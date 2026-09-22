@@ -1,4 +1,6 @@
 import { getDb } from './db.js';
+import { decrypt } from '@racerbot/shared';
+import { MAIN_WALLET_PRIVATE_KEY } from './config.js';
 import { SwapExecutor } from './executor.js';
 
 export class TriggerEngine {
@@ -14,7 +16,7 @@ export class TriggerEngine {
       const position = await (await import('./db.js')).getPositionById(trigger.position_id);
       if (!position || position.status === 'closed') continue;
 
-      const currentPrice = parseFloat((await (await import('./wallet.js')).getTokenInfo(position.token_address)).price || '0');
+      const currentPrice = parseFloat((await (await import('./api/src/wallet.js')).getTokenInfo(position.token_address)).price || '0');
       const entryPrice = parseFloat(position.avg_entry_price);
       let triggered = false;
 
@@ -26,7 +28,7 @@ export class TriggerEngine {
           triggered = currentPrice >= entryPrice * (1 + parseFloat(trigger.target_value) / 100);
           break;
         case 'market_cap':
-          const tokenInfo = await (await import('./wallet.js')).getTokenInfo(position.token_address);
+          const tokenInfo = await (await import('./api/src/wallet.js')).getTokenInfo(position.token_address);
           triggered = (tokenInfo.marketCap || 0) >= parseFloat(trigger.target_value);
           break;
       }

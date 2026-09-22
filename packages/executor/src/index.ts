@@ -1,17 +1,17 @@
-import 'dotenv/config';
 import { createRedis } from './redis.js';
 import { getDb } from './db.js';
-import { SwapExecutor } from './executor/SwapExecutor.js';
+import { SwapExecutor } from './executor.js';
+import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT } from './config.js';
 
 const executor = new SwapExecutor();
 
 async function main() {
   const redis = await createRedis();
   await getDb().connect();
-
   console.log('[EXECUTOR] Warm signing service started');
+  console.log('[EXECUTOR] Parent account:', PARENT_ACCOUNT);
 
-  const redisSub = redis.subscribe(CHANNELS.EXECUTE_SWAP, async (message: string) => {
+  const redisSub = redis.subscribe('execute-swap', async (message: string) => {
     const event = JSON.parse(message);
     await executor.execute(event);
   });
@@ -25,9 +25,3 @@ async function main() {
 }
 
 main().catch(console.error);
-
-const CHANNELS = {
-  EXECUTE_SWAP: 'execute-swap',
-  TRIGGER_FIRED: 'trigger-fired',
-  AUTO_BUY_SIGNAL: 'auto-buy-signal',
-};

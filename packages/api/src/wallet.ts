@@ -1,13 +1,12 @@
+import { decrypt, validateScopedKey, encrypt, generateScopedAccessKey, generateSeedPhrase } from '@racerbot/shared';
 import { getDb } from './db.js';
-import { encrypt, decrypt, generateScopedAccessKey, generateSeedPhrase } from '@racerbot/shared';
-
-const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
+import { MAIN_WALLET_PRIVATE_KEY } from './config.js';
 
 export async function onboardUser(telegramId: number) {
   const keypair = generateScopedAccessKey();
   const seedPhrase = generateSeedPhrase();
   const subaccountId = `${telegramId}.racerbot.near`;
-  const encryptedKey = encrypt(JSON.stringify({ publicKey: keypair.publicKey, secretKey: keypair.secretKey }), MASTER_KEY);
+  const encryptedKey = encrypt(JSON.stringify({ publicKey: keypair.publicKey, secretKey: keypair.secretKey }), MAIN_WALLET_PRIVATE_KEY);
 
   await (await import('./db.js')).createUser({
     telegram_id: telegramId,
@@ -29,6 +28,13 @@ export async function getTokenInfo(tokenAddress: string) {
 }
 
 export async function executeSwap(event: any) {
-  const executor = new (await import('./executor.js')).SwapExecutor();
+  const { SwapExecutor } = await import('./executor.js');
+  const executor = new SwapExecutor();
   return executor.execute(event);
+}
+
+export async function autoBuySwap(userId: string, tokenAddress: string, amount: string) {
+  const { SwapExecutor } = await import('./executor.js');
+  const executor = new SwapExecutor();
+  return executor.autoBuy(userId, tokenAddress, amount);
 }

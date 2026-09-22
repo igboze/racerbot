@@ -1,16 +1,17 @@
 import 'dotenv/config';
 import { createRedis } from './redis.js';
 import { getDb } from './db.js';
-import { TriggerEngine } from './trigger/TriggerEngine.js';
+import { TriggerEngine } from './trigger.js';
+import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
 async function main() {
   const redis = await createRedis();
   await getDb().connect();
-
   console.log('[TRIGGERS] Trigger engine started');
+  console.log('[TRIGGERS] Parent account:', PARENT_ACCOUNT);
 
   const engine = new TriggerEngine();
-  const intervalMs = parseInt(process.env.TRIGGER_INTERVAL_MS || '5000');
+  const intervalMs = TRIGGER_INTERVAL_MS;
 
   setInterval(async () => {
     try {
@@ -28,8 +29,3 @@ async function main() {
 }
 
 main().catch(console.error);
-
-const CHANNELS = {
-  TRIGGER_FIRED: 'trigger-fired',
-  EXECUTE_SWAP: 'execute-swap',
-};

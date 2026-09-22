@@ -1,9 +1,19 @@
 import { decrypt } from '@racerbot/shared';
 import { getDb } from './db.js';
+import { MAIN_WALLET_PRIVATE_KEY } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 
 export class SwapExecutor {
+  private walletKey: string;
+
+  constructor() {
+    this.walletKey = MAIN_WALLET_PRIVATE_KEY;
+    if (!this.walletKey) {
+      throw new Error('MAIN_WALLET_PRIVATE_KEY is required');
+    }
+  }
+
   async execute(event: any) {
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
     const user = await (await import('./db.js')).getUserById(user_id);
@@ -36,7 +46,7 @@ export class SwapExecutor {
   }
 
   async autoBuy(userId: string, tokenAddress: string, amount: string) {
-    const tokenInfo = await (await import('./wallet.js')).getTokenInfo(tokenAddress);
+    const tokenInfo = await (await import('./api/src/wallet.js')).getTokenInfo(tokenAddress);
     if (!tokenInfo || !tokenInfo.liquidity || tokenInfo.liquidity < 1000) {
       return { success: false, reason: 'insufficient_liquidity' };
     }
