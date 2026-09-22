@@ -266,14 +266,14 @@ mod tests {
     fn test_new_contract() {
         testing_env!(get_context(accounts::root_account_id()));
         let contract = RacerbotRouter::new(
-            accounts::root_account_id(),
-            accounts::near_account_id(),
+            "racerbotrouter.near".to_string(),
+            "racerbottreasury.near".to_string(),
             100,
             100,
             150,
         );
-        assert_eq!(contract.owner_id, accounts::root_account_id());
-        assert_eq!(contract.treasury_id, accounts::near_account_id());
+        assert_eq!(contract.owner_id, "racerbotrouter.near");
+        assert_eq!(contract.treasury_id, "racerbottreasury.near");
         assert_eq!(contract.fee_config.buy_fee_bps, 100);
     }
 
