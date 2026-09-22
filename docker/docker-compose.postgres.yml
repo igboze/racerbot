@@ -1,0 +1,6 @@
+FROM postgres:16-alpine
+ENV POSTGRES_DB=racerbot
+ENV POSTGRES_USER=racerbot
+ENV POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+COPY packages/db/migrations/001_init.sql /docker-entrypoint-initdb.d/001_init.sql
+EXPOSE 5432

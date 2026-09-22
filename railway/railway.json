@@ -1,0 +1,52 @@
+[railway]
+
+[services.api]
+dockerfile = Dockerfile.api
+ports = [{ port = 3000 }]
+environments = [
+  { variable = "RPC_PROVIDERS", value = "https://rpc.near.org,https://fastnear.io,https://lava-rpc.near" },
+  { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
+  { variable = "ROUTER_CONTRACT_ID", value = "router.racerbot.near" },
+  { variable = "TREASURY_ACCOUNT_ID", value = "treasury.racerbot.near" },
+  { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
+  { variable = "REDIS_URL", value = "${{Redis.URL}}" },
+  { variable = "TELEGRAM_BOT_TOKEN", value = "${{secrets.TELEGRAM_BOT_TOKEN}}" },
+  { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
+  { variable = "TRIGGER_INTERVAL_MS", value = "5000" },
+]
+
+[services.detector]
+dockerfile = "Dockerfile.detector"
+ports = [{ port = 8080 }]
+environments = [
+  { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
+  { variable = "REDIS_URL", value = "${{Redis.URL}}" },
+  { variable = "TRIGGER_INTERVAL_MS", value = "3000" },
+]
+
+[services.executor]
+dockerfile = "Dockerfile.executor"
+ports = [{ port = 8080 }]
+environments = [
+  { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
+  { variable = "REDIS_URL", value = "${{Redis.URL}}" },
+  { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
+]
+
+[services.triggers]
+dockerfile = "Dockerfile.triggers"
+ports = [{ port = 8080 }]
+environments = [
+  { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
+  { variable = "REDIS_URL", value = "${{Redis.URL}}" },
+  { variable = "TRIGGER_INTERVAL_MS", value = "5000" },
+]
+
+[plugins.postgresql]
+plan = "standard"
+
+[plugins.redis]
+plan = "standard"

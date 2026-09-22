@@ -1,0 +1,1 @@
+{"name": "@racerbot/shared", "version": "1.0.0", "main": "./dist/index.js", "types": "./dist/index.d.ts", "scripts": {"build": "tsc", "dev": "tsc --watch"}, "dependencies": {"dotenv": "^16.4.0", "pg": "^8.11.0", "redis": "^4.6.0", "near-api-js": "^4.6.0", "ed25519-hash": "^3.0.0", "tweetnacl": "^1.0.3", "zod": "^3.23.0", "uuid": "^9.0.0", "date-fns": "^3.3.0"}}

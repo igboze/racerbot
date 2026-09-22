@@ -1,0 +1,11 @@
+FROM rust:1.75-slim AS builder
+WORKDIR /app
+COPY packages/contract/Cargo.toml packages/contract/Cargo.lock ./
+COPY packages/contract/src ./src
+RUN cargo build --release
+
+FROM rust:1.75-slim
+WORKDIR /app
+COPY --from=builder /app/target/wasm32-unknown-unknown/release/racerbot_router.wasm ./
+RUN apt-get update && apt-get install -y wasm-gc && wasm-gc racerbot_router.wasm -o racerbot_router.wasm
+CMD ["sh", "-c", \"echo 'Contract built. Deploy with: near deploy --wasmFile racerbot_router.wasm'\"]

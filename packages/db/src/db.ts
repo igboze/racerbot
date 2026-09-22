@@ -1,0 +1,222 @@
+import { Pool, QueryResult } from 'pg';
+import { getDb as getSharedDb } from '@racerbot/shared';
+import { DatabaseConfig, UserRecord, PositionRecord, FillRecord, TriggerRecord, TokenCacheRecord, CreateUserParams, CreatePositionParams, CreateFillParams, CreateTriggerParams, UpdatePositionParams } from '@racerbot/shared';
+
+let pool: Pool | null = null;
+
+export async function getDb(): Promise<Pool> {
+  if (pool) return pool;
+
+  const config: DatabaseConfig = {
+    url: process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot',
+    poolMin: parseInt(process.env.POOL_MIN || '5'),
+    poolMax: parseInt(process.env.POOL_MAX || '20'),
+    idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
+    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
+  };
+
+  pool = new Pool(config);
+  pool.on('error', (err) => console.error('[DB] Connection pool error:', err));
+  pool.on('connect', () => console.log('[DB] Connected to Postgres'));
+
+  return pool;
+}
+
+export async function connectDb(): Promise<void> {
+  await getDb();
+  console.log('[DB] Connected');
+}
+
+export async function disconnectDb(): Promise<void> {
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
+}
+
+export async function createUser(params: CreateUserParams): Promise<UserRecord> {
+  const db = await getDb();
+  const id = params.telegram_id.toString();
+  const result = await db.query(
+    `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, default_buy_pct, default_sell_pct, fee_tier)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (telegram_id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id, scoped_key_encrypted = EXCLUDED.scoped_key_encrypted
+     RETURNING *`,
+    [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
+  );
+  return rowToUser(result.rows[0]);
+}
+
+export async function getUserByTelegramId(telegramId: number): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE telegram_id = $1', [telegramId]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
+export async function getUserById(id: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
+export async function getUserBySubaccount(subaccountId: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE subaccount_id = $1', [subaccountId]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
+export async function updateUserScopedKey(userId: string, encryptedKey: string): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE users SET scoped_key_encrypted = $1 WHERE id = $2', [encryptedKey, userId]);
+}
+
+export async function updateUserDefaults(userId: string, buyPct?: number, sellPct?: number): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE users SET default_buy_pct = $1, default_sell_pct = $2 WHERE id = $3', [buyPct, sellPct, userId]);
+}
+
+export async function createPosition(params: CreatePositionParams): Promise<PositionRecord> {
+  const db = await getDb();
+  const id = generateId();
+  await db.query(
+    'INSERT INTO positions (id, user_id, token_address, quantity_held, avg_entry_price, status, opened_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+    [id, params.user_id, params.token_address, params.quantity_held, params.avg_entry_price, 'open']
+  );
+  return { ...params, id, status: 'open', opened_at: new Date(), closed_at: null };
+}
+
+export async function getOpenPositions(userId: string): Promise<PositionRecord[]> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM positions WHERE user_id = $1 AND status = $2', [userId, 'open']);
+  return result.rows.map(rowToPosition);
+}
+
+export async function getPositionById(positionId: string): Promise<PositionRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM positions WHERE id = $1', [positionId]);
+  if (result.rows.length === 0) return null;
+  return rowToPosition(result.rows[0]);
+}
+
+export async function updatePosition(params: UpdatePositionParams): Promise<void> {
+  const db = await getDb();
+  const setParts: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (params.quantity_held !== undefined) {
+    setParts.push(`quantity_held = $${idx++}`);
+    values.push(params.quantity_held);
+  }
+  if (params.avg_entry_price !== undefined) {
+    setParts.push(`avg_entry_price = $${idx++}`);
+    values.push(params.avg_entry_price);
+  }
+  if (params.status !== undefined) {
+    setParts.push(`status = $${idx++}`);
+    values.push(params.status);
+  }
+  if (params.closed_at !== undefined) {
+    setParts.push(`closed_at = $${idx++}`);
+    values.push(params.closed_at);
+  }
+
+  values.push(params.position_id);
+  await db.query(`UPDATE positions SET ${setParts.join(', ')} WHERE id = $${idx}`, values);
+}
+
+export async function createFill(params: CreateFillParams): Promise<FillRecord> {
+  const db = await getDb();
+  const id = generateId();
+  await db.query(
+    `INSERT INTO fills (id, user_id, position_id, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+    [id, params.user_id, params.position_id, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+  );
+  return { ...params, id, created_at: new Date() };
+}
+
+export async function getFillsByPosition(positionId: string): Promise<FillRecord[]> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM fills WHERE position_id = $1 ORDER BY created_at ASC', [positionId]);
+  return result.rows.map(rowToFill);
+}
+
+export async function createTrigger(params: CreateTriggerParams): Promise<TriggerRecord> {
+  const db = await getDb();
+  const id = generateId();
+  await db.query(
+    'INSERT INTO triggers (id, user_id, position_id, type, target_value, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+    [id, params.user_id, params.position_id, params.type, params.target_value, 'active']
+  );
+  return { ...params, id, status: 'active', created_at: new Date() };
+}
+
+export async function getActiveTriggers(): Promise<TriggerRecord[]> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM triggers WHERE status = $1', ['active']);
+  return result.rows.map(rowToTrigger);
+}
+
+export async function getTriggersByPosition(positionId: string): Promise<TriggerRecord[]> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM triggers WHERE position_id = $1 AND status = $2', [positionId, 'active']);
+  return result.rows.map(rowToTrigger);
+}
+
+export async function markTriggerFired(triggerId: string): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE triggers SET status = $1 WHERE id = $2', ['fired', triggerId]);
+}
+
+export async function getTokenCache(address: string): Promise<TokenCacheRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM token_cache WHERE token_address = $1', [address]);
+  if (result.rows.length === 0) return null;
+  return rowToTokenCache(result.rows[0]);
+}
+
+export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO token_cache (token_address, name, symbol, decimals, pool_address, venue, last_price, last_liquidity, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     ON CONFLICT (token_address) DO UPDATE SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals, pool_address = EXCLUDED.pool_address, venue = EXCLUDED.venue, last_price = EXCLUDED.last_price, last_liquidity = EXCLUDED.last_liquidity, updated_at = NOW()`,
+    [record.token_address, record.name, record.symbol, record.decimals, record.pool_address, record.venue, record.last_price, record.last_liquidity, record.updated_at]
+  );
+}
+
+export async function recordFee(fillId: string, amount: string): Promise<void> {
+  const db = await getDb();
+  const id = generateId();
+  await db.query('INSERT INTO fee_ledger (id, fill_id, amount, created_at) VALUES ($1, $2, $3, NOW())', [id, fillId, amount]);
+}
+
+function rowToUser(row: any): UserRecord {
+  return { id: row.id, telegram_id: row.telegram_id, subaccount_id: row.subaccount_id, scoped_key_encrypted: row.scoped_key_encrypted, default_buy_pct: row.default_buy_pct, default_sell_pct: row.default_sell_pct, fee_tier: row.fee_tier, created_at: row.created_at };
+}
+
+function rowToPosition(row: any): PositionRecord {
+  return { id: row.id, user_id: row.user_id, token_address: row.token_address, quantity_held: row.quantity_held, avg_entry_price: row.avg_entry_price, status: row.status, opened_at: row.opened_at, closed_at: row.closed_at };
+}
+
+function rowToFill(row: any): FillRecord {
+  return { id: row.id, user_id: row.user_id, position_id: row.position_id, side: row.side, token_address: row.token_address, amount: row.amount, price: row.price, fee_paid: row.fee_paid, venue: row.venue, tx_hash: row.tx_hash, created_at: row.created_at };
+}
+
+function rowToTrigger(row: any): TriggerRecord {
+  return { id: row.id, user_id: row.user_id, position_id: row.position_id, type: row.type, target_value: row.target_value, status: row.status, created_at: row.created_at };
+}
+
+function rowToTokenCache(row: any): TokenCacheRecord {
+  return { token_address: row.token_address, name: row.name, symbol: row.symbol, decimals: row.decimals, pool_address: row.pool_address, venue: row.venue, last_price: row.last_price, last_liquidity: row.last_liquidity, updated_at: row.updated_at };
+}
+
+function generateId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}

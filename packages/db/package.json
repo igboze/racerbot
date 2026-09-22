@@ -1,0 +1,1 @@
+{"name": "@racerbot/db", "version": "1.0.0", "main": "./dist/index.js", "types": "./dist/index.d.ts", "scripts": {"build": "tsc", "migrate": "drizzle-kit migrate:dev", "push": "drizzle-kit push", "studio": "drizzle-kit studio"}, "dependencies": {"drizzle-orm": "^0.30.0", "drizzle-kit": "^0.20.0", "pg": "^8.11.0", "dotenv": "^16.4.0"}}

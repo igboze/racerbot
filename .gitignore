@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.wasm
+.env
+.env.local
+*.log
+.cache/
+.turbo/
+coverage/
+docs/
+.git/

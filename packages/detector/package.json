@@ -1,0 +1,1 @@
+{"name": "@racerbot/detector", "version": "1.0.0", "main": "./dist/index.js", "scripts": {"build": "tsc", "dev": "tsc --watch && node dist/index.js", "start": "node dist/index.js"}, "dependencies": {"@racerbot/shared": "*", "@racerbot/db": "*", "dotenv": "^16.4.0", "pg": "^8.11.0", "redis": "^4.6.0", "near-api-js": "^4.6.0", "ws": "^8.16.0"}}
