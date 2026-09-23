@@ -4,10 +4,11 @@
   "packageManager": "npm@10.0.0",
   "workspaces": ["packages/*"],
   "scripts": {
-    "build": "turbo run build",
+    "build": "turbo run build --filter=!@racerbot/contract",
+    "build:contract": "npm run build --workspace=packages/contract",
     "build:shared": "npm run build --workspace=packages/shared",
     "build:db": "npm run build --workspace=packages/db",
-    "build:all": "npm run build:shared && npm run build:db && turbo run build",
+    "build:all": "turbo run build",
     "dev:api": "turbo run dev --filter=@racerbot/api",
     "dev:detector": "turbo run dev --filter=@racerbot/detector",
     "dev:executor": "turbo run dev --filter=@racerbot/executor",
