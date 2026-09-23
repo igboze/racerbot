@@ -438,7 +438,8 @@ async function executeBuyHelper(
     tokenAddress,
     amountInYocto,
     slippagePct,
-    cached?.rhea_pool_id
+    cached?.rhea_pool_id,
+    cached?.dcl_pool_id ?? undefined
   );
 
   await publishSwap({
