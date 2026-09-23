@@ -99,13 +99,17 @@ export class SwapExecutor {
     const account = await near.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if (venue === 'nearlytrade' && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
       if (!dclPoolId) {
-        const ntState = await near.getNearlytradeTokenState(tokenTarget).catch(() => null);
-        dclPoolId = ntState?.dclPoolId ?? null;
+        if (venue === 'nearlytrade') {
+          const ntState = await near.getNearlytradeTokenState(tokenTarget).catch(() => null);
+          dclPoolId = ntState?.dclPoolId ?? null;
+        } else if (venue === 'rhea') {
+          dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+        }
       }
     }
 
@@ -202,76 +206,140 @@ export class SwapExecutor {
         result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
       }
     } else if (venue === 'rhea') {
-      let rheaPoolId = (event as any).pool_id;
-      if (rheaPoolId === null || rheaPoolId === undefined) {
-        rheaPoolId = await near.findRheaPoolId(token_in, token_out);
-      }
+      if (dclPoolId) {
+        // Execute Ref DCL swap on dclv2.ref-labs.near
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
 
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      if (isBuy) {
-        await near.ensureStorageDeposit(subaccountId, token_out);
-
-        const actions = [
-          transactions.functionCall(
-            'near_deposit',
-            {},
-            BigInt('10000000000000'),
-            amountInBigInt
-          ),
-          transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'v2.ref-finance.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({
-                actions: [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in: 'wrap.near',
-                    token_out,
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: token_out,
                     min_output_amount: minOutAdj,
                   },
-                ],
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
-      } else {
-        await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
 
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'v2.ref-finance.near',
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({
-                actions: [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in,
-                    token_out: 'wrap.near',
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: 'wrap.near',
                     min_output_amount: min_amount_out,
                   },
-                ],
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        }
+      } else {
+        let rheaPoolId = (event as any).pool_id;
+        if (rheaPoolId === null || rheaPoolId === undefined) {
+          rheaPoolId = await near.findRheaPoolId(token_in, token_out);
+        }
+
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
+
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'v2.ref-finance.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: rheaPoolId,
+                      token_in: 'wrap.near',
+                      token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  ],
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'v2.ref-finance.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: rheaPoolId,
+                      token_in,
+                      token_out: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  ],
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        }
       }
     } else if (venue === 'intear') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -540,6 +608,15 @@ export class SwapExecutor {
         return { success: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
       }
       dclPoolId = ntState.dclPoolId;
+    } else if (venue === 'rhea') {
+      const dbCache = await getTokenCache(token_address).catch(() => null);
+      dclPoolId = dbCache?.dcl_pool_id ?? null;
+      if (!dclPoolId) {
+        dclPoolId = await near.findDclPoolId('wrap.near', token_address).catch(() => null);
+      }
+      if (!dclPoolId) {
+        rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', token_address).catch(() => null));
+      }
     }
 
     // BigInt math against live pool reserves for EVERY venue. The old rhea /
@@ -594,7 +671,7 @@ export class SwapExecutor {
       return { safe: false, reason: 'no_metadata' };
     }
 
-    // 2. Check liquidity from Shardsmarket, Rhea, or NearlyTrade
+    // 2. Check liquidity from Shardsmarket, Rhea, DCL, or NearlyTrade
     let liquidityNear = 0;
     try {
       const smReserves = await near.getShardsmarketPoolReserves(tokenAddress);
@@ -606,15 +683,23 @@ export class SwapExecutor {
         const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
         liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
       } catch {
-        // Try NearlyTrade
+        // Try DCL (Ref / NearPad)
         try {
-          const ntState = await near.getNearlytradeTokenState(tokenAddress);
-          if (ntState.phase === 'prebonded') {
-            return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
-          }
-          liquidityNear = ntState.liquidityNear;
+          const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress);
+          if (!dclPoolId) throw new Error('no dcl pool');
+          const dclState = await near.getDclPoolState(dclPoolId);
+          liquidityNear = dclState.liquidityNear;
         } catch {
-          return { safe: false, reason: 'liquidity_check_failed' };
+          // Try NearlyTrade
+          try {
+            const ntState = await near.getNearlytradeTokenState(tokenAddress);
+            if (ntState.phase === 'prebonded') {
+              return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
+            }
+            liquidityNear = ntState.liquidityNear;
+          } catch {
+            return { safe: false, reason: 'liquidity_check_failed' };
+          }
         }
       }
     }
