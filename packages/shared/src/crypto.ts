@@ -10,10 +10,11 @@ const AUTH_TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 const SALT_LENGTH = 16;
 const SCRYPT_N = 32768;
+const SCRYPT_MAXMEM = 128 * 1024 * 1024; // 128 MB to avoid OpenSSL default limit
 
 export function encrypt(plaintext: string, masterKey: string): string {
   const salt = randomFillSync(Buffer.alloc(SALT_LENGTH));
-  const key = scryptSync(masterKey, salt, KEY_LENGTH, { N: SCRYPT_N, r: 8, p: 1 });
+  const key = scryptSync(masterKey, salt, KEY_LENGTH, { N: SCRYPT_N, r: 8, p: 1, maxmem: SCRYPT_MAXMEM });
   const iv = randomFillSync(Buffer.alloc(IV_LENGTH));
   const cipher = createCipheriv(ALGORITHM, key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -27,7 +28,7 @@ export function decrypt(ciphertext: string, masterKey: string): string {
   const iv = buffer.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
   const authTag = buffer.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
   const encrypted = buffer.subarray(SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
-  const key = scryptSync(masterKey, salt, KEY_LENGTH, { N: SCRYPT_N, r: 8, p: 1 });
+  const key = scryptSync(masterKey, salt, KEY_LENGTH, { N: SCRYPT_N, r: 8, p: 1, maxmem: SCRYPT_MAXMEM });
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
