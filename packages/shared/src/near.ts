@@ -599,6 +599,7 @@ export class MultiRpcNear {
             // FIX 5: Persist found pool ID to DB so it survives process restarts.
             // This prevents the expensive 250-pool scan from repeating after a Railway redeploy.
             setImmediate(() => {
+              // @ts-ignore
               import('@racerbot/db').then(({ upsertTokenCache }) =>
                 upsertTokenCache({
                   token_address: tokenAddress,
