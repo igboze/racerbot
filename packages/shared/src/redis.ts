@@ -122,8 +122,8 @@ export interface RedisClient {
 export function createRedis(url: string): RedisClient {
   const options = {
     lazyConnect: false,
-    maxRetriesPerRequest: 1,
-    enableOfflineQueue: false,
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: true,
     // NEVER give up: a Redis restart must not permanently kill swap/trigger
     // pub-sub (returning null ends the connection forever). Bounded backoff.
     retryStrategy(times: number) {

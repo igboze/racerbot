@@ -1,16 +1,6 @@
-import { createRedis, CHANNELS, getNear, type SwapEvent } from '@racerbot/shared';
+import { getNear, type SwapEvent } from '@racerbot/shared';
 import { getPositionById, getTokenCache, getUserById } from '@racerbot/db';
-import { getTokenInfo } from './wallet.js';
-
-const REDIS_URL = process.env.REDIS_URL!;
-
-let redisClient: ReturnType<typeof createRedis> | null = null;
-function getRedisClient() {
-  if (!redisClient) {
-    redisClient = createRedis(REDIS_URL);
-  }
-  return redisClient;
-}
+import { getTokenInfo, publishSwap } from './wallet.js';
 
 /**
  * Sell a percentage of a position by publishing EXECUTE_SWAP to Redis.
@@ -70,8 +60,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     ...(cached?.dcl_pool_id ? { dcl_pool_id: cached.dcl_pool_id } : {}),
   } as any;
 
-  const redis = getRedisClient();
-  await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+  await publishSwap(swapEvent);
 
   return { success: true };
 }

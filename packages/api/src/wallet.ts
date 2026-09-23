@@ -7,6 +7,10 @@ import {
   updateUserScopedKey,
   getTokenCache,
   upsertTokenCache,
+  getOpenPositions,
+  createPosition,
+  createFill,
+  updatePosition,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
@@ -559,10 +563,12 @@ export async function rotateUserKey(telegramId: number): Promise<RotateKeyResult
 }
 
 let pubRedis: any = null;
+let directExecutor: any = null;
 
 /**
  * Execute a swap by publishing to executor via Redis.
- * The API service never signs transactions — that is the executor's role.
+ * If Redis is unavailable, disconnected, or times out (e.g. single-container Railway deploy),
+ * falls back to executing directly on-chain via SwapExecutor so the trade never fails.
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
@@ -572,18 +578,51 @@ export async function publishSwap(swapEvent: {
   min_amount_out: string;
   venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   dcl_pool_id?: string;
-}): Promise<void> {
-  if (!pubRedis) {
-    pubRedis = createRedis(process.env.REDIS_URL!);
+}): Promise<{ txHash?: string }> {
+  const redisUrl = process.env.REDIS_URL;
+  let executedViaRedis = false;
+
+  if (redisUrl && !redisUrl.includes('localhost:6379')) {
+    try {
+      if (!pubRedis) {
+        pubRedis = createRedis(redisUrl);
+      }
+      const pubPromise = pubRedis.publish(
+        CHANNELS.EXECUTE_SWAP,
+        JSON.stringify({
+          type: 'execute_swap',
+          ...swapEvent,
+          timestamp: Date.now(),
+        })
+      );
+      // Wait up to 1.5s for Redis to accept the message
+      await Promise.race([
+        pubPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis publish timeout')), 1500)),
+      ]);
+      executedViaRedis = true;
+    } catch (err: any) {
+      console.warn('[SWAP] Redis publish failed, falling back to direct executor:', err.message);
+    }
   }
-  await pubRedis.publish(
-    CHANNELS.EXECUTE_SWAP,
-    JSON.stringify({
+
+  // Direct on-chain execution fallback:
+  // When Redis is offline, disconnected, or absent on Railway, execute the swap directly
+  // using the user's encrypted key and on-chain RPC broadcast.
+  if (!executedViaRedis) {
+    if (!directExecutor) {
+      const { SwapExecutor } = await import('@racerbot/executor');
+      directExecutor = new SwapExecutor();
+    }
+    const result = await directExecutor.execute({
       type: 'execute_swap',
       ...swapEvent,
       timestamp: Date.now(),
-    })
-  );
+    });
+    return { txHash: result.txHash };
+  }
+
+  return {};
 }
 
 export interface UserBalances {
@@ -751,4 +790,98 @@ export async function withdrawFunds(
     amountWithdrawn: formattedWithdrawn,
     destination,
   };
+}
+
+/**
+ * Detects external token deposits for a user's wallet subaccount.
+ * When a user transfers or receives tokens not purchased directly via RacerBot,
+ * this discovers them, fetches their current market price at this point in time,
+ * and initializes an open position with that price as the avg_entry_price.
+ * PNL calculation starts from that exact point onwards.
+ */
+export async function syncUserTokenDeposits(userId: string, subaccountId: string): Promise<number> {
+  let newDepositsCount = 0;
+  try {
+    // 1. Fetch all FT holdings for this subaccount via FastNEAR API
+    let tokens: Array<{ contract_id: string; balance: string }> = [];
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`https://api.fastnear.com/v1/account/${subaccountId}/ft`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (Array.isArray(data.tokens)) {
+          tokens = data.tokens;
+        }
+      }
+    } catch {
+      // FastNEAR timeout/network error — fallback continues gracefully
+    }
+
+    if (tokens.length === 0) {
+      return 0;
+    }
+
+    // 2. Fetch existing positions
+    const existingPositions = await getOpenPositions(userId);
+    const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
+
+    for (const t of tokens) {
+      // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token)
+      if (t.contract_id === 'wrap.near' || !t.balance || BigInt(t.balance) <= 0n) {
+        continue;
+      }
+
+      const existing = posMap.get(t.contract_id);
+      if (!existing) {
+        // Token received as external deposit!
+        // Start calculating PNL at that point: fetch market price at deposit discovery
+        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const currentPrice = info?.price && parseFloat(info.price) > 0
+          ? parseFloat(info.price)
+          : 0;
+
+        // Initialize position with current price as entry price
+        const newPos = await createPosition({
+          user_id: userId,
+          token_address: t.contract_id,
+          quantity_held: t.balance,
+          avg_entry_price: currentPrice.toString(),
+        });
+
+        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)
+          ? info.venue as any
+          : 'nearlytrade';
+
+        await createFill({
+          user_id: userId,
+          position_id: newPos.id,
+          side: 'buy',
+          token_address: t.contract_id,
+          amount: t.balance,
+          price: currentPrice.toString(),
+          fee_paid: '0',
+          venue,
+          tx_hash: `deposit_${Date.now()}`,
+        }).catch(() => {});
+
+        newDepositsCount++;
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${t.balance}, entryPrice=${currentPrice}`);
+      } else {
+        // Sync position quantity if changed
+        if (existing.quantity_held !== t.balance) {
+          await updatePosition({
+            position_id: existing.id,
+            quantity_held: t.balance,
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[DEPOSIT] syncUserTokenDeposits error: ${err.message}`);
+  }
+  return newDepositsCount;
 }
