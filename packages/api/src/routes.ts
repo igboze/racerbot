@@ -18,6 +18,7 @@ import {
   getUserBalances,
   unwrapUserWrapNear,
   withdrawFunds,
+  syncUserTokenDeposits,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -446,7 +447,7 @@ async function executeBuyHelper(
     cached?.dcl_pool_id ?? undefined
   );
 
-  await publishSwap({
+  const swapResult = await publishSwap({
     user_id: user.id,
     token_in: 'wrap.near',
     token_out: tokenAddress,
@@ -456,11 +457,15 @@ async function executeBuyHelper(
     dcl_pool_id: cached?.dcl_pool_id ?? undefined,
   });
 
+  const txInfo = swapResult.txHash
+    ? `\n\n🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${swapResult.txHash})`
+    : `\n\nYou will receive a notification once confirmed.`;
+
   return {
     success: true,
     amountNear,
     tokenAddress,
-    message: `⚡ Buy order submitted for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).\n\nYou will receive a notification once confirmed.`,
+    message: `⚡ Buy order submitted for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).${txInfo}`,
   };
 }
 
@@ -577,6 +582,9 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
+    // Auto-detect and sync external token deposits to calculate PNL from deposit point
+    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
+
     const positions = await getOpenPositions(user.id).catch(() => []);
     if (positions.length === 0) {
       await ctx.answerCbQuery('No open positions.').catch(() => {});
@@ -651,6 +659,9 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Please run /start first.').catch(() => {});
       return;
     }
+
+    // Auto-detect and sync external token deposits to calculate PNL from deposit point
+    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
 
     const [positions, db] = await Promise.all([
       getOpenPositions(user.id).catch(() => []),
