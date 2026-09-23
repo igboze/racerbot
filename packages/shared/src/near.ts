@@ -278,7 +278,7 @@ export class MultiRpcNear {
       try {
         const near = await this.getConnection(provider.url);
         const account = await near.account(accountId);
-        const state = await withTimeout(account.state(), 3500, `RPC timeout on ${provider.url}`);
+        const state = await withTimeout<any>(account.state(), 3500, `RPC timeout on ${provider.url}`);
         return state.amount;
       } catch (err) {
         lastErr = err as Error;

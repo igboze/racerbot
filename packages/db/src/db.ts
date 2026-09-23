@@ -124,7 +124,7 @@ export async function getDb(): Promise<Pool> {
     idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
     connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
   });
-  pool.on('error', (err) => console.error('[DB] Connection pool error:', err));
+  pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
   pool.on('connect', () => console.log('[DB] Connected to Postgres'));
 
   return pool;
