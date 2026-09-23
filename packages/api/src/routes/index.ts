@@ -135,10 +135,13 @@ router.post('/onboard/scoped-key', async (req, res) => {
     const encryptedKey = encrypt(secretKey, MASTER_KEY);
     await updateUserScopedKey(user.id, encryptedKey);
 
-    // Warm key in executor immediately without restarting
+    // Warm key in executor immediately without restarting if available
     try {
-      const { addUserKey } = await import('@racerbot/executor');
-      await addUserKey(user.id, subaccountId, encryptedKey);
+      // @ts-ignore
+      const executorMod = await import('@racerbot/executor').catch(() => null);
+      if (executorMod?.addUserKey) {
+        await executorMod.addUserKey(user.id, subaccountId, encryptedKey);
+      }
     } catch (err: any) {
       console.warn('[API] Could not warm key in executor directly:', err.message);
     }
