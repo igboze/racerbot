@@ -8,6 +8,7 @@ import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
+import { warmTokenInfoCache } from './wallet.js';
 import { TELEGRAM_BOT_TOKEN } from './config.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000');
@@ -18,6 +19,13 @@ async function main(): Promise<void> {
 
   // Connect to Postgres
   await getDb();
+
+  // FIX 6: Pre-warm the in-memory token info cache from the DB.
+  // Non-blocking — runs in background so startup is not delayed.
+  // Populates up to 500 recently-seen tokens so cold-start RPC calls are avoided.
+  warmTokenInfoCache().catch((err: any) =>
+    console.warn('[API] Cache warm-up failed (non-fatal):', err.message)
+  );
 
   // ── Express REST server & Mini App static assets ─────────────────────────
   const app = express();

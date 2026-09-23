@@ -491,16 +491,23 @@ export class MultiRpcNear {
     reserveToken: string;
     totalSupply: string;
   }> {
-    const launch = await this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: tokenAddress });
+    // FIX 7: Start metadata + supply fetches in parallel with the launch lookup
+    // instead of waiting for it first. All 3 calls are independent at this point.
+    const [launchRes, metaRes, supplyRes] = await Promise.allSettled([
+      this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: tokenAddress }),
+      this.getTokenMetadata(tokenAddress),
+      this.view<string>(tokenAddress, 'ft_total_supply', {}),
+    ]);
+
+    const launch = launchRes.status === 'fulfilled' ? launchRes.value : null;
     if (!launch || !launch.pool_id) {
       throw new Error(`NearlyTrade token ${tokenAddress} not found or has no pool_id`);
     }
 
-    const [pool, meta, supplyOnChain] = await Promise.all([
-      this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id }),
-      this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 })),
-      this.view<string>(tokenAddress, 'ft_total_supply', {}).catch(() => launch.total_supply || '0'),
-    ]);
+    const meta = metaRes.status === 'fulfilled' ? metaRes.value : { decimals: 18 };
+    const supplyOnChain = supplyRes.status === 'fulfilled' ? supplyRes.value : (launch.total_supply || '0');
+
+    const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id });
 
     if (!pool) {
       throw new Error(`DCL pool ${launch.pool_id} not found on dclv2.ref-labs.near`);
@@ -589,6 +596,19 @@ export class MultiRpcNear {
           if (r.data.asset2.includes('.near')) intearPoolCache.set(r.data.asset2, r.id);
           if (r.data.asset1 === tokenAddress || r.data.asset2 === tokenAddress) {
             intearPoolCache.set(tokenAddress, r.id);
+            // FIX 5: Persist found pool ID to DB so it survives process restarts.
+            // This prevents the expensive 250-pool scan from repeating after a Railway redeploy.
+            setImmediate(() => {
+              import('@racerbot/db').then(({ upsertTokenCache }) =>
+                upsertTokenCache({
+                  token_address: tokenAddress,
+                  venue: 'intear',
+                  // Store pool ID in dcl_pool_id column (reuse existing column; intear uses integer IDs)
+                  dcl_pool_id: String(r.id),
+                  updated_at: new Date(),
+                }).catch(() => {})
+              ).catch(() => {});
+            });
             return r.id;
           }
         }

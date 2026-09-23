@@ -25,6 +25,61 @@ const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>(
 let nearUsdPrice = 0;
 let nearUsdLastFetch = 0;
 
+/**
+ * FIX 6: Warm the in-memory tokenInfoCache from the DB on startup.
+ * Runs a single query for all token_cache rows updated in the last 30 minutes
+ * and pre-populates the cache so the first user request after a Railway redeploy
+ * doesn't need to hit the blockchain for already-known tokens.
+ */
+export async function warmTokenInfoCache(): Promise<void> {
+  try {
+    const db = await getDb();
+    const result = await db.query(
+      `SELECT * FROM token_cache
+       WHERE updated_at > NOW() - INTERVAL '30 minutes'
+         AND last_price IS NOT NULL
+         AND last_price > 0
+       ORDER BY updated_at DESC
+       LIMIT 500`
+    );
+    const nearUsd = await getNearUsdPrice().catch(() => 0);
+    let warmed = 0;
+    for (const row of result.rows) {
+      const lastPrice = parseFloat(row.last_price || '0');
+      if (lastPrice <= 0) continue;
+      const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
+      const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+      const tokenData: TokenInfoResult = {
+        address: row.token_address,
+        name: row.name ?? '',
+        symbol: row.symbol ?? '',
+        decimals: row.decimals ?? 18,
+        total_supply: row.total_supply ?? '0',
+        price: lastPrice.toFixed(12),
+        price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+        liquidity: row.last_liquidity?.toString() ?? '0',
+        liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
+        market_cap: mcap,
+        market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
+        near_usd: nearUsd,
+        venue: (row.venue as any) ?? 'unknown',
+        rhea_pool_id: row.rhea_pool_id != null ? Number(row.rhea_pool_id) : null,
+        bonding_phase: (row.bonding_phase as any) ?? null,
+        bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
+        dcl_pool_id: row.dcl_pool_id ?? null,
+        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(row.venue ?? 'unknown'),
+      };
+      // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
+      warmed++;
+    }
+    console.log(`[API] Token cache warmed: ${warmed} tokens pre-loaded from DB.`);
+  } catch (err: any) {
+    console.warn('[API] Token cache warm failed (non-fatal):', err.message);
+  }
+}
+
+
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
   if (nearUsdPrice > 0 && now - nearUsdLastFetch < 120_000) return nearUsdPrice;
