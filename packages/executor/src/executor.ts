@@ -4,10 +4,14 @@ import {
   createRedis,
   CHANNELS,
   decrypt,
+  calculateMinOutAdj,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
 } from '@racerbot/shared';
+
+export { calculateMinOutAdj };
+
 import {
   getDb,
   getUserById,
@@ -121,10 +125,8 @@ export class SwapExecutor {
     // structurally fail at slippage < 1.5% and pass with only ~0.5% margin
     // at the 2% default). AMM output is concave in input, so proportional
     // scaling is conservative: it can never demand more than the pool gives.
-    const minOutAdj = (() => {
-      const scaled = (BigInt(min_amount_out) * swapAmount) / amountInBigInt;
-      return scaled > 0n ? scaled.toString() : min_amount_out;
-    })();
+    const minOutAdj = calculateMinOutAdj(min_amount_out, amountInBigInt);
+
 
     let result: any;
 

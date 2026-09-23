@@ -61,7 +61,7 @@ export class TriggerEngine {
     }
   }
 
-  private async evaluateTrigger(trigger: any): Promise<void> {
+  async evaluateTrigger(trigger: any): Promise<void> {
     const position = await getPositionById(trigger.position_id);
     if (!position || position.status === 'closed') return;
 
