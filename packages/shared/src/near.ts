@@ -26,6 +26,7 @@ export interface PoolReserves {
 
 const rheaPoolIdCache = new Map<string, number>();
 const intearPoolCache = new Map<string, number>();
+const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
 
 export function parseIntearPool(rawBytes: Buffer): { asset1: string; reserve1: string; asset2: string; reserve2: string } | null {
@@ -403,6 +404,89 @@ export class MultiRpcNear {
   }
 
   /**
+   * Find DCL (Discretized Concentrated Liquidity) pool on dclv2.ref-labs.near.
+   * Probes standard fee tiers [10000, 2000, 400, 100] in parallel.
+   */
+  async findDclPoolId(tokenA: string, tokenB: string): Promise<string | null> {
+    const key = `${tokenA}:${tokenB}`;
+    const cached = dclPoolIdCache.get(key);
+    if (cached) return cached;
+
+    const tokenX = tokenA < tokenB ? tokenA : tokenB;
+    const tokenY = tokenA < tokenB ? tokenB : tokenA;
+    const feeTiers = [10000, 2000, 400, 100];
+
+    const results = await Promise.allSettled(
+      feeTiers.map(async (fee) => {
+        const poolId = `${tokenX}|${tokenY}|${fee}`;
+        const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
+        if (pool && pool.state === 'Running') {
+          return poolId;
+        }
+        throw new Error('not running');
+      })
+    );
+
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) {
+        dclPoolIdCache.set(key, r.value);
+        dclPoolIdCache.set(`${tokenB}:${tokenA}`, r.value);
+        return r.value;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get DCL pool state including spot price and liquidity from dclv2.ref-labs.near.
+   */
+  async getDclPoolState(poolId: string): Promise<{
+    poolId: string;
+    tokenX: string;
+    tokenY: string;
+    price: number;
+    liquidityNear: number;
+    reserveNear: string;
+    reserveToken: string;
+  }> {
+    const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
+    if (!pool) {
+      throw new Error(`DCL pool ${poolId} not found`);
+    }
+
+    const isTokenX = pool.token_x !== 'wrap.near';
+    const targetToken = isTokenX ? pool.token_x : pool.token_y;
+    const meta = await this.getTokenMetadata(targetToken).catch(() => ({ decimals: 18 }));
+    const tokenDecimals = meta?.decimals ?? 18;
+
+    const currentPoint = Number(pool.current_point);
+    let price = 0;
+    if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
+      if (isTokenX) {
+        price = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - 24);
+      } else {
+        price = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - 24);
+      }
+    }
+
+    const reserveNear = isTokenX ? (pool.total_y || '0') : (pool.total_x || '0');
+    const reserveToken = isTokenX ? (pool.total_x || '0') : (pool.total_y || '0');
+    const reserveNearNum = parseFloat(reserveNear) / 1e24;
+    const liquidityNear = reserveNearNum * 2;
+
+    return {
+      poolId,
+      tokenX: pool.token_x,
+      tokenY: pool.token_y,
+      price,
+      liquidityNear,
+      reserveNear,
+      reserveToken,
+    };
+  }
+
+
+  /**
    * Get pool reserves from Shardsmarket.
    * On Shardsmarket, each token IS its own AMM pool contract.
    * We call get_state() directly on the token address.
@@ -739,6 +823,25 @@ export class MultiRpcNear {
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'rhea') {
+      if (dclPoolId) {
+        try {
+          const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+          const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+          const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [dclPoolId],
+            input_token: inToken,
+            output_token: outToken,
+            input_amount: amountIn,
+          });
+          const expected = BigInt(quote?.amount || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // fallback to simple pool if quote view fails
+        }
+      }
       let poolId = rheaPoolId;
       if (poolId === null || poolId === undefined) {
         poolId = await this.findRheaPoolId(tokenIn, tokenOut);
@@ -812,15 +915,28 @@ export class MultiRpcNear {
   ): Promise<{ price: number; reserveNearYocto: string } | null> {
     if (venue === 'rhea') {
       const poolId = await this.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-      if (poolId === null) return null;
-      const r = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-      const rIn = parseFloat(r.reserveIn);
-      const rOut = parseFloat(r.reserveOut);
-      if (rIn <= 0 || rOut <= 0) return null;
-      return {
-        reserveNearYocto: r.reserveIn,
-        price: rIn / 1e24 / (rOut / Math.pow(10, decimals)),
-      };
+      if (poolId !== null) {
+        const r = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+        const rIn = parseFloat(r.reserveIn);
+        const rOut = parseFloat(r.reserveOut);
+        if (rIn > 0 && rOut > 0) {
+          return {
+            reserveNearYocto: r.reserveIn,
+            price: rIn / 1e24 / (rOut / Math.pow(10, decimals)),
+          };
+        }
+      }
+      const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
+      if (dclPoolId) {
+        const dcl = await this.getDclPoolState(dclPoolId).catch(() => null);
+        if (dcl && dcl.price > 0) {
+          return {
+            reserveNearYocto: dcl.reserveNear,
+            price: dcl.price,
+          };
+        }
+      }
+      return null;
     }
     if (venue === 'shardsmarket') {
       const st = await this.getShardsmarketTokenState(tokenAddress);

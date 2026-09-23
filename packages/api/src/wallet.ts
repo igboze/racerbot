@@ -268,10 +268,10 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     // miss. Previously every unknown token crawled through the Intear scan
     // SEQUENTIALLY before Rhea was even attempted — the slowest possible
     // order.
-    const [ntRes, rheaRes] = await Promise.allSettled([
+    const [ntRes, rheaRes, dclRes] = await Promise.allSettled([
       // 1. NearlyTrade — single get_launch_by_token call
       near.getNearlytradeTokenState(tokenAddress),
-      // 2. Rhea — pool lookup (cached after first hit)
+      // 2. Rhea — simple pool lookup (cached after first hit)
       (async () => {
         const poolId =
           rheaPoolId !== null
@@ -283,9 +283,20 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
         if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
         return { poolId, reserveIn, reserveOut };
       })(),
+      // 3. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near (NearPad / Ref DCL)
+      (async () => {
+        const pId =
+          dclPoolId !== null
+            ? dclPoolId
+            : await near.findDclPoolId('wrap.near', tokenAddress);
+        if (!pId) throw new Error('empty dcl pool');
+        const st = await near.getDclPoolState(pId);
+        if (!(st.price > 0)) throw new Error('empty dcl pool');
+        return st;
+      })(),
     ]);
 
-    // Precedence: NearlyTrade > Rhea > Intear
+    // Precedence: NearlyTrade > Rhea (Simple or DCL) > Intear
     if (ntRes.status === 'fulfilled' && ntRes.value) {
       const ntState = ntRes.value;
       venue = 'nearlytrade';
@@ -305,6 +316,12 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       liquidity = reserveInHuman * 2; // both sides of AMM
       venue = 'rhea';
       rheaPoolId = poolId;
+    } else if (dclRes.status === 'fulfilled') {
+      const st = dclRes.value;
+      venue = 'rhea';
+      price = st.price;
+      liquidity = st.liquidityNear;
+      dclPoolId = st.poolId;
     } else {
       // 3. Intear last resort — full scan, only when cheap probes missed
       try {
