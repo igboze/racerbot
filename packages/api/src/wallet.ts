@@ -82,11 +82,30 @@ export async function warmTokenInfoCache(): Promise<void> {
 
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
-  if (nearUsdPrice > 0 && now - nearUsdLastFetch < 120_000) return nearUsdPrice;
+  // If we already have a price, return it immediately and refresh in background if expired (stale-while-revalidate)
+  if (nearUsdPrice > 0) {
+    if (now - nearUsdLastFetch >= 120_000) {
+      fetch('https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd', {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      })
+        .then((res) => res.json())
+        .then((data: any) => {
+          if (data?.near?.usd > 0) {
+            nearUsdPrice = data.near.usd;
+            nearUsdLastFetch = Date.now();
+          }
+        })
+        .catch(() => {});
+    }
+    return nearUsdPrice;
+  }
+
+  // Initial fetch on boot (bounded to 2s timeout)
   try {
     const res = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd',
-      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5000) }
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(2000) }
     );
     if (res.ok) {
       const data: any = await res.json();
@@ -97,9 +116,9 @@ export async function getNearUsdPrice(): Promise<number> {
       }
     }
   } catch {
-    // Silently keep last known price
+    // Silently fall back
   }
-  return nearUsdPrice;
+  return nearUsdPrice || 4.3;
 }
 
 export interface TokenInfoResult {
