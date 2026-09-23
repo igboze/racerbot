@@ -46,11 +46,12 @@ export class MultiRpcNear {
       return this.connections.get(providerUrl)!;
     }
 
-    const apiKey = process.env.FASTNEAR_API_KEY;
+    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
     let nodeUrl = providerUrl;
     const isMainnetFastnear = nodeUrl.includes('rpc.mainnet.fastnear.com');
 
-    if (isMainnetFastnear && apiKey && !nodeUrl.includes('apiKey=')) {
+    if (isMainnetFastnear && hasValidKey && !nodeUrl.includes('apiKey=')) {
       const sep = nodeUrl.includes('?') ? '&' : '?';
       nodeUrl = `${nodeUrl}${sep}apiKey=${apiKey}`;
     }
@@ -61,7 +62,7 @@ export class MultiRpcNear {
       keyStore: this.keyStore,
     });
 
-    if (isMainnetFastnear && apiKey) {
+    if (isMainnetFastnear && hasValidKey) {
       try {
         const provider = conn.connection.provider as any;
         if (provider && provider.connection) {
