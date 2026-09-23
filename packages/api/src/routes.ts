@@ -133,10 +133,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
 export async function buildTokenCard(tokenAddress: string, telegramId?: number) {
-  // Fetch token info and balance in parallel to minimize latency
-  const [info, balances] = await Promise.allSettled([
+  // Fetch token info, balance, and user settings in parallel to minimize latency
+  const [info, balances, user] = await Promise.allSettled([
     getTokenInfo(tokenAddress),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
+    telegramId ? getUserByTelegramId(telegramId).catch(() => null) : Promise.resolve(null),
   ]);
 
   if (info.status === 'rejected') {
@@ -145,6 +146,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
 
   const tokenInfo = info.value;
   const b = balances.status === 'fulfilled' ? balances.value : null;
+  const userRecord = user.status === 'fulfilled' ? user.value : null;
+  const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
 
   const balanceText = b
     ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n`
@@ -276,10 +279,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
         Markup.button.callback('⚡ 5 N', `buy_fixed:${tokenInfo.address}:5`),
       ],
       [
-        Markup.button.callback('Buy 10%', `buy_pct:${tokenInfo.address}:10`),
-        Markup.button.callback('Buy 25%', `buy_pct:${tokenInfo.address}:25`),
-        Markup.button.callback('Buy 50%', `buy_pct:${tokenInfo.address}:50`),
-        Markup.button.callback('Buy 100%', `buy_pct:${tokenInfo.address}:100`),
+        Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
+        Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
+        Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
+        Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
       ],
       [
         Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
@@ -350,9 +353,9 @@ export function buildSettingsDashboard(user: UserRecord) {
     ],
     [
       Markup.button.callback(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0'),
-      Markup.button.callback(`${minLiq === 5 ? '✓ ' : ''}5N`, 'set:min_liq:5'),
       Markup.button.callback(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10'),
       Markup.button.callback(`${minLiq === 50 ? '✓ ' : ''}50N`, 'set:min_liq:50'),
+      Markup.button.callback(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500'),
     ],
     [
       Markup.button.callback(`Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10'),
@@ -369,6 +372,7 @@ export function buildSettingsDashboard(user: UserRecord) {
     [
       Markup.button.callback('✏️ Custom Slippage', 'prompt:custom_slippage'),
       Markup.button.callback('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy'),
+      Markup.button.callback('✏️ Custom Min Liq', 'prompt:custom_min_liq'),
     ],
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
@@ -619,14 +623,17 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     // FIX 2: Reuse the already-fetched infoMap — no second getTokenInfo() loop.
+    const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
     const buttons: any[] = [];
     for (const pos of positions.slice(0, 3)) {
       const info = infoMap.get(pos.token_address);
       const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-      buttons.push([
-        Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
-        Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
-      ]);
+      const row: any[] = [];
+      if (defaultSellPct < 100) {
+        row.push(Markup.button.callback(`⚡ Sell ${defaultSellPct}% ${sym}`, `sell:${pos.id}:${defaultSellPct}`));
+      }
+      row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
+      buttons.push(row);
     }
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
@@ -912,6 +919,16 @@ export function setupRoutes(bot: Telegraf): void {
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' });
+  });
+
+  bot.action('prompt:custom_min_liq', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'custom_min_liq',
+      expiresAt: Date.now() + 120000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' });
   });
 
   // ── /info <token_ca> — Token Details Card with in-chat buy buttons ─────────
@@ -1543,6 +1560,22 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
           await ctx.reply(`✅ Auto-buy amount updated to ${amt} NEAR!`);
+          const dash = buildSettingsDashboard(updated);
+          await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+        }
+        return;
+      }
+
+      if (pending.action === 'custom_min_liq') {
+        const liq = parseFloat(rawText);
+        if (isNaN(liq) || liq < 0) {
+          await ctx.reply('❌ Invalid liquidity. Must be a non-negative number in NEAR.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (user) {
+          const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
+          await ctx.reply(`✅ Min pool liquidity updated to ${liq} NEAR!`);
           const dash = buildSettingsDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
