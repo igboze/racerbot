@@ -42,18 +42,18 @@ export function setupRoutes(bot: Telegraf): void {
           `👋 *Welcome back to RacerBot!*\n\n` +
           `🔑 Account: \`${result.subaccountId}\`\n\n` +
           `*Commands*:\n` +
-          `/wallet — View balance & deposit address\n` +
-          `/withdraw <address> [amount] — Withdraw NEAR\n` +
-          `/buy — Quick buy\n` +
-          `/sell — Quick sell open position\n` +
-          `/positions — View open positions\n` +
-          `/pnl — View PNL summary\n` +
-          `/filters — Set auto-buy filters\n` +
-          `/snipe <token_ca> — Snipe by contract address\n` +
-          `/info <token_ca> — Token info\n` +
-          `/export — Export your private key\n` +
-          `/rotatekey — Rotate trading key\n\n` +
-          `💬 Join our official trading community: https://t.me/racertrading`,
+          `• \`/wallet\` — View balance & deposit address\n` +
+          `• \`/withdraw <address> [amount]\` — Withdraw NEAR\n` +
+          `• \`/buy <token> [amount]\` — Quick buy\n` +
+          `• \`/sell\` — Quick sell open position\n` +
+          `• \`/positions\` — View open positions\n` +
+          `• \`/pnl\` — View PNL summary\n` +
+          `• \`/filters\` — Set auto-buy filters\n` +
+          `• \`/snipe <token>\` — Snipe by contract address\n` +
+          `• \`/info <token>\` — Token info\n` +
+          `• \`/export\` — Export your private key\n` +
+          `• \`/rotatekey\` — Rotate trading key\n\n` +
+          `💬 Official Community: https://t.me/racertrading`,
           { parse_mode: 'Markdown' }
         );
         return;
@@ -72,19 +72,19 @@ export function setupRoutes(bot: Telegraf): void {
         `• Save this private key in a safe place. You can import it into MyNearWallet, Meteor Wallet, or NEAR CLI.\n` +
         `• If you ever suspect your key was compromised, use /rotatekey immediately to generate a new key on-chain.\n` +
         `• You can retrieve this key later with /export.\n\n` +
-        `💬 Join our official community: https://t.me/racertrading\n\n` +
+        `💬 Official Community: https://t.me/racertrading\n\n` +
         `*Commands*:\n` +
-        `/wallet — View balance & deposit address\n` +
-        `/withdraw <address> [amount] — Withdraw NEAR\n` +
-        `/buy <token_ca> [amount] — Quick buy\n` +
-        `/sell — Sell open positions\n` +
-        `/positions — View open positions\n` +
-        `/pnl — View profit/loss summary\n` +
-        `/filters — Configure auto-buy settings\n` +
-        `/snipe <token_ca> — Snipe newly launched token\n` +
-        `/info <token_ca> — Token info & quick-buy\n` +
-        `/export — Export account private key\n` +
-        `/rotatekey — Rotate your key on-chain`,
+        `• \`/wallet\` — View balance & deposit address\n` +
+        `• \`/withdraw <address> [amount]\` — Withdraw NEAR\n` +
+        `• \`/buy <token> [amount]\` — Quick buy\n` +
+        `• \`/sell\` — Sell open positions\n` +
+        `• \`/positions\` — View open positions\n` +
+        `• \`/pnl\` — View profit/loss summary\n` +
+        `• \`/filters\` — Configure auto-buy settings\n` +
+        `• \`/snipe <token>\` — Snipe newly launched token\n` +
+        `• \`/info <token>\` — Token info & quick-buy\n` +
+        `• \`/export\` — Export account private key\n` +
+        `• \`/rotatekey\` — Rotate your key on-chain`,
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
