@@ -117,8 +117,11 @@ let pool: Pool | null = null;
 export async function getDb(): Promise<Pool> {
   if (pool) return pool;
 
+  const rawUrl = (process.env.DATABASE_URL || '').trim();
+  const connectionString = rawUrl || 'postgres://localhost:5432/racerbot';
+
   pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot',
+    connectionString,
     min: parseInt(process.env.POOL_MIN || '5'),
     max: parseInt(process.env.POOL_MAX || '20'),
     idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
