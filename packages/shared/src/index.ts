@@ -9,6 +9,7 @@ export {
   computeMarketCap,
   calculateMinAmountOut,
   calculateExpectedOutput,
+  calculateMinOutAdj,
   fuzzyMatch,
   retryWithBackoff,
   sleep,
