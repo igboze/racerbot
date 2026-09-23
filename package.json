@@ -15,12 +15,14 @@
     "dev:triggers": "turbo run dev --filter=@racerbot/triggers",
     "typecheck": "turbo run build",
     "format": "prettier --write .",
-    "migrate": "npm run migrate --workspace=packages/db"
+    "migrate": "npm run migrate --workspace=packages/db",
+    "test": "vitest run"
   },
   "devDependencies": {
     "turbo": "^2.0.0",
     "typescript": "^5.4.0",
     "prettier": "^3.2.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "vitest": "^4.1.11"
   }
 }
