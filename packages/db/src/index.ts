@@ -9,6 +9,7 @@ export {
   getUserBySubaccount,
   updateUserScopedKey,
   updateUserDefaults,
+  updateUserSettings,
   createPosition,
   getOpenPositions,
   getPositionById,
@@ -35,4 +36,5 @@ export type {
   CreateFillParams,
   CreateTriggerParams,
   UpdatePositionParams,
+  UpdateUserSettingsParams,
 } from './db.js';

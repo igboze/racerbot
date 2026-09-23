@@ -22,7 +22,7 @@ export interface SwapRequest {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   timestamp: number;
 }
 

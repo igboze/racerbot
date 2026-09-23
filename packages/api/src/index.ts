@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './config.js';
 import path from 'path';
 import express from 'express';
 import cors from 'cors';
@@ -38,6 +38,16 @@ async function main(): Promise<void> {
   // ── Telegram bot ──────────────────────────────────────────────────────────
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
   setBotInstance(bot);
+
+  // Global error handler to catch expired callback queries or minor Telegram API errors
+  bot.catch((err: any, ctx) => {
+    if (err?.response?.error_code === 400 || err?.code === 400 || String(err?.message).includes('query is too old')) {
+      console.warn(`[API] Ignored stale Telegram 400 error (${err.message}) for update ${ctx?.update?.update_id}`);
+      return;
+    }
+    console.error(`[API] Telegraf unhandled error for update ${ctx?.update?.update_id}:`, err);
+  });
+
   setupRoutes(bot);
 
   // ── Launch bot immediately ────────────────────────────────────────────────

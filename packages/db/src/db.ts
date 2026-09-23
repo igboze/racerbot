@@ -186,6 +186,59 @@ export async function updateUserDefaults(userId: string, buyPct?: number, sellPc
   await db.query('UPDATE users SET default_buy_pct = $1, default_sell_pct = $2 WHERE id = $3', [buyPct, sellPct, userId]);
 }
 
+export interface UpdateUserSettingsParams {
+  auto_buy_enabled?: boolean;
+  auto_buy_amount_near?: number;
+  auto_buy_min_liquidity_near?: number;
+  slippage_pct?: number;
+  default_buy_pct?: number;
+  default_sell_pct?: number;
+}
+
+export async function updateUserSettings(userId: string, params: UpdateUserSettingsParams): Promise<UserRecord> {
+  const db = await getDb();
+  const setParts: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (params.auto_buy_enabled !== undefined) {
+    setParts.push(`auto_buy_enabled = $${idx++}`);
+    values.push(params.auto_buy_enabled);
+  }
+  if (params.auto_buy_amount_near !== undefined) {
+    setParts.push(`auto_buy_amount_near = $${idx++}`);
+    values.push(params.auto_buy_amount_near);
+  }
+  if (params.auto_buy_min_liquidity_near !== undefined) {
+    setParts.push(`auto_buy_min_liquidity_near = $${idx++}`);
+    values.push(params.auto_buy_min_liquidity_near);
+  }
+  if (params.slippage_pct !== undefined) {
+    setParts.push(`slippage_pct = $${idx++}`);
+    values.push(params.slippage_pct);
+  }
+  if (params.default_buy_pct !== undefined) {
+    setParts.push(`default_buy_pct = $${idx++}`);
+    values.push(params.default_buy_pct);
+  }
+  if (params.default_sell_pct !== undefined) {
+    setParts.push(`default_sell_pct = $${idx++}`);
+    values.push(params.default_sell_pct);
+  }
+
+  if (setParts.length === 0) {
+    const u = await getUserById(userId);
+    return u!;
+  }
+
+  values.push(userId);
+  const result = await db.query(
+    `UPDATE users SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`,
+    values
+  );
+  return rowToUser(result.rows[0]);
+}
+
 export async function createPosition(params: CreatePositionParams): Promise<PositionRecord> {
   const db = await getDb();
   const id = generateId();

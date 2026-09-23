@@ -31,12 +31,15 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
   const cached = await getTokenCache(position.token_address).catch(() => null);
-  let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
+  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | undefined = cached?.venue as any;
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(venue as string)) {
+    venue = undefined;
+  }
   if (!venue) {
     const { getTokenInfo } = await import('./wallet.js');
     const info = await getTokenInfo(position.token_address).catch(() => null);
-    if (info && info.venue !== 'unknown') {
-      venue = info.venue;
+    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)) {
+      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
     }
   }
   if (!venue) return { success: false, reason: 'venue_unknown' };

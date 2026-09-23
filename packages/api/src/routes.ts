@@ -6,6 +6,8 @@ import {
   getTokenCache,
   createTrigger,
   updateUserDefaults,
+  updateUserSettings,
+  type UserRecord,
 } from '@racerbot/db';
 import {
   getTokenInfo,
@@ -15,51 +17,460 @@ import {
   getUserBalances,
   unwrapUserWrapNear,
   withdrawFunds,
+  type TokenInfoResult,
 } from './wallet.js';
 import { computePnL, fuzzyMatch, decrypt } from '@racerbot/shared';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY } from './config.js';
 
 // ── Token cache for snipe-by-name fuzzy matching ──────────────────────────────
-// Populated by subscribing to detector events in index.ts
 export const localTokenNames = new Map<string, { address: string; symbol: string }>();
 
 // ── Rate limiting for /export command (1 export per 5 minutes per user) ───────
 const lastExportTime = new Map<number, number>();
 const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
+// ── User pending interactive input state ──────────────────────────────────────
+interface PendingAction {
+  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw';
+  tokenAddress?: string;
+  expiresAt: number;
+}
+const userPendingActions = new Map<number, PendingAction>();
+
+// ── Helper: Safe Markdown string sanitization ────────────────────────────────
+function sanitizeMd(str: string): string {
+  return (str || '').replace(/[_*`\[]/g, ' ');
+}
+
+// ── Helper: Build Main Menu ──────────────────────────────────────────────────
+export async function buildMainMenu(telegramId: number, forceRefresh = false) {
+  const user = await getUserByTelegramId(telegramId).catch(() => null);
+  let subaccountText = 'Not initialized';
+  let balanceText = '0.0000 NEAR';
+
+  if (user) {
+    subaccountText = `\`${user.subaccount_id}\``;
+    try {
+      const b = await getUserBalances(telegramId, forceRefresh);
+      balanceText = `\`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\``;
+    } catch {
+      balanceText = '`0.0000 NEAR`';
+    }
+  }
+
+  const text =
+    `🚀 *RacerBot | High-Speed NEAR Trading*\n\n` +
+    `🔑 *Account*: ${subaccountText}\n` +
+    `💰 *Balance*: ${balanceText}\n\n` +
+    `💡 *Instant Trading Flow*:\n` +
+    `• *Paste any Token Contract Address (CA)* directly into chat to view charts, liquidity, and instant 1-click buy buttons.\n` +
+    `• Or use the interactive in-chat buttons below:`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('💳 Wallet', 'menu_wallet'),
+      Markup.button.callback('⚙️ Settings', 'menu_settings'),
+    ],
+    [
+      Markup.button.callback('📊 Positions', 'menu_positions'),
+      Markup.button.callback('📈 PnL', 'menu_pnl'),
+    ],
+    [
+      Markup.button.callback('🎯 Snipe Rules', 'menu_settings'),
+      Markup.button.callback('🔄 Refresh', 'menu_home'),
+    ],
+    [
+      Markup.button.callback('🔑 Export Key', 'export_prompt'),
+      Markup.button.callback('🔄 Rotate Key', 'rotate_prompt'),
+    ],
+  ]);
+
+  return { text, keyboard };
+}
+
+// ── Helper: Build Wallet Menu ────────────────────────────────────────────────
+export async function buildWalletMenu(telegramId: number, forceRefresh = false) {
+  const b = await getUserBalances(telegramId, forceRefresh);
+  const buttons: any[] = [
+    [
+      Markup.button.callback('🔄 Refresh', 'wallet_refresh'),
+      Markup.button.callback('💸 Withdraw', 'wallet_withdraw_prompt'),
+    ],
+  ];
+
+  if (Number(b.wrapNearFormatted) > 0.0001) {
+    buttons.push([Markup.button.callback(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR to NEAR`, 'wallet_unwrap')]);
+  }
+
+  buttons.push([
+    Markup.button.callback('⚙️ Settings', 'menu_settings'),
+    Markup.button.callback('🔙 Main Menu', 'menu_home'),
+  ]);
+
+  const text =
+    `💳 *RacerBot Trading Wallet*\n\n` +
+    `🔑 Account: \`${b.subaccountId}\`\n\n` +
+    `💰 *Balances*:\n` +
+    `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\`\n` +
+    `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\`\n` +
+    `• *Total*: \`${b.totalNearFormatted} NEAR\`\n\n` +
+    `📥 *Deposit Address*:\n` +
+    `Send native NEAR directly to:\n` +
+    `\`${b.subaccountId}\`\n\n` +
+    `⚡ *Instant Execution*:\n` +
+    `Deposited NEAR is immediately ready for manual and automated sniping.`;
+
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
+}
+
+// ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
+export async function buildTokenCard(tokenAddress: string, telegramId?: number) {
+  // Fetch token info and balance in parallel to minimize latency
+  const [info, balances] = await Promise.allSettled([
+    getTokenInfo(tokenAddress),
+    telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
+  ]);
+
+  if (info.status === 'rejected') {
+    throw info.reason;
+  }
+
+  const tokenInfo = info.value;
+  const b = balances.status === 'fulfilled' ? balances.value : null;
+
+  const balanceText = b
+    ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n`
+    : '';
+
+  // -- Venue label --
+  let venueText = `💧 *Venue*: Unknown`;
+  if (tokenInfo.venue === 'nearlytrade') {
+    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
+    const progressStr =
+      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+        : '';
+    venueText = `💧 *Venue*: NearlyTrade (${phaseStr}${progressStr})`;
+  } else if (tokenInfo.venue === 'rhea') {
+    venueText = `💧 *Venue*: Rhea Finance (AMM)`;
+  } else if (tokenInfo.venue === 'shardsmarket') {
+    venueText = `💧 *Venue*: Shardsmarket (AMM)`;
+  } else if (tokenInfo.venue === 'memecooking') {
+    venueText = `💧 *Venue*: Meme.Cooking Launchpad`;
+  } else if (tokenInfo.venue === 'intear') {
+    venueText = `💧 *Venue*: Intear Launchpad (XYK)`;
+  }
+
+  const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
+  const safeName = sanitizeMd(tokenInfo.name || 'Token');
+
+  // -- Price formatting (NEAR + USD) --
+  const priceNum = parseFloat(tokenInfo.price || '0');
+  let priceNearStr = '0.00';
+  if (priceNum > 0) {
+    if (priceNum >= 1) priceNearStr = priceNum.toFixed(4);
+    else if (priceNum >= 0.0001) priceNearStr = priceNum.toFixed(6);
+    else if (priceNum >= 0.00000001) priceNearStr = priceNum.toFixed(8);
+    else priceNearStr = priceNum.toExponential(4);
+  }
+
+  const priceUsdNum = parseFloat((tokenInfo as any).price_usd || '0');
+  let priceUsdStr = '';
+  if (priceUsdNum > 0) {
+    if (priceUsdNum >= 1) priceUsdStr = '$' + priceUsdNum.toFixed(2);
+    else if (priceUsdNum >= 0.0001) priceUsdStr = '$' + priceUsdNum.toFixed(6);
+    else if (priceUsdNum >= 0.00000001) priceUsdStr = '$' + priceUsdNum.toFixed(8);
+    else priceUsdStr = '$' + priceUsdNum.toExponential(4);
+  }
+  const priceStr = priceUsdStr ? `${priceNearStr} NEAR (~${priceUsdStr})` : `${priceNearStr} NEAR`;
+
+  // -- Liquidity formatting --
+  const liqNum = parseFloat(tokenInfo.liquidity || '0');
+  let liqNearStr = '0.00';
+  if (liqNum >= 1000) liqNearStr = `${(liqNum / 1000).toFixed(2)}K`;
+  else if (liqNum > 0) liqNearStr = liqNum.toFixed(2);
+
+  const liqUsdRaw = parseFloat((tokenInfo as any).liquidity_usd || '0');
+  let liqUsdStr = '';
+  if (liqUsdRaw >= 1_000_000) liqUsdStr = `~$${(liqUsdRaw / 1_000_000).toFixed(2)}M`;
+  else if (liqUsdRaw >= 1_000) liqUsdStr = `~$${(liqUsdRaw / 1_000).toFixed(1)}K`;
+  else if (liqUsdRaw > 0) liqUsdStr = `~$${liqUsdRaw.toFixed(0)}`;
+  const liqStr = liqUsdStr ? `${liqNearStr} NEAR (${liqUsdStr})` : `${liqNearStr} NEAR`;
+
+  // -- Market cap formatting (prefer USD) --
+  let mcapStr = 'N/A';
+  const mcUsdVal = (tokenInfo as any).market_cap_usd as number | undefined;
+  const mcNearVal = tokenInfo.market_cap;
+  if (mcUsdVal && mcUsdVal > 0) {
+    const mcUsdFormatted = mcUsdVal >= 1_000_000_000
+      ? `$${(mcUsdVal / 1_000_000_000).toFixed(2)}B`
+      : mcUsdVal >= 1_000_000
+      ? `$${(mcUsdVal / 1_000_000).toFixed(2)}M`
+      : mcUsdVal >= 1_000
+      ? `$${(mcUsdVal / 1_000).toFixed(2)}K`
+      : `$${mcUsdVal.toFixed(2)}`;
+
+    let mcNearFormatted = '';
+    if (mcNearVal >= 1_000_000) mcNearFormatted = `${(mcNearVal / 1_000_000).toFixed(2)}M NEAR`;
+    else if (mcNearVal >= 1_000) mcNearFormatted = `${(mcNearVal / 1_000).toFixed(2)}K NEAR`;
+    else if (mcNearVal > 0) mcNearFormatted = `${mcNearVal.toFixed(0)} NEAR`;
+
+    mcapStr = mcNearFormatted ? `${mcUsdFormatted} (${mcNearFormatted})` : mcUsdFormatted;
+  } else if (mcNearVal > 0) {
+    if (mcNearVal >= 1_000_000) mcapStr = `${(mcNearVal / 1_000_000).toFixed(2)}M NEAR`;
+    else if (mcNearVal >= 1_000) mcapStr = `${(mcNearVal / 1_000).toFixed(2)}K NEAR`;
+    else mcapStr = `${mcNearVal.toFixed(2)} NEAR`;
+  }
+
+  // -- Supply formatting --
+  const supplyHuman = parseFloat(tokenInfo.total_supply) / Math.pow(10, tokenInfo.decimals);
+  const supplyStr = supplyHuman > 1e9
+    ? `${(supplyHuman / 1e9).toFixed(2)}B`
+    : supplyHuman > 1e6
+    ? `${(supplyHuman / 1e6).toFixed(2)}M`
+    : supplyHuman.toFixed(2);
+
+  // -- NEAR/USD rate footnote --
+  const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
+  const nearUsdFooter = nearUsdRate && nearUsdRate > 0
+    ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n`
+    : '\n';
+
+  let text =
+    `🪙 *${safeName}* (\`${safeSymbol}\`)\n\n` +
+    `📝 *CA*: \`${tokenInfo.address}\`\n` +
+    `${venueText}\n` +
+    `💰 *Price*: \`${priceStr}\`\n` +
+    `💧 *Liquidity*: \`${liqStr}\`\n` +
+    `📊 *Market Cap*: \`${mcapStr}\`\n` +
+    `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`` +
+    nearUsdFooter +
+    balanceText;
+
+  // ── Buttons depend on whether trading is supported ──
+  let keyboard;
+  if (tokenInfo.tradeable) {
+    text += `⚡ *Choose Buy Amount (Fixed or % of Balance)*:`;
+    keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⚡ 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
+        Markup.button.callback('⚡ 1 N', `buy_fixed:${tokenInfo.address}:1`),
+        Markup.button.callback('⚡ 2 N', `buy_fixed:${tokenInfo.address}:2`),
+        Markup.button.callback('⚡ 5 N', `buy_fixed:${tokenInfo.address}:5`),
+      ],
+      [
+        Markup.button.callback('Buy 10%', `buy_pct:${tokenInfo.address}:10`),
+        Markup.button.callback('Buy 25%', `buy_pct:${tokenInfo.address}:25`),
+        Markup.button.callback('Buy 50%', `buy_pct:${tokenInfo.address}:50`),
+        Markup.button.callback('Buy 100%', `buy_pct:${tokenInfo.address}:100`),
+      ],
+      [
+        Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
+        Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+      ],
+      [
+        Markup.button.callback('⚙️ Settings', 'menu_settings'),
+        Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      ],
+    ]);
+  } else {
+    // Non-tradeable venue — info only
+    const venueNote = tokenInfo.venue === 'memecooking'
+      ? '⚠️ Meme.Cooking tokens are not yet directly tradeable via RacerBot. Trade on https://meme.cooking'
+      : '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
+    text += venueNote;
+    keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+        Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      ],
+    ]);
+  }
+
+  return { text, keyboard, info: tokenInfo };
+}
+
+// ── Helper: Build Settings Dashboard with Checkmark Indicators ──────────────
+export function buildSettingsDashboard(user: UserRecord) {
+  const autoBuy = user.auto_buy_enabled;
+  const slip = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+  const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
+  const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
+  const buyPct = user.default_buy_pct ? Number(user.default_buy_pct) : 10;
+  const sellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
+
+  const text =
+    `⚙️ *Trading & Snipe Settings*\n\n` +
+    `Configure your trading defaults and automated sniping rules below. Tap any button to toggle or update instantly:\n\n` +
+    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 *Enabled*' : '🔴 *Disabled*'}\n` +
+    `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
+    `• *Min Pool Liquidity*: \`${minLiq} NEAR\`\n` +
+    `• *Slippage Tolerance*: \`${slip}%\`\n` +
+    `• *Default Manual Buy*: \`${buyPct}%\`\n` +
+    `• *Default Manual Sell*: \`${sellPct}%\``;
+
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        autoBuy ? '🟢 Auto-Buy: ON (Tap to Disable)' : '🔴 Auto-Buy: OFF (Tap to Enable)',
+        'set:toggle_auto_buy'
+      ),
+    ],
+    [
+      Markup.button.callback(`${slip === 0.5 ? '✓ ' : ''}0.5%`, 'set:slippage:0.5'),
+      Markup.button.callback(`${slip === 1 ? '✓ ' : ''}1%`, 'set:slippage:1'),
+      Markup.button.callback(`${slip === 2 ? '✓ ' : ''}2%`, 'set:slippage:2'),
+      Markup.button.callback(`${slip === 5 ? '✓ ' : ''}5%`, 'set:slippage:5'),
+      Markup.button.callback(`${slip === 10 ? '✓ ' : ''}10%`, 'set:slippage:10'),
+    ],
+    [
+      Markup.button.callback(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5'),
+      Markup.button.callback(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1'),
+      Markup.button.callback(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2'),
+      Markup.button.callback(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5'),
+    ],
+    [
+      Markup.button.callback(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0'),
+      Markup.button.callback(`${minLiq === 5 ? '✓ ' : ''}5N`, 'set:min_liq:5'),
+      Markup.button.callback(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10'),
+      Markup.button.callback(`${minLiq === 50 ? '✓ ' : ''}50N`, 'set:min_liq:50'),
+    ],
+    [
+      Markup.button.callback(`Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10'),
+      Markup.button.callback(`${buyPct === 25 ? '✓ ' : ''}25%`, 'set:buy_pct:25'),
+      Markup.button.callback(`${buyPct === 50 ? '✓ ' : ''}50%`, 'set:buy_pct:50'),
+      Markup.button.callback(`${buyPct === 100 ? '✓ ' : ''}100%`, 'set:buy_pct:100'),
+    ],
+    [
+      Markup.button.callback(`Sell: ${sellPct === 25 ? '✓ ' : ''}25%`, 'set:sell_pct:25'),
+      Markup.button.callback(`${sellPct === 50 ? '✓ ' : ''}50%`, 'set:sell_pct:50'),
+      Markup.button.callback(`${sellPct === 75 ? '✓ ' : ''}75%`, 'set:sell_pct:75'),
+      Markup.button.callback(`${sellPct === 100 ? '✓ ' : ''}100%`, 'set:sell_pct:100'),
+    ],
+    [
+      Markup.button.callback('✏️ Custom Slippage', 'prompt:custom_slippage'),
+      Markup.button.callback('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy'),
+    ],
+    [
+      Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+    ],
+  ]);
+
+  return { text, keyboard };
+}
+
+// ── Core Helper: Execute Buy for User ────────────────────────────────────────
+async function executeBuyHelper(
+  telegramId: number,
+  tokenAddress: string,
+  amountNear: number
+): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('Please run /start to set up your trading wallet first.');
+  }
+
+  if (amountNear < 0.001) {
+    throw new Error('Minimum buy amount is 0.001 NEAR.');
+  }
+
+  // Check user native balance
+  const near = (await import('@racerbot/shared')).getNear();
+  let balanceNear = 0;
+  try {
+    const balanceYocto = await near.getNearBalance(user.subaccount_id);
+    balanceNear = parseFloat(nearUtils.format.formatNearAmount(balanceYocto));
+  } catch (err: any) {
+    throw new Error(`Failed to fetch wallet balance: ${err.message}`);
+  }
+
+  if (balanceNear < amountNear + 0.01) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR. Need at least ${(amountNear + 0.01).toFixed(4)} NEAR (including gas & storage reserve).`);
+  }
+
+  const cached = await getTokenCache(tokenAddress).catch(() => null);
+  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | undefined = cached?.venue as any;
+  // Only accept tradeable venues
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(venue as string)) {
+    venue = undefined;
+  }
+  if (!venue) {
+    const info = await getTokenInfo(tokenAddress).catch(() => null);
+    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)) {
+      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+    } else if (info && !info.tradeable) {
+      const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
+      throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
+    }
+  }
+
+  if (!venue) {
+    throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
+  }
+
+  const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+  const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
+  const { minAmountOut } = await near.computeMinAmountOut(
+    venue,
+    'wrap.near',
+    tokenAddress,
+    amountInYocto,
+    slippagePct,
+    cached?.rhea_pool_id
+  );
+
+  await publishSwap({
+    user_id: user.id,
+    token_in: 'wrap.near',
+    token_out: tokenAddress,
+    amount_in: amountInYocto,
+    min_amount_out: minAmountOut,
+    venue,
+    dcl_pool_id: cached?.dcl_pool_id ?? undefined,
+  });
+
+  return {
+    success: true,
+    amountNear,
+    tokenAddress,
+    message: `⚡ Buy order submitted for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).\n\nYou will receive a notification once confirmed.`,
+  };
+}
+
+// ── Core Helper: Execute Percentage Buy for User ─────────────────────────────
+async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct: number) {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('Please run /start to set up your wallet first.');
+  const near = (await import('@racerbot/shared')).getNear();
+  const balanceYocto = await near.getNearBalance(user.subaccount_id);
+  const balanceNear = parseFloat(nearUtils.format.formatNearAmount(balanceYocto));
+
+  // Retain 0.05 NEAR reserve for account storage
+  const usableBalance = Math.max(0, balanceNear - 0.05);
+  const amountNear = (usableBalance * pct) / 100;
+  if (amountNear < 0.005) {
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.05 reserve) is too low to buy.`);
+  }
+  return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
+}
+
 export function setupRoutes(bot: Telegraf): void {
 
-  // ── /start — custodial onboarding (Telegram-only, no Mini App) ──────────────
+  // ── /start — custodial onboarding with in-chat menu buttons ────────────────
   bot.command('start', async (ctx) => {
     const telegramId = ctx.from!.id;
 
     try {
       const result = await onboardUser(telegramId);
+      const menu = await buildMainMenu(telegramId);
 
       if (result.isExisting) {
-        await ctx.reply(
-          `👋 *Welcome back to RacerBot!*\n\n` +
-          `🔑 Account: \`${result.subaccountId}\`\n\n` +
-          `*Commands*:\n` +
-          `• \`/wallet\` — View balance & deposit address\n` +
-          `• \`/withdraw <address> [amount]\` — Withdraw NEAR\n` +
-          `• \`/buy <token> [amount]\` — Quick buy\n` +
-          `• \`/sell\` — Quick sell open position\n` +
-          `• \`/positions\` — View open positions\n` +
-          `• \`/pnl\` — View PNL summary\n` +
-          `• \`/filters\` — Set auto-buy filters\n` +
-          `• \`/snipe <token>\` — Snipe by contract address\n` +
-          `• \`/info <token>\` — Token info\n` +
-          `• \`/export\` — Export your private key\n` +
-          `• \`/rotatekey\` — Rotate trading key\n\n` +
-          `💬 Official Community: https://t.me/racertrading`,
-          { parse_mode: 'Markdown' }
-        );
+        await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
         return;
       }
 
-      // Freshly created account
+      // Freshly created account: show full private key security notice + in-chat buttons
       await ctx.reply(
         `🚀 *Welcome to RacerBot!*\n\n` +
         `Your dedicated NEAR trading wallet is ready:\n` +
@@ -68,24 +479,12 @@ export function setupRoutes(bot: Telegraf): void {
         `\`${result.privateKey}\`\n\n` +
         `*Important Security Notice*:\n` +
         `• This string is your real full-access private key. Anyone with this key controls your account.\n` +
-        `• To execute lightning-fast trades automatically on your behalf, this key is also stored encrypted on RacerBot's server.\n` +
         `• Save this private key in a safe place. You can import it into MyNearWallet, Meteor Wallet, or NEAR CLI.\n` +
         `• If you ever suspect your key was compromised, use /rotatekey immediately to generate a new key on-chain.\n` +
         `• You can retrieve this key later with /export.\n\n` +
-        `💬 Official Community: https://t.me/racertrading\n\n` +
-        `*Commands*:\n` +
-        `• \`/wallet\` — View balance & deposit address\n` +
-        `• \`/withdraw <address> [amount]\` — Withdraw NEAR\n` +
-        `• \`/buy <token> [amount]\` — Quick buy\n` +
-        `• \`/sell\` — Sell open positions\n` +
-        `• \`/positions\` — View open positions\n` +
-        `• \`/pnl\` — View profit/loss summary\n` +
-        `• \`/filters\` — Configure auto-buy settings\n` +
-        `• \`/snipe <token>\` — Snipe newly launched token\n` +
-        `• \`/info <token>\` — Token info & quick-buy\n` +
-        `• \`/export\` — Export account private key\n` +
-        `• \`/rotatekey\` — Rotate your key on-chain`,
-        { parse_mode: 'Markdown' }
+        `💡 *How to Trade*:\n` +
+        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!`,
+        { parse_mode: 'Markdown', ...menu.keyboard }
       );
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
@@ -93,144 +492,168 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // ── /rotatekey — Rotate trading key on-chain ────────────────────────────────
-  bot.command('rotatekey', async (ctx) => {
+  // ── /menu — Open main menu ────────────────────────────────────────────────
+  bot.command('menu', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
     try {
-      const res = await rotateUserKey(telegramId);
-      await ctx.reply(
-        `✅ *Trading Key Rotated Successfully!*\n\n` +
-        `Account: \`${res.subaccountId}\`\n\n` +
-        `⚠️ *NEW PRIVATE KEY*:\n` +
-        `\`${res.newPrivateKey}\`\n\n` +
-        `*Notice*:\n` +
-        `• The old key has been removed from your account on-chain.\n` +
-        `• The new key has been encrypted and stored on RacerBot to continue automated trading.\n` +
-        `• Save this new key securely.`,
-        { parse_mode: 'Markdown' }
-      );
+      const menu = await buildMainMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Key rotation failed: ${err.message}`);
+      await ctx.reply(`❌ Could not open menu: ${err.message}`);
     }
   });
 
-  // ── /export — Export private key with confirmation & rate limiting ───────────
-  bot.command('export', async (ctx) => {
+  // ── Main Menu Actions ─────────────────────────────────────────────────────
+  bot.action('menu_home', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    try {
+      const menu = await buildMainMenu(telegramId, true);
+      await ctx.answerCbQuery('Main Menu');
+      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
+    } catch {
+      await ctx.answerCbQuery();
+    }
+  });
+
+  bot.action('menu_wallet', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const wallet = await buildWalletMenu(telegramId);
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
+    } catch (err: any) {
+      await ctx.answerCbQuery(`Error: ${err.message}`);
+    }
+  });
+
+  bot.action('menu_settings', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
     if (!user) {
-      await ctx.reply('Use /start to set up your wallet first.');
+      await ctx.answerCbQuery('Please run /start first.');
+      return;
+    }
+    const dash = buildSettingsDashboard(user);
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action('menu_positions', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.');
       return;
     }
 
-    const last = lastExportTime.get(telegramId);
-    if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
-      const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
-      await ctx.reply(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
-      return;
-    }
-
-    await ctx.reply(
-      `⚠️ *Export Private Key*\n\n` +
-      `You are requesting to view your raw private key for account \`${user.subaccount_id}\`.\n\n` +
-      `Anyone who sees this key will have full control over your funds.\n\n` +
-      `Are you sure you want to display your private key?`,
-      {
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    if (positions.length === 0) {
+      await ctx.answerCbQuery('No open positions.');
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'menu_positions')],
+        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      ]);
+      await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('⚠️ Yes, show my private key', 'export_confirm'),
-            Markup.button.callback('Cancel', 'export_cancel'),
-          ],
-        ]),
-      }
-    );
+        ...keyboard,
+      });
+      return;
+    }
+
+    await ctx.answerCbQuery();
+    let msg = `📊 *Open Positions (${positions.length})*\n\n`;
+    for (const pos of positions) {
+      const info = await getTokenInfo(pos.token_address).catch(() => null);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+      const currentPrice = info ? parseFloat(info.price) : 0;
+      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+        : 'N/A';
+      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+
+      msg += `${emoji} *${symbol}*\n`;
+      msg += `  Holding: \`${pos.quantity_held}\`\n`;
+      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+      msg += `  PNL: \`${pnlPct}%\`\n`;
+      msg += `  CA: \`${pos.token_address}\`\n\n`;
+    }
+
+    const buttons: any[] = [];
+    for (const pos of positions.slice(0, 3)) {
+      const info = await getTokenInfo(pos.token_address).catch(() => null);
+      const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      buttons.push([
+        Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
+        Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
+      ]);
+    }
+    buttons.push([
+      Markup.button.callback('🔄 Refresh', 'menu_positions'),
+      Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    ]);
+
+    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
   });
 
-  bot.action('export_cancel', async (ctx) => {
-    await ctx.answerCbQuery('Export cancelled.');
-    await ctx.editMessageText('Export cancelled.');
-  });
-
-  bot.action('export_confirm', async (ctx) => {
+  bot.action('menu_pnl', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    const user = await getUserByTelegramId(telegramId);
     if (!user) {
-      await ctx.answerCbQuery('Wallet not found.');
+      await ctx.answerCbQuery('Please run /start first.');
       return;
     }
 
-    const last = lastExportTime.get(telegramId);
-    if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
-      const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
-      await ctx.answerCbQuery(`Cooldown active. Wait ${remainingSec}s.`);
-      await ctx.editMessageText(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
-      return;
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    const db = await (await import('@racerbot/db')).getDb();
+    const closedResult = await db.query(
+      'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
+      [user.id, 'closed']
+    );
+
+    let msg = `📊 *PNL Summary*\n\n`;
+    msg += `🟢 Open positions: ${positions.length}\n`;
+    msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
+
+    let totalRealizedNear = 0;
+    for (const pos of closedResult.rows) {
+      const fills = await getFillsByPosition(pos.id).catch(() => []);
+      const buys = fills.filter(f => f.side === 'buy');
+      const sells = fills.filter(f => f.side === 'sell');
+
+      if (buys.length && sells.length) {
+        const avgEntry = parseFloat(pos.avg_entry_price);
+        const lastSell = sells[sells.length - 1];
+        const sellPrice = parseFloat(lastSell.price);
+        const qty = parseFloat(lastSell.amount);
+        const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
+        const sellFee = parseFloat(lastSell.fee_paid) / qty;
+
+        const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
+        totalRealizedNear += pnl.netNear;
+
+        const tokenInfo = await getTokenInfo(pos.token_address).catch(() => null);
+        const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
+        const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
+        msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+      }
     }
 
-    lastExportTime.set(telegramId, Date.now());
-
-    // Audit log (never log key material)
-    console.log(`[AUDIT] Private key exported for user_id=${user.id}, telegram_id=${telegramId}, timestamp=${new Date().toISOString()}`);
-
-    try {
-      const rawPrivateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
-      await ctx.answerCbQuery('Key decrypted.');
-
-      await ctx.reply(
-        `🔑 *Private Key for Account* \`${user.subaccount_id}\`:\n\n` +
-        `\`${rawPrivateKey}\`\n\n` +
-        `*Import Instructions*:\n` +
-        `Paste this string into MyNearWallet, Meteor Wallet, or near-cli via "Import Private Key" to control your account outside RacerBot.`,
-        { parse_mode: 'Markdown' }
-      );
-
-      await ctx.reply(
-        `🛡️ *Security Reminder*:\n` +
-        `• Anyone with this private key has full control of your account.\n` +
-        `• RacerBot also holds an encrypted copy to execute trades on your behalf. Exporting does not revoke RacerBot's copy.\n` +
-        `• If you suspect this key was exposed or you want to move away, withdraw your funds and/or run /rotatekey immediately.`,
-        { parse_mode: 'Markdown' }
-      );
-    } catch (err: any) {
-      await ctx.reply(`❌ Could not decrypt key: ${err.message}`);
-    }
+    msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+    ]);
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard });
   });
 
-  // ── /wallet & /balance — View account balance and deposit address ──────────
+  // ── /wallet & /balance ────────────────────────────────────────────────────
   const handleWallet = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
     try {
-      const b = await getUserBalances(telegramId);
-      const buttons = [
-        [
-          Markup.button.callback('🔄 Refresh', 'wallet_refresh'),
-          Markup.button.callback('💸 Withdraw', 'wallet_withdraw_prompt'),
-        ],
-      ];
-
-      if (Number(b.wrapNearFormatted) > 0.0001) {
-        buttons.push([Markup.button.callback(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR to NEAR`, 'wallet_unwrap')]);
-      }
-
-      await ctx.reply(
-        `💳 *RacerBot Trading Wallet*\n\n` +
-        `🔑 Account: \`${b.subaccountId}\`\n\n` +
-        `💰 *Balances*:\n` +
-        `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\`\n` +
-        `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\`\n` +
-        `• *Total*: \`${b.totalNearFormatted} NEAR\`\n\n` +
-        `📥 *Deposit Address*:\n` +
-        `Send native NEAR directly to:\n` +
-        `\`${b.subaccountId}\`\n\n` +
-        `⚡ *Instant Execution*:\n` +
-        `Deposited NEAR is immediately ready for manual and automated sniping.`,
-        {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard(buttons),
-        }
-      );
+      const wallet = await buildWalletMenu(telegramId);
+      await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ Could not load wallet: ${err.message}`);
     }
@@ -242,35 +665,9 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('wallet_refresh', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
-      const b = await getUserBalances(telegramId);
-      const buttons = [
-        [
-          Markup.button.callback('🔄 Refresh', 'wallet_refresh'),
-          Markup.button.callback('💸 Withdraw', 'wallet_withdraw_prompt'),
-        ],
-      ];
-      if (Number(b.wrapNearFormatted) > 0.0001) {
-        buttons.push([Markup.button.callback(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR to NEAR`, 'wallet_unwrap')]);
-      }
-
+      const wallet = await buildWalletMenu(telegramId, true);
       await ctx.answerCbQuery('Wallet refreshed.');
-      await ctx.editMessageText(
-        `💳 *RacerBot Trading Wallet*\n\n` +
-        `🔑 Account: \`${b.subaccountId}\`\n\n` +
-        `💰 *Balances*:\n` +
-        `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\`\n` +
-        `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\`\n` +
-        `• *Total*: \`${b.totalNearFormatted} NEAR\`\n\n` +
-        `📥 *Deposit Address*:\n` +
-        `Send native NEAR directly to:\n` +
-        `\`${b.subaccountId}\`\n\n` +
-        `⚡ *Instant Execution*:\n` +
-        `Deposited NEAR is immediately ready for manual and automated sniping.`,
-        {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard(buttons),
-        }
-      );
+      await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
     } catch (err: any) {
       await ctx.answerCbQuery(`Error: ${err.message}`);
     }
@@ -302,31 +699,37 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('wallet_withdraw_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'withdraw',
+      expiresAt: Date.now() + 180000,
+    });
     await ctx.answerCbQuery();
     await ctx.reply(
       `💸 *Withdraw NEAR*\n\n` +
-      `Usage: \`/withdraw <destination_address> [amount]\`\n\n` +
-      `Examples:\n` +
-      `• \`/withdraw mywallet.near 1.5\` — Withdraw 1.5 NEAR\n` +
-      `• \`/withdraw mywallet.near all\` — Withdraw all available balance\n\n` +
-      `_Note: 0.05 NEAR is always retained to cover on-chain account storage._`,
+      `Reply with the recipient address and amount, for example:\n` +
+      `• \`mywallet.near 1.5\`\n` +
+      `• \`mywallet.near all\`\n\n` +
+      `_Type /cancel to abort withdrawal._`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // ── /withdraw <destination> [amount] — Withdraw funds to external wallet ──────
+  // ── /withdraw <destination> [amount] ──────────────────────────────────────
   bot.command('withdraw', async (ctx) => {
     const telegramId = ctx.from!.id;
     const args = ctx.message!.text!.split(' ').slice(1).filter(Boolean);
 
     if (args.length === 0) {
+      userPendingActions.set(telegramId, {
+        action: 'withdraw',
+        expiresAt: Date.now() + 180000,
+      });
       await ctx.reply(
         `💸 *Withdraw NEAR*\n\n` +
         `Usage: \`/withdraw <destination_address> [amount]\`\n\n` +
-        `Examples:\n` +
-        `• \`/withdraw mywallet.near 1.5\` — Withdraw 1.5 NEAR\n` +
-        `• \`/withdraw mywallet.near all\` — Withdraw all available balance\n\n` +
-        `_Note: Any wrapped NEAR is automatically converted to native NEAR before transferring._`,
+        `Or reply directly now with:\n` +
+        `\`mywallet.near 1.5\` or \`mywallet.near all\``,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -357,11 +760,113 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // ── /info <token_ca> — Token info with quick-buy buttons ───────────────────
+  // ── /settings & /filters — Interactive Settings Dashboard ─────────────────
+  const handleSettings = async (ctx: Context) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply('Please run /start first.');
+      return;
+    }
+    const dash = buildSettingsDashboard(user);
+    await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  };
+
+  bot.command('settings', handleSettings);
+  bot.command('filters', handleSettings);
+
+  // Settings Dashboard Button Actions
+  bot.action('set:toggle_auto_buy', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const newStatus = !user.auto_buy_enabled;
+    const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
+    await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action(/^set:slippage:([0-9.]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const slip = parseFloat(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { slippage_pct: slip });
+    await ctx.answerCbQuery(`Slippage set to ${slip}%`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action(/^set:auto_amt:([0-9.]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const amt = parseFloat(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
+    await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action(/^set:min_liq:([0-9.]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const liq = parseFloat(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
+    await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action(/^set:buy_pct:(\d+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pct = parseInt(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { default_buy_pct: pct });
+    await ctx.answerCbQuery(`Default buy set to ${pct}%`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action(/^set:sell_pct:(\d+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pct = parseInt(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { default_sell_pct: pct });
+    await ctx.answerCbQuery(`Default sell set to ${pct}%`);
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+  });
+
+  bot.action('prompt:custom_slippage', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'custom_slippage',
+      expiresAt: Date.now() + 120000,
+    });
+    await ctx.answerCbQuery();
+    await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5`):', { parse_mode: 'Markdown' });
+  });
+
+  bot.action('prompt:custom_auto_buy', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'custom_auto_buy',
+      expiresAt: Date.now() + 120000,
+    });
+    await ctx.answerCbQuery();
+    await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' });
+  });
+
+  // ── /info <token_ca> — Token Details Card with in-chat buy buttons ─────────
   bot.command('info', async (ctx) => {
     const args = ctx.message!.text!.split(' ').slice(1);
     if (!args[0]) {
-      await ctx.reply('Usage: /info <token_contract_address>');
+      await ctx.reply('Usage: /info <token_contract_address>\nExample: /info wrap.near');
       return;
     }
 
@@ -369,55 +874,82 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply('🔍 Fetching token info...');
 
     try {
-      const info = await getTokenInfo(tokenAddress);
-
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('Buy 10%', `buy:${tokenAddress}:10`),
-          Markup.button.callback('Buy 25%', `buy:${tokenAddress}:25`),
-          Markup.button.callback('Buy 50%', `buy:${tokenAddress}:50`),
-          Markup.button.callback('Buy 100%', `buy:${tokenAddress}:100`),
-        ],
-      ]);
-
-      let venueText = `💧 Venue: ${info.venue}`;
-      if (info.venue === 'nearlytrade') {
-        const phaseStr = info.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Prebonded (Bonding Curve)';
-        const progressStr =
-          info.bonding_progress_pct !== null && info.bonding_progress_pct !== undefined
-            ? ` (${info.bonding_progress_pct.toFixed(1)}%)`
-            : '';
-        venueText = `💧 Venue: NearlyTrade\n📈 Bonding Phase: ${phaseStr}${progressStr}`;
-      }
-
-      await ctx.reply(
-        `🪙 *${info.name}* (${info.symbol})\n\n` +
-        `📝 CA: \`${info.address}\`\n` +
-        `${venueText}\n` +
-        `💰 Price: ${parseFloat(info.price).toFixed(8)} NEAR\n` +
-        `💧 Liquidity: ${parseFloat(info.liquidity).toFixed(2)} NEAR\n` +
-        `📊 Market Cap: ${info.market_cap.toFixed(2)} NEAR\n` +
-        `📦 Supply: ${info.total_supply}\n` +
-        `🔢 Decimals: ${info.decimals}`,
-        { parse_mode: 'Markdown', ...keyboard }
-      );
-    } catch {
-      await ctx.reply('❌ Could not fetch token info. Check the contract address and try again.');
+      const card = await buildTokenCard(tokenAddress, ctx.from!.id);
+      await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ Could not fetch token info for \`${tokenAddress}\`: ${err.message}`, { parse_mode: 'Markdown' });
     }
   });
 
-  // ── /buy — Quick-buy buttons ────────────────────────────────────────────────
+  // Refresh token card
+  bot.action(/^token_refresh:(.+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const telegramId = ctx.from!.id;
+    try {
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      await ctx.answerCbQuery('Token refreshed.').catch(() => {});
+      await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(`Refresh failed: ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── 1-Click Buy Inline Handlers ───────────────────────────────────────────
+  // Fixed NEAR amount buy: buy_fixed:<token>:<amount>
+  bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const amountNear = parseFloat(ctx.match![2]);
+    const telegramId = ctx.from!.id;
+
+    await ctx.answerCbQuery(`⚡ Sending buy order for ${amountNear} NEAR...`);
+    try {
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+    } catch (err: any) {
+      await ctx.reply(`❌ Buy failed: ${err.message}`);
+    }
+  });
+
+  // Percentage buy: buy_pct:<token>:<pct> or legacy buy:<token>:<pct>
+  bot.action(/^(?:buy_pct|buy):(.+):(\d+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const pct = parseInt(ctx.match![2]);
+    const telegramId = ctx.from!.id;
+
+    await ctx.answerCbQuery(`⚡ Sending buy order for ${pct}% of balance...`);
+    try {
+      const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
+      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+    } catch (err: any) {
+      await ctx.reply(`❌ Buy failed: ${err.message}`);
+    }
+  });
+
+  // Custom buy prompt button
+  bot.action(/^buy_custom_prompt:(.+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'buy_custom_near',
+      tokenAddress,
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `✏️ *Custom Buy Amount*\n\n` +
+      `Token: \`${tokenAddress}\`\n\n` +
+      `Reply with the amount in NEAR you want to buy (e.g. \`2.5\`):\n` +
+      `_Type /cancel to abort._`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ── /buy <token_ca> [amount_near] ─────────────────────────────────────────
   bot.command('buy', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) {
-      await ctx.reply('Use /start to set up your wallet first.');
-      return;
-    }
-
     const args = ctx.message!.text!.split(' ').slice(1);
     if (!args[0]) {
-      await ctx.reply('Usage: /buy <token_ca> [amount_near]\nExample: /buy token.near 5\n\nOr use /info <token_ca> for quick-buy buttons.');
+      await ctx.reply('Usage: /buy <token_ca> [amount_near]\nExample: /buy token.near 5\n\nOr paste the token address directly for 1-click buy buttons.');
       return;
     }
 
@@ -425,122 +957,25 @@ export function setupRoutes(bot: Telegraf): void {
     const amountNear = parseFloat(args[1] ?? '0');
 
     if (amountNear <= 0) {
-      await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
+      try {
+        const card = await buildTokenCard(tokenAddress, telegramId);
+        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+      } catch {
+        await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
+      }
       return;
     }
 
     await ctx.reply(`⚡ Sending buy order for ${amountNear} NEAR of \`${tokenAddress}\`...`, { parse_mode: 'Markdown' });
-
-    // Determine venue without blind fallback
-    const cached = await getTokenCache(tokenAddress).catch(() => null);
-    let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-    if (!venue) {
-      const info = await getTokenInfo(tokenAddress).catch(() => null);
-      if (info && info.venue !== 'unknown') {
-        venue = info.venue;
-      }
-    }
-
-    if (!venue) {
-      await ctx.reply('❌ Could not determine venue for this token. Verify the contract address and try again.');
-      return;
-    }
-
-    const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-    const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
-    const near = (await import('@racerbot/shared')).getNear();
-    const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
-      'wrap.near',
-      tokenAddress,
-      amountInYocto,
-      slippagePct,
-      cached?.rhea_pool_id
-    );
-
-    await publishSwap({
-      user_id: user.id,
-      token_in: 'wrap.near',
-      token_out: tokenAddress,
-      amount_in: amountInYocto,
-      min_amount_out: minAmountOut,
-      venue,
-      dcl_pool_id: cached?.dcl_pool_id ?? undefined,
-    });
-
-    await ctx.reply(`✅ Buy order queued. You'll be notified when it confirms.`);
-  });
-
-  // ── Inline button handlers for quick-buy ──────────────────────────────────
-  bot.action(/^buy:(.+):(\d+)$/, async (ctx) => {
-    const match = ctx.match!;
-    const tokenAddress = match[1];
-    const pct = parseInt(match[2]);
-    const telegramId = ctx.from!.id;
-
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) {
-      await ctx.answerCbQuery('Please use /start to set up your wallet first.');
-      return;
-    }
-
-    // Get user's NEAR balance to compute percentage
-    const near = (await import('@racerbot/shared')).getNear();
-    let balanceNear = 0;
     try {
-      const balanceYocto = await near.getNearBalance(user.subaccount_id);
-      balanceNear = parseFloat(nearUtils.format.formatNearAmount(balanceYocto));
-    } catch {
-      await ctx.answerCbQuery('Could not fetch balance. Try again.');
-      return;
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+    } catch (err: any) {
+      await ctx.reply(`❌ Buy failed: ${err.message}`);
     }
-
-    const amountNear = (balanceNear * pct) / 100;
-    if (amountNear < 0.01) {
-      await ctx.answerCbQuery('Balance too low to buy.');
-      return;
-    }
-
-    const cached = await getTokenCache(tokenAddress).catch(() => null);
-    let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-    if (!venue) {
-      const info = await getTokenInfo(tokenAddress).catch(() => null);
-      if (info && info.venue !== 'unknown') {
-        venue = info.venue;
-      }
-    }
-
-    if (!venue) {
-      await ctx.answerCbQuery('Could not determine venue for token.');
-      return;
-    }
-
-    const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-    const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
-    const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
-      'wrap.near',
-      tokenAddress,
-      amountInYocto,
-      slippagePct,
-      cached?.rhea_pool_id
-    );
-
-    await publishSwap({
-      user_id: user.id,
-      token_in: 'wrap.near',
-      token_out: tokenAddress,
-      amount_in: amountInYocto,
-      min_amount_out: minAmountOut,
-      venue,
-      dcl_pool_id: cached?.dcl_pool_id ?? undefined,
-    });
-
-    await ctx.answerCbQuery(`✅ Buying ${amountNear.toFixed(4)} NEAR worth (${pct}% of balance)`);
-    await ctx.editMessageText(`⚡ Buy order sent: ${amountNear.toFixed(4)} NEAR → \`${tokenAddress}\`\n\nYou'll be notified on confirmation.`, { parse_mode: 'Markdown' });
   });
 
-  // ── /sell — Quick-sell open position ──────────────────────────────────────
+  // ── /sell — Quick-sell open positions ─────────────────────────────────────
   bot.command('sell', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -554,7 +989,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     for (const pos of positions) {
       const tokenInfo = await getTokenInfo(pos.token_address).catch(() => null);
-      const tokenLabel = tokenInfo ? `${tokenInfo.symbol} (${pos.token_address.slice(0, 12)}...)` : pos.token_address.slice(0, 20) + '...';
+      const tokenLabel = tokenInfo ? `${sanitizeMd(tokenInfo.symbol)} (${pos.token_address.slice(0, 12)}...)` : pos.token_address.slice(0, 20) + '...';
       const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
@@ -571,16 +1006,16 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.reply(
         `📊 *${tokenLabel}*\n` +
-        `📦 Holding: ${pos.quantity_held}\n` +
-        `📥 Avg Entry: ${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\n` +
-        `💰 Current: ${currentPrice.toFixed(8)} NEAR\n` +
-        `📈 PNL: ${pnlPct}%\n\nChoose sell amount:`,
+        `📦 Holding: \`${pos.quantity_held}\`\n` +
+        `📥 Avg Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n` +
+        `💰 Current: \`${currentPrice.toFixed(8)} NEAR\`\n` +
+        `📈 PNL: \`${pnlPct}%\`\n\nChoose sell amount:`,
         { parse_mode: 'Markdown', ...keyboard }
       );
     }
   });
 
-  // ── Inline sell button handlers ───────────────────────────────────────────
+  // Sell inline button handler
   bot.action(/^sell:([^:]+):(\d+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
@@ -595,7 +1030,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.editMessageText(`⚡ Sell order sent: ${pct}% of position.\n\nYou'll be notified on confirmation.`);
   });
 
-  // ── /positions — List all open positions ──────────────────────────────────
+  // ── /positions & /pnl ─────────────────────────────────────────────────────
   bot.command('positions', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -610,7 +1045,7 @@ export function setupRoutes(bot: Telegraf): void {
     let msg = `📊 *Open Positions (${positions.length})*\n\n`;
     for (const pos of positions) {
       const info = await getTokenInfo(pos.token_address).catch(() => null);
-      const symbol = info?.symbol ?? '???';
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
@@ -618,16 +1053,30 @@ export function setupRoutes(bot: Telegraf): void {
       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
 
       msg += `${emoji} *${symbol}*\n`;
-      msg += `  Entry: ${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\n`;
-      msg += `  Current: ${currentPrice.toFixed(8)} NEAR\n`;
-      msg += `  PNL: ${pnlPct}%\n`;
+      msg += `  Holding: \`${pos.quantity_held}\`\n`;
+      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+      msg += `  PNL: \`${pnlPct}%\`\n`;
       msg += `  CA: \`${pos.token_address}\`\n\n`;
     }
 
-    await ctx.reply(msg, { parse_mode: 'Markdown' });
+    const buttons: any[] = [];
+    for (const pos of positions.slice(0, 3)) {
+      const info = await getTokenInfo(pos.token_address).catch(() => null);
+      const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      buttons.push([
+        Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
+        Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
+      ]);
+    }
+    buttons.push([
+      Markup.button.callback('🔄 Refresh', 'menu_positions'),
+      Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    ]);
+
+    await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
   });
 
-  // ── /pnl — PNL summary with real computation ──────────────────────────────
   bot.command('pnl', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -662,18 +1111,21 @@ export function setupRoutes(bot: Telegraf): void {
         totalRealizedNear += pnl.netNear;
 
         const tokenInfo = await getTokenInfo(pos.token_address).catch(() => null);
-        const symbol = tokenInfo?.symbol ?? pos.token_address.slice(0, 8) + '...';
+        const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
         const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
-        msg += `${emoji} *${symbol}*: ${pnl.netNear.toFixed(4)} NEAR (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+        msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
       }
     }
 
     msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-
-    await ctx.reply(msg, { parse_mode: 'Markdown' });
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+    ]);
+    await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
   });
 
-  // ── /snipe <token_ca|name> — Snipe by CA or name ─────────────────────────
+  // ── /snipe <token_ca|name> ────────────────────────────────────────────────
   bot.command('snipe', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -686,59 +1138,24 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     const query = args[0].trim();
-    const amountNear = parseFloat(args[1] ?? user.default_buy_pct?.toString() ?? '1');
+    const amountNear = parseFloat(args[1] ?? user.auto_buy_amount_near?.toString() ?? '1');
 
     if (amountNear <= 0) {
       await ctx.reply('Specify amount: /snipe <token> <amount_near>');
       return;
     }
 
-    // Determine if CA or name
     const isCA = query.includes('.near') || query.length === 64;
 
     if (isCA) {
-      // Direct CA snipe — no fuzzy matching needed
-      const cached = await getTokenCache(query).catch(() => null);
-      let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-      if (!venue) {
-        const info = await getTokenInfo(query).catch(() => null);
-        if (info && info.venue !== 'unknown') {
-          venue = info.venue;
-        }
-      }
-
-      if (!venue) {
-        await ctx.reply('❌ Could not determine venue for token. Please verify the contract address.');
-        return;
-      }
-
       await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
-
-      const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-      const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
-      const near = (await import('@racerbot/shared')).getNear();
-      const { minAmountOut } = await near.computeMinAmountOut(
-        venue,
-        'wrap.near',
-        query,
-        amountInYocto,
-        slippagePct,
-        cached?.rhea_pool_id
-      );
-
-      await publishSwap({
-        user_id: user.id,
-        token_in: 'wrap.near',
-        token_out: query,
-        amount_in: amountInYocto,
-        min_amount_out: minAmountOut,
-        venue,
-        dcl_pool_id: cached?.dcl_pool_id ?? undefined,
-      });
-
-      await ctx.reply('✅ Snipe order queued! You\'ll be notified on confirmation.');
+      try {
+        const res = await executeBuyHelper(telegramId, query, amountNear);
+        await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+      } catch (err: any) {
+        await ctx.reply(`❌ Snipe failed: ${err.message}`);
+      }
     } else {
-      // Name-based fuzzy match
       const names = Array.from(localTokenNames.keys());
       const { match, score } = fuzzyMatch(query, names);
 
@@ -748,8 +1165,6 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       const tokenData = localTokenNames.get(match)!;
-
-      // Confirm before firing (name collisions are possible)
       const keyboard = Markup.inlineKeyboard([
         [
           Markup.button.callback(`✅ Yes, snipe ${match}`, `snipe_confirm:${tokenData.address}:${amountNear}`),
@@ -758,58 +1173,24 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
 
       await ctx.reply(
-        `Found: *${match}* (${tokenData.symbol})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} NEAR?`,
+        `Found: *${match}* (${sanitizeMd(tokenData.symbol)})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} NEAR?`,
         { parse_mode: 'Markdown', ...keyboard }
       );
     }
   });
 
-  // ── Snipe confirmation button ─────────────────────────────────────────────
   bot.action(/^snipe_confirm:([^:]+):(.+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.answerCbQuery('Wallet not found.'); return; }
 
-    const cached = await getTokenCache(tokenAddress).catch(() => null);
-    let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-    if (!venue) {
-      const info = await getTokenInfo(tokenAddress).catch(() => null);
-      if (info && info.venue !== 'unknown') {
-        venue = info.venue;
-      }
+    await ctx.answerCbQuery('Sending snipe order...');
+    try {
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      await ctx.editMessageText(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+    } catch (err: any) {
+      await ctx.editMessageText(`❌ Snipe failed: ${err.message}`);
     }
-
-    if (!venue) {
-      await ctx.answerCbQuery('Could not determine venue.');
-      return;
-    }
-
-    const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-    const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
-    const near = (await import('@racerbot/shared')).getNear();
-    const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
-      'wrap.near',
-      tokenAddress,
-      amountInYocto,
-      slippagePct,
-      cached?.rhea_pool_id
-    );
-
-    await publishSwap({
-      user_id: user.id,
-      token_in: 'wrap.near',
-      token_out: tokenAddress,
-      amount_in: amountInYocto,
-      min_amount_out: minAmountOut,
-      venue,
-      dcl_pool_id: cached?.dcl_pool_id ?? undefined,
-    });
-
-    await ctx.answerCbQuery('Snipe order sent!');
-    await ctx.editMessageText(`⚡ Snipe confirmed: ${amountNear} NEAR → \`${tokenAddress}\``, { parse_mode: 'Markdown' });
   });
 
   bot.action('snipe_cancel', async (ctx) => {
@@ -817,98 +1198,148 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.editMessageText('Snipe cancelled.');
   });
 
-  // ── /filters — Set auto-buy filters ──────────────────────────────────────
-  bot.command('filters', async (ctx) => {
+  // ── /export & /rotatekey ──────────────────────────────────────────────────
+  const handleExportPrompt = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.reply('Use /start first.'); return; }
-
-    const args = ctx.message!.text!.split(' ').slice(1);
-
-    if (args.length === 0) {
-      await ctx.reply(
-        `⚙️ *Auto-buy & Trading Filters*\n\n` +
-        `Current Settings:\n` +
-        `  Auto-buy: ${user.auto_buy_enabled ? '🟢 ON' : '🔴 OFF'}\n` +
-        `  Auto-buy Amount: ${user.auto_buy_amount_near ?? 1} NEAR\n` +
-        `  Min Liquidity: ${user.auto_buy_min_liquidity_near ?? 0} NEAR\n` +
-        `  Default Buy %: ${user.default_buy_pct ?? 10}%\n` +
-        `  Default Sell %: ${user.default_sell_pct ?? 100}%\n` +
-        `  Slippage: ${user.slippage_pct ?? 2.0}%\n\n` +
-        `Commands:\n` +
-        `/filters auto_buy on|off — Enable/disable auto-buy\n` +
-        `/filters amount <near> — Fixed NEAR amount per auto-buy\n` +
-        `/filters min_liquidity <near> — Min pool liquidity (NEAR) to trigger auto-buy\n` +
-        `/filters buy_pct <1-100> — Set default manual buy percentage\n` +
-        `/filters sell_pct <1-100> — Set default manual sell percentage\n` +
-        `/filters slippage <0.1-50> — Set slippage tolerance percentage (default 2%)`,
-        { parse_mode: 'Markdown' }
-      );
+    if (!user) {
+      await ctx.reply('Use /start to set up your wallet first.');
       return;
     }
 
-    const [key, value] = args;
+    const last = lastExportTime.get(telegramId);
+    if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
+      await ctx.reply(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
+      return;
+    }
 
-    if (key === 'slippage') {
-      const pct = parseFloat(value);
-      if (isNaN(pct) || pct < 0.1 || pct > 50) {
-        await ctx.reply('slippage must be between 0.1 and 50 percent');
-        return;
+    await ctx.reply(
+      `⚠️ *Export Private Key*\n\n` +
+      `You are requesting to view your raw private key for account \`${user.subaccount_id}\`.\n\n` +
+      `Anyone who sees this key will have full control over your funds.\n\n` +
+      `Are you sure you want to display your private key?`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('⚠️ Yes, show my private key', 'export_confirm'),
+            Markup.button.callback('Cancel', 'export_cancel'),
+          ],
+        ]),
       }
-      const db = await (await import('@racerbot/db')).getDb();
-      await db.query('UPDATE users SET slippage_pct = $1 WHERE id = $2', [pct, user.id]);
-      await ctx.reply(`✅ Slippage tolerance set to ${pct}%`);
+    );
+  };
 
-    } else if (key === 'buy_pct') {
-      const pct = parseFloat(value);
-      if (isNaN(pct) || pct <= 0 || pct > 100) {
-        await ctx.reply('buy_pct must be between 1 and 100');
-        return;
-      }
-      await updateUserDefaults(user.id, pct, user.default_sell_pct ?? undefined);
-      await ctx.reply(`✅ Default buy set to ${pct}%`);
+  bot.command('export', handleExportPrompt);
+  bot.action('export_prompt', handleExportPrompt);
 
-    } else if (key === 'sell_pct') {
-      const pct = parseFloat(value);
-      if (isNaN(pct) || pct <= 0 || pct > 100) {
-        await ctx.reply('sell_pct must be between 1 and 100');
-        return;
-      }
-      await updateUserDefaults(user.id, user.default_buy_pct ?? undefined, pct);
-      await ctx.reply(`✅ Default sell set to ${pct}%`);
+  bot.action('export_cancel', async (ctx) => {
+    await ctx.answerCbQuery('Export cancelled.');
+    await ctx.editMessageText('Export cancelled.');
+  });
 
-    } else if (key === 'auto_buy') {
-      const enabled = value === 'on';
-      const db = await (await import('@racerbot/db')).getDb();
-      await db.query('UPDATE users SET auto_buy_enabled = $1 WHERE id = $2', [enabled, user.id]);
-      await ctx.reply(`✅ Auto-buy ${enabled ? 'enabled' : 'disabled'}`);
+  bot.action('export_confirm', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Wallet not found.');
+      return;
+    }
 
-    } else if (key === 'amount') {
-      const amt = parseFloat(value);
-      if (isNaN(amt) || amt <= 0) {
-        await ctx.reply('amount must be a positive number in NEAR');
-        return;
-      }
-      const db = await (await import('@racerbot/db')).getDb();
-      await db.query('UPDATE users SET auto_buy_amount_near = $1 WHERE id = $2', [amt, user.id]);
-      await ctx.reply(`✅ Auto-buy amount set to ${amt} NEAR`);
+    const last = lastExportTime.get(telegramId);
+    if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
+      await ctx.answerCbQuery(`Cooldown active. Wait ${remainingSec}s.`);
+      await ctx.editMessageText(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
+      return;
+    }
 
-    } else if (key === 'min_liquidity') {
-      const minLiq = parseFloat(value);
-      if (isNaN(minLiq) || minLiq < 0) {
-        await ctx.reply('min_liquidity must be a positive number in NEAR');
-        return;
-      }
-      const db = await (await import('@racerbot/db')).getDb();
-      await db.query('UPDATE users SET auto_buy_min_liquidity_near = $1 WHERE id = $2', [minLiq, user.id]);
-      await ctx.reply(`✅ Minimum liquidity set to ${minLiq} NEAR`);
+    lastExportTime.set(telegramId, Date.now());
+    console.log(`[AUDIT] Private key exported for user_id=${user.id}, telegram_id=${telegramId}`);
 
-    } else {
-      await ctx.reply('Unknown filter. Use /filters to see available options.');
+    try {
+      const rawPrivateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+      await ctx.answerCbQuery('Key decrypted.');
+
+      await ctx.reply(
+        `🔑 *Private Key for Account* \`${user.subaccount_id}\`:\n\n` +
+        `\`${rawPrivateKey}\`\n\n` +
+        `*Import Instructions*:\n` +
+        `Paste this string into MyNearWallet, Meteor Wallet, or near-cli via "Import Private Key" to control your account outside RacerBot.`,
+        { parse_mode: 'Markdown' }
+      );
+
+      await ctx.reply(
+        `🛡️ *Security Reminder*:\n` +
+        `• Anyone with this private key has full control of your account.\n` +
+        `• Save this private key in a safe place or import it into your preferred NEAR wallet.\n` +
+        `• If you suspect this key was exposed or you want to move away, withdraw your funds and/or run /rotatekey immediately.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Could not decrypt key: ${err.message}`);
     }
   });
 
-  // ── /stoploss <position_id> <pct> — Set stop loss ─────────────────────────
+  const handleRotatePrompt = async (ctx: Context) => {
+    await ctx.reply(
+      `🔄 *Rotate Trading Key*\n\n` +
+      `This will generate a brand new private key on-chain for your account and permanently revoke the old one.\n\n` +
+      `Do you want to proceed with key rotation?`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🔄 Confirm Rotate Key', 'rotate_confirm'),
+            Markup.button.callback('Cancel', 'rotate_cancel'),
+          ],
+        ]),
+      }
+    );
+  };
+
+  bot.command('rotatekey', handleRotatePrompt);
+  bot.action('rotate_prompt', handleRotatePrompt);
+
+  bot.action('rotate_cancel', async (ctx) => {
+    await ctx.answerCbQuery('Cancelled.');
+    await ctx.editMessageText('Key rotation cancelled.');
+  });
+
+  bot.action('rotate_confirm', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('Rotating key on-chain...');
+    await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
+    try {
+      const res = await rotateUserKey(telegramId);
+      await ctx.reply(
+        `✅ *Trading Key Rotated Successfully!*\n\n` +
+        `Account: \`${res.subaccountId}\`\n\n` +
+        `⚠️ *NEW PRIVATE KEY*:\n` +
+        `\`${res.newPrivateKey}\`\n\n` +
+        `*Notice*:\n` +
+        `• The old key has been removed from your account on-chain.\n` +
+        `• Save this new key securely.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Key rotation failed: ${err.message}`);
+    }
+  });
+
+  // ── /cancel — Cancel pending input prompt ─────────────────────────────────
+  bot.command('cancel', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    if (userPendingActions.has(telegramId)) {
+      userPendingActions.delete(telegramId);
+      await ctx.reply('✅ Action cancelled. Type /menu for options.');
+    } else {
+      await ctx.reply('No active action to cancel.');
+    }
+  });
+
+  // ── /stoploss & /takeprofit ───────────────────────────────────────────────
   bot.command('stoploss', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -941,7 +1372,6 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(`✅ Stop loss set at -${pct}% for \`${tokenCA}\``, { parse_mode: 'Markdown' });
   });
 
-  // ── /takeprofit <token_ca> <pct> — Set take profit ───────────────────────
   bot.command('takeprofit', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -972,5 +1402,154 @@ export function setupRoutes(bot: Telegraf): void {
     });
 
     await ctx.reply(`✅ Take profit set at +${pct}% for \`${tokenCA}\``, { parse_mode: 'Markdown' });
+  });
+
+  // ── Central Message Listener (Direct CA Pasting & Interactive Prompts) ────
+  bot.on('text', async (ctx) => {
+    const rawText = ctx.message.text.trim();
+    if (rawText.startsWith('/')) return; // Handled by command dispatch
+
+    const telegramId = ctx.from.id;
+
+    // 1. Process active pending user prompt (e.g. custom buy, custom slippage, withdraw)
+    const pending = userPendingActions.get(telegramId);
+    if (pending && Date.now() < pending.expiresAt) {
+      userPendingActions.delete(telegramId);
+
+      if (pending.action === 'buy_custom_near' && pending.tokenAddress) {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Buy cancelled.');
+          return;
+        }
+        await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+          await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+        } catch (err: any) {
+          await ctx.reply(`❌ Buy failed: ${err.message}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'custom_slippage') {
+        const slip = parseFloat(rawText);
+        if (isNaN(slip) || slip < 0.1 || slip > 50) {
+          await ctx.reply('❌ Invalid slippage. Must be a number between 0.1% and 50%.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (user) {
+          const updated = await updateUserSettings(user.id, { slippage_pct: slip });
+          await ctx.reply(`✅ Slippage tolerance updated to ${slip}%!`);
+          const dash = buildSettingsDashboard(updated);
+          await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+        }
+        return;
+      }
+
+      if (pending.action === 'custom_auto_buy') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (user) {
+          const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
+          await ctx.reply(`✅ Auto-buy amount updated to ${amt} NEAR!`);
+          const dash = buildSettingsDashboard(updated);
+          await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+        }
+        return;
+      }
+
+      if (pending.action === 'withdraw') {
+        const parts = rawText.split(' ').filter(Boolean);
+        const dest = parts[0];
+        const amtArg = parts[1]?.toLowerCase();
+        const amt: number | 'all' = amtArg === 'all' || !amtArg ? 'all' : parseFloat(amtArg);
+        if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".');
+          return;
+        }
+        await ctx.reply(`⏳ Processing withdrawal to \`${dest}\`...`, { parse_mode: 'Markdown' });
+        try {
+          const result = await withdrawFunds(telegramId, dest, amt);
+          await ctx.reply(
+            `✅ *Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (err: any) {
+          await ctx.reply(`❌ Withdrawal failed: ${err.message}`);
+        }
+        return;
+      }
+    }
+
+    // 2. Direct Token Contract Address Detection (Upon pasting a token address)
+    // NEAR accounts can have subdomains like: token.factory.near, axm.meme-cooking.near etc.
+    // Match any string ending in .near, .tg, or .testnet
+    const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
+    const caMatch = nearCaRegex.exec(rawText) ||
+      (rawText.length === 64 && /^[0-9a-fA-F]{64}$/.test(rawText.trim()) ? ['', rawText.trim()] : null);
+    const potentialCA = caMatch ? caMatch[1] || caMatch[0] : null;
+
+    if (potentialCA) {
+      const loadingMsg = await ctx.reply('🔍 Looking up token...').catch(() => null);
+      try {
+        const card = await buildTokenCard(potentialCA.trim(), telegramId);
+        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        return;
+      } catch (err: any) {
+        console.warn(`[API] Token lookup failed for ${potentialCA}:`, err.message);
+        // Show a specific error message for invalid/unknown tokens
+        await ctx.reply(
+          `❌ *Token not found*: \`${potentialCA}\`\n\n` +
+          `This could mean:\n` +
+          `• The contract address is incorrect\n` +
+          `• The token is on an unsupported chain or venue\n` +
+          `• The RPC request timed out — please try again\n\n` +
+          `Error: ${err.message?.slice(0, 100) || 'Unknown error'}`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      } finally {
+        // Delete "Looking up token..." message
+        if (loadingMsg) {
+          ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id).catch(() => {});
+        }
+      }
+    }
+
+    // 3. Local token name fuzzy match
+    const tokenEntry = localTokenNames.get(rawText.toLowerCase());
+    if (tokenEntry) {
+      try {
+        const card = await buildTokenCard(tokenEntry.address, telegramId);
+        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        return;
+      } catch {}
+    }
+
+    // 4. Default helpful guide with Main Menu button
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('💳 Open Wallet', 'menu_wallet'),
+        Markup.button.callback('⚙️ Settings', 'menu_settings'),
+      ],
+      [
+        Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      ],
+    ]);
+
+    await ctx.reply(
+      `💡 *Paste any NEAR token address* (e.g. \`wrap.near\`) directly into this chat to view price, liquidity, and 1-click buy buttons!\n\n` +
+      `Or use the menu below:`,
+      { parse_mode: 'Markdown', ...keyboard }
+    );
   });
 }

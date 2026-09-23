@@ -15,8 +15,37 @@ const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const RPC_URLS = (process.env.RPC_PROVIDERS || 'https://rpc.mainnet.fastnear.com').split(',').map(u => u.trim());
 const near = getNear(RPC_URLS);
 
-// ── In-memory token info cache with 5s TTL ────────────────────────────────────
+// ── In-memory token info cache with 30s TTL ───────────────────────────────────
 const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: number }>();
+
+// ── In-memory user balance cache with 8s TTL ──────────────────────────────────
+const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
+
+// ── NEAR/USD price cache — refresh every 2 minutes ───────────────────────────
+let nearUsdPrice = 0;
+let nearUsdLastFetch = 0;
+
+export async function getNearUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (nearUsdPrice > 0 && now - nearUsdLastFetch < 120_000) return nearUsdPrice;
+  try {
+    const res = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd',
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5000) }
+    );
+    if (res.ok) {
+      const data: any = await res.json();
+      const price = data?.near?.usd;
+      if (price && price > 0) {
+        nearUsdPrice = price;
+        nearUsdLastFetch = now;
+      }
+    }
+  } catch {
+    // Silently keep last known price
+  }
+  return nearUsdPrice;
+}
 
 export interface TokenInfoResult {
   address: string;
@@ -24,19 +53,58 @@ export interface TokenInfoResult {
   symbol: string;
   decimals: number;
   total_supply: string;
-  price: string;
-  liquidity: string;
-  market_cap: number;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'unknown';
+  price: string;           // price in NEAR
+  price_usd: string;       // price in USD
+  liquidity: string;       // liquidity in NEAR
+  liquidity_usd: string;   // liquidity in USD
+  market_cap: number;      // market cap in NEAR
+  market_cap_usd: number;  // market cap in USD
+  near_usd: number;        // NEAR/USD exchange rate at time of fetch
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'unknown';
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
   dcl_pool_id?: string | null;
+  tradeable: boolean;   // false for venues we support info but not trading on
 }
 
 /**
- * Get token info with 5s in-memory TTL cache.
- * Fetches ft_metadata + pool reserves from Shardsmarket, Rhea, or NearlyTrade.
+ * Detect whether a token address belongs to meme.cooking launchpad.
+ */
+function isMemooCookingToken(tokenAddress: string): boolean {
+  return tokenAddress.endsWith('.meme-cooking.near');
+}
+
+/**
+ * Detect whether a token address belongs to intear launchpad.
+ */
+function isIntearToken(tokenAddress: string): boolean {
+  return tokenAddress.endsWith('.launch.intear.near') || tokenAddress.endsWith('.intear.near');
+}
+
+/**
+ * Fetch meme.cooking token state from on-chain.
+ */
+async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string }> {
+  // meme.cooking tokens: get pool info from meme-cooking.near contract
+  // The meme id is extracted from the token address prefix
+  const memeId = tokenAddress.replace('.meme-cooking.near', '');
+  try {
+    const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: parseInt(memeId) || 0 });
+    if (meme) {
+      const nearAmount = parseFloat(meme.total_deposit || meme.near_amount || '0') / 1e24;
+      const phase = meme.end_timestamp_ms && Date.now() >= Number(meme.end_timestamp_ms) ? 'bonded' : 'bonding';
+      return { price: 0, liquidity: nearAmount, phase };
+    }
+  } catch {
+    // Try by name lookup
+  }
+  return { price: 0, liquidity: 0, phase: 'unknown' };
+}
+
+/**
+ * Get token info with 30s in-memory TTL cache.
+ * Fetches ft_metadata + pool reserves from Shardsmarket, Rhea, NearlyTrade, or other known launchpads.
  * Never returns hardcoded data.
  */
 export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResult> {
@@ -45,9 +113,21 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     return cached.data;
   }
 
-  // Check DB cache first (written by detector — may be fresh enough)
+  // Fetch NEAR/USD price in parallel (non-blocking, uses cache if fresh)
+  const nearUsdPromise = getNearUsdPrice();
+
+  // Check DB cache first (written by detector — may be fresh enough if price > 0)
   const dbCache = await getTokenCache(tokenAddress).catch(() => null);
-  if (dbCache && dbCache.updated_at && Date.now() - dbCache.updated_at.getTime() < 5000) {
+  if (
+    dbCache &&
+    dbCache.updated_at &&
+    Date.now() - dbCache.updated_at.getTime() < 15000 &&
+    Number(dbCache.last_price || 0) > 0
+  ) {
+    const lastPrice = Number(dbCache.last_price || 0);
+    const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
+    const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+    const nearUsd = await nearUsdPromise;
     const result: TokenInfoResult = {
       address: tokenAddress,
       name: dbCache.name ?? '',
@@ -55,8 +135,12 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       decimals: dbCache.decimals ?? 18,
       total_supply: dbCache.total_supply ?? '0',
       price: dbCache.last_price?.toString() ?? '0',
+      price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
       liquidity: dbCache.last_liquidity?.toString() ?? '0',
-      market_cap: 0,
+      liquidity_usd: nearUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nearUsd).toFixed(2) : '0',
+      market_cap: mcap,
+      market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
+      near_usd: nearUsd,
       venue: (dbCache.venue as any) ?? 'unknown',
       rhea_pool_id: dbCache.rhea_pool_id,
       bonding_phase: (dbCache.bonding_phase as any) ?? null,
@@ -65,20 +149,21 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
+      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(dbCache.venue ?? 'unknown'),
     };
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 5000 });
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 15000 });
     return result;
   }
 
-  // Fetch from chain
-  const [meta, totalSupply] = await Promise.all([
+  // Fetch ft_metadata first — this validates the token address is a real NEP-141 contract
+  let [meta, totalSupply] = await Promise.all([
     near.getTokenMetadata(tokenAddress),
     near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
   ]);
 
   let price = 0;
   let liquidity = 0;
-  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'unknown' = 'unknown';
+  let venue: TokenInfoResult['venue'] = 'unknown';
   let rheaPoolId: number | null = dbCache?.rhea_pool_id ?? null;
   let bondingPhase: 'prebonded' | 'bonded' | null = (dbCache?.bonding_phase as any) ?? null;
   let bondingProgressPct: number | null =
@@ -87,45 +172,48 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
 
-  // 1. Try Shardsmarket first (most NEAR launchpad tokens)
-  try {
-    const sm = await near.getShardsmarketPoolReserves(tokenAddress);
-    const reserveNear = parseFloat(sm.reserveNear);
-    const reserveToken = parseFloat(sm.reserveToken);
-    if (reserveNear > 0 && reserveToken > 0) {
-      price = reserveNear / reserveToken;
-      liquidity = reserveNear / 1e24; // convert yoctoNEAR to NEAR
-      venue = 'shardsmarket';
-    }
-  } catch {
-    /* try Rhea or Nearlytrade */
-  }
-
-  // 2. Fallback to Rhea
-  if (venue === 'unknown') {
+  // Quick-detect launchpad from address suffix (no RPC needed)
+  if (isMemooCookingToken(tokenAddress)) {
+    venue = 'memecooking';
+    const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
+    price = mcInfo.price;
+    liquidity = mcInfo.liquidity;
+  } else if (isIntearToken(tokenAddress)) {
+    venue = 'intear';
     try {
-      if (rheaPoolId === null) {
-        rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-      }
-      if (rheaPoolId !== null) {
-        const rh = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress);
-        const reserveIn = parseFloat(rh.reserveIn);
-        const reserveOut = parseFloat(rh.reserveOut);
-        if (reserveIn > 0 && reserveOut > 0) {
-          price = reserveIn / reserveOut;
-          liquidity = reserveIn / 1e24;
-          venue = 'rhea';
+      const intearState = await near.getIntearTokenState(tokenAddress);
+      price = intearState.price;
+      liquidity = intearState.liquidityNear;
+    } catch {
+      // If pool lookup failed, keep metadata with 0 price
+    }
+  } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+    // Shardsmarket: token IS its own AMM pool — call get_state() directly
+    try {
+      const smState = await near.getShardsmarketTokenState(tokenAddress);
+      const reserveNearYocto = parseFloat(smState.poolQuote);
+      const reserveTokenRaw = parseFloat(smState.poolToken);
+      if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+        const reserveNearHuman = reserveNearYocto / 1e24;
+        const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+        price = reserveNearHuman / reserveTokenHuman;
+        liquidity = reserveNearHuman * 2; // both sides of AMM
+        venue = 'shardsmarket';
+        if (smState.totalSupply && smState.totalSupply !== '0') {
+          totalSupply = smState.totalSupply;
         }
       }
     } catch {
-      /* try Nearlytrade */
+      // Not a live Shardsmarket pool (presale phase or not found)
     }
-  }
+  } else {
+    // 1. Try NearlyTrade first for non-shardsmarket tokens
+    const [ntRes] = await Promise.allSettled([
+      near.getNearlytradeTokenState(tokenAddress),
+    ]);
 
-  // 3. Fallback to NearlyTrade
-  if (venue === 'unknown') {
-    try {
-      const ntState = await near.getNearlytradeTokenState(tokenAddress);
+    if (ntRes.status === 'fulfilled') {
+      const ntState = ntRes.value;
       if (ntState) {
         venue = 'nearlytrade';
         price = ntState.price;
@@ -133,14 +221,57 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
         bondingPhase = ntState.phase;
         bondingProgressPct = ntState.bondingProgressPct;
         dclPoolId = ntState.dclPoolId;
+        if (ntState.totalSupply && ntState.totalSupply !== '0') {
+          totalSupply = ntState.totalSupply;
+        }
       }
-    } catch {
-      /* no pool found */
+    }
+
+    // 2. Try Intear DEX if not found yet
+    if (venue === 'unknown') {
+      try {
+        const intearState = await near.getIntearTokenState(tokenAddress);
+        if (intearState && intearState.price > 0) {
+          venue = 'intear';
+          price = intearState.price;
+          liquidity = intearState.liquidityNear;
+          if (intearState.totalSupply && intearState.totalSupply !== '0') {
+            totalSupply = intearState.totalSupply;
+          }
+        }
+      } catch {
+        /* not on Intear */
+      }
+    }
+
+    // 3. Fallback to Rhea Finance only if nothing else matched
+    if (venue === 'unknown') {
+      try {
+        if (rheaPoolId === null) {
+          rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
+        }
+        if (rheaPoolId !== null) {
+          const rh = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress);
+          const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
+          const reserveOut = parseFloat(rh.reserveOut); // token base units
+          if (reserveIn > 0 && reserveOut > 0) {
+            const reserveInHuman = reserveIn / 1e24;
+            const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+            price = reserveInHuman / reserveOutHuman;
+            liquidity = reserveInHuman * 2; // both sides of AMM
+            venue = 'rhea';
+          }
+        }
+      } catch {
+        /* no Rhea pool found */
+      }
     }
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
-  const marketCap = price * supplyNum;
+  const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear'].includes(venue);
+  const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {
     address: tokenAddress,
@@ -148,17 +279,22 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     symbol: meta.symbol,
     decimals: meta.decimals,
     total_supply: totalSupply,
-    price: price.toFixed(10),
+    price: price > 0 ? price.toFixed(12) : '0',
+    price_usd: price > 0 && nearUsd > 0 ? (price * nearUsd).toFixed(8) : '0',
     liquidity: liquidity.toFixed(4),
+    liquidity_usd: liquidity > 0 && nearUsd > 0 ? (liquidity * nearUsd).toFixed(2) : '0',
     market_cap: marketCap,
+    market_cap_usd: marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0,
+    near_usd: nearUsd,
     venue,
     rhea_pool_id: rheaPoolId,
     bonding_phase: bondingPhase,
     bonding_progress_pct: bondingProgressPct,
     dcl_pool_id: dclPoolId,
+    tradeable,
   };
 
-  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 5000 });
+  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 30000 });
 
   // Async DB update (non-blocking)
   setImmediate(() =>
@@ -169,7 +305,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       decimals: meta.decimals,
       total_supply: totalSupply,
       pool_address: tokenAddress,
-      venue,
+      venue: venue as any,
       rhea_pool_id: rheaPoolId,
       bonding_phase: bondingPhase,
       bonding_progress_pct: bondingProgressPct,
@@ -343,7 +479,7 @@ export async function publishSwap(swapEvent: {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   dcl_pool_id?: string;
 }): Promise<void> {
   const { createRedis, CHANNELS } = await import('@racerbot/shared');
@@ -370,9 +506,16 @@ export interface UserBalances {
 }
 
 /**
- * Fetch native NEAR and wrap.near balances for user's subaccount.
+ * Fetch native NEAR and wrap.near balances for user's subaccount with caching & parallel requests.
  */
-export async function getUserBalances(telegramId: number): Promise<UserBalances> {
+export async function getUserBalances(telegramId: number, forceRefresh = false): Promise<UserBalances> {
+  if (!forceRefresh) {
+    const cached = balanceCache.get(telegramId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.data;
+    }
+  }
+
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
     throw new Error('User not found. Run /start first.');
@@ -382,22 +525,23 @@ export async function getUserBalances(telegramId: number): Promise<UserBalances>
   let nativeNearYocto = '0';
   let wrapNearYocto = '0';
 
-  try {
-    nativeNearYocto = await near.getNearBalance(subaccountId);
-  } catch (err: any) {
-    console.warn(`[API] Failed to fetch native balance for ${subaccountId}:`, err.message);
-  }
+  const [nativeRes, wrapRes] = await Promise.allSettled([
+    near.getNearBalance(subaccountId),
+    near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
+  ]);
 
-  try {
-    const wrapBal = await near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId });
-    wrapNearYocto = wrapBal || '0';
-  } catch {}
+  if (nativeRes.status === 'fulfilled') {
+    nativeNearYocto = nativeRes.value;
+  }
+  if (wrapRes.status === 'fulfilled') {
+    wrapNearYocto = wrapRes.value || '0';
+  }
 
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
   const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
   const totalNear = nativeNear + wrapNear;
 
-  return {
+  const result: UserBalances = {
     subaccountId,
     nativeNearYocto,
     nativeNearFormatted: nativeNear.toFixed(4),
@@ -405,6 +549,9 @@ export async function getUserBalances(telegramId: number): Promise<UserBalances>
     wrapNearFormatted: wrapNear.toFixed(4),
     totalNearFormatted: totalNear.toFixed(4),
   };
+
+  balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });
+  return result;
 }
 
 /**

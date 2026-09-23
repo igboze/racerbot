@@ -1,3 +1,16 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+
+let curr = process.cwd();
+for (let i = 0; i < 5; i++) {
+  const p = path.join(curr, '.env');
+  if (fs.existsSync(p)) {
+    dotenv.config({ path: p });
+  }
+  curr = path.dirname(curr);
+}
+
 export const MASTER_KEY: string = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
 export const ROUTER_CONTRACT_ID: string = process.env.ROUTER_CONTRACT_ID || 'router.racerbot.near';
 export const TREASURY_ACCOUNT_ID: string = process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near';

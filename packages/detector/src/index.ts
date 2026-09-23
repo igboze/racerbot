@@ -448,9 +448,11 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
     }
     if (typeof rheaPoolId === 'number') {
       const reserves = await near.getRheaPoolReserves(rheaPoolId, data.token_in, data.token_out);
-      if (parseFloat(reserves.reserveOut) > 0) {
-        price = parseFloat(reserves.reserveIn) / parseFloat(reserves.reserveOut);
-        liquidity = parseFloat(reserves.reserveIn);
+      const reserveInHuman = parseFloat(reserves.reserveIn) / 1e24;
+      const reserveOutHuman = parseFloat(reserves.reserveOut) / Math.pow(10, decimals ?? 18);
+      if (reserveOutHuman > 0) {
+        price = reserveInHuman / reserveOutHuman;
+        liquidity = reserveInHuman * 2;
       }
     }
   } else if (venue === 'nearlytrade.near' || venue === 'dclv2.ref-labs.near' || venue.includes('nearlytrade') || venue.includes('dclv2')) {
@@ -458,16 +460,18 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
       const ntState = await near.getNearlytradeTokenState(tokenAddress);
       if (ntState && ntState.price > 0) {
         price = ntState.price;
-        liquidity = ntState.liquidityNear * 1e24;
+        liquidity = ntState.liquidityNear;
       }
     } catch {
       // skip
     }
   } else if (venue === 'factory.shardsmarket.near' || venue.includes('shardsmarket')) {
     const reserves = await near.getShardsmarketPoolReserves(tokenAddress);
-    if (parseFloat(reserves.reserveToken) > 0) {
-      price = parseFloat(reserves.reserveNear) / parseFloat(reserves.reserveToken);
-      liquidity = parseFloat(reserves.reserveNear);
+    const reserveNearHuman = parseFloat(reserves.reserveNear) / 1e24;
+    const reserveTokenHuman = parseFloat(reserves.reserveToken) / Math.pow(10, decimals ?? 18);
+    if (reserveTokenHuman > 0) {
+      price = reserveNearHuman / reserveTokenHuman;
+      liquidity = reserveNearHuman * 2;
     }
   }
 
@@ -477,7 +481,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
   if (supplyNum <= 0) return;
 
   const marketCap = price * supplyNum;
-  const liquidityNear = liquidity / 1e24;
+  const liquidityNear = liquidity;
 
   priceCache.set(tokenAddress, { price, liquidity: liquidityNear, marketCap, ts: Date.now() });
 

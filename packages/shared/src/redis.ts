@@ -24,7 +24,7 @@ export interface TokenDetectedEvent {
   name: string;
   symbol: string;
   decimals: number;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   pool_address: string;
   creator: string;
   timestamp: number;
@@ -34,7 +34,7 @@ export interface PoolCreatedEvent {
   type: 'pool_created';
   token_address: string;
   pool_address: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   total_supply: string;
   initial_liquidity: string;
   timestamp: number;
@@ -57,8 +57,9 @@ export interface SwapEvent {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
-  timestamp: number;
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  dcl_pool_id?: string;
+  timestamp?: number;
 }
 
 export interface AutoBuySignal {

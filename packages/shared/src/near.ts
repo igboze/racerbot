@@ -23,6 +23,60 @@ export interface PoolReserves {
   total_fee: number;
 }
 
+const rheaPoolIdCache = new Map<string, number>();
+const intearPoolCache = new Map<string, number>();
+
+export function parseIntearPool(rawBytes: Buffer): { asset1: string; reserve1: string; asset2: string; reserve2: string } | null {
+  if (!rawBytes || rawBytes.length < 5 || rawBytes[0] !== 1) return null;
+  let offset = 1;
+
+  // Asset 1
+  const asset1Type = rawBytes.readUInt8(offset);
+  offset += 1;
+  let asset1 = 'near';
+  if (asset1Type === 1) {
+    const len = rawBytes.readUInt32LE(offset);
+    offset += 4;
+    asset1 = rawBytes.toString('utf8', offset, offset + len);
+    offset += len;
+  }
+  // Reserve 1 (u128)
+  const r1Buf = rawBytes.subarray(offset, offset + 16);
+  offset += 16;
+  let reserve1 = 0n;
+  for (let i = 0; i < 16; i++) {
+    reserve1 |= BigInt(r1Buf[i]) << BigInt(8 * i);
+  }
+
+  // Asset 2
+  const asset2Type = rawBytes.readUInt8(offset);
+  offset += 1;
+  let asset2 = 'near';
+  if (asset2Type === 1) {
+    const len = rawBytes.readUInt32LE(offset);
+    offset += 4;
+    asset2 = rawBytes.toString('utf8', offset, offset + len);
+    offset += len;
+  }
+  // Reserve 2 (u128)
+  const r2Buf = rawBytes.subarray(offset, offset + 16);
+  offset += 16;
+  let reserve2 = 0n;
+  for (let i = 0; i < 16; i++) {
+    reserve2 |= BigInt(r2Buf[i]) << BigInt(8 * i);
+  }
+
+  return { asset1, reserve1: reserve1.toString(), asset2, reserve2: reserve2.toString() };
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errMsg)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
 /**
  * Multi-RPC NEAR connection.
  * Reads use round-robin across healthy providers.
@@ -95,22 +149,33 @@ export class MultiRpcNear {
    * Falls back to next provider on error.
    */
   async view<T>(contractId: string, methodName: string, args: object = {}): Promise<T> {
-    const healthy = this.providers.filter(p => p.healthy);
-    if (healthy.length === 0) throw new Error('No healthy NEAR RPC providers');
+    const candidates = this.providers.filter(p => p.healthy).length > 0
+      ? this.providers.filter(p => p.healthy)
+      : this.providers;
 
-    const startIndex = (this.currentIndex++) % healthy.length;
+    if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
+
+    const startIndex = (this.currentIndex++) % candidates.length;
     let lastErr: Error | null = null;
-    for (let i = 0; i < healthy.length; i++) {
-      const provider = healthy[(startIndex + i) % healthy.length];
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[(startIndex + i) % candidates.length];
       const start = Date.now();
       try {
         const near = await this.getConnection(provider.url);
         const account = await near.account('');
-        const result = await account.viewFunction({ contractId, methodName, args });
+        const result = await withTimeout(
+          account.viewFunction({ contractId, methodName, args }),
+          4000,
+          `RPC timeout on ${provider.url}`
+        );
         markProviderSuccess(provider, Date.now() - start);
         return result as T;
-      } catch (err) {
-        markProviderError(provider);
+      } catch (err: any) {
+        const msg = err?.message || '';
+        const isNetworkErr = msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') || msg.includes('ETIMEDOUT') || msg.includes('50');
+        if (isNetworkErr) {
+          markProviderError(provider);
+        }
         lastErr = err as Error;
       }
     }
@@ -206,9 +271,20 @@ export class MultiRpcNear {
    * Get account NEAR balance.
    */
   async getNearBalance(accountId: string): Promise<string> {
-    const account = await this.getAccount(accountId);
-    const state = await account.state();
-    return state.amount;
+    const healthy = this.providers.filter(p => p.healthy);
+    const providersToTry = healthy.length > 0 ? healthy : this.providers;
+    let lastErr: Error | null = null;
+    for (const provider of providersToTry) {
+      try {
+        const near = await this.getConnection(provider.url);
+        const account = await near.account(accountId);
+        const state = await withTimeout(account.state(), 3500, `RPC timeout on ${provider.url}`);
+        return state.amount;
+      } catch (err) {
+        lastErr = err as Error;
+      }
+    }
+    throw lastErr ?? new Error(`Failed to get NEAR balance for ${accountId}`);
   }
 
   /**
@@ -244,32 +320,42 @@ export class MultiRpcNear {
   }
 
   /**
-   * Find Rhea pool ID for a token pair.
-   * Enumerates pools from v2.ref-finance.near and matches tokens in either order.
+   * Find Rhea pool ID for a token pair with in-memory caching and fast parallel scanning.
    */
   async findRheaPoolId(tokenA: string, tokenB: string): Promise<number> {
+    const cacheKey1 = `${tokenA}:${tokenB}`;
+    const cacheKey2 = `${tokenB}:${tokenA}`;
+    if (rheaPoolIdCache.has(cacheKey1)) return rheaPoolIdCache.get(cacheKey1)!;
+    if (rheaPoolIdCache.has(cacheKey2)) return rheaPoolIdCache.get(cacheKey2)!;
+
     const batchSize = 100;
-    let fromIndex = 0;
-    const maxPoolsToCheck = 5000;
+    const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools in parallel
 
-    while (fromIndex < maxPoolsToCheck) {
-      const pools = await this.view<any[]>(
-        'v2.ref-finance.near',
-        'get_pools',
-        { from_index: fromIndex, limit: batchSize }
-      );
-      if (!pools || pools.length === 0) break;
+    const results = await Promise.allSettled(
+      batchStarts.map(async (fromIndex) => {
+        const pools = await this.view<any[]>(
+          'v2.ref-finance.near',
+          'get_pools',
+          { from_index: fromIndex, limit: batchSize }
+        );
+        return { fromIndex, pools: pools || [] };
+      })
+    );
 
-      for (let i = 0; i < pools.length; i++) {
-        const pool = pools[i];
-        const tokens: string[] = pool.token_account_ids || [];
-        if (tokens.includes(tokenA) && tokens.includes(tokenB)) {
-          return fromIndex + i;
+    for (const res of results) {
+      if (res.status === 'fulfilled') {
+        const { fromIndex, pools } = res.value;
+        for (let i = 0; i < pools.length; i++) {
+          const pool = pools[i];
+          const tokens: string[] = pool.token_account_ids || [];
+          if (tokens.includes(tokenA) && tokens.includes(tokenB)) {
+            const foundId = fromIndex + i;
+            rheaPoolIdCache.set(cacheKey1, foundId);
+            rheaPoolIdCache.set(cacheKey2, foundId);
+            return foundId;
+          }
         }
       }
-
-      if (pools.length < batchSize) break;
-      fromIndex += batchSize;
     }
 
     throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
@@ -302,20 +388,43 @@ export class MultiRpcNear {
 
   /**
    * Get pool reserves from Shardsmarket.
-   * Throws an explicit error if the pool does not exist or cannot be reached.
+   * On Shardsmarket, each token IS its own AMM pool contract.
+   * We call get_state() directly on the token address.
    */
   async getShardsmarketPoolReserves(tokenAddress: string): Promise<{ reserveNear: string; reserveToken: string }> {
-    const poolInfo = await this.view<any>(
-      'factory.shardsmarket.near',
-      'get_pool',
-      { token_id: tokenAddress }
-    );
-    if (!poolInfo || !poolInfo.near_amount || !poolInfo.token_amount) {
+    const state = await this.getShardsmarketTokenState(tokenAddress);
+    return {
+      reserveNear: state.poolQuote,
+      reserveToken: state.poolToken,
+    };
+  }
+
+  /**
+   * Get full Shardsmarket token state including reserves, phase, supply.
+   * Calls get_state() on the token contract itself (each token IS its own AMM pool).
+   */
+  async getShardsmarketTokenState(tokenAddress: string): Promise<{
+    poolQuote: string;      // NEAR reserves in yoctoNEAR
+    poolToken: string;      // Token reserves in raw units
+    totalSupply: string;    // Total supply in raw units
+    phase: string;          // "live_amm" | "presale" | etc.
+    progressBps: number;    // bonding progress in basis points (10000 = 100%)
+  }> {
+    // Shardsmarket tokens: token address IS the pool contract
+    // Only *.factory.shardsmarket.near tokens are supported
+    if (!tokenAddress.endsWith('.factory.shardsmarket.near')) {
+      throw new Error(`Not a Shardsmarket token: ${tokenAddress}`);
+    }
+    const state = await this.view<any>(tokenAddress, 'get_state', {});
+    if (!state || !state.pool_quote) {
       throw new Error(`No active Shardsmarket pool found for token ${tokenAddress}`);
     }
     return {
-      reserveNear: poolInfo.near_amount,
-      reserveToken: poolInfo.token_amount,
+      poolQuote: state.pool_quote,
+      poolToken: state.pool_token,
+      totalSupply: state.total_supply,
+      phase: state.phase || 'unknown',
+      progressBps: Number(state.progress_bps ?? 0),
     };
   }
 
@@ -387,7 +496,12 @@ export class MultiRpcNear {
       throw new Error(`NearlyTrade token ${tokenAddress} not found or has no pool_id`);
     }
 
-    const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id });
+    const [pool, meta, supplyOnChain] = await Promise.all([
+      this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id }),
+      this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 })),
+      this.view<string>(tokenAddress, 'ft_total_supply', {}).catch(() => launch.total_supply || '0'),
+    ]);
+
     if (!pool) {
       throw new Error(`DCL pool ${launch.pool_id} not found on dclv2.ref-labs.near`);
     }
@@ -406,10 +520,21 @@ export class MultiRpcNear {
     const reserveToken = isTokenX ? pool.total_x : pool.total_y;
     const reserveNear = isTokenX ? pool.total_y : pool.total_x;
 
+    const tokenDecimals = meta?.decimals ?? 18;
+    let price = 0;
+    if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
+      // In Ref DCL, 1.0001^current_point gives raw price of token_x in token_y base units.
+      // Normalize by token decimals (wrap.near has 24 decimals).
+      if (isTokenX) {
+        price = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - 24);
+      } else {
+        price = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - 24);
+      }
+    }
+
     const reserveNearNum = parseFloat(reserveNear || '0') / 1e24;
-    const reserveTokenNum = parseFloat(reserveToken || '0');
-    const price = reserveTokenNum > 0 ? parseFloat(reserveNear || '0') / reserveTokenNum : 0;
-    const liquidityNear = reserveNearNum;
+    const liquidityNear = reserveNearNum * 2;
+    const totalSupply = supplyOnChain && supplyOnChain !== '0' ? supplyOnChain : (launch.total_supply || '0');
 
     return {
       pool_id: launch.pool_id,
@@ -422,7 +547,134 @@ export class MultiRpcNear {
       liquidityNear,
       reserveNear: reserveNear || '0',
       reserveToken: reserveToken || '0',
-      totalSupply: launch.total_supply || '0',
+      totalSupply,
+    };
+  }
+
+  /**
+   * Find pool ID on dex.intear.near (slimedragon.near/xyk) for a token
+   */
+  async findIntearPoolId(tokenAddress: string): Promise<number> {
+    if (intearPoolCache.has(tokenAddress)) {
+      return intearPoolCache.get(tokenAddress)!;
+    }
+
+    // Scan pools from newest (250 down to 0) in parallel batches of 25
+    for (let start = 250; start >= 0; start -= 25) {
+      const promises: Promise<{ id: number; data: any } | null>[] = [];
+      const batchStart = Math.max(0, start - 24);
+      for (let i = start; i >= batchStart; i--) {
+        const buf = Buffer.alloc(4);
+        buf.writeUInt32LE(i, 0);
+        promises.push(
+          this.view<string>('dex.intear.near', 'dex_view', {
+            dex_id: 'slimedragon.near/xyk',
+            method: 'get_pool',
+            args: buf.toString('base64'),
+          })
+            .then((res) => {
+              if (!res) return null;
+              const rawBytes = Buffer.from(typeof res === 'string' ? res : JSON.stringify(res), 'base64');
+              const pool = parseIntearPool(rawBytes);
+              return pool ? { id: i, data: pool } : null;
+            })
+            .catch(() => null)
+        );
+      }
+
+      const results = await Promise.all(promises);
+      for (const r of results) {
+        if (r) {
+          if (r.data.asset1.includes('.near')) intearPoolCache.set(r.data.asset1, r.id);
+          if (r.data.asset2.includes('.near')) intearPoolCache.set(r.data.asset2, r.id);
+          if (r.data.asset1 === tokenAddress || r.data.asset2 === tokenAddress) {
+            intearPoolCache.set(tokenAddress, r.id);
+            return r.id;
+          }
+        }
+      }
+    }
+
+    throw new Error(`Intear pool for ${tokenAddress} not found on dex.intear.near`);
+  }
+
+  /**
+   * Query Intear token state, reserves, real spot price, and liquidity on-chain.
+   */
+  async getIntearTokenState(tokenAddress: string): Promise<{
+    poolId: number;
+    poolMsg: string;
+    price: number;
+    liquidityNear: number;
+    reserveNear: string;
+    reserveToken: string;
+    name: string;
+    symbol: string;
+    decimals: number;
+    totalSupply: string;
+    launchData?: {
+      telegram?: string | null;
+      x?: string | null;
+      website?: string | null;
+      description?: string | null;
+      launched_by?: string | null;
+    };
+  }> {
+    const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({
+      name: tokenAddress.split('.')[0] || 'Unknown',
+      symbol: (tokenAddress.split('.')[0] || 'TKN').toUpperCase(),
+      decimals: 24,
+      total_supply: '0',
+    }));
+
+    const poolId = await this.findIntearPoolId(tokenAddress);
+    const poolBuf = Buffer.alloc(4);
+    poolBuf.writeUInt32LE(poolId, 0);
+    const poolMsg = poolBuf.toString('base64');
+
+    const poolRaw = await this.view<string>('dex.intear.near', 'dex_view', {
+      dex_id: 'slimedragon.near/xyk',
+      method: 'get_pool',
+      args: poolMsg,
+    });
+
+    if (!poolRaw) {
+      throw new Error(`Failed to fetch Intear pool ${poolId}`);
+    }
+
+    const rawBytes = Buffer.from(typeof poolRaw === 'string' ? poolRaw : JSON.stringify(poolRaw), 'base64');
+    const pool = parseIntearPool(rawBytes);
+    if (!pool) {
+      throw new Error(`Failed to parse Intear pool ${poolId}`);
+    }
+
+    const isToken1 = pool.asset1 === tokenAddress;
+    const reserveNear = BigInt(isToken1 ? pool.reserve2 : pool.reserve1);
+    const reserveToken = BigInt(isToken1 ? pool.reserve1 : pool.reserve2);
+
+    const nearAmt = Number(reserveNear) / 1e24;
+    const tokenDecFactor = Math.pow(10, meta.decimals);
+    const tokenAmt = Number(reserveToken) / tokenDecFactor;
+
+    const price = tokenAmt > 0 ? nearAmt / tokenAmt : 0;
+    const liquidityNear = nearAmt * 2;
+
+    const launchData = await this.view<any>('launch.intear.near', 'get_launch_data', {
+      token_account_id: tokenAddress,
+    }).catch(() => undefined);
+
+    return {
+      poolId,
+      poolMsg,
+      price,
+      liquidityNear,
+      reserveNear: reserveNear.toString(),
+      reserveToken: reserveToken.toString(),
+      name: meta.name,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      totalSupply: meta.total_supply,
+      launchData,
     };
   }
 
@@ -431,7 +683,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'shardsmarket' | 'nearlytrade',
+    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -476,6 +728,20 @@ export class MultiRpcNear {
 
       // NearlyTrade DCL pools have 1% pool fee (100 bps)
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 100);
+      const minOut = calculateMinAmountOut(expected, slippagePct);
+      return { expectedOutput: expected.toString(), minAmountOut: minOut };
+    } else if (venue === 'intear') {
+      const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      const state = await this.getIntearTokenState(targetToken);
+      const reserveNear = BigInt(state.reserveNear);
+      const reserveToken = BigInt(state.reserveToken);
+
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      const reserveIn = isBuy ? reserveNear : reserveToken;
+      const reserveOut = isBuy ? reserveToken : reserveNear;
+
+      // Intear XYK pool fee (30 bps / 0.3%)
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 30);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else {

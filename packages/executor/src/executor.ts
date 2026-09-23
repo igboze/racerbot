@@ -267,6 +267,98 @@ export class SwapExecutor {
           actions,
         });
       }
+    } else if (venue === 'intear') {
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      const targetToken = isBuy ? token_out : token_in;
+      const poolId = await near.findIntearPoolId(targetToken);
+      const poolBuf = Buffer.alloc(4);
+      poolBuf.writeUInt32LE(poolId, 0);
+      const poolMsg = poolBuf.toString('base64');
+
+      if (isBuy) {
+        await near.ensureStorageDeposit(subaccountId, token_out);
+
+        // Send 1.5% fee to treasury
+        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount).catch(() => {});
+
+        // Buy on dex.intear.near
+        result = await account.functionCall({
+          contractId: 'dex.intear.near',
+          methodName: 'deposit_near',
+          args: {
+            operations: [
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: 'near',
+                  asset_out: `nep141:${token_out}`,
+                  amount: { Amount: { ExactIn: swapAmount.toString() } },
+                  constraint: min_amount_out,
+                  message: poolMsg,
+                },
+              },
+              {
+                Withdraw: {
+                  asset_id: `nep141:${token_out}`,
+                  amount: { Full: { at_least: min_amount_out } },
+                  to: null,
+                  rescue_address: null,
+                },
+              },
+            ],
+            referrer: 'user.intear.near',
+          },
+          gas: BigInt('250000000000000'),
+          attachedDeposit: swapAmount,
+        });
+      } else {
+        // Sell token on dex.intear.near
+        const actions = [
+          transactions.functionCall(
+            'ft_transfer',
+            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+            BigInt('20000000000000'),
+            BigInt('1')
+          ),
+          transactions.functionCall(
+            'ft_transfer_call',
+            {
+              receiver_id: 'dex.intear.near',
+              amount: swapAmount.toString(),
+              msg: JSON.stringify({
+                operations: [
+                  {
+                    SwapSimple: {
+                      dex_id: 'slimedragon.near/xyk',
+                      asset_in: `nep141:${token_in}`,
+                      asset_out: 'near',
+                      amount: { Amount: { ExactIn: swapAmount.toString() } },
+                      constraint: min_amount_out,
+                      message: poolMsg,
+                    },
+                  },
+                  {
+                    Withdraw: {
+                      asset_id: 'near',
+                      amount: { Full: { at_least: min_amount_out } },
+                      to: null,
+                      rescue_address: null,
+                    },
+                  },
+                ],
+                referrer: 'user.intear.near',
+              }),
+            },
+            BigInt('220000000000000'),
+            BigInt('1')
+          ),
+        ];
+
+        result = await account.signAndSendTransaction({
+          receiverId: token_in,
+          actions,
+        });
+      }
     } else {
       // Shardsmarket
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
