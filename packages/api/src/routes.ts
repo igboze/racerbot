@@ -512,7 +512,8 @@ export function setupRoutes(bot: Telegraf): void {
       );
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
-      await ctx.reply(`❌ Account setup failed: ${err.message}\n\nPlease try running /start again.`);
+      const errMsg = err?.message || (typeof err === 'string' ? err : '') || 'Internal database or network error';
+      await ctx.reply(`❌ Account setup failed: ${errMsg}\n\nPlease try running /start again.`);
     }
   });
 
