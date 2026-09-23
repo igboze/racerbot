@@ -7,6 +7,7 @@ import {
   createTrigger,
   updateUserDefaults,
   updateUserSettings,
+  getDb,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -19,7 +20,8 @@ import {
   withdrawFunds,
   type TokenInfoResult,
 } from './wallet.js';
-import { computePnL, fuzzyMatch, decrypt, tokenLinks } from '@racerbot/shared';
+import { sellAtTarget } from './sellHelper.js';
+import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY } from './config.js';
 
@@ -427,7 +429,7 @@ async function executeBuyHelper(
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
 
-  const near = (await import('@racerbot/shared')).getNear();
+  const near = getNear();
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
   const { minAmountOut } = await near.computeMinAmountOut(
@@ -643,7 +645,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     const [positions, db] = await Promise.all([
       getOpenPositions(user.id).catch(() => []),
-      (await import('@racerbot/db')).getDb(),
+      getDb(),
     ]);
     const closedResult = await db.query(
       'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
@@ -1081,7 +1083,6 @@ export function setupRoutes(bot: Telegraf): void {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
-    const { sellAtTarget } = await import('./sellHelper.js');
     await sellAtTarget(user.id, positionId, pct);
 
     await ctx.answerCbQuery(`✅ Sell order sent (${pct}%)`).catch(() => {});
@@ -1155,7 +1156,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     const [positions, db] = await Promise.all([
       getOpenPositions(user.id).catch(() => []),
-      (await import('@racerbot/db')).getDb(),
+      getDb(),
     ]);
     const closedResult = await db.query(
       'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',

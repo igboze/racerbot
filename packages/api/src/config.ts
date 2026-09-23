@@ -23,3 +23,5 @@ export const RPC_PROVIDERS: string[] = (process.env.RPC_PROVIDERS || '').split('
 export const DEFAULT_ALLOWANCE = 0.5;
 export const DATABASE_URL: string = process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot';
 export const REDIS_URL: string = process.env.REDIS_URL || 'redis://localhost:6379';
+export const PUBLIC_URL: string = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
+export const TELEGRAM_WEBHOOK_SECRET: string = process.env.TELEGRAM_WEBHOOK_SECRET || '';

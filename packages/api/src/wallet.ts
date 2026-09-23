@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix } from '@racerbot/shared';
+import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS } from '@racerbot/shared';
 import {
   getDb,
   createUser,
@@ -537,7 +537,6 @@ export async function publishSwap(swapEvent: {
   venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
   dcl_pool_id?: string;
 }): Promise<void> {
-  const { createRedis, CHANNELS } = await import('@racerbot/shared');
   if (!pubRedis) {
     pubRedis = createRedis(process.env.REDIS_URL!);
   }

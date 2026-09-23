@@ -62,37 +62,102 @@ async function main() {
 
   let lastBlock = parseInt((await redis.get(LAST_BLOCK_KEY)) ?? '0');
 
+  // Case 1 & 2: Initial bootstrap or jump forward if too far behind
+  const initialHeight = await fetchBlockHeight();
+  if (initialHeight > 0) {
+    if (lastBlock === 0) {
+      console.log(`[DETECTOR] Initializing block tracking at current height: ${initialHeight}`);
+      lastBlock = initialHeight;
+      await redis.set(LAST_BLOCK_KEY, initialHeight.toString(), 86400).catch(() => {});
+    } else if (initialHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
+      console.log(
+        `[DETECTOR] Catching up: jumping ${lastBlock} → ${initialHeight - MAX_CATCHUP_BLOCKS} (bounded replay of ${MAX_CATCHUP_BLOCKS} blocks)`
+      );
+      lastBlock = initialHeight - MAX_CATCHUP_BLOCKS;
+
+      // Replay in batches of up to 5 blocks in order
+      for (let h = lastBlock + 1; h <= initialHeight; h += 5) {
+        const batch: number[] = [];
+        for (let b = h; b <= Math.min(h + 4, initialHeight); b++) {
+          batch.push(b);
+        }
+        await Promise.all(
+          batch.map(height =>
+            processBlock(height).catch(err => {
+              console.error(`[DETECTOR] Block ${height} error:`, err.message);
+            })
+          )
+        );
+      }
+      lastBlock = initialHeight;
+      await redis.set(LAST_BLOCK_KEY, initialHeight.toString(), 86400).catch(() => {});
+    }
+  }
+
+  // Steady-state polling loop: fetch next block directly from neardata without polling block height
   while (true) {
     try {
-      const currentHeight = await fetchBlockHeight();
-
-      if (currentHeight > 0) {
-        if (lastBlock === 0) {
-          console.log(`[DETECTOR] Initializing block tracking at current height: ${currentHeight}`);
-          lastBlock = currentHeight;
-          await redis.set(LAST_BLOCK_KEY, currentHeight.toString(), 86400).catch(() => {});
-        } else if (currentHeight > lastBlock) {
-          // After downtime, replay a bounded window instead of skipping the
-          // gap entirely — the old code jumped past every launch that
-          // happened while we were behind by more than ~24s.
-          if (currentHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
-            console.log(
-              `[DETECTOR] Catching up: jumping ${lastBlock} → ${currentHeight - MAX_CATCHUP_BLOCKS} (bounded replay of ${MAX_CATCHUP_BLOCKS} blocks)`
-            );
-            lastBlock = currentHeight - MAX_CATCHUP_BLOCKS;
-          }
-
-          for (let h = lastBlock + 1; h <= currentHeight; h++) {
-            await processBlock(h).catch(err => {
-              console.error(`[DETECTOR] Block ${h} error:`, err.message);
-            });
-          }
-          lastBlock = currentHeight;
-          redis.set(LAST_BLOCK_KEY, currentHeight.toString(), 86400).catch(() => {});
+      if (lastBlock === 0) {
+        const h = await fetchBlockHeight();
+        if (h > 0) {
+          lastBlock = h;
+          await redis.set(LAST_BLOCK_KEY, h.toString(), 86400).catch(() => {});
+        } else {
+          await sleep(POLL_INTERVAL_MS);
+          continue;
         }
       }
-    } catch (err) {
-      console.error('[DETECTOR] Poll error:', (err as Error).message);
+
+      const nextHeight = lastBlock + 1;
+      const res = await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
+
+      if (!res || res.status === 404) {
+        // Next block hasn't been produced yet: sleep and retry same height
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+
+      if (res.ok) {
+        const text = await res.text();
+        if (!text || text.trim() === '' || text === '{}') {
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
+
+        let blockData: any = null;
+        try {
+          blockData = JSON.parse(text);
+        } catch {
+          // ignore json parse error
+        }
+
+        if (blockData) {
+          const shards = blockData?.shards ?? [];
+          for (const shard of shards) {
+            const outcomes = shard?.receipt_execution_outcomes ?? [];
+            for (const item of outcomes) {
+              const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
+              const receiverId: string = item?.receipt?.receiver_id ?? '';
+              for (const log of logs) {
+                await parseEventLog(log, receiverId).catch(() => {});
+              }
+            }
+          }
+        } else {
+          await processBlock(nextHeight).catch(err => {
+            console.error(`[DETECTOR] Block ${nextHeight} error:`, err.message);
+          });
+        }
+
+        lastBlock = nextHeight;
+        redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+        // Immediately attempt next block in same tick (no sleep) to drain backlog
+        continue;
+      }
+    } catch (err: any) {
+      console.error('[DETECTOR] Poll error:', err.message);
     }
     await sleep(POLL_INTERVAL_MS);
   }

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, type PriceUpdateEvent, type SwapEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isTradableVenue, getNear, type PriceUpdateEvent, type SwapEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById, getTokenCache, markTriggerFired, updatePosition } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -22,7 +22,7 @@ const PRICE_STALENESS_MS = 60_000;
  */
 async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
-    const near = (await import('@racerbot/shared')).getNear();
+    const near = getNear();
     const cache = await getTokenCache(tokenAddress);
     const venue = cache?.venue;
     if (!venue || venue === 'memecooking') return false;
@@ -141,7 +141,7 @@ export class TriggerEngine {
 
     // Stop-loss default slippage tolerance of 5% to prioritize exit execution; take-profit uses 2%
     const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
-    const near = (await import('@racerbot/shared')).getNear();
+    const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
       venue,
       position.token_address,
@@ -215,7 +215,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     .then(r => r.rows[0]).catch(() => null);
   const slippagePct = userRow?.slippage_pct ? Number(userRow.slippage_pct) : 2.0;
 
-  const near = (await import('@racerbot/shared')).getNear();
+  const near = getNear();
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     position.token_address,

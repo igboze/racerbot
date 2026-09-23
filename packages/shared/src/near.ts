@@ -1,6 +1,7 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut } from './utils.js';
+import { upsertTokenCache } from '@racerbot/db';
 
 export interface NearConfig {
   rpcUrls: string[];
@@ -25,6 +26,7 @@ export interface PoolReserves {
 
 const rheaPoolIdCache = new Map<string, number>();
 const intearPoolCache = new Map<string, number>();
+const registeredCache = new Set<string>();
 
 export function parseIntearPool(rawBytes: Buffer): { asset1: string; reserve1: string; asset2: string; reserve2: string } | null {
   if (!rawBytes || rawBytes.length < 5 || rawBytes[0] !== 1) return null;
@@ -299,9 +301,15 @@ export class MultiRpcNear {
    */
   async ensureStorageDeposit(accountId: string, tokenAddress: string): Promise<void> {
     if (!tokenAddress || tokenAddress === 'near') return;
+    const cacheKey = `${accountId}:${tokenAddress}`;
+    if (registeredCache.has(cacheKey)) {
+      return;
+    }
+
     try {
       const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
       if (balance && balance.total) {
+        registeredCache.add(cacheKey);
         return; // Already registered
       }
     } catch {
@@ -309,18 +317,19 @@ export class MultiRpcNear {
     }
 
     try {
-      const account = await this.getAccount(accountId);
       const isWrapNear = tokenAddress === 'wrap.near';
       const deposit = isWrapNear
         ? BigInt('1250000000000000000000') // 0.00125 NEAR
         : BigInt('12500000000000000000000'); // 0.0125 NEAR
-      await account.functionCall({
-        contractId: tokenAddress,
-        methodName: 'storage_deposit',
-        args: { account_id: accountId, registration_only: true },
-        gas: BigInt('30000000000000'),
-        attachedDeposit: deposit,
-      });
+      await this.signAndSendTransactionAll(accountId, tokenAddress, [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: accountId, registration_only: true },
+          BigInt('30000000000000'),
+          deposit
+        ),
+      ]);
+      registeredCache.add(cacheKey);
     } catch {
       // Ignore if already registered or contract doesn't support storage_deposit
     }
@@ -606,16 +615,13 @@ export class MultiRpcNear {
             // FIX 5: Persist found pool ID to DB so it survives process restarts.
             // This prevents the expensive 250-pool scan from repeating after a Railway redeploy.
             setImmediate(() => {
-              // @ts-ignore
-              import('@racerbot/db').then(({ upsertTokenCache }) =>
-                upsertTokenCache({
-                  token_address: tokenAddress,
-                  venue: 'intear',
-                  // Store pool ID in dcl_pool_id column (reuse existing column; intear uses integer IDs)
-                  dcl_pool_id: String(r.id),
-                  updated_at: new Date(),
-                }).catch(() => {})
-              ).catch(() => {});
+              upsertTokenCache({
+                token_address: tokenAddress,
+                venue: 'intear',
+                // Store pool ID in dcl_pool_id column (reuse existing column; intear uses integer IDs)
+                dcl_pool_id: String(r.id),
+                updated_at: new Date(),
+              }).catch(() => {});
             });
             return r.id;
           }

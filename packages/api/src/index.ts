@@ -9,7 +9,7 @@ import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache } from './wallet.js';
-import { TELEGRAM_BOT_TOKEN } from './config.js';
+import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000');
 const REDIS_URL = process.env.REDIS_URL!;
@@ -38,25 +38,6 @@ async function main(): Promise<void> {
     console.warn('[API] Cache warm-up failed (non-fatal):', err.message)
   );
 
-  // ── Express REST server & Mini App static assets ─────────────────────────
-  const app = express();
-  // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
-  // for the rate limiter to key on real client IPs.
-  app.set('trust proxy', 1);
-  app.use(cors());
-  app.use(express.json({ limit: '64kb' }));
-  app.use('/api', apiRouter);
-
-  const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
-  app.use('/miniapp', express.static(publicDir));
-  app.get('/miniapp', (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-
-  app.listen(PORT, () => {
-    console.log(`[API] REST server listening on port ${PORT}`);
-  });
-
   // ── Telegram bot ──────────────────────────────────────────────────────────
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
   setBotInstance(bot);
@@ -72,9 +53,47 @@ async function main(): Promise<void> {
 
   setupRoutes(bot);
 
-  // ── Launch bot immediately ────────────────────────────────────────────────
-  bot.launch({ dropPendingUpdates: true });
-  console.log('[API] Telegram bot launched successfully!');
+  // ── Express REST server & Mini App static assets ─────────────────────────
+  const app = express();
+  // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
+  // for the rate limiter to key on real client IPs.
+  app.set('trust proxy', 1);
+  app.use(cors());
+  app.use(express.json({ limit: '64kb' }));
+
+  // Mount Telegram webhook handler on the existing Express app
+  const webhookPath = '/telegram-webhook';
+  if (PUBLIC_URL) {
+    app.use(bot.webhookCallback(webhookPath, {
+      secretToken: TELEGRAM_WEBHOOK_SECRET || undefined,
+    }));
+  }
+
+  app.use('/api', apiRouter);
+
+  const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
+  app.use('/miniapp', express.static(publicDir));
+  app.get('/miniapp', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
+
+  app.listen(PORT, () => {
+    console.log(`[API] REST server listening on port ${PORT}`);
+  });
+
+  // ── Launch bot (Webhook if PUBLIC_URL set, fallback to long polling) ─────
+  if (PUBLIC_URL) {
+    const cleanDomain = PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const webhookUrl = `https://${cleanDomain}${webhookPath}`;
+    await bot.telegram.setWebhook(webhookUrl, {
+      drop_pending_updates: true,
+      secret_token: TELEGRAM_WEBHOOK_SECRET || undefined,
+    });
+    console.log(`[API] Telegram bot launched with webhook @ ${webhookUrl}`);
+  } else {
+    bot.launch({ dropPendingUpdates: true });
+    console.log('[API] Telegram bot launched with long polling (PUBLIC_URL not set)');
+  }
 
   // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
   let redis: any = null;

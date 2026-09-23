@@ -8,6 +8,9 @@ import {
   createUser,
   updateUserScopedKey,
   getPositionById,
+  getUserById,
+  getTokenCache,
+  getDb,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
 import { computePnL, getNear, encrypt, isTradableVenue } from '@racerbot/shared';
@@ -202,7 +205,6 @@ router.post('/swap', ensureTelegramUser, async (req, res) => {
   }
 
   try {
-    const { getUserById, getTokenCache } = await import('@racerbot/db');
     const user = await getUserById(userId).catch(() => null);
     const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
@@ -218,7 +220,7 @@ router.post('/swap', ensureTelegramUser, async (req, res) => {
     // min_amount_out is ALWAYS computed server-side from live pool reserves.
     // Client-supplied min_out was an exploit: anyone could set min_out=1 and
     // grief any account with zero slippage protection.
-    const near = (await import('@racerbot/shared')).getNear();
+    const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
       selectedVenue,
       tokenIn,
@@ -321,7 +323,7 @@ router.get('/pnl/:userId', ensureTelegramUser, async (req, res) => {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
-    const db = await (await import('@racerbot/db')).getDb();
+    const db = await getDb();
     const closedPositions = await db.query(
       'SELECT * FROM positions WHERE user_id = $1 AND status = $2',
       [req.params.userId, 'closed']
