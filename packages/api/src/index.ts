@@ -3,7 +3,7 @@ import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, type TokenDetectedEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
@@ -17,6 +17,17 @@ const REDIS_URL = process.env.REDIS_URL!;
 async function main(): Promise<void> {
   console.log('[API] Starting RacerBot API service...');
 
+  // ── Fail fast on insecure/missing secrets ──────────────────────────────
+  assertValidMasterKey(process.env.KEY_ENCRYPTION_MASTER_KEY);
+  if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'your-bot-token-here') {
+    throw new Error('TELEGRAM_BOT_TOKEN is missing or a placeholder');
+  }
+
+  // One stray rejected promise must not kill the whole trading bot
+  process.on('unhandledRejection', (reason) => {
+    console.error('[API] Unhandled rejection (kept alive):', reason);
+  });
+
   // Connect to Postgres
   await getDb();
 
@@ -29,8 +40,11 @@ async function main(): Promise<void> {
 
   // ── Express REST server & Mini App static assets ─────────────────────────
   const app = express();
+  // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
+  // for the rate limiter to key on real client IPs.
+  app.set('trust proxy', 1);
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '64kb' }));
   app.use('/api', apiRouter);
 
   const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');

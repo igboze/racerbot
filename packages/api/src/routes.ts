@@ -19,7 +19,7 @@ import {
   withdrawFunds,
   type TokenInfoResult,
 } from './wallet.js';
-import { computePnL, fuzzyMatch, decrypt } from '@racerbot/shared';
+import { computePnL, fuzzyMatch, decrypt, tokenLinks } from '@racerbot/shared';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY } from './config.js';
 
@@ -170,6 +170,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
   const safeName = sanitizeMd(tokenInfo.name || 'Token');
 
+  // ── Deep links: DexScreener chart, NearBlocks explorer, venue launchpad ──
+  const linkRows = (() => {
+    const links = tokenLinks(tokenInfo.venue, tokenInfo.address);
+    const rows: any[] = [];
+    if (links.length > 0) rows.push(links.slice(0, 2).map(l => Markup.button.url(l.label, l.url)));
+    if (links.length > 2) rows.push(links.slice(2).map(l => Markup.button.url(l.label, l.url)));
+    return rows;
+  })();
+
   // -- Price formatting (NEAR + USD) --
   const priceNum = parseFloat(tokenInfo.price || '0');
   let priceNearStr = '0.00';
@@ -274,6 +283,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
         Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
       ],
+      ...linkRows,
       [
         Markup.button.callback('⚙️ Settings', 'menu_settings'),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),
@@ -286,6 +296,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
       : '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
     text += venueNote;
     keyboard = Markup.inlineKeyboard([
+      ...linkRows,
       [
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),

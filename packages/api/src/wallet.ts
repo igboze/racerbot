@@ -262,28 +262,51 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       // Not a live Shardsmarket pool (presale phase or not found)
     }
   } else {
-    // 1. Try NearlyTrade first for non-shardsmarket tokens
-    const [ntRes] = await Promise.allSettled([
+    // Venue probing: the two CHEAP probes run in parallel (NearlyTrade is a
+    // single call; Rhea is 5 parallel get_pools batches with caching). The
+    // expensive Intear full-pool scan (~275 RPC calls) only runs when both
+    // miss. Previously every unknown token crawled through the Intear scan
+    // SEQUENTIALLY before Rhea was even attempted — the slowest possible
+    // order.
+    const [ntRes, rheaRes] = await Promise.allSettled([
+      // 1. NearlyTrade — single get_launch_by_token call
       near.getNearlytradeTokenState(tokenAddress),
+      // 2. Rhea — pool lookup (cached after first hit)
+      (async () => {
+        const poolId =
+          rheaPoolId !== null
+            ? rheaPoolId
+            : await near.findRheaPoolId('wrap.near', tokenAddress);
+        const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+        const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
+        const reserveOut = parseFloat(rh.reserveOut); // token base units
+        if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
+        return { poolId, reserveIn, reserveOut };
+      })(),
     ]);
 
-    if (ntRes.status === 'fulfilled') {
+    // Precedence: NearlyTrade > Rhea > Intear
+    if (ntRes.status === 'fulfilled' && ntRes.value) {
       const ntState = ntRes.value;
-      if (ntState) {
-        venue = 'nearlytrade';
-        price = ntState.price;
-        liquidity = ntState.liquidityNear;
-        bondingPhase = ntState.phase;
-        bondingProgressPct = ntState.bondingProgressPct;
-        dclPoolId = ntState.dclPoolId;
-        if (ntState.totalSupply && ntState.totalSupply !== '0') {
-          totalSupply = ntState.totalSupply;
-        }
+      venue = 'nearlytrade';
+      price = ntState.price;
+      liquidity = ntState.liquidityNear;
+      bondingPhase = ntState.phase;
+      bondingProgressPct = ntState.bondingProgressPct;
+      dclPoolId = ntState.dclPoolId;
+      if (ntState.totalSupply && ntState.totalSupply !== '0') {
+        totalSupply = ntState.totalSupply;
       }
-    }
-
-    // 2. Try Intear DEX if not found yet
-    if (venue === 'unknown') {
+    } else if (rheaRes.status === 'fulfilled') {
+      const { poolId, reserveIn, reserveOut } = rheaRes.value;
+      const reserveInHuman = reserveIn / 1e24;
+      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+      price = reserveInHuman / reserveOutHuman;
+      liquidity = reserveInHuman * 2; // both sides of AMM
+      venue = 'rhea';
+      rheaPoolId = poolId;
+    } else {
+      // 3. Intear last resort — full scan, only when cheap probes missed
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
         if (intearState && intearState.price > 0) {
@@ -296,29 +319,6 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
         }
       } catch {
         /* not on Intear */
-      }
-    }
-
-    // 3. Fallback to Rhea Finance only if nothing else matched
-    if (venue === 'unknown') {
-      try {
-        if (rheaPoolId === null) {
-          rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-        }
-        if (rheaPoolId !== null) {
-          const rh = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress);
-          const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
-          const reserveOut = parseFloat(rh.reserveOut); // token base units
-          if (reserveIn > 0 && reserveOut > 0) {
-            const reserveInHuman = reserveIn / 1e24;
-            const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
-            price = reserveInHuman / reserveOutHuman;
-            liquidity = reserveInHuman * 2; // both sides of AMM
-            venue = 'rhea';
-          }
-        }
-      } catch {
-        /* no Rhea pool found */
       }
     }
   }

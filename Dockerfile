@@ -1,3 +1,10 @@
+# Multi-service build: turbo outputs to packages/<svc>/dist (NOT /app/dist),
+# so the previous `COPY --from=builder /app/dist` copied nothing / failed the
+# build, and `node dist/index.js` pointed at a file that never existed.
+#
+# Default CMD is the API service — detector/executor/triggers images should
+# override CMD (see docker/Dockerfile.*).
+
 FROM node:20-alpine AS builder
 WORKDIR /app
 
@@ -30,5 +37,7 @@ ENV PORT=3000
 COPY --from=builder /app ./
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3000/api/health || exit 1
 
 CMD ["node", "packages/api/dist/index.js"]

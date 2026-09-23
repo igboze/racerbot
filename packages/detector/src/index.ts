@@ -8,7 +8,7 @@ import {
   type PriceUpdateEvent,
   type AutoBuySignal,
 } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers } from '@racerbot/db';
+import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionById } from '@racerbot/db';
 
 // ── In-memory caches (primary read path — never query DB in hot loop) ─────────
 
@@ -21,9 +21,21 @@ const tokenNameCache = new Map<string, TokenDetectedEvent>();
 // ── RPC + Redis setup ────────────────────────────────────────────────────────
 
 const REDIS_URL = process.env.REDIS_URL!;
-const RPC_URLS = process.env.RPC_PROVIDERS!.split(',').map(u => u.trim());
+const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
+  .split(',')
+  .map(u => u.trim())
+  .filter(Boolean); // getNear() falls back to DEFAULT_RPC_URLS when empty
+if (RPC_URLS.length === 0) {
+  console.warn('[DETECTOR] RPC_PROVIDERS not set — using built-in default RPCs');
+}
 const POLL_INTERVAL_MS = 1000; // NEAR block time ~1.2s
+const TRIGGER_PRICE_REFRESH_MS = 15_000; // keep stop-loss prices fresh
 const LAST_BLOCK_KEY = 'detector:last_block';
+const MAX_CATCHUP_BLOCKS = 50; // bounded replay after downtime
+
+// Rhea Finance = Ref Finance rebrand; pools live on v2.ref-finance.near
+// (rhea.finance is only the website — watching it alone missed every launch).
+const RHEA_RECEIVERS = new Set(['rhea.finance', 'v2.ref-finance.near']);
 
 const near = getNear(RPC_URLS);
 const redis = createRedis(REDIS_URL);
@@ -33,6 +45,17 @@ const redis = createRedis(REDIS_URL);
 async function main() {
   await getDb();
   near.startHealthChecks(30_000);
+
+  // One stray rejected promise must not kill the block watcher
+  process.on('unhandledRejection', (reason) => {
+    console.error('[DETECTOR] Unhandled rejection (kept alive):', reason);
+  });
+
+  // Stop-loss/take-profit prices must not depend on a swap happening to
+  // occur — refresh every token with an active trigger on a fixed cadence.
+  setInterval(() => {
+    void refreshTriggerTokenPrices();
+  }, TRIGGER_PRICE_REFRESH_MS);
 
   console.log('[DETECTOR] Starting NEAR block watcher...');
   console.log(`[DETECTOR] RPC providers: ${RPC_URLS.length}`);
@@ -49,10 +72,14 @@ async function main() {
           lastBlock = currentHeight;
           await redis.set(LAST_BLOCK_KEY, currentHeight.toString(), 86400).catch(() => {});
         } else if (currentHeight > lastBlock) {
-          // If offline too long, fast-forward to avoid lagging behind
-          if (currentHeight - lastBlock > 20) {
-            console.log(`[DETECTOR] Fast-forwarding from ${lastBlock} to ${currentHeight}`);
-            lastBlock = currentHeight - 1;
+          // After downtime, replay a bounded window instead of skipping the
+          // gap entirely — the old code jumped past every launch that
+          // happened while we were behind by more than ~24s.
+          if (currentHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
+            console.log(
+              `[DETECTOR] Catching up: jumping ${lastBlock} → ${currentHeight - MAX_CATCHUP_BLOCKS} (bounded replay of ${MAX_CATCHUP_BLOCKS} blocks)`
+            );
+            lastBlock = currentHeight - MAX_CATCHUP_BLOCKS;
           }
 
           for (let h = lastBlock + 1; h <= currentHeight; h++) {
@@ -73,18 +100,30 @@ async function main() {
 
 /** Fetch current block height directly from NEAR RPC JSON-RPC */
 async function fetchBlockHeight(): Promise<number> {
-  const response = await fetch(RPC_URLS[Math.floor(Math.random() * RPC_URLS.length)], {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'detector',
-      method: 'block',
-      params: { finality: 'final' },
-    }),
-  });
-  const data = (await response.json()) as any;
-  return data?.result?.header?.height ?? 0;
+  // Try providers in random order with a hard timeout each — a hung RPC
+  // used to stall the entire watcher (no timeout, single random pick).
+  const urls = [...RPC_URLS].sort(() => Math.random() - 0.5);
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'detector',
+          method: 'block',
+          params: { finality: 'final' },
+        }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const data = (await response.json()) as any;
+      const height = data?.result?.header?.height ?? 0;
+      if (height > 0) return height;
+    } catch {
+      // try next provider
+    }
+  }
+  return 0;
 }
 
 /** Process a single NEAR block — parse execution outcomes and events */
@@ -130,9 +169,12 @@ async function processBlock(height: number): Promise<void> {
     const data = (await response.json()) as any;
     const chunks = data?.result?.chunks ?? [];
 
-    for (const chunk of chunks) {
-      await processChunk(rpcUrl, chunk.chunk_hash).catch(() => {});
-    }
+    // Chunks are independent — fetch them in parallel for much faster replay
+    await Promise.all(
+      chunks.map((chunk: any) =>
+        processChunk(rpcUrl, chunk.chunk_hash).catch(() => {})
+      )
+    );
   } catch (err) {
     console.error(`[DETECTOR] Fallback block ${height} error:`, (err as Error).message);
   }
@@ -159,8 +201,10 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
       const receiverId: string = tx?.receiver_id ?? '';
       if (
         receiverId === 'factory.shardsmarket.near' ||
-        receiverId === 'rhea.finance' ||
-        receiverId === 'nearlytrade.near'
+        RHEA_RECEIVERS.has(receiverId) ||
+        receiverId === 'nearlytrade.near' ||
+        receiverId === 'launch.intear.near' ||
+        receiverId === 'meme-cooking.near'
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -177,12 +221,29 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                   await handlePoolCreated(tokenAddress, 'shardsmarket', decoded).catch(() => {});
                 }
               } else if (
-                receiverId === 'rhea.finance' &&
+                RHEA_RECEIVERS.has(receiverId) &&
                 (fn.method_name === 'add_simple_pool' || fn.method_name === 'create_pool' || fn.method_name === 'swap')
               ) {
                 const tokenAddress = decoded?.tokens?.[0] ?? decoded?.tokens?.[1] ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'rhea', decoded).catch(() => {});
+                }
+              } else if (receiverId === 'launch.intear.near') {
+                // Intear launchpad — best-effort field extraction
+                const tokenAddress =
+                  decoded?.token ?? decoded?.token_id ?? decoded?.account_id ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'intear', decoded).catch(() => {});
+                }
+              } else if (receiverId === 'meme-cooking.near' && fn.method_name.includes('create')) {
+                // Meme.Cooking: token account is <meme_id>.meme-cooking.near
+                const memeId = decoded?.meme_id ?? decoded?.id;
+                const tokenAddress =
+                  decoded?.token ??
+                  decoded?.token_id ??
+                  (memeId !== undefined && memeId !== null ? `${memeId}.meme-cooking.near` : '');
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'memecooking', decoded).catch(() => {});
                 }
               } else if (
                 receiverId === 'nearlytrade.near' &&
@@ -222,20 +283,47 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
   const eventName: string = event?.event ?? '';
   const data = Array.isArray(event?.data) ? event.data[0] : event?.data;
 
-  // ── Shardsmarket pool creation ──────────────────────────────────────────
-  if (receiverId === 'factory.shardsmarket.near' && eventName === 'pool_created') {
-    const tokenAddress: string = data?.token_id ?? data?.token_address ?? '';
+  // ── Shardsmarket pool creation (factory or a *.factory.shardsmarket.near
+  //    token contract — each token is its own pool contract) ──────────────────
+  if (receiverId.endsWith('.shardsmarket.near') && eventName === 'pool_created') {
+    const tokenAddress: string = data?.token_id ?? data?.token_address ?? receiverId;
     if (!tokenAddress) return;
 
     await handlePoolCreated(tokenAddress, 'shardsmarket', data);
   }
 
-  // ── Rhea pool / token launch ────────────────────────────────────────────
-  if (receiverId === 'rhea.finance' && (eventName === 'pool_created' || eventName === 'token_launch')) {
+  // ── Rhea pool / token launch (v2.ref-finance.near is the real contract) ──
+  if (RHEA_RECEIVERS.has(receiverId) && (eventName === 'pool_created' || eventName === 'token_launch')) {
     const tokenAddress: string = data?.token_id ?? data?.token_out ?? '';
     if (!tokenAddress) return;
 
     await handlePoolCreated(tokenAddress, 'rhea', data);
+  }
+
+  // ── Intear launchpad ────────────────────────────────────────────────────
+  if (
+    receiverId === 'launch.intear.near' &&
+    (eventName === 'launch' || eventName === 'token_launch' || eventName === 'pool_created')
+  ) {
+    const tokenAddress: string = data?.token ?? data?.token_id ?? data?.account_id ?? '';
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'intear', data);
+    }
+  }
+
+  // ── Meme.Cooking launchpad (info-only venue) ──────────────────────────────
+  if (
+    receiverId === 'meme-cooking.near' &&
+    (eventName === 'meme_created' || eventName === 'token_created' || eventName === 'pool_created')
+  ) {
+    const memeId = data?.meme_id ?? data?.id;
+    const tokenAddress: string =
+      data?.token ??
+      data?.token_id ??
+      (memeId !== undefined && memeId !== null ? `${memeId}.meme-cooking.near` : '');
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'memecooking', data);
+    }
   }
 
   // ── NearlyTrade token creation & bonding transition ─────────────────────
@@ -273,7 +361,7 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking',
   rawData: any
 ): Promise<void> {
   console.log(`[DETECTOR] New pool detected: ${tokenAddress} on ${venue}`);
@@ -319,8 +407,27 @@ async function handlePoolCreated(
     }
   }
 
+  // Creation events frequently carry no usable liquidity/price. Pull the
+  // live pool state instead — auto-buy gating (min liquidity) and the
+  // initial price/market-cap both depended on this and silently saw 0 before.
+  if ((!initialLiquidity || initialLiquidity === '0') || initialPrice <= 0) {
+    try {
+      const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
+      if (spot) {
+        if (!initialLiquidity || initialLiquidity === '0') {
+          initialLiquidity = spot.reserveNearYocto;
+        }
+        if (initialPrice <= 0) {
+          initialPrice = spot.price;
+        }
+      }
+    } catch {
+      // No live pool yet (presale phase) — keep zeros, auto-buy stays gated
+    }
+  }
+
   if (initialPrice <= 0) {
-    initialPrice = computeInitialPrice(initialLiquidity, totalSupply);
+    initialPrice = computeInitialPrice(initialLiquidity, totalSupply, decimals);
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, decimals);
@@ -442,7 +549,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
   let price = 0;
   let liquidity = 0;
 
-  if (venue === 'rhea.finance' || venue.includes('rhea')) {
+  if (venue === 'rhea.finance' || venue.includes('rhea') || venue.includes('ref-finance')) {
     if (rheaPoolId === null || rheaPoolId === undefined) {
       rheaPoolId = await near.findRheaPoolId(data.token_in, data.token_out).catch(() => null);
     }
@@ -504,10 +611,12 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {
+  // Only tradeable venues can be auto-bought
+  if (venue === 'memecooking') return;
   try {
     const db = await getDb();
     const result = await db
@@ -537,11 +646,74 @@ async function checkAutoBuySignals(
   }
 }
 
-function computeInitialPrice(liquidityYocto: string, totalSupply: string): number {
+function computeInitialPrice(liquidityYocto: string, totalSupply: string, decimals = 18): number {
   const liqNear = parseFloat(liquidityYocto) / 1e24;
-  const supply = parseFloat(totalSupply);
-  if (supply <= 0) return 0;
+  // Supply is in RAW base units — must be decimal-adjusted or the price
+  // comes out ~1e18 times too small (and market-cap garbage).
+  const supply = parseFloat(totalSupply) / Math.pow(10, decimals);
+  if (supply <= 0 || liqNear <= 0) return 0;
   return liqNear / supply;
+}
+
+/**
+ * Periodically refresh prices for tokens with ACTIVE triggers directly from
+ * live pool state. Stop-losses must not depend on a swap happening to occur:
+ * if trading goes quiet (or detector price events stall), the trigger engine
+ * would otherwise evaluate against frozen data.
+ */
+async function refreshTriggerTokenPrices(): Promise<void> {
+  try {
+    const triggers = await getActiveTriggers().catch(() => []);
+    if (triggers.length === 0) return;
+
+    const tokenSet = new Set<string>();
+    for (const t of triggers) {
+      const pos = await getPositionById(t.position_id).catch(() => null);
+      if (pos?.token_address && pos.status === 'open') {
+        tokenSet.add(pos.token_address);
+      }
+    }
+    if (tokenSet.size === 0) return;
+
+    await Promise.all(
+      Array.from(tokenSet).map(async (tokenAddress) => {
+        try {
+          const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+          const venue = dbCache?.venue;
+          if (!venue || venue === 'memecooking') return;
+          const decimals = dbCache?.decimals ?? 18;
+          const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
+          if (!spot || !(spot.price > 0)) return;
+
+          const supply = parseFloat(dbCache?.total_supply ?? '0') / Math.pow(10, decimals);
+          const marketCap = supply > 0 ? spot.price * supply : 0;
+          const liquidityNear = (parseFloat(spot.reserveNearYocto) / 1e24) * 2;
+
+          priceCache.set(tokenAddress, {
+            price: spot.price,
+            liquidity: liquidityNear,
+            marketCap,
+            ts: Date.now(),
+          });
+
+          const update: PriceUpdateEvent = {
+            type: 'price_update',
+            token_address: tokenAddress,
+            price: spot.price,
+            liquidity: liquidityNear,
+            market_cap: marketCap,
+            timestamp: Date.now(),
+          };
+          redis.publish(CHANNELS.PRICE_UPDATE, JSON.stringify(update)).catch(() => {});
+          redis.set(`token:price:${tokenAddress}`, JSON.stringify(update), 300).catch(() => {});
+        } catch {
+          // per-token failure must not break the refresh loop
+        }
+      })
+    );
+  } catch (err) {
+    console.error('[DETECTOR] Trigger price refresh error:', (err as Error).message);
+  }
 }
 
 function sleep(ms: number): Promise<void> {

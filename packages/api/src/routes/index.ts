@@ -1,27 +1,33 @@
 import { Router } from 'express';
 import { getTokenInfo, publishSwap } from '../wallet.js';
-import { 
-  getOpenPositions, 
-  getFillsByPosition, 
-  createTrigger, 
-  getUserByTelegramId, 
-  createUser, 
-  updateUserScopedKey 
+import {
+  getOpenPositions,
+  getFillsByPosition,
+  createTrigger,
+  getUserByTelegramId,
+  createUser,
+  updateUserScopedKey,
+  getPositionById,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { computePnL, getNear, encrypt } from '@racerbot/shared';
+import { computePnL, getNear, encrypt, isTradableVenue } from '@racerbot/shared';
 import { KeyPair } from 'near-api-js';
-import { validateTelegramInitData } from '../middleware.js';
-import { 
-  ROUTER_CONTRACT_ID, 
-  RACERBOT_PARENT_ACCOUNT, 
-  MAIN_WALLET_PRIVATE_KEY, 
-  MASTER_KEY 
+import {
+  ensureTelegramInitData,
+  ensureTelegramUser,
+  validateSwapParams,
+  isValidAccountId,
+} from '../middleware.js';
+import {
+  ROUTER_CONTRACT_ID,
+  RACERBOT_PARENT_ACCOUNT,
+  MAIN_WALLET_PRIVATE_KEY,
+  MASTER_KEY
 } from '../config.js';
 
 const router = Router();
 
-// ── Health & Config ───────────────────────────────────────────────────────────
+// ── Health & Config (public — used by Docker HEALTHCHECK / dashboards) ───────
 
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: Date.now() });
@@ -34,23 +40,23 @@ router.get('/config', (_req, res) => {
   });
 });
 
-// ── Non-Custodial Onboarding ──────────────────────────────────────────────────
+// ── Onboarding (Telegram initData proof of identity) ─────────────────────────
 
-router.post('/onboard', async (req, res) => {
+router.post('/onboard', ensureTelegramInitData, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization ?? '';
-    const initData = authHeader.startsWith('tma ') ? authHeader.slice(4) : '';
-    const validation = validateTelegramInitData(initData);
-    
-    const telegramId = validation.userId ?? req.body.telegramId;
-    if (!telegramId) {
-      res.status(401).json({ error: 'Unauthorized: valid Telegram initData required' });
+    // Identity comes ONLY from verified initData — never from req.body
+    const telegramId = (req as any).telegramUserId as number;
+
+    const { publicKey } = req.body;
+    if (typeof publicKey !== 'string' || !/^(ed25519|secp256k1):[A-Za-z0-9+/=_-]+$/.test(publicKey)) {
+      res.status(400).json({ error: 'publicKey required (ed25519:<base58>)' });
       return;
     }
 
-    const { publicKey } = req.body;
-    if (!publicKey) {
-      res.status(400).json({ error: 'publicKey required' });
+    // Fail closed: without the parent key we cannot create the account on-chain,
+    // so never create a DB-only ghost user.
+    if (!MAIN_WALLET_PRIVATE_KEY) {
+      res.status(503).json({ error: 'Onboarding temporarily unavailable (signing key not configured)' });
       return;
     }
 
@@ -64,12 +70,9 @@ router.post('/onboard', async (req, res) => {
     const subaccountId = `${telegramId}.${RACERBOT_PARENT_ACCOUNT}`;
     const near = getNear();
 
-    // Create subaccount on NEAR using parent account full-access key
-    if (MAIN_WALLET_PRIVATE_KEY) {
-      const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
-      await near.addKey(RACERBOT_PARENT_ACCOUNT, parentKeyPair);
-      await near.createSubaccount(RACERBOT_PARENT_ACCOUNT, subaccountId, publicKey, '0.05');
-    }
+    const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+    await near.addKey(RACERBOT_PARENT_ACCOUNT, parentKeyPair);
+    await near.createSubaccount(RACERBOT_PARENT_ACCOUNT, subaccountId, publicKey, '0.05');
 
     // Insert user record in DB only after on-chain creation succeeds
     await createUser({
@@ -85,27 +88,27 @@ router.post('/onboard', async (req, res) => {
   }
 });
 
-router.post('/onboard/scoped-key', async (req, res) => {
+router.post('/onboard/scoped-key', ensureTelegramInitData, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization ?? '';
-    const initData = authHeader.startsWith('tma ') ? authHeader.slice(4) : '';
-    const validation = validateTelegramInitData(initData);
-
-    const telegramId = validation.userId ?? req.body.telegramId;
-    if (!telegramId) {
-      res.status(401).json({ error: 'Unauthorized: valid Telegram initData required' });
-      return;
-    }
+    const telegramId = (req as any).telegramUserId as number;
 
     const { subaccountId, publicKey, secretKey } = req.body;
     if (!subaccountId || !publicKey || !secretKey) {
       res.status(400).json({ error: 'subaccountId, publicKey, secretKey required' });
       return;
     }
+    if (typeof subaccountId !== 'string' || !isValidAccountId(subaccountId)) {
+      res.status(400).json({ error: 'Invalid subaccountId' });
+      return;
+    }
 
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
       res.status(404).json({ error: 'User not found. Complete /onboard first' });
+      return;
+    }
+    if (user.subaccount_id !== subaccountId) {
+      res.status(403).json({ error: 'subaccountId does not match your account' });
       return;
     }
 
@@ -115,7 +118,22 @@ router.post('/onboard/scoped-key', async (req, res) => {
       return;
     }
 
-    // Validate on-chain that this key is a FunctionCall scoped key restricted to ROUTER_CONTRACT_ID
+    // The secret must actually derive the claimed public key — reject junk early
+    let derivedPublicKey: string;
+    try {
+      derivedPublicKey = KeyPair.fromString(secretKey as any).getPublicKey().toString();
+    } catch {
+      res.status(400).json({ error: 'secretKey is not a valid NEAR keypair' });
+      return;
+    }
+    if (derivedPublicKey !== publicKey) {
+      res.status(400).json({ error: 'publicKey does not match secretKey' });
+      return;
+    }
+
+    // Fail closed: verify ON-CHAIN that this key is a FunctionCall key scoped
+    // to ROUTER_CONTRACT_ID. Any RPC/validation failure rejects the request —
+    // previously this only warned and stored the key anyway.
     const near = getNear();
     try {
       const accessKey = await near.viewAccessKey(subaccountId, publicKey);
@@ -129,22 +147,19 @@ router.post('/onboard/scoped-key', async (req, res) => {
         return;
       }
     } catch (err: any) {
-      console.warn('[API] viewAccessKey warning:', err.message);
+      console.error('[API] viewAccessKey failed (rejecting key):', err.message);
+      res.status(502).json({ error: 'Could not verify access key on-chain; try again' });
+      return;
     }
 
     const encryptedKey = encrypt(secretKey, MASTER_KEY);
     await updateUserScopedKey(user.id, encryptedKey);
 
-    // Warm key in executor immediately without restarting if available
-    try {
-      // @ts-ignore
-      const executorMod = await import('@racerbot/executor').catch(() => null);
-      if (executorMod?.addUserKey) {
-        await executorMod.addUserKey(user.id, subaccountId, encryptedKey);
-      }
-    } catch (err: any) {
-      console.warn('[API] Could not warm key in executor directly:', err.message);
-    }
+    // The executor runs as a separate process and loads new scoped keys lazily
+    // from the DB on first swap — no cross-process warm needed. Do NOT import
+    // @racerbot/executor here: importing it used to boot a SECOND executor
+    // inside the API process, double-executing every swap.
+
 
     res.json({ success: true, subaccountId });
   } catch (err: any) {
@@ -153,10 +168,14 @@ router.post('/onboard/scoped-key', async (req, res) => {
   }
 });
 
-// ── Token info ────────────────────────────────────────────────────────────────
+// ── Token info (authenticated read) ──────────────────────────────────────────
 
-router.get('/token/:address', async (req, res) => {
+router.get('/token/:address', ensureTelegramUser, async (req, res) => {
   try {
+    if (!isValidAccountId(req.params.address)) {
+      res.status(400).json({ error: 'Invalid token address' });
+      return;
+    }
     const info = await getTokenInfo(req.params.address);
     res.json(info);
   } catch (err: any) {
@@ -164,68 +183,75 @@ router.get('/token/:address', async (req, res) => {
   }
 });
 
-// ── Swap ──────────────────────────────────────────────────────────────────────
+// ── Swap ─────────────────────────────────────────────────────────────────────
 
-router.post('/swap', async (req, res) => {
-  const { userId, tokenIn, tokenOut, amountIn, minAmountOut, venue } = req.body;
-  if (!userId || !tokenIn || !tokenOut || !amountIn) {
-    res.status(400).json({ error: 'Missing required fields' });
+router.post('/swap', ensureTelegramUser, async (req, res) => {
+  // Identity + ownership are server-side; the body can never impersonate.
+  const userId = (req as any).userId as string;
+  const { tokenIn, tokenOut, amountIn, venue } = req.body;
+
+  const check = validateSwapParams({
+    token_in: tokenIn,
+    token_out: tokenOut,
+    amount_in: amountIn,
+    venue,
+  });
+  if (!check.valid) {
+    res.status(400).json({ error: 'Invalid swap params', details: check.errors });
     return;
   }
-  try {
-    let finalMinOut = minAmountOut;
-    if (!finalMinOut) {
-      const near = (await import('@racerbot/shared')).getNear();
-      const { getUserById, getTokenCache } = await import('@racerbot/db');
-      const user = await getUserById(userId).catch(() => null);
-      const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
-      const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
-      const cached = await getTokenCache(targetToken).catch(() => null);
-      const selectedVenue = venue ?? (cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined);
-      if (!selectedVenue) {
-        res.status(400).json({ error: 'Could not determine venue for token' });
-        return;
-      }
-      const computed = await near.computeMinAmountOut(
-        selectedVenue,
-        tokenIn,
-        tokenOut,
-        amountIn,
-        slippagePct,
-        cached?.rhea_pool_id,
-        cached?.dcl_pool_id ?? undefined
-      );
-      finalMinOut = computed.minAmountOut;
-    }
 
-    const { getTokenCache } = await import('@racerbot/db');
-    const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
-    const cachedRow = await getTokenCache(targetToken).catch(() => null);
-    const resolvedVenue = venue ?? (cachedRow?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined);
-    if (!resolvedVenue) {
-      res.status(400).json({ error: 'Could not determine venue for token' });
+  try {
+    const { getUserById, getTokenCache } = await import('@racerbot/db');
+    const user = await getUserById(userId).catch(() => null);
+    const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+    const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+    const cached = await getTokenCache(targetToken).catch(() => null);
+
+    let selectedVenue = venue ?? cached?.venue;
+    if (!isTradableVenue(selectedVenue)) {
+      res.status(400).json({ error: 'Could not determine a tradeable venue for token' });
       return;
     }
+
+    // min_amount_out is ALWAYS computed server-side from live pool reserves.
+    // Client-supplied min_out was an exploit: anyone could set min_out=1 and
+    // grief any account with zero slippage protection.
+    const near = (await import('@racerbot/shared')).getNear();
+    const { minAmountOut } = await near.computeMinAmountOut(
+      selectedVenue,
+      tokenIn,
+      tokenOut,
+      amountIn,
+      slippagePct,
+      cached?.rhea_pool_id,
+      cached?.dcl_pool_id ?? undefined
+    );
 
     await publishSwap({
       user_id: userId,
       token_in: tokenIn,
       token_out: tokenOut,
       amount_in: amountIn,
-      min_amount_out: finalMinOut,
-      venue: resolvedVenue,
-      dcl_pool_id: cachedRow?.dcl_pool_id ?? undefined,
+      min_amount_out: minAmountOut,
+      venue: selectedVenue,
+      dcl_pool_id: cached?.dcl_pool_id ?? undefined,
     });
-    res.json({ queued: true });
+    res.json({ queued: true, venue: selectedVenue, min_amount_out: minAmountOut });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Positions ─────────────────────────────────────────────────────────────────
+// ── Positions ────────────────────────────────────────────────────────────────
 
-router.get('/positions/:userId', async (req, res) => {
+router.get('/positions/:userId', ensureTelegramUser, async (req, res) => {
   try {
+    if (req.params.userId !== (req as any).userId) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const positions = await getOpenPositions(req.params.userId);
     res.json(positions);
   } catch (err: any) {
@@ -233,27 +259,53 @@ router.get('/positions/:userId', async (req, res) => {
   }
 });
 
-// ── Sell ──────────────────────────────────────────────────────────────────────
+// ── Sell ─────────────────────────────────────────────────────────────────────
 
-router.post('/sell', async (req, res) => {
-  const { userId, positionId, percentage } = req.body;
-  if (!userId || !positionId || !percentage) {
-    res.status(400).json({ error: 'userId, positionId, percentage required' });
+router.post('/sell', ensureTelegramUser, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const { positionId, percentage } = req.body;
+  if (!positionId || !percentage) {
+    res.status(400).json({ error: 'positionId, percentage required' });
     return;
   }
-  const result = await sellAtTarget(userId, positionId, parseFloat(percentage));
-  res.json(result);
-});
-
-// ── Triggers ──────────────────────────────────────────────────────────────────
-
-router.post('/triggers', async (req, res) => {
-  const { userId, positionId, type, targetValue } = req.body;
-  if (!userId || !positionId || !type || !targetValue) {
-    res.status(400).json({ error: 'userId, positionId, type, targetValue required' });
+  const pct = parseFloat(percentage);
+  if (isNaN(pct) || pct <= 0 || pct > 100) {
+    res.status(400).json({ error: 'percentage must be between 0 and 100' });
     return;
   }
   try {
+    // sellAtTarget verifies position.user_id === userId (ownership check)
+    const result = await sellAtTarget(userId, positionId, pct);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Triggers ─────────────────────────────────────────────────────────────────
+
+router.post('/triggers', ensureTelegramUser, async (req, res) => {
+  const userId = (req as any).userId as string;
+  const { positionId, type, targetValue } = req.body;
+  if (!positionId || !type || !targetValue) {
+    res.status(400).json({ error: 'positionId, type, targetValue required' });
+    return;
+  }
+  if (!['stop_loss', 'take_profit', 'market_cap'].includes(type)) {
+    res.status(400).json({ error: 'Invalid trigger type' });
+    return;
+  }
+  if (parseFloat(targetValue) <= 0) {
+    res.status(400).json({ error: 'targetValue must be positive' });
+    return;
+  }
+  try {
+    // Ownership check: you may only trigger sells on your own positions
+    const position = await getPositionById(positionId);
+    if (!position || position.user_id !== userId) {
+      res.status(403).json({ error: 'Forbidden: position not found or not yours' });
+      return;
+    }
     const trigger = await createTrigger({ user_id: userId, position_id: positionId, type, target_value: targetValue });
     res.json(trigger);
   } catch (err: any) {
@@ -261,10 +313,14 @@ router.post('/triggers', async (req, res) => {
   }
 });
 
-// ── PNL ───────────────────────────────────────────────────────────────────────
+// ── PNL ──────────────────────────────────────────────────────────────────────
 
-router.get('/pnl/:userId', async (req, res) => {
+router.get('/pnl/:userId', ensureTelegramUser, async (req, res) => {
   try {
+    if (req.params.userId !== (req as any).userId) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     const db = await (await import('@racerbot/db')).getDb();
     const closedPositions = await db.query(
       'SELECT * FROM positions WHERE user_id = $1 AND status = $2',

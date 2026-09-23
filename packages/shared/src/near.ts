@@ -1,4 +1,4 @@
-import { connect, keyStores, Near, Account, KeyPair, utils } from 'near-api-js';
+import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut } from './utils.js';
 
@@ -172,7 +172,14 @@ export class MultiRpcNear {
         return result as T;
       } catch (err: any) {
         const msg = err?.message || '';
-        const isNetworkErr = msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') || msg.includes('ETIMEDOUT') || msg.includes('50');
+        const isNetworkErr =
+          msg.includes('timeout') ||
+          msg.includes('fetch') ||
+          msg.includes('ECONN') ||
+          msg.includes('ETIMEDOUT') ||
+          msg.includes('EAI_AGAIN') ||
+          /\b50[0-4]\b/.test(msg) ||
+          msg.includes('socket hang up');
         if (isNetworkErr) {
           markProviderError(provider);
         }
@@ -777,7 +784,8 @@ export class MultiRpcNear {
         const start = Date.now();
         try {
           const near = await this.getConnection(provider.url);
-          await near.connection.provider.status();
+          // Timeout guards a hung provider from piling up overlapping checks
+          await withTimeout(near.connection.provider.status(), 5000, `Health check timeout ${provider.url}`);
           markProviderSuccess(provider, Date.now() - start);
         } catch {
           markProviderError(provider);
@@ -785,19 +793,200 @@ export class MultiRpcNear {
       }
     }, intervalMs);
   }
+
+  /**
+   * Current spot price of `tokenAddress` in NEAR plus the NEAR-side reserve,
+   * read from the venue's live pool state. Used for trigger price refreshes
+   * and initial token pricing. Returns null when no live pool is found.
+   */
+  async getVenueSpotPrice(
+    venue: string,
+    tokenAddress: string,
+    decimals: number
+  ): Promise<{ price: number; reserveNearYocto: string } | null> {
+    if (venue === 'rhea') {
+      const poolId = await this.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
+      if (poolId === null) return null;
+      const r = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+      const rIn = parseFloat(r.reserveIn);
+      const rOut = parseFloat(r.reserveOut);
+      if (rIn <= 0 || rOut <= 0) return null;
+      return {
+        reserveNearYocto: r.reserveIn,
+        price: rIn / 1e24 / (rOut / Math.pow(10, decimals)),
+      };
+    }
+    if (venue === 'shardsmarket') {
+      const st = await this.getShardsmarketTokenState(tokenAddress);
+      const rNear = parseFloat(st.poolQuote);
+      const rTok = parseFloat(st.poolToken);
+      if (rNear <= 0 || rTok <= 0) return null;
+      return {
+        reserveNearYocto: st.poolQuote,
+        price: rNear / 1e24 / (rTok / Math.pow(10, decimals)),
+      };
+    }
+    if (venue === 'nearlytrade') {
+      const st = await this.getNearlytradeTokenState(tokenAddress);
+      if (!(st.price > 0)) return null;
+      return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    if (venue === 'intear') {
+      const st = await this.getIntearTokenState(tokenAddress);
+      if (!(st.price > 0)) return null;
+      return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    return null;
+  }
+
+  /**
+   * Build + sign the transaction ONCE, then broadcast the same signed bytes
+   * to ALL healthy RPC providers simultaneously, then poll for the execution
+   * outcome. This is the write path used by the executor — a single slow or
+   * dead RPC can no longer delay or drop a trade.
+   *
+   * Returns a FinalExecutionOutcome-shaped object:
+   *   { status, transaction: { hash }, transaction_outcome, receipts_outcome }
+   */
+  async signAndSendTransactionAll(
+    accountId: string,
+    receiverId: string,
+    actions: any[],
+    waitForMs = 15_000
+  ): Promise<any> {
+    const account = await this.getAccount(accountId);
+    // signTransaction is protected on Account — sign via the same code path
+    // near-api-js uses internally (returns [txHash, signedTx]).
+    const signOnce = async (): Promise<{ hash: string; signedB64: string }> => {
+      const [txHash, signedTx] = await withTimeout<any[]>(
+        (account as any).signTransaction(receiverId, actions),
+        8_000,
+        `Signing timed out for ${accountId}`
+      );
+      return {
+        hash: utils.serialize.base_encode(txHash as Uint8Array),
+        signedB64: Buffer.from(transactions.encodeTransaction(signedTx)).toString('base64'),
+      };
+    };
+
+    let signed = await signOnce();
+    let results = await this.broadcastSignedToAll(signed.signedB64);
+
+    // All providers rejected the nonce → the cached access-key nonce is stale.
+    // Clear it, re-sign with a fresh nonce and rebroadcast exactly once.
+    const allNonceErrors = results.every(
+      (r) => r.status === 'rejected' && /nonce/i.test((r.reason as Error)?.message ?? '')
+    );
+    if (allNonceErrors && results.length > 0) {
+      (account as any).accessKeyByPublicKeyCache = {};
+      signed = await signOnce();
+      results = await this.broadcastSignedToAll(signed.signedB64);
+    }
+
+    if (!results.some((r) => r.status === 'fulfilled')) {
+      const errors = results
+        .map((r) => (r.status === 'rejected' ? (r.reason as Error).message : ''))
+        .filter(Boolean)
+        .join('; ');
+      throw new Error(`All NEAR RPC broadcast failed: ${errors}`);
+    }
+
+    return this.awaitOutcome(signed.hash, accountId, waitForMs);
+  }
+
+  /** Broadcast identical signed bytes to every healthy provider in parallel. */
+  private async broadcastSignedToAll(
+    signedB64: string
+  ): Promise<PromiseSettledResult<string>[]> {
+    const healthy = this.providers.filter((p) => p.healthy);
+    const targets = healthy.length > 0 ? healthy : this.providers;
+    if (targets.length === 0) throw new Error('No NEAR RPC providers configured');
+
+    return Promise.allSettled(
+      targets.map(async (provider) => {
+        const start = Date.now();
+        try {
+          const res = await fetch(provider.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'racerbot-broadcast',
+              method: 'broadcast_tx_async',
+              params: [signedB64],
+            }),
+            signal: AbortSignal.timeout(5000),
+          });
+          const data: any = await res.json();
+          if (data?.error) {
+            throw new Error(data.error.message || JSON.stringify(data.error));
+          }
+          markProviderSuccess(provider, Date.now() - start);
+          return data?.result as string;
+        } catch (err) {
+          markProviderError(provider);
+          throw err;
+        }
+      })
+    );
+  }
+
+  /** Poll every healthy provider until the transaction outcome is available. */
+  private async awaitOutcome(txHash: string, accountId: string, maxMs: number): Promise<any> {
+    const deadline = Date.now() + maxMs;
+    let lastErr: Error | null = null;
+
+    while (Date.now() < deadline) {
+      const healthy = this.providers.filter((p) => p.healthy);
+      const candidates = healthy.length > 0 ? healthy : this.providers;
+      for (const provider of candidates) {
+        try {
+          const near = await this.getConnection(provider.url);
+          const outcome = await withTimeout(
+            near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC'),
+            4000,
+            `txStatus timeout on ${provider.url}`
+          );
+          if (outcome && outcome.status !== undefined && outcome.status !== null) {
+            markProviderSuccess(provider, 0);
+            return outcome;
+          }
+        } catch (err) {
+          lastErr = err as Error;
+          // NOT_FOUND / "not yet executed" — keep polling other providers
+        }
+      }
+      await sleep(250);
+    }
+    throw new Error(
+      `Transaction ${txHash} not confirmed within ${maxMs}ms${lastErr ? `: ${lastErr.message}` : ''}`
+    );
+  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service. */
+export const DEFAULT_RPC_URLS = [
+  'https://rpc.mainnet.fastnear.com',
+  'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.near.org',
+];
+
 /** Singleton factory — call once per process, reuse the connection pool */
 let _nearInstance: MultiRpcNear | null = null;
 
 export function getNear(rpcUrls?: string[]): MultiRpcNear {
   if (!_nearInstance) {
-    const urls = rpcUrls ?? process.env.RPC_PROVIDERS!.split(',').map(u => u.trim());
-    _nearInstance = new MultiRpcNear(urls);
+    const urls =
+      rpcUrls ??
+      (process.env.RPC_PROVIDERS ?? '')
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean);
+    _nearInstance = new MultiRpcNear(urls.length > 0 ? urls : DEFAULT_RPC_URLS);
   }
   return _nearInstance;
 }

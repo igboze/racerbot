@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, type PriceUpdateEvent, type SwapEvent } from '@racerbot/shared';
-import { getDb, getActiveTriggers, getPositionById, markTriggerFired, updatePosition } from '@racerbot/db';
+import { createRedis, CHANNELS, isTradableVenue, type PriceUpdateEvent, type SwapEvent } from '@racerbot/shared';
+import { getDb, getActiveTriggers, getPositionById, getTokenCache, markTriggerFired, updatePosition } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
 const redis = createRedis(REDIS_URL);
@@ -8,6 +8,39 @@ const redis = createRedis(REDIS_URL);
 // ── In-memory price cache — warmed by detector price updates ──────────────────
 // This is the ONLY price read path in the hot trigger loop (no RPC, no DB).
 const localPriceCache = new Map<string, { price: number; marketCap: number; ts: number }>();
+
+/**
+ * Max age of cached price data before we force an RPC refresh. The detector
+ * pushes a price refresh for every triggered token every ~15s; if it stops
+ * (crash/RPC outage), acting on stale prices would silently skip stop-losses.
+ */
+const PRICE_STALENESS_MS = 60_000;
+
+/**
+ * Fallback price refresh straight from the venue's live pool state.
+ * Returns true and updates localPriceCache on success.
+ */
+async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
+  try {
+    const near = (await import('@racerbot/shared')).getNear();
+    const cache = await getTokenCache(tokenAddress);
+    const venue = cache?.venue;
+    if (!venue || venue === 'memecooking') return false;
+    const decimals = cache?.decimals ?? 18;
+    const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
+    if (!spot || !(spot.price > 0)) return false;
+    const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
+    const marketCap = supply > 0 ? spot.price * supply : 0;
+    localPriceCache.set(tokenAddress, {
+      price: spot.price,
+      marketCap,
+      ts: Date.now(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export class TriggerEngine {
 
@@ -32,8 +65,25 @@ export class TriggerEngine {
     const position = await getPositionById(trigger.position_id);
     if (!position || position.status === 'closed') return;
 
-    const cached = localPriceCache.get(position.token_address);
-    if (!cached) return; // No price data yet — skip, do not fire
+    let cached = localPriceCache.get(position.token_address);
+
+    // Staleness guard: never evaluate a stop-loss against old data.
+    if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
+      const refreshed = await refreshTokenPrice(position.token_address);
+      cached = localPriceCache.get(position.token_address);
+      if (!cached) {
+        console.warn(
+          `[TRIGGERS] No price data for ${position.token_address} — trigger ${trigger.id} held active`
+        );
+        return; // Keep the trigger active; retry next poll
+      }
+      if (!refreshed && Date.now() - cached.ts > PRICE_STALENESS_MS) {
+        console.warn(
+          `[TRIGGERS] Price data stale for ${position.token_address} — trigger ${trigger.id} held active`
+        );
+        return;
+      }
+    }
 
     const currentPrice = cached.price;
     const currentMarketCap = cached.marketCap;
@@ -66,8 +116,11 @@ export class TriggerEngine {
   }
 
   private async fireTrigger(trigger: any, position: any, currentPrice: number): Promise<void> {
-    // Atomically mark trigger as fired (prevents double-fire on next poll)
-    await markTriggerFired(trigger.id);
+    // Order matters: resolve venue + min_out FIRST, publish SECOND, mark fired
+    // LAST. Previously the trigger was marked fired before the sell was
+    // published — if venue lookup or slippage math threw, the stop-loss was
+    // consumed WITHOUT ever selling (user stuck in a losing position).
+    // Any failure before publish now leaves the trigger active for retry.
 
     // Determine sell side — determine venue from token cache
     const db = await getDb();
@@ -76,11 +129,15 @@ export class TriggerEngine {
       [position.token_address]
     ).then(r => r.rows[0]).catch(() => null);
 
-    const venue = tokenRow?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-    if (!venue) {
-      console.warn(`[TRIGGER] Unknown venue for token ${position.token_address}, skipping trigger execution`);
+    const venueRaw = tokenRow?.venue as string | undefined;
+    if (!isTradableVenue(venueRaw)) {
+      // Do NOT mark fired — keep it active so it retries once venue is known
+      console.warn(
+        `[TRIGGER] Unknown/non-tradeable venue '${venueRaw}' for token ${position.token_address}, holding trigger ${trigger.id}`
+      );
       return;
     }
+    const venue = venueRaw;
 
     // Stop-loss default slippage tolerance of 5% to prioritize exit execution; take-profit uses 2%
     const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
@@ -109,6 +166,9 @@ export class TriggerEngine {
     } as any;
 
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+
+    // Only consume the trigger once the sell order is actually in flight
+    await markTriggerFired(trigger.id);
 
     // Notify user via Redis → API
     await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
