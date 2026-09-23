@@ -1,21 +1,123 @@
-import { Pool, QueryResult } from 'pg';
-import { getDb as getSharedDb } from '@racerbot/shared';
-import { DatabaseConfig, UserRecord, PositionRecord, FillRecord, TriggerRecord, TokenCacheRecord, CreateUserParams, CreatePositionParams, CreateFillParams, CreateTriggerParams, UpdatePositionParams } from '@racerbot/shared';
+import { Pool } from 'pg';
+import { randomUUID } from 'crypto';
+
+// ── Local type definitions (not imported from shared — avoids circular deps) ──
+
+export interface UserRecord {
+  id: string;
+  telegram_id: number;
+  subaccount_id: string;
+  scoped_key_encrypted: string;
+  default_buy_pct: number | null;
+  default_sell_pct: number | null;
+  fee_tier: string;
+  auto_buy_enabled: boolean;
+  auto_buy_amount_near: number;
+  auto_buy_min_liquidity_near: number;
+  created_at: Date;
+}
+
+export interface PositionRecord {
+  id: string;
+  user_id: string;
+  token_address: string;
+  quantity_held: string;
+  avg_entry_price: string;
+  status: string;
+  opened_at: Date;
+  closed_at: Date | null;
+}
+
+export interface FillRecord {
+  id: string;
+  user_id: string;
+  position_id: string;
+  side: string;
+  token_address: string;
+  amount: string;
+  price: string;
+  fee_paid: string;
+  venue: string;
+  tx_hash: string;
+  created_at: Date;
+}
+
+export interface TriggerRecord {
+  id: string;
+  user_id: string;
+  position_id: string;
+  type: string;
+  target_value: string;
+  status: string;
+  created_at: Date;
+}
+
+export interface TokenCacheRecord {
+  token_address: string;
+  name: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  pool_address: string | null;
+  venue: string | null;
+  last_price: number | null;
+  last_liquidity: number | null;
+  updated_at: Date | null;
+}
+
+export interface CreateUserParams {
+  telegram_id: number;
+  subaccount_id: string;
+  scoped_key_encrypted: string;
+  default_buy_pct?: number;
+  default_sell_pct?: number;
+}
+
+export interface CreatePositionParams {
+  user_id: string;
+  token_address: string;
+  quantity_held: string;
+  avg_entry_price: string;
+}
+
+export interface CreateFillParams {
+  user_id: string;
+  position_id: string;
+  side: string;
+  token_address: string;
+  amount: string;
+  price: string;
+  fee_paid: string;
+  venue: string;
+  tx_hash: string;
+}
+
+export interface CreateTriggerParams {
+  user_id: string;
+  position_id: string;
+  type: string;
+  target_value: string;
+}
+
+export interface UpdatePositionParams {
+  position_id: string;
+  quantity_held?: string;
+  avg_entry_price?: string;
+  status?: string;
+  closed_at?: Date;
+}
 
 let pool: Pool | null = null;
 
 export async function getDb(): Promise<Pool> {
   if (pool) return pool;
 
-  const config: DatabaseConfig = {
-    url: process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot',
-    poolMin: parseInt(process.env.POOL_MIN || '5'),
-    poolMax: parseInt(process.env.POOL_MAX || '20'),
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot',
+    min: parseInt(process.env.POOL_MIN || '5'),
+    max: parseInt(process.env.POOL_MAX || '20'),
     idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
     connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
-  };
-
-  pool = new Pool(config);
+  });
   pool.on('error', (err) => console.error('[DB] Connection pool error:', err));
   pool.on('connect', () => console.log('[DB] Connected to Postgres'));
 
@@ -36,7 +138,7 @@ export async function disconnectDb(): Promise<void> {
 
 export async function createUser(params: CreateUserParams): Promise<UserRecord> {
   const db = await getDb();
-  const id = params.telegram_id.toString();
+  const id = randomUUID();
   const result = await db.query(
     `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, default_buy_pct, default_sell_pct, fee_tier)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -196,7 +298,19 @@ export async function recordFee(fillId: string, amount: string): Promise<void> {
 }
 
 function rowToUser(row: any): UserRecord {
-  return { id: row.id, telegram_id: row.telegram_id, subaccount_id: row.subaccount_id, scoped_key_encrypted: row.scoped_key_encrypted, default_buy_pct: row.default_buy_pct, default_sell_pct: row.default_sell_pct, fee_tier: row.fee_tier, created_at: row.created_at };
+  return {
+    id: row.id,
+    telegram_id: Number(row.telegram_id),
+    subaccount_id: row.subaccount_id,
+    scoped_key_encrypted: row.scoped_key_encrypted,
+    default_buy_pct: row.default_buy_pct != null ? parseFloat(row.default_buy_pct) : null,
+    default_sell_pct: row.default_sell_pct != null ? parseFloat(row.default_sell_pct) : null,
+    fee_tier: row.fee_tier,
+    auto_buy_enabled: Boolean(row.auto_buy_enabled),
+    auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
+    auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 500,
+    created_at: row.created_at,
+  };
 }
 
 function rowToPosition(row: any): PositionRecord {
@@ -216,7 +330,5 @@ function rowToTokenCache(row: any): TokenCacheRecord {
 }
 
 function generateId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return randomUUID();
 }

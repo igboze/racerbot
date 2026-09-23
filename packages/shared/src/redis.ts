@@ -1,23 +1,9 @@
-export interface RedisClient {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  publish: (channel: string, message: string) => Promise<number>;
-  subscribe: (channel: string, handler: (message: string) => void) => Promise<void>;
-  get: (key: string) => Promise<string | null>;
-  set: (key: string, value: string, ttlSeconds?: number) => Promise<void>;
-  del: (key: string) => Promise<void>;
-  hget: (key: string, field: string) => Promise<string | null>;
-  hset: (key: string, fields: Record<string, string>) => Promise<void>;
-  hgetall: (key: string) => Promise<Record<string, string>>;
-  sadd: (key: string, ...members: string[]) => Promise<number>;
-  smembers: (key: string) => Promise<string[]>;
-}
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const Redis = require('ioredis') as typeof import('ioredis').default;
 
-export interface MessageBus {
-  publish: (channel: string, message: object) => Promise<void>;
-  subscribe: (channel: string, handler: (message: object) => void) => Promise<void>;
-}
-
+// ── Public event channel names ────────────────────────────────────────────────
 export const CHANNELS = {
   NEW_TOKENS: 'new-tokens',
   POOL_CREATED: 'pool-created',
@@ -26,7 +12,11 @@ export const CHANNELS = {
   EXECUTE_SWAP: 'execute-swap',
   TOKEN_LOOKUP: 'token-lookup',
   AUTO_BUY_SIGNAL: 'auto-buy-signal',
+  PRICE_UPDATE: 'price-update',
+  NOTIFY_USER: 'notify-user',
 } as const;
+
+// ── Event interfaces ──────────────────────────────────────────────────────────
 
 export interface TokenDetectedEvent {
   type: 'token_detected';
@@ -69,4 +59,128 @@ export interface SwapEvent {
   min_amount_out: string;
   venue: 'rhea' | 'shardsmarket';
   timestamp: number;
+}
+
+export interface AutoBuySignal {
+  type: 'auto_buy_signal';
+  user_id: string;
+  token_address: string;
+  amount_near: string;
+  venue: 'rhea' | 'shardsmarket';
+  timestamp: number;
+}
+
+export interface PriceUpdateEvent {
+  type: 'price_update';
+  token_address: string;
+  price: number;
+  liquidity: number;
+  market_cap: number;
+  timestamp: number;
+}
+
+export interface NotifyUserEvent {
+  type: 'notify_user';
+  telegram_id: number;
+  event: 'rug_check_failed' | 'trigger_fired' | 'allowance_low' | 'pnl_card' | 'token_not_found' | 'auto_buy_skipped';
+  data?: Record<string, unknown>;
+}
+
+// ── Redis client abstraction ──────────────────────────────────────────────────
+
+export interface RedisClient {
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(channel: string, handler: (message: string) => void): Promise<void>;
+  unsubscribe(channel?: string): Promise<void>;
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+  del(key: string): Promise<void>;
+  hget(key: string, field: string): Promise<string | null>;
+  hset(key: string, fields: Record<string, string>): Promise<void>;
+  hgetall(key: string): Promise<Record<string, string>>;
+  sadd(key: string, ...members: string[]): Promise<number>;
+  smembers(key: string): Promise<string[]>;
+  disconnect(): Promise<void>;
+}
+
+/**
+ * Create a Redis client backed by ioredis.
+ * Separate pub and sub connections are required by Redis protocol —
+ * a subscribed connection cannot issue regular commands.
+ */
+export function createRedis(url: string): RedisClient {
+  const pub = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
+  const sub = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
+
+  const handlers = new Map<string, (msg: string) => void>();
+
+  sub.on('message', (channel: string, message: string) => {
+    const handler = handlers.get(channel);
+    if (handler) handler(message);
+  });
+
+  pub.on('error', (err: Error) => console.error('[REDIS] pub error:', err.message));
+  sub.on('error', (err: Error) => console.error('[REDIS] sub error:', err.message));
+
+  return {
+    async publish(channel, message) {
+      return pub.publish(channel, message);
+    },
+
+    async subscribe(channel, handler) {
+      handlers.set(channel, handler);
+      await sub.subscribe(channel);
+    },
+
+    async unsubscribe(channel?) {
+      if (channel) {
+        handlers.delete(channel);
+        await sub.unsubscribe(channel);
+      } else {
+        handlers.clear();
+        await sub.unsubscribe();
+      }
+    },
+
+    async get(key) {
+      return pub.get(key);
+    },
+
+    async set(key, value, ttlSeconds?) {
+      if (ttlSeconds) {
+        await pub.set(key, value, 'EX', ttlSeconds);
+      } else {
+        await pub.set(key, value);
+      }
+    },
+
+    async del(key) {
+      await pub.del(key);
+    },
+
+    async hget(key, field) {
+      return pub.hget(key, field);
+    },
+
+    async hset(key, fields) {
+      await pub.hset(key, fields);
+    },
+
+    async hgetall(key) {
+      return pub.hgetall(key) as Promise<Record<string, string>>;
+    },
+
+    async sadd(key, ...members) {
+      return pub.sadd(key, ...members);
+    },
+
+    async smembers(key) {
+      return pub.smembers(key);
+    },
+
+    async disconnect() {
+      await pub.quit();
+      await sub.quit();
+    },
+  };
 }

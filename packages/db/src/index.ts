@@ -1,2 +1,38 @@
-// Placeholder - db.ts handles all database types and connections
-export * from './db.js';
+// Re-export everything from db.ts
+export {
+  getDb,
+  connectDb,
+  disconnectDb,
+  createUser,
+  getUserByTelegramId,
+  getUserById,
+  getUserBySubaccount,
+  updateUserScopedKey,
+  updateUserDefaults,
+  createPosition,
+  getOpenPositions,
+  getPositionById,
+  updatePosition,
+  createFill,
+  getFillsByPosition,
+  createTrigger,
+  getActiveTriggers,
+  getTriggersByPosition,
+  markTriggerFired,
+  getTokenCache,
+  upsertTokenCache,
+  recordFee,
+} from './db.js';
+
+export type {
+  UserRecord,
+  PositionRecord,
+  FillRecord,
+  TriggerRecord,
+  TokenCacheRecord,
+  CreateUserParams,
+  CreatePositionParams,
+  CreateFillParams,
+  CreateTriggerParams,
+  UpdatePositionParams,
+} from './db.js';

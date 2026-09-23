@@ -1,1 +1,25 @@
-{"name": "@racerbot/db", "version": "1.0.0", "main": "./dist/index.js", "types": "./dist/index.d.ts", "scripts": {"build": "tsc", "migrate": "drizzle-kit migrate:dev", "push": "drizzle-kit push", "studio": "drizzle-kit studio"}, "dependencies": {"drizzle-orm": "^0.30.0", "drizzle-kit": "^0.20.0", "pg": "^8.11.0", "dotenv": "^16.4.0"}}
+{
+  "name": "@racerbot/db",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "migrate": "psql $DATABASE_URL -f migrations/001_init.sql && psql $DATABASE_URL -f migrations/002_auto_buy.sql"
+  },
+  "dependencies": {
+    "pg": "^8.11.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  }
+}

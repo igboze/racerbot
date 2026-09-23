@@ -1,1 +1,25 @@
-{"name":"racerbot","private":true,"workspaces":["packages/*"],"scripts":{"build":"turbo run build","dev:api":"turbo run dev --filter=racerbot-api","dev:detector":"turbo run dev --filter=racerbot-detector","dev:executor":"turbo run dev --filter=racerbot-executor","dev:triggers":"turbo run dev --filter=racerbot-triggers","db:init":"drizzle-kit migrate:dev","lint":"eslint . --ext .ts","typecheck":"tsc --build","format":"prettier --write ."},"devDependencies":{"turbo":"^2.0.0","typescript":"^5.4.0","prettier":"^3.2.0","eslint":"^8.57.0","@typescript-eslint/eslint-plugin":"^7.0.0","@typescript-eslint/parser":"^7.0.0"}}
+{
+  "name": "racerbot",
+  "private": true,
+  "packageManager": "npm@10.0.0",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "turbo run build",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "build:db": "npm run build --workspace=packages/db",
+    "build:all": "npm run build:shared && npm run build:db && turbo run build",
+    "dev:api": "turbo run dev --filter=@racerbot/api",
+    "dev:detector": "turbo run dev --filter=@racerbot/detector",
+    "dev:executor": "turbo run dev --filter=@racerbot/executor",
+    "dev:triggers": "turbo run dev --filter=@racerbot/triggers",
+    "typecheck": "turbo run build",
+    "format": "prettier --write .",
+    "migrate": "npm run migrate --workspace=packages/db"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "prettier": "^3.2.0",
+    "@types/node": "^20.0.0"
+  }
+}

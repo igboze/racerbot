@@ -6,6 +6,8 @@ dist/
 *.log
 .cache/
 .turbo/
+.cargo-target/
+target/
+*.tsbuildinfo
 coverage/
 docs/
-.git/

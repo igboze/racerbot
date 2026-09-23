@@ -91,15 +91,17 @@ BEGIN
     SELECT * INTO v_position FROM positions WHERE id = p_position_id AND status = 'open';
 
     IF NOT FOUND THEN
-        INSERT INTO positions (id, user_id, token_address, quantity_held, avg_entry_price, status, opened_at)
-        VALUES (p_position_id, (SELECT user_id FROM fills WHERE id = p_position_id LIMIT 1), p_position_id, p_amount, p_price, 'open', NOW());
         RETURN;
     END IF;
 
     IF p_side = 'buy' THEN
-        v_total_cost := v_position.avg_entry_price * v_position.quantity_held + (p_price + p_fee) * p_amount;
+        v_total_cost := (v_position.avg_entry_price * v_position.quantity_held) + (p_price * p_amount) + p_fee;
         v_new_qty := v_position.quantity_held + p_amount;
-        v_new_avg := v_total_cost / v_new_qty;
+        IF v_new_qty > 0 THEN
+            v_new_avg := v_total_cost / v_new_qty;
+        ELSE
+            v_new_avg := p_price;
+        END IF;
 
         UPDATE positions SET
             quantity_held = v_new_qty,
@@ -107,7 +109,6 @@ BEGIN
         WHERE id = p_position_id;
 
     ELSIF p_side = 'sell' THEN
-        v_realized := (p_price - v_position.avg_entry_price) * p_amount - p_fee * p_amount;
         v_new_qty := v_position.quantity_held - p_amount;
 
         IF v_new_qty <= 0 THEN
