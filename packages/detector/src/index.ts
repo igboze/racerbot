@@ -1,6 +1,14 @@
 import 'dotenv/config';
-import { getNear, createRedis, CHANNELS, type TokenDetectedEvent, type PoolCreatedEvent, type PriceUpdateEvent, type AutoBuySignal } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getActiveTriggers } from '@racerbot/db';
+import {
+  getNear,
+  createRedis,
+  CHANNELS,
+  type TokenDetectedEvent,
+  type PoolCreatedEvent,
+  type PriceUpdateEvent,
+  type AutoBuySignal,
+} from '@racerbot/shared';
+import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers } from '@racerbot/db';
 
 // ── In-memory caches (primary read path — never query DB in hot loop) ─────────
 
@@ -75,7 +83,7 @@ async function fetchBlockHeight(): Promise<number> {
       params: { finality: 'final' },
     }),
   });
-  const data = await response.json() as any;
+  const data = (await response.json()) as any;
   return data?.result?.header?.height ?? 0;
 }
 
@@ -87,7 +95,7 @@ async function processBlock(height: number): Promise<void> {
       signal: AbortSignal.timeout(3000),
     });
     if (neardataRes.ok) {
-      const blockData = await neardataRes.json() as any;
+      const blockData = (await neardataRes.json()) as any;
       const shards = blockData?.shards ?? [];
       for (const shard of shards) {
         const outcomes = shard?.receipt_execution_outcomes ?? [];
@@ -119,7 +127,7 @@ async function processBlock(height: number): Promise<void> {
       }),
     });
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
     const chunks = data?.result?.chunks ?? [];
 
     for (const chunk of chunks) {
@@ -130,7 +138,7 @@ async function processBlock(height: number): Promise<void> {
   }
 }
 
-/** Process chunk function calls — look for Shardsmarket and Rhea pool creation transactions */
+/** Process chunk function calls — look for Shardsmarket, Rhea, and NearlyTrade creation transactions */
 async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
   try {
     const response = await fetch(rpcUrl, {
@@ -144,27 +152,45 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
       }),
     });
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
     const txs = data?.result?.transactions ?? [];
 
     for (const tx of txs) {
       const receiverId: string = tx?.receiver_id ?? '';
-      if (receiverId === 'factory.shardsmarket.near' || receiverId === 'rhea.finance') {
+      if (
+        receiverId === 'factory.shardsmarket.near' ||
+        receiverId === 'rhea.finance' ||
+        receiverId === 'nearlytrade.near'
+      ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
           const fn = action?.FunctionCall;
           if (fn && fn.method_name && fn.args) {
             try {
               const decoded = JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8'));
-              if (receiverId === 'factory.shardsmarket.near' && (fn.method_name === 'create_token' || fn.method_name === 'create_pool' || fn.method_name === 'buy')) {
+              if (
+                receiverId === 'factory.shardsmarket.near' &&
+                (fn.method_name === 'create_token' || fn.method_name === 'create_pool' || fn.method_name === 'buy')
+              ) {
                 const tokenAddress = decoded?.token_id ?? decoded?.token_address ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'shardsmarket', decoded).catch(() => {});
                 }
-              } else if (receiverId === 'rhea.finance' && (fn.method_name === 'add_simple_pool' || fn.method_name === 'create_pool' || fn.method_name === 'swap')) {
+              } else if (
+                receiverId === 'rhea.finance' &&
+                (fn.method_name === 'add_simple_pool' || fn.method_name === 'create_pool' || fn.method_name === 'swap')
+              ) {
                 const tokenAddress = decoded?.tokens?.[0] ?? decoded?.tokens?.[1] ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'rhea', decoded).catch(() => {});
+                }
+              } else if (
+                receiverId === 'nearlytrade.near' &&
+                (fn.method_name === 'launch' || fn.method_name === 'buy' || fn.method_name === 'sell')
+              ) {
+                const tokenAddress = decoded?.token ?? decoded?.token_id ?? decoded?.token_address ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'nearlytrade', decoded).catch(() => {});
                 }
               }
             } catch {
@@ -212,8 +238,34 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
     await handlePoolCreated(tokenAddress, 'rhea', data);
   }
 
+  // ── NearlyTrade token creation & bonding transition ─────────────────────
+  if (
+    receiverId === 'nearlytrade.near' &&
+    (eventName === 'launch' || eventName === 'launch_started' || eventName === 'bonded')
+  ) {
+    const tokenAddress: string = data?.token ?? data?.token_id ?? '';
+    if (!tokenAddress) return;
+
+    // Handle bonding transition directly if step is Done or event is bonded
+    if (eventName === 'bonded' || data?.step === 'Done' || data?.step === 'Graduated') {
+      console.log(`[DETECTOR] Token graduated/bonded on NearlyTrade: ${tokenAddress}`);
+      const dclPoolId = data?.pool_id ?? `${tokenAddress}|wrap.near|10000`;
+      setImmediate(() => {
+        upsertTokenCache({
+          token_address: tokenAddress,
+          bonding_phase: 'bonded',
+          bonding_progress_pct: 100,
+          dcl_pool_id: dclPoolId,
+          updated_at: new Date(),
+        }).catch(err => console.error('[DETECTOR] DB graduation update error:', err.message));
+      });
+    }
+
+    await handlePoolCreated(tokenAddress, 'nearlytrade', data);
+  }
+
   // ── Price update from any venue (swap events) ───────────────────────────
-  if (eventName === 'swap' && data?.token_in && data?.token_out) {
+  if (eventName === 'swap' && ((data?.token_in && data?.token_out) || data?.pool_id)) {
     await handleSwapEvent(data, receiverId).catch(() => {});
   }
 }
@@ -221,12 +273,12 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade',
   rawData: any
 ): Promise<void> {
   console.log(`[DETECTOR] New pool detected: ${tokenAddress} on ${venue}`);
 
-  // Fetch token metadata via NEAR RPC (non-blocking from main loop perspective)
+  // Fetch token metadata via NEAR RPC
   let name = rawData?.name ?? '';
   let symbol = rawData?.symbol ?? '';
   let decimals = rawData?.decimals ?? 18;
@@ -244,15 +296,37 @@ async function handlePoolCreated(
   }
 
   const poolAddress = rawData?.pool_id ?? rawData?.pool_address ?? tokenAddress;
-  const initialLiquidity = rawData?.near_amount ?? rawData?.initial_liquidity ?? '0';
+  let initialLiquidity = rawData?.near_amount ?? rawData?.initial_liquidity ?? '0';
   const creator = rawData?.creator_id ?? rawData?.owner_id ?? '';
 
-  // Compute initial price from reserves
-  const initialPrice = computeInitialPrice(initialLiquidity, totalSupply);
+  let bondingPhase: 'prebonded' | 'bonded' | null = null;
+  let bondingProgressPct: number | null = null;
+  let dclPoolId: string | null = rawData?.pool_id ?? null;
+  let initialPrice = 0;
+
+  if (venue === 'nearlytrade') {
+    try {
+      const ntState = await near.getNearlytradeTokenState(tokenAddress);
+      if (ntState) {
+        bondingPhase = ntState.phase;
+        bondingProgressPct = ntState.bondingProgressPct;
+        dclPoolId = ntState.dclPoolId;
+        initialPrice = ntState.price;
+        initialLiquidity = (ntState.liquidityNear * 1e24).toString();
+      }
+    } catch (err) {
+      console.warn(`[DETECTOR] Could not fetch NearlyTrade state for ${tokenAddress}:`, (err as Error).message);
+    }
+  }
+
+  if (initialPrice <= 0) {
+    initialPrice = computeInitialPrice(initialLiquidity, totalSupply);
+  }
+
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, decimals);
   const marketCap = initialPrice * supplyNum;
 
-  // 1. Update in-memory name cache immediately (fastest path)
+  // 1. Update in-memory name cache immediately
   const tokenEvent: TokenDetectedEvent = {
     type: 'token_detected',
     token_address: tokenAddress,
@@ -267,31 +341,33 @@ async function handlePoolCreated(
   tokenNameCache.set(tokenAddress, tokenEvent);
 
   // 2. Update in-memory price cache
-  priceCache.set(tokenAddress, { price: initialPrice, liquidity: parseFloat(initialLiquidity), marketCap, ts: Date.now() });
+  priceCache.set(tokenAddress, { price: initialPrice, liquidity: parseFloat(initialLiquidity) / 1e24, marketCap, ts: Date.now() });
 
   // 3. Publish to Redis for other services
   await redis.publish(CHANNELS.NEW_TOKENS, JSON.stringify(tokenEvent));
-  await redis.publish(CHANNELS.POOL_CREATED, JSON.stringify({
-    type: 'pool_created',
-    token_address: tokenAddress,
-    pool_address: poolAddress,
-    venue,
-    total_supply: totalSupply,
-    initial_liquidity: initialLiquidity,
-    timestamp: Date.now(),
-  } satisfies PoolCreatedEvent));
+  await redis.publish(
+    CHANNELS.POOL_CREATED,
+    JSON.stringify({
+      type: 'pool_created',
+      token_address: tokenAddress,
+      pool_address: poolAddress,
+      venue,
+      total_supply: totalSupply,
+      initial_liquidity: initialLiquidity,
+      timestamp: Date.now(),
+    } satisfies PoolCreatedEvent)
+  );
 
   // Publish initial price update
   const priceUpdate: PriceUpdateEvent = {
     type: 'price_update',
     token_address: tokenAddress,
     price: initialPrice,
-    liquidity: parseFloat(initialLiquidity),
+    liquidity: parseFloat(initialLiquidity) / 1e24,
     market_cap: marketCap,
     timestamp: Date.now(),
   };
   await redis.publish(CHANNELS.PRICE_UPDATE, JSON.stringify(priceUpdate));
-  // Cache price in Redis for trigger engine
   await redis.set(`token:price:${tokenAddress}`, JSON.stringify(priceUpdate), 300);
 
   // 4. Async DB write — does NOT block the detection loop
@@ -301,10 +377,15 @@ async function handlePoolCreated(
       name,
       symbol,
       decimals,
+      total_supply: totalSupply,
       pool_address: poolAddress,
       venue,
+      rhea_pool_id: venue === 'rhea' && typeof poolAddress === 'number' ? poolAddress : undefined,
+      bonding_phase: bondingPhase,
+      bonding_progress_pct: bondingProgressPct,
+      dcl_pool_id: dclPoolId,
       last_price: initialPrice,
-      last_liquidity: parseFloat(initialLiquidity),
+      last_liquidity: parseFloat(initialLiquidity) / 1e24,
       updated_at: new Date(),
     }).catch(err => console.error('[DETECTOR] DB cache write error:', err.message));
   });
@@ -318,17 +399,71 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
   const tokenAddress: string = data.token_out ?? data.token_in ?? '';
   if (!tokenAddress || tokenAddress === 'near' || tokenAddress === 'wrap.near') return;
 
+  // 1. Resolve token_cache row for total_supply, decimals, and pool info
+  const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+  let totalSupply = dbCache?.total_supply;
+  let decimals = dbCache?.decimals;
+  let rheaPoolId = dbCache?.rhea_pool_id;
+
+  // If no token_cache row exists or missing supply/decimals, fetch via RPC directly
+  if (!totalSupply || decimals === undefined) {
+    try {
+      const [meta, fetchedSupply] = await Promise.all([
+        near.getTokenMetadata(tokenAddress),
+        near.getTokenTotalSupply(tokenAddress),
+      ]);
+      decimals = meta.decimals;
+      totalSupply = fetchedSupply;
+      const detectedVenue: 'rhea' | 'shardsmarket' | 'nearlytrade' = venue.includes('rhea')
+        ? 'rhea'
+        : venue.includes('nearlytrade') || venue.includes('dclv2')
+        ? 'nearlytrade'
+        : 'shardsmarket';
+
+      setImmediate(() => {
+        upsertTokenCache({
+          token_address: tokenAddress,
+          name: meta.name,
+          symbol: meta.symbol,
+          decimals: meta.decimals,
+          total_supply: fetchedSupply,
+          pool_address: tokenAddress,
+          venue: detectedVenue,
+          updated_at: new Date(),
+        }).catch(() => {});
+      });
+    } catch (err) {
+      console.warn(`[DETECTOR] Skipping price update: failed to fetch supply/metadata for ${tokenAddress}:`, (err as Error).message);
+      return;
+    }
+  }
+
   // Pull reserves for fresh price calculation
   let price = 0;
   let liquidity = 0;
 
-  if (venue === 'rhea.finance') {
-    const reserves = await near.getRheaPoolReserves('', data.token_in, data.token_out);
-    if (parseFloat(reserves.reserveOut) > 0) {
-      price = parseFloat(reserves.reserveIn) / parseFloat(reserves.reserveOut);
-      liquidity = parseFloat(reserves.reserveIn);
+  if (venue === 'rhea.finance' || venue.includes('rhea')) {
+    if (rheaPoolId === null || rheaPoolId === undefined) {
+      rheaPoolId = await near.findRheaPoolId(data.token_in, data.token_out).catch(() => null);
     }
-  } else if (venue === 'factory.shardsmarket.near') {
+    if (typeof rheaPoolId === 'number') {
+      const reserves = await near.getRheaPoolReserves(rheaPoolId, data.token_in, data.token_out);
+      if (parseFloat(reserves.reserveOut) > 0) {
+        price = parseFloat(reserves.reserveIn) / parseFloat(reserves.reserveOut);
+        liquidity = parseFloat(reserves.reserveIn);
+      }
+    }
+  } else if (venue === 'nearlytrade.near' || venue === 'dclv2.ref-labs.near' || venue.includes('nearlytrade') || venue.includes('dclv2')) {
+    try {
+      const ntState = await near.getNearlytradeTokenState(tokenAddress);
+      if (ntState && ntState.price > 0) {
+        price = ntState.price;
+        liquidity = ntState.liquidityNear * 1e24;
+      }
+    } catch {
+      // skip
+    }
+  } else if (venue === 'factory.shardsmarket.near' || venue.includes('shardsmarket')) {
     const reserves = await near.getShardsmarketPoolReserves(tokenAddress);
     if (parseFloat(reserves.reserveToken) > 0) {
       price = parseFloat(reserves.reserveNear) / parseFloat(reserves.reserveToken);
@@ -338,22 +473,23 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
 
   if (price <= 0) return;
 
-  const cached = priceCache.get(tokenAddress);
-  const supply = cached ? cached.marketCap / (cached.price || 1) : 0;
-  const marketCap = price * supply;
+  const supplyNum = parseFloat(totalSupply!) / Math.pow(10, decimals!);
+  if (supplyNum <= 0) return;
 
-  priceCache.set(tokenAddress, { price, liquidity, marketCap, ts: Date.now() });
+  const marketCap = price * supplyNum;
+  const liquidityNear = liquidity / 1e24;
+
+  priceCache.set(tokenAddress, { price, liquidity: liquidityNear, marketCap, ts: Date.now() });
 
   const update: PriceUpdateEvent = {
     type: 'price_update',
     token_address: tokenAddress,
     price,
-    liquidity,
+    liquidity: liquidityNear,
     market_cap: marketCap,
     timestamp: Date.now(),
   };
 
-  // Fire-and-forget
   redis.publish(CHANNELS.PRICE_UPDATE, JSON.stringify(update)).catch(() => {});
   redis.set(`token:price:${tokenAddress}`, JSON.stringify(update), 300).catch(() => {});
 }
@@ -364,21 +500,21 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {
   try {
     const db = await getDb();
-    // Get users with auto_buy enabled — extend schema if needed
-    const result = await db.query(
-      `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near FROM users WHERE auto_buy_enabled = true AND auto_buy_amount_near > 0`
-    ).catch(() => ({ rows: [] as any[] }));
+    const result = await db
+      .query(
+        `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near FROM users WHERE auto_buy_enabled = true AND auto_buy_amount_near > 0`
+      )
+      .catch(() => ({ rows: [] as any[] }));
 
     const liquidity = parseFloat(liquidityStr) / 1e24; // Convert yoctoNEAR to NEAR
 
     for (const user of result.rows) {
-      // Apply filters: minimum liquidity (default 500 NEAR)
       const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '500');
       if (liquidity < minLiquidity) continue;
 

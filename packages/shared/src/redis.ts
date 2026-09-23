@@ -24,7 +24,7 @@ export interface TokenDetectedEvent {
   name: string;
   symbol: string;
   decimals: number;
-  venue: 'rhea' | 'shardsmarket';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
   pool_address: string;
   creator: string;
   timestamp: number;
@@ -34,7 +34,7 @@ export interface PoolCreatedEvent {
   type: 'pool_created';
   token_address: string;
   pool_address: string;
-  venue: 'rhea' | 'shardsmarket';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
   total_supply: string;
   initial_liquidity: string;
   timestamp: number;
@@ -57,7 +57,7 @@ export interface SwapEvent {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
   timestamp: number;
 }
 
@@ -66,7 +66,7 @@ export interface AutoBuySignal {
   user_id: string;
   token_address: string;
   amount_near: string;
-  venue: 'rhea' | 'shardsmarket';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
   timestamp: number;
 }
 
@@ -109,8 +109,17 @@ export interface RedisClient {
  * a subscribed connection cannot issue regular commands.
  */
 export function createRedis(url: string): RedisClient {
-  const pub = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
-  const sub = new Redis(url, { lazyConnect: false, maxRetriesPerRequest: 3 });
+  const options = {
+    lazyConnect: false,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+    retryStrategy(times: number) {
+      if (times > 3) return null;
+      return 1000;
+    },
+  };
+  const pub = new Redis(url, options);
+  const sub = new Redis(url, options);
 
   const handlers = new Map<string, (msg: string) => void>();
 
@@ -119,8 +128,12 @@ export function createRedis(url: string): RedisClient {
     if (handler) handler(message);
   });
 
-  pub.on('error', (err: Error) => console.error('[REDIS] pub error:', err.message));
-  sub.on('error', (err: Error) => console.error('[REDIS] sub error:', err.message));
+  pub.on('error', (err: Error) => {
+    // suppress repeated connection refuse noise if redis is offline locally
+  });
+  sub.on('error', (err: Error) => {
+    // suppress repeated connection refuse noise if redis is offline locally
+  });
 
   return {
     async publish(channel, message) {

@@ -79,7 +79,7 @@ export function validateSwapParams(params: any): { valid: boolean; errors: strin
   const errors: string[] = [];
   if (!params.token_in || !params.token_out) errors.push('token_in and token_out required');
   if (!params.amount_in || parseFloat(params.amount_in) <= 0) errors.push('amount_in must be positive');
-  if (!['rhea', 'shardsmarket'].includes(params.venue)) errors.push('venue must be rhea or shardsmarket');
+  if (!['rhea', 'shardsmarket', 'nearlytrade'].includes(params.venue)) errors.push('venue must be rhea, shardsmarket, or nearlytrade');
   return { valid: errors.length === 0, errors };
 }
 

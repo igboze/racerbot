@@ -1,11 +1,14 @@
 // Core utilities
 export {
   generateId,
+  generateRandomAccountPrefix,
   formatNearAmount,
   parseNearAmount,
   weightedAverage,
   computePnL,
   computeMarketCap,
+  calculateMinAmountOut,
+  calculateExpectedOutput,
   fuzzyMatch,
   retryWithBackoff,
   sleep,
@@ -15,10 +18,8 @@ export {
 export {
   encrypt,
   decrypt,
-  generateScopedAccessKey,
   validateScopedKey,
-  generateSeedPhrase,
-  mnemonicToBytes,
+  generateScopedAccessKey,
 } from './crypto.js';
 
 // Redis pub/sub and event types

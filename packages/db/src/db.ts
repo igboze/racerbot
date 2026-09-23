@@ -14,6 +14,7 @@ export interface UserRecord {
   auto_buy_enabled: boolean;
   auto_buy_amount_near: number;
   auto_buy_min_liquidity_near: number;
+  slippage_pct: number;
   created_at: Date;
 }
 
@@ -54,14 +55,19 @@ export interface TriggerRecord {
 
 export interface TokenCacheRecord {
   token_address: string;
-  name: string | null;
-  symbol: string | null;
-  decimals: number | null;
-  pool_address: string | null;
-  venue: string | null;
-  last_price: number | null;
-  last_liquidity: number | null;
-  updated_at: Date | null;
+  name?: string | null;
+  symbol?: string | null;
+  decimals?: number | null;
+  total_supply?: string | null;
+  pool_address?: string | null;
+  venue?: string | null;
+  rhea_pool_id?: number | null;
+  bonding_phase?: 'prebonded' | 'bonded' | null;
+  bonding_progress_pct?: number | null;
+  dcl_pool_id?: string | null;
+  last_price?: number | null;
+  last_liquidity?: number | null;
+  updated_at?: Date | null;
 }
 
 export interface CreateUserParams {
@@ -235,7 +241,8 @@ export async function createFill(params: CreateFillParams): Promise<FillRecord> 
   const id = generateId();
   await db.query(
     `INSERT INTO fills (id, user_id, position_id, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+     ON CONFLICT (tx_hash) DO NOTHING`,
     [id, params.user_id, params.position_id, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
   );
   return { ...params, id, created_at: new Date() };
@@ -284,10 +291,37 @@ export async function getTokenCache(address: string): Promise<TokenCacheRecord |
 export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> {
   const db = await getDb();
   await db.query(
-    `INSERT INTO token_cache (token_address, name, symbol, decimals, pool_address, venue, last_price, last_liquidity, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-     ON CONFLICT (token_address) DO UPDATE SET name = EXCLUDED.name, symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals, pool_address = EXCLUDED.pool_address, venue = EXCLUDED.venue, last_price = EXCLUDED.last_price, last_liquidity = EXCLUDED.last_liquidity, updated_at = NOW()`,
-    [record.token_address, record.name, record.symbol, record.decimals, record.pool_address, record.venue, record.last_price, record.last_liquidity, record.updated_at]
+    `INSERT INTO token_cache (token_address, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+     ON CONFLICT (token_address) DO UPDATE SET 
+       name = COALESCE(EXCLUDED.name, token_cache.name), 
+       symbol = COALESCE(EXCLUDED.symbol, token_cache.symbol), 
+       decimals = COALESCE(EXCLUDED.decimals, token_cache.decimals), 
+       total_supply = COALESCE(EXCLUDED.total_supply, token_cache.total_supply),
+       pool_address = COALESCE(EXCLUDED.pool_address, token_cache.pool_address), 
+       venue = COALESCE(EXCLUDED.venue, token_cache.venue), 
+       rhea_pool_id = COALESCE(EXCLUDED.rhea_pool_id, token_cache.rhea_pool_id),
+       bonding_phase = COALESCE(EXCLUDED.bonding_phase, token_cache.bonding_phase),
+       bonding_progress_pct = COALESCE(EXCLUDED.bonding_progress_pct, token_cache.bonding_progress_pct),
+       dcl_pool_id = COALESCE(EXCLUDED.dcl_pool_id, token_cache.dcl_pool_id),
+       last_price = COALESCE(EXCLUDED.last_price, token_cache.last_price), 
+       last_liquidity = COALESCE(EXCLUDED.last_liquidity, token_cache.last_liquidity), 
+       updated_at = NOW()`,
+    [
+      record.token_address,
+      record.name ?? null,
+      record.symbol ?? null,
+      record.decimals ?? null,
+      record.total_supply ?? null,
+      record.pool_address ?? null,
+      record.venue ?? null,
+      record.rhea_pool_id ?? null,
+      record.bonding_phase ?? null,
+      record.bonding_progress_pct ?? null,
+      record.dcl_pool_id ?? null,
+      record.last_price ?? null,
+      record.last_liquidity ?? null,
+    ]
   );
 }
 
@@ -309,6 +343,7 @@ function rowToUser(row: any): UserRecord {
     auto_buy_enabled: Boolean(row.auto_buy_enabled),
     auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
     auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 500,
+    slippage_pct: row.slippage_pct != null ? parseFloat(row.slippage_pct) : 2,
     created_at: row.created_at,
   };
 }
@@ -326,7 +361,22 @@ function rowToTrigger(row: any): TriggerRecord {
 }
 
 function rowToTokenCache(row: any): TokenCacheRecord {
-  return { token_address: row.token_address, name: row.name, symbol: row.symbol, decimals: row.decimals, pool_address: row.pool_address, venue: row.venue, last_price: row.last_price, last_liquidity: row.last_liquidity, updated_at: row.updated_at };
+  return { 
+    token_address: row.token_address, 
+    name: row.name, 
+    symbol: row.symbol, 
+    decimals: row.decimals != null ? Number(row.decimals) : null, 
+    total_supply: row.total_supply != null ? String(row.total_supply) : null,
+    pool_address: row.pool_address, 
+    venue: row.venue, 
+    rhea_pool_id: row.rhea_pool_id != null ? Number(row.rhea_pool_id) : null,
+    bonding_phase: row.bonding_phase ?? null,
+    bonding_progress_pct: row.bonding_progress_pct != null ? parseFloat(row.bonding_progress_pct) : null,
+    dcl_pool_id: row.dcl_pool_id ?? null,
+    last_price: row.last_price != null ? parseFloat(row.last_price) : null, 
+    last_liquidity: row.last_liquidity != null ? parseFloat(row.last_liquidity) : null, 
+    updated_at: row.updated_at 
+  };
 }
 
 function generateId(): string {

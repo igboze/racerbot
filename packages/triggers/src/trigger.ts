@@ -72,11 +72,28 @@ export class TriggerEngine {
     // Determine sell side — determine venue from token cache
     const db = await getDb();
     const tokenRow = await db.query(
-      'SELECT venue FROM token_cache WHERE token_address = $1',
+      'SELECT venue, rhea_pool_id, dcl_pool_id FROM token_cache WHERE token_address = $1',
       [position.token_address]
     ).then(r => r.rows[0]).catch(() => null);
 
-    const venue = (tokenRow?.venue ?? 'shardsmarket') as 'rhea' | 'shardsmarket';
+    const venue = tokenRow?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
+    if (!venue) {
+      console.warn(`[TRIGGER] Unknown venue for token ${position.token_address}, skipping trigger execution`);
+      return;
+    }
+
+    // Stop-loss default slippage tolerance of 5% to prioritize exit execution; take-profit uses 2%
+    const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
+    const near = (await import('@racerbot/shared')).getNear();
+    const { minAmountOut } = await near.computeMinAmountOut(
+      venue,
+      position.token_address,
+      'wrap.near',
+      position.quantity_held,
+      slippagePct,
+      tokenRow?.rhea_pool_id,
+      tokenRow?.dcl_pool_id ?? undefined
+    );
 
     // Publish to executor via Redis — DO NOT call executor directly (microservice boundary)
     const swapEvent: SwapEvent = {
@@ -85,10 +102,11 @@ export class TriggerEngine {
       token_in: position.token_address,
       token_out: 'wrap.near',
       amount_in: position.quantity_held,
-      min_amount_out: '0', // Accept any output — trigger fires when threshold already crossed
+      min_amount_out: minAmountOut,
       venue,
       timestamp: Date.now(),
-    };
+      ...(tokenRow?.dcl_pool_id ? { dcl_pool_id: tokenRow.dcl_pool_id } : {}),
+    } as any;
 
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
@@ -126,11 +144,27 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   const db = await getDb();
   const tokenRow = await db.query(
-    'SELECT venue FROM token_cache WHERE token_address = $1',
+    'SELECT venue, rhea_pool_id, dcl_pool_id FROM token_cache WHERE token_address = $1',
     [position.token_address]
   ).then(r => r.rows[0]).catch(() => null);
 
-  const venue = (tokenRow?.venue ?? 'shardsmarket') as 'rhea' | 'shardsmarket';
+  const venue = tokenRow?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
+  if (!venue) return { success: false };
+
+  const userRow = await db.query('SELECT slippage_pct FROM users WHERE id = $1', [userId])
+    .then(r => r.rows[0]).catch(() => null);
+  const slippagePct = userRow?.slippage_pct ? Number(userRow.slippage_pct) : 2.0;
+
+  const near = (await import('@racerbot/shared')).getNear();
+  const { minAmountOut } = await near.computeMinAmountOut(
+    venue,
+    position.token_address,
+    'wrap.near',
+    sellQty,
+    slippagePct,
+    tokenRow?.rhea_pool_id,
+    tokenRow?.dcl_pool_id ?? undefined
+  );
 
   const swapEvent: SwapEvent = {
     type: 'execute_swap',
@@ -138,10 +172,11 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     token_in: position.token_address,
     token_out: 'wrap.near',
     amount_in: sellQty,
-    min_amount_out: '0',
+    min_amount_out: minAmountOut,
     venue,
     timestamp: Date.now(),
-  };
+    ...(tokenRow?.dcl_pool_id ? { dcl_pool_id: tokenRow.dcl_pool_id } : {}),
+  } as any;
 
   await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
   return { success: true };

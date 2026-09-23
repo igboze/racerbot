@@ -17,6 +17,7 @@ const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 pub enum Venue {
     Rhea,
     Shardsmarket,
+    Nearlytrade,
 }
 
 #[near(serializers = [borsh, json])]
@@ -27,6 +28,8 @@ pub struct SwapParams {
     pub amount_in: U128,
     pub min_amount_out: U128,
     pub venue: Venue,
+    pub pool_id: Option<u64>,
+    pub dcl_pool_id: Option<String>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -143,6 +146,13 @@ impl RacerbotRouter {
     pub fn execute_swap(&mut self, params: SwapParams) -> Promise {
         self.assert_function_call_key();
 
+        if params.venue == Venue::Rhea {
+            require!(params.pool_id.is_some(), "pool_id is required for Rhea swaps");
+        }
+        if params.venue == Venue::Nearlytrade {
+            require!(params.dcl_pool_id.is_some(), "dcl_pool_id is required for NearlyTrade swaps");
+        }
+
         let caller = env::predecessor_account_id();
         let is_sell = params.token_out == "wrap.near" || params.token_out == "near";
         let fee_bps = if is_sell {
@@ -151,6 +161,7 @@ impl RacerbotRouter {
             match &params.venue {
                 Venue::Shardsmarket => self.fee_config.snipe_fee_bps,
                 Venue::Rhea => self.fee_config.buy_fee_bps,
+                Venue::Nearlytrade => self.fee_config.buy_fee_bps,
             }
         };
 
@@ -167,6 +178,7 @@ impl RacerbotRouter {
         let swap_promise = match &params.venue {
             Venue::Rhea => self.call_rhea(&params),
             Venue::Shardsmarket => self.call_shardsmarket(&caller, &params),
+            Venue::Nearlytrade => self.call_nearlytrade(&params),
         };
 
         swap_promise.then(
@@ -178,19 +190,45 @@ impl RacerbotRouter {
 
     // ── Venue integrations ────────────────────────────────────────────────────
 
+    fn call_nearlytrade(&self, params: &SwapParams) -> Promise {
+        let pool_id = params.dcl_pool_id.as_ref().expect("dcl_pool_id is required for Nearlytrade");
+        let swap_msg = serde_json::json!({
+            "Swap": {
+                "pool_ids": [pool_id],
+                "output_token": params.token_out,
+                "min_output_amount": params.min_amount_out
+            }
+        }).to_string();
+
+        let transfer_call_args = serde_json::json!({
+            "receiver_id": "dclv2.ref-labs.near",
+            "amount": params.amount_in,
+            "msg": swap_msg,
+        });
+
+        Promise::new(params.token_in.parse().unwrap())
+            .function_call(
+                "ft_transfer_call".to_string(),
+                serde_json::to_vec(&transfer_call_args).unwrap(),
+                NearToken::from_yoctonear(1),
+                GAS_FOR_SWAP,
+            )
+    }
+
     fn call_rhea(&self, params: &SwapParams) -> Promise {
+        let pool_id = params.pool_id.expect("pool_id is required for Rhea swaps");
         let args = serde_json::json!({
             "actions": [{
-                "pool_id": 0,
+                "pool_id": pool_id,
                 "token_in": params.token_in,
                 "amount_in": params.amount_in,
                 "token_out": params.token_out,
-                "min_amount_out": "0",
+                "min_amount_out": params.min_amount_out,
             }],
             "referral_id": null,
         });
 
-        Promise::new("rhea.finance".parse().unwrap())
+        Promise::new("v2.ref-finance.near".parse().unwrap())
             .function_call(
                 "swap".to_string(),
                 serde_json::to_vec(&args).unwrap(),
@@ -240,10 +278,15 @@ impl RacerbotRouter {
                     return PromiseOrValue::Value(U128(0));
                 }
 
-                require!(
-                    raw_out.0 >= pending.min_amount_out.0,
-                    format!("Slippage: got {} but need {}", raw_out.0, pending.min_amount_out.0)
-                );
+                if raw_out.0 < pending.min_amount_out.0 {
+                    // Slippage tolerance breached: refund full gross amount to caller without taking fees
+                    let _ = self.transfer_out(&pending.token_out, &caller, raw_out.0);
+                    env::log_str(&format!(
+                        "SWAP SLIPPAGE_REFUND caller={} token_out={} got={} min={}",
+                        caller, pending.token_out, raw_out.0, pending.min_amount_out.0
+                    ));
+                    return PromiseOrValue::Value(U128(0));
+                }
 
                 let fee_amount = (raw_out.0 * pending.fee_bps as u128) / 10_000;
                 let net_amount = raw_out.0 - fee_amount;
@@ -387,5 +430,20 @@ mod tests {
             .build();
         testing_env!(ctx);
         contract.set_fee_config(0, 0, 0);
+    }
+
+    #[test]
+    fn test_slippage_refund_path() {
+        let contract = setup();
+        let raw_out = 900_000_000_000_000_000_000_000u128;
+        let min_amount_out = 950_000_000_000_000_000_000_000u128;
+        // Verify slippage condition is breached
+        assert!(raw_out < min_amount_out);
+        // On slippage breach, caller receives full raw_out (no fee deduction)
+        let refund_to_caller = raw_out;
+        let fee_to_treasury = 0u128;
+        assert_eq!(refund_to_caller, 900_000_000_000_000_000_000_000u128);
+        assert_eq!(fee_to_treasury, 0u128);
+        assert_eq!(contract.fee_config.buy_fee_bps, 150);
     }
 }

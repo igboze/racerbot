@@ -33,22 +33,10 @@ export function decrypt(ciphertext: string, masterKey: string): string {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
 }
 
-export function generateScopedAccessKey(): { publicKey: string; secretKey: string } {
-  const keypair = KeyPair.fromRandom('ed25519');
-  return {
-    publicKey: keypair.getPublicKey().toString(),
-    secretKey: keypair.toString(),
-  };
-}
-
 export function validateScopedKey(key: string): boolean {
   return key.startsWith('ed25519:') && key.length > 50;
 }
 
-export function generateSeedPhrase(): string {
-  return generateMnemonic(wordlist, 128);
-}
-
-export function mnemonicToBytes(mnemonic: string): Uint8Array {
-  return mnemonicToEntropy(mnemonic, wordlist);
+export function generateScopedAccessKey(): KeyPair {
+  return KeyPair.fromRandom('ed25519');
 }

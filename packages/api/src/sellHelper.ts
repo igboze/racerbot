@@ -31,7 +31,30 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
   const cached = await getTokenCache(position.token_address).catch(() => null);
-  const venue = (cached?.venue as 'rhea' | 'shardsmarket') ?? 'shardsmarket';
+  let venue = cached?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
+  if (!venue) {
+    const { getTokenInfo } = await import('./wallet.js');
+    const info = await getTokenInfo(position.token_address).catch(() => null);
+    if (info && info.venue !== 'unknown') {
+      venue = info.venue;
+    }
+  }
+  if (!venue) return { success: false, reason: 'venue_unknown' };
+
+  const { getUserById } = await import('@racerbot/db');
+  const user = await getUserById(userId).catch(() => null);
+  const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  const near = (await import('@racerbot/shared')).getNear();
+  const { minAmountOut } = await near.computeMinAmountOut(
+    venue,
+    position.token_address,
+    'wrap.near',
+    sellQty,
+    slippagePct,
+    cached?.rhea_pool_id,
+    cached?.dcl_pool_id ?? undefined
+  );
 
   const swapEvent: SwapEvent = {
     type: 'execute_swap',
@@ -39,10 +62,11 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     token_in: position.token_address,
     token_out: 'wrap.near',
     amount_in: sellQty,
-    min_amount_out: '0',
+    min_amount_out: minAmountOut,
     venue,
     timestamp: Date.now(),
-  };
+    ...(cached?.dcl_pool_id ? { dcl_pool_id: cached.dcl_pool_id } : {}),
+  } as any;
 
   const redis = getRedisClient();
   await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));

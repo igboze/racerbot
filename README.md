@@ -42,6 +42,23 @@ bash scripts/deploy.sh
 - [Architecture](docs/ARCHITECTURE.md)
 - [Development](docs/DEVELOPMENT.md)
 
+## Smart Contract (`packages/contract`)
+
+- **Pinned Rust Toolchain**: Rust `1.95.0` (specified in `packages/contract/rust-toolchain.toml`).
+- **Target**: `wasm32-unknown-unknown`
+- **Dependencies**: Uses `near-sdk` 5.29.1 (requires Rust 1.93+) and Cargo lockfile format v4.
+- **Build**:
+  ```bash
+  npm run build --workspace=@racerbot/contract
+  # or
+  cargo build --target wasm32-unknown-unknown --release
+  ```
+- **Tests**:
+  ```bash
+  AWS_LC_SYS_PREBUILT_NASM=1 cargo test
+  ```
+
+
 ## Security
 - Full-access private keys are generated client-side in the Mini App
 - Backend stores only encrypted scoped function-call access keys

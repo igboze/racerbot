@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createRedis, CHANNELS, type PriceUpdateEvent } from '@racerbot/shared';
-import { getDb } from '@racerbot/db';
+import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
@@ -29,8 +29,54 @@ async function main(): Promise<void> {
   });
 
   // Seed price cache from Redis on startup (tokens detected before this process started)
-  // This is a best-effort warm-up — missing entries just won't trigger until next price update
   console.log('[TRIGGERS] Price cache warming from Redis...');
+  try {
+    const activeTriggers = await getActiveTriggers();
+    const tokenSet = new Set<string>();
+
+    await Promise.all(
+      activeTriggers.map(async (trigger) => {
+        try {
+          const pos = await getPositionById(trigger.position_id);
+          if (pos && pos.token_address) {
+            tokenSet.add(pos.token_address);
+          }
+        } catch {
+          // ignore lookup failure
+        }
+      })
+    );
+
+    const tokenAddresses = Array.from(tokenSet);
+    console.log(`[TRIGGERS] Found ${tokenAddresses.length} distinct token(s) with active triggers.`);
+
+    await Promise.all(
+      tokenAddresses.map(async (tokenAddress) => {
+        try {
+          const timeoutPromise = new Promise<null>((_, reject) =>
+            setTimeout(() => reject(new Error('Redis timeout')), 2000)
+          );
+          const cachedJson = await Promise.race([
+            triggerRedis.get(`token:price:${tokenAddress}`),
+            timeoutPromise,
+          ]);
+          if (cachedJson) {
+            const update: PriceUpdateEvent = JSON.parse(cachedJson);
+            localPriceCache.set(tokenAddress, {
+              price: update.price,
+              marketCap: update.market_cap,
+              ts: update.timestamp,
+            });
+          }
+        } catch {
+          // If Redis is slow or missing, leave out as specified
+        }
+      })
+    );
+    console.log(`[TRIGGERS] Price cache warmed with ${localPriceCache.size} active token price(s).`);
+  } catch (err) {
+    console.warn('[TRIGGERS] Price cache warm-up error:', (err as Error).message);
+  }
 
   // Run trigger evaluation on interval
   const interval = setInterval(async () => {

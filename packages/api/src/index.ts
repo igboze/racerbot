@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import { Telegraf } from 'telegraf';
@@ -18,11 +19,17 @@ async function main(): Promise<void> {
   // Connect to Postgres
   await getDb();
 
-  // ── Express REST server ───────────────────────────────────────────────────
+  // ── Express REST server & Mini App static assets ─────────────────────────
   const app = express();
   app.use(cors());
   app.use(express.json());
   app.use('/api', apiRouter);
+
+  const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
+  app.use('/miniapp', express.static(publicDir));
+  app.get('/miniapp', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
 
   app.listen(PORT, () => {
     console.log(`[API] REST server listening on port ${PORT}`);
@@ -33,30 +40,41 @@ async function main(): Promise<void> {
   setBotInstance(bot);
   setupRoutes(bot);
 
-  // ── Subscribe to detector's NEW_TOKENS to warm local name cache ───────────
-  const redis = createRedis(REDIS_URL);
-  await redis.subscribe(CHANNELS.NEW_TOKENS, (message: string) => {
-    try {
-      const event: TokenDetectedEvent = JSON.parse(message);
-      localTokenNames.set(event.name.toLowerCase(), {
-        address: event.token_address,
-        symbol: event.symbol,
-      });
-    } catch { /* ignore malformed */ }
-  });
+  // ── Launch bot immediately ────────────────────────────────────────────────
+  bot.launch({ dropPendingUpdates: true });
+  console.log('[API] Telegram bot launched successfully!');
+
+  // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
+  let redis: any = null;
+  try {
+    redis = createRedis(REDIS_URL);
+    await redis.subscribe(CHANNELS.NEW_TOKENS, (message: string) => {
+      try {
+        const event: TokenDetectedEvent = JSON.parse(message);
+        localTokenNames.set(event.name.toLowerCase(), {
+          address: event.token_address,
+          symbol: event.symbol,
+        });
+      } catch { /* ignore malformed */ }
+    });
+  } catch (err: any) {
+    console.warn('[API] Redis pub/sub unavailable, token name caching inactive:', err.message);
+  }
 
   // ── Start notification listener (async, non-blocking) ──────────────────────
-  await startNotifyListener(REDIS_URL);
-
-  // ── Launch bot ────────────────────────────────────────────────────────────
-  bot.launch({ dropPendingUpdates: true });
-  console.log('[API] Telegram bot launched');
+  try {
+    await startNotifyListener(REDIS_URL);
+  } catch (err: any) {
+    console.warn('[API] Redis notification listener inactive:', err.message);
+  }
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
     console.log(`[API] ${signal} received — shutting down`);
     bot.stop(signal);
-    await redis.disconnect();
+    if (redis) {
+      await redis.disconnect().catch(() => {});
+    }
     process.exit(0);
   };
 

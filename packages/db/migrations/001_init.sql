@@ -35,7 +35,7 @@ CREATE TABLE fills (
     amount NUMERIC NOT NULL,
     price NUMERIC NOT NULL,
     fee_paid NUMERIC NOT NULL,
-    venue TEXT NOT NULL CHECK (venue IN ('rhea', 'shardsmarket')),
+    venue TEXT NOT NULL CHECK (venue IN ('rhea', 'shardsmarket', 'nearlytrade')),
     tx_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -66,3 +66,5 @@ main().catch(err => {
   console.error('[EXECUTOR] Fatal:', err);
   process.exit(1);
 });
+
+export { addUserKey, warmAllKeys, SwapExecutor } from './executor.js';
