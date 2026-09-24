@@ -1238,43 +1238,63 @@ export class MultiRpcNear {
       return null;
     };
 
-    /** Try a single RPC provider using the non-long-polling `tx` JSON-RPC method */
+    /**
+     * Try a single RPC provider for tx status.
+     *
+     * Strategy: try the newer `tx` method first (non-long-polling, fast).
+     * If the provider returns -32601 (method not found), fall back to
+     * `EXPERIMENTAL_tx_status` with array params (universally supported).
+     * In both cases, TIMEOUT_ERROR / HANDLER_ERROR / UNKNOWN_TRANSACTION
+     * are treated as "pending" — return null so the caller retries.
+     * -32601 (method not found) is also treated as "skip, retry later".
+     */
     const tryRpc = async (providerUrl: string): Promise<any | null> => {
-      try {
+      const callRpc = async (method: string, params: any): Promise<any | null> => {
         const res = await fetch(providerUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'await-outcome',
-            method: 'tx',
-            params: { tx_hash: txHash, sender_account_id: accountId, wait_until: 'EXECUTED_OPTIMISTIC' },
-          }),
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
           signal: AbortSignal.timeout(6000),
         });
-        const data: any = await res.json();
+        return res.json();
+      };
+
+      try {
+        // First attempt: newer `tx` method with array params (NEAR node ≥ 1.30)
+        let data: any = await callRpc('tx', [txHash, accountId, 'EXECUTED_OPTIMISTIC']);
+
+        // If provider doesn't know `tx`, fall back to EXPERIMENTAL_tx_status
+        if (data?.error?.code === -32601) {
+          data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId, 'EXECUTED_OPTIMISTIC']);
+        }
+
         if (data?.error) {
-          const errName: string = data.error?.cause?.name ?? data.error?.name ?? '';
-          // TIMEOUT_ERROR / HANDLER_ERROR = tx is pending / not yet indexed — retry
+          const code: number = data.error?.code ?? 0;
+          const errName: string = data.error?.cause?.name ?? data.error?.name ?? data.error?.message ?? '';
+          // Transient / "not yet indexed" conditions — return null to retry
           if (
+            code === -32601 ||                         // method still not available
             errName.includes('TIMEOUT') ||
             errName.includes('HANDLER_ERROR') ||
-            errName.includes('UNKNOWN_TRANSACTION')
+            errName.includes('UNKNOWN_TRANSACTION') ||
+            errName.includes('does not exist')
           ) {
             return null;
           }
           throw new Error(data.error.message || JSON.stringify(data.error));
         }
+
         const outcome = data?.result;
         if (outcome && outcome.status !== undefined && outcome.status !== null) {
           return outcome;
         }
       } catch (err: any) {
-        // Network-level error — mark provider unhealthy and continue
+        // Network-level or thrown error — record and continue
         lastErr = err as Error;
       }
       return null;
     };
+
 
     while (Date.now() < deadline) {
       // Race FastNEAR indexer and all healthy RPC providers
