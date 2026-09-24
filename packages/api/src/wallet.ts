@@ -11,6 +11,12 @@ import {
   createPosition,
   createFill,
   updatePosition,
+  generateReferralCode,
+  getUserByReferralCode,
+  createReferral,
+  activateReferral,
+  addReferralReward,
+  getReferralByReferredUser,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
@@ -447,8 +453,9 @@ export interface OnboardResult {
  * Generates a single ed25519 keypair, creates & funds the subaccount on-chain,
  * and returns the raw exported key string (ed25519:<base58>) to show once.
  * Idempotent: returns existing account info if user is already onboarded.
+ * Optionally accepts a referral code to track who referred the user.
  */
-export async function onboardUser(telegramId: number): Promise<OnboardResult> {
+export async function onboardUser(telegramId: number, referralCode?: string, username?: string): Promise<OnboardResult> {
   // Step 5: Check for existing user row (idempotency)
   const existing = await getUserByTelegramId(telegramId).catch(() => null);
   if (existing) {
@@ -457,6 +464,15 @@ export async function onboardUser(telegramId: number): Promise<OnboardResult> {
       subaccountId: existing.subaccount_id,
       isExisting: true,
     };
+  }
+
+  // Validate referral code if provided
+  let referrerId: string | null = null;
+  if (referralCode) {
+    const referrer = await getUserByReferralCode(referralCode);
+    if (referrer) {
+      referrerId = referrer.id;
+    }
   }
 
   // Step 1: Generate exactly one ed25519 keypair
@@ -506,6 +522,16 @@ export async function onboardUser(telegramId: number): Promise<OnboardResult> {
     subaccount_id: subaccountId,
     scoped_key_encrypted: encryptedKey,
   });
+
+  // Generate referral code based on username
+  if (username) {
+    await generateReferralCode(user.id, username);
+  }
+
+  // Create referral record if referrer exists
+  if (referrerId) {
+    await createReferral(referrerId, user.id);
+  }
 
   return {
     userId: user.id,
