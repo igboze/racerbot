@@ -38,6 +38,27 @@ export function validateScopedKey(key: string): boolean {
   return key.startsWith('ed25519:') && key.length > 50;
 }
 
+/**
+ * Fail fast at startup when the master encryption key is missing, too short,
+ * or still the template placeholder from .env.example. Without this guard an
+ * empty/placeholder key silently "works" and produces trivially breakable
+ * ciphertext for every stored user key.
+ */
+export function assertValidMasterKey(key: string | undefined | null): asserts key is string {
+  const k = (key ?? '').trim();
+  const looksPlaceholder =
+    k.startsWith('your-') ||
+    k.includes('change-me') ||
+    k.includes('placeholder') ||
+    k.startsWith('TEMP');
+  if (k.length < 32 || looksPlaceholder) {
+    throw new Error(
+      'KEY_ENCRYPTION_MASTER_KEY is missing, too short, or a placeholder. ' +
+        'Generate a strong key with: openssl rand -hex 32'
+    );
+  }
+}
+
 export function generateScopedAccessKey(): KeyPair {
   return KeyPair.fromRandom('ed25519');
 }

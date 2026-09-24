@@ -1,15 +1,6 @@
-import { createRedis, CHANNELS, type SwapEvent } from '@racerbot/shared';
-import { getPositionById, getTokenCache } from '@racerbot/db';
-
-const REDIS_URL = process.env.REDIS_URL!;
-
-let redisClient: ReturnType<typeof createRedis> | null = null;
-function getRedisClient() {
-  if (!redisClient) {
-    redisClient = createRedis(REDIS_URL);
-  }
-  return redisClient;
-}
+import { getNear, type SwapEvent } from '@racerbot/shared';
+import { getPositionById, getTokenCache, getUserById } from '@racerbot/db';
+import { getTokenInfo, publishSwap } from './wallet.js';
 
 /**
  * Sell a percentage of a position by publishing EXECUTE_SWAP to Redis.
@@ -31,24 +22,22 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
   const cached = await getTokenCache(position.token_address).catch(() => null);
-  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | undefined = cached?.venue as any;
-  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(venue as string)) {
+  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | undefined = cached?.venue as any;
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(venue as string)) {
     venue = undefined;
   }
   if (!venue) {
-    const { getTokenInfo } = await import('./wallet.js');
     const info = await getTokenInfo(position.token_address).catch(() => null);
-    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)) {
-      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
     }
   }
   if (!venue) return { success: false, reason: 'venue_unknown' };
 
-  const { getUserById } = await import('@racerbot/db');
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
-  const near = (await import('@racerbot/shared')).getNear();
+  const near = getNear();
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     position.token_address,
@@ -68,11 +57,10 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     min_amount_out: minAmountOut,
     venue,
     timestamp: Date.now(),
-    ...(cached?.dcl_pool_id ? { dcl_pool_id: cached.dcl_pool_id } : {}),
+    dcl_pool_id: cached?.dcl_pool_id ?? undefined,
   } as any;
 
-  const redis = getRedisClient();
-  await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+  await publishSwap(swapEvent);
 
   return { success: true };
 }

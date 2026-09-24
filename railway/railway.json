@@ -4,7 +4,7 @@
 dockerfile = Dockerfile.api
 ports = [{ port = 3000 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://rpc.near.org,https://fastnear.io,https://lava-rpc.near" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://free.rpc.fastnear.com,https://rpc.mainnet.near.org" },
   { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
   { variable = "ROUTER_CONTRACT_ID", value = "router.racerbot.near" },
   { variable = "TREASURY_ACCOUNT_ID", value = "treasury.racerbot.near" },

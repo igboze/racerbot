@@ -18,13 +18,15 @@ export const CHANNELS = {
 
 // ── Event interfaces ──────────────────────────────────────────────────────────
 
+export type EventVenue = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub';
+
 export interface TokenDetectedEvent {
   type: 'token_detected';
   token_address: string;
   name: string;
   symbol: string;
   decimals: number;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  venue: EventVenue;
   pool_address: string;
   creator: string;
   timestamp: number;
@@ -34,7 +36,7 @@ export interface PoolCreatedEvent {
   type: 'pool_created';
   token_address: string;
   pool_address: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  venue: EventVenue;
   total_supply: string;
   initial_liquidity: string;
   timestamp: number;
@@ -57,7 +59,7 @@ export interface SwapEvent {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
   dcl_pool_id?: string;
   timestamp?: number;
 }
@@ -67,7 +69,7 @@ export interface AutoBuySignal {
   user_id: string;
   token_address: string;
   amount_near: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
   timestamp: number;
 }
 
@@ -83,7 +85,15 @@ export interface PriceUpdateEvent {
 export interface NotifyUserEvent {
   type: 'notify_user';
   telegram_id: number;
-  event: 'rug_check_failed' | 'trigger_fired' | 'allowance_low' | 'pnl_card' | 'token_not_found' | 'auto_buy_skipped';
+  event:
+    | 'rug_check_failed'
+    | 'trigger_fired'
+    | 'allowance_low'
+    | 'pnl_card'
+    | 'token_not_found'
+    | 'auto_buy_skipped'
+    | 'trade_failed'
+    | 'trade_confirmed';
   data?: Record<string, unknown>;
 }
 
@@ -112,11 +122,12 @@ export interface RedisClient {
 export function createRedis(url: string): RedisClient {
   const options = {
     lazyConnect: false,
-    maxRetriesPerRequest: 1,
-    enableOfflineQueue: false,
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: true,
+    // NEVER give up: a Redis restart must not permanently kill swap/trigger
+    // pub-sub (returning null ends the connection forever). Bounded backoff.
     retryStrategy(times: number) {
-      if (times > 3) return null;
-      return 1000;
+      return Math.min(50 * times, 2000);
     },
   };
   const pub = new Redis(url, options);

@@ -1,8 +1,9 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
+import { pathToFileURL } from 'url';
+import { createRedis, CHANNELS, assertValidMasterKey, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import { SwapExecutor, warmAllKeys } from './executor.js';
-import { PARENT_ACCOUNT } from './config.js';
+import { PARENT_ACCOUNT, MASTER_KEY } from './config.js';
 
 const REDIS_URL = process.env.REDIS_URL!;
 const executor = new SwapExecutor();
@@ -11,6 +12,14 @@ const redis = createRedis(REDIS_URL);
 async function main(): Promise<void> {
   console.log('[EXECUTOR] Starting warm signing service...');
   console.log('[EXECUTOR] Parent account:', PARENT_ACCOUNT);
+
+  // Fail fast — never decrypt user keys with a missing/placeholder master key
+  assertValidMasterKey(MASTER_KEY);
+
+  // One stray rejected promise must not kill the signing service
+  process.on('unhandledRejection', (reason) => {
+    console.error('[EXECUTOR] Unhandled rejection (kept alive):', reason);
+  });
 
   // Connect DB
   await getDb();
@@ -62,9 +71,19 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch(err => {
-  console.error('[EXECUTOR] Fatal:', err);
-  process.exit(1);
-});
+// Run main() ONLY when this file is the process entrypoint. Importing
+// @racerbot/executor (e.g. from the API for key warming) used to boot a
+// second executor that subscribed to the same Redis channel and
+// double-executed every swap. The executor now loads new keys lazily from
+// the DB on first use, so cross-process imports are never needed.
+const isDirectRun =
+  !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch(err => {
+    console.error('[EXECUTOR] Fatal:', err);
+    process.exit(1);
+  });
+}
 
 export { addUserKey, warmAllKeys, SwapExecutor } from './executor.js';
