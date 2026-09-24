@@ -93,6 +93,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       Markup.button.callback('🔑 Export Key', 'export_prompt'),
       Markup.button.callback('🔄 Rotate Key', 'rotate_prompt'),
     ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    ],
   ]);
 
   return { text, keyboard };
@@ -115,6 +119,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   buttons.push([
     Markup.button.callback('⚙️ Settings', 'menu_settings'),
     Markup.button.callback('🔙 Main Menu', 'menu_home'),
+  ]);
+
+  buttons.push([
+    Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+    Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
   ]);
 
   const text =
@@ -297,6 +306,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
         Markup.button.callback('⚙️ Settings', 'menu_settings'),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),
       ],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
   } else {
     // Non-tradeable venue — info only
@@ -309,6 +322,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
       [
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      ],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       ],
     ]);
   }
@@ -380,6 +397,10 @@ export function buildSettingsDashboard(user: UserRecord) {
     ],
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+    ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
     ],
   ]);
 
@@ -575,7 +596,10 @@ export function setupRoutes(bot: Telegraf): void {
         `• If you ever suspect your key was compromised, use /rotatekey immediately to generate a new key on-chain.\n` +
         `• You can retrieve this key later with /export.\n\n` +
         `💡 *How to Trade*:\n` +
-        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!`,
+        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!\n\n` +
+        `🔗 *Join Our Community*:\n` +
+        `💬 [Community Group](https://t.me/racerbot_community) - Get help and connect with traders\n` +
+        `📢 [Updates Channel](https://t.me/racertrading) - Announcements and news`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
 
@@ -659,6 +683,10 @@ export function setupRoutes(bot: Telegraf): void {
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🔄 Refresh', 'menu_positions')],
         [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        ],
       ]);
       await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
         parse_mode: 'Markdown',
@@ -714,6 +742,10 @@ export function setupRoutes(bot: Telegraf): void {
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
       Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    ]);
+    buttons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
     ]);
 
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
@@ -781,6 +813,10 @@ export function setupRoutes(bot: Telegraf): void {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
       [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
     await ctx.answerCbQuery().catch(() => {});
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
@@ -1302,6 +1338,10 @@ export function setupRoutes(bot: Telegraf): void {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
       [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
     await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
   });
