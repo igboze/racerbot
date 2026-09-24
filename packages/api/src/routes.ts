@@ -171,6 +171,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     venueText = `💧 *Venue*: Meme.Cooking Launchpad`;
   } else if (tokenInfo.venue === 'intear') {
     venueText = `💧 *Venue*: Intear Launchpad (XYK)`;
+  } else if (tokenInfo.venue === 'onetokenhub') {
+    venueText = `💧 *Venue*: OneTokenHub (Ref DCL)`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
@@ -415,20 +417,32 @@ async function executeBuyHelper(
   }
 
   const cached = await getTokenCache(tokenAddress).catch(() => null);
-  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | undefined = cached?.venue as any;
+  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | undefined = cached?.venue as any;
   // Only accept tradeable venues
-  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(venue as string)) {
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(venue as string)) {
     venue = undefined;
   }
   if (!venue) {
     const info = await getTokenInfo(tokenAddress).catch(() => null);
-    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)) {
-      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
     } else if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
   }
+
+  // If we have a venue but no dcl_pool_id in cache, re-fetch from getTokenInfo to get the pool ID
+  // (cached dcl_pool_id may be null if upsertTokenCache hasn't completed or the entry is stale)
+  let dclPoolIdFromCache = cached?.dcl_pool_id ?? undefined;
+  if (!dclPoolIdFromCache && venue && ['nearlytrade', 'rhea', 'onetokenhub'].includes(venue)) {
+    const freshInfo = await getTokenInfo(tokenAddress).catch(() => null);
+    if (freshInfo?.dcl_pool_id) {
+      dclPoolIdFromCache = freshInfo.dcl_pool_id;
+    }
+  }
+  const effectiveRheaPoolId = cached?.rhea_pool_id ?? undefined;
+  const effectiveDclPoolId = dclPoolIdFromCache;
 
   if (!venue) {
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
@@ -443,8 +457,8 @@ async function executeBuyHelper(
     tokenAddress,
     amountInYocto,
     slippagePct,
-    cached?.rhea_pool_id,
-    cached?.dcl_pool_id ?? undefined
+    effectiveRheaPoolId,
+    effectiveDclPoolId
   );
 
   const swapResult = await publishSwap({
@@ -454,7 +468,7 @@ async function executeBuyHelper(
     amount_in: amountInYocto,
     min_amount_out: minAmountOut,
     venue,
-    dcl_pool_id: cached?.dcl_pool_id ?? undefined,
+    dcl_pool_id: effectiveDclPoolId,
   });
 
   const txInfo = swapResult.txHash
