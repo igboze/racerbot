@@ -7,8 +7,8 @@ RUN npm run build
 
 FROM node:20-alpine
 WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-CMD ["node", "dist/index.js"]
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:8080/health || exit 1
+ENV NODE_ENV=production
+# turbo emits to packages/<svc>/dist — copy the whole workspace, not /app/dist
+COPY --from=builder /app /app
+# Triggers is a headless polling engine — no HTTP port to healthcheck
+CMD ["node", "packages/triggers/dist/index.js"]

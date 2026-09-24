@@ -4,6 +4,11 @@ import { getUserById } from '@racerbot/db';
 
 let _bot: Telegraf | null = null;
 
+/** Strip Telegram Markdown control chars so user/data strings can't break messages. */
+function sanitize(s: string): string {
+  return String(s ?? '').replace(/[_*`\[]/g, ' ').slice(0, 300);
+}
+
 export function setBotInstance(bot: Telegraf): void {
   _bot = bot;
 }
@@ -86,6 +91,19 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         `📦 Quantity: ${pnl.quantity}\n` +
         `💰 Realized PNL: ${pnl.realizedPnlNear.toFixed(4)} NEAR (${pnlSign}${pnl.realizedPnlPercent.toFixed(2)}%)\n` +
         `⏱ Hold: ${pnl.holdDuration}`,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case 'trade_failed': {
+      const txHash = data.txHash as string ?? 'unknown';
+      const reason = (data.reason as string) ?? 'transaction failed or slippage breach';
+      await _bot.telegram.sendMessage(telegramId,
+        `❌ *Trade Failed*\n\n` +
+        `📋 Reason: ${sanitize(reason)}\n` +
+        `🧾 TX: \`${sanitize(txHash)}\`\n\n` +
+        `No position was opened by this transaction.`,
         { parse_mode: 'Markdown' }
       );
       break;

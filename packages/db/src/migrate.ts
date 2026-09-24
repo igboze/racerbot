@@ -34,17 +34,41 @@ async function runMigrations() {
 
   const client = await pool.connect();
   try {
+    // Track applied migrations so re-running is safe (previously every run
+    // re-applied 001_init.sql and crashed on an already-provisioned database).
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS schema_migrations (
+         filename TEXT PRIMARY KEY,
+         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+       )`
+    );
+
     const migrationsDir = path.resolve(__dirname, '../migrations');
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
-    console.log(`[MIGRATE] Running ${files.length} migrations from ${migrationsDir}...`);
+    const appliedRes = await client.query('SELECT filename FROM schema_migrations');
+    const applied = new Set(appliedRes.rows.map(r => r.filename));
+
+    console.log(`[MIGRATE] ${files.length} migration file(s), ${applied.size} already applied.`);
 
     for (const file of files) {
-      console.log(`[MIGRATE] Applying ${file}...`);
+      if (applied.has(file)) continue;
+
       const filePath = path.join(migrationsDir, file);
       const sql = fs.readFileSync(filePath, 'utf-8');
-      await client.query(sql);
-      console.log(`[MIGRATE] Applied ${file} successfully.`);
+
+      console.log(`[MIGRATE] Applying ${file}...`);
+      // Each migration is atomic: SQL + bookkeeping commit together.
+      await client.query('BEGIN');
+      try {
+        await client.query(sql);
+        await client.query('INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
+        await client.query('COMMIT');
+        console.log(`[MIGRATE] Applied ${file} successfully.`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
     }
 
     console.log('[MIGRATE] All migrations applied successfully!');

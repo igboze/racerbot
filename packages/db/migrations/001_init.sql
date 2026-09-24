@@ -2,7 +2,7 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     telegram_id BIGINT UNIQUE NOT NULL,
     subaccount_id TEXT UNIQUE NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE positions (
+CREATE TABLE IF NOT EXISTS positions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     token_address TEXT NOT NULL,
@@ -24,9 +24,9 @@ CREATE TABLE positions (
     closed_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_positions_user_status ON positions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_positions_user_status ON positions(user_id, status);
 
-CREATE TABLE fills (
+CREATE TABLE IF NOT EXISTS fills (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     position_id UUID REFERENCES positions(id) ON DELETE CASCADE,
@@ -40,9 +40,9 @@ CREATE TABLE fills (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_fills_position ON fills(position_id);
+CREATE INDEX IF NOT EXISTS idx_fills_position ON fills(position_id);
 
-CREATE TABLE triggers (
+CREATE TABLE IF NOT EXISTS triggers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     position_id UUID REFERENCES positions(id) ON DELETE CASCADE,
@@ -52,9 +52,9 @@ CREATE TABLE triggers (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_triggers_status_type ON triggers(status, type);
+CREATE INDEX IF NOT EXISTS idx_triggers_status_type ON triggers(status, type);
 
-CREATE TABLE token_cache (
+CREATE TABLE IF NOT EXISTS token_cache (
     token_address TEXT PRIMARY KEY,
     name TEXT,
     symbol TEXT,
@@ -66,7 +66,7 @@ CREATE TABLE token_cache (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE fee_ledger (
+CREATE TABLE IF NOT EXISTS fee_ledger (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     fill_id UUID REFERENCES fills(id) ON DELETE CASCADE,
     amount NUMERIC NOT NULL,

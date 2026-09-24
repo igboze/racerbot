@@ -140,6 +140,14 @@ export function calculateExpectedOutput(
   return numerator / denominator;
 }
 
+export function calculateMinOutAdj(minAmountOut: string | bigint, amountIn: string | bigint): string {
+  const amountInBigInt = BigInt(amountIn);
+  const feeAmount = (amountInBigInt * 150n) / 10000n;
+  const swapAmount = amountInBigInt - feeAmount;
+  const scaled = (BigInt(minAmountOut) * swapAmount) / amountInBigInt;
+  return scaled > 0n ? scaled.toString() : (typeof minAmountOut === 'string' ? minAmountOut : minAmountOut.toString());
+}
+
 const ADJECTIVES = [
   'swift', 'rapid', 'bold', 'brave', 'cyber', 'neon', 'hyper', 'sonic',
   'turbo', 'blaze', 'alpha', 'apex', 'vivid', 'prime', 'stellar', 'cosmic',

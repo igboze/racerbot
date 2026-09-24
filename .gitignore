@@ -11,3 +11,5 @@ target/
 *.tsbuildinfo
 coverage/
 docs/
+scratch*
+*.scratch.*
