@@ -1003,8 +1003,30 @@ export class MultiRpcNear {
       try {
         state = await this.getNearlytradeTokenState(targetToken);
       } catch {
+        // If NearlyTrade RPC fails, check if Rhea has a pool as fallback
+        try {
+          const rheaPoolId = await this.findRheaPoolId(tokenIn, tokenOut);
+          if (rheaPoolId) {
+            // Use Rhea pool calculation
+            const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+            const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+            const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+              pool_id: rheaPoolId,
+              token_in: inToken,
+              amount_in: amountIn,
+              token_out: outToken,
+            });
+            const expected = BigInt(ret || '0');
+            if (expected > 0n) {
+              const minOut = calculateMinAmountOut(expected, slippagePct);
+              return { expectedOutput: expected.toString(), minAmountOut: minOut };
+            }
+          }
+        } catch {
+          // Ignore Rhea lookup errors
+        }
         throw new Error(
-          `NearlyTrade RPC failed for ${targetToken}. Token may be on a launchpad but RPC is unreachable. Try again later.`
+          `NearlyTrade token ${targetToken} is not yet bonded and has no Rhea pool. Wait for bonding or pool creation.`
         );
       }
       const reserveNear = BigInt(state.reserveNear);
