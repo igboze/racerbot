@@ -15,6 +15,9 @@ export interface UserRecord {
   auto_buy_amount_near: number;
   auto_buy_min_liquidity_near: number;
   slippage_pct: number;
+  referred_by: string | null;
+  referral_code: string | null;
+  username: string | null;
   created_at: Date;
 }
 
@@ -68,6 +71,16 @@ export interface TokenCacheRecord {
   last_price?: number | null;
   last_liquidity?: number | null;
   updated_at?: Date | null;
+}
+
+export interface ReferralRecord {
+  id: string;
+  referrer_id: string;
+  referred_user_id: string;
+  status: 'pending' | 'active' | 'completed';
+  total_fees_earned: number;
+  created_at: Date;
+  completed_at: Date | null;
 }
 
 export interface CreateUserParams {
@@ -294,7 +307,7 @@ export async function updatePosition(params: UpdatePositionParams): Promise<void
   await db.query(`UPDATE positions SET ${setParts.join(', ')} WHERE id = $${idx}`, values);
 }
 
-export async function createFill(params: CreateFillParams): Promise<{ fill: FillRecord; inserted: boolean }> {
+export async function createFill(params: CreateFillParams): Promise<{ fill: FillRecord; inserted: boolean; fillId: string }> {
   const db = await getDb();
   const id = generateId();
   const client = await db.connect();
@@ -324,7 +337,8 @@ export async function createFill(params: CreateFillParams): Promise<{ fill: Fill
 
     return {
       fill: { ...params, id, created_at: new Date() },
-      inserted
+      inserted,
+      fillId: id,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -417,6 +431,96 @@ export async function recordFee(fillId: string, amount: string): Promise<void> {
   await db.query('INSERT INTO fee_ledger (id, fill_id, amount, created_at) VALUES ($1, $2, $3, NOW())', [id, fillId, amount]);
 }
 
+// ── Referral System Functions ─────────────────────────────────────────────────
+
+export async function generateReferralCode(userId: string, username: string): Promise<string> {
+  const db = await getDb();
+  // Generate a referral code based on username with random suffix
+  const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+  const code = `${username}-${randomSuffix}`;
+  
+  await db.query(
+    'UPDATE users SET referral_code = $1, username = $2 WHERE id = $3',
+    [code, username, userId]
+  );
+  return code;
+}
+
+export async function getUserByReferralCode(referralCode: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
+export async function createReferral(referrerId: string, referredUserId: string): Promise<ReferralRecord> {
+  const db = await getDb();
+  const id = generateId();
+  await db.query(
+    'INSERT INTO referrals (id, referrer_id, referred_user_id, status, created_at) VALUES ($1, $2, $3, $4, NOW())',
+    [id, referrerId, referredUserId, 'pending']
+  );
+  return {
+    id,
+    referrer_id: referrerId,
+    referred_user_id: referredUserId,
+    status: 'pending',
+    total_fees_earned: 0,
+    created_at: new Date(),
+    completed_at: null,
+  };
+}
+
+export async function activateReferral(referralId: string): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE referrals SET status = $1, completed_at = NOW() WHERE id = $2',
+    ['active', referralId]
+  );
+}
+
+export async function addReferralReward(referralId: string, rewardAmount: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE referrals SET total_fees_earned = total_fees_earned + $1 WHERE id = $2',
+    [rewardAmount, referralId]
+  );
+}
+
+export async function getReferralsByReferrer(referrerId: string): Promise<ReferralRecord[]> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM referrals WHERE referrer_id = $1', [referrerId]);
+  return result.rows.map(rowToReferral);
+}
+
+export async function getReferralByReferredUser(referredUserId: string): Promise<ReferralRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM referrals WHERE referred_user_id = $1', [referredUserId]);
+  if (result.rows.length === 0) return null;
+  return rowToReferral(result.rows[0]);
+}
+
+export async function getTotalReferralEarnings(referrerId: string): Promise<number> {
+  const db = await getDb();
+  const result = await db.query(
+    'SELECT COALESCE(SUM(total_fees_earned), 0) as total FROM referrals WHERE referrer_id = $1',
+    [referrerId]
+  );
+  return parseFloat(result.rows[0].total);
+}
+
+function rowToReferral(row: any): ReferralRecord {
+  return {
+    id: row.id,
+    referrer_id: row.referrer_id,
+    referred_user_id: row.referred_user_id,
+    status: row.status,
+    total_fees_earned: parseFloat(row.total_fees_earned),
+    created_at: row.created_at,
+    completed_at: row.completed_at,
+  };
+}
+
 function rowToUser(row: any): UserRecord {
   return {
     id: row.id,
@@ -430,6 +534,9 @@ function rowToUser(row: any): UserRecord {
     auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
     auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 500,
     slippage_pct: row.slippage_pct != null ? parseFloat(row.slippage_pct) : 2,
+    referred_by: row.referred_by,
+    referral_code: row.referral_code,
+    username: row.username,
     created_at: row.created_at,
   };
 }
