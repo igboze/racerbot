@@ -133,6 +133,8 @@ export async function getDb(): Promise<Pool> {
   return pool;
 }
 
+
+
 export async function connectDb(): Promise<void> {
   await getDb();
   console.log('[DB] Connected');
