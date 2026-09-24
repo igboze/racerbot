@@ -13,13 +13,14 @@ import {
   getDb,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { computePnL, getNear, encrypt, isTradableVenue } from '@racerbot/shared';
+import { computePnL, getNear, encrypt, isTradableVenue, createLogger } from '@racerbot/shared';
 import { KeyPair } from 'near-api-js';
 import {
   ensureTelegramInitData,
   ensureTelegramUser,
   validateSwapParams,
   isValidAccountId,
+  perUserRateLimit,
 } from '../middleware.js';
 import {
   ROUTER_CONTRACT_ID,
@@ -27,6 +28,8 @@ import {
   MAIN_WALLET_PRIVATE_KEY,
   MASTER_KEY
 } from '../config.js';
+
+const logger = createLogger('api-routes');
 
 const router = Router();
 
@@ -188,7 +191,7 @@ router.get('/token/:address', ensureTelegramUser, async (req, res) => {
 
 // ── Swap ─────────────────────────────────────────────────────────────────────
 
-router.post('/swap', ensureTelegramUser, async (req, res) => {
+router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 10), async (req, res) => {
   // Identity + ownership are server-side; the body can never impersonate.
   const userId = (req as any).userId as string;
   const { tokenIn, tokenOut, amountIn, venue } = req.body;
@@ -200,6 +203,7 @@ router.post('/swap', ensureTelegramUser, async (req, res) => {
     venue,
   });
   if (!check.valid) {
+    logger.warn('Invalid swap params', { userId, errors: check.errors });
     res.status(400).json({ error: 'Invalid swap params', details: check.errors });
     return;
   }
@@ -240,9 +244,11 @@ router.post('/swap', ensureTelegramUser, async (req, res) => {
       venue: selectedVenue,
       dcl_pool_id: cached?.dcl_pool_id ?? undefined,
     });
+    logger.info('Swap queued', { userId, tokenIn, tokenOut, venue: selectedVenue });
     res.json({ queued: true, venue: selectedVenue, min_amount_out: minAmountOut });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    logger.error('Swap failed', err, { userId, tokenIn, tokenOut });
+    res.status(500).json({ error: 'Failed to queue swap' });
   }
 });
 
@@ -263,55 +269,82 @@ router.get('/positions/:userId', ensureTelegramUser, async (req, res) => {
 
 // ── Sell ─────────────────────────────────────────────────────────────────────
 
-router.post('/sell', ensureTelegramUser, async (req, res) => {
+router.post('/sell', ensureTelegramUser, perUserRateLimit(60000, 10), async (req, res) => {
   const userId = (req as any).userId as string;
   const { positionId, percentage } = req.body;
-  if (!positionId || !percentage) {
-    res.status(400).json({ error: 'positionId, percentage required' });
+  
+  if (!positionId) {
+    res.status(400).json({ error: 'positionId is required' });
     return;
   }
+  
+  if (!percentage) {
+    res.status(400).json({ error: 'percentage is required' });
+    return;
+  }
+  
   const pct = parseFloat(percentage);
   if (isNaN(pct) || pct <= 0 || pct > 100) {
     res.status(400).json({ error: 'percentage must be between 0 and 100' });
     return;
   }
+  
   try {
     // sellAtTarget verifies position.user_id === userId (ownership check)
     const result = await sellAtTarget(userId, positionId, pct);
+    logger.info('Sell executed', { userId, positionId, percentage: pct });
     res.json(result);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    logger.error('Sell failed', err, { userId, positionId, percentage: pct });
+    res.status(500).json({ error: 'Failed to execute sell' });
   }
 });
 
 // ── Triggers ─────────────────────────────────────────────────────────────────
 
-router.post('/triggers', ensureTelegramUser, async (req, res) => {
+router.post('/triggers', ensureTelegramUser, perUserRateLimit(60000, 5), async (req, res) => {
   const userId = (req as any).userId as string;
   const { positionId, type, targetValue } = req.body;
-  if (!positionId || !type || !targetValue) {
-    res.status(400).json({ error: 'positionId, type, targetValue required' });
+  
+  if (!positionId) {
+    res.status(400).json({ error: 'positionId is required' });
     return;
   }
+  
+  if (!type) {
+    res.status(400).json({ error: 'type is required' });
+    return;
+  }
+  
+  if (!targetValue) {
+    res.status(400).json({ error: 'targetValue is required' });
+    return;
+  }
+  
   if (!['stop_loss', 'take_profit', 'market_cap'].includes(type)) {
     res.status(400).json({ error: 'Invalid trigger type' });
     return;
   }
+  
   if (parseFloat(targetValue) <= 0) {
     res.status(400).json({ error: 'targetValue must be positive' });
     return;
   }
+  
   try {
     // Ownership check: you may only trigger sells on your own positions
     const position = await getPositionById(positionId);
     if (!position || position.user_id !== userId) {
+      logger.warn('Unauthorized trigger creation attempt', { userId, positionId });
       res.status(403).json({ error: 'Forbidden: position not found or not yours' });
       return;
     }
     const trigger = await createTrigger({ user_id: userId, position_id: positionId, type, target_value: targetValue });
+    logger.info('Trigger created', { userId, positionId, type, targetValue });
     res.json(trigger);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    logger.error('Trigger creation failed', err, { userId, positionId, type });
+    res.status(500).json({ error: 'Failed to create trigger' });
   }
 });
 
