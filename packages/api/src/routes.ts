@@ -412,8 +412,8 @@ async function executeBuyHelper(
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  if (balanceNear < amountNear + 0.01) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR. Need at least ${(amountNear + 0.01).toFixed(4)} NEAR (including gas & storage reserve).`);
+  if (balanceNear < amountNear + 0.005) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR. Need at least ${(amountNear + 0.005).toFixed(4)} NEAR (including gas reserve). Fees are deducted from your swap amount.`);
   }
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
@@ -475,11 +475,11 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   const balances = await getUserBalances(telegramId);
   const balanceNear = parseFloat(balances.nativeNearFormatted);
 
-  // Retain 0.05 NEAR reserve for account storage
-  const usableBalance = Math.max(0, balanceNear - 0.05);
+  // Retain 0.005 NEAR reserve for gas (fees are deducted from swap amount)
+  const usableBalance = Math.max(0, balanceNear - 0.005);
   const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.05 reserve) is too low to buy.`);
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.005 gas reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
 }
