@@ -225,7 +225,7 @@ export class MultiRpcNear {
    * Wait for transaction confirmation by polling.
    * Used after broadcast to confirm the tx landed.
    */
-  async waitForTx(txHash: string, accountId: string, maxWaitMs = 10000): Promise<any> {
+  async waitForTx(txHash: string, accountId: string, maxWaitMs = 30000): Promise<any> {
     const provider = rotateProvider(this.providers);
     const near = await this.getConnection(provider.url);
     const deadline = Date.now() + maxWaitMs;
@@ -1126,7 +1126,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 15_000
+    waitForMs = 30_000
   ): Promise<any> {
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
@@ -1189,7 +1189,7 @@ export class MultiRpcNear {
               method: 'broadcast_tx_async',
               params: [signedB64],
             }),
-            signal: AbortSignal.timeout(5000),
+            signal: AbortSignal.timeout(7000),
           });
           const data: any = await res.json();
           if (data?.error) {
@@ -1220,7 +1220,7 @@ export class MultiRpcNear {
           const near = await this.getConnection(provider.url);
           const outcome = await withTimeout(
             near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC'),
-            4000,
+            7000,
             `txStatus timeout on ${provider.url}`
           );
           if (outcome && outcome.status !== undefined && outcome.status !== null) {
@@ -1236,7 +1236,7 @@ export class MultiRpcNear {
         lastErr = (r as PromiseRejectedResult).reason as Error;
       }
 
-      await sleep(250);
+      await sleep(500);
     }
     throw new Error(
       `Transaction ${txHash} not confirmed within ${maxMs}ms${lastErr ? `: ${lastErr.message}` : ''}`
