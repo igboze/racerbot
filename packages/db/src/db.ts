@@ -292,16 +292,44 @@ export async function updatePosition(params: UpdatePositionParams): Promise<void
   await db.query(`UPDATE positions SET ${setParts.join(', ')} WHERE id = $${idx}`, values);
 }
 
-export async function createFill(params: CreateFillParams): Promise<FillRecord> {
+export async function createFill(params: CreateFillParams): Promise<{ fill: FillRecord; inserted: boolean }> {
   const db = await getDb();
   const id = generateId();
-  await db.query(
-    `INSERT INTO fills (id, user_id, position_id, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-     ON CONFLICT (tx_hash) DO NOTHING`,
-    [id, params.user_id, params.position_id, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
-  );
-  return { ...params, id, created_at: new Date() };
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const insertResult = await client.query(
+      `INSERT INTO fills (id, user_id, position_id, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+       ON CONFLICT (tx_hash) DO NOTHING
+       RETURNING id`,
+      [id, params.user_id, params.position_id, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+    );
+
+    const inserted = insertResult.rows.length > 0;
+
+    if (inserted) {
+      // Only update position if the fill was actually inserted
+      await client.query(
+        'SELECT update_position_fill($1, $2, $3, $4, $5)',
+        [params.position_id, params.side, params.amount, params.price, params.fee_paid]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    return {
+      fill: { ...params, id, created_at: new Date() },
+      inserted
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getFillsByPosition(positionId: string): Promise<FillRecord[]> {
