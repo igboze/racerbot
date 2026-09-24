@@ -863,12 +863,12 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           ? parseFloat(info.price)
           : 0;
 
-        // Initialize position with current price as entry price
+        // Initialize position with zero values - createFill will update them
         const newPos = await createPosition({
           user_id: userId,
           token_address: t.contract_id,
-          quantity_held: t.balance,
-          avg_entry_price: currentPrice.toString(),
+          quantity_held: '0',
+          avg_entry_price: '0',
         });
 
         const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)

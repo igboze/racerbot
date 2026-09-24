@@ -882,8 +882,8 @@ export class SwapExecutor {
         position = await createPosition({
           user_id: userId,
           token_address: tokenAddress,
-          quantity_held: tokenQty,
-          avg_entry_price: priceNear.toString(),
+          quantity_held: '0',
+          avg_entry_price: '0',
         });
       }
 
@@ -898,12 +898,6 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
-
-      // Update position weighted average via stored proc
-      await db.query(
-        'SELECT update_position_fill($1, $2, $3, $4, $5)',
-        [position.id, 'buy', tokenQty, priceNear, feePaidNear]
-      );
     } else if (position) {
       await createFill({
         user_id: userId,
@@ -916,11 +910,6 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
-
-      await db.query(
-        'SELECT update_position_fill($1, $2, $3, $4, $5)',
-        [position.id, 'sell', tokenQty, priceNear, feePaidNear]
-      );
     }
   }
 
