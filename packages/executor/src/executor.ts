@@ -524,16 +524,14 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Send 1.5% fee to treasury (separate tx — see audit note)
-        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount).catch(() => {});
-
-        // Buy on shardsmarket factory — signed once, broadcast to ALL RPCs
+        // Buy on shardsmarket factory — atomic transaction with fee taken from input
+        // User deposits full amount_in, fee is taken from that amount before swap
         result = await near.signAndSendTransactionAll(subaccountId, 'factory.shardsmarket.near', [
           transactions.functionCall(
             'buy',
             { token_id: token_out, min_amount_out: minOutAdj },
             BigInt('200000000000000'),
-            swapAmount
+            amountInBigInt  // Deposit full amount_in, fee taken atomically by contract
           ),
         ]);
       } else {
