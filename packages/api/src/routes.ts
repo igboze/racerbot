@@ -385,9 +385,68 @@ export function buildSettingsDashboard(user: UserRecord) {
   return { text, keyboard };
 }
 
+// ── User-Friendly Error Messages ────────────────────────────────────────
+function getUserFriendlyError(error: Error | string): string {
+  const errorMsg = typeof error === 'string' ? error : error.message;
+  
+  // Map technical errors to user-friendly messages
+  const errorMap: Record<string, string> = {
+    'Failed to fetch wallet balance': 'Unable to check your wallet balance. Please try again.',
+    'Insufficient balance': 'You don\'t have enough NEAR for this trade. Please deposit more NEAR.',
+    'Minimum buy amount': 'The amount is too small. Minimum is 0.001 NEAR.',
+    'Token is on': 'This token is not yet supported for trading.',
+    'Could not determine DEX venue': 'Unable to trade this token. Please verify the contract address.',
+    'Available balance': 'Your available balance is too low for this trade.',
+    'Failed to queue swap': 'Unable to process your buy order. Please try again.',
+    'Failed to execute sell': 'Unable to process your sell order. Please try again.',
+    'Failed to create trigger': 'Unable to set up your trigger. Please try again.',
+    'positionId is required': 'Position ID is missing. Please try again.',
+    'percentage is required': 'Percentage is missing. Please try again.',
+    'percentage must be between 0 and 100': 'Percentage must be between 0 and 100.',
+    'type is required': 'Trigger type is missing. Please try again.',
+    'targetValue must be positive': 'Target value must be greater than 0.',
+    'Invalid trigger type': 'Invalid trigger type. Use stop_loss or take_profit.',
+    'Insufficient liquidity': 'Not enough liquidity available for this trade.',
+    'Token not found': 'Unable to find this token. Please verify the address.',
+    'RPC timeout': 'Network is slow. Please try again.',
+    'Parse error': 'Transaction confirmation issue. Please try again.',
+    'Transaction not confirmed': 'Transaction is taking longer than expected. Check explorer for status.',
+    'near deposit': 'Failed to wrap NEAR. Please try again.',
+    'ft_transfer': 'Failed to process transfer. Please try again.',
+    'fee skim': 'Failed to process fee. Please try again.',
+    'pool_id': 'Unable to find trading pool. Please try again.',
+    'dcl_pool_id': 'Unable to find DCL pool. Please try again.',
+    'Invalid swap params': 'Invalid trade parameters. Please try again.',
+    'Unauthorized': 'Authentication required. Please run /start.',
+    'Forbidden': 'You don\'t have permission for this action.',
+    'User not found': 'Wallet not found. Please run /start first.',
+    'Account setup failed': 'Unable to set up your wallet. Please try running /start again.',
+    'Scoped key already registered': 'Key already exists. Try a different action.',
+    'Key must be scoped': 'Invalid key format. Please use the proper key format.',
+    'Could not verify access key': 'Unable to verify your key. Please try again.',
+    'Token lookup failed': 'Unable to fetch token information. Please try again.',
+    'Auth lookup failed': 'Authentication check failed. Please run /start again.',
+    'Too many requests': 'You\'re doing this too fast. Please wait a moment.',
+    'buy failed': 'Trade failed. Please try again.',
+    'sell failed': 'Sell failed. Please try again.',
+    'snipe failed': 'Auto-buy failed. Please try again.',
+    'withdrawal failed': 'Withdrawal failed. Please try again.',
+    'unwrap failed': 'Unwrap failed. Please try again.',
+    'rotate key failed': 'Key rotation failed. Please try again.',
+  };
+
+  // Check for known errors
+  for (const [key, message] of Object.entries(errorMap)) {
+    if (errorMsg.toLowerCase().includes(key.toLowerCase())) {
+      return message;
+    }
+  }
+
+  // Default generic message
+  return 'Something went wrong. Please try again or contact support if the issue persists.';
+}
+
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
-// FIX 3: Use the cached getUserBalances() instead of a raw RPC call for balance check.
-// The balanceCache has an 8s TTL — fresh enough to gate a buy without a live round-trip.
 async function executeBuyHelper(
   telegramId: number,
   tokenAddress: string,
@@ -517,8 +576,7 @@ export function setupRoutes(bot: Telegraf): void {
       );
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
-      const errMsg = err?.message || (typeof err === 'string' ? err : '') || 'Internal database or network error';
-      await ctx.reply(`❌ Account setup failed: ${errMsg}\n\nPlease try running /start again.`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nPlease try running /start again.`);
     }
   });
 
@@ -529,7 +587,7 @@ export function setupRoutes(bot: Telegraf): void {
       const menu = await buildMainMenu(telegramId);
       await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not open menu: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -553,7 +611,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery().catch(() => {});
       await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Error: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -721,7 +779,7 @@ export function setupRoutes(bot: Telegraf): void {
       const wallet = await buildWalletMenu(telegramId);
       await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not load wallet: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   };
 
@@ -735,7 +793,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Wallet refreshed.').catch(() => {});
       await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Error: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -746,7 +804,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await unwrapUserWrapNear(telegramId);
       await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
     } catch (err: any) {
-      await ctx.reply(`❌ Unwrap failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -760,7 +818,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
       }
     } catch (err: any) {
-      await ctx.reply(`❌ Unwrap failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -822,7 +880,7 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ Withdrawal failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -953,7 +1011,7 @@ export function setupRoutes(bot: Telegraf): void {
       const card = await buildTokenCard(tokenAddress, ctx.from!.id);
       await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not fetch token info for \`${tokenAddress}\`: ${err.message}`, { parse_mode: 'Markdown' });
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`, { parse_mode: 'Markdown' });
     }
   });
 
@@ -966,7 +1024,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Token refreshed.').catch(() => {});
       await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Refresh failed: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -982,7 +1040,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -997,7 +1055,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1047,7 +1105,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1262,7 +1320,7 @@ export function setupRoutes(bot: Telegraf): void {
         const res = await executeBuyHelper(telegramId, query, amountNear);
         await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
       } catch (err: any) {
-        await ctx.reply(`❌ Snipe failed: ${err.message}`);
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
       }
     } else {
       const names = Array.from(localTokenNames.keys());
@@ -1298,7 +1356,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.editMessageText(`✅ ${res.message}`, { parse_mode: 'Markdown' }).catch(() => {});
     } catch (err: any) {
-      await ctx.editMessageText(`❌ Snipe failed: ${err.message}`).catch(() => {});
+      await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -1387,7 +1445,7 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ Could not decrypt key: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1433,7 +1491,7 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ Key rotation failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1614,7 +1672,7 @@ try {
             { parse_mode: 'Markdown' }
           );
         } catch (err: any) {
-          await ctx.reply(`❌ Withdrawal failed: ${err.message}`);
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
         return;
       }
