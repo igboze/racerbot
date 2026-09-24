@@ -1554,7 +1554,7 @@ export function setupRoutes(bot: Telegraf): void {
       user.referral_code = code;
     }
 
-    const referralLink = `https://t.me/${process.env.TELEGRAM_BOT_USERNAME || 'racerbot'}?start=${user.referral_code}`;
+    const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
 
     // Get referral stats
     const db = await getDb();
