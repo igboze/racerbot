@@ -124,7 +124,38 @@ export function rateLimit(windowMs: number, maxRequests: number) {
     const hits = (windows.get(key) ?? []).filter(t => now - t < windowMs);
 
     if (hits.length >= maxRequests) {
-      res.status(429).json({ error: 'Too many requests' });
+      res.status(429).json({ error: 'Too many requests', retryAfter: Math.ceil(windowMs / 1000) });
+      return;
+    }
+
+    hits.push(now);
+    windows.set(key, hits);
+    next();
+  };
+}
+
+/**
+ * Per-user rate limiter. Keyed on userId from authenticated requests.
+ * Prevents individual users from overwhelming the system.
+ */
+export function perUserRateLimit(windowMs: number, maxRequests: number) {
+  const windows = new Map<string, number[]>();
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const userId = (req as any).userId;
+    if (!userId) {
+      next(); // Skip if not authenticated
+      return;
+    }
+
+    if (windows.size > 10_000) windows.clear(); // hard memory cap
+
+    const key = userId;
+    const now = Date.now();
+    const hits = (windows.get(key) ?? []).filter(t => now - t < windowMs);
+
+    if (hits.length >= maxRequests) {
+      res.status(429).json({ error: 'Too many requests for your account', retryAfter: Math.ceil(windowMs / 1000) });
       return;
     }
 
@@ -136,6 +167,8 @@ export function rateLimit(windowMs: number, maxRequests: number) {
 
 const ACCOUNT_ID_RE = /^[a-z0-9_\-]+(\.[a-z0-9_\-]+)+$/;
 const UINT_RE = /^\d+$/;
+const HEX_RE = /^[0-9a-fA-F]+$/;
+const FLOAT_RE = /^\d+(\.\d+)?$/;
 
 export function isValidAccountId(id: unknown): id is string {
   return typeof id === 'string' && id.length <= 64 && ACCOUNT_ID_RE.test(id);
@@ -145,23 +178,81 @@ export function isValidUintString(v: unknown): v is string {
   return typeof v === 'string' && UINT_RE.test(v) && v !== '0';
 }
 
+export function isValidFloatString(v: unknown): v is string {
+  return typeof v === 'string' && FLOAT_RE.test(v) && parseFloat(v) > 0;
+}
+
+export function isValidHexString(v: unknown): v is string {
+  return typeof v === 'string' && HEX_RE.test(v) && v.length > 0;
+}
+
+export function isValidPercentage(v: unknown): boolean {
+  const num = typeof v === 'string' ? parseFloat(v) : v;
+  return typeof num === 'number' && !isNaN(num) && num >= 0 && num <= 100;
+}
+
+export function isValidTelegramId(v: unknown): boolean {
+  const num = typeof v === 'string' ? parseInt(v, 10) : v;
+  return typeof num === 'number' && !isNaN(num) && num > 0 && num < 2_147_483_647;
+}
+
+export function sanitizeString(v: unknown, maxLength: number = 255): string {
+  if (typeof v !== 'string') return '';
+  return v.slice(0, maxLength).trim();
+}
+
+export function validateNonEmptyString(v: unknown, fieldName: string): { valid: boolean; error?: string } {
+  if (typeof v !== 'string' || v.trim().length === 0) {
+    return { valid: false, error: `${fieldName} must be a non-empty string` };
+  }
+  return { valid: true };
+}
+
+export function validateLength(v: unknown, min: number, max: number, fieldName: string): { valid: boolean; error?: string } {
+  if (typeof v !== 'string') {
+    return { valid: false, error: `${fieldName} must be a string` };
+  }
+  if (v.length < min || v.length > max) {
+    return { valid: false, error: `${fieldName} must be between ${min} and ${max} characters` };
+  }
+  return { valid: true };
+}
+
 export function validateSwapParams(params: any): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  if (!isValidAccountId(params.token_in) && params.token_in !== 'near') errors.push('token_in must be a NEAR account id');
-  if (!isValidAccountId(params.token_out) && params.token_out !== 'near') errors.push('token_out must be a NEAR account id');
-  if (!isValidUintString(params.amount_in)) errors.push('amount_in must be a positive integer (atomic units)');
+  
+  if (!params.token_in) errors.push('token_in is required');
+  else if (!isValidAccountId(params.token_in) && params.token_in !== 'near') errors.push('token_in must be a NEAR account id');
+  
+  if (!params.token_out) errors.push('token_out is required');
+  else if (!isValidAccountId(params.token_out) && params.token_out !== 'near') errors.push('token_out must be a NEAR account id');
+  
+  if (!params.amount_in) errors.push('amount_in is required');
+  else if (!isValidUintString(params.amount_in)) errors.push('amount_in must be a positive integer (atomic units)');
+  
   if (
     params.venue !== undefined &&
     !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(params.venue)
   ) {
     errors.push('venue must be rhea, shardsmarket, nearlytrade, intear, or onetokenhub');
   }
+  
+  // Validate token_in != token_out (no self-swaps)
+  if (params.token_in && params.token_out && params.token_in === params.token_out) {
+    errors.push('token_in and token_out must be different');
+  }
+  
   return { valid: errors.length === 0, errors };
 }
 
 export function validateTriggerParams(params: any): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  if (!['stop_loss', 'take_profit', 'market_cap'].includes(params.type)) errors.push('Invalid trigger type');
-  if (!params.target_value || parseFloat(params.target_value) <= 0) errors.push('target_value must be positive');
+  
+  if (!params.type) errors.push('type is required');
+  else if (!['stop_loss', 'take_profit', 'market_cap'].includes(params.type)) errors.push('Invalid trigger type');
+  
+  if (!params.target_value) errors.push('target_value is required');
+  else if (!isValidFloatString(params.target_value) || parseFloat(params.target_value) <= 0) errors.push('target_value must be a positive number');
+  
   return { valid: errors.length === 0, errors };
 }

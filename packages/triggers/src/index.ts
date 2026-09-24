@@ -1,15 +1,18 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, type PriceUpdateEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, createLogger, type PriceUpdateEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
-async function main(): Promise<void> {
-  console.log('[TRIGGERS] Starting trigger engine...');
-  console.log('[TRIGGERS] Parent account:', PARENT_ACCOUNT);
-  console.log('[TRIGGERS] Poll interval:', TRIGGER_INTERVAL_MS, 'ms');
+const logger = createLogger('triggers');
 
-  await getDb();
+async function main(): Promise<void> {
+  logger.info('Starting trigger engine...', { 
+    parentAccount: PARENT_ACCOUNT, 
+    pollInterval: TRIGGER_INTERVAL_MS 
+  });
+
+  await logger.time('Connected to database', () => getDb());
 
   const engine = new TriggerEngine();
 
@@ -29,7 +32,7 @@ async function main(): Promise<void> {
   });
 
   // Seed price cache from Redis on startup (tokens detected before this process started)
-  console.log('[TRIGGERS] Price cache warming from Redis...');
+  logger.info('Price cache warming from Redis...');
   try {
     const activeTriggers = await getActiveTriggers();
     const tokenSet = new Set<string>();
@@ -48,7 +51,7 @@ async function main(): Promise<void> {
     );
 
     const tokenAddresses = Array.from(tokenSet);
-    console.log(`[TRIGGERS] Found ${tokenAddresses.length} distinct token(s) with active triggers.`);
+    logger.info('Found distinct tokens with active triggers', { count: tokenAddresses.length });
 
     await Promise.all(
       tokenAddresses.map(async (tokenAddress) => {
@@ -73,9 +76,9 @@ async function main(): Promise<void> {
         }
       })
     );
-    console.log(`[TRIGGERS] Price cache warmed with ${localPriceCache.size} active token price(s).`);
+    logger.info('Price cache warmed with active token prices', { count: localPriceCache.size });
   } catch (err) {
-    console.warn('[TRIGGERS] Price cache warm-up error:', (err as Error).message);
+    logger.warn('Price cache warm-up error', (err as Error));
   }
 
   // Run trigger evaluation on interval
@@ -83,11 +86,11 @@ async function main(): Promise<void> {
     try {
       await engine.checkAllTriggers();
     } catch (err) {
-      console.error('[TRIGGERS] Check error:', (err as Error).message);
+      logger.error('Trigger check error', (err as Error));
     }
   }, TRIGGER_INTERVAL_MS);
 
-  console.log('[TRIGGERS] Ready — evaluating triggers every', TRIGGER_INTERVAL_MS, 'ms');
+  logger.info('Ready — evaluating triggers on interval', { intervalMs: TRIGGER_INTERVAL_MS });
 
   process.on('SIGINT', async () => {
     clearInterval(interval);
