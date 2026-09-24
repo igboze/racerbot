@@ -99,7 +99,7 @@ export class SwapExecutor {
     const account = await near.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'onetokenhub') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -109,6 +109,9 @@ export class SwapExecutor {
           dclPoolId = ntState?.dclPoolId ?? null;
         } else if (venue === 'rhea') {
           dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+        } else if (venue === 'onetokenhub') {
+          const hubState = await near.getOneTokenHubState(tokenTarget).catch(() => null);
+          dclPoolId = hubState?.dclPoolId ?? null;
         }
       }
     }
@@ -432,6 +435,84 @@ export class SwapExecutor {
 
         result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
       }
+    } else if (venue === 'onetokenhub') {
+      // OneTokenHub: DCL on dclv2.ref-labs.near with the launch's pool_id
+      if (!dclPoolId) {
+        const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+        const hubState = await near.getOneTokenHubState(tokenTarget);
+        dclPoolId = hubState.dclPoolId;
+      }
+      if (!dclPoolId) {
+        throw new Error(`No DCL pool found for OneTokenHub token`);
+      }
+
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      if (isBuy) {
+        await near.ensureStorageDeposit(subaccountId, token_out);
+
+        const actions = [
+          transactions.functionCall(
+            'near_deposit',
+            {},
+            BigInt('10000000000000'),
+            amountInBigInt
+          ),
+          transactions.functionCall(
+            'ft_transfer',
+            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+            BigInt('20000000000000'),
+            BigInt('1')
+          ),
+          transactions.functionCall(
+            'ft_transfer_call',
+            {
+              receiver_id: 'dclv2.ref-labs.near',
+              amount: swapAmount.toString(),
+              msg: JSON.stringify({
+                Swap: {
+                  pool_ids: [dclPoolId],
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
+              }),
+            },
+            BigInt('180000000000000'),
+            BigInt('1')
+          ),
+        ];
+
+        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+      } else {
+        // Sell OneTokenHub token for the paired quote token
+        await near.ensureStorageDeposit(subaccountId, token_out);
+
+        const actions = [
+          transactions.functionCall(
+            'ft_transfer',
+            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+            BigInt('20000000000000'),
+            BigInt('1')
+          ),
+          transactions.functionCall(
+            'ft_transfer_call',
+            {
+              receiver_id: 'dclv2.ref-labs.near',
+              amount: swapAmount.toString(),
+              msg: JSON.stringify({
+                Swap: {
+                  pool_ids: [dclPoolId],
+                  output_token: token_out,
+                  min_output_amount: min_amount_out,
+                },
+              }),
+            },
+            BigInt('180000000000000'),
+            BigInt('1')
+          ),
+        ];
+
+        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+      }
     } else {
       // Shardsmarket
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -579,7 +660,7 @@ export class SwapExecutor {
     // Run all rug checks. Any failure = skip buy, notify user.
     let rugResult: { safe: boolean; reason?: string };
     try {
-      rugResult = await this.rugCheck(token_address);
+      rugResult = await this.rugCheck(token_address, venue);
     } catch (err) {
       rugResult = { safe: false, reason: `check_failed: ${(err as Error).message}` };
     }
@@ -617,6 +698,9 @@ export class SwapExecutor {
       if (!dclPoolId) {
         rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', token_address).catch(() => null));
       }
+    } else if (venue === 'onetokenhub') {
+      const hubState = await near.getOneTokenHubState(token_address);
+      dclPoolId = hubState.dclPoolId;
     }
 
     // BigInt math against live pool reserves for EVERY venue. The old rhea /
@@ -661,7 +745,7 @@ export class SwapExecutor {
    * Returns { safe: true } only if ALL checks pass.
    * Any thrown exception propagates to the caller, which treats it as unsafe (fail-closed).
    */
-  private async rugCheck(tokenAddress: string): Promise<{ safe: boolean; reason?: string }> {
+  private async rugCheck(tokenAddress: string, venue: string): Promise<{ safe: boolean; reason?: string }> {
     const HOLDER_CONCENTRATION_THRESHOLD = 0.8; // fail if top holder > 80%
     const MIN_LIQUIDITY_NEAR = 100; // fail if < 100 NEAR liquidity
 
@@ -671,37 +755,41 @@ export class SwapExecutor {
       return { safe: false, reason: 'no_metadata' };
     }
 
-    // 2. Check liquidity from Shardsmarket, Rhea, DCL, or NearlyTrade
+    // 2. Check liquidity using the KNOWN venue directly (no waterfall probing)
     let liquidityNear = 0;
     try {
-      const smReserves = await near.getShardsmarketPoolReserves(tokenAddress);
-      liquidityNear = parseFloat(smReserves.reserveNear) / 1e24;
-    } catch {
-      // Try Rhea
-      try {
-        const poolId = await near.findRheaPoolId('wrap.near', tokenAddress);
-        const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-        liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
-      } catch {
-        // Try DCL (Ref / NearPad)
+      if (venue === 'shardsmarket') {
+        const smReserves = await near.getShardsmarketPoolReserves(tokenAddress);
+        liquidityNear = parseFloat(smReserves.reserveNear) / 1e24;
+      } else if (venue === 'rhea') {
+        // Try simple pool first, then DCL
         try {
+          const poolId = await near.findRheaPoolId('wrap.near', tokenAddress);
+          const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+          liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
+        } catch {
           const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress);
           if (!dclPoolId) throw new Error('no dcl pool');
           const dclState = await near.getDclPoolState(dclPoolId);
           liquidityNear = dclState.liquidityNear;
-        } catch {
-          // Try NearlyTrade
-          try {
-            const ntState = await near.getNearlytradeTokenState(tokenAddress);
-            if (ntState.phase === 'prebonded') {
-              return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
-            }
-            liquidityNear = ntState.liquidityNear;
-          } catch {
-            return { safe: false, reason: 'liquidity_check_failed' };
-          }
         }
+      } else if (venue === 'nearlytrade') {
+        const ntState = await near.getNearlytradeTokenState(tokenAddress);
+        if (ntState.phase === 'prebonded') {
+          return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
+        }
+        liquidityNear = ntState.liquidityNear;
+      } else if (venue === 'intear') {
+        const intearState = await near.getIntearTokenState(tokenAddress);
+        liquidityNear = intearState.liquidityNear;
+      } else if (venue === 'onetokenhub') {
+        const hubState = await near.getOneTokenHubState(tokenAddress);
+        liquidityNear = hubState.liquidityNear;
+      } else {
+        return { safe: false, reason: `liquidity_check_failed` };
       }
+    } catch {
+      return { safe: false, reason: 'liquidity_check_failed' };
     }
 
     if (liquidityNear < MIN_LIQUIDITY_NEAR) {

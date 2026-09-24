@@ -135,16 +135,21 @@ async function main() {
 
         if (blockData) {
           const shards = blockData?.shards ?? [];
+          // Collect all (log, receiverId) pairs from all shards/outcomes and process concurrently
+          const eventPairs: Array<{ log: string; receiverId: string }> = [];
           for (const shard of shards) {
             const outcomes = shard?.receipt_execution_outcomes ?? [];
             for (const item of outcomes) {
               const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
               const receiverId: string = item?.receipt?.receiver_id ?? '';
               for (const log of logs) {
-                await parseEventLog(log, receiverId).catch(() => {});
+                eventPairs.push({ log, receiverId });
               }
             }
           }
+          await Promise.all(
+            eventPairs.map(({ log, receiverId }) => parseEventLog(log, receiverId).catch(() => {}))
+          );
         } else {
           await processBlock(nextHeight).catch(err => {
             console.error(`[DETECTOR] Block ${nextHeight} error:`, err.message);
@@ -201,16 +206,21 @@ async function processBlock(height: number): Promise<void> {
     if (neardataRes.ok) {
       const blockData = (await neardataRes.json()) as any;
       const shards = blockData?.shards ?? [];
+      // Collect all (log, receiverId) pairs from all shards/outcomes and process concurrently
+      const eventPairs: Array<{ log: string; receiverId: string }> = [];
       for (const shard of shards) {
         const outcomes = shard?.receipt_execution_outcomes ?? [];
         for (const item of outcomes) {
           const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
           const receiverId: string = item?.receipt?.receiver_id ?? '';
           for (const log of logs) {
-            await parseEventLog(log, receiverId).catch(() => {});
+            eventPairs.push({ log, receiverId });
           }
         }
       }
+      await Promise.all(
+        eventPairs.map(({ log, receiverId }) => parseEventLog(log, receiverId).catch(() => {}))
+      );
       return;
     }
   } catch {
@@ -269,7 +279,8 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         RHEA_RECEIVERS.has(receiverId) ||
         receiverId === 'nearlytrade.near' ||
         receiverId === 'launch.intear.near' ||
-        receiverId === 'meme-cooking.near'
+        receiverId === 'meme-cooking.near' ||
+        receiverId === 'pad.onetokenhub.near'
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -317,6 +328,11 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 const tokenAddress = decoded?.token ?? decoded?.token_id ?? decoded?.token_address ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'nearlytrade', decoded).catch(() => {});
+                }
+              } else if (receiverId === 'pad.onetokenhub.near') {
+                const tokenAddress = decoded?.token ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'onetokenhub', decoded).catch(() => {});
                 }
               }
             } catch {
@@ -417,6 +433,17 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
     await handlePoolCreated(tokenAddress, 'nearlytrade', data);
   }
 
+  // ── OneTokenHub launchpad ─────────────────────────────────────────────────
+  if (
+    receiverId === 'pad.onetokenhub.near' &&
+    (eventName === 'launch' || eventName === 'launch_created' || eventName === 'pool_created' || eventName === 'step_done')
+  ) {
+    const tokenAddress: string = data?.token ?? data?.token_id ?? '';
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'onetokenhub', data);
+    }
+  }
+
   // ── Price update from any venue (swap events) ───────────────────────────
   if (eventName === 'swap' && ((data?.token_in && data?.token_out) || data?.pool_id)) {
     await handleSwapEvent(data, receiverId).catch(() => {});
@@ -426,7 +453,7 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub',
   rawData: any
 ): Promise<void> {
   console.log(`[DETECTOR] New pool detected: ${tokenAddress} on ${venue}`);
@@ -438,11 +465,15 @@ async function handlePoolCreated(
   let totalSupply = '0';
 
   try {
-    const meta = await near.getTokenMetadata(tokenAddress);
+    // Parallelize metadata + total_supply — they are independent calls
+    const [meta, supply] = await Promise.all([
+      near.getTokenMetadata(tokenAddress),
+      near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+    ]);
     name = meta.name;
     symbol = meta.symbol;
     decimals = meta.decimals;
-    totalSupply = await near.getTokenTotalSupply(tokenAddress);
+    totalSupply = supply;
   } catch (err) {
     console.warn(`[DETECTOR] Could not fetch metadata for ${tokenAddress}:`, (err as Error).message);
     if (!name) return; // Skip if we have no data at all
@@ -469,6 +500,17 @@ async function handlePoolCreated(
       }
     } catch (err) {
       console.warn(`[DETECTOR] Could not fetch NearlyTrade state for ${tokenAddress}:`, (err as Error).message);
+    }
+  } else if (venue === 'onetokenhub') {
+    try {
+      const hubState = await near.getOneTokenHubState(tokenAddress);
+      if (hubState) {
+        dclPoolId = hubState.dclPoolId;
+        initialPrice = hubState.price;
+        initialLiquidity = (hubState.liquidityNear * 1e24).toString();
+      }
+    } catch (err) {
+      console.warn(`[DETECTOR] Could not fetch OneTokenHub state for ${tokenAddress}:`, (err as Error).message);
     }
   }
 
@@ -676,7 +718,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {
