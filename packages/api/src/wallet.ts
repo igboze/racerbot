@@ -71,7 +71,7 @@ export async function warmTokenInfoCache(): Promise<void> {
         bonding_phase: (row.bonding_phase as any) ?? null,
         bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
         dcl_pool_id: row.dcl_pool_id ?? null,
-        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(row.venue ?? 'unknown'),
+        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(row.venue ?? 'unknown'),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
       tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
@@ -138,7 +138,7 @@ export interface TokenInfoResult {
   market_cap: number;      // market cap in NEAR
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD exchange rate at time of fetch
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'unknown';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'unknown';
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
@@ -227,7 +227,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(dbCache.venue ?? 'unknown'),
     };
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 15000 });
     return result;
@@ -284,17 +284,27 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     } catch {
       // Not a live Shardsmarket pool (presale phase or not found)
     }
+  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+    venue = 'onetokenhub';
+    try {
+      const hubState = await near.getOneTokenHubState(tokenAddress);
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } catch {
+      // If state lookup failed, keep metadata
+    }
   } else {
-    // Venue probing: the two CHEAP probes run in parallel (NearlyTrade is a
-    // single call; Rhea is 5 parallel get_pools batches with caching). The
-    // expensive Intear full-pool scan (~275 RPC calls) only runs when both
-    // miss. Previously every unknown token crawled through the Intear scan
-    // SEQUENTIALLY before Rhea was even attempted — the slowest possible
-    // order.
-    const [ntRes, rheaRes, dclRes] = await Promise.allSettled([
+    // Venue probing: the cheap probes run in parallel
+    const [ntRes, hubRes, rheaRes, dclRes] = await Promise.allSettled([
       // 1. NearlyTrade — single get_launch_by_token call
       near.getNearlytradeTokenState(tokenAddress),
-      // 2. Rhea — simple pool lookup (cached after first hit)
+      // 2. OneTokenHub — single get_launch_by_token call
+      near.getOneTokenHubState(tokenAddress),
+      // 3. Rhea — simple pool lookup (cached after first hit)
       (async () => {
         const poolId =
           rheaPoolId !== null
@@ -306,7 +316,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
         if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
         return { poolId, reserveIn, reserveOut };
       })(),
-      // 3. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near (NearPad / Ref DCL)
+      // 4. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near
       (async () => {
         const pId =
           dclPoolId !== null
@@ -319,7 +329,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       })(),
     ]);
 
-    // Precedence: NearlyTrade > Rhea (Simple or DCL) > Intear
+    // Precedence: NearlyTrade > OneTokenHub > Rhea (Simple or DCL) > Intear
     if (ntRes.status === 'fulfilled' && ntRes.value) {
       const ntState = ntRes.value;
       venue = 'nearlytrade';
@@ -330,6 +340,15 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       dclPoolId = ntState.dclPoolId;
       if (ntState.totalSupply && ntState.totalSupply !== '0') {
         totalSupply = ntState.totalSupply;
+      }
+    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+      const hubState = hubRes.value;
+      venue = 'onetokenhub';
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
       }
     } else if (rheaRes.status === 'fulfilled') {
       const { poolId, reserveIn, reserveOut } = rheaRes.value;
@@ -346,7 +365,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       liquidity = st.liquidityNear;
       dclPoolId = st.poolId;
     } else {
-      // 3. Intear last resort — full scan, only when cheap probes missed
+      // 5. Intear last resort — full scan, only when cheap probes missed
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
         if (intearState && intearState.price > 0) {
@@ -365,7 +384,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
   const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear'].includes(venue);
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear', 'onetokenhub'].includes(venue);
   const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {
@@ -576,7 +595,7 @@ export async function publishSwap(swapEvent: {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
   dcl_pool_id?: string;
 }): Promise<{ txHash?: string }> {
   const redisUrl = process.env.REDIS_URL;
@@ -852,7 +871,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           avg_entry_price: currentPrice.toString(),
         });
 
-        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)
+        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)
           ? info.venue as any
           : 'nearlytrade';
 

@@ -152,9 +152,9 @@ export function validateSwapParams(params: any): { valid: boolean; errors: strin
   if (!isValidUintString(params.amount_in)) errors.push('amount_in must be a positive integer (atomic units)');
   if (
     params.venue !== undefined &&
-    !['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(params.venue)
+    !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(params.venue)
   ) {
-    errors.push('venue must be rhea, shardsmarket, nearlytrade, or intear');
+    errors.push('venue must be rhea, shardsmarket, nearlytrade, intear, or onetokenhub');
   }
   return { valid: errors.length === 0, errors };
 }

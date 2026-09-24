@@ -16,9 +16,9 @@ export interface TokenInfo {
   marketCap: number;
 }
 
-export type VenueName = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+export type VenueName = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
 
-export const TRADABLE_VENUES: readonly VenueName[] = ['rhea', 'shardsmarket', 'nearlytrade', 'intear'];
+export const TRADABLE_VENUES: readonly VenueName[] = ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
