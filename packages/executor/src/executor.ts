@@ -24,7 +24,7 @@ import {
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
-import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, ROUTER_CONTRACT_ID } from './config.js';
+import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
@@ -524,22 +524,17 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Buy on shardsmarket factory via RacerBot router to ensure fee collection
-        // Router contract will handle fee from OUTPUT tokens after swap completes
-        // This is different from direct DEX calls - router takes fee from output, not input
-        result = await near.signAndSendTransactionAll(subaccountId, ROUTER_CONTRACT_ID, [
+        // Buy on shardsmarket factory - send fee separately before swap
+        // Shardsmarket doesn't support atomic fee transfers like Intear
+        // We send the fee to treasury first, then execute the swap
+        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount);
+
+        result = await near.signAndSendTransactionAll(subaccountId, 'factory.shardsmarket.near', [
           transactions.functionCall(
-            'swap',
-            {
-              token_in: token_in,
-              token_out: token_out,
-              amount_in: amountInBigInt.toString(),
-              min_amount_out: minOutAdj,
-              venue: 'shardsmarket',
-              dcl_pool_id: null,
-            },
+            'buy',
+            { token_id: token_out, min_amount_out: minOutAdj },
             BigInt('200000000000000'),
-            amountInBigInt
+            swapAmount  // After fee, send remaining 98.5% for swap
           ),
         ]);
       } else {
