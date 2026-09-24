@@ -25,17 +25,18 @@ describe('db: fill idempotency and position math', () => {
 
   describe('5. Fill idempotency', () => {
     it('creates only one fill row for duplicate tx_hash and position reflects single fill', async () => {
+      // Create a position with zero values (genuinely empty starting position)
       const position = await createPosition({
         user_id: userId,
         token_address: tokenAddress,
-        quantity_held: '100',
-        avg_entry_price: '1.5',
+        quantity_held: '0',
+        avg_entry_price: '0',
       });
 
       const txHash = `tx-${Date.now()}-${Math.random()}`;
 
-      // First call to createFill
-      await createFill({
+      // First call to createFill with a specific amount and price
+      const firstResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'buy',
@@ -47,8 +48,16 @@ describe('db: fill idempotency and position math', () => {
         tx_hash: txHash,
       });
 
-      // Second call to createFill with same tx_hash but different field values
-      await createFill({
+      // Assert the first call was inserted
+      expect(firstResult.inserted).toBe(true);
+
+      // Query the position and assert it now reflects the first fill
+      const posAfterFirst = await getPositionById(position.id);
+      expect(Number(posAfterFirst?.quantity_held)).toBe(100);
+      expect(Number(posAfterFirst?.avg_entry_price)).toBeCloseTo(1.5, 2);
+
+      // Second call to createFill with same tx_hash but different amount and price
+      const secondResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'buy',
@@ -60,15 +69,20 @@ describe('db: fill idempotency and position math', () => {
         tx_hash: txHash,
       });
 
+      // Assert the second call was NOT inserted (duplicate)
+      expect(secondResult.inserted).toBe(false);
+
       // Assert only one row exists in fills for that tx_hash
       const db = await getDb();
       const fillsRes = await db.query('SELECT * FROM fills WHERE tx_hash = $1', [txHash]);
       expect(fillsRes.rows.length).toBe(1);
       expect(fillsRes.rows[0].amount).toBe('100');
 
-      // Assert position was only updated once (quantity_held reflects single fill of 100, not two)
-      const updatedPos = await getPositionById(position.id);
-      expect(Number(updatedPos?.quantity_held)).toBe(100);
+      // Assert position quantity_held and avg_entry_price are unchanged from the first fill
+      // This proves the second call was correctly ignored by the position math
+      const posAfterSecond = await getPositionById(position.id);
+      expect(Number(posAfterSecond?.quantity_held)).toBe(100);
+      expect(Number(posAfterSecond?.avg_entry_price)).toBeCloseTo(1.5, 2);
     });
   });
 
