@@ -1550,12 +1550,17 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
-        try {
-          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-          await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
-        } catch (err: any) {
-          await ctx.reply(`❌ Buy failed: ${err.message}`);
-        }
+try {
+           const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+           await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+         } catch (err: any) {
+           console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
+           try {
+           await ctx.reply(`❌ Buy failed: ${err?.message || 'Unknown error'}`);
+         } catch (replyErr: any) {
+           console.error(`[BUY] Failed to send error message:`, replyErr?.message || replyErr);
+         }
+         }
         return;
       }
 
