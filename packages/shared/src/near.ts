@@ -1126,7 +1126,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 30_000
+    waitForMs = 60_000
   ): Promise<any> {
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
@@ -1205,39 +1205,100 @@ export class MultiRpcNear {
     );
   }
 
-  /** Poll every healthy provider until the transaction outcome is available. */
+  /**
+   * Poll for a transaction outcome using two tracks in parallel:
+   *   A) NEAR JSON-RPC `tx` method with `wait_until: EXECUTED_OPTIMISTIC` — non-long-polling;
+   *      returns immediately once the tx appears in the chain (no receipt-tree wait).
+   *   B) FastNEAR indexer REST API — indexes NEAR in ~1 s, responds instantly.
+   *
+   * HANDLER_ERROR / TIMEOUT_ERROR from the RPC is treated as "pending, retry" — NOT fatal.
+   * The old `txStatus` long-poll was causing false failures when the RPC held the connection
+   * open waiting for cross-contract receipt trees, then returned TIMEOUT_ERROR.
+   */
   private async awaitOutcome(txHash: string, accountId: string, maxMs: number): Promise<any> {
     const deadline = Date.now() + maxMs;
     let lastErr: Error | null = null;
 
+    const fastnearApiBase =
+      (process.env.FASTNEAR_API_URL || 'https://api.fastnear.com').replace(/\/$/, '');
+
+    /** Try FastNEAR indexer REST — resolves immediately once tx is indexed */
+    const tryFastnear = async (): Promise<any | null> => {
+      try {
+        const res = await fetch(`${fastnearApiBase}/v0/tx/${txHash}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return null;
+        const data: any = await res.json();
+        // FastNEAR returns { receipts_outcome, transaction_outcome, ... }
+        if (data && data.transaction_outcome) return data;
+      } catch {
+        // indexer not available — fall through
+      }
+      return null;
+    };
+
+    /** Try a single RPC provider using the non-long-polling `tx` JSON-RPC method */
+    const tryRpc = async (providerUrl: string): Promise<any | null> => {
+      try {
+        const res = await fetch(providerUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'await-outcome',
+            method: 'tx',
+            params: { tx_hash: txHash, sender_account_id: accountId, wait_until: 'EXECUTED_OPTIMISTIC' },
+          }),
+          signal: AbortSignal.timeout(6000),
+        });
+        const data: any = await res.json();
+        if (data?.error) {
+          const errName: string = data.error?.cause?.name ?? data.error?.name ?? '';
+          // TIMEOUT_ERROR / HANDLER_ERROR = tx is pending / not yet indexed — retry
+          if (
+            errName.includes('TIMEOUT') ||
+            errName.includes('HANDLER_ERROR') ||
+            errName.includes('UNKNOWN_TRANSACTION')
+          ) {
+            return null;
+          }
+          throw new Error(data.error.message || JSON.stringify(data.error));
+        }
+        const outcome = data?.result;
+        if (outcome && outcome.status !== undefined && outcome.status !== null) {
+          return outcome;
+        }
+      } catch (err: any) {
+        // Network-level error — mark provider unhealthy and continue
+        lastErr = err as Error;
+      }
+      return null;
+    };
+
     while (Date.now() < deadline) {
+      // Race FastNEAR indexer and all healthy RPC providers
       const healthy = this.providers.filter((p) => p.healthy);
       const candidates = healthy.length > 0 ? healthy : this.providers;
 
-      // Poll all healthy providers concurrently — take first successful response
-      const results = await Promise.allSettled(
-        candidates.map(async (provider) => {
-          const near = await this.getConnection(provider.url);
-          const outcome = await withTimeout(
-            near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC'),
-            7000,
-            `txStatus timeout on ${provider.url}`
-          );
-          if (outcome && outcome.status !== undefined && outcome.status !== null) {
-            markProviderSuccess(provider, 0);
-            return outcome;
-          }
-          throw new Error('outcome status not available yet');
-        })
-      );
+      const polls = [
+        tryFastnear(),
+        ...candidates.map((p) => tryRpc(p.url)),
+      ];
 
+      const results = await Promise.allSettled(polls);
       for (const r of results) {
-        if (r.status === 'fulfilled') return r.value;
-        lastErr = (r as PromiseRejectedResult).reason as Error;
+        if (r.status === 'fulfilled' && r.value !== null) {
+          return r.value;
+        }
+        if (r.status === 'rejected') {
+          lastErr = (r as PromiseRejectedResult).reason as Error;
+        }
       }
 
-      await sleep(500);
+      await sleep(800);
     }
+
     throw new Error(
       `Transaction ${txHash} not confirmed within ${maxMs}ms${lastErr ? `: ${lastErr.message}` : ''}`
     );
