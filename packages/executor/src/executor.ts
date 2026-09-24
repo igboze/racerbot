@@ -142,8 +142,12 @@ export class SwapExecutor {
     let result: any;
 
     if (venue === 'nearlytrade') {
-      if (!dclPoolId) {
-        throw new Error(`DCL pool ID not found for NearlyTrade token`);
+      // First try to find a Rhea pool for the token
+      let rheaPoolId: number | null = null;
+      try {
+        rheaPoolId = await near.findRheaPoolId('wrap.near', token_out).catch(() => null);
+      } catch {
+        // Ignore Rhea pool lookup errors
       }
 
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -151,42 +155,87 @@ export class SwapExecutor {
         // Ensure user is registered for NEP-141 storage on token_out
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Batched actions on wrap.near in 1 atomic transaction:
-        // 1. near_deposit to wrap native NEAR
-        // 2. ft_transfer to send 1.5% fee to treasury
-        // 3. ft_transfer_call to swap 98.5% on DCL
-        const actions = [
-          transactions.functionCall(
-            'near_deposit',
-            {},
-            BigInt('10000000000000'),
-            amountInBigInt
-          ),
-          transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dclv2.ref-labs.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                },
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
+        // If Rhea pool exists, use Rhea DEX
+        if (rheaPoolId) {
+          // Batched actions on wrap.near in 1 atomic transaction for Rhea:
+          // 1. near_deposit to wrap native NEAR
+          // 2. ft_transfer to send 1.5% fee to treasury
+          // 3. ft_transfer_call to swap 98.5% on Rhea
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'v2.ref-finance.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: rheaPoolId,
+                      token_in: 'wrap.near',
+                      token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  ],
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else if (dclPoolId) {
+          // If no Rhea pool but DCL pool exists, use NearlyTrade DCL
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: token_out,
+                    min_output_amount: minOutAdj,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          // No pool exists - token is still in launchpad/bonding phase
+          throw new Error(
+            `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
+          );
+        }
       } else {
         // Sell token on DCL for wrap.near
         await near.ensureStorageDeposit(subaccountId, 'wrap.near');
