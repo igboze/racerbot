@@ -24,7 +24,7 @@ import {
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
-import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
+import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, ROUTER_CONTRACT_ID } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
@@ -524,14 +524,22 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Buy on shardsmarket factory — atomic transaction with fee taken from input
-        // User deposits full amount_in, fee is taken from that amount before swap
-        result = await near.signAndSendTransactionAll(subaccountId, 'factory.shardsmarket.near', [
+        // Buy on shardsmarket factory via RacerBot router to ensure fee collection
+        // Router contract will handle fee from OUTPUT tokens after swap completes
+        // This is different from direct DEX calls - router takes fee from output, not input
+        result = await near.signAndSendTransactionAll(subaccountId, ROUTER_CONTRACT_ID, [
           transactions.functionCall(
-            'buy',
-            { token_id: token_out, min_amount_out: minOutAdj },
+            'swap',
+            {
+              token_in: token_in,
+              token_out: token_out,
+              amount_in: amountInBigInt.toString(),
+              min_amount_out: minOutAdj,
+              venue: 'shardsmarket',
+              dcl_pool_id: null,
+            },
             BigInt('200000000000000'),
-            amountInBigInt  // Deposit full amount_in, fee taken atomically by contract
+            amountInBigInt
           ),
         ]);
       } else {
