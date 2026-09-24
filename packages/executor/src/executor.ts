@@ -355,16 +355,21 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Send 1.5% fee to treasury (separate tx — see audit note on
-        // non-atomic fee skims on the intear/shardsmarket buy paths)
-        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount).catch(() => {});
-
-        // Buy on dex.intear.near — signed once, broadcast to ALL RPCs
+        // Buy on dex.intear.near — atomic transaction with fee skimmed from input
+        // User deposits full amount_in, fee is taken from that amount before swap
         result = await near.signAndSendTransactionAll(subaccountId, 'dex.intear.near', [
           transactions.functionCall(
             'deposit_near',
             {
               operations: [
+                {
+                  // Send 1.5% fee to treasury atomically before swap
+                  Transfer: {
+                    asset_id: 'near',
+                    amount: feeAmount.toString(),
+                    to: TREASURY_ACCOUNT_ID,
+                  },
+                },
                 {
                   SwapSimple: {
                     dex_id: 'slimedragon.near/xyk',
@@ -387,7 +392,7 @@ export class SwapExecutor {
               referrer: 'user.intear.near',
             },
             BigInt('250000000000000'),
-            swapAmount
+            amountInBigInt  // Deposit full amount_in, fee taken atomically
           ),
         ]);
       } else {
