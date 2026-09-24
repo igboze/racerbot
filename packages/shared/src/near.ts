@@ -90,6 +90,7 @@ export class MultiRpcNear {
   private keyStore: keyStores.InMemoryKeyStore;
   private networkId: string;
   private connections: Map<string, Near> = new Map();
+  private accountCache: Map<string, Account> = new Map();
   private currentIndex = 0;
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
@@ -270,11 +271,17 @@ export class MultiRpcNear {
 
   /**
    * Get an Account instance connected with the internal KeyStore.
+   * Cached per accountId for the process lifetime so the nonce cache persists.
    */
   async getAccount(accountId: string): Promise<Account> {
+    if (this.accountCache.has(accountId)) {
+      return this.accountCache.get(accountId)!;
+    }
     const provider = rotateProvider(this.providers);
     const near = await this.getConnection(provider.url);
-    return near.account(accountId);
+    const account = await near.account(accountId);
+    this.accountCache.set(accountId, account);
+    return account;
   }
 
   /**
@@ -338,6 +345,7 @@ export class MultiRpcNear {
 
   /**
    * Find Rhea pool ID for a token pair with in-memory caching and fast parallel scanning.
+   * Scans both newly created pools (backwards from latest) and top historical pools in parallel.
    */
   async findRheaPoolId(tokenA: string, tokenB: string): Promise<number> {
     const cacheKey1 = `${tokenA}:${tokenB}`;
@@ -346,10 +354,21 @@ export class MultiRpcNear {
     if (rheaPoolIdCache.has(cacheKey2)) return rheaPoolIdCache.get(cacheKey2)!;
 
     const batchSize = 100;
-    const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools in parallel
+    const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools
+
+    // Also probe recent pools created near the end of the pool list
+    const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
+    const recentStarts: number[] = [];
+    if (numPools && numPools > 500) {
+      for (let s = Math.max(500, numPools - batchSize); s >= Math.max(500, numPools - 1000); s -= batchSize) {
+        recentStarts.push(s);
+      }
+    }
+
+    const allStarts = [...recentStarts, ...batchStarts];
 
     const results = await Promise.allSettled(
-      batchStarts.map(async (fromIndex) => {
+      allStarts.map(async (fromIndex) => {
         const pools = await this.view<any[]>(
           'v2.ref-finance.near',
           'get_pools',
@@ -405,7 +424,7 @@ export class MultiRpcNear {
 
   /**
    * Find DCL (Discretized Concentrated Liquidity) pool on dclv2.ref-labs.near.
-   * Probes standard fee tiers [10000, 2000, 400, 100] in parallel.
+   * Probes standard fee tiers [10000, 3000, 2000, 400, 100] in parallel.
    */
   async findDclPoolId(tokenA: string, tokenB: string): Promise<string | null> {
     const key = `${tokenA}:${tokenB}`;
@@ -414,7 +433,7 @@ export class MultiRpcNear {
 
     const tokenX = tokenA < tokenB ? tokenA : tokenB;
     const tokenY = tokenA < tokenB ? tokenB : tokenA;
-    const feeTiers = [10000, 2000, 400, 100];
+    const feeTiers = [10000, 3000, 2000, 400, 100];
 
     const results = await Promise.allSettled(
       feeTiers.map(async (fee) => {
@@ -440,7 +459,7 @@ export class MultiRpcNear {
   /**
    * Get DCL pool state including spot price and liquidity from dclv2.ref-labs.near.
    */
-  async getDclPoolState(poolId: string): Promise<{
+  async getDclPoolState(poolId: string, baseToken?: string): Promise<{
     poolId: string;
     tokenX: string;
     tokenY: string;
@@ -454,24 +473,29 @@ export class MultiRpcNear {
       throw new Error(`DCL pool ${poolId} not found`);
     }
 
-    const isTokenX = pool.token_x !== 'wrap.near';
-    const targetToken = isTokenX ? pool.token_x : pool.token_y;
-    const meta = await this.getTokenMetadata(targetToken).catch(() => ({ decimals: 18 }));
-    const tokenDecimals = meta?.decimals ?? 18;
+    const isBaseTokenX = pool.token_x === (baseToken || 'wrap.near');
+    const isBaseTokenY = pool.token_y === (baseToken || 'wrap.near');
+    const baseIsX = isBaseTokenX || (!isBaseTokenY);
+    const targetToken = baseIsX ? pool.token_y : pool.token_x;
+    const baseAccount = baseIsX ? pool.token_x : pool.token_y;
+
+    const [targetMeta, baseMeta] = await Promise.all([
+      this.getTokenMetadata(targetToken).catch(() => ({ decimals: 18 })),
+      this.getTokenMetadata(baseAccount).catch(() => ({ decimals: 24 })),
+    ]);
+    const targetDecimals = targetMeta?.decimals ?? 18;
+    const baseDecimals = baseMeta?.decimals ?? 24;
 
     const currentPoint = Number(pool.current_point);
     let price = 0;
     if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
-      if (isTokenX) {
-        price = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - 24);
-      } else {
-        price = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - 24);
-      }
+      const rawPrice = Math.pow(1.0001, currentPoint) * Math.pow(10, (baseIsX ? baseDecimals - targetDecimals : targetDecimals - baseDecimals));
+      price = baseIsX ? (rawPrice > 0 ? 1 / rawPrice : 0) : rawPrice;
     }
 
-    const reserveNear = isTokenX ? (pool.total_y || '0') : (pool.total_x || '0');
-    const reserveToken = isTokenX ? (pool.total_x || '0') : (pool.total_y || '0');
-    const reserveNearNum = parseFloat(reserveNear) / 1e24;
+    const reserveNear = baseIsX ? (pool.total_x || '0') : (pool.total_y || '0');
+    const reserveToken = baseIsX ? (pool.total_y || '0') : (pool.total_x || '0');
+    const reserveNearNum = parseFloat(reserveNear) / Math.pow(10, baseDecimals);
     const liquidityNear = reserveNearNum * 2;
 
     return {
@@ -482,6 +506,69 @@ export class MultiRpcNear {
       liquidityNear,
       reserveNear,
       reserveToken,
+    };
+  }
+
+  /**
+   * Get OneTokenHub launchpad state and associated DCL pool state on dclv2.ref-labs.near.
+   */
+  async getOneTokenHubState(tokenAddress: string): Promise<{
+    token: string;
+    step: string;
+    dclPoolId: string | null;
+    pairedToken: string;
+    price: number;
+    liquidityNear: number;
+    reserveNear: string;
+    reserveToken: string;
+    totalSupply: string;
+  }> {
+    const launch = await this.view<any>(
+      'pad.onetokenhub.near',
+      'get_launch_by_token',
+      { token: tokenAddress }
+    ).catch(() => null);
+
+    if (!launch) {
+      throw new Error(`Token ${tokenAddress} not found on OneTokenHub launchpad`);
+    }
+
+    const dclPoolId = launch.pool_id || null;
+    let pairedToken = 'wrap.near';
+    if (dclPoolId) {
+      const parts = dclPoolId.split('|');
+      if (parts.length >= 2) {
+        pairedToken = parts[0] === tokenAddress ? parts[1] : parts[0];
+      }
+    }
+
+    let price = 0;
+    let liquidityNear = 0;
+    let reserveNear = '0';
+    let reserveToken = '0';
+
+    if (dclPoolId) {
+      try {
+        const dcl = await this.getDclPoolState(dclPoolId, pairedToken);
+        price = dcl.price;
+        liquidityNear = dcl.liquidityNear;
+        reserveNear = dcl.reserveNear;
+        reserveToken = dcl.reserveToken;
+      } catch {
+        // Pool may be newly creating or not yet seeded
+      }
+    }
+
+    return {
+      token: tokenAddress,
+      step: launch.step || 'Unknown',
+      dclPoolId,
+      pairedToken,
+      price,
+      liquidityNear,
+      reserveNear,
+      reserveToken,
+      totalSupply: launch.total_supply || '0',
     };
   }
 
@@ -801,7 +888,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear',
+    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -846,16 +933,44 @@ export class MultiRpcNear {
       if (poolId === null || poolId === undefined) {
         poolId = await this.findRheaPoolId(tokenIn, tokenOut);
       }
+
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
+      // Try on-chain get_return on v2.ref-finance.near first (supports SIMPLE_POOL, STABLE_SWAP, RATED_SWAP)
+      try {
+        const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+          pool_id: poolId,
+          token_in: inToken,
+          amount_in: amountIn,
+          token_out: outToken,
+        });
+        const expected = BigInt(ret || '0');
+        if (expected > 0n) {
+          const minOut = calculateMinAmountOut(expected, slippagePct);
+          return { expectedOutput: expected.toString(), minAmountOut: minOut };
+        }
+      } catch {
+        // Fallback to local reserve calculation
+      }
+
       const reserves = await this.getRheaPoolReserves(poolId, tokenIn, tokenOut);
       const reserveIn = BigInt(reserves.reserveIn);
       const reserveOut = BigInt(reserves.reserveOut);
 
-      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut);
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, reserves.fee);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'nearlytrade') {
       const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
-      const state = await this.getNearlytradeTokenState(targetToken);
+      let state;
+      try {
+        state = await this.getNearlytradeTokenState(targetToken);
+      } catch {
+        throw new Error(
+          `NearlyTrade RPC failed for ${targetToken}. Token may be on a launchpad but RPC is unreachable. Try again later.`
+        );
+      }
       const reserveNear = BigInt(state.reserveNear);
       const reserveToken = BigInt(state.reserveToken);
 
@@ -869,7 +984,14 @@ export class MultiRpcNear {
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'intear') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
-      const state = await this.getIntearTokenState(targetToken);
+      let state;
+      try {
+        state = await this.getIntearTokenState(targetToken);
+      } catch {
+        throw new Error(
+          `Intear RPC failed for ${targetToken}. Token may be on Intear but RPC is unreachable.`
+        );
+      }
       const reserveNear = BigInt(state.reserveNear);
       const reserveToken = BigInt(state.reserveToken);
 
@@ -879,6 +1001,31 @@ export class MultiRpcNear {
 
       // Intear XYK pool fee (30 bps / 0.3%)
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 30);
+      const minOut = calculateMinAmountOut(expected, slippagePct);
+      return { expectedOutput: expected.toString(), minAmountOut: minOut };
+    } else if (venue === 'onetokenhub') {
+      const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      let poolId = dclPoolId;
+      if (!poolId) {
+        const state = await this.getOneTokenHubState(targetToken);
+        poolId = state.dclPoolId;
+      }
+      if (!poolId) {
+        throw new Error(`No DCL pool found for OneTokenHub token ${targetToken}`);
+      }
+
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+      const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+        pool_ids: [poolId],
+        input_token: inToken,
+        output_token: outToken,
+        input_amount: amountIn,
+      });
+      const expected = BigInt(quote?.amount || '0');
+      if (expected <= 0n) {
+        throw new Error(`Insufficient liquidity or zero output for OneTokenHub quote on pool ${poolId}`);
+      }
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else {
@@ -956,6 +1103,11 @@ export class MultiRpcNear {
     if (venue === 'intear') {
       const st = await this.getIntearTokenState(tokenAddress);
       if (!(st.price > 0)) return null;
+      return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    if (venue === 'onetokenhub') {
+      const st = await this.getOneTokenHubState(tokenAddress).catch(() => null);
+      if (!st || !(st.price > 0)) return null;
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
     return null;
@@ -1061,8 +1213,10 @@ export class MultiRpcNear {
     while (Date.now() < deadline) {
       const healthy = this.providers.filter((p) => p.healthy);
       const candidates = healthy.length > 0 ? healthy : this.providers;
-      for (const provider of candidates) {
-        try {
+
+      // Poll all healthy providers concurrently — take first successful response
+      const results = await Promise.allSettled(
+        candidates.map(async (provider) => {
           const near = await this.getConnection(provider.url);
           const outcome = await withTimeout(
             near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC'),
@@ -1073,11 +1227,15 @@ export class MultiRpcNear {
             markProviderSuccess(provider, 0);
             return outcome;
           }
-        } catch (err) {
-          lastErr = err as Error;
-          // NOT_FOUND / "not yet executed" — keep polling other providers
-        }
+          throw new Error('outcome status not available yet');
+        })
+      );
+
+      for (const r of results) {
+        if (r.status === 'fulfilled') return r.value;
+        lastErr = (r as PromiseRejectedResult).reason as Error;
       }
+
       await sleep(250);
     }
     throw new Error(

@@ -22,14 +22,14 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
   const cached = await getTokenCache(position.token_address).catch(() => null);
-  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | undefined = cached?.venue as any;
-  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(venue as string)) {
+  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | undefined = cached?.venue as any;
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(venue as string)) {
     venue = undefined;
   }
   if (!venue) {
     const info = await getTokenInfo(position.token_address).catch(() => null);
-    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(info.venue)) {
-      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
     }
   }
   if (!venue) return { success: false, reason: 'venue_unknown' };
@@ -57,7 +57,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     min_amount_out: minAmountOut,
     venue,
     timestamp: Date.now(),
-    ...(cached?.dcl_pool_id ? { dcl_pool_id: cached.dcl_pool_id } : {}),
+    dcl_pool_id: cached?.dcl_pool_id ?? undefined,
   } as any;
 
   await publishSwap(swapEvent);
