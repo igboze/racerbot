@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix } from '@racerbot/shared';
+import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS } from '@racerbot/shared';
 import {
   getDb,
   createUser,
@@ -7,6 +7,10 @@ import {
   updateUserScopedKey,
   getTokenCache,
   upsertTokenCache,
+  getOpenPositions,
+  createPosition,
+  createFill,
+  updatePosition,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
@@ -25,13 +29,87 @@ const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>(
 let nearUsdPrice = 0;
 let nearUsdLastFetch = 0;
 
+/**
+ * FIX 6: Warm the in-memory tokenInfoCache from the DB on startup.
+ * Runs a single query for all token_cache rows updated in the last 30 minutes
+ * and pre-populates the cache so the first user request after a Railway redeploy
+ * doesn't need to hit the blockchain for already-known tokens.
+ */
+export async function warmTokenInfoCache(): Promise<void> {
+  try {
+    const db = await getDb();
+    const result = await db.query(
+      `SELECT * FROM token_cache
+       WHERE updated_at > NOW() - INTERVAL '30 minutes'
+         AND last_price IS NOT NULL
+         AND last_price > 0
+       ORDER BY updated_at DESC
+       LIMIT 500`
+    );
+    const nearUsd = await getNearUsdPrice().catch(() => 0);
+    let warmed = 0;
+    for (const row of result.rows) {
+      const lastPrice = parseFloat(row.last_price || '0');
+      if (lastPrice <= 0) continue;
+      const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
+      const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+      const tokenData: TokenInfoResult = {
+        address: row.token_address,
+        name: row.name ?? '',
+        symbol: row.symbol ?? '',
+        decimals: row.decimals ?? 18,
+        total_supply: row.total_supply ?? '0',
+        price: lastPrice.toFixed(12),
+        price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+        liquidity: row.last_liquidity?.toString() ?? '0',
+        liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
+        market_cap: mcap,
+        market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
+        near_usd: nearUsd,
+        venue: (row.venue as any) ?? 'unknown',
+        rhea_pool_id: row.rhea_pool_id != null ? Number(row.rhea_pool_id) : null,
+        bonding_phase: (row.bonding_phase as any) ?? null,
+        bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
+        dcl_pool_id: row.dcl_pool_id ?? null,
+        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(row.venue ?? 'unknown'),
+      };
+      // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
+      warmed++;
+    }
+    console.log(`[API] Token cache warmed: ${warmed} tokens pre-loaded from DB.`);
+  } catch (err: any) {
+    console.warn('[API] Token cache warm failed (non-fatal):', err.message);
+  }
+}
+
+
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
-  if (nearUsdPrice > 0 && now - nearUsdLastFetch < 120_000) return nearUsdPrice;
+  // If we already have a price, return it immediately and refresh in background if expired (stale-while-revalidate)
+  if (nearUsdPrice > 0) {
+    if (now - nearUsdLastFetch >= 120_000) {
+      fetch('https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd', {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      })
+        .then((res) => res.json())
+        .then((data: any) => {
+          if (data?.near?.usd > 0) {
+            nearUsdPrice = data.near.usd;
+            nearUsdLastFetch = Date.now();
+          }
+        })
+        .catch(() => {});
+    }
+    return nearUsdPrice;
+  }
+
+  // Initial fetch on boot (bounded to 2s timeout)
   try {
     const res = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd',
-      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5000) }
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(2000) }
     );
     if (res.ok) {
       const data: any = await res.json();
@@ -42,9 +120,9 @@ export async function getNearUsdPrice(): Promise<number> {
       }
     }
   } catch {
-    // Silently keep last known price
+    // Silently fall back
   }
-  return nearUsdPrice;
+  return nearUsdPrice || 4.3;
 }
 
 export interface TokenInfoResult {
@@ -60,7 +138,7 @@ export interface TokenInfoResult {
   market_cap: number;      // market cap in NEAR
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD exchange rate at time of fetch
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'unknown';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'unknown';
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
@@ -149,7 +227,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(dbCache.venue ?? 'unknown'),
     };
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 15000 });
     return result;
@@ -206,29 +284,88 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     } catch {
       // Not a live Shardsmarket pool (presale phase or not found)
     }
+  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+    venue = 'onetokenhub';
+    try {
+      const hubState = await near.getOneTokenHubState(tokenAddress);
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } catch {
+      // If state lookup failed, keep metadata
+    }
   } else {
-    // 1. Try NearlyTrade first for non-shardsmarket tokens
-    const [ntRes] = await Promise.allSettled([
+    // Venue probing: the cheap probes run in parallel
+    const [ntRes, hubRes, rheaRes, dclRes] = await Promise.allSettled([
+      // 1. NearlyTrade — single get_launch_by_token call
       near.getNearlytradeTokenState(tokenAddress),
+      // 2. OneTokenHub — single get_launch_by_token call
+      near.getOneTokenHubState(tokenAddress),
+      // 3. Rhea — simple pool lookup (cached after first hit)
+      (async () => {
+        const poolId =
+          rheaPoolId !== null
+            ? rheaPoolId
+            : await near.findRheaPoolId('wrap.near', tokenAddress);
+        const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+        const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
+        const reserveOut = parseFloat(rh.reserveOut); // token base units
+        if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
+        return { poolId, reserveIn, reserveOut };
+      })(),
+      // 4. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near
+      (async () => {
+        const pId =
+          dclPoolId !== null
+            ? dclPoolId
+            : await near.findDclPoolId('wrap.near', tokenAddress);
+        if (!pId) throw new Error('empty dcl pool');
+        const st = await near.getDclPoolState(pId);
+        if (!(st.price > 0)) throw new Error('empty dcl pool');
+        return st;
+      })(),
     ]);
 
-    if (ntRes.status === 'fulfilled') {
+    // Precedence: NearlyTrade > OneTokenHub > Rhea (Simple or DCL) > Intear
+    if (ntRes.status === 'fulfilled' && ntRes.value) {
       const ntState = ntRes.value;
-      if (ntState) {
-        venue = 'nearlytrade';
-        price = ntState.price;
-        liquidity = ntState.liquidityNear;
-        bondingPhase = ntState.phase;
-        bondingProgressPct = ntState.bondingProgressPct;
-        dclPoolId = ntState.dclPoolId;
-        if (ntState.totalSupply && ntState.totalSupply !== '0') {
-          totalSupply = ntState.totalSupply;
-        }
+      venue = 'nearlytrade';
+      price = ntState.price;
+      liquidity = ntState.liquidityNear;
+      bondingPhase = ntState.phase;
+      bondingProgressPct = ntState.bondingProgressPct;
+      dclPoolId = ntState.dclPoolId;
+      if (ntState.totalSupply && ntState.totalSupply !== '0') {
+        totalSupply = ntState.totalSupply;
       }
-    }
-
-    // 2. Try Intear DEX if not found yet
-    if (venue === 'unknown') {
+    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+      const hubState = hubRes.value;
+      venue = 'onetokenhub';
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } else if (rheaRes.status === 'fulfilled') {
+      const { poolId, reserveIn, reserveOut } = rheaRes.value;
+      const reserveInHuman = reserveIn / 1e24;
+      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+      price = reserveInHuman / reserveOutHuman;
+      liquidity = reserveInHuman * 2; // both sides of AMM
+      venue = 'rhea';
+      rheaPoolId = poolId;
+    } else if (dclRes.status === 'fulfilled') {
+      const st = dclRes.value;
+      venue = 'rhea';
+      price = st.price;
+      liquidity = st.liquidityNear;
+      dclPoolId = st.poolId;
+    } else {
+      // 5. Intear last resort — full scan, only when cheap probes missed
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
         if (intearState && intearState.price > 0) {
@@ -243,34 +380,11 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
         /* not on Intear */
       }
     }
-
-    // 3. Fallback to Rhea Finance only if nothing else matched
-    if (venue === 'unknown') {
-      try {
-        if (rheaPoolId === null) {
-          rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-        }
-        if (rheaPoolId !== null) {
-          const rh = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress);
-          const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
-          const reserveOut = parseFloat(rh.reserveOut); // token base units
-          if (reserveIn > 0 && reserveOut > 0) {
-            const reserveInHuman = reserveIn / 1e24;
-            const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
-            price = reserveInHuman / reserveOutHuman;
-            liquidity = reserveInHuman * 2; // both sides of AMM
-            venue = 'rhea';
-          }
-        }
-      } catch {
-        /* no Rhea pool found */
-      }
-    }
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
   const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear'].includes(venue);
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear', 'onetokenhub'].includes(venue);
   const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {
@@ -468,10 +582,12 @@ export async function rotateUserKey(telegramId: number): Promise<RotateKeyResult
 }
 
 let pubRedis: any = null;
+let directExecutor: any = null;
 
 /**
  * Execute a swap by publishing to executor via Redis.
- * The API service never signs transactions — that is the executor's role.
+ * If Redis is unavailable, disconnected, or times out (e.g. single-container Railway deploy),
+ * falls back to executing directly on-chain via SwapExecutor so the trade never fails.
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
@@ -479,21 +595,53 @@ export async function publishSwap(swapEvent: {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
   dcl_pool_id?: string;
-}): Promise<void> {
-  const { createRedis, CHANNELS } = await import('@racerbot/shared');
-  if (!pubRedis) {
-    pubRedis = createRedis(process.env.REDIS_URL!);
+}): Promise<{ txHash?: string }> {
+  const redisUrl = process.env.REDIS_URL;
+  let executedViaRedis = false;
+
+  if (redisUrl && !redisUrl.includes('localhost:6379')) {
+    try {
+      if (!pubRedis) {
+        pubRedis = createRedis(redisUrl);
+      }
+      const pubPromise = pubRedis.publish(
+        CHANNELS.EXECUTE_SWAP,
+        JSON.stringify({
+          type: 'execute_swap',
+          ...swapEvent,
+          timestamp: Date.now(),
+        })
+      );
+      // Wait up to 1.5s for Redis to accept the message
+      await Promise.race([
+        pubPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis publish timeout')), 1500)),
+      ]);
+      executedViaRedis = true;
+    } catch (err: any) {
+      console.warn('[SWAP] Redis publish failed, falling back to direct executor:', err.message);
+    }
   }
-  await pubRedis.publish(
-    CHANNELS.EXECUTE_SWAP,
-    JSON.stringify({
+
+  // Direct on-chain execution fallback:
+  // When Redis is offline, disconnected, or absent on Railway, execute the swap directly
+  // using the user's encrypted key and on-chain RPC broadcast.
+  if (!executedViaRedis) {
+    if (!directExecutor) {
+      const { SwapExecutor } = await import('@racerbot/executor');
+      directExecutor = new SwapExecutor();
+    }
+    const result = await directExecutor.execute({
       type: 'execute_swap',
       ...swapEvent,
       timestamp: Date.now(),
-    })
-  );
+    });
+    return { txHash: result.txHash };
+  }
+
+  return {};
 }
 
 export interface UserBalances {
@@ -661,4 +809,98 @@ export async function withdrawFunds(
     amountWithdrawn: formattedWithdrawn,
     destination,
   };
+}
+
+/**
+ * Detects external token deposits for a user's wallet subaccount.
+ * When a user transfers or receives tokens not purchased directly via RacerBot,
+ * this discovers them, fetches their current market price at this point in time,
+ * and initializes an open position with that price as the avg_entry_price.
+ * PNL calculation starts from that exact point onwards.
+ */
+export async function syncUserTokenDeposits(userId: string, subaccountId: string): Promise<number> {
+  let newDepositsCount = 0;
+  try {
+    // 1. Fetch all FT holdings for this subaccount via FastNEAR API
+    let tokens: Array<{ contract_id: string; balance: string }> = [];
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`https://api.fastnear.com/v1/account/${subaccountId}/ft`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (Array.isArray(data.tokens)) {
+          tokens = data.tokens;
+        }
+      }
+    } catch {
+      // FastNEAR timeout/network error — fallback continues gracefully
+    }
+
+    if (tokens.length === 0) {
+      return 0;
+    }
+
+    // 2. Fetch existing positions
+    const existingPositions = await getOpenPositions(userId);
+    const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
+
+    for (const t of tokens) {
+      // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token)
+      if (t.contract_id === 'wrap.near' || !t.balance || BigInt(t.balance) <= 0n) {
+        continue;
+      }
+
+      const existing = posMap.get(t.contract_id);
+      if (!existing) {
+        // Token received as external deposit!
+        // Start calculating PNL at that point: fetch market price at deposit discovery
+        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const currentPrice = info?.price && parseFloat(info.price) > 0
+          ? parseFloat(info.price)
+          : 0;
+
+        // Initialize position with zero values - createFill will update them
+        const newPos = await createPosition({
+          user_id: userId,
+          token_address: t.contract_id,
+          quantity_held: '0',
+          avg_entry_price: '0',
+        });
+
+        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)
+          ? info.venue as any
+          : 'nearlytrade';
+
+        await createFill({
+          user_id: userId,
+          position_id: newPos.id,
+          side: 'buy',
+          token_address: t.contract_id,
+          amount: t.balance,
+          price: currentPrice.toString(),
+          fee_paid: '0',
+          venue,
+          tx_hash: `deposit_${Date.now()}`,
+        }).catch(() => {});
+
+        newDepositsCount++;
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${t.balance}, entryPrice=${currentPrice}`);
+      } else {
+        // Sync position quantity if changed
+        if (existing.quantity_held !== t.balance) {
+          await updatePosition({
+            position_id: existing.id,
+            quantity_held: t.balance,
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[DEPOSIT] syncUserTokenDeposits error: ${err.message}`);
+  }
+  return newDepositsCount;
 }

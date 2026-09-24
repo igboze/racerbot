@@ -9,6 +9,7 @@ export {
   computeMarketCap,
   calculateMinAmountOut,
   calculateExpectedOutput,
+  calculateMinOutAdj,
   fuzzyMatch,
   retryWithBackoff,
   sleep,
@@ -20,7 +21,19 @@ export {
   decrypt,
   validateScopedKey,
   generateScopedAccessKey,
+  assertValidMasterKey,
 } from './crypto.js';
+
+// Venue / launchpad registry & public links (DexScreener, explorer, launchpads)
+export {
+  VENUES,
+  getVenueInfo,
+  dexscreenerUrl,
+  nearblocksTokenUrl,
+  nearblocksTxUrl,
+  tokenLinks,
+} from './venues.js';
+export type { VenueId, VenueInfo, VenueLink } from './venues.js';
 
 // Redis pub/sub and event types
 export {
@@ -63,9 +76,11 @@ export type {
   UserConfig,
   TokenInfo,
   SwapRequest,
+  VenueName,
   TriggerConfig,
   PnLCard,
 } from './types.js';
+export { TRADABLE_VENUES, isTradableVenue } from './types.js';
 
 // Master key — accessed per-service from env, NOT exported as a constant
 // Use process.env.KEY_ENCRYPTION_MASTER_KEY in each service
