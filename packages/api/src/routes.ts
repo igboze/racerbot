@@ -1552,7 +1552,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
 try {
            const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-           await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+           await ctx.reply(`✅ ${res.message}`);
          } catch (err: any) {
            console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
            try {
