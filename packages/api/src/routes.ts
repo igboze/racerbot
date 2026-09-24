@@ -8,6 +8,7 @@ import {
   updateUserDefaults,
   updateUserSettings,
   getDb,
+  generateReferralCode,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -548,9 +549,12 @@ export function setupRoutes(bot: Telegraf): void {
   // ── /start — custodial onboarding with in-chat menu buttons ────────────────
   bot.command('start', async (ctx) => {
     const telegramId = ctx.from!.id;
+    const args = ctx.message!.text!.split(' ').slice(1);
+    const referralCode = args[0] || undefined;
+    const username = ctx.from!.username || undefined;
 
     try {
-      const result = await onboardUser(telegramId);
+      const result = await onboardUser(telegramId, referralCode, username);
       const menu = await buildMainMenu(telegramId);
 
       if (result.isExisting) {
@@ -559,7 +563,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // Freshly created account: show full private key security notice + in-chat buttons
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `🚀 *Welcome to RacerBot!*\n\n` +
         `Your dedicated NEAR trading wallet is ready:\n` +
         `🔑 Account: \`${result.subaccountId}\`\n\n` +
@@ -574,6 +578,16 @@ export function setupRoutes(bot: Telegraf): void {
         `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
+
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
       await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nPlease try running /start again.`);
@@ -1429,7 +1443,7 @@ export function setupRoutes(bot: Telegraf): void {
       const rawPrivateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
       await ctx.answerCbQuery('Key decrypted.').catch(() => {});
 
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `🔑 *Private Key for Account* \`${user.subaccount_id}\`:\n\n` +
         `\`${rawPrivateKey}\`\n\n` +
         `*Import Instructions*:\n` +
@@ -1444,6 +1458,15 @@ export function setupRoutes(bot: Telegraf): void {
         `• If you suspect this key was exposed or you want to move away, withdraw your funds and/or run /rotatekey immediately.`,
         { parse_mode: 'Markdown' }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -1480,7 +1503,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
     try {
       const res = await rotateUserKey(telegramId);
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `✅ *Trading Key Rotated Successfully!*\n\n` +
         `Account: \`${res.subaccountId}\`\n\n` +
         `⚠️ *NEW PRIVATE KEY*:\n` +
@@ -1490,6 +1513,16 @@ export function setupRoutes(bot: Telegraf): void {
         `• Save this new key securely.`,
         { parse_mode: 'Markdown' }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
+
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -1504,6 +1537,50 @@ export function setupRoutes(bot: Telegraf): void {
     } else {
       await ctx.reply('No active action to cancel.');
     }
+  });
+
+  // ── /referral — Show referral link and stats ───────────────────────────────
+  bot.command('referral', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.reply('Use /start first.');
+      return;
+    }
+
+    if (!user.referral_code) {
+      const username = ctx.from!.username || 'user';
+      const code = await generateReferralCode(user.id, username);
+      user.referral_code = code;
+    }
+
+    const referralLink = `https://t.me/${process.env.TELEGRAM_BOT_USERNAME || 'racerbot'}?start=${user.referral_code}`;
+
+    // Get referral stats
+    const db = await getDb();
+    const referralsResult = await db.query(
+      'SELECT * FROM referrals WHERE referrer_id = $1',
+      [user.id]
+    );
+    const referrals = referralsResult.rows;
+
+    const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
+    const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+
+    await ctx.reply(
+      `🎁 *Referral Program*\n\n` +
+      `Your referral link:\n` +
+      `\`${referralLink}\`\n\n` +
+      `📊 *Your Stats*:\n` +
+      `• Total referrals: ${referrals.length}\n` +
+      `• Active referrals: ${activeReferrals}\n` +
+      `• Total earnings: ${totalEarnings.toFixed(4)} NEAR\n\n` +
+      `💰 *Rewards*:\n` +
+      `• Earn 30% of fees from every user you refer\n` +
+      `• Rewards are automatically credited to your account\n` +
+      `• Share your link and earn while your friends trade!`,
+      { parse_mode: 'Markdown' }
+    );
   });
 
   // ── /stoploss & /takeprofit ───────────────────────────────────────────────

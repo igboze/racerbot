@@ -21,6 +21,10 @@ import {
   createPosition,
   updatePosition,
   getTokenCache,
+  recordFee,
+  getReferralByReferredUser,
+  activateReferral,
+  addReferralReward,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
@@ -893,7 +897,7 @@ export class SwapExecutor {
         });
       }
 
-      await createFill({
+      const fillResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'buy',
@@ -904,8 +908,26 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
+
+      // Record fee in ledger and handle referral rewards (only if fill was inserted)
+      if (fillResult.inserted) {
+        await recordFee(fillResult.fillId, feePaidNear.toString());
+
+        // Handle referral rewards (30% of fee goes to referrer)
+        const referral = await getReferralByReferredUser(userId);
+        if (referral && referral.status === 'pending') {
+          // Activate referral on first trade
+          await activateReferral(referral.id);
+        }
+        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+          // Calculate 30% reward
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          await addReferralReward(referral.id, rewardAmount);
+        }
+      }
+
     } else if (position) {
-      await createFill({
+      const fillResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'sell',
@@ -916,6 +938,19 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
+
+      // Record fee in ledger and handle referral rewards (only if fill was inserted)
+      if (fillResult.inserted) {
+        await recordFee(fillResult.fillId, feePaidNear.toString());
+
+        // Handle referral rewards (30% of fee goes to referrer)
+        const referral = await getReferralByReferredUser(userId);
+        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+          // Calculate 30% reward
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          await addReferralReward(referral.id, rewardAmount);
+        }
+      }
     }
   }
 
