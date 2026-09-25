@@ -1,5 +1,5 @@
-import { getNear, type SwapEvent } from '@racerbot/shared';
-import { getPositionById, getTokenCache, getUserById } from '@racerbot/db';
+import { getNear } from '@racerbot/shared';
+import { getPositionById, getUserById } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
 /**
@@ -28,8 +28,8 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     return { success: false, reason: 'venue_unknown' };
   }
   const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
-  const dclPoolId = info.dcl_pool_id ?? undefined;
-  const rheaPoolId = info.rhea_pool_id ?? undefined;
+  const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
+  const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
@@ -41,20 +41,20 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     'wrap.near',
     sellQty,
     slippagePct,
-    rheaPoolId,
-    dclPoolId
+    effectiveRheaPoolId,
+    effectiveDclPoolId
   );
 
-  const swapEvent: SwapEvent = {
-    type: 'execute_swap',
+  const swapEvent = {
+    type: 'execute_swap' as const,
     user_id: userId,
     token_in: position.token_address,
     token_out: 'wrap.near',
     amount_in: sellQty,
     min_amount_out: minAmountOut,
-    venue,
+    venue: venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub',
     timestamp: Date.now(),
-    dcl_pool_id: dclPoolId,
+    dcl_pool_id: effectiveDclPoolId,
   } as any;
 
   await publishSwap(swapEvent);

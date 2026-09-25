@@ -30,6 +30,8 @@ export interface PositionRecord {
   status: string;
   opened_at: Date;
   closed_at: Date | null;
+  is_external_deposit?: boolean;
+  external_deposit_detected_at?: Date | null;
 }
 
 export interface FillRecord {
@@ -542,7 +544,18 @@ function rowToUser(row: any): UserRecord {
 }
 
 function rowToPosition(row: any): PositionRecord {
-  return { id: row.id, user_id: row.user_id, token_address: row.token_address, quantity_held: row.quantity_held, avg_entry_price: row.avg_entry_price, status: row.status, opened_at: row.opened_at, closed_at: row.closed_at };
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    token_address: row.token_address,
+    quantity_held: row.quantity_held,
+    avg_entry_price: row.avg_entry_price,
+    status: row.status,
+    opened_at: row.opened_at,
+    closed_at: row.closed_at,
+    is_external_deposit: row.is_external_deposit,
+    external_deposit_detected_at: row.external_deposit_detected_at,
+  };
 }
 
 function rowToFill(row: any): FillRecord {

@@ -77,10 +77,10 @@ export async function warmTokenInfoCache(): Promise<void> {
         bonding_phase: (row.bonding_phase as any) ?? null,
         bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
         dcl_pool_id: row.dcl_pool_id ?? null,
-        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'gaypad'].includes(row.venue ?? 'unknown'),
+        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(row.venue ?? 'unknown'),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
-      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 60000 });
       warmed++;
     }
     console.log(`[API] Token cache warmed: ${warmed} tokens pre-loaded from DB.`);
@@ -144,9 +144,8 @@ export interface TokenInfoResult {
   market_cap: number;      // market cap in NEAR
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD exchange rate at time of fetch
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'gaypad' | 'unknown';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'unknown';
   rhea_pool_id?: number | null;
-  rhea_intermediate_token?: string | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
   dcl_pool_id?: string | null;
@@ -208,7 +207,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   if (
     dbCache &&
     dbCache.updated_at &&
-    Date.now() - dbCache.updated_at.getTime() < 15000 &&
+    Date.now() - dbCache.updated_at.getTime() < 60000 &&
     Number(dbCache.last_price || 0) > 0
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
@@ -236,9 +235,9 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'gaypad'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(dbCache.venue ?? 'unknown'),
     };
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 15000 });
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
     return result;
   }
 
@@ -252,7 +251,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   let liquidity = 0;
   let venue: TokenInfoResult['venue'] = 'unknown';
   let rheaPoolId: number | null = dbCache?.rhea_pool_id ?? null;
-  let rheaIntermediateToken: string | null = null;
   let bondingPhase: 'prebonded' | 'bonded' | null = (dbCache?.bonding_phase as any) ?? null;
   let bondingProgressPct: number | null =
     dbCache?.bonding_progress_pct !== null && dbCache?.bonding_progress_pct !== undefined
@@ -260,124 +258,141 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
 
-  // ── RULE 1: Check Rhea Finance pools first! ──────────────────────────────
-  // When a token CA is pasted, check Rhea Finance (v2.ref-finance.near &
-  // dclv2.ref-labs.near) first. If an active pool exists with liquidity,
-  // we execute on Rhea Finance.
-  const rheaFound = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
-
-  if (rheaFound && rheaFound.price > 0 && rheaFound.liquidityNear > 0) {
-    venue = 'rhea';
-    price = rheaFound.price;
-    liquidity = rheaFound.liquidityNear;
-    rheaPoolId = typeof rheaFound.poolId === 'number' ? rheaFound.poolId : null;
-    dclPoolId = rheaFound.isDcl ? String(rheaFound.poolId) : null;
-    rheaIntermediateToken = rheaFound.intermediateToken ?? null;
-    bondingPhase = 'bonded';
-  } else {
-    // ── RULE 2: When there is NO pool on Rhea, check the launchpad! ────────
-    if (tokenAddress.endsWith('.gaypad.j1-racing.near') || tokenAddress.includes('gaypad')) {
-      venue = 'gaypad';
-      try {
-        const gpState = await near.getGaypadTokenState(tokenAddress);
-        price = gpState.price;
-        liquidity = gpState.liquidityNear;
-        bondingPhase = gpState.phase;
-        bondingProgressPct = gpState.bondingProgressPct;
-        if (gpState.totalSupply && gpState.totalSupply !== '0') {
-          totalSupply = gpState.totalSupply;
+  // Quick-detect launchpad from address suffix (no RPC needed)
+  if (isMemooCookingToken(tokenAddress)) {
+    venue = 'memecooking';
+    const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
+    price = mcInfo.price;
+    liquidity = mcInfo.liquidity;
+  } else if (isIntearToken(tokenAddress)) {
+    venue = 'intear';
+    try {
+      const intearState = await near.getIntearTokenState(tokenAddress);
+      price = intearState.price;
+      liquidity = intearState.liquidityNear;
+    } catch {
+      // If pool lookup failed, keep metadata with 0 price
+    }
+  } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+    // Shardsmarket: token IS its own AMM pool — call get_state() directly
+    try {
+      const smState = await near.getShardsmarketTokenState(tokenAddress);
+      const reserveNearYocto = parseFloat(smState.poolQuote);
+      const reserveTokenRaw = parseFloat(smState.poolToken);
+      if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+        const reserveNearHuman = reserveNearYocto / 1e24;
+        const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+        price = reserveNearHuman / reserveTokenHuman;
+        liquidity = reserveNearHuman * 2; // both sides of AMM
+        venue = 'shardsmarket';
+        if (smState.totalSupply && smState.totalSupply !== '0') {
+          totalSupply = smState.totalSupply;
         }
-      } catch {
-        // If state lookup failed, keep metadata
       }
-    } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
-      // Shardsmarket: token IS its own AMM pool — call get_state() directly
+    } catch {
+      // Not a live Shardsmarket pool (presale phase or not found)
+    }
+  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+    venue = 'onetokenhub';
+    try {
+      const hubState = await near.getOneTokenHubState(tokenAddress);
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } catch {
+      // If state lookup failed, keep metadata
+    }
+  } else {
+    // Venue probing: the cheap probes run in parallel
+    const [ntRes, hubRes, rheaRes, dclRes] = await Promise.allSettled([
+      // 1. NearlyTrade — single get_launch_by_token call
+      near.getNearlytradeTokenState(tokenAddress),
+      // 2. OneTokenHub — single get_launch_by_token call
+      near.getOneTokenHubState(tokenAddress),
+      // 3. Rhea — simple pool lookup (cached after first hit)
+      (async () => {
+        const poolId =
+          rheaPoolId !== null
+            ? rheaPoolId
+            : await near.findRheaPoolId('wrap.near', tokenAddress);
+        const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+        const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
+        const reserveOut = parseFloat(rh.reserveOut); // token base units
+        if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
+        return { poolId, reserveIn, reserveOut };
+      })(),
+      // 4. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near
+      (async () => {
+        const pId =
+          dclPoolId !== null
+            ? dclPoolId
+            : await near.findDclPoolId('wrap.near', tokenAddress);
+        if (!pId) throw new Error('empty dcl pool');
+        const st = await near.getDclPoolState(pId);
+        if (!(st.price > 0)) throw new Error('empty dcl pool');
+        return st;
+      })(),
+    ]);
+
+    // Precedence: NearlyTrade > OneTokenHub > Rhea (Simple or DCL) > Intear
+    if (ntRes.status === 'fulfilled' && ntRes.value) {
+      const ntState = ntRes.value;
+      venue = 'nearlytrade';
+      price = ntState.price;
+      liquidity = ntState.liquidityNear;
+      bondingPhase = ntState.phase;
+      bondingProgressPct = ntState.bondingProgressPct;
+      dclPoolId = ntState.dclPoolId;
+      if (ntState.totalSupply && ntState.totalSupply !== '0') {
+        totalSupply = ntState.totalSupply;
+      }
+    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+      const hubState = hubRes.value;
+      venue = 'onetokenhub';
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } else if (rheaRes.status === 'fulfilled') {
+      const { poolId, reserveIn, reserveOut } = rheaRes.value;
+      const reserveInHuman = reserveIn / 1e24;
+      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+      price = reserveInHuman / reserveOutHuman;
+      liquidity = reserveInHuman * 2; // both sides of AMM
+      venue = 'rhea';
+      rheaPoolId = poolId;
+    } else if (dclRes.status === 'fulfilled') {
+      const st = dclRes.value;
+      venue = 'rhea';
+      price = st.price;
+      liquidity = st.liquidityNear;
+      dclPoolId = st.poolId;
+    } else {
+      // 5. Intear last resort — full scan, only when cheap probes missed
       try {
-        const smState = await near.getShardsmarketTokenState(tokenAddress);
-        const reserveNearYocto = parseFloat(smState.poolQuote);
-        const reserveTokenRaw = parseFloat(smState.poolToken);
-        if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
-          const reserveNearHuman = reserveNearYocto / 1e24;
-          const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
-          price = reserveNearHuman / reserveTokenHuman;
-          liquidity = reserveNearHuman * 2; // both sides of AMM
-          venue = 'shardsmarket';
-          if (smState.totalSupply && smState.totalSupply !== '0') {
-            totalSupply = smState.totalSupply;
+        const intearState = await near.getIntearTokenState(tokenAddress);
+        if (intearState && intearState.price > 0) {
+          venue = 'intear';
+          price = intearState.price;
+          liquidity = intearState.liquidityNear;
+          if (intearState.totalSupply && intearState.totalSupply !== '0') {
+            totalSupply = intearState.totalSupply;
           }
         }
       } catch {
-        // Not a live Shardsmarket pool
-      }
-    } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
-      venue = 'onetokenhub';
-      try {
-        const hubState = await near.getOneTokenHubState(tokenAddress);
-        price = hubState.price;
-        liquidity = hubState.liquidityNear;
-        dclPoolId = hubState.dclPoolId;
-        if (hubState.totalSupply && hubState.totalSupply !== '0') {
-          totalSupply = hubState.totalSupply;
-        }
-      } catch {}
-    } else if (isIntearToken(tokenAddress)) {
-      venue = 'intear';
-      try {
-        const intearState = await near.getIntearTokenState(tokenAddress);
-        price = intearState.price;
-        liquidity = intearState.liquidityNear;
-        if (intearState.totalSupply && intearState.totalSupply !== '0') {
-          totalSupply = intearState.totalSupply;
-        }
-      } catch {}
-    } else if (isMemooCookingToken(tokenAddress)) {
-      venue = 'memecooking';
-      const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
-      price = mcInfo.price;
-      liquidity = mcInfo.liquidity;
-    } else {
-      // Other launchpad probing in parallel (NearlyTrade, OneTokenHub, Intear)
-      const [ntRes, hubRes, intearRes] = await Promise.allSettled([
-        near.getNearlytradeTokenState(tokenAddress),
-        near.getOneTokenHubState(tokenAddress),
-        near.getIntearTokenState(tokenAddress),
-      ]);
-
-      if (ntRes.status === 'fulfilled' && ntRes.value) {
-        const ntState = ntRes.value;
-        venue = 'nearlytrade';
-        price = ntState.price;
-        liquidity = ntState.liquidityNear;
-        bondingPhase = ntState.phase;
-        bondingProgressPct = ntState.bondingProgressPct;
-        dclPoolId = ntState.dclPoolId;
-        if (ntState.totalSupply && ntState.totalSupply !== '0') {
-          totalSupply = ntState.totalSupply;
-        }
-      } else if (hubRes.status === 'fulfilled' && hubRes.value) {
-        const hubState = hubRes.value;
-        venue = 'onetokenhub';
-        price = hubState.price;
-        liquidity = hubState.liquidityNear;
-        dclPoolId = hubState.dclPoolId;
-        if (hubState.totalSupply && hubState.totalSupply !== '0') {
-          totalSupply = hubState.totalSupply;
-        }
-      } else if (intearRes.status === 'fulfilled' && intearRes.value && intearRes.value.price > 0) {
-        const intearState = intearRes.value;
-        venue = 'intear';
-        price = intearState.price;
-        liquidity = intearState.liquidityNear;
-        if (intearState.totalSupply && intearState.totalSupply !== '0') {
-          totalSupply = intearState.totalSupply;
-        }
+        /* not on Intear */
       }
     }
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
   const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear', 'onetokenhub', 'gaypad'].includes(venue);
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear', 'onetokenhub'].includes(venue);
   const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {
@@ -395,14 +410,13 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     near_usd: nearUsd,
     venue,
     rhea_pool_id: rheaPoolId,
-    rhea_intermediate_token: rheaIntermediateToken,
     bonding_phase: bondingPhase,
     bonding_progress_pct: bondingProgressPct,
     dcl_pool_id: dclPoolId,
     tradeable,
   };
 
-  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 30000 });
+  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
 
   // Async DB update (non-blocking)
   setImmediate(() =>
@@ -609,10 +623,8 @@ export async function publishSwap(swapEvent: {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
   dcl_pool_id?: string;
-  pool_id?: number | null;
-  intermediate_token?: string | null;
 }): Promise<{ txHash?: string }> {
   const redisUrl = process.env.REDIS_URL;
   let executedViaRedis = false;
@@ -845,7 +857,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     let tokens: Array<{ contract_id: string; balance: string }> = [];
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
+      const timeout = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(`https://api.fastnear.com/v1/account/${subaccountId}/ft`, {
         signal: controller.signal,
       });
@@ -860,156 +872,112 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       // FastNEAR timeout/network error — fallback continues gracefully
     }
 
-    // 2. Fetch existing open positions
+    if (tokens.length === 0) {
+      return 0;
+    }
+
+    // 2. Fetch existing positions
     const existingPositions = await getOpenPositions(userId);
     const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
 
-    // If FastNEAR returned tokens, process them
-    if (tokens.length > 0) {
-      const returnedContracts = new Set<string>();
+    for (const t of tokens) {
+      // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token)
+      if (t.contract_id === 'wrap.near' || !t.balance || BigInt(t.balance) <= 0n) {
+        continue;
+      }
 
-      for (const t of tokens) {
-        // Exclude wrap.near (wNEAR is trading collateral, not a speculative token)
-        if (t.contract_id === 'wrap.near') {
-          continue;
-        }
-        returnedContracts.add(t.contract_id);
+      const existing = posMap.get(t.contract_id);
+      if (!existing) {
+        // Token received as external deposit!
+        // Start calculating PNL at that point: fetch market price at deposit discovery
+        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const currentPrice = info?.price && parseFloat(info.price) > 0
+          ? parseFloat(info.price)
+          : 0;
 
-        const existing = posMap.get(t.contract_id);
-        const hasBalance = t.balance && BigInt(t.balance) > 0n;
-
-        if (!hasBalance) {
-          // Token balance is zero on-chain — if position exists, close it!
-          if (existing) {
-            await updatePosition({
-              position_id: existing.id,
-              quantity_held: '0',
-              status: 'closed',
-              closed_at: new Date(),
-            });
-            console.log(`[DEPOSIT] Closed zero-balance position for user ${userId}: ${t.contract_id}`);
-          }
+        // Skip if price is 0 - can't calculate PNL without a baseline
+        if (currentPrice === 0) {
+          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - price is 0, cannot establish PNL baseline`);
           continue;
         }
 
-        if (!existing) {
-          // Token received as new external deposit!
-          // Fetch market price at deposit discovery
-          let currentPrice = 0;
-          let venue = 'rhea';
+        // Convert raw balance to human-readable using token decimals
+        const decimals = info?.decimals ?? 18;
+        const rawBalance = BigInt(t.balance);
 
-          const info = await getTokenInfo(t.contract_id).catch(() => null);
-          if (info?.price && parseFloat(info.price) > 0) {
-            currentPrice = parseFloat(info.price);
-          } else {
-            // Direct pool fallback
-            const pool = await near.findRheaPoolForToken(t.contract_id).catch(() => null);
-            if (pool && pool.price > 0) {
-              currentPrice = pool.price;
-            }
-          }
+        // Use BigInt arithmetic for large balances to avoid precision loss
+        // Then convert to number for storage (position system expects numeric strings)
+        const divisor = BigInt(10) ** BigInt(decimals);
+        const humanBalanceBigInt = rawBalance / divisor;
+        const remainder = rawBalance % divisor;
 
-          if (info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'gaypad'].includes(info.venue)) {
-            venue = info.venue;
-          }
+        // Convert to float with proper decimal handling
+        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
 
-          // Initialize position with real entry price and quantity
-          const newPos = await createPosition({
-            user_id: userId,
-            token_address: t.contract_id,
-            quantity_held: t.balance,
-            avg_entry_price: currentPrice.toString(),
+        // Validate converted balance is a reasonable number
+        if (!isFinite(humanBalance) || humanBalance <= 0) {
+          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - invalid converted balance: ${humanBalance}`);
+          continue;
+        }
+
+        // Initialize position with zero values - createFill will update them
+        const newPos = await createPosition({
+          user_id: userId,
+          token_address: t.contract_id,
+          quantity_held: '0',
+          avg_entry_price: '0',
+        });
+
+        // Mark this position as an external deposit
+        const db = await getDb();
+        await db.query(
+          'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
+          [newPos.id]
+        );
+
+        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)
+          ? info.venue as any
+          : 'nearlytrade';
+
+        await createFill({
+          user_id: userId,
+          position_id: newPos.id,
+          side: 'buy',
+          token_address: t.contract_id,
+          amount: humanBalance.toString(),
+          price: currentPrice.toString(),
+          fee_paid: '0',
+          venue,
+          tx_hash: `deposit_${Date.now()}`,
+        }).catch(() => {});
+
+        newDepositsCount++;
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${humanBalance.toFixed(4)}, entryPrice=${currentPrice}`);
+      } else {
+        // Sync position quantity if changed
+        // Convert raw balance to human-readable using token decimals
+        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const decimals = info?.decimals ?? 18;
+        const rawBalance = BigInt(t.balance);
+
+        // Use BigInt arithmetic for large balances to avoid precision loss
+        const divisor = BigInt(10) ** BigInt(decimals);
+        const humanBalanceBigInt = rawBalance / divisor;
+        const remainder = rawBalance % divisor;
+        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
+
+        // Validate converted balance
+        if (!isFinite(humanBalance) || humanBalance < 0) {
+          console.warn(`[DEPOSIT] Skipping balance update for ${t.contract_id} - invalid converted balance: ${humanBalance}`);
+          continue;
+        }
+
+        if (existing.quantity_held !== humanBalance.toString()) {
+          await updatePosition({
+            position_id: existing.id,
+            quantity_held: humanBalance.toString(),
           });
-
-          await createFill({
-            user_id: userId,
-            position_id: newPos.id,
-            side: 'buy',
-            token_address: t.contract_id,
-            amount: t.balance,
-            price: currentPrice.toString(),
-            fee_paid: '0',
-            venue: venue as any,
-            tx_hash: `deposit_${Date.now()}`,
-          }).catch(() => {});
-
-          newDepositsCount++;
-          console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${t.balance}, entryPrice=${currentPrice}`);
-        } else {
-          // Sync existing position quantity if changed
-          if (existing.quantity_held !== t.balance) {
-            await updatePosition({
-              position_id: existing.id,
-              quantity_held: t.balance,
-            });
-          }
-
-          // If position was previously created with 0 entry price (corrupted sync), backfill it now
-          if (parseFloat(existing.avg_entry_price || '0') <= 0) {
-            let fixPrice = 0;
-            const info = await getTokenInfo(t.contract_id).catch(() => null);
-            if (info?.price && parseFloat(info.price) > 0) {
-              fixPrice = parseFloat(info.price);
-            } else {
-              const pool = await near.findRheaPoolForToken(t.contract_id).catch(() => null);
-              if (pool && pool.price > 0) fixPrice = pool.price;
-            }
-            if (fixPrice > 0) {
-              await updatePosition({
-                position_id: existing.id,
-                avg_entry_price: fixPrice.toString(),
-              });
-              console.log(`[DEPOSIT] Backfilled missing entry price for user ${userId} token ${t.contract_id}: ${fixPrice}`);
-            }
-          }
         }
-      }
-
-      // Check if user has open positions for tokens not present in FastNEAR list
-      for (const pos of existingPositions) {
-        if (pos.token_address !== 'wrap.near' && !returnedContracts.has(pos.token_address)) {
-          // Double-check on-chain balance
-          try {
-            const onChainBal = await near.getTokenBalance(pos.token_address, subaccountId).catch(() => '0');
-            if (!onChainBal || BigInt(onChainBal) <= 0n) {
-              await updatePosition({
-                position_id: pos.id,
-                quantity_held: '0',
-                status: 'closed',
-                closed_at: new Date(),
-              });
-              console.log(`[DEPOSIT] Closed transferred-out position for user ${userId}: ${pos.token_address}`);
-            } else if (pos.quantity_held !== onChainBal) {
-              await updatePosition({
-                position_id: pos.id,
-                quantity_held: onChainBal,
-              });
-            }
-          } catch {}
-        }
-      }
-    } else {
-      // FastNEAR was unavailable: verify existing open positions directly on-chain
-      for (const pos of existingPositions) {
-        if (pos.token_address === 'wrap.near') continue;
-        try {
-          const bal = await near.getTokenBalance(pos.token_address, subaccountId).catch(() => null);
-          if (bal !== null) {
-            if (BigInt(bal) <= 0n) {
-              await updatePosition({
-                position_id: pos.id,
-                quantity_held: '0',
-                status: 'closed',
-                closed_at: new Date(),
-              });
-            } else if (pos.quantity_held !== bal) {
-              await updatePosition({
-                position_id: pos.id,
-                quantity_held: bal,
-              });
-            }
-          }
-        } catch {}
       }
     }
   } catch (err: any) {
