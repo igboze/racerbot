@@ -85,6 +85,61 @@ export async function addUserKey(userId: string, subaccountId: string, encrypted
 export class SwapExecutor {
 
   /**
+   * Helper to build atomic actions on wrap.near for buy orders.
+   * Dynamically checks the user's existing wNEAR balance on-chain:
+   * - If user already holds enough wNEAR, skips near_deposit entirely.
+   * - If user holds partial wNEAR, only wraps the shortfall depositNeeded.
+   * - Otherwise wraps the full amountInBigInt.
+   * Batches near_deposit (if needed) + ft_transfer (fee to treasury) + ft_transfer_call (swap on DEX).
+   */
+  private async buildWrapNearBuyActions(
+    subaccountId: string,
+    amountInBigInt: bigint,
+    feeAmount: bigint,
+    swapAmount: bigint,
+    dexReceiverId: string,
+    dexMsg: string,
+    swapGas: bigint = BigInt('180000000000000')
+  ): Promise<any[]> {
+    const wNearBalStr = await near.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
+    const wNearBal = BigInt(wNearBalStr || '0');
+    const depositNeeded = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
+
+    const actions: any[] = [];
+    if (depositNeeded > 0n) {
+      actions.push(
+        transactions.functionCall(
+          'near_deposit',
+          {},
+          BigInt('10000000000000'),
+          depositNeeded
+        )
+      );
+    }
+
+    actions.push(
+      transactions.functionCall(
+        'ft_transfer',
+        { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+        BigInt('20000000000000'),
+        BigInt('1')
+      ),
+      transactions.functionCall(
+        'ft_transfer_call',
+        {
+          receiver_id: dexReceiverId,
+          amount: swapAmount.toString(),
+          msg: dexMsg,
+        },
+        swapGas,
+        BigInt('1')
+      )
+    );
+
+    return actions;
+  }
+
+  /**
    * Execute a swap event. Uses the user's pre-warmed scoped key.
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
    */
@@ -160,77 +215,43 @@ export class SwapExecutor {
 
         // If Rhea pool exists, use Rhea DEX
         if (rheaPoolId) {
-          // Batched actions on wrap.near in 1 atomic transaction for Rhea:
-          // 1. near_deposit to wrap native NEAR
-          // 2. ft_transfer to send 1.5% fee to treasury
-          // 3. ft_transfer_call to swap 98.5% on Rhea
-          const actions = [
-            transactions.functionCall(
-              'near_deposit',
-              {},
-              BigInt('10000000000000'),
-              amountInBigInt
-            ),
-            transactions.functionCall(
-              'ft_transfer',
-              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-              BigInt('20000000000000'),
-              BigInt('1')
-            ),
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'v2.ref-finance.near',
-                amount: swapAmount.toString(),
-                msg: JSON.stringify({
-                  actions: [
-                    {
-                      pool_id: rheaPoolId,
-                      token_in: 'wrap.near',
-                      token_out,
-                      min_output_amount: minOutAdj,
-                    },
-                  ],
-                }),
-              },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'v2.ref-finance.near',
+            JSON.stringify({
+              actions: [
+                {
+                  pool_id: rheaPoolId,
+                  token_in: 'wrap.near',
+                  token_out,
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: minOutAdj,
+                  min_output_amount: minOutAdj,
+                },
+              ],
+            })
+          );
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else if (dclPoolId) {
           // If no Rhea pool but DCL pool exists, use NearlyTrade DCL
-          const actions = [
-            transactions.functionCall(
-              'near_deposit',
-              {},
-              BigInt('10000000000000'),
-              amountInBigInt
-            ),
-            transactions.functionCall(
-              'ft_transfer',
-              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-              BigInt('20000000000000'),
-              BigInt('1')
-            ),
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: swapAmount.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [dclPoolId],
-                    output_token: token_out,
-                    min_output_amount: minOutAdj,
-                  },
-                }),
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'dclv2.ref-labs.near',
+            JSON.stringify({
+              Swap: {
+                pool_ids: [dclPoolId],
+                output_token: token_out,
+                min_output_amount: minOutAdj,
               },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
+            })
+          );
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else {
@@ -271,36 +292,20 @@ export class SwapExecutor {
         if (isBuy) {
           await near.ensureStorageDeposit(subaccountId, token_out);
 
-          const actions = [
-            transactions.functionCall(
-              'near_deposit',
-              {},
-              BigInt('10000000000000'),
-              amountInBigInt
-            ),
-            transactions.functionCall(
-              'ft_transfer',
-              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-              BigInt('20000000000000'),
-              BigInt('1')
-            ),
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: swapAmount.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [dclPoolId],
-                    output_token: token_out,
-                    min_output_amount: minOutAdj,
-                  },
-                }),
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'dclv2.ref-labs.near',
+            JSON.stringify({
+              Swap: {
+                pool_ids: [dclPoolId],
+                output_token: token_out,
+                min_output_amount: minOutAdj,
               },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
+            })
+          );
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else {
@@ -337,39 +342,25 @@ export class SwapExecutor {
         if (isBuy) {
           await near.ensureStorageDeposit(subaccountId, token_out);
 
-          const actions = [
-            transactions.functionCall(
-              'near_deposit',
-              {},
-              BigInt('10000000000000'),
-              amountInBigInt
-            ),
-            transactions.functionCall(
-              'ft_transfer',
-              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-              BigInt('20000000000000'),
-              BigInt('1')
-            ),
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'v2.ref-finance.near',
-                amount: swapAmount.toString(),
-                msg: JSON.stringify({
-                  actions: [
-                    {
-                      pool_id: rheaPoolId,
-                      token_in: 'wrap.near',
-                      token_out,
-                      min_output_amount: minOutAdj,
-                    },
-                  ],
-                }),
-              },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'v2.ref-finance.near',
+            JSON.stringify({
+              actions: [
+                {
+                  pool_id: rheaPoolId,
+                  token_in: 'wrap.near',
+                  token_out,
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: minOutAdj,
+                  min_output_amount: minOutAdj,
+                },
+              ],
+            })
+          );
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else {
@@ -387,6 +378,8 @@ export class SwapExecutor {
                       pool_id: rheaPoolId,
                       token_in,
                       token_out: 'wrap.near',
+                      amount_in: amountInBigInt.toString(),
+                      min_amount_out: min_amount_out,
                       min_output_amount: min_amount_out,
                     },
                   ],
@@ -455,32 +448,26 @@ export class SwapExecutor {
         // Sell token on dex.intear.near
         const actions = [
           transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
             'ft_transfer_call',
             {
               receiver_id: 'dex.intear.near',
-              amount: swapAmount.toString(),
+              amount: amountInBigInt.toString(),
               msg: JSON.stringify({
                 operations: [
                   {
-                  SwapSimple: {
-                    dex_id: 'slimedragon.near/xyk',
-                    asset_in: `nep141:${token_in}`,
-                    asset_out: 'near',
-                    amount: { Amount: { ExactIn: swapAmount.toString() } },
-                    constraint: minOutAdj,
-                    message: poolMsg,
+                    SwapSimple: {
+                      dex_id: 'slimedragon.near/xyk',
+                      asset_in: `nep141:${token_in}`,
+                      asset_out: 'near',
+                      amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                      constraint: min_amount_out,
+                      message: poolMsg,
+                    },
                   },
-                },
-                {
-                  Withdraw: {
-                    asset_id: 'near',
-                    amount: { Full: { at_least: minOutAdj } },
+                  {
+                    Withdraw: {
+                      asset_id: 'near',
+                      amount: { Full: { at_least: min_amount_out } },
                       to: null,
                       rescue_address: null,
                     },
@@ -511,36 +498,20 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        const actions = [
-          transactions.functionCall(
-            'near_deposit',
-            {},
-            BigInt('10000000000000'),
-            amountInBigInt
-          ),
-          transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dclv2.ref-labs.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                },
-              }),
+        const actions = await this.buildWrapNearBuyActions(
+          subaccountId,
+          amountInBigInt,
+          feeAmount,
+          swapAmount,
+          'dclv2.ref-labs.near',
+          JSON.stringify({
+            Swap: {
+              pool_ids: [dclPoolId],
+              output_token: token_out,
+              min_output_amount: minOutAdj,
             },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
+          })
+        );
 
         result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
       } else {
@@ -549,21 +520,15 @@ export class SwapExecutor {
 
         const actions = [
           transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
             'ft_transfer_call',
             {
               receiver_id: 'dclv2.ref-labs.near',
-              amount: swapAmount.toString(),
+              amount: amountInBigInt.toString(),
               msg: JSON.stringify({
                 Swap: {
                   pool_ids: [dclPoolId],
                   output_token: token_out,
-                  min_output_amount: minOutAdj, // FIX: use fee-adjusted min, not full-amount min
+                  min_output_amount: min_amount_out,
                 },
               }),
             },
@@ -580,51 +545,25 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // FIX: Do NOT use account.sendMoney() — that requires a FullAccess key and fails
-        // for accounts that only have a FunctionCall key. Instead batch everything atomically:
-        // 1. near_deposit: wrap native NEAR → wNEAR (attaches full amountInBigInt as deposit)
-        // 2. ft_transfer: send 1.5% fee to treasury (1 yoctoNEAR deposit for NEP-141 security)
-        // 3. ft_transfer_call: send 98.5% to Shardsmarket factory with buy msg
-        const actions = [
-          transactions.functionCall(
-            'near_deposit',
-            {},
-            BigInt('10000000000000'),
-            amountInBigInt
-          ),
-          transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'factory.shardsmarket.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({ min_amount_out: minOutAdj }),
-            },
-            BigInt('200000000000000'),
-            BigInt('1')
-          ),
-        ];
+        const actions = await this.buildWrapNearBuyActions(
+          subaccountId,
+          amountInBigInt,
+          feeAmount,
+          swapAmount,
+          token_out,
+          JSON.stringify({ min_amount_out: minOutAdj }),
+          BigInt('200000000000000')
+        );
 
         result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
       } else {
         const actions = [
           transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
             'ft_transfer_call',
             {
-              receiver_id: 'factory.shardsmarket.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({ min_amount_out: minOutAdj }),
+              receiver_id: token_in,
+              amount: amountInBigInt.toString(),
+              msg: JSON.stringify({ min_amount_out: min_amount_out }),
             },
             BigInt('180000000000000'),
             BigInt('1')
