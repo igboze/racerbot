@@ -563,7 +563,7 @@ export class SwapExecutor {
                 Swap: {
                   pool_ids: [dclPoolId],
                   output_token: token_out,
-                  min_output_amount: min_amount_out,
+                  min_output_amount: minOutAdj, // FIX: use fee-adjusted min, not full-amount min
                 },
               }),
             },
@@ -580,19 +580,37 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Buy on shardsmarket factory - send fee separately before swap
-        // Shardsmarket doesn't support atomic fee transfers like Intear
-        // We send the fee to treasury first, then execute the swap
-        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount);
-
-        result = await near.signAndSendTransactionAll(subaccountId, 'factory.shardsmarket.near', [
+        // FIX: Do NOT use account.sendMoney() — that requires a FullAccess key and fails
+        // for accounts that only have a FunctionCall key. Instead batch everything atomically:
+        // 1. near_deposit: wrap native NEAR → wNEAR (attaches full amountInBigInt as deposit)
+        // 2. ft_transfer: send 1.5% fee to treasury (1 yoctoNEAR deposit for NEP-141 security)
+        // 3. ft_transfer_call: send 98.5% to Shardsmarket factory with buy msg
+        const actions = [
           transactions.functionCall(
-            'buy',
-            { token_id: token_out, min_amount_out: minOutAdj },
-            BigInt('200000000000000'),
-            swapAmount  // After fee, send remaining 98.5% for swap
+            'near_deposit',
+            {},
+            BigInt('10000000000000'),
+            amountInBigInt
           ),
-        ]);
+          transactions.functionCall(
+            'ft_transfer',
+            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+            BigInt('20000000000000'),
+            BigInt('1')
+          ),
+          transactions.functionCall(
+            'ft_transfer_call',
+            {
+              receiver_id: 'factory.shardsmarket.near',
+              amount: swapAmount.toString(),
+              msg: JSON.stringify({ min_amount_out: minOutAdj }),
+            },
+            BigInt('200000000000000'),
+            BigInt('1')
+          ),
+        ];
+
+        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
       } else {
         const actions = [
           transactions.functionCall(
@@ -657,8 +675,45 @@ export class SwapExecutor {
     }
 
     if (!netAmountOut || netAmountOut === '0') {
-      console.warn(`[EXECUTOR] Trade unconfirmed / failed: txHash=${txHash}`);
-      await this.notifyUser(user_id, 'trade_failed' as any, { txHash, reason: 'Transaction failed or slippage breach' });
+      // Extract the real on-chain failure reason from receipt outcomes
+      let failReason = 'Transaction failed or slippage breach';
+      const txStatusFailure = (result.status as any)?.Failure;
+      if (txStatusFailure) {
+        const errStr = JSON.stringify(txStatusFailure).toLowerCase();
+        if (errStr.includes('slippage') || errStr.includes('min_amount') || errStr.includes('less than minimum')) {
+          failReason = 'Slippage too high — price moved against you. Increase slippage in Settings and retry.';
+        } else if (errStr.includes('insufficient') && errStr.includes('balanc')) {
+          failReason = 'Insufficient wNEAR balance for this swap. Please retry.';
+        } else if (errStr.includes('no pool') || errStr.includes('pool_not_found')) {
+          failReason = 'No liquidity pool found on-chain for this token.';
+        } else if (errStr.includes('panic')) {
+          // Extract panic message for debugging
+          const panicMatch = JSON.stringify(txStatusFailure).match(/"FunctionCallError".*?"ExecutionError":"([^"]+)"/);
+          if (panicMatch) failReason = `Contract error: ${panicMatch[1].slice(0, 150)}`;
+        }
+      } else {
+        // Check individual receipt outcomes for failure messages
+        for (const r of receiptsOutcomes) {
+          const outcomeStatus = r.outcome?.status;
+          if (outcomeStatus && typeof outcomeStatus === 'object' && 'Failure' in outcomeStatus) {
+            const rErrStr = JSON.stringify(outcomeStatus.Failure).toLowerCase();
+            if (rErrStr.includes('slippage') || rErrStr.includes('min_amount')) {
+              failReason = 'Slippage too high — price moved against you. Increase slippage in Settings and retry.';
+            } else if (rErrStr.includes('panic')) {
+              const panicMatch = JSON.stringify(outcomeStatus.Failure).match(/"ExecutionError":"([^"]+)"/);
+              if (panicMatch) failReason = `Contract error: ${panicMatch[1].slice(0, 150)}`;
+            }
+            break;
+          }
+        }
+      }
+
+      console.warn(`[EXECUTOR] Trade failed: txHash=${txHash} reason=${failReason}`);
+      await this.notifyUser(user_id, 'trade_failed' as any, {
+        txHash,
+        reason: failReason,
+        token: token_out !== 'near' && token_out !== 'wrap.near' ? token_out : token_in,
+      });
       return { txHash, success: false };
     }
 
@@ -765,15 +820,17 @@ export class SwapExecutor {
       dclPoolId = hubState.dclPoolId;
     }
 
-    // BigInt math against live pool reserves for EVERY venue. The old rhea /
-    // shardsmarket branches computed min_out from Number(u128 reserves),
-    // which silently produces garbage beyond 2^53 — either failing every
-    // trade or shipping them with no real slippage protection.
+    // FIX Bug 2: Compute minAmountOut against the SWAP amount (98.5% after 1.5% fee).
+    // The executor skims the fee before calling the DEX, so quoting against the full
+    // inYocto produces a minAmountOut the DEX can never hit — silently failing every trade.
+    const feeYocto = (BigInt(inYocto) * 150n) / 10000n;
+    const swapYocto = (BigInt(inYocto) - feeYocto).toString();
+
     const { minAmountOut } = await near.computeMinAmountOut(
       venue,
       'wrap.near',
       token_address,
-      inYocto,
+      swapYocto,       // ← post-fee amount that actually reaches the DEX
       slippagePct,
       rheaPoolId,
       dclPoolId
