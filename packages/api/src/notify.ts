@@ -1,6 +1,7 @@
 import type { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, type NotifyUserEvent } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
+import { PUBLIC_URL } from './config.js';
 
 let _bot: Telegraf | null = null;
 
@@ -81,17 +82,44 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
 
     case 'pnl_card': {
       const pnl = data as any;
-      const pnlSign = pnl.pnlPercent >= 0 ? '+' : '';
-      const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
+      const pnlPercent = pnl.realizedPnlPercent ?? pnl.pnlPercent ?? 0;
+      const pnlSign = pnlPercent >= 0 ? '+' : '';
+      const emoji = pnlPercent >= 0 ? '🟢' : '🔴';
+      const tokenSym = pnl.tokenTicker || pnl.tokenSymbol || pnl.tokenName || 'TOKEN';
+      const tokenName = pnl.tokenName || tokenSym;
+      const exitPrice = pnl.exitPrice ?? pnl.currentPrice ?? 0;
+      const realizedNear = pnl.realizedPnlNear ?? pnl.profitAmount ?? 0;
+      const holdDuration = pnl.holdDuration || pnl.duration || '—';
+      const quantity = pnl.quantity ?? pnl.positionSize ?? 0;
+
+      const extra: any = { parse_mode: 'Markdown' };
+
+      const cardUrl = pnl.positionId && PUBLIC_URL
+        ? `${PUBLIC_URL}/pnl-card?positionId=${encodeURIComponent(pnl.positionId)}`
+        : PUBLIC_URL
+        ? `${PUBLIC_URL}/pnl-card?tokenSymbol=${encodeURIComponent(tokenSym)}&entryPrice=${pnl.entryPrice}&currentPrice=${exitPrice}&profitAmount=${realizedNear}&duration=${encodeURIComponent(holdDuration)}`
+        : '';
+
+      if (cardUrl) {
+        extra.reply_markup = {
+          inline_keyboard: [
+            [
+              { text: '🖼️ View PnL Card', web_app: { url: cardUrl } },
+              { text: '📤 Share Card', url: `https://t.me/share/url?url=${encodeURIComponent(cardUrl)}&text=${encodeURIComponent(`🏎️ Made ${pnlSign}${Number(pnlPercent).toFixed(1)}% on $${tokenSym} with @racerbot!`)}` }
+            ]
+          ]
+        };
+      }
+
       await _bot.telegram.sendMessage(telegramId,
         `${emoji} *Trade Closed — PNL Summary*\n\n` +
-        `🪙 ${pnl.tokenName} (${pnl.tokenTicker})\n` +
+        `🪙 ${tokenName} (${tokenSym})\n` +
         `📥 Entry: ${pnl.entryPrice} NEAR\n` +
-        `📤 Exit: ${pnl.exitPrice} NEAR\n` +
-        `📦 Quantity: ${pnl.quantity}\n` +
-        `💰 Realized PNL: ${pnl.realizedPnlNear.toFixed(4)} NEAR (${pnlSign}${pnl.realizedPnlPercent.toFixed(2)}%)\n` +
-        `⏱ Hold: ${pnl.holdDuration}`,
-        { parse_mode: 'Markdown' }
+        `📤 Exit: ${exitPrice} NEAR\n` +
+        `📦 Quantity: ${quantity}\n` +
+        `💰 Realized PNL: ${Number(realizedNear).toFixed(4)} NEAR (${pnlSign}${Number(pnlPercent).toFixed(2)}%)\n` +
+        `⏱ Hold: ${holdDuration}`,
+        extra
       );
       break;
     }
@@ -123,14 +151,23 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
  * Called async — never blocks trade confirmation message.
  */
 export async function sendPnlCard(telegramId: number, pnlData: {
-  tokenName: string;
-  tokenTicker: string;
+  tokenName?: string;
+  tokenTicker?: string;
+  tokenSymbol?: string;
   entryPrice: number;
-  exitPrice: number;
-  quantity: number;
-  realizedPnlNear: number;
-  realizedPnlPercent: number;
-  holdDuration: string;
+  exitPrice?: number;
+  currentPrice?: number;
+  quantity?: number;
+  positionSize?: number;
+  realizedPnlNear?: number;
+  realizedPnlPercent?: number;
+  profitAmount?: number;
+  pnlPercent?: number;
+  holdDuration?: string;
+  duration?: string;
+  positionId?: string;
+  handle?: string;
+  date?: string;
 }): Promise<void> {
   if (!_bot) return;
   // Fire-and-forget — do not await

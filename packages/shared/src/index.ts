@@ -7,6 +7,7 @@ export {
   weightedAverage,
   computePnL,
   computeMarketCap,
+  formatHoldDuration,
   calculateMinAmountOut,
   calculateExpectedOutput,
   calculateMinOutAdj,
