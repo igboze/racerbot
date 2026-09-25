@@ -487,18 +487,18 @@ async function executeBuyHelper(
 
   // FIX 3: Reuse the cached balance instead of a direct RPC hit.
   // getUserBalances has its own 8s in-memory cache in wallet.ts.
-  // The balance returned is already spendable (storage reserve subtracted).
+  // The balance returned includes both spendable native NEAR and wNEAR.
   let balanceNear = 0;
   try {
     const balances = await getUserBalances(telegramId);
-    balanceNear = parseFloat(balances.nativeNearFormatted);
+    balanceNear = parseFloat(balances.totalNearFormatted);
   } catch (err: any) {
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  // Check balance including 0.005 NEAR gas reserve for transaction fees
-  if (balanceNear < amountNear + 0.005) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.005).toFixed(4)} NEAR (including gas reserve). Fees are deducted from your swap amount.`);
+  // Check balance including 0.025 NEAR reserve for gas and token storage deposit
+  if (balanceNear < amountNear + 0.025) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.025).toFixed(4)} NEAR (including gas & storage deposit reserve). Fees are deducted from your swap amount.`);
   }
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
@@ -566,15 +566,15 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
-  // The balance returned is already spendable (storage reserve subtracted).
+  // The balance returned includes both spendable native NEAR and wNEAR.
   const balances = await getUserBalances(telegramId);
-  const balanceNear = parseFloat(balances.nativeNearFormatted);
+  const balanceNear = parseFloat(balances.totalNearFormatted);
 
-  // Retain 0.005 NEAR reserve for gas (fees are deducted from swap amount)
-  const usableBalance = Math.max(0, balanceNear - 0.005);
+  // Retain 0.025 NEAR reserve for gas and token storage deposit
+  const usableBalance = Math.max(0, balanceNear - 0.025);
   const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.005 gas reserve) is too low to buy.`);
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.025 gas/storage reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
 }
