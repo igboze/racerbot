@@ -25,7 +25,7 @@ import {
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
 import { utils as nearUtils } from 'near-api-js';
-import { MASTER_KEY, PUBLIC_URL } from './config.js';
+import { MASTER_KEY } from './config.js';
 
 // ── Token cache for snipe-by-name fuzzy matching ──────────────────────────────
 export const localTokenNames = new Map<string, { address: string; symbol: string }>();
@@ -83,7 +83,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       Markup.button.callback('⚙️ Settings', 'menu_settings'),
     ],
     [
-      Markup.button.callback('📊 Positions', 'menu_positions'),
+      Markup.button.callback('� Holdings', 'menu_holdings'),
       Markup.button.callback('📈 PnL', 'menu_pnl'),
     ],
     [
@@ -118,6 +118,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
 
   buttons.push([
+    Markup.button.callback('💼 Holdings', 'menu_holdings'),
     Markup.button.callback('⚙️ Settings', 'menu_settings'),
     Markup.button.callback('🔙 Main Menu', 'menu_home'),
   ]);
@@ -670,8 +671,218 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
-  // ── menu_positions — FIX 1 & 2: Parallel token fetches, no duplicate calls ──
+  // ── menu_holdings — Token list with name/logo and % change ────────────────
+  bot.action('menu_holdings', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+
+    // Auto-detect and sync external token deposits to calculate PNL from deposit point
+    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
+
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    if (positions.length === 0) {
+      await ctx.answerCbQuery('No holdings.').catch(() => {});
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
+        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        ],
+      ]);
+      await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
+        parse_mode: 'Markdown',
+        ...keyboard,
+      }).catch(() => {});
+      return;
+    }
+
+    await ctx.answerCbQuery().catch(() => {});
+
+    // Fetch all token info in parallel
+    const infoResults = await Promise.allSettled(
+      positions.map(pos => getTokenInfo(pos.token_address))
+    );
+    const infoMap = new Map<string, TokenInfoResult | null>();
+    positions.forEach((pos, i) => {
+      const r = infoResults[i];
+      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+    });
+
+    let msg = `💼 *Holdings (${positions.length})*\n\n`;
+    const buttons: any[] = [];
+
+    for (const pos of positions) {
+      const info = infoMap.get(pos.token_address);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+      const currentPrice = info ? parseFloat(info.price) : 0;
+      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+        : 'N/A';
+      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+
+      msg += `${emoji} *${symbol}*\n`;
+      msg += `  Change: \`${pnlDisplay}\`\n\n`;
+
+      // Add clickable token button
+      buttons.push([Markup.button.callback(`${symbol} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+    }
+
+    buttons.push([
+      Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+      Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    ]);
+
+    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+  });
+
+  // ── token_detail — Individual token detail modal ───────────────────────────
+  bot.action(/^token_detail:(.+)$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+
+    await ctx.answerCbQuery().catch(() => {});
+
+    try {
+      const positions = await getOpenPositions(user.id).catch(() => []);
+      const position = positions.find(p => p.id === positionId);
+      if (!position) {
+        await ctx.reply('Position not found. Please try again.').catch(() => {});
+        return;
+      }
+
+      const [info, fills] = await Promise.all([
+        getTokenInfo(position.token_address).catch(() => null),
+        getFillsByPosition(positionId).catch(() => []),
+      ]);
+
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+      const currentPrice = info ? parseFloat(info.price) : 0;
+      const entryPrice = parseFloat(position.avg_entry_price) || 0;
+      const pnlPct = currentPrice > 0 && entryPrice > 0
+        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
+        : 'N/A';
+      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+
+      const marketCap = info?.market_cap || 0;
+      const marketCapDisplay = marketCap > 0 ? `${(marketCap / 1e6).toFixed(2)}M` : 'N/A';
+
+      // Calculate initial investment (first buy)
+      const buys = fills.filter(f => f.side === 'buy');
+      const initialInvestment = buys.length > 0 
+        ? parseFloat(buys[0].amount) * parseFloat(buys[0].price)
+        : 0;
+
+      let msg = `📊 *${symbol} Details*\n\n`;
+      msg += `💰 *Price Info*:\n`;
+      msg += `  Entry: \`${entryPrice.toFixed(8)} NEAR\`\n`;
+      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+      msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
+      msg += `📈 *Market Cap*: \`${marketCapDisplay} NEAR\`\n\n`;
+      msg += `💼 *Position*:\n`;
+      msg += `  Holding: \`${position.quantity_held}\`\n`;
+      msg += `  Initial Investment: \`${initialInvestment.toFixed(4)} NEAR\`\n\n`;
+      msg += `🔗 *Contract Address*:\n`;
+      msg += `  \`${position.token_address}\`\n`;
+
+      const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
+      const buttons: any[] = [];
+
+      // Sell percentage buttons
+      const sellRow1: any[] = [];
+      sellRow1.push(Markup.button.callback('Sell 25%', `sell:${positionId}:25`));
+      sellRow1.push(Markup.button.callback('Sell 50%', `sell:${positionId}:50`));
+      buttons.push(sellRow1);
+
+      const sellRow2: any[] = [];
+      sellRow2.push(Markup.button.callback('Sell 75%', `sell:${positionId}:75`));
+      sellRow2.push(Markup.button.callback('Sell 100%', `sell:${positionId}:100`));
+      buttons.push(sellRow2);
+
+      // Sell Initial button
+      if (initialInvestment > 0) {
+        buttons.push([Markup.button.callback('💰 Sell Initial', `sell_initial:${positionId}`)]);
+      }
+
+      // Navigation buttons
+      buttons.push([
+        Markup.button.callback('🔄 Refresh', `token_detail:${positionId}`),
+        Markup.button.callback('🔙 Back to Holdings', 'menu_holdings'),
+      ]);
+      buttons.push([Markup.button.callback('🏠 Main Menu', 'menu_home')]);
+
+      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply('Error loading token details. Please try again.').catch(() => {});
+    }
+  });
+
+  // ── sell_initial — Sell exact initial investment amount ───────────────────
+  bot.action(/^sell_initial:(.+)$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+
+    await ctx.answerCbQuery().catch(() => {});
+
+    try {
+      const positions = await getOpenPositions(user.id).catch(() => []);
+      const position = positions.find(p => p.id === positionId);
+      if (!position) {
+        await ctx.reply('Position not found.').catch(() => {});
+        return;
+      }
+
+      const fills = await getFillsByPosition(positionId).catch(() => []);
+      const buys = fills.filter(f => f.side === 'buy');
+      
+      if (buys.length === 0) {
+        await ctx.reply('No buy history found for this position.').catch(() => {});
+        return;
+      }
+
+      const initialInvestment = parseFloat(buys[0].amount) * parseFloat(buys[0].price);
+      const currentPrice = parseFloat(position.avg_entry_price) || 0;
+      
+      if (currentPrice === 0) {
+        await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
+        return;
+      }
+
+      const sellPercentage = (initialInvestment / (parseFloat(position.quantity_held) * currentPrice)) * 100;
+      const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
+
+      const result = await sellAtTarget(user.id, positionId, adjustedPercentage);
+      
+      if (result.success) {
+        await ctx.reply(`✅ Sold initial investment of \`${initialInvestment.toFixed(4)} NEAR\` worth of tokens.`, { parse_mode: 'Markdown' }).catch(() => {});
+      } else {
+        await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+      }
+    } catch (err: any) {
+      await ctx.reply('Error processing sell. Please try again.').catch(() => {});
+    }
+  });
+
+  // ── menu_positions — Redirect to holdings for backwards compatibility ───────
   bot.action('menu_positions', async (ctx) => {
+    // Redirect to the new holdings menu
+    await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId);
     if (!user) {
@@ -744,9 +955,6 @@ export function setupRoutes(bot: Telegraf): void {
       row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
       buttons.push(row);
     }
-    if (PUBLIC_URL && positions.length > 0) {
-      buttons.unshift([Markup.button.webApp('📈 Live PnL Cards', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
-    }
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
       Markup.button.callback('🔙 Main Menu', 'menu_home'),
@@ -818,17 +1026,14 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const navButtons: any[] = [];
-    if (PUBLIC_URL) {
-      navButtons.push([Markup.button.webApp('🖼️ View Full PnL Card', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
-    }
-    navButtons.push([Markup.button.callback('🔄 Refresh', 'menu_pnl')]);
-    navButtons.push([Markup.button.callback('🔙 Main Menu', 'menu_home')]);
-    navButtons.push([
-      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
-    const keyboard = Markup.inlineKeyboard(navButtons);
     await ctx.answerCbQuery().catch(() => {});
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
   });
@@ -1346,17 +1551,14 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const navButtons: any[] = [];
-    if (PUBLIC_URL) {
-      navButtons.push([Markup.button.webApp('🖼️ View Full PnL Card', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
-    }
-    navButtons.push([Markup.button.callback('🔄 Refresh', 'menu_pnl')]);
-    navButtons.push([Markup.button.callback('🔙 Main Menu', 'menu_home')]);
-    navButtons.push([
-      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
-    const keyboard = Markup.inlineKeyboard(navButtons);
     await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
   });
 

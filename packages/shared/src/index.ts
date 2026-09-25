@@ -89,7 +89,6 @@ export type {
   SwapRequest,
   VenueName,
   TriggerConfig,
-  PnLCard,
 } from './types.js';
 export { TRADABLE_VENUES, isTradableVenue } from './types.js';
 
