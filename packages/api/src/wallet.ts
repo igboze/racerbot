@@ -893,10 +893,30 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           ? parseFloat(info.price)
           : 0;
 
+        // Skip if price is 0 - can't calculate PNL without a baseline
+        if (currentPrice === 0) {
+          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - price is 0, cannot establish PNL baseline`);
+          continue;
+        }
+
         // Convert raw balance to human-readable using token decimals
         const decimals = info?.decimals ?? 18;
         const rawBalance = BigInt(t.balance);
-        const humanBalance = Number(rawBalance) / Math.pow(10, decimals);
+
+        // Use BigInt arithmetic for large balances to avoid precision loss
+        // Then convert to number for storage (position system expects numeric strings)
+        const divisor = BigInt(10) ** BigInt(decimals);
+        const humanBalanceBigInt = rawBalance / divisor;
+        const remainder = rawBalance % divisor;
+
+        // Convert to float with proper decimal handling
+        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
+
+        // Validate converted balance is a reasonable number
+        if (!isFinite(humanBalance) || humanBalance <= 0) {
+          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - invalid converted balance: ${humanBalance}`);
+          continue;
+        }
 
         // Initialize position with zero values - createFill will update them
         const newPos = await createPosition({
@@ -905,6 +925,13 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           quantity_held: '0',
           avg_entry_price: '0',
         });
+
+        // Mark this position as an external deposit
+        const db = await getDb();
+        await db.query(
+          'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
+          [newPos.id]
+        );
 
         const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)
           ? info.venue as any
@@ -930,7 +957,18 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         const info = await getTokenInfo(t.contract_id).catch(() => null);
         const decimals = info?.decimals ?? 18;
         const rawBalance = BigInt(t.balance);
-        const humanBalance = Number(rawBalance) / Math.pow(10, decimals);
+
+        // Use BigInt arithmetic for large balances to avoid precision loss
+        const divisor = BigInt(10) ** BigInt(decimals);
+        const humanBalanceBigInt = rawBalance / divisor;
+        const remainder = rawBalance % divisor;
+        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
+
+        // Validate converted balance
+        if (!isFinite(humanBalance) || humanBalance < 0) {
+          console.warn(`[DEPOSIT] Skipping balance update for ${t.contract_id} - invalid converted balance: ${humanBalance}`);
+          continue;
+        }
 
         if (existing.quantity_held !== humanBalance.toString()) {
           await updatePosition({
