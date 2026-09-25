@@ -9,12 +9,14 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@racerbot/shared": "*",
     "@racerbot/db": "*",
     "@racerbot/executor": "*",
+    "@racerbot/shared": "*",
+    "@types/helmet": "^0.0.48",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
+    "helmet": "^8.3.0",
     "ioredis": "^5.3.2",
     "near-api-js": "^4.0.0",
     "pg": "^8.11.0",

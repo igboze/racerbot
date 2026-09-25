@@ -1,63 +1,79 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'url';
-import { createRedis, CHANNELS, assertValidMasterKey, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import { SwapExecutor, warmAllKeys } from './executor.js';
 import { PARENT_ACCOUNT, MASTER_KEY } from './config.js';
 
 const REDIS_URL = process.env.REDIS_URL!;
+const logger = createLogger('executor');
 const executor = new SwapExecutor();
 const redis = createRedis(REDIS_URL);
 
 async function main(): Promise<void> {
-  console.log('[EXECUTOR] Starting warm signing service...');
-  console.log('[EXECUTOR] Parent account:', PARENT_ACCOUNT);
+  logger.info('Starting warm signing service...', { parentAccount: PARENT_ACCOUNT });
 
   // Fail fast — never decrypt user keys with a missing/placeholder master key
   assertValidMasterKey(MASTER_KEY);
 
   // One stray rejected promise must not kill the signing service
   process.on('unhandledRejection', (reason) => {
-    console.error('[EXECUTOR] Unhandled rejection (kept alive):', reason);
+    logger.error('Unhandled rejection (kept alive)', undefined, { reason });
   });
 
   // Connect DB
-  await getDb();
+  await logger.time('Connected to database', () => getDb());
 
   // Pre-warm ALL user scoped keys into memory before accepting events
-  await warmAllKeys();
+  await logger.time('Warmed user keys', () => warmAllKeys());
 
   // Subscribe to swap execution events from API and triggers
   await redis.subscribe(CHANNELS.EXECUTE_SWAP, async (message: string) => {
+    const correlationId = generateCorrelationId();
     let event: SwapEvent;
     try {
       event = JSON.parse(message);
     } catch {
-      console.error('[EXECUTOR] Bad swap event JSON');
+      logger.error('Bad swap event JSON', undefined, { correlationId });
       return;
     }
-    console.log(`[EXECUTOR] Swap event: user=${event.user_id} token=${event.token_out}`);
-    await executor.execute(event).catch(err => {
-      console.error('[EXECUTOR] Swap failed:', err.message);
+    logger.info('Swap event received', { 
+      correlationId, 
+      userId: event.user_id, 
+      token: event.token_out 
     });
+    
+    await logger.time('Swap executed', async () => {
+      await executor.execute(event).catch(err => {
+        logger.error('Swap failed', err, { correlationId, userId: event.user_id });
+      });
+    }, { correlationId, userId: event.user_id });
   });
 
   // Subscribe to auto-buy signals from detector
   await redis.subscribe(CHANNELS.AUTO_BUY_SIGNAL, async (message: string) => {
+    const correlationId = generateCorrelationId();
     let signal: AutoBuySignal;
     try {
       signal = JSON.parse(message);
     } catch {
-      console.error('[EXECUTOR] Bad auto-buy signal JSON');
+      logger.error('Bad auto-buy signal JSON', undefined, { correlationId });
       return;
     }
-    console.log(`[EXECUTOR] Auto-buy signal: user=${signal.user_id} token=${signal.token_address}`);
-    await executor.autoBuy(signal).catch(err => {
-      console.error('[EXECUTOR] Auto-buy failed:', err.message);
+    logger.info('Auto-buy signal received', { 
+      correlationId, 
+      userId: signal.user_id, 
+      token: signal.token_address 
     });
+    
+    await logger.time('Auto-buy executed', async () => {
+      await executor.autoBuy(signal).catch(err => {
+        logger.error('Auto-buy failed', err, { correlationId, userId: signal.user_id });
+      });
+    }, { correlationId, userId: signal.user_id });
   });
 
-  console.log('[EXECUTOR] Ready — listening for swap events');
+  logger.info('Ready — listening for swap events');
 
   process.on('SIGINT', async () => {
     console.log('[EXECUTOR] Shutting down...');
