@@ -37,15 +37,34 @@ async function main(): Promise<void> {
       logger.error('Bad swap event JSON', undefined, { correlationId });
       return;
     }
-    logger.info('Swap event received', { 
-      correlationId, 
-      userId: event.user_id, 
-      token: event.token_out 
+    logger.info('Swap event received', {
+      correlationId,
+      userId: event.user_id,
+      token: event.token_out,
     });
-    
+
     await logger.time('Swap executed', async () => {
-      await executor.execute(event).catch(err => {
+      await executor.execute(event).catch(async (err: Error) => {
         logger.error('Swap failed', err, { correlationId, userId: event.user_id });
+        // Notify the user via Telegram — notify.ts resolves telegram_id from data.user_id
+        try {
+          await redis.publish(
+            CHANNELS.NOTIFY_USER,
+            JSON.stringify({
+              type: 'notify_user',
+              telegram_id: 0, // resolved by notify.ts from data.user_id below
+              event: 'trade_failed',
+              data: {
+                user_id: event.user_id,
+                txHash: 'none',
+                reason: err.message ?? 'Unknown executor error',
+                token: event.token_out,
+              },
+            })
+          );
+        } catch (notifyErr: any) {
+          logger.warn('Failed to publish trade_failed notification', { error: notifyErr.message });
+        }
       });
     }, { correlationId, userId: event.user_id });
   });
@@ -60,15 +79,33 @@ async function main(): Promise<void> {
       logger.error('Bad auto-buy signal JSON', undefined, { correlationId });
       return;
     }
-    logger.info('Auto-buy signal received', { 
-      correlationId, 
-      userId: signal.user_id, 
-      token: signal.token_address 
+    logger.info('Auto-buy signal received', {
+      correlationId,
+      userId: signal.user_id,
+      token: signal.token_address,
     });
-    
+
     await logger.time('Auto-buy executed', async () => {
-      await executor.autoBuy(signal).catch(err => {
+      await executor.autoBuy(signal).catch(async (err: Error) => {
         logger.error('Auto-buy failed', err, { correlationId, userId: signal.user_id });
+        try {
+          await redis.publish(
+            CHANNELS.NOTIFY_USER,
+            JSON.stringify({
+              type: 'notify_user',
+              telegram_id: 0,
+              event: 'trade_failed',
+              data: {
+                user_id: signal.user_id,
+                txHash: 'none',
+                reason: err.message ?? 'Auto-buy executor error',
+                token: signal.token_address,
+              },
+            })
+          );
+        } catch (notifyErr: any) {
+          logger.warn('Failed to publish auto-buy trade_failed notification', { error: notifyErr.message });
+        }
       });
     }, { correlationId, userId: signal.user_id });
   });
