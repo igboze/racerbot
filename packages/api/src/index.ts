@@ -184,7 +184,7 @@ async function main(): Promise<void> {
         logger.info('External deposit sync completed', { totalNewDeposits });
       }
     } catch (err: any) {
-      logger.error('Background sync error', { error: err.message });
+      logger.error('Background sync error', err);
     }
   }, SYNC_INTERVAL_MS);
   
