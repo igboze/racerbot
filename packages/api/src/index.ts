@@ -1,8 +1,6 @@
 import './config.js';
-import path from 'path';
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
@@ -62,26 +60,11 @@ async function main(): Promise<void> {
 
   setupRoutes(bot);
 
-  // ── Express REST server & Mini App static assets ─────────────────────────
+  // ── Express REST server ─────────────────────────────────────────────────────
   const app = express();
   // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
   // for the rate limiter to key on real client IPs.
   app.set('trust proxy', 1);
-  
-  // Security headers
-  app.use(helmet({
-    crossOriginEmbedderPolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://telegram.org", "https://cdn.jsdelivr.net"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'", "https:", "http:"],
-      },
-    },
-  }));
   
   app.use(cors());
   app.use(express.json({ limit: '64kb' }));
@@ -99,15 +82,6 @@ async function main(): Promise<void> {
 
   // Add monitoring routes
   monitoringRoutes(app);
-
-  const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
-  app.use('/miniapp', express.static(publicDir));
-  app.get('/miniapp', (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-  app.get(['/pnl-card', '/miniapp/pnl', '/pnl-card.html'], (_req, res) => {
-    res.sendFile(path.join(publicDir, 'pnl.html'));
-  });
 
   app.listen(PORT, () => {
     logger.info('REST server listening', { port: PORT });
@@ -155,31 +129,47 @@ async function main(): Promise<void> {
   // ── Start background sync for external token deposits ─────────────────────
   // Sync all users' external deposits every 5 minutes to detect purchases from other wallets
   const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  const BATCH_SIZE = 10; // Process 10 users in parallel to avoid overwhelming RPC
   syncInterval = setInterval(async () => {
     try {
       const db = await getDb();
       const result = await db.query('SELECT id, telegram_id, subaccount_id FROM users');
       logger.info('Starting external deposit sync', { userCount: result.rows.length });
-      
+
       let totalNewDeposits = 0;
-      for (const user of result.rows) {
-        try {
-          const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
-          if (newDeposits > 0) {
-            totalNewDeposits += newDeposits;
-            logger.info('External deposits detected', { 
-              telegramId: user.telegram_id, 
-              newDeposits 
-            });
+
+      // Process users in parallel batches instead of sequentially
+      for (let i = 0; i < result.rows.length; i += BATCH_SIZE) {
+        const batch = result.rows.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (user) => {
+            try {
+              const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
+              if (newDeposits > 0) {
+                logger.info('External deposits detected', {
+                  telegramId: user.telegram_id,
+                  newDeposits
+                });
+                return newDeposits;
+              }
+              return 0;
+            } catch (err: any) {
+              logger.warn('Failed to sync user deposits', {
+                telegramId: user.telegram_id,
+                error: err.message
+              });
+              return 0;
+            }
+          })
+        );
+
+        for (const batchResult of batchResults) {
+          if (batchResult.status === 'fulfilled') {
+            totalNewDeposits += batchResult.value;
           }
-        } catch (err: any) {
-          logger.warn('Failed to sync user deposits', { 
-            telegramId: user.telegram_id, 
-            error: err.message 
-          });
         }
       }
-      
+
       if (totalNewDeposits > 0) {
         logger.info('External deposit sync completed', { totalNewDeposits });
       }

@@ -89,9 +89,17 @@ export type {
   SwapRequest,
   VenueName,
   TriggerConfig,
-  PnLCard,
 } from './types.js';
 export { TRADABLE_VENUES, isTradableVenue } from './types.js';
+
+// Launchpad framework
+export {
+  LAUNCHPAD_CONFIGS,
+  getLaunchpadConfig,
+  isLaunchpadVenue,
+  registerLaunchpad,
+} from './launchpad.js';
+export type { LaunchpadPool, LaunchpadConfig } from './launchpad.js';
 
 // Master key — accessed per-service from env, NOT exported as a constant
 // Use process.env.KEY_ENCRYPTION_MASTER_KEY in each service

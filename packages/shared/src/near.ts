@@ -1778,7 +1778,7 @@ function sleep(ms: number): Promise<void> {
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.near.org',
+  'https://rpc.near.org',
 ];
 
 /** Singleton factory — call once per process, reuse the connection pool */

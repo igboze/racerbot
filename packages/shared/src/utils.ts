@@ -192,5 +192,13 @@ export function formatHoldDuration(start: Date | string | number, end: Date | st
 
   const days = Math.floor(hours / 24);
   const remainingHours = hours % 24;
-  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+
+  if (days < 7) {
+    return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+  }
+
+  const weeks = Math.floor(days / 7);
+  const remainingDays = days % 7;
+
+  return remainingDays > 0 ? `${weeks}w ${remainingDays}d` : `${weeks}w`;
 }
