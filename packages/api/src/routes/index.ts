@@ -13,7 +13,7 @@ import {
   getDb,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { computePnL, getNear, encrypt, isTradableVenue, createLogger } from '@racerbot/shared';
+import { computePnL, formatHoldDuration, type PnLCard, getNear, encrypt, isTradableVenue, createLogger } from '@racerbot/shared';
 import { KeyPair } from 'near-api-js';
 import {
   ensureTelegramInitData,
@@ -349,6 +349,151 @@ router.post('/triggers', ensureTelegramUser, perUserRateLimit(60000, 5), async (
 });
 
 // ── PNL ──────────────────────────────────────────────────────────────────────
+
+export async function buildPnLCardData(positionId: string): Promise<PnLCard | null> {
+  const position = await getPositionById(positionId);
+  if (!position) return null;
+
+  const [user, tokenInfo, fills] = await Promise.all([
+    getUserById(position.user_id).catch(() => null),
+    getTokenInfo(position.token_address).catch(() => null),
+    getFillsByPosition(positionId).catch(() => []),
+  ]);
+
+  const entryPrice = parseFloat(position.avg_entry_price) || 0;
+  const isClosed = position.status === 'closed';
+  const decimals = tokenInfo?.decimals ?? 24;
+
+  const buys = fills.filter(f => f.side === 'buy');
+  const sells = fills.filter(f => f.side === 'sell');
+
+  let currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : entryPrice;
+  if (isClosed && sells.length > 0) {
+    currentPrice = parseFloat(sells[sells.length - 1].price);
+  }
+
+  const rawSupply = tokenInfo?.total_supply ? parseFloat(tokenInfo.total_supply) / Math.pow(10, decimals) : 0;
+  const currentMcap = tokenInfo?.market_cap ?? (rawSupply > 0 ? currentPrice * rawSupply : undefined);
+  const entryMcap = rawSupply > 0 && entryPrice > 0 ? entryPrice * rawSupply : currentMcap;
+
+  let positionSize = 0;
+  if (isClosed && sells.length > 0) {
+    const totalSoldUnits = sells.reduce((acc, f) => acc + BigInt(f.amount || '0'), 0n);
+    positionSize = parseFloat(totalSoldUnits.toString()) / Math.pow(10, decimals);
+  } else {
+    const heldUnits = BigInt(position.quantity_held.split('.')[0] || '0');
+    positionSize = parseFloat(heldUnits.toString()) / Math.pow(10, decimals);
+  }
+
+  let profitAmount = 0;
+  let pnlPercent = 0;
+
+  if (isClosed && buys.length && sells.length) {
+    const lastSell = sells[sells.length - 1];
+    const sellPrice = parseFloat(lastSell.price);
+    const qty = parseFloat(lastSell.amount);
+    const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
+    const sellFee = parseFloat(lastSell.fee_paid) / (qty || 1);
+    const pnl = computePnL(entryPrice, sellPrice, qty, buyFee, sellFee);
+    profitAmount = pnl.netNear;
+    pnlPercent = pnl.pnlPercent;
+  } else {
+    pnlPercent = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+    profitAmount = (currentPrice - entryPrice) * (positionSize || 0);
+  }
+
+  const duration = formatHoldDuration(position.opened_at, position.closed_at || Date.now());
+  const tokenSymbol = tokenInfo?.symbol ? tokenInfo.symbol.toUpperCase() : position.token_address.slice(0, 8).toUpperCase();
+  const dateObj = position.closed_at ? new Date(position.closed_at) : new Date(position.opened_at);
+  const date = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const handle = user?.subaccount_id ?? 'racerbot.near';
+
+  return {
+    botName: 'RacerBot',
+    tokenSymbol,
+    pairSymbol: 'NEAR',
+    side: 'long',
+    entryPrice,
+    currentPrice,
+    pnlPercent: Number(pnlPercent.toFixed(1)),
+    entryMcap: entryMcap ? Math.round(entryMcap) : undefined,
+    currentMcap: currentMcap ? Math.round(currentMcap) : undefined,
+    positionSize: Number(positionSize.toFixed(2)),
+    positionUnit: tokenSymbol,
+    profitAmount: Number(profitAmount.toFixed(4)),
+    profitUnit: 'NEAR',
+    duration,
+    handle,
+    date,
+    tokenAddress: position.token_address,
+    positionId: position.id,
+  };
+}
+
+// ── GET /api/pnl/card-data/:positionId — Fetch full card data for a position ──
+router.get('/pnl/card-data/:positionId', async (req, res) => {
+  try {
+    const card = await buildPnLCardData(req.params.positionId);
+    if (!card) {
+      res.status(404).json({ error: 'Position not found' });
+      return;
+    }
+    res.json({ success: true, card });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/pnl/cards/:userId — Fetch all cards for a user ─────────────────
+router.get('/pnl/cards/:userId', async (req, res) => {
+  try {
+    const [openPositions, db] = await Promise.all([
+      getOpenPositions(req.params.userId).catch(() => []),
+      getDb(),
+    ]);
+
+    const closedResult = await db.query(
+      'SELECT id FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
+      [req.params.userId, 'closed']
+    );
+
+    const positionIds = [
+      ...openPositions.map(p => p.id),
+      ...closedResult.rows.map(r => r.id),
+    ];
+
+    const cardResults = await Promise.allSettled(
+      positionIds.map(id => buildPnLCardData(id))
+    );
+
+    const cards: PnLCard[] = [];
+    for (const r of cardResults) {
+      if (r.status === 'fulfilled' && r.value) {
+        cards.push(r.value);
+      }
+    }
+
+    res.json({ success: true, cards });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/pnl/live/:address — Fast real-time price & mcap for cards ────────
+router.get('/pnl/live/:address', async (req, res) => {
+  try {
+    const info = await getTokenInfo(req.params.address);
+    res.json({
+      success: true,
+      price: parseFloat(info.price),
+      marketCap: info.market_cap,
+      symbol: info.symbol,
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/pnl/:userId', ensureTelegramUser, async (req, res) => {
   try {

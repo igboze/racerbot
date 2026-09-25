@@ -4,6 +4,8 @@ import {
   createRedis,
   CHANNELS,
   decrypt,
+  computePnL,
+  formatHoldDuration,
   calculateMinOutAdj,
   type SwapEvent,
   type AutoBuySignal,
@@ -18,6 +20,7 @@ import {
   createFill,
   getOpenPositions,
   getPositionById,
+  getFillsByPosition,
   createPosition,
   updatePosition,
   getTokenCache,
@@ -998,6 +1001,41 @@ export class SwapExecutor {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
+        }
+
+        // Notify user with PNL card summary and link
+        try {
+          const updatedPos = await getPositionById(position.id);
+          const fills = await getFillsByPosition(position.id);
+          const buys = fills.filter(f => f.side === 'buy');
+          const avgEntry = parseFloat(position.avg_entry_price);
+          const sellPrice = priceNear;
+          const qty = parseFloat(tokenQty) / Math.pow(10, decimals);
+          const buyFee = buys.length ? parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1')) : 0;
+          const sellFee = feePaidNear / (qty || 1);
+          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
+          const duration = formatHoldDuration(position.opened_at, Date.now());
+
+          await this.notifyUser(userId, 'pnl_card', {
+            tokenName: (meta as any)?.name || tokenAddress,
+            tokenTicker: (meta as any)?.symbol || tokenAddress.slice(0, 8),
+            tokenSymbol: (meta as any)?.symbol || tokenAddress.slice(0, 8),
+            entryPrice: avgEntry,
+            exitPrice: sellPrice,
+            currentPrice: sellPrice,
+            quantity: qty,
+            positionSize: qty,
+            realizedPnlNear: pnl.netNear,
+            realizedPnlPercent: pnl.pnlPercent,
+            profitAmount: pnl.netNear,
+            pnlPercent: pnl.pnlPercent,
+            holdDuration: duration,
+            duration,
+            positionId: position.id,
+            status: updatedPos?.status || 'closed',
+          });
+        } catch (err: any) {
+          console.warn('[EXECUTOR] Failed to send pnl_card notification:', err.message);
         }
       }
     }
