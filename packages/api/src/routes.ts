@@ -859,31 +859,52 @@ export function setupRoutes(bot: Telegraf): void {
 
       const fills = await getFillsByPosition(positionId).catch(() => []);
       const buys = fills.filter(f => f.side === 'buy');
-      
+
       if (buys.length === 0) {
         await ctx.reply('No buy history found for this position.').catch(() => {});
         return;
       }
 
-      const initialInvestment = parseFloat(buys[0].amount) * parseFloat(buys[0].price);
-      const currentPrice = parseFloat(position.avg_entry_price) || 0;
-      
+      // Calculate total initial investment across ALL buy fills (not just first)
+      // Include fees paid to get accurate total NEAR invested
+      let totalInitialInvestment = 0;
+      for (const buy of buys) {
+        const amount = parseFloat(buy.amount);
+        const price = parseFloat(buy.price);
+        const fee = parseFloat(buy.fee_paid || '0');
+        totalInitialInvestment += (amount * price) + fee;
+      }
+
+      // Fetch current market price from token info (not avg_entry_price)
+      const tokenInfo = await getTokenInfo(position.token_address).catch(() => null);
+      const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+
       if (currentPrice === 0) {
         await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
         return;
       }
 
-      const sellPercentage = (initialInvestment / (parseFloat(position.quantity_held) * currentPrice)) * 100;
+      const currentHeld = parseFloat(position.quantity_held);
+      if (currentHeld === 0) {
+        await ctx.reply('No tokens held in this position.').catch(() => {});
+        return;
+      }
+
+      // Calculate percentage needed to sell to recover initial investment
+      // We want to sell enough tokens to get back the initial NEAR investment
+      const currentValue = currentHeld * currentPrice;
+      const sellPercentage = (totalInitialInvestment / currentValue) * 100;
       const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
 
       const result = await sellAtTarget(user.id, positionId, adjustedPercentage);
-      
+
       if (result.success) {
-        await ctx.reply(`✅ Sold initial investment of \`${initialInvestment.toFixed(4)} NEAR\` worth of tokens.`, { parse_mode: 'Markdown' }).catch(() => {});
+        await ctx.reply(`✅ Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).`, { parse_mode: 'Markdown' }).catch(() => {});
       } else {
         await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
       }
     } catch (err: any) {
+      console.error('[SELL_INITIAL] Error:', err);
       await ctx.reply('Error processing sell. Please try again.').catch(() => {});
     }
   });
