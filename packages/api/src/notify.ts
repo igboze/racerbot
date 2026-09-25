@@ -29,10 +29,11 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
       return;
     }
 
-    // Resolve telegram_id from user_id if not set
+    // Resolve telegram_id from user_id if not set (executor publishes user_id, not telegram_id)
     let telegramId = event.telegram_id;
-    if (!telegramId && event.data?.user_id) {
-      const user = await getUserById(event.data.user_id as string).catch(() => null);
+    if ((!telegramId || telegramId === 0) && (event.data?.user_id || (event as any).user_id)) {
+      const uid = (event.data?.user_id ?? (event as any).user_id) as string;
+      const user = await getUserById(uid).catch(() => null);
       telegramId = user?.telegram_id ?? 0;
     }
 
@@ -126,12 +127,33 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
 
     case 'trade_failed': {
       const txHash = data.txHash as string ?? 'unknown';
-      const reason = (data.reason as string) ?? 'transaction failed or slippage breach';
+      const rawReason = (data.reason as string) ?? 'transaction failed or slippage breach';
+      const token = data.token as string ?? '';
+      const tokenLine = token ? `🪙 Token: \`${sanitize(token)}\`\n` : '';
+
+      // Map raw NEAR / RPC errors to user-friendly language
+      const friendlyReason = (() => {
+        const r = rawReason.toLowerCase();
+        if (r.includes('notenoughallowance') || r.includes('not enough allowance')) return 'Insufficient key allowance — please contact support.';
+        if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum')) return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings.';
+        if (r.includes('insufficient') && r.includes('balanc')) return 'Insufficient balance for this trade.';
+        if (r.includes('no pool') || r.includes('pool not found') || r.includes('no dcl pool')) return 'No liquidity pool found for this token. It may not yet be tradeable.';
+        if (r.includes('prebonded')) return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
+        if (r.includes('liquidity') && r.includes('insufficient')) return 'Pool liquidity too low to fill this order.';
+        if (r.includes('all near rpc broadcast failed')) return 'Network error — all RPC nodes rejected the transaction. Please retry.';
+        if (r.includes('signing timed out')) return 'Transaction signing timed out. Please retry.';
+        if (r.includes('timeout') || r.includes('timed out')) return 'Network timeout — the NEAR RPC did not respond in time. Please retry.';
+        if (r.includes('invalid receiver') || r.includes('does not exist')) return 'Contract not found on-chain. Verify the token contract address.';
+        if (r.includes('panic')) return `Contract execution failed: ${sanitize(rawReason.slice(0, 120))}`;
+        return sanitize(rawReason.slice(0, 200));
+      })();
+
       await _bot.telegram.sendMessage(telegramId,
         `❌ *Trade Failed*\n\n` +
-        `📋 Reason: ${sanitize(reason)}\n` +
-        `🧾 TX: \`${sanitize(txHash)}\`\n\n` +
-        `No position was opened by this transaction.`,
+        tokenLine +
+        `📋 Reason: ${friendlyReason}\n` +
+        (txHash !== 'none' ? `🧾 TX: \`${sanitize(txHash)}\`\n` : '') +
+        `\n_No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check._`,
         { parse_mode: 'Markdown' }
       );
       break;
