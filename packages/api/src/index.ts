@@ -8,11 +8,13 @@ import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
-import { warmTokenInfoCache } from './wallet.js';
+import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000');
 const REDIS_URL = process.env.REDIS_URL!;
+
+let syncInterval: NodeJS.Timeout | null = null;
 
 async function main(): Promise<void> {
   console.log('[API] Starting RacerBot API service...');
@@ -119,10 +121,46 @@ async function main(): Promise<void> {
     console.warn('[API] Redis notification listener inactive:', err.message);
   }
 
+  // ── Start background sync for external token deposits ─────────────────────
+  // Sync all users' external deposits every 5 minutes to detect purchases from other wallets
+  const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  syncInterval = setInterval(async () => {
+    try {
+      const db = await getDb();
+      const result = await db.query('SELECT id, telegram_id, subaccount_id FROM users');
+      console.log(`[SYNC] Starting external deposit sync for ${result.rows.length} users...`);
+      
+      let totalNewDeposits = 0;
+      for (const user of result.rows) {
+        try {
+          const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
+          if (newDeposits > 0) {
+            totalNewDeposits += newDeposits;
+            console.log(`[SYNC] User ${user.telegram_id}: ${newDeposits} new external deposits detected`);
+          }
+        } catch (err: any) {
+          console.warn(`[SYNC] Failed to sync user ${user.telegram_id}:`, err.message);
+        }
+      }
+      
+      if (totalNewDeposits > 0) {
+        console.log(`[SYNC] Completed: ${totalNewDeposits} new external deposits detected across all users`);
+      }
+    } catch (err: any) {
+      console.error('[SYNC] Background sync error:', err.message);
+    }
+  }, SYNC_INTERVAL_MS);
+  
+  console.log(`[SYNC] Background external deposit sync started (interval: ${SYNC_INTERVAL_MS}ms)`);
+
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
     console.log(`[API] ${signal} received — shutting down`);
     bot.stop(signal);
+    if (syncInterval) {
+      clearInterval(syncInterval);
+      syncInterval = null;
+    }
     if (redis) {
       await redis.disconnect().catch(() => {});
     }

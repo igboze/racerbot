@@ -687,12 +687,16 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
 
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
   const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
-  const totalNear = nativeNear + wrapNear;
+  
+  // Subtract storage reserve (0.05 NEAR) from display balance to show spendable amount
+  const storageReserve = 0.05;
+  const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
+  const totalNear = spendableNativeNear + wrapNear;
 
   const result: UserBalances = {
     subaccountId,
     nativeNearYocto,
-    nativeNearFormatted: nativeNear.toFixed(4),
+    nativeNearFormatted: spendableNativeNear.toFixed(4),
     wrapNearYocto,
     wrapNearFormatted: wrapNear.toFixed(4),
     totalNearFormatted: totalNear.toFixed(4),

@@ -73,7 +73,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     `💰 *Balance*: ${balanceText}\n\n` +
     `💡 *Instant Trading Flow*:\n` +
     `• *Paste any Token Contract Address (CA)* directly into chat to view charts, liquidity, and instant 1-click buy buttons.\n` +
-    `• Or use the interactive in-chat buttons below:`;
+    `• Or use the interactive in-chat buttons below:\n\n` +
+    `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -127,7 +128,8 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     `Send native NEAR directly to:\n` +
     `\`${b.subaccountId}\`\n\n` +
     `⚡ *Instant Execution*:\n` +
-    `Deposited NEAR is immediately ready for manual and automated sniping.`;
+    `Deposited NEAR is immediately ready for manual and automated sniping.\n\n` +
+    `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.`;
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -404,6 +406,7 @@ async function executeBuyHelper(
 
   // FIX 3: Reuse the cached balance instead of a direct RPC hit.
   // getUserBalances has its own 8s in-memory cache in wallet.ts.
+  // The balance returned is already spendable (storage reserve subtracted).
   let balanceNear = 0;
   try {
     const balances = await getUserBalances(telegramId);
@@ -412,8 +415,8 @@ async function executeBuyHelper(
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  if (balanceNear < amountNear + 0.01) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR. Need at least ${(amountNear + 0.01).toFixed(4)} NEAR (including gas & storage reserve).`);
+  if (balanceNear < amountNear) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${amountNear.toFixed(4)} NEAR.`);
   }
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
@@ -472,14 +475,13 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
+  // The balance returned is already spendable (storage reserve subtracted).
   const balances = await getUserBalances(telegramId);
   const balanceNear = parseFloat(balances.nativeNearFormatted);
 
-  // Retain 0.05 NEAR reserve for account storage
-  const usableBalance = Math.max(0, balanceNear - 0.05);
-  const amountNear = (usableBalance * pct) / 100;
+  const amountNear = (balanceNear * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.05 reserve) is too low to buy.`);
+    throw new Error(`Available balance (${balanceNear.toFixed(4)} NEAR) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
 }
