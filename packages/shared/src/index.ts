@@ -15,6 +15,16 @@ export {
   sleep,
 } from './utils.js';
 
+// Structured logging
+export {
+  createLogger,
+  generateCorrelationId,
+} from './logger.js';
+export type { LogLevel, LogContext, LogEntry } from './logger.js';
+
+// Metrics collection
+export { metrics, MetricNames } from './metrics.js';
+
 // Cryptography — never log output of these
 export {
   encrypt,

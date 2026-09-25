@@ -222,29 +222,65 @@ export class MultiRpcNear {
   }
 
   /**
-   * Wait for transaction confirmation by polling.
+   * Wait for transaction confirmation by polling with improved error handling.
    * Used after broadcast to confirm the tx landed.
    */
-  async waitForTx(txHash: string, accountId: string, maxWaitMs = 30000): Promise<any> {
-    const provider = rotateProvider(this.providers);
-    const near = await this.getConnection(provider.url);
+  async waitForTx(txHash: string, accountId: string, maxWaitMs = 60000): Promise<any> {
     const deadline = Date.now() + maxWaitMs;
+    const providers = this.providers.filter(p => p.healthy);
+    
+    if (providers.length === 0) {
+      throw new Error('No healthy RPC providers available for transaction confirmation');
+    }
+
+    let lastError: Error | null = null;
+    let parseErrors = 0;
+    const maxParseErrors = 5;
 
     while (Date.now() < deadline) {
-      try {
-        const outcome = await near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
-        if (outcome.status && typeof outcome.status === 'object' && 'SuccessValue' in outcome.status) {
-          return outcome;
+      // Try each healthy provider in sequence for better resilience
+      for (const provider of providers) {
+        try {
+          const near = await this.getConnection(provider.url);
+          const outcome = await near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
+          
+          if (outcome.status && typeof outcome.status === 'object' && 'SuccessValue' in outcome.status) {
+            return outcome;
+          }
+          
+          if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
+            const failureDetails = outcome.status.Failure;
+            throw new Error(`Transaction failed: ${JSON.stringify(failureDetails)}`);
+          }
+          
+          // Transaction exists but not yet executed
+          lastError = null;
+          break; // Success in getting status, move to next provider
+          
+        } catch (err) {
+          lastError = err as Error;
+          const errorMessage = (err as Error).message.toLowerCase();
+          
+          // Track parse errors specifically
+          if (errorMessage.includes('parse') || errorMessage.includes('json')) {
+            parseErrors++;
+            if (parseErrors >= maxParseErrors) {
+              throw new Error(`Transaction ${txHash} confirmation failed after ${parseErrors} parse errors. Last error: ${lastError.message}`);
+            }
+          }
+          
+          // Try next provider
+          continue;
         }
-        if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
-          throw new Error(`Transaction failed: ${JSON.stringify(outcome.status)}`);
-        }
-      } catch (err) {
-        // Not yet indexed — keep polling
       }
-      await sleep(500);
+      
+      // Wait before next polling round
+      await sleep(1000);
     }
-    throw new Error(`Transaction ${txHash} not confirmed within ${maxWaitMs}ms`);
+
+    // If we exit the loop, transaction wasn't confirmed
+    const timeElapsed = Date.now() - (deadline - maxWaitMs);
+    throw new Error(`Transaction ${txHash} not confirmed within ${maxWaitMs}ms (waited ${timeElapsed}ms). Last error: ${lastError?.message || 'Unknown'}`);
   }
 
   /**
@@ -967,8 +1003,30 @@ export class MultiRpcNear {
       try {
         state = await this.getNearlytradeTokenState(targetToken);
       } catch {
+        // If NearlyTrade RPC fails, check if Rhea has a pool as fallback
+        try {
+          const rheaPoolId = await this.findRheaPoolId(tokenIn, tokenOut);
+          if (rheaPoolId) {
+            // Use Rhea pool calculation
+            const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+            const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+            const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+              pool_id: rheaPoolId,
+              token_in: inToken,
+              amount_in: amountIn,
+              token_out: outToken,
+            });
+            const expected = BigInt(ret || '0');
+            if (expected > 0n) {
+              const minOut = calculateMinAmountOut(expected, slippagePct);
+              return { expectedOutput: expected.toString(), minAmountOut: minOut };
+            }
+          }
+        } catch {
+          // Ignore Rhea lookup errors
+        }
         throw new Error(
-          `NearlyTrade RPC failed for ${targetToken}. Token may be on a launchpad but RPC is unreachable. Try again later.`
+          `NearlyTrade token ${targetToken} is not yet bonded and has no Rhea pool. Wait for bonding or pool creation.`
         );
       }
       const reserveNear = BigInt(state.reserveNear);
@@ -1126,7 +1184,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 60_000
+    waitForMs = 90_000
   ): Promise<any> {
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
@@ -1250,13 +1308,31 @@ export class MultiRpcNear {
      */
     const tryRpc = async (providerUrl: string): Promise<any | null> => {
       const callRpc = async (method: string, params: any): Promise<any | null> => {
-        const res = await fetch(providerUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
-          signal: AbortSignal.timeout(6000),
-        });
-        return res.json();
+        try {
+          const res = await fetch(providerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
+            signal: AbortSignal.timeout(6000),
+          });
+          
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          
+          const text = await res.text();
+          if (!text || text.trim() === '') {
+            throw new Error('Empty response from RPC');
+          }
+          
+          return JSON.parse(text);
+        } catch (err: any) {
+          // Enhanced error handling for parse errors
+          if (err instanceof SyntaxError) {
+            throw new Error(`Parse error: Invalid JSON response from ${providerUrl}`);
+          }
+          throw err;
+        }
       };
 
       try {
@@ -1277,7 +1353,8 @@ export class MultiRpcNear {
             errName.includes('TIMEOUT') ||
             errName.includes('HANDLER_ERROR') ||
             errName.includes('UNKNOWN_TRANSACTION') ||
-            errName.includes('does not exist')
+            errName.includes('does not exist') ||
+            errName.includes('Parse error')           // Treat parse errors as transient
           ) {
             return null;
           }
@@ -1291,6 +1368,14 @@ export class MultiRpcNear {
       } catch (err: any) {
         // Network-level or thrown error — record and continue
         lastErr = err as Error;
+        
+        // If it's a parse error, mark the provider as unhealthy
+        if (err.message?.includes('Parse error')) {
+          const provider = this.providers.find(p => p.url === providerUrl);
+          if (provider) {
+            markProviderError(provider);
+          }
+        }
       }
       return null;
     };

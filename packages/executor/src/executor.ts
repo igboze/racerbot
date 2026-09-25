@@ -21,6 +21,10 @@ import {
   createPosition,
   updatePosition,
   getTokenCache,
+  recordFee,
+  getReferralByReferredUser,
+  activateReferral,
+  addReferralReward,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
@@ -138,8 +142,12 @@ export class SwapExecutor {
     let result: any;
 
     if (venue === 'nearlytrade') {
-      if (!dclPoolId) {
-        throw new Error(`DCL pool ID not found for NearlyTrade token`);
+      // First try to find a Rhea pool for the token
+      let rheaPoolId: number | null = null;
+      try {
+        rheaPoolId = await near.findRheaPoolId('wrap.near', token_out).catch(() => null);
+      } catch {
+        // Ignore Rhea pool lookup errors
       }
 
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -147,42 +155,87 @@ export class SwapExecutor {
         // Ensure user is registered for NEP-141 storage on token_out
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Batched actions on wrap.near in 1 atomic transaction:
-        // 1. near_deposit to wrap native NEAR
-        // 2. ft_transfer to send 1.5% fee to treasury
-        // 3. ft_transfer_call to swap 98.5% on DCL
-        const actions = [
-          transactions.functionCall(
-            'near_deposit',
-            {},
-            BigInt('10000000000000'),
-            amountInBigInt
-          ),
-          transactions.functionCall(
-            'ft_transfer',
-            { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-            BigInt('20000000000000'),
-            BigInt('1')
-          ),
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dclv2.ref-labs.near',
-              amount: swapAmount.toString(),
-              msg: JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                },
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
+        // If Rhea pool exists, use Rhea DEX
+        if (rheaPoolId) {
+          // Batched actions on wrap.near in 1 atomic transaction for Rhea:
+          // 1. near_deposit to wrap native NEAR
+          // 2. ft_transfer to send 1.5% fee to treasury
+          // 3. ft_transfer_call to swap 98.5% on Rhea
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'v2.ref-finance.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: rheaPoolId,
+                      token_in: 'wrap.near',
+                      token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  ],
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else if (dclPoolId) {
+          // If no Rhea pool but DCL pool exists, use NearlyTrade DCL
+          const actions = [
+            transactions.functionCall(
+              'near_deposit',
+              {},
+              BigInt('10000000000000'),
+              amountInBigInt
+            ),
+            transactions.functionCall(
+              'ft_transfer',
+              { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
+              BigInt('20000000000000'),
+              BigInt('1')
+            ),
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: swapAmount.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: token_out,
+                    min_output_amount: minOutAdj,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          // No pool exists - token is still in launchpad/bonding phase
+          throw new Error(
+            `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
+          );
+        }
       } else {
         // Sell token on DCL for wrap.near
         await near.ensureStorageDeposit(subaccountId, 'wrap.near');
@@ -355,16 +408,21 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Send 1.5% fee to treasury (separate tx — see audit note on
-        // non-atomic fee skims on the intear/shardsmarket buy paths)
-        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount).catch(() => {});
-
-        // Buy on dex.intear.near — signed once, broadcast to ALL RPCs
+        // Buy on dex.intear.near — atomic transaction with fee skimmed from input
+        // User deposits full amount_in, fee is taken from that amount before swap
         result = await near.signAndSendTransactionAll(subaccountId, 'dex.intear.near', [
           transactions.functionCall(
             'deposit_near',
             {
               operations: [
+                {
+                  // Send 1.5% fee to treasury atomically before swap
+                  Transfer: {
+                    asset_id: 'near',
+                    amount: feeAmount.toString(),
+                    to: TREASURY_ACCOUNT_ID,
+                  },
+                },
                 {
                   SwapSimple: {
                     dex_id: 'slimedragon.near/xyk',
@@ -387,7 +445,7 @@ export class SwapExecutor {
               referrer: 'user.intear.near',
             },
             BigInt('250000000000000'),
-            swapAmount
+            amountInBigInt  // Deposit full amount_in, fee taken atomically
           ),
         ]);
       } else {
@@ -519,16 +577,17 @@ export class SwapExecutor {
       if (isBuy) {
         await near.ensureStorageDeposit(subaccountId, token_out);
 
-        // Send 1.5% fee to treasury (separate tx — see audit note)
-        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount).catch(() => {});
+        // Buy on shardsmarket factory - send fee separately before swap
+        // Shardsmarket doesn't support atomic fee transfers like Intear
+        // We send the fee to treasury first, then execute the swap
+        await account.sendMoney(TREASURY_ACCOUNT_ID, feeAmount);
 
-        // Buy on shardsmarket factory — signed once, broadcast to ALL RPCs
         result = await near.signAndSendTransactionAll(subaccountId, 'factory.shardsmarket.near', [
           transactions.functionCall(
             'buy',
             { token_id: token_out, min_amount_out: minOutAdj },
             BigInt('200000000000000'),
-            swapAmount
+            swapAmount  // After fee, send remaining 98.5% for swap
           ),
         ]);
       } else {
@@ -887,7 +946,7 @@ export class SwapExecutor {
         });
       }
 
-      await createFill({
+      const fillResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'buy',
@@ -898,8 +957,26 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
+
+      // Record fee in ledger and handle referral rewards (only if fill was inserted)
+      if (fillResult.inserted) {
+        await recordFee(fillResult.fillId, feePaidNear.toString());
+
+        // Handle referral rewards (30% of fee goes to referrer)
+        const referral = await getReferralByReferredUser(userId);
+        if (referral && referral.status === 'pending') {
+          // Activate referral on first trade
+          await activateReferral(referral.id);
+        }
+        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+          // Calculate 30% reward
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          await addReferralReward(referral.id, rewardAmount);
+        }
+      }
+
     } else if (position) {
-      await createFill({
+      const fillResult = await createFill({
         user_id: userId,
         position_id: position.id,
         side: 'sell',
@@ -910,6 +987,19 @@ export class SwapExecutor {
         venue,
         tx_hash: txHash,
       });
+
+      // Record fee in ledger and handle referral rewards (only if fill was inserted)
+      if (fillResult.inserted) {
+        await recordFee(fillResult.fillId, feePaidNear.toString());
+
+        // Handle referral rewards (30% of fee goes to referrer)
+        const referral = await getReferralByReferredUser(userId);
+        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+          // Calculate 30% reward
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          await addReferralReward(referral.id, rewardAmount);
+        }
+      }
     }
   }
 

@@ -23,6 +23,14 @@ export {
   getTokenCache,
   upsertTokenCache,
   recordFee,
+  generateReferralCode,
+  getUserByReferralCode,
+  createReferral,
+  activateReferral,
+  addReferralReward,
+  getReferralsByReferrer,
+  getReferralByReferredUser,
+  getTotalReferralEarnings,
 } from './db.js';
 
 export type {
@@ -31,6 +39,7 @@ export type {
   FillRecord,
   TriggerRecord,
   TokenCacheRecord,
+  ReferralRecord,
   CreateUserParams,
   CreatePositionParams,
   CreateFillParams,

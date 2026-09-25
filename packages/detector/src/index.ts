@@ -3,12 +3,16 @@ import {
   getNear,
   createRedis,
   CHANNELS,
+  createLogger,
+  generateCorrelationId,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
   type AutoBuySignal,
 } from '@racerbot/shared';
 import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionById } from '@racerbot/db';
+
+const logger = createLogger('detector');
 
 // ── In-memory caches (primary read path — never query DB in hot loop) ─────────
 
@@ -43,12 +47,12 @@ const redis = createRedis(REDIS_URL);
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
-  await getDb();
+  await logger.time('Connected to database', () => getDb());
   near.startHealthChecks(30_000);
 
   // One stray rejected promise must not kill the block watcher
   process.on('unhandledRejection', (reason) => {
-    console.error('[DETECTOR] Unhandled rejection (kept alive):', reason);
+    logger.error('Unhandled rejection (kept alive)', undefined, { reason });
   });
 
   // Stop-loss/take-profit prices must not depend on a swap happening to
@@ -57,8 +61,7 @@ async function main() {
     void refreshTriggerTokenPrices();
   }, TRIGGER_PRICE_REFRESH_MS);
 
-  console.log('[DETECTOR] Starting NEAR block watcher...');
-  console.log(`[DETECTOR] RPC providers: ${RPC_URLS.length}`);
+  logger.info('Starting NEAR block watcher...', { rpcProviders: RPC_URLS.length });
 
   let lastBlock = parseInt((await redis.get(LAST_BLOCK_KEY)) ?? '0');
 
@@ -70,9 +73,11 @@ async function main() {
       lastBlock = initialHeight;
       await redis.set(LAST_BLOCK_KEY, initialHeight.toString(), 86400).catch(() => {});
     } else if (initialHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
-      console.log(
-        `[DETECTOR] Catching up: jumping ${lastBlock} → ${initialHeight - MAX_CATCHUP_BLOCKS} (bounded replay of ${MAX_CATCHUP_BLOCKS} blocks)`
-      );
+      logger.info('Catching up: jumping blocks', { 
+        from: lastBlock, 
+        to: initialHeight - MAX_CATCHUP_BLOCKS, 
+        replayCount: MAX_CATCHUP_BLOCKS 
+      });
       lastBlock = initialHeight - MAX_CATCHUP_BLOCKS;
 
       // Replay in batches of up to 5 blocks in order
@@ -84,7 +89,7 @@ async function main() {
         await Promise.all(
           batch.map(height =>
             processBlock(height).catch(err => {
-              console.error(`[DETECTOR] Block ${height} error:`, err.message);
+              logger.error('Block processing error', err, { height });
             })
           )
         );
@@ -162,7 +167,7 @@ async function main() {
         continue;
       }
     } catch (err: any) {
-      console.error('[DETECTOR] Poll error:', err.message);
+      logger.error('Poll error', err);
     }
     await sleep(POLL_INTERVAL_MS);
   }
@@ -456,7 +461,8 @@ async function handlePoolCreated(
   venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub',
   rawData: any
 ): Promise<void> {
-  console.log(`[DETECTOR] New pool detected: ${tokenAddress} on ${venue}`);
+  const correlationId = generateCorrelationId();
+  logger.info('New pool detected', { correlationId, tokenAddress, venue });
 
   // Fetch token metadata via NEAR RPC
   let name = rawData?.name ?? '';
@@ -475,7 +481,7 @@ async function handlePoolCreated(
     decimals = meta.decimals;
     totalSupply = supply;
   } catch (err) {
-    console.warn(`[DETECTOR] Could not fetch metadata for ${tokenAddress}:`, (err as Error).message);
+    logger.warn('Could not fetch token metadata', { correlationId, tokenAddress, error: (err as Error).message });
     if (!name) return; // Skip if we have no data at all
   }
 
@@ -499,7 +505,7 @@ async function handlePoolCreated(
         initialLiquidity = (ntState.liquidityNear * 1e24).toString();
       }
     } catch (err) {
-      console.warn(`[DETECTOR] Could not fetch NearlyTrade state for ${tokenAddress}:`, (err as Error).message);
+      logger.warn('Could not fetch NearlyTrade state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   } else if (venue === 'onetokenhub') {
     try {
@@ -510,7 +516,7 @@ async function handlePoolCreated(
         initialLiquidity = (hubState.liquidityNear * 1e24).toString();
       }
     } catch (err) {
-      console.warn(`[DETECTOR] Could not fetch OneTokenHub state for ${tokenAddress}:`, (err as Error).message);
+      logger.warn('Could not fetch OneTokenHub state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   }
 

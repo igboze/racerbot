@@ -2,14 +2,18 @@ import './config.js';
 import path from 'path';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, assertValidMasterKey, type TokenDetectedEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
+import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
+
+const logger = createLogger('api');
 
 const PORT = parseInt(process.env.PORT ?? '3000');
 const REDIS_URL = process.env.REDIS_URL!;
@@ -17,7 +21,7 @@ const REDIS_URL = process.env.REDIS_URL!;
 let syncInterval: NodeJS.Timeout | null = null;
 
 async function main(): Promise<void> {
-  console.log('[API] Starting RacerBot API service...');
+  logger.info('Starting RacerBot API service...');
 
   // ── Fail fast on insecure/missing secrets ──────────────────────────────
   assertValidMasterKey(process.env.KEY_ENCRYPTION_MASTER_KEY);
@@ -27,17 +31,17 @@ async function main(): Promise<void> {
 
   // One stray rejected promise must not kill the whole trading bot
   process.on('unhandledRejection', (reason) => {
-    console.error('[API] Unhandled rejection (kept alive):', reason);
+    logger.error('Unhandled rejection (kept alive)', undefined, { reason });
   });
 
   // Connect to Postgres
-  await getDb();
+  await logger.time('Connected to Postgres', () => getDb());
 
   // FIX 6: Pre-warm the in-memory token info cache from the DB.
   // Non-blocking — runs in background so startup is not delayed.
   // Populates up to 500 recently-seen tokens so cold-start RPC calls are avoided.
   warmTokenInfoCache().catch((err: any) =>
-    console.warn('[API] Cache warm-up failed (non-fatal):', err.message)
+    logger.warn('Cache warm-up failed (non-fatal)', { error: err.message })
   );
 
   // ── Telegram bot ──────────────────────────────────────────────────────────
@@ -47,10 +51,13 @@ async function main(): Promise<void> {
   // Global error handler to catch expired callback queries or minor Telegram API errors
   bot.catch((err: any, ctx) => {
     if (err?.response?.error_code === 400 || err?.code === 400 || String(err?.message).includes('query is too old')) {
-      console.warn(`[API] Ignored stale Telegram 400 error (${err.message}) for update ${ctx?.update?.update_id}`);
+      logger.warn('Ignored stale Telegram 400 error', { 
+        error: err.message, 
+        updateId: ctx?.update?.update_id 
+      });
       return;
     }
-    console.error(`[API] Telegraf unhandled error for update ${ctx?.update?.update_id}:`, err);
+    logger.error('Telegraf unhandled error', err, { updateId: ctx?.update?.update_id });
   });
 
   setupRoutes(bot);
@@ -60,8 +67,23 @@ async function main(): Promise<void> {
   // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
   // for the rate limiter to key on real client IPs.
   app.set('trust proxy', 1);
+  
+  // Security headers
+  app.use(helmet({
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+      },
+    },
+  }));
+  
   app.use(cors());
   app.use(express.json({ limit: '64kb' }));
+  app.use(metricsMiddleware);
 
   // Mount Telegram webhook handler on the existing Express app
   const webhookPath = '/telegram-webhook';
@@ -73,6 +95,9 @@ async function main(): Promise<void> {
 
   app.use('/api', apiRouter);
 
+  // Add monitoring routes
+  monitoringRoutes(app);
+
   const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
   app.use('/miniapp', express.static(publicDir));
   app.get('/miniapp', (_req, res) => {
@@ -80,7 +105,7 @@ async function main(): Promise<void> {
   });
 
   app.listen(PORT, () => {
-    console.log(`[API] REST server listening on port ${PORT}`);
+    logger.info('REST server listening', { port: PORT });
   });
 
   // ── Launch bot (Webhook if PUBLIC_URL set, fallback to long polling) ─────
@@ -91,10 +116,10 @@ async function main(): Promise<void> {
       drop_pending_updates: true,
       secret_token: TELEGRAM_WEBHOOK_SECRET || undefined,
     });
-    console.log(`[API] Telegram bot launched with webhook @ ${webhookUrl}`);
+    logger.info('Telegram bot launched with webhook', { webhookUrl });
   } else {
     bot.launch({ dropPendingUpdates: true });
-    console.log('[API] Telegram bot launched with long polling (PUBLIC_URL not set)');
+    logger.info('Telegram bot launched with long polling (PUBLIC_URL not set)');
   }
 
   // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
@@ -108,17 +133,18 @@ async function main(): Promise<void> {
           address: event.token_address,
           symbol: event.symbol,
         });
+        logger.debug('Token name cached', { token: event.name, address: event.token_address });
       } catch { /* ignore malformed */ }
     });
   } catch (err: any) {
-    console.warn('[API] Redis pub/sub unavailable, token name caching inactive:', err.message);
+    logger.warn('Redis pub/sub unavailable, token name caching inactive', { error: err.message });
   }
 
   // ── Start notification listener (async, non-blocking) ──────────────────────
   try {
     await startNotifyListener(REDIS_URL);
   } catch (err: any) {
-    console.warn('[API] Redis notification listener inactive:', err.message);
+    logger.warn('Redis notification listener inactive', { error: err.message });
   }
 
   // ── Start background sync for external token deposits ─────────────────────
@@ -128,7 +154,7 @@ async function main(): Promise<void> {
     try {
       const db = await getDb();
       const result = await db.query('SELECT id, telegram_id, subaccount_id FROM users');
-      console.log(`[SYNC] Starting external deposit sync for ${result.rows.length} users...`);
+      logger.info('Starting external deposit sync', { userCount: result.rows.length });
       
       let totalNewDeposits = 0;
       for (const user of result.rows) {
@@ -136,26 +162,32 @@ async function main(): Promise<void> {
           const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
           if (newDeposits > 0) {
             totalNewDeposits += newDeposits;
-            console.log(`[SYNC] User ${user.telegram_id}: ${newDeposits} new external deposits detected`);
+            logger.info('External deposits detected', { 
+              telegramId: user.telegram_id, 
+              newDeposits 
+            });
           }
         } catch (err: any) {
-          console.warn(`[SYNC] Failed to sync user ${user.telegram_id}:`, err.message);
+          logger.warn('Failed to sync user deposits', { 
+            telegramId: user.telegram_id, 
+            error: err.message 
+          });
         }
       }
       
       if (totalNewDeposits > 0) {
-        console.log(`[SYNC] Completed: ${totalNewDeposits} new external deposits detected across all users`);
+        logger.info('External deposit sync completed', { totalNewDeposits });
       }
     } catch (err: any) {
-      console.error('[SYNC] Background sync error:', err.message);
+      logger.error('Background sync error', { error: err.message });
     }
   }, SYNC_INTERVAL_MS);
   
-  console.log(`[SYNC] Background external deposit sync started (interval: ${SYNC_INTERVAL_MS}ms)`);
+  logger.info('Background external deposit sync started', { intervalMs: SYNC_INTERVAL_MS });
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
-    console.log(`[API] ${signal} received — shutting down`);
+    logger.info('Shutting down', { signal });
     bot.stop(signal);
     if (syncInterval) {
       clearInterval(syncInterval);
