@@ -893,6 +893,11 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           ? parseFloat(info.price)
           : 0;
 
+        // Convert raw balance to human-readable using token decimals
+        const decimals = info?.decimals ?? 18;
+        const rawBalance = BigInt(t.balance);
+        const humanBalance = Number(rawBalance) / Math.pow(10, decimals);
+
         // Initialize position with zero values - createFill will update them
         const newPos = await createPosition({
           user_id: userId,
@@ -910,7 +915,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           position_id: newPos.id,
           side: 'buy',
           token_address: t.contract_id,
-          amount: t.balance,
+          amount: humanBalance.toString(),
           price: currentPrice.toString(),
           fee_paid: '0',
           venue,
@@ -918,13 +923,19 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         }).catch(() => {});
 
         newDepositsCount++;
-        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${t.balance}, entryPrice=${currentPrice}`);
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${humanBalance.toFixed(4)}, entryPrice=${currentPrice}`);
       } else {
         // Sync position quantity if changed
-        if (existing.quantity_held !== t.balance) {
+        // Convert raw balance to human-readable using token decimals
+        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const decimals = info?.decimals ?? 18;
+        const rawBalance = BigInt(t.balance);
+        const humanBalance = Number(rawBalance) / Math.pow(10, decimals);
+
+        if (existing.quantity_held !== humanBalance.toString()) {
           await updatePosition({
             position_id: existing.id,
-            quantity_held: t.balance,
+            quantity_held: humanBalance.toString(),
           });
         }
       }
