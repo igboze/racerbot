@@ -24,6 +24,7 @@ import {
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
+import { generatePNLCardData, generatePNLCardMessage } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY } from './config.js';
 
@@ -512,12 +513,35 @@ async function executeBuyHelper(
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
-  const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
-  const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
+
+  // VENUE PRIORITY LOGIC: Check Rhea first, then use detected venue
+  // If token has a Rhea pool (either simple or DCL), prefer it over launchpad
+  let venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  let effectiveDclPoolId = info.dcl_pool_id ?? undefined;
+  let effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   const near = getNear();
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // Check if Rhea pool exists for this token
+  let hasRheaPool = false;
+  try {
+    if (effectiveRheaPoolId || effectiveDclPoolId) {
+      hasRheaPool = true;
+    } else {
+      // Try to find Rhea pool dynamically
+      const rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
+      if (rheaPoolId) {
+        hasRheaPool = true;
+        effectiveRheaPoolId = rheaPoolId;
+        venue = 'rhea';
+      }
+    }
+  } catch {
+    // If Rhea check fails, continue with detected venue
+  }
+
+  console.log(`[BUY] Token: ${tokenAddress}, Detected venue: ${info.venue}, Has Rhea pool: ${hasRheaPool}, Final venue: ${venue}`);
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
 
   // FIX: computeMinAmountOut must use the SWAP amount (98.5% after 1.5% fee),
@@ -900,6 +924,19 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (result.success) {
         await ctx.reply(`✅ Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).`, { parse_mode: 'Markdown' }).catch(() => {});
+
+        // Generate PNL card after sell
+        setTimeout(async () => {
+          try {
+            const pnlData = await generatePNLCardData(positionId);
+            if (pnlData) {
+              const pnlMessage = generatePNLCardMessage(pnlData);
+              await ctx.reply(pnlMessage, { parse_mode: 'Markdown' }).catch(() => {});
+            }
+          } catch (err: any) {
+            console.error('[PNL_CARD] Error generating PNL card after sell initial:', err);
+          }
+        }, 3000);
       } else {
         await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
       }
@@ -1463,10 +1500,25 @@ export function setupRoutes(bot: Telegraf): void {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
-    await sellAtTarget(user.id, positionId, pct);
+    const result = await sellAtTarget(user.id, positionId, pct);
 
     await ctx.answerCbQuery(`✅ Sell order sent (${pct}%)`).catch(() => {});
     await ctx.editMessageText(`⚡ Sell order sent: ${pct}% of position.\n\nYou'll be notified on confirmation.`).catch(() => {});
+
+    // Generate PNL card after sell
+    if (result.success) {
+      setTimeout(async () => {
+        try {
+          const pnlData = await generatePNLCardData(positionId);
+          if (pnlData) {
+            const pnlMessage = generatePNLCardMessage(pnlData);
+            await ctx.reply(pnlMessage, { parse_mode: 'Markdown' }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error('[PNL_CARD] Error generating PNL card after sell:', err);
+        }
+      }, 3000); // Wait 3 seconds for sell to process
+    }
   });
 
   // ── /positions & /pnl ─────────────────────────────────────────────────────
