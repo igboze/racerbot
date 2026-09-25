@@ -569,7 +569,7 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
   // The balance returned includes both spendable native NEAR and wNEAR.
   const balances = await getUserBalances(telegramId);
-  const balanceNear = parseFloat(balances.totalNearFormatted);
+  const balanceNear = parseFloat(balances.nativeNearFormatted);
 
   // Retain 0.025 NEAR reserve for gas and token storage deposit
   const usableBalance = Math.max(0, balanceNear - 0.025);
@@ -1984,13 +1984,17 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
-        try {
-           const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-           await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
-         } catch (err: any) {
-           console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
-           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-         }
+try {
+            const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+            await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+          } catch (err: any) {
+            console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
+            try {
+              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+            } catch {
+              console.error(`[BUY] Failed to send error message for ${pending.tokenAddress}:`, err?.message || err);
+            }
+          }
         return; // Always return after handling custom buy
       }
 
