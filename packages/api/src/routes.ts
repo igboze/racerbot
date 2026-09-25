@@ -681,75 +681,73 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── menu_holdings — Token list with name/logo and % change ────────────────
-  bot.action('menu_holdings', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
+bot.action('menu_holdings', async (ctx) => {
+     const telegramId = ctx.from!.id;
+     const user = await getUserByTelegramId(telegramId);
+     if (!user) {
+       await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+       return;
+     }
 
-    // NOTE: External deposit sync now runs in background only, not blocking menu load
-    // This prevents 3.5s+ delays when loading Holdings menu
-    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
+     setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
-    const positions = await getOpenPositions(user.id).catch(() => []);
-    if (positions.length === 0) {
-      await ctx.answerCbQuery('No holdings.').catch(() => {});
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-        [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-        ],
-      ]);
-      await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      }).catch(() => {});
-      return;
-    }
+     const positions = await getOpenPositions(user.id).catch(() => []);
+     if (positions.length === 0) {
+       await ctx.answerCbQuery('No holdings.').catch(() => {});
+       const keyboard = Markup.inlineKeyboard([
+         [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
+         [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+         [
+           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+         ],
+       ]);
+       await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
+         parse_mode: 'Markdown',
+         ...keyboard,
+       }).catch(() => {});
+       return;
+     }
 
-    await ctx.answerCbQuery().catch(() => {});
+     await ctx.answerCbQuery().catch(() => {});
 
-    // Fetch all token info in parallel
-    const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
-    );
-    const infoMap = new Map<string, TokenInfoResult | null>();
-    positions.forEach((pos, i) => {
-      const r = infoResults[i];
-      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-    });
+     // Fetch all token info in parallel with forceRefresh for live data
+     const infoResults = await Promise.allSettled(
+       positions.map(pos => getTokenInfo(pos.token_address, true))
+     );
+     const infoMap = new Map<string, TokenInfoResult | null>();
+     positions.forEach((pos, i) => {
+       const r = infoResults[i];
+       infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+     });
 
-    let msg = `💼 *Holdings (${positions.length})*\n\n`;
-    const buttons: any[] = [];
+     let msg = `💼 *Holdings (${positions.length})*\n\n`;
+     const buttons: any[] = [];
 
-    for (const pos of positions) {
-      const info = infoMap.get(pos.token_address);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-      const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+     for (const pos of positions) {
+       const info = infoMap.get(pos.token_address);
+       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+       const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+       const currentPrice = info ? parseFloat(info.price) : 0;
+       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+         : 'N/A';
+       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+       const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
-      msg += `${emoji} *${symbol}*\n`;
-      msg += `  Change: \`${pnlDisplay}\`\n\n`;
+       msg += `${emoji} *${displayLabel}*\n`;
+       msg += `  Change: \`${pnlDisplay}\`\n\n`;
 
-      // Add clickable token button
-      buttons.push([Markup.button.callback(`${symbol} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
-    }
+       buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+     }
 
-    buttons.push([
-      Markup.button.callback('🔄 Refresh', 'menu_holdings'),
-      Markup.button.callback('🔙 Main Menu', 'menu_home'),
-    ]);
+     buttons.push([
+       Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+       Markup.button.callback('🔙 Main Menu', 'menu_home'),
+     ]);
 
-    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-  });
+     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+   });
 
   // ── token_detail — Individual token detail modal ───────────────────────────
   bot.action(/^token_detail:(.+)$/, async (ctx) => {
@@ -958,10 +956,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.answerCbQuery().catch(() => {});
 
-    // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass.
+    // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass with forceRefresh.
     // Reuse this same map for both the message text and the buttons — no second fetch loop.
     const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
+      positions.map(pos => getTokenInfo(pos.token_address, true))
     );
     const infoMap = new Map<string, TokenInfoResult | null>();
     positions.forEach((pos, i) => {
@@ -973,13 +971,14 @@ export function setupRoutes(bot: Telegraf): void {
     for (const pos of positions) {
       const info = infoMap.get(pos.token_address);
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+      const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
       const currentPrice = info ? parseFloat(info.price) : 0;
       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
         : 'N/A';
       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
 
-      msg += `${emoji} *${symbol}*\n`;
+      msg += `${emoji} *${displayLabel}*\n`;
       msg += `  Holding: \`${pos.quantity_held}\`\n`;
       msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
       msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
@@ -1574,10 +1573,10 @@ export function setupRoutes(bot: Telegraf): void {
       [user.id, 'closed']
     );
 
-    // FIX 1: Fetch all fills and token info in parallel.
+    // FIX 1: Fetch all fills and token info in parallel with forceRefresh.
     const [fillsResults, tokenInfoResults] = await Promise.all([
       Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address))),
+      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
     ]);
 
     let msg = `📊 *PNL Summary*\n\n`;

@@ -242,10 +242,38 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   }
 
   // Fetch ft_metadata first — this validates the token address is a real NEP-141 contract
-  let [meta, totalSupply] = await Promise.all([
-    near.getTokenMetadata(tokenAddress),
-    near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
-  ]);
+  let meta: { name: string; symbol: string; decimals: number };
+  let totalSupply: string;
+  try {
+    [meta, totalSupply] = await Promise.all([
+      near.getTokenMetadata(tokenAddress),
+      near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+    ]);
+  } catch {
+    // If RPC metadata fetch fails, fall back to DB cache data if available
+    if (dbCache && dbCache.name) {
+      meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18 };
+      totalSupply = dbCache.total_supply ?? '0';
+    } else {
+      // Last resort: return a minimal result so the caller can still identify the token
+      return {
+        address: tokenAddress,
+        name: 'Unknown',
+        symbol: '???',
+        decimals: 18,
+        total_supply: '0',
+        price: '0',
+        price_usd: '0',
+        liquidity: '0',
+        liquidity_usd: '0',
+        market_cap: 0,
+        market_cap_usd: 0,
+        near_usd: 0,
+        venue: 'unknown',
+        tradeable: false,
+      };
+    }
+  }
 
   let price = 0;
   let liquidity = 0;
