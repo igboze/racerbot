@@ -361,10 +361,17 @@ export class MultiRpcNear {
     }
 
     try {
-      const isWrapNear = tokenAddress === 'wrap.near';
-      const deposit = isWrapNear
-        ? BigInt('1250000000000000000000') // 0.00125 NEAR
-        : BigInt('12500000000000000000000'); // 0.0125 NEAR
+      // Query token's storage balance bounds to get exact required deposit if possible
+      let deposit = BigInt('12500000000000000000000'); // 0.0125 NEAR fallback
+      if (tokenAddress === 'wrap.near') {
+        deposit = BigInt('1250000000000000000000'); // 0.00125 NEAR
+      } else {
+        const bounds = await this.view<any>(tokenAddress, 'storage_balance_bounds', {}).catch(() => null);
+        if (bounds && bounds.min) {
+          deposit = BigInt(bounds.min);
+        }
+      }
+
       await this.signAndSendTransactionAll(accountId, tokenAddress, [
         transactions.functionCall(
           'storage_deposit',
@@ -374,8 +381,25 @@ export class MultiRpcNear {
         ),
       ]);
       registeredCache.add(cacheKey);
-    } catch {
-      // Ignore if already registered or contract doesn't support storage_deposit
+    } catch (err) {
+      console.warn(`[NEAR] storage_deposit registration_only failed for ${accountId} on ${tokenAddress}:`, (err as Error).message);
+      // Try once more without registration_only for older token contracts
+      try {
+        const deposit = tokenAddress === 'wrap.near'
+          ? BigInt('1250000000000000000000')
+          : BigInt('12500000000000000000000');
+        await this.signAndSendTransactionAll(accountId, tokenAddress, [
+          transactions.functionCall(
+            'storage_deposit',
+            { account_id: accountId },
+            BigInt('30000000000000'),
+            deposit
+          ),
+        ]);
+        registeredCache.add(cacheKey);
+      } catch (err2) {
+        console.warn(`[NEAR] fallback storage_deposit failed for ${accountId} on ${tokenAddress}:`, (err2 as Error).message);
+      }
     }
   }
 
