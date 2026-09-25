@@ -170,3 +170,27 @@ export function generateRandomAccountPrefix(): string {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `${adj}-${noun}-${num}`;
 }
+
+/**
+ * Format hold duration from milliseconds or start/end dates into human readable '4h 12m', '2d 5h', etc.
+ */
+export function formatHoldDuration(start: Date | string | number, end: Date | string | number = Date.now()): string {
+  const startTime = typeof start === 'number' ? start : new Date(start).getTime();
+  const endTime = typeof end === 'number' ? end : new Date(end).getTime();
+  const diffMs = Math.max(0, endTime - startTime);
+  const totalMinutes = Math.floor(diffMs / 60000);
+
+  if (totalMinutes < 1) return '< 1m';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+
+  if (hours < 24) {
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}

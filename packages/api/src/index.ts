@@ -72,9 +72,11 @@ async function main(): Promise<void> {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://telegram.org", "https://cdn.jsdelivr.net"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "https:", "http:"],
       },
     },
   }));
@@ -100,6 +102,9 @@ async function main(): Promise<void> {
   app.use('/miniapp', express.static(publicDir));
   app.get('/miniapp', (_req, res) => {
     res.sendFile(path.join(publicDir, 'index.html'));
+  });
+  app.get(['/pnl-card', '/miniapp/pnl', '/pnl-card.html'], (_req, res) => {
+    res.sendFile(path.join(publicDir, 'pnl.html'));
   });
 
   app.listen(PORT, () => {

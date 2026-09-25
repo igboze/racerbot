@@ -25,7 +25,7 @@ import {
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
 import { utils as nearUtils } from 'near-api-js';
-import { MASTER_KEY } from './config.js';
+import { MASTER_KEY, PUBLIC_URL } from './config.js';
 
 // ── Token cache for snipe-by-name fuzzy matching ──────────────────────────────
 export const localTokenNames = new Map<string, { address: string; symbol: string }>();
@@ -739,6 +739,9 @@ export function setupRoutes(bot: Telegraf): void {
       row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
       buttons.push(row);
     }
+    if (PUBLIC_URL && positions.length > 0) {
+      buttons.unshift([Markup.button.webApp('📈 Live PnL Cards', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
+    }
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
       Markup.button.callback('🔙 Main Menu', 'menu_home'),
@@ -810,14 +813,17 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-      ],
+    const navButtons: any[] = [];
+    if (PUBLIC_URL) {
+      navButtons.push([Markup.button.webApp('🖼️ View Full PnL Card', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
+    }
+    navButtons.push([Markup.button.callback('🔄 Refresh', 'menu_pnl')]);
+    navButtons.push([Markup.button.callback('🔙 Main Menu', 'menu_home')]);
+    navButtons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
     ]);
+    const keyboard = Markup.inlineKeyboard(navButtons);
     await ctx.answerCbQuery().catch(() => {});
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
   });
@@ -1335,14 +1341,17 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-      ],
+    const navButtons: any[] = [];
+    if (PUBLIC_URL) {
+      navButtons.push([Markup.button.webApp('🖼️ View Full PnL Card', `${PUBLIC_URL}/pnl-card?userId=${user.id}`)]);
+    }
+    navButtons.push([Markup.button.callback('🔄 Refresh', 'menu_pnl')]);
+    navButtons.push([Markup.button.callback('🔙 Main Menu', 'menu_home')]);
+    navButtons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
     ]);
+    const keyboard = Markup.inlineKeyboard(navButtons);
     await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
   });
 
