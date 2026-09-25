@@ -39,31 +39,3 @@ export interface TriggerConfig {
   target_value: number;
   percentage?: number;
 }
-
-export interface PnLCard {
-  tokenName?: string;
-  tokenTicker?: string;
-  botName?: string;
-  tokenSymbol: string;
-  pairSymbol?: string;
-  side?: 'long' | 'short';
-  entryPrice: number;
-  currentPrice: number;
-  exitPrice?: number;
-  quantity?: number;
-  realizedPnlNear?: number;
-  realizedPnlPercent?: number;
-  pnlPercent?: number;
-  entryMcap?: number;
-  currentMcap?: number;
-  positionSize?: number;
-  positionUnit?: string;
-  profitAmount?: number;
-  profitUnit?: string;
-  duration?: string;
-  holdDuration?: string;
-  handle?: string;
-  date?: string;
-  tokenAddress?: string;
-  positionId?: string;
-}

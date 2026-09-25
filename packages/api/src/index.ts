@@ -1,8 +1,6 @@
 import './config.js';
-import path from 'path';
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
@@ -62,26 +60,11 @@ async function main(): Promise<void> {
 
   setupRoutes(bot);
 
-  // ── Express REST server & Mini App static assets ─────────────────────────
+  // ── Express REST server ─────────────────────────────────────────────────────
   const app = express();
   // Behind Railway/nginx proxies, req.ip must come from X-Forwarded-For
   // for the rate limiter to key on real client IPs.
   app.set('trust proxy', 1);
-  
-  // Security headers
-  app.use(helmet({
-    crossOriginEmbedderPolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://telegram.org", "https://cdn.jsdelivr.net"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'", "https:", "http:"],
-      },
-    },
-  }));
   
   app.use(cors());
   app.use(express.json({ limit: '64kb' }));
@@ -99,15 +82,6 @@ async function main(): Promise<void> {
 
   // Add monitoring routes
   monitoringRoutes(app);
-
-  const publicDir = path.resolve(process.cwd(), 'packages/api/public/miniapp');
-  app.use('/miniapp', express.static(publicDir));
-  app.get('/miniapp', (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-  app.get(['/pnl-card', '/miniapp/pnl', '/pnl-card.html'], (_req, res) => {
-    res.sendFile(path.join(publicDir, 'pnl.html'));
-  });
 
   app.listen(PORT, () => {
     logger.info('REST server listening', { port: PORT });
@@ -184,7 +158,7 @@ async function main(): Promise<void> {
         logger.info('External deposit sync completed', { totalNewDeposits });
       }
     } catch (err: any) {
-      logger.error('Background sync error', { error: err.message });
+      logger.error('Background sync error', err);
     }
   }, SYNC_INTERVAL_MS);
   
