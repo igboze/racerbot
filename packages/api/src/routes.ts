@@ -47,6 +47,27 @@ function sanitizeMd(str: string): string {
   return (str || '').replace(/[_*`\[]/g, ' ');
 }
 
+export function formatHoldingQuantity(rawQtyStr: string, decimals = 24): string {
+  if (!rawQtyStr || rawQtyStr === '0') return '0';
+  if (rawQtyStr.includes('.')) {
+    const num = parseFloat(rawQtyStr);
+    return isNaN(num) ? '0' : num >= 1 ? num.toLocaleString('en-US', { maximumFractionDigits: 4 }) : num.toFixed(6);
+  }
+  try {
+    const raw = BigInt(rawQtyStr);
+    if (raw === 0n) return '0';
+    const divisor = 10n ** BigInt(decimals);
+    const whole = raw / divisor;
+    const remainder = raw % divisor;
+    if (remainder === 0n) return whole.toLocaleString('en-US');
+    const remStr = remainder.toString().padStart(decimals, '0');
+    const trimmedRem = remStr.slice(0, 4).replace(/0+$/, '');
+    return trimmedRem ? `${whole.toLocaleString('en-US')}.${trimmedRem}` : whole.toLocaleString('en-US');
+  } catch {
+    return rawQtyStr;
+  }
+}
+
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
 // FIX 4: Use cached balance; only do a live fetch if forceRefresh=true or cache is cold.
 // The `getUserBalances` function already has its own 8s TTL cache, so calling it here
@@ -185,6 +206,13 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     venueText = `💧 *Venue*: Intear Launchpad (XYK)`;
   } else if (tokenInfo.venue === 'onetokenhub') {
     venueText = `💧 *Venue*: OneTokenHub (Ref DCL)`;
+  } else if (tokenInfo.venue === 'gaypad') {
+    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (Ref)' : 'Bonding Curve';
+    const progressStr =
+      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}%`
+        : '';
+    venueText = `💧 *Venue*: Gaypad (${phaseStr}${progressStr})`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
@@ -503,15 +531,15 @@ async function executeBuyHelper(
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
-  const info = await getTokenInfo(tokenAddress).catch(() => null);
-  if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+  const info = await getTokenInfo(tokenAddress, true).catch(() => null);
+  if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'gaypad'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
@@ -545,6 +573,8 @@ async function executeBuyHelper(
     min_amount_out: minAmountOut,
     venue,
     dcl_pool_id: effectiveDclPoolId,
+    pool_id: effectiveRheaPoolId,
+    intermediate_token: info.rhea_intermediate_token,
   });
 
   const txInfo = swapResult.txHash
@@ -727,14 +757,16 @@ export function setupRoutes(bot: Telegraf): void {
       const info = infoMap.get(pos.token_address);
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+      const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+      const pnlPct = currentPrice > 0 && entryPrice > 0
+        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
         : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const emoji = pnlPct !== 'N/A' && parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const heldStr = formatHoldingQuantity(pos.quantity_held, info?.decimals ?? 24);
 
       msg += `${emoji} *${symbol}*\n`;
-      msg += `  Holding: \`${pos.quantity_held}\`\n`;
-      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+      msg += `  Holding: \`${heldStr}\`\n`;
+      msg += `  Entry: \`${entryPrice.toFixed(8)} NEAR\`\n`;
       msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
       msg += `  PNL: \`${pnlPct}%\`\n`;
       msg += `  CA: \`${pos.token_address}\`\n\n`;
@@ -1205,9 +1237,11 @@ export function setupRoutes(bot: Telegraf): void {
         ? `${sanitizeMd(tokenInfo.symbol)} (${pos.token_address.slice(0, 12)}...)`
         : pos.token_address.slice(0, 20) + '...';
       const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+      const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+      const pnlPct = currentPrice > 0 && entryPrice > 0
+        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
         : 'N/A';
+      const heldStr = formatHoldingQuantity(pos.quantity_held, tokenInfo?.decimals ?? 24);
 
       const keyboard = Markup.inlineKeyboard([
         [
@@ -1220,8 +1254,8 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.reply(
         `📊 *${tokenLabel}*\n` +
-        `📦 Holding: \`${pos.quantity_held}\`\n` +
-        `📥 Avg Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n` +
+        `📦 Holding: \`${heldStr}\`\n` +
+        `📥 Avg Entry: \`${entryPrice.toFixed(8)} NEAR\`\n` +
         `💰 Current: \`${currentPrice.toFixed(8)} NEAR\`\n` +
         `📈 PNL: \`${pnlPct}%\`\n\nChoose sell amount:`,
         { parse_mode: 'Markdown', ...keyboard }
@@ -1271,14 +1305,16 @@ export function setupRoutes(bot: Telegraf): void {
       const info = infoMap.get(pos.token_address);
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+      const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+      const pnlPct = currentPrice > 0 && entryPrice > 0
+        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
         : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const emoji = pnlPct !== 'N/A' && parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const heldStr = formatHoldingQuantity(pos.quantity_held, info?.decimals ?? 24);
 
       msg += `${emoji} *${symbol}*\n`;
-      msg += `  Holding: \`${pos.quantity_held}\`\n`;
-      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+      msg += `  Holding: \`${heldStr}\`\n`;
+      msg += `  Entry: \`${entryPrice.toFixed(8)} NEAR\`\n`;
       msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
       msg += `  PNL: \`${pnlPct}%\`\n`;
       msg += `  CA: \`${pos.token_address}\`\n\n`;
