@@ -8,6 +8,7 @@ import {
   updateUserDefaults,
   updateUserSettings,
   getDb,
+  generateReferralCode,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -93,6 +94,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       Markup.button.callback('🔑 Export Key', 'export_prompt'),
       Markup.button.callback('🔄 Rotate Key', 'rotate_prompt'),
     ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    ],
   ]);
 
   return { text, keyboard };
@@ -115,6 +120,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   buttons.push([
     Markup.button.callback('⚙️ Settings', 'menu_settings'),
     Markup.button.callback('🔙 Main Menu', 'menu_home'),
+  ]);
+
+  buttons.push([
+    Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+    Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
   ]);
 
   const text =
@@ -298,6 +308,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
         Markup.button.callback('⚙️ Settings', 'menu_settings'),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),
       ],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
   } else {
     // Non-tradeable venue — info only
@@ -310,6 +324,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
       [
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
         Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      ],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       ],
     ]);
   }
@@ -382,14 +400,77 @@ export function buildSettingsDashboard(user: UserRecord) {
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
     ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    ],
   ]);
 
   return { text, keyboard };
 }
 
+// ── User-Friendly Error Messages ────────────────────────────────────────
+function getUserFriendlyError(error: Error | string): string {
+  const errorMsg = typeof error === 'string' ? error : error.message;
+  
+  // Map technical errors to user-friendly messages
+  const errorMap: Record<string, string> = {
+    'Failed to fetch wallet balance': 'Unable to check your wallet balance. Please try again.',
+    'Insufficient balance': 'You don\'t have enough NEAR for this trade. Please deposit more NEAR.',
+    'Minimum buy amount': 'The amount is too small. Minimum is 0.001 NEAR.',
+    'Token is on': 'This token is not yet supported for trading.',
+    'Could not determine DEX venue': 'Unable to trade this token. Please verify the contract address.',
+    'Available balance': 'Your available balance is too low for this trade.',
+    'Failed to queue swap': 'Unable to process your buy order. Please try again.',
+    'Failed to execute sell': 'Unable to process your sell order. Please try again.',
+    'Failed to create trigger': 'Unable to set up your trigger. Please try again.',
+    'positionId is required': 'Position ID is missing. Please try again.',
+    'percentage is required': 'Percentage is missing. Please try again.',
+    'percentage must be between 0 and 100': 'Percentage must be between 0 and 100.',
+    'type is required': 'Trigger type is missing. Please try again.',
+    'targetValue must be positive': 'Target value must be greater than 0.',
+    'Invalid trigger type': 'Invalid trigger type. Use stop_loss or take_profit.',
+    'Insufficient liquidity': 'Not enough liquidity available for this trade.',
+    'Token not found': 'Unable to find this token. Please verify the address.',
+    'RPC timeout': 'Network is slow. Please try again.',
+    'Parse error': 'Transaction confirmation issue. Please try again.',
+    'Transaction not confirmed': 'Transaction is taking longer than expected. Check explorer for status.',
+    'near deposit': 'Failed to wrap NEAR. Please try again.',
+    'ft_transfer': 'Failed to process transfer. Please try again.',
+    'fee skim': 'Failed to process fee. Please try again.',
+    'pool_id': 'Unable to find trading pool. Please try again.',
+    'dcl_pool_id': 'Unable to find DCL pool. Please try again.',
+    'Invalid swap params': 'Invalid trade parameters. Please try again.',
+    'Unauthorized': 'Authentication required. Please run /start.',
+    'Forbidden': 'You don\'t have permission for this action.',
+    'User not found': 'Wallet not found. Please run /start first.',
+    'Account setup failed': 'Unable to set up your wallet. Please try running /start again.',
+    'Scoped key already registered': 'Key already exists. Try a different action.',
+    'Key must be scoped': 'Invalid key format. Please use the proper key format.',
+    'Could not verify access key': 'Unable to verify your key. Please try again.',
+    'Token lookup failed': 'Unable to fetch token information. Please try again.',
+    'Auth lookup failed': 'Authentication check failed. Please run /start again.',
+    'Too many requests': 'You\'re doing this too fast. Please wait a moment.',
+    'buy failed': 'Trade failed. Please try again.',
+    'sell failed': 'Sell failed. Please try again.',
+    'snipe failed': 'Auto-buy failed. Please try again.',
+    'withdrawal failed': 'Withdrawal failed. Please try again.',
+    'unwrap failed': 'Unwrap failed. Please try again.',
+    'rotate key failed': 'Key rotation failed. Please try again.',
+  };
+
+  // Check for known errors
+  for (const [key, message] of Object.entries(errorMap)) {
+    if (errorMsg.toLowerCase().includes(key.toLowerCase())) {
+      return message;
+    }
+  }
+
+  // Default generic message
+  return 'Something went wrong. Please try again or contact support if the issue persists.';
+}
+
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
-// FIX 3: Use the cached getUserBalances() instead of a raw RPC call for balance check.
-// The balanceCache has an 8s TTL — fresh enough to gate a buy without a live round-trip.
 async function executeBuyHelper(
   telegramId: number,
   tokenAddress: string,
@@ -415,8 +496,9 @@ async function executeBuyHelper(
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  if (balanceNear < amountNear) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${amountNear.toFixed(4)} NEAR.`);
+  // Check balance including 0.005 NEAR gas reserve for transaction fees
+  if (balanceNear < amountNear + 0.005) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.005).toFixed(4)} NEAR (including gas reserve). Fees are deducted from your swap amount.`);
   }
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
@@ -479,9 +561,11 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   const balances = await getUserBalances(telegramId);
   const balanceNear = parseFloat(balances.nativeNearFormatted);
 
-  const amountNear = (balanceNear * pct) / 100;
+  // Retain 0.005 NEAR reserve for gas (fees are deducted from swap amount)
+  const usableBalance = Math.max(0, balanceNear - 0.005);
+  const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${balanceNear.toFixed(4)} NEAR) is too low to buy.`);
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.005 gas reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
 }
@@ -491,9 +575,12 @@ export function setupRoutes(bot: Telegraf): void {
   // ── /start — custodial onboarding with in-chat menu buttons ────────────────
   bot.command('start', async (ctx) => {
     const telegramId = ctx.from!.id;
+    const args = ctx.message!.text!.split(' ').slice(1);
+    const referralCode = args[0] || undefined;
+    const username = ctx.from!.username || undefined;
 
     try {
-      const result = await onboardUser(telegramId);
+      const result = await onboardUser(telegramId, referralCode, username);
       const menu = await buildMainMenu(telegramId);
 
       if (result.isExisting) {
@@ -502,7 +589,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // Freshly created account: show full private key security notice + in-chat buttons
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `🚀 *Welcome to RacerBot!*\n\n` +
         `Your dedicated NEAR trading wallet is ready:\n` +
         `🔑 Account: \`${result.subaccountId}\`\n\n` +
@@ -514,13 +601,25 @@ export function setupRoutes(bot: Telegraf): void {
         `• If you ever suspect your key was compromised, use /rotatekey immediately to generate a new key on-chain.\n` +
         `• You can retrieve this key later with /export.\n\n` +
         `💡 *How to Trade*:\n` +
-        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!`,
+        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!\n\n` +
+        `🔗 *Join Our Community*:\n` +
+        `💬 [Community Group](https://t.me/racerbot_community) - Get help and connect with traders\n` +
+        `📢 [Updates Channel](https://t.me/racertrading) - Announcements and news`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
+
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
-      const errMsg = err?.message || (typeof err === 'string' ? err : '') || 'Internal database or network error';
-      await ctx.reply(`❌ Account setup failed: ${errMsg}\n\nPlease try running /start again.`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nPlease try running /start again.`);
     }
   });
 
@@ -531,7 +630,7 @@ export function setupRoutes(bot: Telegraf): void {
       const menu = await buildMainMenu(telegramId);
       await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not open menu: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -555,7 +654,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery().catch(() => {});
       await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Error: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -589,6 +688,10 @@ export function setupRoutes(bot: Telegraf): void {
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🔄 Refresh', 'menu_positions')],
         [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        ],
       ]);
       await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
         parse_mode: 'Markdown',
@@ -644,6 +747,10 @@ export function setupRoutes(bot: Telegraf): void {
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
       Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    ]);
+    buttons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
     ]);
 
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
@@ -711,6 +818,10 @@ export function setupRoutes(bot: Telegraf): void {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
       [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
     await ctx.answerCbQuery().catch(() => {});
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
@@ -723,7 +834,7 @@ export function setupRoutes(bot: Telegraf): void {
       const wallet = await buildWalletMenu(telegramId);
       await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not load wallet: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   };
 
@@ -737,7 +848,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Wallet refreshed.').catch(() => {});
       await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Error: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -748,7 +859,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await unwrapUserWrapNear(telegramId);
       await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
     } catch (err: any) {
-      await ctx.reply(`❌ Unwrap failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -762,7 +873,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
       }
     } catch (err: any) {
-      await ctx.reply(`❌ Unwrap failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -824,7 +935,7 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ Withdrawal failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -955,7 +1066,7 @@ export function setupRoutes(bot: Telegraf): void {
       const card = await buildTokenCard(tokenAddress, ctx.from!.id);
       await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
     } catch (err: any) {
-      await ctx.reply(`❌ Could not fetch token info for \`${tokenAddress}\`: ${err.message}`, { parse_mode: 'Markdown' });
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`, { parse_mode: 'Markdown' });
     }
   });
 
@@ -968,7 +1079,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Token refreshed.').catch(() => {});
       await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.answerCbQuery(`Refresh failed: ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -984,7 +1095,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -999,7 +1110,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1049,7 +1160,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
     } catch (err: any) {
-      await ctx.reply(`❌ Buy failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1232,6 +1343,10 @@ export function setupRoutes(bot: Telegraf): void {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
       [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      ],
     ]);
     await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
   });
@@ -1264,7 +1379,7 @@ export function setupRoutes(bot: Telegraf): void {
         const res = await executeBuyHelper(telegramId, query, amountNear);
         await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
       } catch (err: any) {
-        await ctx.reply(`❌ Snipe failed: ${err.message}`);
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
       }
     } else {
       const names = Array.from(localTokenNames.keys());
@@ -1300,7 +1415,7 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.editMessageText(`✅ ${res.message}`, { parse_mode: 'Markdown' }).catch(() => {});
     } catch (err: any) {
-      await ctx.editMessageText(`❌ Snipe failed: ${err.message}`).catch(() => {});
+      await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -1373,7 +1488,7 @@ export function setupRoutes(bot: Telegraf): void {
       const rawPrivateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
       await ctx.answerCbQuery('Key decrypted.').catch(() => {});
 
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `🔑 *Private Key for Account* \`${user.subaccount_id}\`:\n\n` +
         `\`${rawPrivateKey}\`\n\n` +
         `*Import Instructions*:\n` +
@@ -1388,8 +1503,17 @@ export function setupRoutes(bot: Telegraf): void {
         `• If you suspect this key was exposed or you want to move away, withdraw your funds and/or run /rotatekey immediately.`,
         { parse_mode: 'Markdown' }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
     } catch (err: any) {
-      await ctx.reply(`❌ Could not decrypt key: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1424,7 +1548,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
     try {
       const res = await rotateUserKey(telegramId);
-      await ctx.reply(
+      const keyMessage = await ctx.reply(
         `✅ *Trading Key Rotated Successfully!*\n\n` +
         `Account: \`${res.subaccountId}\`\n\n` +
         `⚠️ *NEW PRIVATE KEY*:\n` +
@@ -1434,8 +1558,18 @@ export function setupRoutes(bot: Telegraf): void {
         `• Save this new key securely.`,
         { parse_mode: 'Markdown' }
       );
+
+      // Delete private key message after 2 minutes for security
+      setTimeout(async () => {
+        try {
+          await ctx.deleteMessage(keyMessage.message_id);
+        } catch {
+          // Message may already be deleted by user
+        }
+      }, 120000); // 2 minutes
+
     } catch (err: any) {
-      await ctx.reply(`❌ Key rotation failed: ${err.message}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1448,6 +1582,50 @@ export function setupRoutes(bot: Telegraf): void {
     } else {
       await ctx.reply('No active action to cancel.');
     }
+  });
+
+  // ── /referral — Show referral link and stats ───────────────────────────────
+  bot.command('referral', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.reply('Use /start first.');
+      return;
+    }
+
+    if (!user.referral_code) {
+      const username = ctx.from!.username || 'user';
+      const code = await generateReferralCode(user.id, username);
+      user.referral_code = code;
+    }
+
+    const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
+
+    // Get referral stats
+    const db = await getDb();
+    const referralsResult = await db.query(
+      'SELECT * FROM referrals WHERE referrer_id = $1',
+      [user.id]
+    );
+    const referrals = referralsResult.rows;
+
+    const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
+    const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+
+    await ctx.reply(
+      `🎁 *Referral Program*\n\n` +
+      `Your referral link:\n` +
+      `\`${referralLink}\`\n\n` +
+      `📊 *Your Stats*:\n` +
+      `• Total referrals: ${referrals.length}\n` +
+      `• Active referrals: ${activeReferrals}\n` +
+      `• Total earnings: ${totalEarnings.toFixed(4)} NEAR\n\n` +
+      `💰 *Rewards*:\n` +
+      `• Earn 30% of fees from every user you refer\n` +
+      `• Rewards are automatically credited to your account\n` +
+      `• Share your link and earn while your friends trade!`,
+      { parse_mode: 'Markdown' }
+    );
   });
 
   // ── /stoploss & /takeprofit ───────────────────────────────────────────────
@@ -1534,18 +1712,14 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
-try {
+        try {
            const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-           await ctx.reply(`✅ ${res.message}`);
+           await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
          } catch (err: any) {
            console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
-           try {
-           await ctx.reply(`❌ Buy failed: ${err?.message || 'Unknown error'}`);
-         } catch (replyErr: any) {
-           console.error(`[BUY] Failed to send error message:`, replyErr?.message || replyErr);
+           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
          }
-         }
-        return;
+        return; // Always return after handling custom buy
       }
 
       if (pending.action === 'custom_slippage') {
@@ -1616,7 +1790,7 @@ try {
             { parse_mode: 'Markdown' }
           );
         } catch (err: any) {
-          await ctx.reply(`❌ Withdrawal failed: ${err.message}`);
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
         return;
       }
