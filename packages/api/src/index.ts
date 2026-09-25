@@ -129,31 +129,47 @@ async function main(): Promise<void> {
   // ── Start background sync for external token deposits ─────────────────────
   // Sync all users' external deposits every 5 minutes to detect purchases from other wallets
   const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  const BATCH_SIZE = 10; // Process 10 users in parallel to avoid overwhelming RPC
   syncInterval = setInterval(async () => {
     try {
       const db = await getDb();
       const result = await db.query('SELECT id, telegram_id, subaccount_id FROM users');
       logger.info('Starting external deposit sync', { userCount: result.rows.length });
-      
+
       let totalNewDeposits = 0;
-      for (const user of result.rows) {
-        try {
-          const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
-          if (newDeposits > 0) {
-            totalNewDeposits += newDeposits;
-            logger.info('External deposits detected', { 
-              telegramId: user.telegram_id, 
-              newDeposits 
-            });
+
+      // Process users in parallel batches instead of sequentially
+      for (let i = 0; i < result.rows.length; i += BATCH_SIZE) {
+        const batch = result.rows.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (user) => {
+            try {
+              const newDeposits = await syncUserTokenDeposits(user.id, user.subaccount_id);
+              if (newDeposits > 0) {
+                logger.info('External deposits detected', {
+                  telegramId: user.telegram_id,
+                  newDeposits
+                });
+                return newDeposits;
+              }
+              return 0;
+            } catch (err: any) {
+              logger.warn('Failed to sync user deposits', {
+                telegramId: user.telegram_id,
+                error: err.message
+              });
+              return 0;
+            }
+          })
+        );
+
+        for (const batchResult of batchResults) {
+          if (batchResult.status === 'fulfilled') {
+            totalNewDeposits += batchResult.value;
           }
-        } catch (err: any) {
-          logger.warn('Failed to sync user deposits', { 
-            telegramId: user.telegram_id, 
-            error: err.message 
-          });
         }
       }
-      
+
       if (totalNewDeposits > 0) {
         logger.info('External deposit sync completed', { totalNewDeposits });
       }
