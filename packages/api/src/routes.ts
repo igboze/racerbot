@@ -412,63 +412,63 @@ export function buildSettingsDashboard(user: UserRecord) {
 
 // ── User-Friendly Error Messages ────────────────────────────────────────
 function getUserFriendlyError(error: Error | string): string {
-  const errorMsg = typeof error === 'string' ? error : error.message;
-  
-  // Map technical errors to user-friendly messages
-  const errorMap: Record<string, string> = {
-    'Failed to fetch wallet balance': 'Unable to check your wallet balance. Please try again.',
-    'Insufficient balance': 'You don\'t have enough NEAR for this trade. Please deposit more NEAR.',
-    'Minimum buy amount': 'The amount is too small. Minimum is 0.001 NEAR.',
-    'Token is on': 'This token is not yet supported for trading.',
-    'Could not determine DEX venue': 'Unable to trade this token. Please verify the contract address.',
-    'Available balance': 'Your available balance is too low for this trade.',
-    'Failed to queue swap': 'Unable to process your buy order. Please try again.',
-    'Failed to execute sell': 'Unable to process your sell order. Please try again.',
-    'Failed to create trigger': 'Unable to set up your trigger. Please try again.',
-    'positionId is required': 'Position ID is missing. Please try again.',
-    'percentage is required': 'Percentage is missing. Please try again.',
-    'percentage must be between 0 and 100': 'Percentage must be between 0 and 100.',
-    'type is required': 'Trigger type is missing. Please try again.',
-    'targetValue must be positive': 'Target value must be greater than 0.',
-    'Invalid trigger type': 'Invalid trigger type. Use stop_loss or take_profit.',
-    'Insufficient liquidity': 'Not enough liquidity available for this trade.',
-    'Token not found': 'Unable to find this token. Please verify the address.',
-    'RPC timeout': 'Network is slow. Please try again.',
-    'Parse error': 'Transaction confirmation issue. Please try again.',
-    'Transaction not confirmed': 'Transaction is taking longer than expected. Check explorer for status.',
-    'near deposit': 'Failed to wrap NEAR. Please try again.',
-    'ft_transfer': 'Failed to process transfer. Please try again.',
-    'fee skim': 'Failed to process fee. Please try again.',
-    'pool_id': 'Unable to find trading pool. Please try again.',
-    'dcl_pool_id': 'Unable to find DCL pool. Please try again.',
-    'Invalid swap params': 'Invalid trade parameters. Please try again.',
-    'Unauthorized': 'Authentication required. Please run /start.',
-    'Forbidden': 'You don\'t have permission for this action.',
-    'User not found': 'Wallet not found. Please run /start first.',
-    'Account setup failed': 'Unable to set up your wallet. Please try running /start again.',
-    'Scoped key already registered': 'Key already exists. Try a different action.',
-    'Key must be scoped': 'Invalid key format. Please use the proper key format.',
-    'Could not verify access key': 'Unable to verify your key. Please try again.',
-    'Token lookup failed': 'Unable to fetch token information. Please try again.',
-    'Auth lookup failed': 'Authentication check failed. Please run /start again.',
-    'Too many requests': 'You\'re doing this too fast. Please wait a moment.',
-    'buy failed': 'Trade failed. Please try again.',
-    'sell failed': 'Sell failed. Please try again.',
-    'snipe failed': 'Auto-buy failed. Please try again.',
-    'withdrawal failed': 'Withdrawal failed. Please try again.',
-    'unwrap failed': 'Unwrap failed. Please try again.',
-    'rotate key failed': 'Key rotation failed. Please try again.',
-  };
+  const errorMsg = typeof error === 'string' ? error : (error.message || String(error));
+  const r = errorMsg.toLowerCase();
 
-  // Check for known errors
-  for (const [key, message] of Object.entries(errorMap)) {
-    if (errorMsg.toLowerCase().includes(key.toLowerCase())) {
-      return message;
-    }
-  }
+  // ── Wallet / balance ────────────────────────────────────────────────
+  if (r.includes('insufficient balance') || (r.includes('insufficient') && r.includes('balanc')))
+    return errorMsg.slice(0, 280); // pass through — already human-readable from executeBuyHelper
+  if (r.includes('minimum buy amount') || r.includes('minimum is 0.001'))
+    return 'The amount is too small. Minimum is 0.001 NEAR.';
+  if (r.includes('available balance') && r.includes('too low'))
+    return errorMsg.slice(0, 280);
+  if (r.includes('failed to fetch wallet balance'))
+    return 'Unable to check your wallet balance. Please try again.';
 
-  // Default generic message
-  return 'Something went wrong. Please try again or contact support if the issue persists.';
+  // ── Venue / pool discovery ───────────────────────────────────────────
+  if (r.includes('could not determine dex venue') || r.includes('could not determine venue'))
+    return 'Unable to find a trading pool for this token. Paste the exact contract address.';
+  if (r.includes('token is on') && (r.includes('not yet supported') || r.includes('not supported')))
+    return errorMsg.slice(0, 280);
+  if (r.includes('no pool') || r.includes('pool not found') || r.includes('no dcl pool'))
+    return 'No liquidity pool found for this token. It may not yet be tradeable.';
+  if (r.includes('prebonded') || r.includes('not yet bonded'))
+    return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
+
+  // ── NEAR Protocol / RPC errors ───────────────────────────────────────
+  if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum'))
+    return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings, then retry.';
+  if (r.includes('notenoughallowance') || r.includes('not enough allowance'))
+    return 'Key allowance exhausted. Please contact support to reset your trading key.';
+  if (r.includes('all near rpc broadcast failed'))
+    return 'All NEAR RPC nodes rejected the transaction. Please retry in a moment.';
+  if (r.includes('signing timed out'))
+    return 'Transaction signing timed out. Please retry.';
+  if (r.includes('timeout') || r.includes('timed out'))
+    return 'Network timeout — NEAR RPC is slow right now. Please retry.';
+  if (r.includes('panic') || r.includes('wasm execution failed'))
+    return `Contract error: ${sanitizeMd(errorMsg.slice(0, 150))}`;
+
+  // ── Auth / setup ─────────────────────────────────────────────────────
+  if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
+    return 'Wallet not found. Please run /start first.';
+  if (r.includes('unauthorized') || r.includes('forbidden'))
+    return 'Authentication required. Please run /start.';
+
+  // ── Misc known patterns ───────────────────────────────────────────────
+  if (r.includes('too many requests') || r.includes('rate limit'))
+    return 'You\'re doing this too fast. Please wait a moment.';
+  if (r.includes('token not found') || r.includes('token lookup failed'))
+    return 'Unable to find this token. Please verify the contract address.';
+  if (r.includes('insufficient liquidity'))
+    return 'Not enough liquidity in the pool for this trade size.';
+
+  // ── Pass through unknown errors (truncated) rather than hiding them ──
+  // This makes new errors visible without exposing full stack traces.
+  if (errorMsg && errorMsg.length > 0)
+    return sanitizeMd(errorMsg.slice(0, 280));
+
+  return 'Something went wrong. Please try again or contact support.';
 }
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
@@ -488,18 +488,18 @@ async function executeBuyHelper(
 
   // FIX 3: Reuse the cached balance instead of a direct RPC hit.
   // getUserBalances has its own 8s in-memory cache in wallet.ts.
-  // The balance returned is already spendable (storage reserve subtracted).
+  // The balance returned includes both spendable native NEAR and wNEAR.
   let balanceNear = 0;
   try {
     const balances = await getUserBalances(telegramId);
-    balanceNear = parseFloat(balances.nativeNearFormatted);
+    balanceNear = parseFloat(balances.totalNearFormatted);
   } catch (err: any) {
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  // Check balance including 0.005 NEAR gas reserve for transaction fees
-  if (balanceNear < amountNear + 0.005) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.005).toFixed(4)} NEAR (including gas reserve). Fees are deducted from your swap amount.`);
+  // Check balance including 0.025 NEAR reserve for gas and token storage deposit
+  if (balanceNear < amountNear + 0.025) {
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.025).toFixed(4)} NEAR (including gas & storage deposit reserve). Fees are deducted from your swap amount.`);
   }
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
@@ -519,11 +519,20 @@ async function executeBuyHelper(
   const near = getNear();
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
+
+  // FIX: computeMinAmountOut must use the SWAP amount (98.5% after 1.5% fee),
+  // not the full input. The executor skims the fee before calling the DEX, so
+  // quoting against the full amount results in a minAmountOut that the DEX can
+  // never satisfy — causing every trade to appear as a slippage breach.
+  const amountInBigInt = BigInt(amountInYocto);
+  const feeAmountBigInt = (amountInBigInt * 150n) / 10000n;
+  const swapAmountYocto = (amountInBigInt - feeAmountBigInt).toString();
+
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     'wrap.near',
     tokenAddress,
-    amountInYocto,
+    swapAmountYocto,   // ← post-fee amount that actually reaches the DEX
     slippagePct,
     effectiveRheaPoolId,
     effectiveDclPoolId
@@ -558,15 +567,15 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
-  // The balance returned is already spendable (storage reserve subtracted).
+  // The balance returned includes both spendable native NEAR and wNEAR.
   const balances = await getUserBalances(telegramId);
-  const balanceNear = parseFloat(balances.nativeNearFormatted);
+  const balanceNear = parseFloat(balances.totalNearFormatted);
 
-  // Retain 0.005 NEAR reserve for gas (fees are deducted from swap amount)
-  const usableBalance = Math.max(0, balanceNear - 0.005);
+  // Retain 0.025 NEAR reserve for gas and token storage deposit
+  const usableBalance = Math.max(0, balanceNear - 0.025);
   const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.005 gas reserve) is too low to buy.`);
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.025 gas/storage reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
 }
