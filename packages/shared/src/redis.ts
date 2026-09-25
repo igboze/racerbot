@@ -18,7 +18,7 @@ export const CHANNELS = {
 
 // ── Event interfaces ──────────────────────────────────────────────────────────
 
-export type EventVenue = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub';
+export type EventVenue = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad';
 
 export interface TokenDetectedEvent {
   type: 'token_detected';
@@ -59,8 +59,10 @@ export interface SwapEvent {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad';
   dcl_pool_id?: string;
+  pool_id?: number | null;
+  intermediate_token?: string | null;
   timestamp?: number;
 }
 
@@ -69,7 +71,7 @@ export interface AutoBuySignal {
   user_id: string;
   token_address: string;
   amount_near: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad';
   timestamp: number;
 }
 

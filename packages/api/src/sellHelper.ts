@@ -21,18 +21,15 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
-  const cached = await getTokenCache(position.token_address).catch(() => null);
-  let venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | undefined = cached?.venue as any;
-  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(venue as string)) {
-    venue = undefined;
+  // Always use fresh data from getTokenInfo to avoid stale cache issues
+  const info = await getTokenInfo(position.token_address, true).catch(() => null);
+  if (!info) return { success: false, reason: 'token_not_found' };
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+    return { success: false, reason: 'venue_unknown' };
   }
-  if (!venue) {
-    const info = await getTokenInfo(position.token_address).catch(() => null);
-    if (info && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
-      venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
-    }
-  }
-  if (!venue) return { success: false, reason: 'venue_unknown' };
+  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  const dclPoolId = info.dcl_pool_id ?? undefined;
+  const rheaPoolId = info.rhea_pool_id ?? undefined;
 
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
@@ -44,8 +41,8 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     'wrap.near',
     sellQty,
     slippagePct,
-    cached?.rhea_pool_id,
-    cached?.dcl_pool_id ?? undefined
+    rheaPoolId,
+    dclPoolId
   );
 
   const swapEvent: SwapEvent = {
@@ -57,7 +54,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     min_amount_out: minAmountOut,
     venue,
     timestamp: Date.now(),
-    dcl_pool_id: cached?.dcl_pool_id ?? undefined,
+    dcl_pool_id: dclPoolId,
   } as any;
 
   await publishSwap(swapEvent);

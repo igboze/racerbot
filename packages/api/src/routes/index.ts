@@ -360,16 +360,21 @@ export async function buildPnLCardData(positionId: string): Promise<PnLCard | nu
     getFillsByPosition(positionId).catch(() => []),
   ]);
 
-  const entryPrice = parseFloat(position.avg_entry_price) || 0;
+  let entryPrice = parseFloat(position.avg_entry_price) || 0;
   const isClosed = position.status === 'closed';
   const decimals = tokenInfo?.decimals ?? 24;
 
   const buys = fills.filter(f => f.side === 'buy');
   const sells = fills.filter(f => f.side === 'sell');
 
-  let currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : entryPrice;
+  let currentPrice = tokenInfo && parseFloat(tokenInfo.price) > 0 ? parseFloat(tokenInfo.price) : entryPrice;
   if (isClosed && sells.length > 0) {
     currentPrice = parseFloat(sells[sells.length - 1].price);
+  }
+
+  // If entryPrice was missing (0) but currentPrice is known, default entryPrice to currentPrice
+  if (entryPrice <= 0 && currentPrice > 0) {
+    entryPrice = currentPrice;
   }
 
   const rawSupply = tokenInfo?.total_supply ? parseFloat(tokenInfo.total_supply) / Math.pow(10, decimals) : 0;
@@ -380,6 +385,8 @@ export async function buildPnLCardData(positionId: string): Promise<PnLCard | nu
   if (isClosed && sells.length > 0) {
     const totalSoldUnits = sells.reduce((acc, f) => acc + BigInt(f.amount || '0'), 0n);
     positionSize = parseFloat(totalSoldUnits.toString()) / Math.pow(10, decimals);
+  } else if (position.quantity_held.includes('.')) {
+    positionSize = parseFloat(position.quantity_held);
   } else {
     const heldUnits = BigInt(position.quantity_held.split('.')[0] || '0');
     positionSize = parseFloat(heldUnits.toString()) / Math.pow(10, decimals);
@@ -408,6 +415,8 @@ export async function buildPnLCardData(positionId: string): Promise<PnLCard | nu
   const date = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const handle = user?.subaccount_id ?? 'racerbot.near';
 
+  const finalPositionSize = positionSize >= 1 ? Number(positionSize.toFixed(2)) : Number(positionSize.toPrecision(4));
+
   return {
     botName: 'RacerBot',
     tokenSymbol,
@@ -418,7 +427,7 @@ export async function buildPnLCardData(positionId: string): Promise<PnLCard | nu
     pnlPercent: Number(pnlPercent.toFixed(1)),
     entryMcap: entryMcap ? Math.round(entryMcap) : undefined,
     currentMcap: currentMcap ? Math.round(currentMcap) : undefined,
-    positionSize: Number(positionSize.toFixed(2)),
+    positionSize: finalPositionSize,
     positionUnit: tokenSymbol,
     profitAmount: Number(profitAmount.toFixed(4)),
     profitUnit: 'NEAR',

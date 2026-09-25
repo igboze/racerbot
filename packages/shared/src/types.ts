@@ -16,9 +16,9 @@ export interface TokenInfo {
   marketCap: number;
 }
 
-export type VenueName = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+export type VenueName = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad';
 
-export const TRADABLE_VENUES: readonly VenueName[] = ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'];
+export const TRADABLE_VENUES: readonly VenueName[] = ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'gaypad'];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
@@ -32,6 +32,9 @@ export interface SwapRequest {
   min_amount_out: string;
   venue: VenueName;
   timestamp: number;
+  dcl_pool_id?: string;
+  pool_id?: number | null;
+  intermediate_token?: string | null;
 }
 
 export interface TriggerConfig {
