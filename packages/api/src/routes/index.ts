@@ -65,7 +65,7 @@ router.post('/onboard', ensureTelegramInitData, async (req, res) => {
 
 // ── Trading (swaps via executor) ─────────────────────────────────────────────
 
-router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 10), async (req, res) => {
+router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req, res) => {
   try {
     const userId = (req as any).userId;
     const tokenAddress = req.body.tokenAddress;
@@ -97,7 +97,7 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 10), async (req
 
 // ── Sell (percentage-based via executor) ─────────────────────────────────────
 
-router.post('/sell', ensureTelegramUser, perUserRateLimit(60000, 10), async (req, res) => {
+router.post('/sell', ensureTelegramUser, perUserRateLimit(60000, 30), async (req, res) => {
   try {
     const userId = (req as any).userId;
     const positionId = req.body.positionId;
