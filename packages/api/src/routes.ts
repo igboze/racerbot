@@ -713,8 +713,9 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
-    // Auto-detect and sync external token deposits to calculate PNL from deposit point
-    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
+    // NOTE: External deposit sync now runs in background only, not blocking menu load
+    // This prevents 3.5s+ delays when loading Holdings menu
+    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
     const positions = await getOpenPositions(user.id).catch(() => []);
     if (positions.length === 0) {
@@ -957,8 +958,9 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
-    // Auto-detect and sync external token deposits to calculate PNL from deposit point
-    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
+    // NOTE: External deposit sync now runs in background only, not blocking menu load
+    // This prevents 3.5s+ delays when loading token detail modal
+    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
     const positions = await getOpenPositions(user.id).catch(() => []);
     if (positions.length === 0) {
@@ -1043,8 +1045,9 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
-    // Auto-detect and sync external token deposits to calculate PNL from deposit point
-    await syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {});
+    // NOTE: External deposit sync now runs in background only, not blocking menu load
+    // This prevents 3.5s+ delays when loading PNL summary
+    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
     const [positions, db] = await Promise.all([
       getOpenPositions(user.id).catch(() => []),

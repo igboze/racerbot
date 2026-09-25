@@ -80,7 +80,7 @@ export async function warmTokenInfoCache(): Promise<void> {
         tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(row.venue ?? 'unknown'),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
-      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 60000 });
       warmed++;
     }
     console.log(`[API] Token cache warmed: ${warmed} tokens pre-loaded from DB.`);
@@ -205,7 +205,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
   if (
     dbCache &&
     dbCache.updated_at &&
-    Date.now() - dbCache.updated_at.getTime() < 15000 &&
+    Date.now() - dbCache.updated_at.getTime() < 60000 &&
     Number(dbCache.last_price || 0) > 0
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
@@ -235,7 +235,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
       tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(dbCache.venue ?? 'unknown'),
     };
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 15000 });
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
     return result;
   }
 
@@ -414,7 +414,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfoResul
     tradeable,
   };
 
-  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 30000 });
+  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
 
   // Async DB update (non-blocking)
   setImmediate(() =>
