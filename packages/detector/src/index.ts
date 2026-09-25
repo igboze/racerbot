@@ -285,7 +285,8 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         receiverId === 'nearlytrade.near' ||
         receiverId === 'launch.intear.near' ||
         receiverId === 'meme-cooking.near' ||
-        receiverId === 'pad.onetokenhub.near'
+        receiverId === 'pad.onetokenhub.near' ||
+        receiverId === 'gaypad.j1-racing.near'
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -338,6 +339,11 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 const tokenAddress = decoded?.token ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'onetokenhub', decoded).catch(() => {});
+                }
+              } else if (receiverId === 'gaypad.j1-racing.near') {
+                const tokenAddress = decoded?.token_id ?? decoded?.token ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'gaypad', decoded).catch(() => {});
                 }
               }
             } catch {
@@ -458,7 +464,7 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -517,6 +523,18 @@ async function handlePoolCreated(
       }
     } catch (err) {
       logger.warn('Could not fetch OneTokenHub state', { correlationId, tokenAddress, error: (err as Error).message });
+    }
+  } else if (venue === 'gaypad') {
+    try {
+      const gpState = await near.getGaypadTokenState(tokenAddress);
+      if (gpState) {
+        bondingPhase = gpState.phase;
+        bondingProgressPct = gpState.bondingProgressPct;
+        initialPrice = gpState.price;
+        initialLiquidity = (gpState.liquidityNear * 1e24).toString();
+      }
+    } catch (err) {
+      logger.warn('Could not fetch Gaypad state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   }
 
@@ -724,7 +742,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {

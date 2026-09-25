@@ -10,7 +10,7 @@
  * MultiRpcNear.computeMinAmountOut / SwapExecutor.
  */
 
-export type VenueId = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub';
+export type VenueId = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad';
 
 export interface VenueInfo {
   id: VenueId;
@@ -78,6 +78,15 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     tradeable: true,
     website: 'https://onetokenhub.xyz',
     tokenPage: (t) => `https://onetokenhub.xyz/token/${t}`,
+  },
+  gaypad: {
+    id: 'gaypad',
+    label: 'Gaypad',
+    kind: 'launchpad',
+    contracts: ['gaypad.j1-racing.near'],
+    tradeable: true,
+    website: 'https://gaypad.j1-racing.near',
+    tokenPage: (t) => `https://gaypad.j1-racing.near/#/token/${t}`,
   },
 };
 
