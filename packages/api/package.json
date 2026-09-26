@@ -13,6 +13,7 @@
     "@racerbot/executor": "*",
     "@racerbot/shared": "*",
     "@types/helmet": "^0.0.48",
+    "canvas": "^3.2.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
