@@ -24,7 +24,7 @@ import {
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
-import { generatePNLCardData, generatePNLCardMessage } from './pnlCardGenerator.js';
+import { generatePNLCardData, generatePNLCardMessage, generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY } from './config.js';
 
@@ -147,7 +147,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 }
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
-export async function buildTokenCard(tokenAddress: string, telegramId?: number) {
+export async function buildTokenCard(tokenAddress: string, telegramId?: number): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, and user settings in parallel
   const [info, balances, user] = await Promise.allSettled([
     getTokenInfo(tokenAddress),
@@ -314,17 +314,23 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     text += `  Entry Price: \`${entryPrice.toFixed(8)} NEAR\`\n`;
     text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
 
-    // Generate PNL card
+    // Generate PNL card with image (image will be sent by the calling handler)
+    let pnlCardImage: Buffer | null = null;
     try {
-      const pnlData = await generatePNLCardData(userPosition.id);
-      if (pnlData) {
-        const pnlMessage = generatePNLCardMessage(pnlData);
-        text += `${pnlMessage}\n\n`;
+      const pnlCard = await generatePNLCard(userPosition.id);
+      if (pnlCard.image) {
+        pnlCardImage = pnlCard.image;
+      } else {
+        // Fallback to text only
+        text += `${pnlCard.text}\n\n`;
       }
     } catch (err: any) {
       console.error('Failed to generate PNL card:', err);
       // Continue without PNL card if generation fails
     }
+
+    // Return image buffer for calling handler to send
+    return { text, keyboard: Markup.inlineKeyboard([]), pnlCardImage: pnlCardImage || undefined };
   }
 
   // ── Buttons depend on whether trading is supported and if user holds token ──
@@ -403,7 +409,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     ]);
   }
 
-  return { text, keyboard, info: tokenInfo };
+  return { text, keyboard, pnlCardImage: undefined };
 }
 
 // ── Helper: Build Settings Dashboard with Checkmark Indicators ──────────────
@@ -899,16 +905,30 @@ bot.action('menu_holdings', async (ctx) => {
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
 
-      // Generate PNL card and append to message
+      // Generate PNL card with image
+      let pnlCardImage: Buffer | null = null;
       try {
-        const pnlData = await generatePNLCardData(positionId);
-        if (pnlData) {
-          const pnlMessage = generatePNLCardMessage(pnlData);
-          msg += `\n${pnlMessage}`;
+        const pnlCard = await generatePNLCard(positionId);
+        if (pnlCard.image) {
+          pnlCardImage = pnlCard.image;
+        } else {
+          // Fallback to text only
+          msg += `\n${pnlCard.text}`;
         }
       } catch (err: any) {
         console.error('Failed to generate PNL card:', err);
         // Continue without PNL card if generation fails
+      }
+
+      // If image was generated, send it as a new message with caption
+      if (pnlCardImage) {
+        await ctx.replyWithPhoto({ source: pnlCardImage }, { caption: msg, parse_mode: 'Markdown' }).catch(() => {
+          // Fallback to text if image send fails
+          ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+        });
+        // Delete the original message to avoid clutter
+        await ctx.deleteMessage().catch(() => {});
+        return;
       }
 
       const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
@@ -1425,7 +1445,11 @@ bot.action('menu_holdings', async (ctx) => {
 
     try {
       const card = await buildTokenCard(tokenAddress, ctx.from!.id);
-      await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+      if (card.pnlCardImage) {
+        await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+      } else {
+        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`, { parse_mode: 'Markdown' });
     }
@@ -1438,7 +1462,14 @@ bot.action('menu_holdings', async (ctx) => {
     try {
       const card = await buildTokenCard(tokenAddress, telegramId);
       await ctx.answerCbQuery('Token refreshed.').catch(() => {});
-      await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
+      if (card.pnlCardImage) {
+        // Send new image with updated text
+        await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        // Delete old message to avoid clutter
+        await ctx.deleteMessage().catch(() => {});
+      } else {
+        await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
+      }
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -1509,7 +1540,11 @@ bot.action('menu_holdings', async (ctx) => {
     if (amountNear <= 0) {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
-        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        if (card.pnlCardImage) {
+          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        } else {
+          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        }
       } catch {
         await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
       }
@@ -2188,10 +2223,16 @@ try {
       const loadingMsg = await ctx.reply('🔍 Looking up token...').catch(() => null);
       try {
         const card = await buildTokenCard(potentialCA.trim(), telegramId);
-        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+        if (card.pnlCardImage) {
+          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        } else {
+          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        }
         return;
       } catch (err: any) {
         console.warn(`[API] Token lookup failed for ${potentialCA}:`, err.message);
+        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
         await ctx.reply(
           `❌ Token not found: ${sanitizeMd(potentialCA)}\n\n` +
           `This could mean:\n` +
@@ -2201,10 +2242,6 @@ try {
           `Error: ${sanitizeMd(err.message?.slice(0, 100) || 'Unknown error')}`
         );
         return;
-      } finally {
-        if (loadingMsg) {
-          ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id).catch(() => {});
-        }
       }
     }
 
@@ -2213,7 +2250,11 @@ try {
     if (tokenEntry) {
       try {
         const card = await buildTokenCard(tokenEntry.address, telegramId);
-        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        if (card.pnlCardImage) {
+          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        } else {
+          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+        }
         return;
       } catch {}
     }
