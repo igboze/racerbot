@@ -45,7 +45,8 @@ const userPendingActions = new Map<number, PendingAction>();
 
 // ── Helper: Safe Markdown string sanitization ────────────────────────────────
 function sanitizeMd(str: string): string {
-  return (str || '').replace(/[_*`[\](~|>#+=|{}!@-]/g, ' ');
+  // Replace special Markdown characters but keep hyphens (valid in NEAR addresses)
+  return (str || '').replace(/[_*`[\](~|>#+=|{}!@]/g, ' ');
 }
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
