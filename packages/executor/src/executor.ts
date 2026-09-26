@@ -821,6 +821,153 @@ export class SwapExecutor {
           }
         }
       }
+    } else if (venue === 'memecooking') {
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      const targetToken = isBuy ? token_out : token_in;
+
+      const match = targetToken.match(/-(\d+)\.meme-cooking\.near$/) || targetToken.match(/(\d+)\.meme-cooking\.near$/);
+      const memeId = match ? parseInt(match[1], 10) : parseInt(targetToken.replace('.meme-cooking.near', ''), 10);
+
+      // Check if token is pre-bonded (active auction) or bonded (DEX pool)
+      let isPrebonded = false;
+      if (!isNaN(memeId)) {
+        try {
+          const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+          if (meme) {
+            isPrebonded = true;
+          }
+        } catch {}
+      }
+
+      if (isPrebonded) {
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'meme-cooking.near',
+            JSON.stringify({ Deposit: { meme_id: memeId } }),
+            BigInt('200000000000000')
+          );
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          const actions = [
+            transactions.functionCall(
+              'withdraw',
+              {
+                meme_id: memeId,
+                amount: amountInBigInt.toString(),
+              },
+              BigInt('150000000000000'),
+              BigInt('0')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'meme-cooking.near', actions);
+        }
+      } else {
+        // Bonded phase — trade on Rhea Finance / Ref Finance AMM simple pool or DCL pool
+        let rheaPoolId: number | null = null;
+        try {
+          rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
+        } catch {}
+
+        if (rheaPoolId) {
+          if (isBuy) {
+            await near.ensureStorageDeposit(subaccountId, token_out);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: rheaPoolId,
+                    token_in: 'wrap.near',
+                    token_out,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minOutAdj,
+                    min_output_amount: minOutAdj,
+                  },
+                ],
+              })
+            );
+
+            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          } else {
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: rheaPoolId,
+                        token_in,
+                        token_out: 'wrap.near',
+                        min_amount_out: min_amount_out,
+                        min_output_amount: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+
+            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          }
+        } else if (dclPoolId) {
+          if (isBuy) {
+            await near.ensureStorageDeposit(subaccountId, token_out);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                pool_id: dclPoolId,
+                token_in: 'wrap.near',
+                token_out,
+                min_output_amount: minOutAdj,
+              })
+            );
+
+            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          } else {
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    pool_id: dclPoolId,
+                    token_in,
+                    token_out: 'wrap.near',
+                    min_output_amount: min_amount_out,
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+
+            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          }
+        } else {
+          throw new Error(`No Rhea or DCL pool found for bonded Meme.Cooking token ${targetToken}.`);
+        }
+      }
     } else {
       // Shardsmarket
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -1128,9 +1275,19 @@ export class SwapExecutor {
       } else if (venue === 'onetokenhub') {
         const hubState = await near.getOneTokenHubState(tokenAddress);
         liquidityNear = hubState.liquidityNear;
-      } else if (venue === 'nearpad') {
-        const padState = await near.getNEARpadState(tokenAddress);
-        liquidityNear = padState.liquidityNear;
+      } else if (venue === 'memecooking') {
+        const match = tokenAddress.match(/-(\d+)\.meme-cooking\.near$/) || tokenAddress.match(/(\d+)\.meme-cooking\.near$/);
+        const memeId = match ? parseInt(match[1], 10) : parseInt(tokenAddress.replace('.meme-cooking.near', ''), 10);
+        const mcInfo = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+        if (mcInfo) {
+          liquidityNear = parseFloat(mcInfo.total_staked || '0') / 1e24;
+        } else {
+          const poolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
+          if (poolId) {
+            const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+            liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
+          }
+        }
       } else {
         return { safe: false, reason: `liquidity_check_failed` };
       }

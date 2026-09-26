@@ -59,7 +59,7 @@ export interface SwapEvent {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad';
+  venue: EventVenue;
   dcl_pool_id?: string;
   pool_id?: number | null;
   intermediate_token?: string | null;
@@ -71,7 +71,7 @@ export interface AutoBuySignal {
   user_id: string;
   token_address: string;
   amount_near: string;
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad';
+  venue: EventVenue;
   timestamp: number;
 }
 

@@ -25,7 +25,7 @@ async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
     const near = getNear();
     const cache = await getTokenCache(tokenAddress);
     const venue = cache?.venue;
-    if (!venue || venue === 'memecooking') return false;
+    if (!venue) return false;
     const decimals = cache?.decimals ?? 18;
     const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
     if (!spot || !(spot.price > 0)) return false;
