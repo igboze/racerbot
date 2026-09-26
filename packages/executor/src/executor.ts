@@ -335,21 +335,45 @@ export class SwapExecutor {
       } else {
         let rheaPoolId = (event as any).pool_id;
         if (rheaPoolId === null || rheaPoolId === undefined) {
-          rheaPoolId = await near.findRheaPoolId(token_in, token_out);
+          try {
+            rheaPoolId = await near.findRheaPoolId(token_in, token_out);
+          } catch {
+            const target = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+            const rhea = await near.findRheaPoolForToken(target);
+            if (rhea && typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
+          }
+        }
+
+        let isMultiHopJambo = (event as any).intermediate_token === 'jambo-1679.meme-cooking.near';
+        if (!isMultiHopJambo && rheaPoolId !== null && rheaPoolId !== undefined) {
+          const poolInfo = await near.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: rheaPoolId }).catch(() => null);
+          const tokens: string[] = poolInfo?.token_account_ids || [];
+          if (!tokens.includes(token_in) && tokens.includes('jambo-1679.meme-cooking.near')) {
+            isMultiHopJambo = true;
+          }
         }
 
         const isBuy = token_in === 'wrap.near' || token_in === 'near';
         if (isBuy) {
           await near.ensureStorageDeposit(subaccountId, token_out);
 
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'v2.ref-finance.near',
-            JSON.stringify({
-              actions: [
+          const rheaActions = isMultiHopJambo
+            ? [
+                {
+                  pool_id: 6518,
+                  token_in: 'wrap.near',
+                  token_out: 'jambo-1679.meme-cooking.near',
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: '0',
+                },
+                {
+                  pool_id: rheaPoolId,
+                  token_in: 'jambo-1679.meme-cooking.near',
+                  token_out,
+                  min_amount_out: minOutAdj,
+                },
+              ]
+            : [
                 {
                   pool_id: rheaPoolId,
                   token_in: 'wrap.near',
@@ -358,13 +382,48 @@ export class SwapExecutor {
                   min_amount_out: minOutAdj,
                   min_output_amount: minOutAdj,
                 },
-              ],
-            })
+              ];
+
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'v2.ref-finance.near',
+            JSON.stringify({ actions: rheaActions }),
+            BigInt('250000000000000')
           );
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else {
           await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+
+          const rheaActions = isMultiHopJambo
+            ? [
+                {
+                  pool_id: rheaPoolId,
+                  token_in,
+                  token_out: 'jambo-1679.meme-cooking.near',
+                  amount_in: amountInBigInt.toString(),
+                  min_amount_out: '0',
+                },
+                {
+                  pool_id: 6518,
+                  token_in: 'jambo-1679.meme-cooking.near',
+                  token_out: 'wrap.near',
+                  min_amount_out: min_amount_out,
+                },
+              ]
+            : [
+                {
+                  pool_id: rheaPoolId,
+                  token_in,
+                  token_out: 'wrap.near',
+                  amount_in: amountInBigInt.toString(),
+                  min_amount_out: min_amount_out,
+                  min_output_amount: min_amount_out,
+                },
+              ];
 
           const actions = [
             transactions.functionCall(
@@ -372,20 +431,9 @@ export class SwapExecutor {
               {
                 receiver_id: 'v2.ref-finance.near',
                 amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  actions: [
-                    {
-                      pool_id: rheaPoolId,
-                      token_in,
-                      token_out: 'wrap.near',
-                      amount_in: amountInBigInt.toString(),
-                      min_amount_out: min_amount_out,
-                      min_output_amount: min_amount_out,
-                    },
-                  ],
-                }),
+                msg: JSON.stringify({ actions: rheaActions }),
               },
-              BigInt('180000000000000'),
+              BigInt('220000000000000'),
               BigInt('1')
             ),
           ];
@@ -538,6 +586,122 @@ export class SwapExecutor {
         ];
 
         result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+      }
+    } else if (venue === 'gaypad') {
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      const targetToken = isBuy ? token_out : token_in;
+      // First check if token is on Rhea (Rule 1)
+      let rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && typeof rhea.poolId === 'number') {
+        const rheaPoolId = rhea.poolId;
+        const isMultiHopJambo = rhea.intermediateToken === 'jambo-1679.meme-cooking.near';
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
+          const rheaActions = isMultiHopJambo
+            ? [
+                { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
+                { pool_id: rheaPoolId, token_in: 'jambo-1679.meme-cooking.near', token_out, min_amount_out: minOutAdj },
+              ]
+            : [
+                { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+              ];
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId, amountInBigInt, feeAmount, swapAmount,
+            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), BigInt('250000000000000')
+          );
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          const rheaActions = isMultiHopJambo
+            ? [
+                { pool_id: rheaPoolId, token_in, token_out: 'jambo-1679.meme-cooking.near', amount_in: amountInBigInt.toString(), min_amount_out: '0' },
+                { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
+              ]
+            : [
+                { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+              ];
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+              BigInt('220000000000000'), BigInt('1')
+            ),
+          ];
+          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        }
+      } else {
+        // Pre-bonded on Gaypad
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
+          await near.ensureStorageDeposit(subaccountId, 'jambo-1679.meme-cooking.near');
+          // Swap wrap.near -> jambo on Ref, then jambo -> gaypad
+          const buyActions = await this.buildWrapNearBuyActions(
+            subaccountId, amountInBigInt, feeAmount, swapAmount,
+            'v2.ref-finance.near',
+            JSON.stringify({
+              actions: [
+                { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
+              ],
+            }),
+            BigInt('200000000000000')
+          );
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', buyActions);
+          // Transfer jambo to gaypad.j1-racing.near
+          const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
+          if (BigInt(jamboBal || '0') > 0n) {
+            const gpAction = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'gaypad.j1-racing.near',
+                  amount: jamboBal,
+                  msg: JSON.stringify({ token: token_out, min_swap_amount: minOutAdj }),
+                },
+                BigInt('200000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await near.signAndSendTransactionAll(subaccountId, 'jambo-1679.meme-cooking.near', gpAction);
+          }
+        } else {
+          await near.ensureStorageDeposit(subaccountId, 'jambo-1679.meme-cooking.near');
+          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          // Sell token on gaypad for jambo
+          const gpAction = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'gaypad.j1-racing.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({ token: 'jambo-1679.meme-cooking.near', min_swap_amount: '0' }),
+              },
+              BigInt('200000000000000'),
+              BigInt('1')
+            ),
+          ];
+          result = await near.signAndSendTransactionAll(subaccountId, token_in, gpAction);
+          // Then swap jambo to wrap.near via Ref 6518
+          const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
+          if (BigInt(jamboBal || '0') > 0n) {
+            const sellJamboAction = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: jamboBal,
+                  msg: JSON.stringify({
+                    actions: [
+                      { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
+                    ],
+                  }),
+                },
+                BigInt('200000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await near.signAndSendTransactionAll(subaccountId, 'jambo-1679.meme-cooking.near', sellJamboAction);
+          }
+        }
       }
     } else {
       // Shardsmarket
