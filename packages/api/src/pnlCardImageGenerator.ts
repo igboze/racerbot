@@ -26,15 +26,24 @@ try {
       return null;
     };
 
-    const regularFont = resolveFont('Roboto-Regular.ttf');
-    const boldFont = resolveFont('Roboto-Bold.ttf');
+    const registerIfExists = (file: string, family: string, weight: string) => {
+      const fontPath = resolveFont(file);
+      if (fontPath) {
+        try {
+          canvasModule.registerFont(fontPath, { family, weight });
+        } catch (e) {
+          // Ignore duplicate font registrations
+        }
+      }
+    };
 
-    if (regularFont) {
-      canvasModule.registerFont(regularFont, { family: 'Roboto', weight: 'normal' });
-    }
-    if (boldFont) {
-      canvasModule.registerFont(boldFont, { family: 'Roboto', weight: 'bold' });
-    }
+    registerIfExists('SpaceGrotesk-Bold.ttf', 'Space Grotesk', 'bold');
+    registerIfExists('SpaceGrotesk-Medium.ttf', 'Space Grotesk', 'normal');
+    registerIfExists('Inter-Regular.ttf', 'Inter', 'normal');
+    registerIfExists('Inter-SemiBold.ttf', 'Inter', 'bold');
+    registerIfExists('Inter-Bold.ttf', 'Inter', 'bold');
+    registerIfExists('Roboto-Regular.ttf', 'Roboto', 'normal');
+    registerIfExists('Roboto-Bold.ttf', 'Roboto', 'bold');
   }
 } catch (err) {
   console.warn('[PNL_CARD_IMAGE] Canvas module not available or font registration failed. PNL cards will be text-only.');
@@ -69,7 +78,8 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    const fontFallback = 'Roboto, "DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
+    const fontHeader = '"Space Grotesk", "Inter", Roboto, "DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
+    const fontBody = '"Inter", Roboto, "DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
 
     // 1. Background Outer Container Gradient
     const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
@@ -90,17 +100,17 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     // 2. Header / Brand Row (Y = 45)
     // Brand name & icon
     ctx.fillStyle = '#23e6c4';
-    ctx.font = `bold 22px ${fontFallback}`;
+    ctx.font = `bold 22px ${fontHeader}`;
     ctx.textAlign = 'left';
     ctx.fillText('⚡', 40, 48);
 
     ctx.fillStyle = '#f4f6ff';
-    ctx.font = `bold 18px ${fontFallback}`;
+    ctx.font = `bold 18px ${fontHeader}`;
     ctx.fillText('RacerBot', 68, 47);
 
     // Network / Venue Pill (Right aligned)
     const venueText = (data.venue || 'NEAR PROTOCOL').toUpperCase();
-    ctx.font = `500 12px ${fontFallback}`;
+    ctx.font = `normal 12px ${fontBody}`;
     const venueWidth = ctx.measureText(venueText).width;
     const pillPaddingX = 12;
     const pillW = venueWidth + pillPaddingX * 2;
@@ -120,7 +130,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     // 3. Hero Section (Y = 100 - 230)
     // Token symbol & Name
     ctx.textAlign = 'left';
-    ctx.font = `500 16px ${fontFallback}`;
+    ctx.font = `normal 16px ${fontBody}`;
     ctx.fillStyle = '#78829f';
     const tokenDisplay = `${data.tokenSymbol} (${data.tokenName})`;
     ctx.fillText(tokenDisplay, 40, 105);
@@ -130,7 +140,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const statusColor = data.positionStatus === 'open' ? '#35f2b4' : '#ff5c72';
     const statusBg = data.positionStatus === 'open' ? 'rgba(53, 242, 180, 0.12)' : 'rgba(255, 92, 114, 0.12)';
 
-    ctx.font = `bold 11px ${fontFallback}`;
+    ctx.font = `bold 11px ${fontHeader}`;
     const statusW = ctx.measureText(statusText).width + 24;
     const tokenW = ctx.measureText(tokenDisplay).width;
     const tagX = 40 + tokenW + 16;
@@ -164,12 +174,12 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const pnlColor = data.isProfit ? '#35f2b4' : '#ff5c72';
 
     ctx.fillStyle = pnlColor;
-    ctx.font = `bold 64px ${fontFallback}`;
+    ctx.font = `bold 64px ${fontHeader}`;
     ctx.fillText(pnlPercentText, 40, 178);
 
     // Sub label: Bought X NEAR -> Worth Y NEAR
     ctx.fillStyle = '#78829f';
-    ctx.font = `500 15px ${fontFallback}`;
+    ctx.font = `normal 15px ${fontBody}`;
     const subText = `Total PNL: ${pnlSign}${data.totalPnl.toFixed(4)} NEAR  •  Bought ${data.initialInvestment.toFixed(2)} NEAR ➔ Worth ${data.unrealizedValue.toFixed(2)} NEAR`;
     ctx.fillText(subText, 40, 212);
 
@@ -220,18 +230,18 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
       // Col 1
       ctx.fillStyle = '#78829f';
-      ctx.font = `500 12px ${fontFallback}`;
+      ctx.font = `normal 12px ${fontBody}`;
       ctx.fillText(row[0].label, col1X, y);
       ctx.fillStyle = '#f4f6ff';
-      ctx.font = `bold 19px ${fontFallback}`;
+      ctx.font = `bold 19px ${fontHeader}`;
       ctx.fillText(row[0].val, col1X, y + 24);
 
       // Col 2
       ctx.fillStyle = '#78829f';
-      ctx.font = `500 12px ${fontFallback}`;
+      ctx.font = `normal 12px ${fontBody}`;
       ctx.fillText(row[1].label, col2X, y);
       ctx.fillStyle = '#f4f6ff';
-      ctx.font = `bold 19px ${fontFallback}`;
+      ctx.font = `bold 19px ${fontHeader}`;
       ctx.fillText(row[1].val, col2X, y + 24);
     });
 
@@ -248,7 +258,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
     // Footer text left
     ctx.fillStyle = '#454d66';
-    ctx.font = `500 13px ${fontFallback}`;
+    ctx.font = `normal 13px ${fontBody}`;
     ctx.textAlign = 'left';
     ctx.fillText(
       `Generated by RacerBot  •  ${data.totalBuys} buys, ${data.totalSells} sells  •  Fees: ${data.totalFeesPaid.toFixed(4)} NEAR`,
@@ -258,7 +268,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
     // Footer text right
     ctx.fillStyle = '#78829f';
-    ctx.font = `bold 13px ${fontFallback}`;
+    ctx.font = `bold 13px ${fontHeader}`;
     ctx.textAlign = 'right';
     ctx.fillText('@RacerBot', width - 40, footerY + 45);
 
