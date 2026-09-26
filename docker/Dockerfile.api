@@ -1,6 +1,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
+# Install canvas native build dependencies (required to compile canvas npm package)
+RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -8,6 +10,8 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+# Install canvas runtime shared libraries (canvas's native addon needs .so files at runtime)
+RUN apk add --no-cache cairo pango pixman giflib libjpeg-turbo librsvg
 # turbo emits to packages/<svc>/dist — copy the whole workspace, not /app/dist
 COPY --from=builder /app /app
 CMD ["node", "packages/api/dist/index.js"]

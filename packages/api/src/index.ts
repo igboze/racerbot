@@ -2,7 +2,7 @@ import './config.js';
 import express from 'express';
 import cors from 'cors';
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent, createQuickNodeProvider, BlockScanner, TransactionIndexer } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
@@ -17,8 +17,7 @@ const PORT = parseInt(process.env.PORT ?? '3000');
 const REDIS_URL = process.env.REDIS_URL!;
 
 let syncInterval: NodeJS.Timeout | null = null;
-let blockScanner: BlockScanner | null = null;
-let transactionIndexer: TransactionIndexer | null = null;
+
 
 async function main(): Promise<void> {
   logger.info('Starting RacerBot API service...');
@@ -183,30 +182,7 @@ async function main(): Promise<void> {
   
   logger.info('Background external deposit sync started', { intervalMs: SYNC_INTERVAL_MS });
 
-  // ── QuickNode integration for real-time data and enhanced indexing ─────────
-  const quickNodeProvider = createQuickNodeProvider();
-  if (quickNodeProvider) {
-    try {
-      // Initialize block scanner for real-time block data
-      blockScanner = new BlockScanner(quickNodeProvider);
-      await blockScanner.start();
 
-      // Note: Block scanner is available for future real-time features
-      // but sync is handled by the background interval to avoid overlapping operations
-
-      // Initialize transaction indexer for enhanced scanning
-      transactionIndexer = new TransactionIndexer(quickNodeProvider);
-      transactionIndexer.start(15000); // Scan every 15 seconds
-
-      logger.info('QuickNode integration started', {
-        endpoint: process.env.QUICKNODE_ENDPOINT_URL?.substring(0, 30) + '...'
-      });
-    } catch (err: any) {
-      logger.warn('QuickNode integration failed (continuing without it)', { error: err.message });
-    }
-  } else {
-    logger.info('QuickNode not configured (missing API key or endpoint)');
-  }
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
@@ -215,14 +191,6 @@ async function main(): Promise<void> {
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;
-    }
-    if (blockScanner) {
-      blockScanner.stop();
-      blockScanner = null;
-    }
-    if (transactionIndexer) {
-      transactionIndexer.stop();
-      transactionIndexer = null;
     }
     if (redis) {
       await redis.disconnect().catch(() => {});
