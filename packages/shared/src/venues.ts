@@ -73,10 +73,11 @@ export const VENUES: Record<VenueId, VenueInfo> = {
   memecooking: {
     id: 'memecooking',
     label: 'Meme.Cooking',
-    kind: 'launchpad',
+    kind: 'launchpad+amm',
     contracts: ['meme-cooking.near'],
-    tradeable: false,
+    tradeable: true,
     website: 'https://meme.cooking',
+    tokenPage: (t) => `https://meme.cooking/meme/${t}`,
   },
   onetokenhub: {
     id: 'onetokenhub',

@@ -774,8 +774,6 @@ async function checkAutoBuySignals(
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {
-  // Only tradeable venues can be auto-bought
-  if (venue === 'memecooking') return;
   // NEARpad can be auto-bought
   try {
     const db = await getDb();
