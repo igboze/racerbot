@@ -101,6 +101,7 @@ export class MultiRpcProvider {
 
   /**
    * Data operations: Use QuickNode (enhanced indexing)
+   * Simplified fallback: QuickNode only with error handling
    */
   async data<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
     // Use QuickNode for data updates (block scanning, indexing)
@@ -113,12 +114,13 @@ export class MultiRpcProvider {
         qn.markHealthy();
         return result;
       } catch (err) {
-        console.error('[RPC] QuickNode data failed, falling back to FastNear');
+        console.error('[RPC] QuickNode data failed, will retry later');
         qn.markUnhealthy();
+        throw err; // Don't fallback to avoid latency overhead
       }
     }
 
-    // Fallback to FastNear for data
+    // If QuickNode not configured, use FastNear
     const fastNear = this.getFastNearProvider();
     if (fastNear) {
       const start = Date.now();
@@ -128,6 +130,7 @@ export class MultiRpcProvider {
         return result;
       } catch (err) {
         markProviderError(fastNear);
+        throw err;
       }
     }
 
