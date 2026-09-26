@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS, type VenueName } from '@racerbot/shared';
+import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import {
   getDb,
   createUser,
@@ -175,9 +175,8 @@ function isIntearToken(tokenAddress: string): boolean {
  * Fetch meme.cooking token state from on-chain.
  */
 async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string; progress: number }> {
-  const match = tokenAddress.match(/-(\d+)\.meme-cooking\.near$/) || tokenAddress.match(/(\d+)\.meme-cooking\.near$/);
-  const memeId = match ? parseInt(match[1], 10) : parseInt(tokenAddress.replace('.meme-cooking.near', ''), 10);
-  if (isNaN(memeId)) {
+  const memeId = parseMemeCookingId(tokenAddress);
+  if (memeId === null) {
     return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
   }
 

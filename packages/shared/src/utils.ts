@@ -4,6 +4,20 @@ export function generateId(): string {
   return randomBytes(16).toString('hex');
 }
 
+export function parseMemeCookingId(tokenAddress: string): number | null {
+  if (!tokenAddress || typeof tokenAddress !== 'string' || !tokenAddress.endsWith('.meme-cooking.near')) {
+    return null;
+  }
+  const match = tokenAddress.match(/-(\d+)\.meme-cooking\.near$/) || tokenAddress.match(/(\d+)\.meme-cooking\.near$/);
+  if (match) {
+    const id = parseInt(match[1], 10);
+    return isNaN(id) ? null : id;
+  }
+  const clean = tokenAddress.replace('.meme-cooking.near', '');
+  const id = parseInt(clean, 10);
+  return isNaN(id) ? null : id;
+}
+
 export function formatNearAmount(amount: string, decimals: number = 24): string {
   const val = BigInt(Math.floor(parseFloat(amount) * 10 ** decimals));
   return val.toString();

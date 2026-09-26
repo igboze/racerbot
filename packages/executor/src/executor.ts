@@ -7,6 +7,7 @@ import {
   computePnL,
   formatHoldDuration,
   calculateMinOutAdj,
+  parseMemeCookingId,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
@@ -825,12 +826,11 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
 
-      const match = targetToken.match(/-(\d+)\.meme-cooking\.near$/) || targetToken.match(/(\d+)\.meme-cooking\.near$/);
-      const memeId = match ? parseInt(match[1], 10) : parseInt(targetToken.replace('.meme-cooking.near', ''), 10);
+      const memeId = parseMemeCookingId(targetToken);
 
       // Check if token is pre-bonded (active auction) or bonded (DEX pool)
       let isPrebonded = false;
-      if (!isNaN(memeId)) {
+      if (memeId !== null) {
         try {
           const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
           if (meme) {
@@ -1276,9 +1276,8 @@ export class SwapExecutor {
         const hubState = await near.getOneTokenHubState(tokenAddress);
         liquidityNear = hubState.liquidityNear;
       } else if (venue === 'memecooking') {
-        const match = tokenAddress.match(/-(\d+)\.meme-cooking\.near$/) || tokenAddress.match(/(\d+)\.meme-cooking\.near$/);
-        const memeId = match ? parseInt(match[1], 10) : parseInt(tokenAddress.replace('.meme-cooking.near', ''), 10);
-        const mcInfo = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+        const memeId = parseMemeCookingId(tokenAddress);
+        const mcInfo = memeId !== null ? await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null) : null;
         if (mcInfo) {
           liquidityNear = parseFloat(mcInfo.total_staked || '0') / 1e24;
         } else {

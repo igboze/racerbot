@@ -1,6 +1,7 @@
 // Core utilities
 export {
   generateId,
+  parseMemeCookingId,
   generateRandomAccountPrefix,
   formatNearAmount,
   parseNearAmount,
