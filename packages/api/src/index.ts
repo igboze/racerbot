@@ -129,8 +129,9 @@ async function main(): Promise<void> {
   }
 
   // ── Start background sync for external token deposits ─────────────────────
-  // Sync all users' external deposits every 5 minutes to detect purchases from other wallets
-  const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  // Sync all users' external deposits every 15 minutes to detect purchases from other wallets
+  // Reduced from 5 minutes to 15 minutes to reduce RPC load and avoid overlapping operations
+  const SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
   const BATCH_SIZE = 10; // Process 10 users in parallel to avoid overwhelming RPC
   syncInterval = setInterval(async () => {
     try {
@@ -190,23 +191,8 @@ async function main(): Promise<void> {
       blockScanner = new BlockScanner(quickNodeProvider);
       await blockScanner.start();
 
-      // Register callbacks for block events
-      blockScanner.onNewBlock('token-sync', async (block) => {
-        try {
-          // Trigger token sync on new blocks for faster detection
-          const db = await getDb();
-          const result = await db.query('SELECT id, subaccount_id FROM users LIMIT 5');
-          for (const user of result.rows) {
-            setImmediate(() => {
-              syncUserTokenDeposits(user.id, user.subaccount_id).catch(err => {
-                logger.warn('Block sync failed', { userId: user.id, error: err.message });
-              });
-            });
-          }
-        } catch (err: any) {
-          logger.warn('Block sync callback error', { error: err.message });
-        }
-      });
+      // Note: Block scanner is available for future real-time features
+      // but sync is handled by the background interval to avoid overlapping operations
 
       // Initialize transaction indexer for enhanced scanning
       transactionIndexer = new TransactionIndexer(quickNodeProvider);

@@ -689,7 +689,6 @@ bot.action('menu_holdings', async (ctx) => {
        return;
      }
 
-     setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
      const positions = await getOpenPositions(user.id).catch(() => []);
      if (positions.length === 0) {
@@ -749,7 +748,7 @@ bot.action('menu_holdings', async (ctx) => {
      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
    });
 
-  // ── token_detail — Individual token detail modal ───────────────────────────
+  // ── token_detail — Individual token detail modal with PNL card ────────────────
   bot.action(/^token_detail:(.+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const telegramId = ctx.from!.id;
@@ -803,6 +802,18 @@ bot.action('menu_holdings', async (ctx) => {
       msg += `  Initial Investment: \`${initialInvestment.toFixed(4)} NEAR\`\n\n`;
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
+
+      // Generate PNL card and append to message
+      try {
+        const pnlData = await generatePNLCardData(positionId);
+        if (pnlData) {
+          const pnlMessage = generatePNLCardMessage(pnlData);
+          msg += `\n${pnlMessage}`;
+        }
+      } catch (err: any) {
+        console.error('Failed to generate PNL card:', err);
+        // Continue without PNL card if generation fails
+      }
 
       const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
       const buttons: any[] = [];
@@ -935,7 +946,6 @@ bot.action('menu_holdings', async (ctx) => {
     // NOTE: External deposit sync now runs in background only, not blocking menu load
     // This prevents 3.5s+ delays when loading token detail modal
     setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
-
     const positions = await getOpenPositions(user.id).catch(() => []);
     if (positions.length === 0) {
       await ctx.answerCbQuery('No open positions.').catch(() => {});
@@ -1021,7 +1031,6 @@ bot.action('menu_holdings', async (ctx) => {
     }
 
     // NOTE: External deposit sync now runs in background only, not blocking menu load
-    // This prevents 3.5s+ delays when loading PNL summary
     setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
     const [positions, db] = await Promise.all([
