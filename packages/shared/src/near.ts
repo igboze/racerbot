@@ -1021,6 +1021,9 @@ export class MultiRpcNear {
    */
   async getNEARpadState(tokenAddress: string): Promise<{
     token: string;
+    dclPoolId: string | null;
+    status: string;
+    pairedToken: string;
     price: number;
     liquidityNear: number;
     reserveNear: string;
@@ -1029,32 +1032,50 @@ export class MultiRpcNear {
   }> {
     const launch = await this.view<any>(
       'nearpadfamily.near',
-      'get_launch_by_token',
-      { token: tokenAddress }
+      'get_launch',
+      { token_id: tokenAddress }
     ).catch(() => null);
 
-    if (!launch) {
+    const dclPoolId = launch?.pool_id || (await this.findDclPoolId('wrap.near', tokenAddress).catch(() => null));
+    if (!launch && !dclPoolId) {
       throw new Error(`Token ${tokenAddress} not found on NEARpad launchpad`);
     }
 
-    // Extract pool data from NEARpad structure
-    const pool = launch.pool || launch;
-    const reserveNear = pool.reserve_near || pool.reserve_near_yocto || '0';
-    const reserveToken = pool.reserve_token || pool.reserve_token_yocto || '0';
-    const totalSupply = pool.total_supply || launch.total_supply || '0';
+    let pairedToken = launch?.pair_asset || 'wrap.near';
+    if (dclPoolId) {
+      const parts = dclPoolId.split('|');
+      if (parts.length >= 2) {
+        pairedToken = parts[0] === tokenAddress ? parts[1] : parts[0];
+      }
+    }
 
-    const reserveNearNum = parseFloat(reserveNear) / 1e24;
-    const reserveTokenNum = parseFloat(reserveToken) / Math.pow(10, pool.decimals || 18);
-    const price = reserveNearNum > 0 && reserveTokenNum > 0 ? reserveNearNum / reserveTokenNum : 0;
-    const liquidityNear = reserveNearNum * 2;
+    let price = 0;
+    let liquidityNear = 0;
+    let reserveNear = '0';
+    let reserveToken = '0';
+
+    if (dclPoolId) {
+      try {
+        const dcl = await this.getDclPoolState(dclPoolId, pairedToken);
+        price = dcl.price;
+        liquidityNear = dcl.liquidityNear;
+        reserveNear = dcl.reserveNear;
+        reserveToken = dcl.reserveToken;
+      } catch {
+        // Pool may be creating or empty
+      }
+    }
 
     return {
       token: tokenAddress,
+      dclPoolId,
+      status: launch?.status || 'Active',
+      pairedToken,
       price,
       liquidityNear,
       reserveNear,
       reserveToken,
-      totalSupply,
+      totalSupply: '0',
     };
   }
 
@@ -1374,7 +1395,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -1395,7 +1416,7 @@ export class MultiRpcNear {
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
-    } else if (venue === 'rhea') {
+    } else if (venue === 'rhea' || venue === 'ref') {
       if (dclPoolId) {
         try {
           const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
@@ -1595,6 +1616,32 @@ export class MultiRpcNear {
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'nearpad') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      let poolId = dclPoolId;
+      if (!poolId) {
+        const state = await this.getNEARpadState(targetToken).catch(() => null);
+        poolId = state?.dclPoolId ?? (await this.findDclPoolId('wrap.near', targetToken).catch(() => null));
+      }
+
+      if (poolId) {
+        const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+        const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+        try {
+          const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [poolId],
+            input_token: inToken,
+            output_token: outToken,
+            input_amount: amountIn,
+          });
+          const expected = BigInt(quote?.amount || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // quote fallback to reserve math
+        }
+      }
+
       let state;
       try {
         state = await this.getNEARpadState(targetToken);
@@ -1610,8 +1657,8 @@ export class MultiRpcNear {
       const reserveIn = isBuy ? reserveNear : reserveToken;
       const reserveOut = isBuy ? reserveToken : reserveNear;
 
-      // NEARpad XYK pool fee (assuming 30 bps / 0.3% like Intear, adjust if different)
-      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 30);
+      // NEARpad DCL pool fee default (100 bps / 1%)
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 100);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'gaypad') {
@@ -1682,7 +1729,7 @@ export class MultiRpcNear {
     tokenAddress: string,
     decimals: number
   ): Promise<{ price: number; reserveNearYocto: string } | null> {
-    if (venue === 'rhea') {
+    if (venue === 'rhea' || venue === 'ref') {
       const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
       if (rhea) {
         return {
