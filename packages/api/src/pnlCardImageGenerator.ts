@@ -1,13 +1,43 @@
 import { PNLCardData } from './pnlCardGenerator.js';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs';
+
 const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Dynamic import for canvas to avoid build failures on platforms without Python
 let canvasModule: any = null;
 try {
   canvasModule = require('canvas');
+  if (canvasModule && typeof canvasModule.registerFont === 'function') {
+    const resolveFont = (filename: string) => {
+      const candidates = [
+        path.join(__dirname, '..', 'fonts', filename),
+        path.join(process.cwd(), 'packages', 'api', 'fonts', filename),
+        path.join(process.cwd(), 'fonts', filename),
+        path.join(__dirname, 'fonts', filename),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) return p;
+      }
+      return null;
+    };
+
+    const regularFont = resolveFont('Roboto-Regular.ttf');
+    const boldFont = resolveFont('Roboto-Bold.ttf');
+
+    if (regularFont) {
+      canvasModule.registerFont(regularFont, { family: 'Roboto', weight: 'normal' });
+    }
+    if (boldFont) {
+      canvasModule.registerFont(boldFont, { family: 'Roboto', weight: 'bold' });
+    }
+  }
 } catch (err) {
-  console.warn('[PNL_CARD_IMAGE] Canvas module not available. PNL cards will be text-only.');
+  console.warn('[PNL_CARD_IMAGE] Canvas module not available or font registration failed. PNL cards will be text-only.');
 }
 
 /**
@@ -26,7 +56,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    const fontFallback = '"DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
+    const fontFallback = 'Roboto, "DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
 
     // Background gradient
     const gradient = ctx.createLinearGradient(0, 0, width, height);
