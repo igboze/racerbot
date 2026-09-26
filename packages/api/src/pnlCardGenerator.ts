@@ -187,6 +187,10 @@ export function generatePNLCardMessage(data: PNLCardData): string {
   const pnlSign = data.isProfit ? '+' : '';
   const statusEmoji = data.positionStatus === 'open' ? '🟢' : '🔴';
 
+  const safeSymbol = (data.tokenSymbol || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
+  const safeName = (data.tokenName || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
+  const safeAddress = (data.tokenAddress || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
+
   // Format USD values
   const formatUSD = (nearValue: number) => {
     const usdValue = nearValue * data.nearUsd;
@@ -196,11 +200,11 @@ export function generatePNLCardMessage(data: PNLCardData): string {
   };
 
   let card = `
-${emoji} *${data.tokenSymbol} PNL CARD* ${statusEmoji}
+ ${emoji} *${safeSymbol} PNL CARD* ${statusEmoji}
 
-📝 *Token*: \`${data.tokenName}\`
-🔗 *CA*: \`${data.tokenAddress}\`
-💧 *Venue*: \`${data.venue || 'Unknown'}\``;
+ 📝 *Token*: \`${safeName}\`
+ 🔗 *CA*: \`${safeAddress}\`
+ 💧 *Venue*: \`${(data.venue || 'Unknown').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ')}\``;
 
   // External deposit indicator
   if (data.isExternalDeposit) {
