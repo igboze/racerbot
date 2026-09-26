@@ -45,7 +45,8 @@ const userPendingActions = new Map<number, PendingAction>();
 
 // ── Helper: Safe Markdown string sanitization ────────────────────────────────
 function sanitizeMd(str: string): string {
-  return (str || '').replace(/[_*`[\](~|>#+=|{}!@-]/g, ' ');
+  // Replace special Markdown characters but keep hyphens (valid in NEAR addresses)
+  return (str || '').replace(/[_*`[\](~|>#+=|{}!@]/g, ' ');
 }
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
@@ -98,6 +99,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
 
@@ -127,6 +130,8 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   buttons.push([
     Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
     Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+    Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
   ]);
 
   const text =
@@ -356,6 +361,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
     } else {
@@ -386,6 +393,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
     }
@@ -404,6 +413,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
         Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       ],
     ]);
   }
@@ -479,6 +489,8 @@ export function buildSettingsDashboard(user: UserRecord) {
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
 
@@ -688,7 +700,8 @@ export function setupRoutes(bot: Telegraf): void {
         `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!\n\n` +
         `🔗 *Join Our Community*:\n` +
         `💬 [Community Group](https://t.me/racerbot_community) - Get help and connect with traders\n` +
-        `📢 [Updates Channel](https://t.me/racertrading) - Announcements and news`,
+        `📢 [Updates Channel](https://t.me/racertrading) - Announcements and news\n` +
+        `𝕏 [X/Twitter](https://x.com/racertradingbot) - Follow for updates`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
 
@@ -774,6 +787,8 @@ bot.action('menu_holdings', async (ctx) => {
          [
            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
          ],
        ]);
        await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
@@ -1082,6 +1097,8 @@ bot.action('menu_holdings', async (ctx) => {
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
       await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
@@ -1143,6 +1160,7 @@ bot.action('menu_holdings', async (ctx) => {
     buttons.push([
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ]);
 
     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
@@ -1213,6 +1231,7 @@ bot.action('menu_holdings', async (ctx) => {
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
         Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       ],
     ]);
     await ctx.answerCbQuery().catch(() => {});
@@ -1789,6 +1808,7 @@ bot.action('menu_holdings', async (ctx) => {
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
         Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       ],
     ]);
     await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
