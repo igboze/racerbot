@@ -346,96 +346,98 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       // If state lookup failed, keep metadata
     }
   } else {
-    // Venue probing: the cheap probes run in parallel
-    const [ntRes, hubRes, padRes, rheaRes, dclRes] = await Promise.allSettled([
-      // 1. NearlyTrade — single get_launch_by_token call
-      near.getNearlytradeTokenState(tokenAddress),
-      // 2. OneTokenHub — single get_launch_by_token call
-      near.getOneTokenHubState(tokenAddress),
-      // 3. NEARpad — single get_launch_by_token call
-      near.getNEARpadState(tokenAddress),
-      // 4. Rhea — simple pool lookup (cached after first hit)
-      (async () => {
-        const poolId =
-          rheaPoolId !== null
-            ? rheaPoolId
-            : await near.findRheaPoolId('wrap.near', tokenAddress);
-        const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-        const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
-        const reserveOut = parseFloat(rh.reserveOut); // token base units
-        if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
-        return { poolId, reserveIn, reserveOut };
-      })(),
-      // 5. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near
-      (async () => {
-        const pId =
+    // FIRST: Check Rhea Finance (both Simple and DCL pools) - first place of truth
+    try {
+      // Try Rhea Simple pool first
+      const simplePoolId =
+        rheaPoolId !== null
+          ? rheaPoolId
+          : await near.findRheaPoolId('wrap.near', tokenAddress);
+      const rheaReserves = await near.getRheaPoolReserves(simplePoolId, 'wrap.near', tokenAddress);
+      const reserveIn = parseFloat(rheaReserves.reserveIn);   // wNEAR in yoctoNEAR
+      const reserveOut = parseFloat(rheaReserves.reserveOut); // token base units
+      if (reserveIn > 0 && reserveOut > 0) {
+        const reserveInHuman = reserveIn / 1e24;
+        const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+        price = reserveInHuman / reserveOutHuman;
+        liquidity = reserveInHuman * 2; // both sides of AMM
+        venue = 'rhea';
+        rheaPoolId = simplePoolId;
+      } else {
+        // Rhea Simple not found, try Rhea DCL
+        const dclPoolIdStr =
           dclPoolId !== null
             ? dclPoolId
             : await near.findDclPoolId('wrap.near', tokenAddress);
-        if (!pId) throw new Error('empty dcl pool');
-        const st = await near.getDclPoolState(pId);
-        if (!(st.price > 0)) throw new Error('empty dcl pool');
-        return st;
-      })(),
-    ]);
-
-    // Precedence: Rhea (Simple) > Rhea (DCL) > NearlyTrade > OneTokenHub > NEARpad > Intear
-    if (rheaRes.status === 'fulfilled') {
-      const { poolId, reserveIn, reserveOut } = rheaRes.value;
-      const reserveInHuman = reserveIn / 1e24;
-      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
-      price = reserveInHuman / reserveOutHuman;
-      liquidity = reserveInHuman * 2; // both sides of AMM
-      venue = 'rhea';
-      rheaPoolId = poolId;
-    } else if (dclRes.status === 'fulfilled') {
-      const st = dclRes.value;
-      venue = 'rhea';
-      price = st.price;
-      liquidity = st.liquidityNear;
-      dclPoolId = st.poolId;
-    } else if (ntRes.status === 'fulfilled' && ntRes.value) {
-      const ntState = ntRes.value;
-      venue = 'nearlytrade';
-      price = ntState.price;
-      liquidity = ntState.liquidityNear;
-      bondingPhase = ntState.phase;
-      bondingProgressPct = ntState.bondingProgressPct;
-      dclPoolId = ntState.dclPoolId;
-      if (ntState.totalSupply && ntState.totalSupply !== '0') {
-        totalSupply = ntState.totalSupply;
-      }
-    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
-      const hubState = hubRes.value;
-      venue = 'onetokenhub';
-      price = hubState.price;
-      liquidity = hubState.liquidityNear;
-      dclPoolId = hubState.dclPoolId;
-      if (hubState.totalSupply && hubState.totalSupply !== '0') {
-        totalSupply = hubState.totalSupply;
-      }
-    } else if (padRes.status === 'fulfilled' && padRes.value) {
-      const padState = padRes.value;
-      venue = 'nearpad';
-      price = padState.price;
-      liquidity = padState.liquidityNear;
-      if (padState.totalSupply && padState.totalSupply !== '0') {
-        totalSupply = padState.totalSupply;
-      }
-    } else {
-      // 6. Intear last resort — full scan, only when cheap probes missed
-      try {
-        const intearState = await near.getIntearTokenState(tokenAddress);
-        if (intearState && intearState.price > 0) {
-          venue = 'intear';
-          price = intearState.price;
-          liquidity = intearState.liquidityNear;
-          if (intearState.totalSupply && intearState.totalSupply !== '0') {
-            totalSupply = intearState.totalSupply;
+        if (dclPoolIdStr) {
+          const dclState = await near.getDclPoolState(dclPoolIdStr);
+          if (dclState.price > 0) {
+            venue = 'rhea';
+            price = dclState.price;
+            liquidity = dclState.liquidityNear;
+            dclPoolId = dclPoolIdStr;
           }
         }
-      } catch {
-        /* not on Intear */
+      }
+    } catch {
+      // Not on Rhea, continue to launchpad probing
+    }
+
+    // SECOND: If not on Rhea, probe launchpads in parallel
+    if (price === 0) {
+      const [ntRes, hubRes, padRes] = await Promise.allSettled([
+        // 1. NearlyTrade — single get_launch_by_token call
+        near.getNearlytradeTokenState(tokenAddress),
+        // 2. OneTokenHub — single get_launch_by_token call
+        near.getOneTokenHubState(tokenAddress),
+        // 3. NEARpad — single get_launch_by_token call
+        near.getNEARpadState(tokenAddress),
+      ]);
+
+      // Precedence: NearlyTrade > OneTokenHub > NEARpad
+      if (ntRes.status === 'fulfilled' && ntRes.value) {
+        const ntState = ntRes.value;
+        venue = 'nearlytrade';
+        price = ntState.price;
+        liquidity = ntState.liquidityNear;
+        bondingPhase = ntState.phase;
+        bondingProgressPct = ntState.bondingProgressPct;
+        dclPoolId = ntState.dclPoolId;
+        if (ntState.totalSupply && ntState.totalSupply !== '0') {
+          totalSupply = ntState.totalSupply;
+        }
+      } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+        const hubState = hubRes.value;
+        venue = 'onetokenhub';
+        price = hubState.price;
+        liquidity = hubState.liquidityNear;
+        dclPoolId = hubState.dclPoolId;
+        if (hubState.totalSupply && hubState.totalSupply !== '0') {
+          totalSupply = hubState.totalSupply;
+        }
+      } else if (padRes.status === 'fulfilled' && padRes.value) {
+        const padState = padRes.value;
+        venue = 'nearpad';
+        price = padState.price;
+        liquidity = padState.liquidityNear;
+        if (padState.totalSupply && padState.totalSupply !== '0') {
+          totalSupply = padState.totalSupply;
+        }
+      } else {
+        // THIRD: Intear last resort — full scan, only when cheap probes missed
+        try {
+          const intearState = await near.getIntearTokenState(tokenAddress);
+          if (intearState && intearState.price > 0) {
+            venue = 'intear';
+            price = intearState.price;
+            liquidity = intearState.liquidityNear;
+            if (intearState.totalSupply && intearState.totalSupply !== '0') {
+              totalSupply = intearState.totalSupply;
+            }
+          }
+        } catch {
+          /* not on Intear */
+        }
       }
     }
   }
