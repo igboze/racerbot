@@ -286,7 +286,8 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         receiverId === 'launch.intear.near' ||
         receiverId === 'meme-cooking.near' ||
         receiverId === 'pad.onetokenhub.near' ||
-        receiverId === 'gaypad.j1-racing.near'
+        receiverId === 'gaypad.j1-racing.near' ||
+        receiverId === 'nearpadfamily.near'
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -344,6 +345,11 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 const tokenAddress = decoded?.token_id ?? decoded?.token ?? '';
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'gaypad', decoded).catch(() => {});
+                }
+              } else if (receiverId === 'nearpadfamily.near') {
+                const tokenAddress = decoded?.token ?? decoded?.token_id ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'nearpad', decoded).catch(() => {});
                 }
               }
             } catch {
@@ -455,6 +461,17 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
     }
   }
 
+  // ── NEARpad launchpad ────────────────────────────────────────────────────
+  if (
+    receiverId === 'nearpadfamily.near' &&
+    (eventName === 'launch' || eventName === 'launch_created' || eventName === 'pool_created' || eventName === 'token_created')
+  ) {
+    const tokenAddress: string = data?.token ?? data?.token_id ?? '';
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'nearpad', data);
+    }
+  }
+
   // ── Price update from any venue (swap events) ───────────────────────────
   if (eventName === 'swap' && ((data?.token_in && data?.token_out) || data?.pool_id)) {
     await handleSwapEvent(data, receiverId).catch(() => {});
@@ -464,7 +481,7 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -742,12 +759,13 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad',
+  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {
   // Only tradeable venues can be auto-bought
   if (venue === 'memecooking') return;
+  // NEARpad can be auto-bought
   try {
     const db = await getDb();
     const result = await db

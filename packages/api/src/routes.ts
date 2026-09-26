@@ -201,6 +201,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     venueText = `💧 *Venue*: Intear Launchpad (XYK)`;
   } else if (tokenInfo.venue === 'onetokenhub') {
     venueText = `💧 *Venue*: OneTokenHub (Ref DCL)`;
+  } else if (tokenInfo.venue === 'nearpad') {
+    venueText = `💧 *Venue*: NEARpad Launchpad`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
@@ -573,14 +575,14 @@ async function executeBuyHelper(
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
   const info = await getTokenInfo(tokenAddress, true).catch(() => null);
-  if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+  if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
   const near = getNear();
