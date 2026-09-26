@@ -641,6 +641,19 @@ export class MultiRpcNear {
       return { rateInNear: 1, decimals: 18 };
     };
 
+    const candidates: Array<{
+      poolId: number | string;
+      pairedToken: string;
+      intermediateToken?: string;
+      intermediatePoolId?: number;
+      isDcl: boolean;
+      price: number;
+      liquidityNear: number;
+      reserveNear?: string;
+      reserveToken?: string;
+      fee?: number;
+    }> = [];
+
     // 1. Direct pool with wrap.near on v2.ref-finance.near
     try {
       const poolId = await this.findRheaPoolId('wrap.near', tokenAddress);
@@ -652,7 +665,7 @@ export class MultiRpcNear {
         const reserveTokenHuman = reserveOut / Math.pow(10, decimals);
         const price = reserveNearHuman / reserveTokenHuman;
         const liquidityNear = reserveNearHuman * 2;
-        return {
+        candidates.push({
           poolId,
           pairedToken: 'wrap.near',
           isDcl: false,
@@ -661,7 +674,7 @@ export class MultiRpcNear {
           reserveNear: rh.reserveIn,
           reserveToken: rh.reserveOut,
           fee: rh.fee,
-        };
+        });
       }
     } catch {}
 
@@ -671,7 +684,7 @@ export class MultiRpcNear {
       if (dclPoolId) {
         const st = await this.getDclPoolState(dclPoolId, 'wrap.near');
         if (st.price > 0 && st.liquidityNear > 0) {
-          return {
+          candidates.push({
             poolId: dclPoolId,
             pairedToken: 'wrap.near',
             isDcl: true,
@@ -679,7 +692,7 @@ export class MultiRpcNear {
             liquidityNear: st.liquidityNear,
             reserveNear: st.reserveNear,
             reserveToken: st.reserveToken,
-          };
+          });
         }
       }
     } catch {}
@@ -691,7 +704,6 @@ export class MultiRpcNear {
         (p: any) => p.token_account_ids && p.token_account_ids.includes(tokenAddress)
       );
       if (matching.length > 0) {
-        matching.sort((a: any, b: any) => parseFloat(b.tvl || '0') - parseFloat(a.tvl || '0'));
         for (const pool of matching) {
           const poolId = Number(pool.id);
           const tokens: string[] = pool.token_account_ids || [];
@@ -705,7 +717,7 @@ export class MultiRpcNear {
             if (rOtherHuman > 0 && rOutHuman > 0) {
               const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
               const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
-              return {
+              candidates.push({
                 poolId,
                 pairedToken: otherToken,
                 intermediateToken: otherToken !== 'wrap.near' ? otherToken : undefined,
@@ -716,7 +728,7 @@ export class MultiRpcNear {
                 reserveNear: (rOtherHuman * pairedInfo.rateInNear * 1e24).toFixed(0),
                 reserveToken: rh.reserveOut,
                 fee: rh.fee,
-              };
+              });
             }
           }
         }
@@ -755,7 +767,7 @@ export class MultiRpcNear {
                   if (rOtherHuman > 0 && rOutHuman > 0) {
                     const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
                     const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
-                    return {
+                    candidates.push({
                       poolId,
                       pairedToken: otherToken,
                       intermediateToken: otherToken !== 'wrap.near' ? otherToken : undefined,
@@ -766,7 +778,7 @@ export class MultiRpcNear {
                       reserveNear: (rOtherHuman * pairedInfo.rateInNear * 1e24).toFixed(0),
                       reserveToken: rh.reserveOut,
                       fee: rh.fee,
-                    };
+                    });
                   }
                 }
               }
@@ -776,7 +788,21 @@ export class MultiRpcNear {
       }
     } catch {}
 
-    return null;
+    if (candidates.length === 0) return null;
+
+    // Deduplicate candidate pools by poolId to avoid duplicates
+    const poolMap = new Map<string | number, typeof candidates[0]>();
+    for (const c of candidates) {
+      if (!poolMap.has(c.poolId) || (c.liquidityNear > poolMap.get(c.poolId)!.liquidityNear)) {
+        poolMap.set(c.poolId, c);
+      }
+    }
+
+    const uniqueCandidates = Array.from(poolMap.values());
+    // Sort candidates strictly by HIGHEST liquidity (liquidityNear) to ensure best execution route & protect user funds
+    uniqueCandidates.sort((a, b) => b.liquidityNear - a.liquidityNear);
+
+    return uniqueCandidates[0];
   }
 
   /**
