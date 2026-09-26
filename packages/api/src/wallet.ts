@@ -379,8 +379,22 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       })(),
     ]);
 
-    // Precedence: NearlyTrade > OneTokenHub > NEARpad > Rhea (Simple or DCL) > Intear
-    if (ntRes.status === 'fulfilled' && ntRes.value) {
+    // Precedence: Rhea (Simple) > Rhea (DCL) > NearlyTrade > OneTokenHub > NEARpad > Intear
+    if (rheaRes.status === 'fulfilled') {
+      const { poolId, reserveIn, reserveOut } = rheaRes.value;
+      const reserveInHuman = reserveIn / 1e24;
+      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
+      price = reserveInHuman / reserveOutHuman;
+      liquidity = reserveInHuman * 2; // both sides of AMM
+      venue = 'rhea';
+      rheaPoolId = poolId;
+    } else if (dclRes.status === 'fulfilled') {
+      const st = dclRes.value;
+      venue = 'rhea';
+      price = st.price;
+      liquidity = st.liquidityNear;
+      dclPoolId = st.poolId;
+    } else if (ntRes.status === 'fulfilled' && ntRes.value) {
       const ntState = ntRes.value;
       venue = 'nearlytrade';
       price = ntState.price;
@@ -408,20 +422,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       if (padState.totalSupply && padState.totalSupply !== '0') {
         totalSupply = padState.totalSupply;
       }
-    } else if (rheaRes.status === 'fulfilled') {
-      const { poolId, reserveIn, reserveOut } = rheaRes.value;
-      const reserveInHuman = reserveIn / 1e24;
-      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
-      price = reserveInHuman / reserveOutHuman;
-      liquidity = reserveInHuman * 2; // both sides of AMM
-      venue = 'rhea';
-      rheaPoolId = poolId;
-    } else if (dclRes.status === 'fulfilled') {
-      const st = dclRes.value;
-      venue = 'rhea';
-      price = st.price;
-      liquidity = st.liquidityNear;
-      dclPoolId = st.poolId;
     } else {
       // 6. Intear last resort — full scan, only when cheap probes missed
       try {

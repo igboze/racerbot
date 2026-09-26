@@ -1,5 +1,6 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
+import { createQuickNodeProvider } from './quicknode.js';
 import { calculateExpectedOutput, calculateMinAmountOut } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 
@@ -101,8 +102,19 @@ export class MultiRpcNear {
       if (url.includes('rpc.mainnet.near.org')) return false;
       return true;
     });
-    const finalUrls = sanitizedUrls.length > 0 ? sanitizedUrls : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
-    this.providers = finalUrls.map((url, i) => createProvider(url, `near-rpc-${i}`));
+    // Prepend QuickNode if configured (enhanced indexing/faster RPC)
+    const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
+    const finalUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
+    if (quickNodeUrl && !finalUrls.includes(quickNodeUrl)) {
+      finalUrls.unshift(quickNodeUrl);
+    }
+    const allProviders = finalUrls.map((url, i) => createProvider(url, `near-rpc-${i}`, url === quickNodeUrl));
+    // Also add QuickNode SDK provider if available for data lookups
+    const qnProvider = createQuickNodeProvider();
+    if (qnProvider) {
+      allProviders.push(createProvider(qnProvider.endpointUrl || quickNodeUrl!, 'near-qn-sdk', true));
+    }
+    this.providers = allProviders;
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
   }
