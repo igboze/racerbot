@@ -328,13 +328,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       console.error('Failed to generate PNL card:', err);
       // Continue without PNL card if generation fails
     }
-
-    // Return image buffer for calling handler to send
-    return { text, keyboard: Markup.inlineKeyboard([]), pnlCardImage: pnlCardImage || undefined };
   }
 
   // ── Buttons depend on whether trading is supported and if user holds token ──
   let keyboard;
+  let pnlCardImage: Buffer | null = null;
+
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
       // User holds token - show sell buttons instead of buy buttons
@@ -409,7 +408,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     ]);
   }
 
-  return { text, keyboard, pnlCardImage: undefined };
+  return { text, keyboard, pnlCardImage: pnlCardImage || undefined };
 }
 
 // ── Helper: Build Settings Dashboard with Checkmark Indicators ──────────────
@@ -905,32 +904,7 @@ bot.action('menu_holdings', async (ctx) => {
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
 
-      // Generate PNL card with image
-      let pnlCardImage: Buffer | null = null;
-      try {
-        const pnlCard = await generatePNLCard(positionId);
-        if (pnlCard.image) {
-          pnlCardImage = pnlCard.image;
-        } else {
-          // Fallback to text only
-          msg += `\n${pnlCard.text}`;
-        }
-      } catch (err: any) {
-        console.error('Failed to generate PNL card:', err);
-        // Continue without PNL card if generation fails
-      }
-
-      // If image was generated, send it as a new message with caption
-      if (pnlCardImage) {
-        await ctx.replyWithPhoto({ source: pnlCardImage }, { caption: msg, parse_mode: 'Markdown' }).catch(() => {
-          // Fallback to text if image send fails
-          ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-        });
-        // Delete the original message to avoid clutter
-        await ctx.deleteMessage().catch(() => {});
-        return;
-      }
-
+      // Build keyboard buttons first (needed for both text and image paths)
       const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
       const buttons: any[] = [];
 
@@ -956,6 +930,39 @@ bot.action('menu_holdings', async (ctx) => {
         Markup.button.callback('🔙 Back to Holdings', 'menu_holdings'),
       ]);
       buttons.push([Markup.button.callback('🏠 Main Menu', 'menu_home')]);
+
+      // Generate PNL card with image
+      let pnlCardImage: Buffer | null = null;
+      try {
+        const pnlCard = await generatePNLCard(positionId);
+        if (pnlCard.image) {
+          pnlCardImage = pnlCard.image;
+        } else {
+          // Fallback to text only
+          msg += `\n${pnlCard.text}`;
+        }
+      } catch (err: any) {
+        console.error('Failed to generate PNL card:', err);
+        // Continue without PNL card if generation fails
+      }
+
+      // If image was generated, send it as a new message with caption and keyboard
+      if (pnlCardImage) {
+        await ctx.replyWithPhoto(
+          { source: pnlCardImage },
+          {
+            caption: msg,
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
+          }
+        ).catch(() => {
+          // Fallback to text if image send fails
+          ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+        });
+        // Delete the original message to avoid clutter
+        await ctx.deleteMessage().catch(() => {});
+        return;
+      }
 
       await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
     } catch (err: any) {
@@ -1446,7 +1453,14 @@ bot.action('menu_holdings', async (ctx) => {
     try {
       const card = await buildTokenCard(tokenAddress, ctx.from!.id);
       if (card.pnlCardImage) {
-        await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        await ctx.replyWithPhoto(
+          { source: card.pnlCardImage },
+          {
+            caption: card.text,
+            parse_mode: 'Markdown',
+            reply_markup: card.keyboard.reply_markup
+          }
+        );
       } else {
         await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
       }
@@ -1463,8 +1477,15 @@ bot.action('menu_holdings', async (ctx) => {
       const card = await buildTokenCard(tokenAddress, telegramId);
       await ctx.answerCbQuery('Token refreshed.').catch(() => {});
       if (card.pnlCardImage) {
-        // Send new image with updated text
-        await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+        // Send new image with updated text and keyboard
+        await ctx.replyWithPhoto(
+          { source: card.pnlCardImage },
+          {
+            caption: card.text,
+            parse_mode: 'Markdown',
+            reply_markup: card.keyboard.reply_markup
+          }
+        );
         // Delete old message to avoid clutter
         await ctx.deleteMessage().catch(() => {});
       } else {
@@ -1541,7 +1562,14 @@ bot.action('menu_holdings', async (ctx) => {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
         if (card.pnlCardImage) {
-          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+          await ctx.replyWithPhoto(
+            { source: card.pnlCardImage },
+            {
+              caption: card.text,
+              parse_mode: 'Markdown',
+              reply_markup: card.keyboard.reply_markup
+            }
+          );
         } else {
           await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
         }
@@ -2225,7 +2253,14 @@ try {
         const card = await buildTokenCard(potentialCA.trim(), telegramId);
         if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
         if (card.pnlCardImage) {
-          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+          await ctx.replyWithPhoto(
+            { source: card.pnlCardImage },
+            {
+              caption: card.text,
+              parse_mode: 'Markdown',
+              reply_markup: card.keyboard.reply_markup
+            }
+          );
         } else {
           await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
         }
@@ -2251,7 +2286,14 @@ try {
       try {
         const card = await buildTokenCard(tokenEntry.address, telegramId);
         if (card.pnlCardImage) {
-          await ctx.replyWithPhoto({ source: card.pnlCardImage }, { caption: card.text, parse_mode: 'Markdown', ...card.keyboard });
+          await ctx.replyWithPhoto(
+            { source: card.pnlCardImage },
+            {
+              caption: card.text,
+              parse_mode: 'Markdown',
+              reply_markup: card.keyboard.reply_markup
+            }
+          );
         } else {
           await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
         }
