@@ -291,11 +291,11 @@ export class SwapExecutor {
           result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
         }
       } else if (venue === 'rhea') {
-        // Per docs: check whitelisted tokens before swap
+        // Per docs: check whitelisted tokens before swap; register storage if not whitelisted
         const whitelisted: string[] = await near.getWhitelistedTokens().catch(() => []);
-        if (whitelisted.length > 0 && !whitelisted.includes(token_in) && !whitelisted.includes(token_out)) {
-          // Token not whitelisted — need storage deposit registration
-          await near.ensureStorageDeposit(subaccountId, token_in);
+        if (whitelisted.length > 0) {
+          if (!whitelisted.includes(token_in)) await near.ensureStorageDeposit(subaccountId, token_in);
+          if (!whitelisted.includes(token_out)) await near.ensureStorageDeposit(subaccountId, token_out);
         }
 
         if (dclPoolId) {
