@@ -678,11 +678,8 @@ function getUserFriendlyError(error: Error | string): string {
   if (r.includes('insufficient liquidity'))
     return 'Not enough liquidity in the pool for this trade size.';
 
-  // ── Pass through unknown errors (truncated) rather than hiding them ──
-  // This makes new errors visible without exposing full stack traces.
-  if (errorMsg && errorMsg.length > 0)
-    return sanitizeMd(errorMsg.slice(0, 280));
-
+  // ── Pass through unknown errors server-side only ─────────────────────
+  console.error('[UNHANDLED_ERROR]', errorMsg);
   return 'Something went wrong. Please try again or contact support.';
 }
 
@@ -885,104 +882,112 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('menu_settings', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+      const dash = buildSettingsDashboard(user);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
-    const dash = buildSettingsDashboard(user);
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
   // ── menu_holdings — Token list with name/logo and % change ────────────────
 bot.action('menu_holdings', async (ctx) => {
      const telegramId = ctx.from!.id;
-     const user = await getUserByTelegramId(telegramId);
-     if (!user) {
-       await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-       return;
-     }
+     try {
+       const user = await getUserByTelegramId(telegramId);
+       if (!user) {
+         await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+         return;
+       }
 
 
-     const positions = await getOpenPositions(user.id).catch(() => []);
-     if (positions.length === 0) {
-       await ctx.answerCbQuery('No holdings.').catch(() => {});
-       const keyboard = Markup.inlineKeyboard([
-         [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-         [Markup.button.callback('🔙 Back', 'menu_home')],
-         [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
-         [
-           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-         ],
+       const positions = await getOpenPositions(user.id).catch(() => []);
+       if (positions.length === 0) {
+         await ctx.answerCbQuery('No holdings.').catch(() => {});
+         const keyboard = Markup.inlineKeyboard([
+           [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
+           [Markup.button.callback('🔙 Back', 'menu_home')],
+           [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
+           [
+             Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+             Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+             Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+           ],
+         ]);
+         await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
+           parse_mode: 'Markdown',
+           ...keyboard,
+         }).catch(() => {});
+         return;
+       }
+
+       await ctx.answerCbQuery().catch(() => {});
+
+       // Fetch all token info in parallel with forceRefresh for live data
+       const infoResults = await Promise.allSettled(
+         positions.map(pos => getTokenInfo(pos.token_address, true))
+       );
+       const infoMap = new Map<string, TokenInfoResult | null>();
+       positions.forEach((pos, i) => {
+         const r = infoResults[i];
+         infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+       });
+
+      let msg = "";
+       const buttons: any[] = [];
+       let totalPortfolioValueNear = 0;
+       let nearUsd = 4.3; // Default fallback
+
+       for (const pos of positions) {
+         const info = infoMap.get(pos.token_address);
+         const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+         const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+         const currentPrice = info ? parseFloat(info.price) : 0;
+         const quantityHeld = parseFloat(pos.quantity_held);
+         const tokenValue = currentPrice * quantityHeld;
+         totalPortfolioValueNear += tokenValue;
+         nearUsd = info?.near_usd || 4.3;
+
+         const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+           ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+           : 'N/A';
+         const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+         const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+
+         // Format USD value
+         const formatUSD = (nearValue: number) => {
+           const usdValue = nearValue * nearUsd;
+           if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
+           if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
+           return `$${usdValue.toFixed(4)}`;
+         };
+
+         msg += `${emoji} *${displayLabel}*\n`;
+         msg += `  Qty: \`${quantityHeld.toFixed(4)}\`\n`;
+         msg += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
+         msg += `  Change: \`${pnlDisplay}\`\n\n`;
+
+         buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+       }
+
+
+       buttons.push([
+         Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+         Markup.button.callback('🔙 Back', 'menu_home'),
+        Markup.button.callback('➕ Import Token', 'import_token_prompt'),
        ]);
-       await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
-         parse_mode: 'Markdown',
-         ...keyboard,
-       }).catch(() => {});
-       return;
+
+       await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+     } catch (err: any) {
+       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
      }
-
-     await ctx.answerCbQuery().catch(() => {});
-
-     // Fetch all token info in parallel with forceRefresh for live data
-     const infoResults = await Promise.allSettled(
-       positions.map(pos => getTokenInfo(pos.token_address, true))
-     );
-     const infoMap = new Map<string, TokenInfoResult | null>();
-     positions.forEach((pos, i) => {
-       const r = infoResults[i];
-       infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-     });
-
-    let msg = "";
-     const buttons: any[] = [];
-     let totalPortfolioValueNear = 0;
-     let nearUsd = 4.3; // Default fallback
-
-     for (const pos of positions) {
-       const info = infoMap.get(pos.token_address);
-       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-       const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
-       const currentPrice = info ? parseFloat(info.price) : 0;
-       const quantityHeld = parseFloat(pos.quantity_held);
-       const tokenValue = currentPrice * quantityHeld;
-       totalPortfolioValueNear += tokenValue;
-       nearUsd = info?.near_usd || 4.3;
-
-       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-         : 'N/A';
-       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-       const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
-
-       // Format USD value
-       const formatUSD = (nearValue: number) => {
-         const usdValue = nearValue * nearUsd;
-         if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
-         if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
-         return `$${usdValue.toFixed(4)}`;
-       };
-
-       msg += `${emoji} *${displayLabel}*\n`;
-       msg += `  Qty: \`${quantityHeld.toFixed(4)}\`\n`;
-       msg += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
-       msg += `  Change: \`${pnlDisplay}\`\n\n`;
-
-       buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
-     }
-
-
-     buttons.push([
-       Markup.button.callback('🔄 Refresh', 'menu_holdings'),
-       Markup.button.callback('🔙 Back', 'menu_home'),
-      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
-     ]);
-
-     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
    });
 
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
@@ -1000,15 +1005,14 @@ bot.action('menu_holdings', async (ctx) => {
   bot.action(/^token_detail:(.+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
-
-    await ctx.answerCbQuery().catch(() => {});
-
     try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+
+      await ctx.answerCbQuery().catch(() => {});
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
@@ -1154,16 +1158,16 @@ bot.action('menu_holdings', async (ctx) => {
   bot.action(/^sell_initial:(.+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
-
-    await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
-    const procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
-
+    let procMsg: any = null;
     try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+
+      await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
+      procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
@@ -1238,163 +1242,171 @@ bot.action('menu_holdings', async (ctx) => {
     // Redirect to the new holdings menu
     await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
-
-    // NOTE: External deposit sync now runs in background only, not blocking menu load
-    // This prevents 3.5s+ delays when loading token detail modal
-    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
-    const positions = await getOpenPositions(user.id).catch(() => []);
-    if (positions.length === 0) {
-      await ctx.answerCbQuery('No open positions.').catch(() => {});
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_positions')],
-        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-        [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-        ],
-      ]);
-      await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      }).catch(() => {});
-      return;
-    }
-
-    await ctx.answerCbQuery().catch(() => {});
-
-    // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass with forceRefresh.
-    // Reuse this same map for both the message text and the buttons — no second fetch loop.
-    const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address, true))
-    );
-    const infoMap = new Map<string, TokenInfoResult | null>();
-    positions.forEach((pos, i) => {
-      const r = infoResults[i];
-      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-    });
-
-    let msg = `📊 *Open Positions (${positions.length})*\n\n`;
-    for (const pos of positions) {
-      const info = infoMap.get(pos.token_address);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-      const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
-      const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-
-      msg += `${emoji} *${displayLabel}*\n`;
-      msg += `  Holding: \`${pos.quantity_held}\`\n`;
-      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
-      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
-      msg += `  PNL: \`${pnlPct}%\`\n`;
-      msg += `  CA: \`${pos.token_address}\`\n\n`;
-    }
-
-    // FIX 2: Reuse the already-fetched infoMap — no second getTokenInfo() loop.
-    const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
-    const buttons: any[] = [];
-    for (const pos of positions.slice(0, 3)) {
-      const info = infoMap.get(pos.token_address);
-      const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-      const row: any[] = [];
-      if (defaultSellPct < 100) {
-        row.push(Markup.button.callback(`⚡ Sell ${defaultSellPct}% ${sym}`, `sell:${pos.id}:${defaultSellPct}`));
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
       }
-      row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
-      buttons.push(row);
-    }
-    buttons.push([
-      Markup.button.callback('🔄 Refresh', 'menu_positions'),
-      Markup.button.callback('🔙 Back', 'menu_home'),
-    ]);
-    buttons.push([
-      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-    ]);
 
-    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+      // NOTE: External deposit sync now runs in background only, not blocking menu load
+      // This prevents 3.5s+ delays when loading token detail modal
+      setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
+      const positions = await getOpenPositions(user.id).catch(() => []);
+      if (positions.length === 0) {
+        await ctx.answerCbQuery('No open positions.').catch(() => {});
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Refresh', 'menu_positions')],
+          [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+          [
+            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          ],
+        ]);
+        await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
+          parse_mode: 'Markdown',
+          ...keyboard,
+        }).catch(() => {});
+        return;
+      }
+
+      await ctx.answerCbQuery().catch(() => {});
+
+      // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass with forceRefresh.
+      // Reuse this same map for both the message text and the buttons — no second fetch loop.
+      const infoResults = await Promise.allSettled(
+        positions.map(pos => getTokenInfo(pos.token_address, true))
+      );
+      const infoMap = new Map<string, TokenInfoResult | null>();
+      positions.forEach((pos, i) => {
+        const r = infoResults[i];
+        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+      });
+
+      let msg = `📊 *Open Positions (${positions.length})*\n\n`;
+      for (const pos of positions) {
+        const info = infoMap.get(pos.token_address);
+        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+        const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+        const currentPrice = info ? parseFloat(info.price) : 0;
+        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+          : 'N/A';
+        const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+
+        msg += `${emoji} *${displayLabel}*\n`;
+        msg += `  Holding: \`${pos.quantity_held}\`\n`;
+        msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+        msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+        msg += `  PNL: \`${pnlPct}%\`\n`;
+        msg += `  CA: \`${pos.token_address}\`\n\n`;
+      }
+
+      // FIX 2: Reuse the already-fetched infoMap — no second getTokenInfo() loop.
+      const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
+      const buttons: any[] = [];
+      for (const pos of positions.slice(0, 3)) {
+        const info = infoMap.get(pos.token_address);
+        const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+        const row: any[] = [];
+        if (defaultSellPct < 100) {
+          row.push(Markup.button.callback(`⚡ Sell ${defaultSellPct}% ${sym}`, `sell:${pos.id}:${defaultSellPct}`));
+        }
+        row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
+        buttons.push(row);
+      }
+      buttons.push([
+        Markup.button.callback('🔄 Refresh', 'menu_positions'),
+        Markup.button.callback('🔙 Back', 'menu_home'),
+      ]);
+      buttons.push([
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+      ]);
+
+      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   });
 
   // ── menu_pnl — FIX 1: Parallel token fetches for closed positions ──────────
   bot.action('menu_pnl', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
-
-    // NOTE: External deposit sync now runs in background only, not blocking menu load
-    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
-
-    const [positions, db] = await Promise.all([
-      getOpenPositions(user.id).catch(() => []),
-      getDb(),
-    ]);
-    const closedResult = await db.query(
-      'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
-      [user.id, 'closed']
-    );
-
-    // FIX 1: Fetch all fills and token info for closed positions in parallel.
-    const [fillsResults, tokenInfoResults] = await Promise.all([
-      Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-       Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
-    ]);
-
-    let msg = `📊 *PNL Summary*\n\n`;
-    msg += `🟢 Open positions: ${positions.length}\n`;
-    msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
-
-    let totalRealizedNear = 0;
-    for (let i = 0; i < closedResult.rows.length; i++) {
-      const pos = closedResult.rows[i];
-      const fillResult = fillsResults[i];
-      const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
-      const buys = fills.filter((f: any) => f.side === 'buy');
-      const sells = fills.filter((f: any) => f.side === 'sell');
-
-      if (buys.length && sells.length) {
-        const avgEntry = parseFloat(pos.avg_entry_price);
-        const lastSell = sells[sells.length - 1];
-        const sellPrice = parseFloat(lastSell.price);
-        const qty = parseFloat(lastSell.amount);
-        const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
-        const sellFee = parseFloat(lastSell.fee_paid) / qty;
-
-        const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
-        totalRealizedNear += pnl.netNear;
-
-        const tiResult = tokenInfoResults[i];
-        const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
-        const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
-        const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
-        msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
       }
-    }
 
-    msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-      ],
-    ]);
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      // NOTE: External deposit sync now runs in background only, not blocking menu load
+      setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
+
+      const [positions, db] = await Promise.all([
+        getOpenPositions(user.id).catch(() => []),
+        getDb(),
+      ]);
+      const closedResult = await db.query(
+        'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
+        [user.id, 'closed']
+      );
+
+      // FIX 1: Fetch all fills and token info for closed positions in parallel.
+      const [fillsResults, tokenInfoResults] = await Promise.all([
+        Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
+        Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
+      ]);
+
+      let msg = `📊 *PNL Summary*\n\n`;
+      msg += `🟢 Open positions: ${positions.length}\n`;
+      msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
+
+      let totalRealizedNear = 0;
+      for (let i = 0; i < closedResult.rows.length; i++) {
+        const pos = closedResult.rows[i];
+        const fillResult = fillsResults[i];
+        const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
+        const buys = fills.filter((f: any) => f.side === 'buy');
+        const sells = fills.filter((f: any) => f.side === 'sell');
+
+        if (buys.length && sells.length) {
+          const avgEntry = parseFloat(pos.avg_entry_price);
+          const lastSell = sells[sells.length - 1];
+          const sellPrice = parseFloat(lastSell.price);
+          const qty = parseFloat(lastSell.amount);
+          const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
+          const sellFee = parseFloat(lastSell.fee_paid) / qty;
+
+          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
+          totalRealizedNear += pnl.netNear;
+
+          const tiResult = tokenInfoResults[i];
+          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
+          const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
+          const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
+          msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+        }
+      }
+
+      msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   });
 
   // ── /wallet & /balance ────────────────────────────────────────────────────
@@ -1512,13 +1524,17 @@ bot.action('menu_holdings', async (ctx) => {
   // ── /settings & /filters — Interactive Settings Dashboard ─────────────────
   const handleSettings = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.reply('Please run /start first.');
-      return;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.reply('Please run /start first.');
+        return;
+      }
+      const dash = buildSettingsDashboard(user);
+      await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
-    const dash = buildSettingsDashboard(user);
-    await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
   };
 
   bot.command('settings', handleSettings);
@@ -1766,49 +1782,53 @@ bot.action('menu_holdings', async (ctx) => {
   // FIX 1: Parallel token info fetch across all open positions.
   bot.command('sell', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.reply('Use /start first.'); return; }
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.reply('Use /start first.'); return; }
 
-    const positions = await getOpenPositions(user.id).catch(() => []);
-    if (positions.length === 0) {
-      await ctx.reply('📭 No open positions.');
-      return;
-    }
+      const positions = await getOpenPositions(user.id).catch(() => []);
+      if (positions.length === 0) {
+        await ctx.reply('📭 No open positions.');
+        return;
+      }
 
-    // FIX 1: All token info in parallel, one round-trip for all positions.
-    const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address, true))
-    );
-
-    for (let i = 0; i < positions.length; i++) {
-      const pos = positions[i];
-      const infoResult = infoResults[i];
-      const tokenInfo = infoResult.status === 'fulfilled' ? (infoResult as PromiseFulfilledResult<TokenInfoResult>).value : null;
-      const tokenLabel = tokenInfo
-        ? `${sanitizeMd(tokenInfo.symbol)} (${pos.token_address.slice(0, 12)}...)`
-        : pos.token_address.slice(0, 20) + '...';
-      const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-        : 'N/A';
-
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('Sell 25%', `sell:${pos.id}:25`),
-          Markup.button.callback('Sell 50%', `sell:${pos.id}:50`),
-          Markup.button.callback('Sell 75%', `sell:${pos.id}:75`),
-          Markup.button.callback('Sell 100%', `sell:${pos.id}:100`),
-        ],
-      ]);
-
-      await ctx.reply(
-        `📊 *${tokenLabel}*\n` +
-        `📦 Holding: \`${pos.quantity_held}\`\n` +
-        `📥 Avg Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n` +
-        `💰 Current: \`${currentPrice.toFixed(8)} NEAR\`\n` +
-        `📈 PNL: \`${pnlPct}%\`\n\nChoose sell amount:`,
-        { parse_mode: 'Markdown', ...keyboard }
+      // FIX 1: All token info in parallel, one round-trip for all positions.
+      const infoResults = await Promise.allSettled(
+        positions.map(pos => getTokenInfo(pos.token_address, true))
       );
+
+      for (let i = 0; i < positions.length; i++) {
+        const pos = positions[i];
+        const infoResult = infoResults[i];
+        const tokenInfo = infoResult.status === 'fulfilled' ? (infoResult as PromiseFulfilledResult<TokenInfoResult>).value : null;
+        const tokenLabel = tokenInfo
+          ? `${sanitizeMd(tokenInfo.symbol)} (${pos.token_address.slice(0, 12)}...)`
+          : pos.token_address.slice(0, 20) + '...';
+        const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+          : 'N/A';
+
+        const keyboard = Markup.inlineKeyboard([
+          [
+            Markup.button.callback('Sell 25%', `sell:${pos.id}:25`),
+            Markup.button.callback('Sell 50%', `sell:${pos.id}:50`),
+            Markup.button.callback('Sell 75%', `sell:${pos.id}:75`),
+            Markup.button.callback('Sell 100%', `sell:${pos.id}:100`),
+          ],
+        ]);
+
+        await ctx.reply(
+          `📊 *${tokenLabel}*\n` +
+          `📦 Holding: \`${pos.quantity_held}\`\n` +
+          `📥 Avg Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n` +
+          `💰 Current: \`${currentPrice.toFixed(8)} NEAR\`\n` +
+          `📈 PNL: \`${pnlPct}%\`\n\nChoose sell amount:`,
+          { parse_mode: 'Markdown', ...keyboard }
+        );
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1838,177 +1858,189 @@ bot.action('menu_holdings', async (ctx) => {
   // FIX 1 & 2: Parallel token fetches + single-pass info reuse for buttons.
   bot.command('positions', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.reply('Use /start first.'); return; }
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.reply('Use /start first.'); return; }
 
-    const positions = await getOpenPositions(user.id).catch(() => []);
-    if (positions.length === 0) {
-      await ctx.reply('📭 No open positions.');
-      return;
-    }
+      const positions = await getOpenPositions(user.id).catch(() => []);
+      if (positions.length === 0) {
+        await ctx.reply('📭 No open positions.');
+        return;
+      }
 
-    // FIX 1 & 2: Single parallel fetch; reuse results for both text and buttons.
-    const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address, true))
-    );
-    const infoMap = new Map<string, TokenInfoResult | null>();
-    positions.forEach((pos, i) => {
-      const r = infoResults[i];
-      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-    });
+      // FIX 1 & 2: Single parallel fetch; reuse results for both text and buttons.
+      const infoResults = await Promise.allSettled(
+        positions.map(pos => getTokenInfo(pos.token_address, true))
+      );
+      const infoMap = new Map<string, TokenInfoResult | null>();
+      positions.forEach((pos, i) => {
+        const r = infoResults[i];
+        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+      });
 
-    let msg = `📊 *Open Positions (${positions.length})*\n\n`;
-    for (const pos of positions) {
-      const info = infoMap.get(pos.token_address);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-      const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      let msg = `📊 *Open Positions (${positions.length})*\n\n`;
+      for (const pos of positions) {
+        const info = infoMap.get(pos.token_address);
+        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+        const currentPrice = info ? parseFloat(info.price) : 0;
+        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+          : 'N/A';
+        const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
 
-      msg += `${emoji} *${symbol}*\n`;
-      msg += `  Holding: \`${pos.quantity_held}\`\n`;
-      msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
-      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
-      msg += `  PNL: \`${pnlPct}%\`\n`;
-      msg += `  CA: \`${pos.token_address}\`\n\n`;
-    }
+        msg += `${emoji} *${symbol}*\n`;
+        msg += `  Holding: \`${pos.quantity_held}\`\n`;
+        msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
+        msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+        msg += `  PNL: \`${pnlPct}%\`\n`;
+        msg += `  CA: \`${pos.token_address}\`\n\n`;
+      }
 
-    // FIX 2: Reuse infoMap — no second getTokenInfo() loop.
-    const buttons: any[] = [];
-    for (const pos of positions.slice(0, 3)) {
-      const info = infoMap.get(pos.token_address);
-      const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      // FIX 2: Reuse infoMap — no second getTokenInfo() loop.
+      const buttons: any[] = [];
+      for (const pos of positions.slice(0, 3)) {
+        const info = infoMap.get(pos.token_address);
+        const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+        buttons.push([
+          Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
+          Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
+        ]);
+      }
       buttons.push([
-        Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
-        Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
+        Markup.button.callback('🔄 Refresh', 'menu_positions'),
+        Markup.button.callback('🔙 Back', 'menu_home'),
       ]);
-    }
-    buttons.push([
-      Markup.button.callback('🔄 Refresh', 'menu_positions'),
-      Markup.button.callback('🔙 Back', 'menu_home'),
-    ]);
 
-    await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+      await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   });
 
   // FIX 1: Parallel fills + token info fetches for /pnl command.
   bot.command('pnl', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.reply('Use /start first.'); return; }
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.reply('Use /start first.'); return; }
 
-    const [positions, db] = await Promise.all([
-      getOpenPositions(user.id).catch(() => []),
-      getDb(),
-    ]);
-    const closedResult = await db.query(
-      'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
-      [user.id, 'closed']
-    );
+      const [positions, db] = await Promise.all([
+        getOpenPositions(user.id).catch(() => []),
+        getDb(),
+      ]);
+      const closedResult = await db.query(
+        'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
+        [user.id, 'closed']
+      );
 
-    // FIX 1: Fetch all fills and token info in parallel with forceRefresh.
-    const [fillsResults, tokenInfoResults] = await Promise.all([
-      Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
-    ]);
+      // FIX 1: Fetch all fills and token info in parallel with forceRefresh.
+      const [fillsResults, tokenInfoResults] = await Promise.all([
+        Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
+        Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
+      ]);
 
-    let msg = `📊 *PNL Summary*\n\n`;
-    msg += `🟢 Open positions: ${positions.length}\n`;
-    msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
+      let msg = `📊 *PNL Summary*\n\n`;
+      msg += `🟢 Open positions: ${positions.length}\n`;
+      msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
 
-    let totalRealizedNear = 0;
-    for (let i = 0; i < closedResult.rows.length; i++) {
-      const pos = closedResult.rows[i];
-      const fillResult = fillsResults[i];
-      const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
-      const buys = fills.filter((f: any) => f.side === 'buy');
-      const sells = fills.filter((f: any) => f.side === 'sell');
+      let totalRealizedNear = 0;
+      for (let i = 0; i < closedResult.rows.length; i++) {
+        const pos = closedResult.rows[i];
+        const fillResult = fillsResults[i];
+        const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
+        const buys = fills.filter((f: any) => f.side === 'buy');
+        const sells = fills.filter((f: any) => f.side === 'sell');
 
-      if (buys.length && sells.length) {
-        const avgEntry = parseFloat(pos.avg_entry_price);
-        const lastSell = sells[sells.length - 1];
-        const sellPrice = parseFloat(lastSell.price);
-        const qty = parseFloat(lastSell.amount);
-        const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
-        const sellFee = parseFloat(lastSell.fee_paid) / qty;
+        if (buys.length && sells.length) {
+          const avgEntry = parseFloat(pos.avg_entry_price);
+          const lastSell = sells[sells.length - 1];
+          const sellPrice = parseFloat(lastSell.price);
+          const qty = parseFloat(lastSell.amount);
+          const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
+          const sellFee = parseFloat(lastSell.fee_paid) / qty;
 
-        const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
-        totalRealizedNear += pnl.netNear;
+          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
+          totalRealizedNear += pnl.netNear;
 
-        const tiResult = tokenInfoResults[i];
-        const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
-        const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
-        const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
-        msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+          const tiResult = tokenInfoResults[i];
+          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
+          const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
+          const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
+          msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+        }
       }
-    }
 
-    msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-      [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-      ],
-    ]);
-    await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+      msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
+        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+      await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   });
 
   // ── /snipe <token_ca|name> ────────────────────────────────────────────────
   bot.command('snipe', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.reply('Use /start first.'); return; }
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.reply('Use /start first.'); return; }
 
-    const args = ctx.message!.text!.split(' ').slice(1);
-    if (!args[0]) {
-      await ctx.reply('Usage: /snipe <token_ca_or_name> [amount_near]\nExample: /snipe MYTOKEN.near 2');
-      return;
-    }
-
-    const query = args[0].trim();
-    const amountNear = parseFloat(args[1] ?? user.auto_buy_amount_near?.toString() ?? '1');
-
-    if (amountNear <= 0) {
-      await ctx.reply('Specify amount: /snipe <token> <amount_near>');
-      return;
-    }
-
-    const isCA = query.includes('.near') || query.length === 64;
-
-    if (isCA) {
-      await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
-      try {
-        const res = await executeBuyHelper(telegramId, query, amountNear);
-        await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
-      } catch (err: any) {
-        await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-      }
-    } else {
-      const names = Array.from(localTokenNames.keys());
-      const { match, score } = fuzzyMatch(query, names);
-
-      if (!match || score < 0.5) {
-        await ctx.reply(`❌ No token found matching "${query}".\n\nTry pasting the full contract address (CA) for a direct snipe.`);
+      const args = ctx.message!.text!.split(' ').slice(1);
+      if (!args[0]) {
+        await ctx.reply('Usage: /snipe <token_ca_or_name> [amount_near]\nExample: /snipe MYTOKEN.near 2');
         return;
       }
 
-      const tokenData = localTokenNames.get(match)!;
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback(`✅ Yes, snipe ${match}`, `snipe_confirm:${tokenData.address}:${amountNear}`),
-          Markup.button.callback('❌ Cancel', 'snipe_cancel'),
-        ],
-      ]);
+      const query = args[0].trim();
+      const amountNear = parseFloat(args[1] ?? user.auto_buy_amount_near?.toString() ?? '1');
 
-      await ctx.reply(
-        `Found: *${match}* (${sanitizeMd(tokenData.symbol)})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} NEAR?`,
-        { parse_mode: 'Markdown', ...keyboard }
-      );
+      if (amountNear <= 0) {
+        await ctx.reply('Specify amount: /snipe <token> <amount_near>');
+        return;
+      }
+
+      const isCA = query.includes('.near') || query.length === 64;
+
+      if (isCA) {
+        await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await executeBuyHelper(telegramId, query, amountNear);
+          await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+      } else {
+        const names = Array.from(localTokenNames.keys());
+        const { match, score } = fuzzyMatch(query, names);
+
+        if (!match || score < 0.5) {
+          await ctx.reply(`❌ No token found matching "${query}".\n\nTry pasting the full contract address (CA) for a direct snipe.`);
+          return;
+        }
+
+        const tokenData = localTokenNames.get(match)!;
+        const keyboard = Markup.inlineKeyboard([
+          [
+            Markup.button.callback(`✅ Yes, snipe ${match}`, `snipe_confirm:${tokenData.address}:${amountNear}`),
+            Markup.button.callback('❌ Cancel', 'snipe_cancel'),
+          ],
+        ]);
+
+        await ctx.reply(
+          `Found: *${match}* (${sanitizeMd(tokenData.symbol)})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} NEAR?`,
+          { parse_mode: 'Markdown', ...keyboard }
+        );
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -2039,34 +2071,38 @@ bot.action('menu_holdings', async (ctx) => {
   // ── /export & /rotatekey ──────────────────────────────────────────────────
   const handleExportPrompt = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) {
-      await ctx.reply('Use /start to set up your wallet first.');
-      return;
-    }
-
-    const last = lastExportTime.get(telegramId);
-    if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
-      const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
-      await ctx.reply(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
-      return;
-    }
-
-    await ctx.reply(
-      `⚠️ *Export Private Key*\n\n` +
-      `You are requesting to view your raw private key for account \`${user.subaccount_id}\`.\n\n` +
-      `Anyone who sees this key will have full control over your funds.\n\n` +
-      `Are you sure you want to display your private key?`,
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('⚠️ Yes, show my private key', 'export_confirm'),
-            Markup.button.callback('Cancel', 'export_cancel'),
-          ],
-        ]),
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) {
+        await ctx.reply('Use /start to set up your wallet first.');
+        return;
       }
-    );
+
+      const last = lastExportTime.get(telegramId);
+      if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
+        const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
+        await ctx.reply(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`);
+        return;
+      }
+
+      await ctx.reply(
+        `⚠️ *Export Private Key*\n\n` +
+        `You are requesting to view your raw private key for account \`${user.subaccount_id}\`.\n\n` +
+        `Anyone who sees this key will have full control over your funds.\n\n` +
+        `Are you sure you want to display your private key?`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback('⚠️ Yes, show my private key', 'export_confirm'),
+              Markup.button.callback('Cancel', 'export_cancel'),
+            ],
+          ]),
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   };
 
   bot.command('export', handleExportPrompt);
@@ -2199,45 +2235,49 @@ bot.action('menu_holdings', async (ctx) => {
   // ── /referral — Show referral link and stats ───────────────────────────────
   bot.command('referral', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) {
-      await ctx.reply('Use /start first.');
-      return;
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) {
+        await ctx.reply('Use /start first.');
+        return;
+      }
+
+      if (!user.referral_code) {
+        const username = ctx.from!.username || 'user';
+        const code = await generateReferralCode(user.id, username);
+        user.referral_code = code;
+      }
+
+      const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
+
+      // Get referral stats
+      const db = await getDb();
+      const referralsResult = await db.query(
+        'SELECT * FROM referrals WHERE referrer_id = $1',
+        [user.id]
+      );
+      const referrals = referralsResult.rows;
+
+      const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
+      const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+
+      await ctx.reply(
+        `🎁 *Referral Program*\n\n` +
+        `Your referral link:\n` +
+        `\`${referralLink}\`\n\n` +
+        `📊 *Your Stats*:\n` +
+        `• Total referrals: ${referrals.length}\n` +
+        `• Active referrals: ${activeReferrals}\n` +
+        `• Total earnings: ${totalEarnings.toFixed(4)} NEAR\n\n` +
+        `💰 *Rewards*:\n` +
+        `• Earn 30% of fees from every user you refer\n` +
+        `• Rewards are automatically credited to your account\n` +
+        `• Share your link and earn while your friends trade!`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
-
-    if (!user.referral_code) {
-      const username = ctx.from!.username || 'user';
-      const code = await generateReferralCode(user.id, username);
-      user.referral_code = code;
-    }
-
-    const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
-
-    // Get referral stats
-    const db = await getDb();
-    const referralsResult = await db.query(
-      'SELECT * FROM referrals WHERE referrer_id = $1',
-      [user.id]
-    );
-    const referrals = referralsResult.rows;
-
-    const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
-    const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
-
-    await ctx.reply(
-      `🎁 *Referral Program*\n\n` +
-      `Your referral link:\n` +
-      `\`${referralLink}\`\n\n` +
-      `📊 *Your Stats*:\n` +
-      `• Total referrals: ${referrals.length}\n` +
-      `• Active referrals: ${activeReferrals}\n` +
-      `• Total earnings: ${totalEarnings.toFixed(4)} NEAR\n\n` +
-      `💰 *Rewards*:\n` +
-      `• Earn 30% of fees from every user you refer\n` +
-      `• Rewards are automatically credited to your account\n` +
-      `• Share your link and earn while your friends trade!`,
-      { parse_mode: 'Markdown' }
-    );
   });
 
   // ── /stoploss & /takeprofit ───────────────────────────────────────────────
