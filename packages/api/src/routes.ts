@@ -150,7 +150,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 export async function buildTokenCard(tokenAddress: string, telegramId?: number): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, and user settings in parallel
   const [info, balances, user] = await Promise.allSettled([
-    getTokenInfo(tokenAddress),
+    getTokenInfo(tokenAddress, true),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
     telegramId ? getUserByTelegramId(telegramId).catch(() => null) : Promise.resolve(null),
   ]);
@@ -870,9 +870,9 @@ bot.action('menu_holdings', async (ctx) => {
         return;
       }
 
-      const [info, fills] = await Promise.all([
-        getTokenInfo(position.token_address).catch(() => null),
-        getFillsByPosition(positionId).catch(() => []),
+       const [info, fills] = await Promise.all([
+         getTokenInfo(position.token_address, true).catch(() => null),
+         getFillsByPosition(positionId).catch(() => []),
       ]);
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
@@ -1002,8 +1002,8 @@ bot.action('menu_holdings', async (ctx) => {
       }
 
       // Fetch current market price from token info (not avg_entry_price)
-      const tokenInfo = await getTokenInfo(position.token_address).catch(() => null);
-      const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+       const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
+       const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
 
       if (currentPrice === 0) {
         await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
@@ -1161,7 +1161,7 @@ bot.action('menu_holdings', async (ctx) => {
     // FIX 1: Fetch all fills and token info for closed positions in parallel.
     const [fillsResults, tokenInfoResults] = await Promise.all([
       Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address))),
+       Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
     ]);
 
     let msg = `📊 *PNL Summary*\n\n`;
@@ -1575,7 +1575,7 @@ bot.action('menu_holdings', async (ctx) => {
 
     // FIX 1: All token info in parallel, one round-trip for all positions.
     const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
+      positions.map(pos => getTokenInfo(pos.token_address, true))
     );
 
     for (let i = 0; i < positions.length; i++) {
@@ -1654,7 +1654,7 @@ bot.action('menu_holdings', async (ctx) => {
 
     // FIX 1 & 2: Single parallel fetch; reuse results for both text and buttons.
     const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
+      positions.map(pos => getTokenInfo(pos.token_address, true))
     );
     const infoMap = new Map<string, TokenInfoResult | null>();
     positions.forEach((pos, i) => {
