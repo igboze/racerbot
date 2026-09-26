@@ -24,6 +24,8 @@ dockerfile = "Dockerfile.detector"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "FASTNEAR_API_KEY", value = "${{services.api.environments.FASTNEAR_API_KEY}}" },
+  { variable = "QUICKNODE_ENDPOINT_URL", value = "${{services.api.environments.QUICKNODE_ENDPOINT_URL}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "3000" },
@@ -34,6 +36,8 @@ dockerfile = "Dockerfile.executor"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "FASTNEAR_API_KEY", value = "${{services.api.environments.FASTNEAR_API_KEY}}" },
+  { variable = "QUICKNODE_ENDPOINT_URL", value = "${{services.api.environments.QUICKNODE_ENDPOINT_URL}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
@@ -44,6 +48,8 @@ dockerfile = "Dockerfile.triggers"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "${{services.api.environments.RPC_PROVIDERS}}" },
+  { variable = "FASTNEAR_API_KEY", value = "${{services.api.environments.FASTNEAR_API_KEY}}" },
+  { variable = "QUICKNODE_ENDPOINT_URL", value = "${{services.api.environments.QUICKNODE_ENDPOINT_URL}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "5000" },
