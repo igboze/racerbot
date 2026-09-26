@@ -701,6 +701,9 @@ export class MultiRpcNear {
       }
     } catch {}
 
+    // Early exit: if we already have a direct wrap.near pool, no need to scan further
+    if (candidates.length > 0) return candidates[0];
+
     // 2. DCL pool on dclv2.ref-labs.near with wrap.near
     try {
       const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress);
@@ -758,8 +761,46 @@ export class MultiRpcNear {
       }
     } catch {}
 
-    // 4. On-chain scan of recent Ref Finance AMM pools (scanning backwards from poolCount)
-    try {
+    // Fast REST path via api.ref.finance before slow on-chain scan
+    if (candidates.length === 0) {
+      try {
+        const _u2 = 'https://api.ref.finance/list-pools-by-tokens?token0=wrap.near&token1=' + encodeURIComponent(tokenAddress);
+        const _r2 = await fetch(_u2, { signal: AbortSignal.timeout(5000) });
+        if (_r2.ok) {
+          const _pools2 = (await _r2.json()) as any[];
+          for (const pool of (_pools2 || [])) {
+            const poolId = Number(pool.id);
+            const tokens: string[] = pool.token_account_ids || [];
+            const otherToken = tokens.find((t: string) => t !== tokenAddress) || 'wrap.near';
+            const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
+            if (rh) {
+              const pairedInfo = await getPairedTokenNearRate(otherToken);
+              const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
+              const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+              if (rOtherHuman > 0 && rOutHuman > 0) {
+                const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
+                const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
+                candidates.push({
+                  poolId,
+                  pairedToken: otherToken,
+                  intermediateToken: otherToken !== 'wrap.near' ? otherToken : undefined,
+                  intermediatePoolId: pairedInfo.poolId,
+                  isDcl: false,
+                  price: priceInNear,
+                  liquidityNear,
+                  reserveNear: (rOtherHuman * pairedInfo.rateInNear * 1e24).toFixed(0),
+                  reserveToken: rh.reserveOut,
+                  fee: rh.fee,
+                });
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 4. On-chain scan of recent Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
+    if (candidates.length === 0) try {
       const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
       if (numPools && numPools > 0) {
         const batchSize = 100;
