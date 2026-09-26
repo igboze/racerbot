@@ -41,8 +41,21 @@ try {
 }
 
 /**
+ * Helper to draw rounded rectangles on canvas
+ */
+function drawRoundedRect(ctx: any, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/**
  * Generate PNL card image using canvas
- * Falls back to null if canvas is not available or fails
+ * Rendered using RacerBot modern dark UI card aesthetic
  */
 export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | null> {
   if (!canvasModule) {
@@ -52,98 +65,202 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
   try {
     const { createCanvas } = canvasModule;
     const width = 800;
-    const height = 600;
+    const height = 620;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     const fontFallback = 'Roboto, "DejaVu Sans", "Liberation Sans", "Arial", sans-serif';
 
-    // Background gradient
-    const gradient = ctx.createLinearGradient(0, 0, width, height);
-    if (data.isProfit) {
-      gradient.addColorStop(0, '#1a2f1a');
-      gradient.addColorStop(1, '#0d1f0d');
-    } else {
-      gradient.addColorStop(0, '#2f1a1a');
-      gradient.addColorStop(1, '#1f0d0d');
-    }
-    ctx.fillStyle = gradient;
+    // 1. Background Outer Container Gradient
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    bgGradient.addColorStop(0, '#131a2c');
+    bgGradient.addColorStop(0.55, '#0d1220');
+    bgGradient.addColorStop(1, '#080c16');
+
+    // Fill background
+    ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, width, height);
 
-    // Border
-    ctx.strokeStyle = data.isProfit ? '#4ade80' : '#f87171';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, width - 4, height - 4);
+    // Card Outer Border (24px radius inset)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 2;
+    drawRoundedRect(ctx, 10, 10, width - 20, height - 20, 24);
+    ctx.stroke();
 
-    // Title
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold 32px ${fontFallback}`;
+    // 2. Header / Brand Row (Y = 45)
+    // Brand name & icon
+    ctx.fillStyle = '#23e6c4';
+    ctx.font = `bold 22px ${fontFallback}`;
+    ctx.textAlign = 'left';
+    ctx.fillText('⚡', 40, 48);
+
+    ctx.fillStyle = '#f4f6ff';
+    ctx.font = `bold 18px ${fontFallback}`;
+    ctx.fillText('RacerBot', 68, 47);
+
+    // Network / Venue Pill (Right aligned)
+    const venueText = (data.venue || 'NEAR PROTOCOL').toUpperCase();
+    ctx.font = `500 12px ${fontFallback}`;
+    const venueWidth = ctx.measureText(venueText).width;
+    const pillPaddingX = 12;
+    const pillW = venueWidth + pillPaddingX * 2;
+    const pillX = width - 40 - pillW;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    drawRoundedRect(ctx, pillX, 30, pillW, 26, 13);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#78829f';
     ctx.textAlign = 'center';
-    ctx.fillText(`${data.tokenSymbol} PNL CARD`, width / 2, 50);
+    ctx.fillText(venueText, pillX + pillW / 2, 47);
 
-    // Status indicator with canvas drawn dot
+    // 3. Hero Section (Y = 100 - 230)
+    // Token symbol & Name
+    ctx.textAlign = 'left';
+    ctx.font = `500 16px ${fontFallback}`;
+    ctx.fillStyle = '#78829f';
+    const tokenDisplay = `${data.tokenSymbol} (${data.tokenName})`;
+    ctx.fillText(tokenDisplay, 40, 105);
+
+    // Status Tag (Open / Closed Position)
     const statusText = data.positionStatus === 'open' ? 'OPEN POSITION' : 'CLOSED POSITION';
-    const statusColor = data.positionStatus === 'open' ? '#4ade80' : '#f87171';
-    
-    // Draw status dot
-    ctx.fillStyle = statusColor;
-    ctx.beginPath();
-    ctx.arc(width / 2 - 80, 78, 6, 0, Math.PI * 2);
+    const statusColor = data.positionStatus === 'open' ? '#35f2b4' : '#ff5c72';
+    const statusBg = data.positionStatus === 'open' ? 'rgba(53, 242, 180, 0.12)' : 'rgba(255, 92, 114, 0.12)';
+
+    ctx.font = `bold 11px ${fontFallback}`;
+    const statusW = ctx.measureText(statusText).width + 24;
+    const tokenW = ctx.measureText(tokenDisplay).width;
+    const tagX = 40 + tokenW + 16;
+
+    ctx.fillStyle = statusBg;
+    drawRoundedRect(ctx, tagX, 90, statusW, 22, 11);
     ctx.fill();
 
-    ctx.fillStyle = '#e5e7eb';
-    ctx.font = `bold 18px ${fontFallback}`;
-    ctx.textAlign = 'left';
-    ctx.fillText(statusText, width / 2 - 65, 84);
+    // Status Dot
+    ctx.fillStyle = statusColor;
+    ctx.beginPath();
+    ctx.arc(tagX + 10, 101, 3.5, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Token info
-    ctx.font = `16px ${fontFallback}`;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillText(`Token: ${data.tokenName}`, 30, 130);
-    ctx.fillText(`CA: ${data.tokenAddress.length > 30 ? data.tokenAddress.slice(0, 28) + '...' : data.tokenAddress}`, 30, 155);
-    ctx.fillText(`Venue: ${data.venue || 'Unknown'}`, 30, 180);
+    // Status Text
+    ctx.fillStyle = statusColor;
+    ctx.fillText(statusText, tagX + 18, 105);
 
-    // External deposit indicator
+    // External deposit badge if active
     if (data.isExternalDeposit) {
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.15)';
+      drawRoundedRect(ctx, tagX + statusW + 10, 90, 130, 22, 11);
+      ctx.fill();
       ctx.fillStyle = '#fbbf24';
-      ctx.fillText('[External Deposit Detected]', 30, 205);
+      ctx.fillText('EXTERNAL DEPOSIT', tagX + statusW + 20, 105);
     }
 
-    // Prices
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold 20px ${fontFallback}`;
-    ctx.fillText(`Entry Price: ${data.entryPrice.toFixed(8)} NEAR`, 30, 250);
-    ctx.fillText(`Current Price: ${data.currentPrice.toFixed(8)} NEAR`, 30, 280);
+    // Giant PNL Display
+    const pnlSign = data.isProfit ? '+' : '';
+    const pnlPercentText = `${pnlSign}${data.pnlPercent.toFixed(2)}%`;
+    const pnlColor = data.isProfit ? '#35f2b4' : '#ff5c72';
 
-    // Market cap
-    if (data.marketCap && data.marketCap !== 'N/A') {
-      ctx.fillStyle = '#9ca3af';
-      ctx.font = `16px ${fontFallback}`;
-      ctx.fillText(`Market Cap: ${data.marketCap}`, 30, 310);
-    }
-
-    // Holdings
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold 20px ${fontFallback}`;
-    ctx.fillText(`Quantity Held: ${data.quantityHeld.toFixed(4)}`, 30, 350);
-    ctx.fillText(`Initial Investment: ${data.initialInvestment.toFixed(4)} NEAR`, 30, 380);
-    ctx.fillText(`Unrealized Value: ${data.unrealizedValue.toFixed(4)} NEAR`, 30, 410);
-
-    // PNL
-    const pnlColor = data.isProfit ? '#4ade80' : '#f87171';
     ctx.fillStyle = pnlColor;
-    ctx.font = `bold 24px ${fontFallback}`;
-    ctx.fillText(`Realized PNL: ${data.isProfit ? '+' : ''}${data.realizedPnl.toFixed(4)} NEAR`, 30, 450);
-    ctx.fillText(`Unrealized PNL: ${data.isProfit ? '+' : ''}${data.unrealizedPnl.toFixed(4)} NEAR`, 30, 480);
-    ctx.fillText(`Total PNL: ${data.isProfit ? '+' : ''}${data.totalPnl.toFixed(4)} NEAR (${data.pnlPercent.toFixed(2)}%)`, 30, 510);
+    ctx.font = `bold 64px ${fontFallback}`;
+    ctx.fillText(pnlPercentText, 40, 178);
 
-    // Footer
-    ctx.fillStyle = '#9ca3af';
-    ctx.font = `14px ${fontFallback}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(`Hold: ${data.holdDuration}  |  ${data.totalBuys} buys, ${data.totalSells} sells  |  Fees: ${data.totalFeesPaid.toFixed(4)} NEAR`, width / 2, 560);
-    ctx.fillText('Generated by RacerBot', width / 2, 585);
+    // Sub label: Bought X NEAR -> Worth Y NEAR
+    ctx.fillStyle = '#78829f';
+    ctx.font = `500 15px ${fontFallback}`;
+    const subText = `Total PNL: ${pnlSign}${data.totalPnl.toFixed(4)} NEAR  •  Bought ${data.initialInvestment.toFixed(2)} NEAR ➔ Worth ${data.unrealizedValue.toFixed(2)} NEAR`;
+    ctx.fillText(subText, 40, 212);
+
+    // 4. Decorative Cyan Accent Lines (Y = 242)
+    const lineY = 242;
+    const grad1 = ctx.createLinearGradient(40, 0, width - 40, 0);
+    grad1.addColorStop(0, '#23e6c4');
+    grad1.addColorStop(1, 'transparent');
+
+    // Line 1 (100% width, 55% opacity)
+    ctx.fillStyle = grad1;
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(40, lineY, width - 80, 2);
+
+    // Line 2 (62% width, 30% opacity)
+    ctx.globalAlpha = 0.30;
+    ctx.fillRect(40, lineY + 5, (width - 80) * 0.62, 2);
+
+    // Line 3 (30% width, 15% opacity)
+    ctx.globalAlpha = 0.15;
+    ctx.fillRect(40, lineY + 10, (width - 80) * 0.30, 2);
+
+    ctx.globalAlpha = 1.0; // reset alpha
+
+    // 5. Stats Grid (2 Columns x 3 Rows)
+    const gridStartY = 285;
+    const col1X = 40;
+    const col2X = 420;
+    const rowGap = 65;
+
+    const fields = [
+      [
+        { label: 'ENTRY PRICE', val: `${data.entryPrice.toFixed(6)} NEAR` },
+        { label: 'CURRENT PRICE', val: `${data.currentPrice.toFixed(6)} NEAR` },
+      ],
+      [
+        { label: 'INITIAL INVESTMENT', val: `${data.initialInvestment.toFixed(4)} NEAR` },
+        { label: 'UNREALIZED VALUE', val: `${data.unrealizedValue.toFixed(4)} NEAR` },
+      ],
+      [
+        { label: 'REALIZED PNL', val: `${data.isProfit ? '+' : ''}${data.realizedPnl.toFixed(4)} NEAR` },
+        { label: 'HOLD DURATION', val: data.holdDuration },
+      ],
+    ];
+
+    fields.forEach((row, rIdx) => {
+      const y = gridStartY + rIdx * rowGap;
+
+      // Col 1
+      ctx.fillStyle = '#78829f';
+      ctx.font = `500 12px ${fontFallback}`;
+      ctx.fillText(row[0].label, col1X, y);
+      ctx.fillStyle = '#f4f6ff';
+      ctx.font = `bold 19px ${fontFallback}`;
+      ctx.fillText(row[0].val, col1X, y + 24);
+
+      // Col 2
+      ctx.fillStyle = '#78829f';
+      ctx.font = `500 12px ${fontFallback}`;
+      ctx.fillText(row[1].label, col2X, y);
+      ctx.fillStyle = '#f4f6ff';
+      ctx.font = `bold 19px ${fontFallback}`;
+      ctx.fillText(row[1].val, col2X, y + 24);
+    });
+
+    // 6. Footer Section (Y = 515 - 590)
+    const footerY = 515;
+
+    // Footer divider line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(40, footerY);
+    ctx.lineTo(width - 40, footerY);
+    ctx.stroke();
+
+    // Footer text left
+    ctx.fillStyle = '#454d66';
+    ctx.font = `500 13px ${fontFallback}`;
+    ctx.textAlign = 'left';
+    ctx.fillText(
+      `Generated by RacerBot  •  ${data.totalBuys} buys, ${data.totalSells} sells  •  Fees: ${data.totalFeesPaid.toFixed(4)} NEAR`,
+      40,
+      footerY + 45
+    );
+
+    // Footer text right
+    ctx.fillStyle = '#78829f';
+    ctx.font = `bold 13px ${fontFallback}`;
+    ctx.textAlign = 'right';
+    ctx.fillText('@RacerBot', width - 40, footerY + 45);
 
     // Convert to buffer
     const buffer = canvas.toBuffer('image/png');
