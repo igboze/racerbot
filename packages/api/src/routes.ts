@@ -3,6 +3,7 @@ import {
   getUserByTelegramId,
   getOpenPositions,
   getFillsByPosition,
+  getPositionById,
   getTokenCache,
   createTrigger,
   updateUserDefaults,
@@ -362,8 +363,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
           Markup.button.callback('Sell 100%', `sell:${userPosition.id}:100`),
         ],
         [
+          Markup.button.callback('⚡ Buy More', `buy_custom_prompt:${tokenInfo.address}`),
           Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
-          Markup.button.callback('🔙 Back', 'menu_home'),
         ],
         ...linkRows,
         [
@@ -467,6 +468,84 @@ export async function sendTokenCard(ctx: any, card: { text: string; keyboard: an
   } catch (err: any) {
     console.warn('[API] ctx.reply Markdown failed, retrying plain text:', err.message);
     await ctx.reply(card.text.replace(/[*_`]/g, ''), card.keyboard);
+  }
+}
+
+/**
+ * Safely send a PNL card (photo + caption or markdown text) for a position to Telegram.
+ */
+export async function sendPnlCardMessage(
+  ctx: Context,
+  positionId: string,
+  headerMsg?: string
+) {
+  try {
+    const position = await getPositionById(positionId);
+    if (!position) {
+      if (headerMsg) {
+        await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+      }
+      return;
+    }
+
+    const pnlCard = await generatePNLCard(positionId);
+    let fullText = pnlCard.text;
+    if (headerMsg) {
+      fullText = `${headerMsg}\n\n${fullText}`;
+    }
+
+    const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
+    const buttons: any[] = [];
+    const quantityHeldNum = parseFloat(position.quantity_held || '0');
+
+    if (position.status === 'open' && quantityHeldNum > 0) {
+      buttons.push([
+        Markup.button.callback('Sell 25%', `sell:${positionId}:25`),
+        Markup.button.callback('Sell 50%', `sell:${positionId}:50`),
+      ]);
+      buttons.push([
+        Markup.button.callback('Sell 75%', `sell:${positionId}:75`),
+        Markup.button.callback('Sell 100%', `sell:${positionId}:100`),
+      ]);
+      buttons.push([
+        Markup.button.callback('💰 Sell Initial', `sell_initial:${positionId}`),
+      ]);
+    }
+
+    buttons.push([
+      Markup.button.callback('🔄 Refresh PnL', `token_detail:${positionId}`),
+      Markup.button.callback('💼 Holdings', 'menu_holdings'),
+    ]);
+    buttons.push([
+      Markup.button.callback('🏠 Main Menu', 'menu_home'),
+    ]);
+
+    const keyboard = Markup.inlineKeyboard(buttons);
+
+    if (pnlCard.image) {
+      try {
+        await ctx.replyWithPhoto(
+          { source: pnlCard.image },
+          {
+            caption: fullText,
+            parse_mode: 'Markdown',
+            reply_markup: keyboard.reply_markup,
+          }
+        );
+        return;
+      } catch (err: any) {
+        console.warn('[PNL_CARD] replyWithPhoto failed, falling back to text:', err.message);
+      }
+    }
+
+    await ctx.reply(fullText, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+      await ctx.reply(fullText.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+    });
+  } catch (err: any) {
+    console.error('[PNL_CARD] Error sending PNL card message:', err);
+    if (headerMsg) {
+      await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+    }
   }
 }
 
@@ -1081,12 +1160,14 @@ bot.action('menu_holdings', async (ctx) => {
       return;
     }
 
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
+    const procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
 
     try {
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply('Position not found.').catch(() => {});
         return;
       }
@@ -1095,6 +1176,7 @@ bot.action('menu_holdings', async (ctx) => {
       const buys = fills.filter(f => f.side === 'buy');
 
       if (buys.length === 0) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply('No buy history found for this position.').catch(() => {});
         return;
       }
@@ -1110,47 +1192,42 @@ bot.action('menu_holdings', async (ctx) => {
       }
 
       // Fetch current market price from token info (not avg_entry_price)
-       const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
-       const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+      const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
+      const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
 
       if (currentPrice === 0) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
         return;
       }
 
       const currentHeld = parseFloat(position.quantity_held);
       if (currentHeld === 0) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply('No tokens held in this position.').catch(() => {});
         return;
       }
 
       // Calculate percentage needed to sell to recover initial investment
-      // We want to sell enough tokens to get back the initial NEAR investment
       const currentValue = currentHeld * currentPrice;
       const sellPercentage = (totalInitialInvestment / currentValue) * 100;
       const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
 
       const result = await sellAtTarget(user.id, positionId, adjustedPercentage);
 
-      if (result.success) {
-        await ctx.reply(`✅ Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).`, { parse_mode: 'Markdown' }).catch(() => {});
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-        // Generate PNL card after sell
-        setTimeout(async () => {
-          try {
-            const pnlData = await generatePNLCardData(positionId);
-            if (pnlData) {
-              const pnlMessage = generatePNLCardMessage(pnlData);
-              await ctx.reply(pnlMessage, { parse_mode: 'Markdown' }).catch(() => {});
-            }
-          } catch (err: any) {
-            console.error('[PNL_CARD] Error generating PNL card after sell initial:', err);
-          }
-        }, 3000);
+      if (result.success) {
+        await sendPnlCardMessage(
+          ctx,
+          positionId,
+          `✅ *Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).*`
+        );
       } else {
         await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
       }
     } catch (err: any) {
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       console.error('[SELL_INITIAL] Error:', err);
       await ctx.reply('Error processing sell. Please try again.').catch(() => {});
     }
@@ -1592,11 +1669,18 @@ bot.action('menu_holdings', async (ctx) => {
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery(`⚡ Sending buy order for ${amountNear} NEAR...`).catch(() => {});
+    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountNear} NEAR...`).catch(() => {});
+    const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+
     try {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
-      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      card.text = `✅ *Buy Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -1607,11 +1691,18 @@ bot.action('menu_holdings', async (ctx) => {
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery(`⚡ Sending buy order for ${pct}% of balance...`).catch(() => {});
+    await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
+    const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+
     try {
       const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
-      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      card.text = `✅ *Buy Order Executed!* (\`${res.amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -1657,11 +1748,16 @@ bot.action('menu_holdings', async (ctx) => {
       return;
     }
 
-    await ctx.reply(`⚡ Sending buy order for ${amountNear} NEAR of \`${tokenAddress}\`...`, { parse_mode: 'Markdown' });
+    const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
     try {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
-      await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      card.text = `✅ *Buy Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -1724,24 +1820,17 @@ bot.action('menu_holdings', async (ctx) => {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
+    await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
+    const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+
     const result = await sellAtTarget(user.id, positionId, pct);
 
-    await ctx.answerCbQuery(`✅ Sell order sent (${pct}%)`).catch(() => {});
-    await ctx.editMessageText(`⚡ Sell order sent: ${pct}% of position.\n\nYou'll be notified on confirmation.`).catch(() => {});
+    if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-    // Generate PNL card after sell
     if (result.success) {
-      setTimeout(async () => {
-        try {
-          const pnlData = await generatePNLCardData(positionId);
-          if (pnlData) {
-            const pnlMessage = generatePNLCardMessage(pnlData);
-            await ctx.reply(pnlMessage, { parse_mode: 'Markdown' }).catch(() => {});
-          }
-        } catch (err: any) {
-          console.error('[PNL_CARD] Error generating PNL card after sell:', err);
-        }
-      }, 3000); // Wait 3 seconds for sell to process
+      await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`);
+    } else {
+      await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
     }
   });
 
@@ -1928,10 +2017,15 @@ bot.action('menu_holdings', async (ctx) => {
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery('Sending snipe order...').catch(() => {});
+    await ctx.answerCbQuery('Processing snipe order...').catch(() => {});
+    await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => {});
     try {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
-      await ctx.editMessageText(`✅ ${res.message}`, { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.deleteMessage().catch(() => {});
+
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      card.text = `✅ *Snipe Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
       await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -2229,18 +2323,23 @@ bot.action('menu_holdings', async (ctx) => {
           await ctx.reply('❌ Invalid amount. Buy cancelled.');
           return;
         }
-        await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
-try {
-            const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-            await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
-          } catch (err: any) {
-            console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
-            try {
-              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-            } catch {
-              console.error(`[BUY] Failed to send error message for ${pending.tokenAddress}:`, err?.message || err);
-            }
+        const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} NEAR\` for \`${pending.tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        try {
+          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+          const card = await buildTokenCard(pending.tokenAddress, telegramId);
+          card.text = `✅ *Buy Order Executed!* (\`${amt.toFixed(4)} NEAR\`)\n\n` + card.text;
+          await sendTokenCard(ctx, card);
+        } catch (err: any) {
+          console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          try {
+            await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+          } catch {
+            console.error(`[BUY] Failed to send error message for ${pending.tokenAddress}:`, err?.message || err);
           }
+        }
         return; // Always return after handling custom buy
       }
 
