@@ -495,6 +495,29 @@ export class MultiRpcNear {
       }
     } catch {}
 
+    // 2. Fast REST lookup via api.ref.finance (covers ALL Ref Finance pools)
+    // Resolves any pool in <5s — avoids slow 30x on-chain batch scanning.
+    try {
+      const _url = 'https://api.ref.finance/list-pools-by-tokens?token0=' +
+        encodeURIComponent(tokenA) + '&token1=' + encodeURIComponent(tokenB);
+      const _r = await fetch(_url, { signal: AbortSignal.timeout(5000) });
+      if (_r.ok) {
+        const _data = await _r.json();
+        if (Array.isArray(_data) && _data.length > 0) {
+          const _best = _data.reduce((p: any, c: any) => {
+            const pL = (p.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
+            const cL = (c.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
+            return cL > pL ? c : p;
+          });
+          const _id = Number(_best.id);
+          if (!isNaN(_id) && _id >= 0) {
+            rheaPoolIdCache.set(cacheKey1, _id);
+            rheaPoolIdCache.set(cacheKey2, _id);
+            return _id;
+          }
+        }
+      }
+    } catch {}
     const batchSize = 100;
     const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools
 
