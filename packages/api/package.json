@@ -13,6 +13,7 @@
      "@racerbot/executor": "*",
      "@racerbot/shared": "*",
      "@types/helmet": "^0.0.48",
+     "canvas": "^3.2.3",
      "cors": "^2.8.5",
      "dotenv": "^16.4.0",
      "express": "^4.19.0",
@@ -22,9 +23,6 @@
      "pg": "^8.11.0",
      "telegraf": "^4.16.3",
      "uuid": "^9.0.0"
-   },
-   "optionalDependencies": {
-     "canvas": "^3.2.3"
    },
   "devDependencies": {
     "@types/cors": "^2.8.17",
