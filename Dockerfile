@@ -12,6 +12,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Install Python and build tools required for canvas compilation
+RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
+
 # Copy root and all workspace manifests so npm ci can resolve all workspace dependencies
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json ./packages/api/
