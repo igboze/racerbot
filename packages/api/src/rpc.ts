@@ -15,9 +15,22 @@ export class MultiRpcProvider {
     const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
     const allUrls = quickNodeUrl ? [quickNodeUrl, ...providerUrls] : providerUrls;
 
+    // Prepare FastNear premium API key
+    const apiKey = process.env.FASTNEAR_API_KEY?.trim();
+    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+
     this.providers = allUrls.map((url, i) => {
       const isQuickNode = url === quickNodeUrl;
-      return createProvider(url, `provider-${i}`, isQuickNode);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      // Add Bearer token for FastNear premium
+      if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      return createProvider(url, `provider-${i}`, isQuickNode, headers);
     });
 
     this.healthCheckIntervalMs = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || '30000');
@@ -42,7 +55,7 @@ export class MultiRpcProvider {
     return null;
   }
 
-  async read<T>(fn: (url: string) => Promise<T>): Promise<T> {
+  async read<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
     // Try QuickNode first if available
     const qn = this.getQuickNodeProvider();
     if (qn) {
@@ -60,10 +73,11 @@ export class MultiRpcProvider {
     }
 
     // Fallback to standard provider rotation
+    // Premium FastNear is already prioritized via RPC_PROVIDERS order
     const provider = rotateProvider(this.providers);
     const start = Date.now();
     try {
-      const result = await fn(provider.url);
+      const result = await fn(provider.url, provider.headers);
       markProviderSuccess(provider, Date.now() - start);
       return result;
     } catch (err) {
@@ -72,12 +86,12 @@ export class MultiRpcProvider {
     }
   }
 
-  async broadcast<T>(fn: (url: string) => Promise<T>): Promise<T> {
+  async broadcast<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
     const results = await Promise.allSettled(
       this.providers.filter(p => p.healthy).map(async (provider) => {
         const start = Date.now();
         try {
-          const result = await fn(provider.url);
+          const result = await fn(provider.url, provider.headers);
           markProviderSuccess(provider, Date.now() - start);
           return result;
         } catch (err) {
@@ -101,7 +115,18 @@ export class MultiRpcProvider {
       for (const provider of this.providers) {
         try {
           const start = Date.now();
-          await fetch(provider.url + '/status');
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+
+          // Add Bearer token for FastNear premium
+          const apiKey = process.env.FASTNEAR_API_KEY?.trim();
+          const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+          if (provider.url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+          }
+
+          await fetch(provider.url + '/status', { headers });
           markProviderSuccess(provider, Date.now() - start);
         } catch {
           markProviderError(provider);
