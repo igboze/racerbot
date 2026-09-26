@@ -106,7 +106,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
           inline_keyboard: [
             [
               { text: '🖼️ View PnL Card', web_app: { url: cardUrl } },
-              { text: '📤 Share Card', url: `https://t.me/share/url?url=${encodeURIComponent(cardUrl)}&text=${encodeURIComponent(`🏎️ Made ${pnlSign}${Number(pnlPercent).toFixed(1)}% on $${tokenSym} with @racerbot!`)}` }
+              { text: '📤 Share Card', url: `https://t.me/share/url?url=${encodeURIComponent(cardUrl)}&text=${encodeURIComponent(`🏎️ Made ${pnlSign}${Number(pnlPercent).toFixed(1)}% on $${tokenSym} with @racertradingbot!`)}` }
             ]
           ]
         };

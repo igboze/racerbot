@@ -49,6 +49,19 @@ try {
   console.warn('[PNL_CARD_IMAGE] Canvas module not available or font registration failed. PNL cards will be text-only.');
 }
 
+const resolveLogo = () => {
+  const candidates = [
+    path.join(__dirname, '..', 'assets', 'logo.png'),
+    path.join(process.cwd(), 'packages', 'api', 'assets', 'logo.png'),
+    path.join(process.cwd(), 'assets', 'logo.png'),
+    path.join(__dirname, 'assets', 'logo.png'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+};
+
 /**
  * Helper to draw rounded rectangles on canvas
  */
@@ -72,7 +85,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
   }
 
   try {
-    const { createCanvas } = canvasModule;
+    const { createCanvas, loadImage } = canvasModule;
     const width = 800;
     const height = 620;
     const canvas = createCanvas(width, height);
@@ -99,14 +112,33 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
     // 2. Header / Brand Row (Y = 45)
     // Brand name & icon
-    ctx.fillStyle = '#23e6c4';
-    ctx.font = `bold 22px ${fontHeader}`;
-    ctx.textAlign = 'left';
-    ctx.fillText('⚡', 40, 48);
+    let logoImg: any = null;
+    const logoPath = resolveLogo();
+    if (logoPath && typeof loadImage === 'function') {
+      try {
+        logoImg = await loadImage(logoPath);
+      } catch (e) {
+        // Fall back to text emoji if image load fails
+      }
+    }
 
-    ctx.fillStyle = '#f4f6ff';
-    ctx.font = `bold 18px ${fontHeader}`;
-    ctx.fillText('RacerBot', 68, 47);
+    if (logoImg) {
+      ctx.drawImage(logoImg, 40, 22, 44, 44);
+
+      ctx.fillStyle = '#f4f6ff';
+      ctx.font = `bold 20px ${fontHeader}`;
+      ctx.textAlign = 'left';
+      ctx.fillText('RacerBot', 94, 51);
+    } else {
+      ctx.fillStyle = '#23e6c4';
+      ctx.font = `bold 22px ${fontHeader}`;
+      ctx.textAlign = 'left';
+      ctx.fillText('⚡', 40, 48);
+
+      ctx.fillStyle = '#f4f6ff';
+      ctx.font = `bold 18px ${fontHeader}`;
+      ctx.fillText('RacerBot', 68, 47);
+    }
 
     // Network / Venue Pill (Right aligned)
     const venueText = (data.venue || 'NEAR PROTOCOL').toUpperCase();
@@ -134,6 +166,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     ctx.fillStyle = '#78829f';
     const tokenDisplay = `${data.tokenSymbol} (${data.tokenName})`;
     ctx.fillText(tokenDisplay, 40, 105);
+    const tokenW = ctx.measureText(tokenDisplay).width;
 
     // Status Tag (Open / Closed Position)
     const statusText = data.positionStatus === 'open' ? 'OPEN POSITION' : 'CLOSED POSITION';
@@ -142,7 +175,6 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
     ctx.font = `bold 11px ${fontHeader}`;
     const statusW = ctx.measureText(statusText).width + 24;
-    const tokenW = ctx.measureText(tokenDisplay).width;
     const tagX = 40 + tokenW + 16;
 
     ctx.fillStyle = statusBg;
@@ -270,7 +302,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     ctx.fillStyle = '#78829f';
     ctx.font = `bold 13px ${fontHeader}`;
     ctx.textAlign = 'right';
-    ctx.fillText('@RacerBot', width - 40, footerY + 45);
+    ctx.fillText('@racertradingbot', width - 40, footerY + 45);
 
     // Convert to buffer
     const buffer = canvas.toBuffer('image/png');
