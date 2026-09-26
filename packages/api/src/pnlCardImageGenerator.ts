@@ -1,12 +1,24 @@
-import { createCanvas, loadImage } from 'canvas';
 import { PNLCardData } from './pnlCardGenerator.js';
+
+// Dynamic import for canvas to avoid build failures on platforms without Python
+let canvasModule: any = null;
+try {
+  canvasModule = require('canvas');
+} catch (err) {
+  console.warn('[PNL_CARD_IMAGE] Canvas module not available. PNL cards will be text-only.');
+}
 
 /**
  * Generate PNL card image using canvas
  * Falls back to null if canvas is not available or fails
  */
 export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | null> {
+  if (!canvasModule) {
+    return null;
+  }
+
   try {
+    const { createCanvas } = canvasModule;
     const width = 800;
     const height = 600;
     const canvas = createCanvas(width, height);
