@@ -841,7 +841,6 @@ export class SwapExecutor {
 
       if (isPrebonded) {
         if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
           const actions = await this.buildWrapNearBuyActions(
             subaccountId,
             amountInBigInt,
@@ -873,6 +872,9 @@ export class SwapExecutor {
         let rheaPoolId: number | null = null;
         try {
           rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
+          if (!rheaPoolId && !dclPoolId) {
+            dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+          }
         } catch {}
 
         if (rheaPoolId) {

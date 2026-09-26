@@ -714,14 +714,14 @@ async function executeBuyHelper(
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
   const info = await getTokenInfo(tokenAddress, true).catch(() => null);
-  if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(info.venue)) {
+  if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad';
+  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
   const near = getNear();
