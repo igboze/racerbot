@@ -87,7 +87,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
  * Writes broadcast to all healthy providers simultaneously.
  */
 export class MultiRpcNear {
-  private providers: RPCProvider[];
+  private readProviders: RPCProvider[];
+  private tradeProviders: RPCProvider[];
   private keyStore: keyStores.InMemoryKeyStore;
   private networkId: string;
   private connections: Map<string, Near> = new Map();
@@ -102,19 +103,42 @@ export class MultiRpcNear {
       if (url.includes('rpc.mainnet.near.org')) return false;
       return true;
     });
-    // Prepend QuickNode if configured (enhanced indexing/faster RPC)
     const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
-    const finalUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
-    if (quickNodeUrl && !finalUrls.includes(quickNodeUrl)) {
-      finalUrls.unshift(quickNodeUrl);
+
+    // Read-only providers: QuickNode ONLY for token updates and on-chain reads
+    const readUrls: string[] = [];
+    if (quickNodeUrl && !readUrls.includes(quickNodeUrl)) {
+      readUrls.push(quickNodeUrl);
     }
-    const allProviders = finalUrls.map((url, i) => createProvider(url, `near-rpc-${i}`, url === quickNodeUrl));
-    // Also add QuickNode SDK provider if available for data lookups
+    // Also add FastNear data URLs to read pool if QuickNode is not available
+    if (readUrls.length === 0) {
+      readUrls.push(...sanitizedUrls);
+    }
+    this.readProviders = readUrls.map((url, i) => createProvider(url, `read-rpc-${i}`, url === quickNodeUrl));
+
+    // Add QuickNode SDK provider for reads if available
     const qnProvider = createQuickNodeProvider();
-    if (qnProvider) {
-      allProviders.push(createProvider(qnProvider.endpointUrl || quickNodeUrl!, 'near-qn-sdk', true));
+    if (qnProvider && !this.readProviders.some(p => p.url === qnProvider.endpointUrl)) {
+      this.readProviders.push(createProvider(qnProvider.endpointUrl || quickNodeUrl!, 'read-qn-sdk', true));
     }
-    this.providers = allProviders;
+
+    // Trade providers: FastNEAR ONLY for swaps/buys/sells
+    const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com'));
+    if (tradeUrls.length === 0) {
+      tradeUrls.push(...sanitizedUrls);
+    }
+    this.tradeProviders = tradeUrls.map((url, i) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+      return createProvider(url, `trade-rpc-${i}`, false, headers);
+    });
+    // Always include FastNear SDK if available for trade
+    if (this.tradeProviders.length === 0 && quickNodeUrl) {
+      this.tradeProviders.push(createProvider(quickNodeUrl, 'trade-qn-sdk', false));
+    }
+
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
   }
@@ -173,9 +197,9 @@ export class MultiRpcNear {
    * Falls back to next provider on error.
    */
   async view<T>(contractId: string, methodName: string, args: object = {}): Promise<T> {
-    const candidates = this.providers.filter(p => p.healthy).length > 0
-      ? this.providers.filter(p => p.healthy)
-      : this.providers;
+    const candidates = this.readProviders.filter(p => p.healthy).length > 0
+      ? this.readProviders.filter(p => p.healthy)
+      : this.readProviders;
 
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
 
@@ -225,7 +249,7 @@ export class MultiRpcNear {
    * This is the write path — maximum redundancy for lowest miss rate.
    */
   async broadcastTransaction(signedTxBase64: string): Promise<string> {
-    const healthy = this.providers.filter(p => p.healthy);
+    const healthy = this.tradeProviders.filter(p => p.healthy);
     if (healthy.length === 0) throw new Error('No healthy NEAR RPC providers');
 
     const results = await Promise.allSettled(
@@ -253,7 +277,7 @@ export class MultiRpcNear {
    */
   async waitForTx(txHash: string, accountId: string, maxWaitMs = 60000): Promise<any> {
     const deadline = Date.now() + maxWaitMs;
-    const providers = this.providers.filter(p => p.healthy);
+    const providers = this.tradeProviders.filter(p => p.healthy);
     
     if (providers.length === 0) {
       throw new Error('No healthy RPC providers available for transaction confirmation');
@@ -339,7 +363,7 @@ export class MultiRpcNear {
     if (this.accountCache.has(accountId)) {
       return this.accountCache.get(accountId)!;
     }
-    const provider = rotateProvider(this.providers);
+    const provider = rotateProvider(this.tradeProviders);
     const near = await this.getConnection(provider.url);
     const account = await near.account(accountId);
     this.accountCache.set(accountId, account);
@@ -350,8 +374,8 @@ export class MultiRpcNear {
    * Get account NEAR balance.
    */
   async getNearBalance(accountId: string): Promise<string> {
-    const healthy = this.providers.filter(p => p.healthy);
-    const providersToTry = healthy.length > 0 ? healthy : this.providers;
+    const healthy = this.tradeProviders.filter(p => p.healthy);
+    const providersToTry = healthy.length > 0 ? healthy : this.tradeProviders;
     let lastErr: Error | null = null;
     for (const provider of providersToTry) {
       try {
@@ -975,7 +999,7 @@ export class MultiRpcNear {
    * View access key on chain to verify permissions.
    */
   async viewAccessKey(accountId: string, publicKey: string): Promise<any> {
-    const healthy = this.providers.filter(p => p.healthy);
+    const healthy = this.readProviders.filter(p => p.healthy);
     if (healthy.length === 0) throw new Error('No healthy NEAR RPC providers');
     const startIndex = (this.currentIndex++) % healthy.length;
     let lastErr: Error | null = null;
@@ -1527,15 +1551,16 @@ export class MultiRpcNear {
   /** Start health-check interval for all providers */
   startHealthChecks(intervalMs = 30_000): NodeJS.Timeout {
     return setInterval(async () => {
-      for (const provider of this.providers) {
-        const start = Date.now();
-        try {
-          const near = await this.getConnection(provider.url);
-          // Timeout guards a hung provider from piling up overlapping checks
-          await withTimeout(near.connection.provider.status(), 5000, `Health check timeout ${provider.url}`);
-          markProviderSuccess(provider, Date.now() - start);
-        } catch {
-          markProviderError(provider);
+      for (const list of [this.readProviders, this.tradeProviders]) {
+        for (const provider of list) {
+          const start = Date.now();
+          try {
+            const near = await this.getConnection(provider.url);
+            await withTimeout(near.connection.provider.status(), 5000, `Health check timeout ${provider.url}`);
+            markProviderSuccess(provider, Date.now() - start);
+          } catch {
+            markProviderError(provider);
+          }
         }
       }
     }, intervalMs);
@@ -1670,8 +1695,8 @@ export class MultiRpcNear {
   private async broadcastSignedToAll(
     signedB64: string
   ): Promise<PromiseSettledResult<string>[]> {
-    const healthy = this.providers.filter((p) => p.healthy);
-    const targets = healthy.length > 0 ? healthy : this.providers;
+    const healthy = this.tradeProviders.filter((p) => p.healthy);
+    const targets = healthy.length > 0 ? healthy : this.tradeProviders;
     if (targets.length === 0) throw new Error('No NEAR RPC providers configured');
 
     return Promise.allSettled(
@@ -1811,7 +1836,7 @@ export class MultiRpcNear {
         
         // If it's a parse error, mark the provider as unhealthy
         if (err.message?.includes('Parse error')) {
-          const provider = this.providers.find(p => p.url === providerUrl);
+          const provider = this.tradeProviders.find(p => p.url === providerUrl);
           if (provider) {
             markProviderError(provider);
           }
@@ -1820,11 +1845,10 @@ export class MultiRpcNear {
       return null;
     };
 
-
     while (Date.now() < deadline) {
       // Race FastNEAR indexer and all healthy RPC providers
-      const healthy = this.providers.filter((p) => p.healthy);
-      const candidates = healthy.length > 0 ? healthy : this.providers;
+      const healthy = this.tradeProviders.filter((p) => p.healthy);
+      const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
 
       const polls = [
         tryFastnear(),
