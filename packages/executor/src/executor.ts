@@ -363,85 +363,87 @@ export class SwapExecutor {
             await near.ensureStorageDeposit(subaccountId, token_in);
           }
 
-          let isMultiHopJambo = (event as any).intermediate_token === 'jambo-1679.meme-cooking.near';
-          if (!isMultiHopJambo && rheaPoolId !== null && rheaPoolId !== undefined) {
-            const poolInfo = await near.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: rheaPoolId }).catch(() => null);
-            const tokens: string[] = poolInfo?.token_account_ids || [];
-            if (!tokens.includes(token_in) && tokens.includes('jambo-1679.meme-cooking.near')) {
-              isMultiHopJambo = true;
-            }
-          }
+          const targetToken = isBuy ? token_out : token_in;
+          const rheaState = await near.findRheaPoolForToken(targetToken).catch(() => null);
+
+          let intermediateToken = (event as any).intermediate_token || rheaState?.intermediateToken;
+          let intermediatePoolId = (event as any).intermediate_pool_id || rheaState?.intermediatePoolId;
 
           if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
+            await near.ensureStorageDeposit(subaccountId, token_out);
+            if (intermediateToken) {
+              await near.ensureStorageDeposit(subaccountId, intermediateToken);
+            }
 
-          const rheaActions = isMultiHopJambo
-            ? [
-                {
-                  pool_id: 6518,
-                  token_in: 'wrap.near',
-                  token_out: 'jambo-1679.meme-cooking.near',
-                  amount_in: swapAmount.toString(),
-                  min_amount_out: '0',
-                },
-                {
-                  pool_id: rheaPoolId,
-                  token_in: 'jambo-1679.meme-cooking.near',
-                  token_out,
-                  min_amount_out: minOutAdj,
-                },
-              ]
-            : [
-                {
-                  pool_id: rheaPoolId,
-                  token_in: 'wrap.near',
-                  token_out,
-                  amount_in: swapAmount.toString(),
-                  min_amount_out: minOutAdj,
-                  min_output_amount: minOutAdj,
-                },
-              ];
+            const rheaActions = (intermediateToken && intermediatePoolId)
+              ? [
+                  {
+                    pool_id: intermediatePoolId,
+                    token_in: 'wrap.near',
+                    token_out: intermediateToken,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: '0',
+                  },
+                  {
+                    pool_id: rheaPoolId,
+                    token_in: intermediateToken,
+                    token_out,
+                    min_amount_out: minOutAdj,
+                  },
+                ]
+              : [
+                  {
+                    pool_id: rheaPoolId,
+                    token_in: 'wrap.near',
+                    token_out,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minOutAdj,
+                    min_output_amount: minOutAdj,
+                  },
+                ];
 
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'v2.ref-finance.near',
-            JSON.stringify({ actions: rheaActions }),
-            BigInt('250000000000000')
-          );
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({ actions: rheaActions }),
+              BigInt('250000000000000')
+            );
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
-        } else {
-          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          } else {
+            await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+            if (intermediateToken) {
+              await near.ensureStorageDeposit(subaccountId, intermediateToken);
+            }
 
-          const rheaActions = isMultiHopJambo
-            ? [
-                {
-                  pool_id: rheaPoolId,
-                  token_in,
-                  token_out: 'jambo-1679.meme-cooking.near',
-                  amount_in: amountInBigInt.toString(),
-                  min_amount_out: '0',
-                },
-                {
-                  pool_id: 6518,
-                  token_in: 'jambo-1679.meme-cooking.near',
-                  token_out: 'wrap.near',
-                  min_amount_out: min_amount_out,
-                },
-              ]
-            : [
-                {
-                  pool_id: rheaPoolId,
-                  token_in,
-                  token_out: 'wrap.near',
-                  amount_in: amountInBigInt.toString(),
-                  min_amount_out: min_amount_out,
-                  min_output_amount: min_amount_out,
-                },
-              ];
+            const rheaActions = (intermediateToken && intermediatePoolId)
+              ? [
+                  {
+                    pool_id: rheaPoolId,
+                    token_in,
+                    token_out: intermediateToken,
+                    amount_in: amountInBigInt.toString(),
+                    min_amount_out: '0',
+                  },
+                  {
+                    pool_id: intermediatePoolId,
+                    token_in: intermediateToken,
+                    token_out: 'wrap.near',
+                    min_amount_out: min_amount_out,
+                  },
+                ]
+              : [
+                  {
+                    pool_id: rheaPoolId,
+                    token_in,
+                    token_out: 'wrap.near',
+                    amount_in: amountInBigInt.toString(),
+                    min_amount_out: min_amount_out,
+                  },
+                ];
 
           const actions = [
             transactions.functionCall(
