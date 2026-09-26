@@ -264,31 +264,62 @@ export class SwapExecutor {
           );
         }
         } else {
-          // Sell token on DCL for wrap.near
+          // Sell token on Rhea or DCL for wrap.near
           // Per docs: always check storage deposit before initiating swaps
           await near.ensureStorageDeposit(subaccountId, token_in);
           await near.ensureStorageDeposit(subaccountId, 'wrap.near');
 
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [dclPoolId],
-                    output_token: 'wrap.near',
-                    min_output_amount: min_amount_out,
-                  },
-                }),
-              },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
+          if (rheaPoolId) {
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: rheaPoolId,
+                        token_in,
+                        token_out: 'wrap.near',
+                        amount_in: amountInBigInt.toString(),
+                        min_amount_out: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
 
-          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          } else if (dclPoolId) {
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [dclPoolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+
+            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          } else {
+            throw new Error(
+              `Token ${token_in} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
+            );
+          }
         }
       } else if (venue === 'rhea' || venue === 'ref') {
         // Per docs: check whitelisted tokens before swap; register storage if not whitelisted
@@ -414,6 +445,12 @@ export class SwapExecutor {
 
             result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
           } else {
+            if (rheaPoolId === null || rheaPoolId === undefined) {
+              throw new Error(
+                `No Rhea pool found for token pair ${token_in} / wrap.near.`
+              );
+            }
+
             await near.ensureStorageDeposit(subaccountId, 'wrap.near');
             if (intermediateToken) {
               await near.ensureStorageDeposit(subaccountId, intermediateToken);
@@ -464,7 +501,10 @@ export class SwapExecutor {
     } else if (venue === 'intear') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
-      const poolId = await near.findIntearPoolId(targetToken);
+      const poolId = await near.findIntearPoolId(targetToken).catch(() => null);
+      if (poolId === null || poolId === undefined || typeof poolId !== 'number' || poolId < 0) {
+        throw new Error(`No Intear pool found for token ${targetToken}.`);
+      }
       const poolBuf = Buffer.alloc(4);
       poolBuf.writeUInt32LE(poolId, 0);
       const poolMsg = poolBuf.toString('base64');
