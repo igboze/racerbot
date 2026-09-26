@@ -5,6 +5,7 @@ export interface RPCProvider {
   latency: number;
   errorCount: number;
   successCount: number;
+  isQuickNode?: boolean;
 }
 
 export interface RPCConfig {
@@ -33,8 +34,8 @@ export interface BroadcastResult {
   latencyMs: number;
 }
 
-export function createProvider(url: string, name: string): RPCProvider {
-  return { url, name, healthy: true, latency: 0, errorCount: 0, successCount: 0 };
+export function createProvider(url: string, name: string, isQuickNode: boolean = false): RPCProvider {
+  return { url, name, healthy: true, latency: 0, errorCount: 0, successCount: 0, isQuickNode };
 }
 
 export function getRpcProvider(providers: RPCProvider[], index: number): RPCProvider {

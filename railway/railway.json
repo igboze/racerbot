@@ -13,6 +13,9 @@ environments = [
   { variable = "TELEGRAM_BOT_TOKEN", value = "${{secrets.TELEGRAM_BOT_TOKEN}}" },
   { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "5000" },
+  { variable = "QUICKNODE_API_KEY", value = "${{secrets.QUICKNODE_API_KEY}}" },
+  { variable = "QUICKNODE_ENDPOINT_URL", value = "${{secrets.QUICKNODE_ENDPOINT_URL}}" },
+  { variable = "QUICKNODE_CHAIN_ID", value = "near-mainnet" },
 ]
 
 [services.detector]
