@@ -72,14 +72,7 @@ export {
 } from './near.js';
 export type { NearConfig, TokenMetadata, PoolReserves } from './near.js';
 
-// QuickNode SDK integration for faster RPC & WebSocket
-export {
-  QuickNodeProvider,
-  createQuickNodeProvider,
-  BlockScanner,
-  TransactionIndexer,
-} from './quicknode.js';
-export type { QuickNodeConfig } from './quicknode.js';
+
 
 // RPC provider management
 export {

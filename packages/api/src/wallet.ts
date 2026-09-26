@@ -286,87 +286,20 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
 
-  // Quick-detect launchpad from address suffix (no RPC needed)
-  if (isMemooCookingToken(tokenAddress)) {
-    venue = 'memecooking';
-    const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
-    price = mcInfo.price;
-    liquidity = mcInfo.liquidity;
-  } else if (isIntearToken(tokenAddress)) {
-    venue = 'intear';
-    try {
-      const intearState = await near.getIntearTokenState(tokenAddress);
-      price = intearState.price;
-      liquidity = intearState.liquidityNear;
-    } catch {
-      // If pool lookup failed, keep metadata with 0 price
-    }
-  } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
-    // Shardsmarket: token IS its own AMM pool — call get_state() directly
-    try {
-      const smState = await near.getShardsmarketTokenState(tokenAddress);
-      const reserveNearYocto = parseFloat(smState.poolQuote);
-      const reserveTokenRaw = parseFloat(smState.poolToken);
-      if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
-        const reserveNearHuman = reserveNearYocto / 1e24;
-        const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
-        price = reserveNearHuman / reserveTokenHuman;
-        liquidity = reserveNearHuman * 2; // both sides of AMM
-        venue = 'shardsmarket';
-        if (smState.totalSupply && smState.totalSupply !== '0') {
-          totalSupply = smState.totalSupply;
-        }
-      }
-    } catch {
-      // Not a live Shardsmarket pool (presale phase or not found)
-    }
-  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
-    venue = 'onetokenhub';
-    try {
-      const hubState = await near.getOneTokenHubState(tokenAddress);
-      price = hubState.price;
-      liquidity = hubState.liquidityNear;
-      dclPoolId = hubState.dclPoolId;
-      if (hubState.totalSupply && hubState.totalSupply !== '0') {
-        totalSupply = hubState.totalSupply;
-      }
-    } catch {
-      // If state lookup failed, keep metadata
-    }
-  } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
-    venue = 'nearpad';
-    try {
-      const padState = await near.getNEARpadState(tokenAddress);
-      price = padState.price;
-      liquidity = padState.liquidityNear;
-      if (padState.totalSupply && padState.totalSupply !== '0') {
-        totalSupply = padState.totalSupply;
-      }
-    } catch {
-      // If state lookup failed, keep metadata
-    }
-  } else {
-    // Venue probing: the cheap probes run in parallel
-    const [ntRes, hubRes, padRes, rheaRes, dclRes] = await Promise.allSettled([
-      // 1. NearlyTrade — single get_launch_by_token call
-      near.getNearlytradeTokenState(tokenAddress),
-      // 2. OneTokenHub — single get_launch_by_token call
-      near.getOneTokenHubState(tokenAddress),
-      // 3. NEARpad — single get_launch_by_token call
-      near.getNEARpadState(tokenAddress),
-      // 4. Rhea — simple pool lookup (cached after first hit)
+  // Step 1: Rhea first, for every token — try both Simple and DCL pools in parallel
+  if (price === 0) {
+    const [rheaSimpleRes, rheaDclRes] = await Promise.allSettled([
       (async () => {
         const poolId =
           rheaPoolId !== null
             ? rheaPoolId
             : await near.findRheaPoolId('wrap.near', tokenAddress);
         const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-        const reserveIn = parseFloat(rh.reserveIn);   // wNEAR in yoctoNEAR
-        const reserveOut = parseFloat(rh.reserveOut); // token base units
+        const reserveIn = parseFloat(rh.reserveIn);
+        const reserveOut = parseFloat(rh.reserveOut);
         if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
         return { poolId, reserveIn, reserveOut };
       })(),
-      // 5. Rhea DCL — concentrated liquidity on dclv2.ref-labs.near
       (async () => {
         const pId =
           dclPoolId !== null
@@ -379,63 +312,134 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       })(),
     ]);
 
-    // Precedence: Rhea (Simple) > Rhea (DCL) > NearlyTrade > OneTokenHub > NEARpad > Intear
-    if (rheaRes.status === 'fulfilled') {
-      const { poolId, reserveIn, reserveOut } = rheaRes.value;
+    if (rheaSimpleRes.status === 'fulfilled') {
+      const { poolId, reserveIn, reserveOut } = rheaSimpleRes.value;
       const reserveInHuman = reserveIn / 1e24;
       const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
       price = reserveInHuman / reserveOutHuman;
-      liquidity = reserveInHuman * 2; // both sides of AMM
+      liquidity = reserveInHuman * 2;
       venue = 'rhea';
       rheaPoolId = poolId;
-    } else if (dclRes.status === 'fulfilled') {
-      const st = dclRes.value;
+    } else if (rheaDclRes.status === 'fulfilled') {
+      const st = rheaDclRes.value;
       venue = 'rhea';
       price = st.price;
       liquidity = st.liquidityNear;
       dclPoolId = st.poolId;
-    } else if (ntRes.status === 'fulfilled' && ntRes.value) {
-      const ntState = ntRes.value;
-      venue = 'nearlytrade';
-      price = ntState.price;
-      liquidity = ntState.liquidityNear;
-      bondingPhase = ntState.phase;
-      bondingProgressPct = ntState.bondingProgressPct;
-      dclPoolId = ntState.dclPoolId;
-      if (ntState.totalSupply && ntState.totalSupply !== '0') {
-        totalSupply = ntState.totalSupply;
-      }
-    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
-      const hubState = hubRes.value;
-      venue = 'onetokenhub';
-      price = hubState.price;
-      liquidity = hubState.liquidityNear;
-      dclPoolId = hubState.dclPoolId;
-      if (hubState.totalSupply && hubState.totalSupply !== '0') {
-        totalSupply = hubState.totalSupply;
-      }
-    } else if (padRes.status === 'fulfilled' && padRes.value) {
-      const padState = padRes.value;
-      venue = 'nearpad';
-      price = padState.price;
-      liquidity = padState.liquidityNear;
-      if (padState.totalSupply && padState.totalSupply !== '0') {
-        totalSupply = padState.totalSupply;
-      }
-    } else {
-      // 6. Intear last resort — full scan, only when cheap probes missed
+    }
+  }
+
+  // Step 2: Only if Rhea has no liquidity, use address suffix to pick a launchpad prober
+  if (price === 0) {
+    if (isMemooCookingToken(tokenAddress)) {
+      venue = 'memecooking';
+      const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
+      price = mcInfo.price;
+      liquidity = mcInfo.liquidity;
+    } else if (isIntearToken(tokenAddress)) {
+      venue = 'intear';
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
-        if (intearState && intearState.price > 0) {
-          venue = 'intear';
-          price = intearState.price;
-          liquidity = intearState.liquidityNear;
-          if (intearState.totalSupply && intearState.totalSupply !== '0') {
-            totalSupply = intearState.totalSupply;
+        price = intearState.price;
+        liquidity = intearState.liquidityNear;
+      } catch {
+        // If pool lookup failed, keep metadata with 0 price
+      }
+    } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+      // Shardsmarket: token IS its own AMM pool — call get_state() directly
+      try {
+        const smState = await near.getShardsmarketTokenState(tokenAddress);
+        const reserveNearYocto = parseFloat(smState.poolQuote);
+        const reserveTokenRaw = parseFloat(smState.poolToken);
+        if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+          const reserveNearHuman = reserveNearYocto / 1e24;
+          const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+          price = reserveNearHuman / reserveTokenHuman;
+          liquidity = reserveNearHuman * 2;
+          venue = 'shardsmarket';
+          if (smState.totalSupply && smState.totalSupply !== '0') {
+            totalSupply = smState.totalSupply;
           }
         }
       } catch {
-        /* not on Intear */
+        // Not a live Shardsmarket pool (presale phase or not found)
+      }
+    } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+      venue = 'onetokenhub';
+      try {
+        const hubState = await near.getOneTokenHubState(tokenAddress);
+        price = hubState.price;
+        liquidity = hubState.liquidityNear;
+        dclPoolId = hubState.dclPoolId;
+        if (hubState.totalSupply && hubState.totalSupply !== '0') {
+          totalSupply = hubState.totalSupply;
+        }
+      } catch {
+        // If state lookup failed, keep metadata
+      }
+    } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
+      venue = 'nearpad';
+      try {
+        const padState = await near.getNEARpadState(tokenAddress);
+        price = padState.price;
+        liquidity = padState.liquidityNear;
+        if (padState.totalSupply && padState.totalSupply !== '0') {
+          totalSupply = padState.totalSupply;
+        }
+      } catch {
+        // If state lookup failed, keep metadata
+      }
+    } else {
+      // Venue probing for tokens matching no known address suffix
+      const [ntRes, hubRes, padRes] = await Promise.allSettled([
+        near.getNearlytradeTokenState(tokenAddress),
+        near.getOneTokenHubState(tokenAddress),
+        near.getNEARpadState(tokenAddress),
+      ]);
+
+      if (ntRes.status === 'fulfilled' && ntRes.value) {
+        const ntState = ntRes.value;
+        venue = 'nearlytrade';
+        price = ntState.price;
+        liquidity = ntState.liquidityNear;
+        bondingPhase = ntState.phase;
+        bondingProgressPct = ntState.bondingProgressPct;
+        dclPoolId = ntState.dclPoolId;
+        if (ntState.totalSupply && ntState.totalSupply !== '0') {
+          totalSupply = ntState.totalSupply;
+        }
+      } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+        const hubState = hubRes.value;
+        venue = 'onetokenhub';
+        price = hubState.price;
+        liquidity = hubState.liquidityNear;
+        dclPoolId = hubState.dclPoolId;
+        if (hubState.totalSupply && hubState.totalSupply !== '0') {
+          totalSupply = hubState.totalSupply;
+        }
+      } else if (padRes.status === 'fulfilled' && padRes.value) {
+        const padState = padRes.value;
+        venue = 'nearpad';
+        price = padState.price;
+        liquidity = padState.liquidityNear;
+        if (padState.totalSupply && padState.totalSupply !== '0') {
+          totalSupply = padState.totalSupply;
+        }
+      } else {
+        // Intear last resort — full scan, only when cheap probes missed
+        try {
+          const intearState = await near.getIntearTokenState(tokenAddress);
+          if (intearState && intearState.price > 0) {
+            venue = 'intear';
+            price = intearState.price;
+            liquidity = intearState.liquidityNear;
+            if (intearState.totalSupply && intearState.totalSupply !== '0') {
+              totalSupply = intearState.totalSupply;
+            }
+          }
+        } catch {
+          /* not on Intear */
+        }
       }
     }
   }

@@ -102,14 +102,14 @@ export class MultiRpcNear {
       if (url.includes('rpc.mainnet.near.org')) return false;
       return true;
     });
-    const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
-
-    // Read-only providers: FastNEAR RPC for token metadata, pool reserves, etc.
-    // QuickNode is NOT used here because @quicknode/sdk requires a custom transport
-    // that near-api-js doesn't support. QuickNode is used exclusively via
-    // MultiRpcProvider.data() in rpc.ts.
-    const readUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
-    this.readProviders = readUrls.map((url, i) => createProvider(url, `read-rpc-${i}`));
+    const readUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://rpc.mainnet.fastnear.com'];
+    this.readProviders = readUrls.map((url, i) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+      return createProvider(url, `read-rpc-${i}`, false, headers);
+    });
 
     // Trade providers: FastNEAR ONLY for swaps/buys/sells
     const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com'));
@@ -188,44 +188,40 @@ export class MultiRpcNear {
 
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
 
-    const startIndex = (this.currentIndex++) % candidates.length;
-    let lastErr: Error | null = null;
-    for (let i = 0; i < candidates.length; i++) {
-      const provider = candidates[(startIndex + i) % candidates.length];
-      const start = Date.now();
-      try {
-        const near = await this.getConnection(provider.url);
-        const account = await near.account('');
-        const result = await withTimeout(
-          account.viewFunction({ contractId, methodName, args }),
-          4000,
-          `RPC timeout on ${provider.url}`
-        );
-        markProviderSuccess(provider, Date.now() - start);
-        return result as T;
-      } catch (err: any) {
-        const msg = err?.message || '';
-        const isNetworkErr =
-          msg.includes('timeout') ||
-          msg.includes('fetch') ||
-          msg.includes('ECONN') ||
-          msg.includes('ETIMEDOUT') ||
-          msg.includes('EAI_AGAIN') ||
-          /\b50[0-4]\b/.test(msg) ||
-          msg.includes('socket hang up') ||
-          msg.includes('429') ||
-          msg.includes('-429') ||
-          msg.includes('TooManyRequestsError') ||
-          msg.includes('DEPRECATED') ||
-          msg.includes('Rate limit') ||
-          msg.includes('rate limit');
-        if (isNetworkErr) {
-          markProviderError(provider);
+    // Try all providers in parallel, return first successful result
+    const results = await Promise.allSettled(
+      candidates.map(async (provider) => {
+        const start = Date.now();
+        try {
+          const near = await this.getConnection(provider.url);
+          const account = await near.account('');
+          const result = await withTimeout(
+            account.viewFunction({ contractId, methodName, args }),
+            3000,
+            `RPC timeout on ${provider.url}`
+          );
+          markProviderSuccess(provider, Date.now() - start);
+          return result as T;
+        } catch (err: any) {
+          const msg = err?.message || '';
+          const isNetworkErr =
+            msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
+            msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
+            /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
+            msg.includes('429') || msg.includes('-429') ||
+            msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
+            msg.includes('Rate limit') || msg.includes('rate limit');
+          if (isNetworkErr) markProviderError(provider);
+          throw err;
         }
-        lastErr = err as Error;
-      }
+      })
+    );
+
+    // Return first successful result
+    for (const result of results) {
+      if (result.status === 'fulfilled') return result.value;
     }
-    throw lastErr ?? new Error('All NEAR RPC providers failed');
+    throw (results[0] as PromiseRejectedResult).reason ?? new Error('All NEAR RPC providers failed');
   }
 
   /**

@@ -1,3 +1,7 @@
+# WARNING: Railway does NOT use this file. railway/railway.json specifies dockerfile = Dockerfile.api
+# for the API service. This root Dockerfile is kept only for local development convenience.
+# Always fix PNL-card/canvas issues in docker/Dockerfile.api, NOT here.
+
 # Multi-service build: turbo outputs to packages/<svc>/dist (NOT /app/dist),
 # so the previous `COPY --from=builder /app/dist` copied nothing / failed the
 # build, and `node dist/index.js` pointed at a file that never existed.
@@ -21,6 +25,9 @@ COPY packages/triggers/package.json ./packages/triggers/
 # Install dependencies for all workspaces
 RUN npm ci
 
+# Install canvas native build dependencies (required to compile canvas npm package)
+RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
+
 # Copy full source tree
 COPY . .
 
@@ -32,6 +39,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+
+# Install canvas runtime shared libraries (canvas's native addon needs .so files at runtime)
+RUN apk add --no-cache cairo pango pixman giflib libjpeg-turbo librsvg
 
 # Copy all files including built dist directories and node_modules
 COPY --from=builder /app ./
