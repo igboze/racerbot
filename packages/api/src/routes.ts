@@ -350,7 +350,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ],
         [
           Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
-          Markup.button.callback('🔙 Main Menu', 'menu_home'),
+          Markup.button.callback('🔙 Back', 'menu_home'),
         ],
         ...linkRows,
         [
@@ -381,7 +381,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         [
           Markup.button.callback('⚙️ Settings', 'menu_settings'),
-          Markup.button.callback('🔙 Main Menu', 'menu_home'),
+          Markup.button.callback('🔙 Back', 'menu_home'),
         ],
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -399,7 +399,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ...linkRows,
       [
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
-        Markup.button.callback('🔙 Main Menu', 'menu_home'),
+        Markup.button.callback('🔙 Back', 'menu_home'),
       ],
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -769,7 +769,8 @@ bot.action('menu_holdings', async (ctx) => {
        await ctx.answerCbQuery('No holdings.').catch(() => {});
        const keyboard = Markup.inlineKeyboard([
          [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-         [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+         [Markup.button.callback('🔙 Back', 'menu_home')],
+         [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
          [
            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
@@ -794,7 +795,7 @@ bot.action('menu_holdings', async (ctx) => {
        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
      });
 
-     let msg = `💼 *Holdings (${positions.length})*\n\n`;
+    let msg = "";
      const buttons: any[] = [];
      let totalPortfolioValueNear = 0;
      let nearUsd = 4.3; // Default fallback
@@ -831,23 +832,26 @@ bot.action('menu_holdings', async (ctx) => {
        buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
      }
 
-     // Add total portfolio value
-     const totalPortfolioUsd = totalPortfolioValueNear * nearUsd;
-     const formatTotalUSD = totalPortfolioUsd >= 1000 
-       ? `$${(totalPortfolioUsd / 1000).toFixed(2)}K` 
-       : totalPortfolioUsd >= 1 
-         ? `$${totalPortfolioUsd.toFixed(2)}` 
-         : `$${totalPortfolioUsd.toFixed(4)}`;
-
-     msg += `💎 *Total Portfolio Value*: \`${totalPortfolioValueNear.toFixed(4)} NEAR\` (\`${formatTotalUSD}\`)\n\n`;
 
      buttons.push([
        Markup.button.callback('🔄 Refresh', 'menu_holdings'),
-       Markup.button.callback('🔙 Main Menu', 'menu_home'),
+       Markup.button.callback('🔙 Back', 'menu_home'),
+      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
      ]);
 
      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
    });
+
+  // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
+  bot.action('import_token_prompt', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      '📝 *Import Token*\n\n' +
+      'Please paste the token contract address (CA) you want to import.\n\n' +
+      'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`',
+      { parse_mode: 'Markdown' }
+    );
+  });
 
   // ── token_detail — Individual token detail modal with PNL card ────────────────
   bot.action(/^token_detail:(.+)$/, async (ctx) => {
@@ -1134,7 +1138,7 @@ bot.action('menu_holdings', async (ctx) => {
     }
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
-      Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      Markup.button.callback('🔙 Back', 'menu_home'),
     ]);
     buttons.push([
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -1720,7 +1724,7 @@ bot.action('menu_holdings', async (ctx) => {
     }
     buttons.push([
       Markup.button.callback('🔄 Refresh', 'menu_positions'),
-      Markup.button.callback('🔙 Main Menu', 'menu_home'),
+      Markup.button.callback('🔙 Back', 'menu_home'),
     ]);
 
     await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
@@ -2308,7 +2312,7 @@ try {
         Markup.button.callback('⚙️ Settings', 'menu_settings'),
       ],
       [
-        Markup.button.callback('🔙 Main Menu', 'menu_home'),
+        Markup.button.callback('🔙 Back', 'menu_home'),
       ],
     ]);
 
