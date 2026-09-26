@@ -481,7 +481,7 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -552,6 +552,17 @@ async function handlePoolCreated(
       }
     } catch (err) {
       logger.warn('Could not fetch Gaypad state', { correlationId, tokenAddress, error: (err as Error).message });
+    }
+  } else if (venue === 'nearpad') {
+    try {
+      const padState = await near.getNEARpadState(tokenAddress);
+      if (padState) {
+        dclPoolId = padState.dclPoolId;
+        initialPrice = padState.price;
+        initialLiquidity = (padState.liquidityNear * 1e24).toString();
+      }
+    } catch (err) {
+      logger.warn('Could not fetch NEARpad state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   }
 
@@ -759,7 +770,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   liquidityStr: string,
   marketCap: number
 ): Promise<void> {

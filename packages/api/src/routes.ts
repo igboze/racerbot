@@ -196,8 +196,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
         : '';
     venueText = `💧 *Venue*: NearlyTrade (${phaseStr}${progressStr})`;
-  } else if (tokenInfo.venue === 'rhea') {
-    venueText = `💧 *Venue*: Rhea Finance (AMM)`;
+  } else if (tokenInfo.venue === 'rhea' || tokenInfo.venue === 'ref') {
+    venueText = tokenInfo.dcl_pool_id
+      ? `💧 *Venue*: Ref Finance / Rhea (DCL)`
+      : `💧 *Venue*: Rhea / Ref Finance (AMM)`;
   } else if (tokenInfo.venue === 'shardsmarket') {
     venueText = `💧 *Venue*: Shardsmarket (AMM)`;
   } else if (tokenInfo.venue === 'memecooking') {
@@ -207,7 +209,13 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   } else if (tokenInfo.venue === 'onetokenhub') {
     venueText = `💧 *Venue*: OneTokenHub (Ref DCL)`;
   } else if (tokenInfo.venue === 'nearpad') {
-    venueText = `💧 *Venue*: NEARpad Launchpad`;
+    venueText = tokenInfo.dcl_pool_id
+      ? `💧 *Venue*: NEARpad (Ref DCL)`
+      : `💧 *Venue*: NEARpad Launchpad`;
+  } else if (tokenInfo.venue === 'gaypad') {
+    venueText = `💧 *Venue*: Gaypad Launchpad`;
+  } else if (tokenInfo.tradeable) {
+    venueText = `💧 *Venue*: NEAR Protocol DEX`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
@@ -342,7 +350,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
       // User holds token - show sell buttons instead of buy buttons
-      text += `⚡ *Sell Your Holdings:`;
+      text += `⚡ *Sell Your Holdings*:\n`;
       const defaultSellPct = userRecord?.default_sell_pct ? Number(userRecord.default_sell_pct) : 100;
       keyboard = Markup.inlineKeyboard([
         [
@@ -367,7 +375,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ]);
     } else {
       // User doesn't hold token - show buy buttons
-      text += `⚡ *Choose Buy Amount (Fixed or % of Balance)*:`;
+      text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         [
           Markup.button.callback('⚡ 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
@@ -419,6 +427,47 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   }
 
   return { text, keyboard, pnlCardImage: pnlCardImage || undefined };
+}
+
+/**
+ * Safely send a token card to Telegram.
+ * Handles photo or text rendering, and gracefully falls back to plain text if Telegram Markdown entity parsing fails.
+ */
+export async function sendTokenCard(ctx: any, card: { text: string; keyboard: any; pnlCardImage?: Buffer }) {
+  if (card.pnlCardImage) {
+    try {
+      await ctx.replyWithPhoto(
+        { source: card.pnlCardImage },
+        {
+          caption: card.text,
+          parse_mode: 'Markdown',
+          reply_markup: card.keyboard.reply_markup,
+        }
+      );
+      return;
+    } catch (err: any) {
+      console.warn('[API] replyWithPhoto Markdown failed, retrying plain caption:', err.message);
+      try {
+        await ctx.replyWithPhoto(
+          { source: card.pnlCardImage },
+          {
+            caption: card.text.replace(/[*_`]/g, ''),
+            reply_markup: card.keyboard.reply_markup,
+          }
+        );
+        return;
+      } catch {
+        // Fallback to text message
+      }
+    }
+  }
+
+  try {
+    await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
+  } catch (err: any) {
+    console.warn('[API] ctx.reply Markdown failed, retrying plain text:', err.message);
+    await ctx.reply(card.text.replace(/[*_`]/g, ''), card.keyboard);
+  }
 }
 
 // ── Helper: Build Settings Dashboard with Checkmark Indicators ──────────────
@@ -592,14 +641,14 @@ async function executeBuyHelper(
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
   const info = await getTokenInfo(tokenAddress, true).catch(() => null);
-  if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(info.venue)) {
+  if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad';
+  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
   const near = getNear();
@@ -1475,20 +1524,9 @@ bot.action('menu_holdings', async (ctx) => {
 
     try {
       const card = await buildTokenCard(tokenAddress, ctx.from!.id);
-      if (card.pnlCardImage) {
-        await ctx.replyWithPhoto(
-          { source: card.pnlCardImage },
-          {
-            caption: card.text,
-            parse_mode: 'Markdown',
-            reply_markup: card.keyboard.reply_markup
-          }
-        );
-      } else {
-        await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
-      }
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`, { parse_mode: 'Markdown' });
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -1501,18 +1539,13 @@ bot.action('menu_holdings', async (ctx) => {
       await ctx.answerCbQuery('Token refreshed.').catch(() => {});
       if (card.pnlCardImage) {
         // Send new image with updated text and keyboard
-        await ctx.replyWithPhoto(
-          { source: card.pnlCardImage },
-          {
-            caption: card.text,
-            parse_mode: 'Markdown',
-            reply_markup: card.keyboard.reply_markup
-          }
-        );
+        await sendTokenCard(ctx, card);
         // Delete old message to avoid clutter
         await ctx.deleteMessage().catch(() => {});
       } else {
-        await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(() => {});
+        await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(async () => {
+          await ctx.editMessageText(card.text.replace(/[*_`]/g, ''), card.keyboard).catch(() => {});
+        });
       }
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
@@ -1584,18 +1617,7 @@ bot.action('menu_holdings', async (ctx) => {
     if (amountNear <= 0) {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
-        if (card.pnlCardImage) {
-          await ctx.replyWithPhoto(
-            { source: card.pnlCardImage },
-            {
-              caption: card.text,
-              parse_mode: 'Markdown',
-              reply_markup: card.keyboard.reply_markup
-            }
-          );
-        } else {
-          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
-        }
+        await sendTokenCard(ctx, card);
       } catch {
         await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
       }
@@ -2264,31 +2286,17 @@ try {
     }
 
     // 2. Direct Token Contract Address Detection (Upon pasting a token address)
-    // NEAR accounts can have subdomains like: token.factory.near, axm.meme-cooking.near etc.
-    // Match any string ending in .near, .tg, or .testnet
+    // Match any string ending in .near, .tg, or .testnet, or 64-char hex addresses
     const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
-    const caMatch = nearCaRegex.exec(rawText) ||
-      (rawText.length === 64 && /^[0-9a-fA-F]{64}$/.test(rawText.trim()) ? ['', rawText.trim()] : null);
-    const potentialCA = caMatch ? caMatch[1] || caMatch[0] : null;
+    const hex64Regex = /(?:^|\s)([0-9a-fA-F]{64})(?:\s|$)/;
+    const caMatch = nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
+    const potentialCA = caMatch ? (caMatch[1] || caMatch[0]).trim() : null;
 
     if (potentialCA) {
       const loadingMsg = await ctx.reply('🔍 Looking up token...').catch(() => null);
+      let card;
       try {
-        const card = await buildTokenCard(potentialCA.trim(), telegramId);
-        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
-        if (card.pnlCardImage) {
-          await ctx.replyWithPhoto(
-            { source: card.pnlCardImage },
-            {
-              caption: card.text,
-              parse_mode: 'Markdown',
-              reply_markup: card.keyboard.reply_markup
-            }
-          );
-        } else {
-          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
-        }
-        return;
+        card = await buildTokenCard(potentialCA.trim(), telegramId);
       } catch (err: any) {
         console.warn(`[API] Token lookup failed for ${potentialCA}:`, err.message);
         if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
@@ -2302,6 +2310,10 @@ try {
         );
         return;
       }
+
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      await sendTokenCard(ctx, card);
+      return;
     }
 
     // 3. Local token name fuzzy match
@@ -2309,18 +2321,7 @@ try {
     if (tokenEntry) {
       try {
         const card = await buildTokenCard(tokenEntry.address, telegramId);
-        if (card.pnlCardImage) {
-          await ctx.replyWithPhoto(
-            { source: card.pnlCardImage },
-            {
-              caption: card.text,
-              parse_mode: 'Markdown',
-              reply_markup: card.keyboard.reply_markup
-            }
-          );
-        } else {
-          await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
-        }
+        await sendTokenCard(ctx, card);
         return;
       } catch {}
     }
