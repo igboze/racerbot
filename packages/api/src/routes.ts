@@ -408,10 +408,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ]);
     }
   } else {
-    // Non-tradeable venue — info only
-    const venueNote = tokenInfo.venue === 'memecooking'
-      ? '⚠️ Meme.Cooking tokens are not yet directly tradeable via RacerBot. Trade on https://meme.cooking'
-      : '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
+    const venueNote = '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
     text += venueNote;
     keyboard = Markup.inlineKeyboard([
       ...linkRows,

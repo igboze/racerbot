@@ -174,21 +174,33 @@ function isIntearToken(tokenAddress: string): boolean {
 /**
  * Fetch meme.cooking token state from on-chain.
  */
-async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string }> {
-  // meme.cooking tokens: get pool info from meme-cooking.near contract
-  // The meme id is extracted from the token address prefix
-  const memeId = tokenAddress.replace('.meme-cooking.near', '');
-  try {
-    const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: parseInt(memeId) || 0 });
-    if (meme) {
-      const nearAmount = parseFloat(meme.total_deposit || meme.near_amount || '0') / 1e24;
-      const phase = meme.end_timestamp_ms && Date.now() >= Number(meme.end_timestamp_ms) ? 'bonded' : 'bonding';
-      return { price: 0, liquidity: nearAmount, phase };
-    }
-  } catch {
-    // Try by name lookup
+async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string; progress: number }> {
+  const match = tokenAddress.match(/-(\d+)\.meme-cooking\.near$/) || tokenAddress.match(/(\d+)\.meme-cooking\.near$/);
+  const memeId = match ? parseInt(match[1], 10) : parseInt(tokenAddress.replace('.meme-cooking.near', ''), 10);
+  if (isNaN(memeId)) {
+    return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
   }
-  return { price: 0, liquidity: 0, phase: 'unknown' };
+
+  try {
+    const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+    if (meme) {
+      const totalStaked = parseFloat(meme.total_staked || '0') / 1e24;
+      const hardCap = parseFloat(meme.hard_cap || '0') / 1e24;
+      const tokensToDistribute = parseFloat(meme.amount_to_be_distributed || meme.total_supply || '0') / Math.pow(10, meme.decimals || 18);
+      const price = tokensToDistribute > 0 ? totalStaked / tokensToDistribute : 0;
+      const progress = hardCap > 0 ? Math.min(100, (totalStaked / hardCap) * 100) : 0;
+      return { price, liquidity: totalStaked, phase: 'prebonded', progress };
+    }
+  } catch {}
+
+  try {
+    const fin = await near.view<any>('meme-cooking.near', 'get_finalized_meme', { meme_id: memeId }).catch(() => null);
+    if (fin) {
+      return { price: 0, liquidity: 0, phase: 'bonded', progress: 100 };
+    }
+  } catch {}
+
+  return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
 }
 
 /**
@@ -240,7 +252,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(dbCache.venue ?? 'unknown'),
     };
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
     return result;
@@ -312,9 +324,11 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   if (price === 0) {
     if (isMemooCookingToken(tokenAddress)) {
       venue = 'memecooking';
-      const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown' }));
+      const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
       price = mcInfo.price;
       liquidity = mcInfo.liquidity;
+      bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
+      bondingProgressPct = mcInfo.progress;
     } else if (isIntearToken(tokenAddress)) {
       venue = 'intear';
       try {
@@ -427,7 +441,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
   const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(venue);
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
   const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {

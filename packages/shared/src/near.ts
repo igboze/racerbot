@@ -1410,7 +1410,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -1418,7 +1418,40 @@ export class MultiRpcNear {
     rheaPoolId?: number | null,
     dclPoolId?: string | null
   ): Promise<{ expectedOutput: string; minAmountOut: string }> {
-    if (venue === 'shardsmarket') {
+    if (venue === 'memecooking') {
+      const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+      // Check Rhea DEX first for bonded tokens
+      const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, typeof rhea.poolId === 'number' ? rhea.poolId : null, rhea.isDcl ? String(rhea.poolId) : null);
+      }
+
+      // Pre-bonded on Meme.Cooking launchpad
+      const match = targetToken.match(/-(\d+)\.meme-cooking\.near$/) || targetToken.match(/(\d+)\.meme-cooking\.near$/);
+      const memeId = match ? parseInt(match[1], 10) : parseInt(targetToken.replace('.meme-cooking.near', ''), 10);
+      const meme = await this.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+
+      if (meme) {
+        const hardCap = BigInt(meme.hard_cap || '100000000000000000000000000');
+        const tokensToDistribute = BigInt(meme.amount_to_be_distributed || meme.total_supply || '0');
+        const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+
+        let expected = 0n;
+        if (isBuy) {
+          const amountInBI = BigInt(amountIn);
+          if (hardCap > 0n && tokensToDistribute > 0n) {
+            expected = (amountInBI * tokensToDistribute) / hardCap;
+          }
+        } else {
+          expected = BigInt(amountIn);
+        }
+
+        const minOut = calculateMinAmountOut(expected, slippagePct);
+        return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      }
+
+      throw new Error(`Meme.Cooking token ${targetToken} is not active and has no DEX pool.`);
+    } else if (venue === 'shardsmarket') {
       const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
       const reserves = await this.getShardsmarketPoolReserves(targetToken);
       const reserveNear = BigInt(reserves.reserveNear);
