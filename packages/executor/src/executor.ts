@@ -161,7 +161,7 @@ export class SwapExecutor {
     const account = await near.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -169,14 +169,14 @@ export class SwapExecutor {
         if (venue === 'nearlytrade') {
           const ntState = await near.getNearlytradeTokenState(tokenTarget).catch(() => null);
           dclPoolId = ntState?.dclPoolId ?? null;
-        } else if (venue === 'rhea') {
+        } else if (venue === 'rhea' || venue === 'ref') {
           dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
         } else if (venue === 'onetokenhub') {
           const hubState = await near.getOneTokenHubState(tokenTarget).catch(() => null);
           dclPoolId = hubState?.dclPoolId ?? null;
         } else if (venue === 'nearpad') {
-          // NEARpad doesn't use DCL pools, so no dclPoolId needed
-          dclPoolId = null;
+          const padState = await near.getNEARpadState(tokenTarget).catch(() => null);
+          dclPoolId = padState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
         }
       }
     }
@@ -290,7 +290,7 @@ export class SwapExecutor {
 
           result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
         }
-      } else if (venue === 'rhea') {
+      } else if (venue === 'rhea' || venue === 'ref') {
         // Per docs: check whitelisted tokens before swap; register storage if not whitelisted
         const whitelisted: string[] = await near.getWhitelistedTokens().catch(() => []);
         if (whitelisted.length > 0) {
@@ -606,45 +606,62 @@ export class SwapExecutor {
         result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
       }
     } else if (venue === 'nearpad') {
-      // NEARpad: direct swap on nearpadfamily.near
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      if (isBuy) {
-        await near.ensureStorageDeposit(subaccountId, token_out);
+      // NEARpad: swaps execute on Ref DCL (dclv2.ref-labs.near)
+      if (!dclPoolId) {
+        const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+        const padState = await near.getNEARpadState(tokenTarget).catch(() => null);
+        dclPoolId = padState?.dclPoolId ?? (await near.findDclPoolId('wrap.near', tokenTarget).catch(() => null));
+      }
 
-        const actions = await this.buildWrapNearBuyActions(
-          subaccountId,
-          amountInBigInt,
-          feeAmount,
-          swapAmount,
-          'nearpadfamily.near',
-          JSON.stringify({
-            token: token_out,
-            min_amount_out: minOutAdj,
-          })
-        );
+      if (dclPoolId) {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        if (isBuy) {
+          await near.ensureStorageDeposit(subaccountId, token_out);
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'dclv2.ref-labs.near',
+            JSON.stringify({
+              Swap: {
+                pool_ids: [dclPoolId],
+                output_token: token_out,
+                min_output_amount: minOutAdj,
+              },
+            })
+          );
+
+          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        } else {
+          // Sell NEARpad token
+          await near.ensureStorageDeposit(subaccountId, token_in);
+          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: 'wrap.near',
+                    min_output_amount: min_amount_out,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+
+          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        }
       } else {
-        // Sell NEARpad token
-        await near.ensureStorageDeposit(subaccountId, token_out);
-
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'nearpadfamily.near',
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({
-                token: token_out,
-                min_amount_out: min_amount_out,
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
-
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        throw new Error('DCL pool not found for NEARpad token');
       }
     } else if (venue === 'gaypad') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -883,7 +900,7 @@ export class SwapExecutor {
     const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
     // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea') && BigInt(netAmountOut) > 0n) {
+    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       onChainFeeYocto = sellFeeNear.toString();
 
@@ -968,7 +985,7 @@ export class SwapExecutor {
         return { success: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
       }
       dclPoolId = ntState.dclPoolId;
-    } else if (venue === 'rhea') {
+    } else if (venue === 'rhea' || venue === 'ref') {
       const dbCache = await getTokenCache(token_address).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
       if (!dclPoolId) {
@@ -980,6 +997,9 @@ export class SwapExecutor {
     } else if (venue === 'onetokenhub') {
       const hubState = await near.getOneTokenHubState(token_address);
       dclPoolId = hubState.dclPoolId;
+    } else if (venue === 'nearpad') {
+      const padState = await near.getNEARpadState(token_address);
+      dclPoolId = padState.dclPoolId;
     }
 
     // FIX Bug 2: Compute minAmountOut against the SWAP amount (98.5% after 1.5% fee).
@@ -1042,7 +1062,7 @@ export class SwapExecutor {
       if (venue === 'shardsmarket') {
         const smReserves = await near.getShardsmarketPoolReserves(tokenAddress);
         liquidityNear = parseFloat(smReserves.reserveNear) / 1e24;
-      } else if (venue === 'rhea') {
+      } else if (venue === 'rhea' || venue === 'ref') {
         // Try simple pool first, then DCL
         try {
           const poolId = await near.findRheaPoolId('wrap.near', tokenAddress);

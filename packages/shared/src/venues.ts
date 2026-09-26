@@ -10,7 +10,7 @@
  * MultiRpcNear.computeMinAmountOut / SwapExecutor.
  */
 
-export type VenueId = 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad';
+export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad';
 
 export interface VenueInfo {
   id: VenueId;
@@ -35,6 +35,14 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     contracts: ['v2.ref-finance.near', 'dclv2.ref-labs.near'],
     tradeable: true,
     website: 'https://rhea.finance',
+  },
+  ref: {
+    id: 'ref',
+    label: 'Ref Finance',
+    kind: 'dex',
+    contracts: ['v2.ref-finance.near', 'dclv2.ref-labs.near'],
+    tradeable: true,
+    website: 'https://ref.finance',
   },
   shardsmarket: {
     id: 'shardsmarket',
@@ -87,6 +95,14 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     tradeable: true,
     website: 'https://gaypad.j1-racing.near',
     tokenPage: (t) => `https://gaypad.j1-racing.near/#/token/${t}`,
+  },
+  nearpad: {
+    id: 'nearpad',
+    label: 'NEARpad',
+    kind: 'launchpad+amm',
+    contracts: ['nearpadfamily.near', 'dclv2.ref-labs.near'],
+    tradeable: true,
+    website: 'https://nearpad.family',
   },
 };
 

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS } from '@racerbot/shared';
+import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS, type VenueName } from '@racerbot/shared';
 import {
   getDb,
   createUser,
@@ -149,7 +149,7 @@ export interface TokenInfoResult {
   market_cap: number;      // market cap in NEAR
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD exchange rate at time of fetch
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'nearpad' | 'unknown';
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'unknown';
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
@@ -240,7 +240,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(dbCache.venue ?? 'unknown'),
     };
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
     return result;
@@ -362,6 +362,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         const padState = await near.getNEARpadState(tokenAddress);
         price = padState.price;
         liquidity = padState.liquidityNear;
+        dclPoolId = padState.dclPoolId;
         if (padState.totalSupply && padState.totalSupply !== '0') {
           totalSupply = padState.totalSupply;
         }
@@ -401,6 +402,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         venue = 'nearpad';
         price = padState.price;
         liquidity = padState.liquidityNear;
+        dclPoolId = padState.dclPoolId;
         if (padState.totalSupply && padState.totalSupply !== '0') {
           totalSupply = padState.totalSupply;
         }
@@ -425,7 +427,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
   const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'intear', 'onetokenhub', 'nearpad'].includes(venue);
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad'].includes(venue);
   const nearUsd = await nearUsdPromise;
 
   const result: TokenInfoResult = {
@@ -656,7 +658,7 @@ export async function publishSwap(swapEvent: {
   token_out: string;
   amount_in: string;
   min_amount_out: string;
-  venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad';
+  venue: VenueName;
   dcl_pool_id?: string;
 }): Promise<{ txHash?: string }> {
   const redisUrl = process.env.REDIS_URL;
