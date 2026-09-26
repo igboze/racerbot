@@ -45,7 +45,7 @@ const userPendingActions = new Map<number, PendingAction>();
 
 // ── Helper: Safe Markdown string sanitization ────────────────────────────────
 function sanitizeMd(str: string): string {
-  return (str || '').replace(/[_*`\[]/g, ' ');
+  return (str || '').replace(/[_*`[\](~|>#+=|{}!@-]/g, ' ');
 }
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
@@ -2166,13 +2166,12 @@ try {
       } catch (err: any) {
         console.warn(`[API] Token lookup failed for ${potentialCA}:`, err.message);
         await ctx.reply(
-          `❌ *Token not found*: \`${potentialCA}\`\n\n` +
+          `❌ Token not found: ${sanitizeMd(potentialCA)}\n\n` +
           `This could mean:\n` +
           `• The contract address is incorrect\n` +
           `• The token is on an unsupported chain or venue\n` +
           `• The RPC request timed out — please try again\n\n` +
-          `Error: ${err.message?.slice(0, 100) || 'Unknown error'}`,
-          { parse_mode: 'Markdown' }
+          `Error: ${sanitizeMd(err.message?.slice(0, 100) || 'Unknown error')}`
         );
         return;
       } finally {
