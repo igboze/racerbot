@@ -1,6 +1,6 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
-import { calculateExpectedOutput, calculateMinAmountOut } from './utils.js';
+import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 
 export interface NearConfig {
@@ -1427,9 +1427,8 @@ export class MultiRpcNear {
       }
 
       // Pre-bonded on Meme.Cooking launchpad
-      const match = targetToken.match(/-(\d+)\.meme-cooking\.near$/) || targetToken.match(/(\d+)\.meme-cooking\.near$/);
-      const memeId = match ? parseInt(match[1], 10) : parseInt(targetToken.replace('.meme-cooking.near', ''), 10);
-      const meme = await this.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+      const memeId = parseMemeCookingId(targetToken);
+      const meme = memeId !== null ? await this.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null) : null;
 
       if (meme) {
         const hardCap = BigInt(meme.hard_cap || '100000000000000000000000000');

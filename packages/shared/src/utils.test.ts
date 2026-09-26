@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateMinAmountOut, calculateExpectedOutput, calculateMinOutAdj } from './utils.js';
+import { calculateMinAmountOut, calculateExpectedOutput, calculateMinOutAdj, parseMemeCookingId } from './utils.js';
 
 describe('utils: fee and slippage math', () => {
   describe('calculateMinAmountOut & calculateExpectedOutput', () => {
@@ -69,6 +69,27 @@ describe('utils: fee and slippage math', () => {
       const expected = (BigInt(minAmountOut) * swapAmount) / BigInt(amountIn);
       expect(adj).toBe(expected.toString());
       expect(BigInt(adj)).toBe((BigInt(minAmountOut) * 9850n) / 10000n);
+    });
+  });
+
+  describe('parseMemeCookingId', () => {
+    it('parses symbol-id format (e.g. zolanear-1726.meme-cooking.near)', () => {
+      expect(parseMemeCookingId('zolanear-1726.meme-cooking.near')).toBe(1726);
+      expect(parseMemeCookingId('jambo-1679.meme-cooking.near')).toBe(1679);
+    });
+
+    it('parses numeric id format (e.g. 1990.meme-cooking.near)', () => {
+      expect(parseMemeCookingId('1990.meme-cooking.near')).toBe(1990);
+    });
+
+    it('parses hyphenated symbol format (e.g. my-cool-coin-42.meme-cooking.near)', () => {
+      expect(parseMemeCookingId('my-cool-coin-42.meme-cooking.near')).toBe(42);
+    });
+
+    it('returns null for non-meme-cooking or invalid addresses', () => {
+      expect(parseMemeCookingId('wrap.near')).toBeNull();
+      expect(parseMemeCookingId('invalid-address.near')).toBeNull();
+      expect(parseMemeCookingId('notanumber.meme-cooking.near')).toBeNull();
     });
   });
 });
