@@ -951,24 +951,57 @@ bot.action('menu_holdings', async (ctx) => {
       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
       const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
-      const marketCap = info?.market_cap || 0;
-      const marketCapDisplay = marketCap > 0 ? `${(marketCap / 1e6).toFixed(2)}M` : 'N/A';
+      const nearUsdRate = info?.near_usd || 4.3;
 
-      // Calculate initial investment (first buy)
+      const formatDualPrice = (priceNear: number) => {
+        if (priceNear <= 0) return '`0.00000000 NEAR` ($0.00)';
+        let nearStr = priceNear >= 1 ? priceNear.toFixed(4) : priceNear >= 0.0001 ? priceNear.toFixed(6) : priceNear.toFixed(8);
+        const usdVal = priceNear * nearUsdRate;
+        let usdStr = usdVal >= 1 ? `$${usdVal.toFixed(2)}` : usdVal >= 0.0001 ? `$${usdVal.toFixed(6)}` : `$${usdVal.toFixed(8)}`;
+        return `\`${nearStr} NEAR\` (\`${usdStr}\`)`;
+      };
+
+      const formatDualValue = (nearVal: number) => {
+        const usdVal = nearVal * nearUsdRate;
+        let usdStr = usdVal >= 1000 ? `$${(usdVal / 1000).toFixed(2)}K` : `$${usdVal.toFixed(2)}`;
+        return `\`${nearVal.toFixed(4)} NEAR\` (\`${usdStr}\`)`;
+      };
+
+      let marketCapDisplay = 'N/A';
+      const mcNear = info?.market_cap || 0;
+      if (mcNear > 0) {
+        const mcUsd = info?.market_cap_usd || (mcNear * nearUsdRate);
+        const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
+        const mcNearStr = mcNear >= 1e6 ? `${(mcNear / 1e6).toFixed(2)}M NEAR` : mcNear >= 1e3 ? `${(mcNear / 1e3).toFixed(2)}K NEAR` : `${mcNear.toFixed(2)} NEAR`;
+        marketCapDisplay = `${mcUsdStr} (${mcNearStr})`;
+      }
+
+      // Calculate initial investment across all buy fills, or fallback to position entry * qty
       const buys = fills.filter(f => f.side === 'buy');
-      const initialInvestment = buys.length > 0 
-        ? parseFloat(buys[0].amount) * parseFloat(buys[0].price)
-        : 0;
+      let initialInvestment = 0;
+      for (const buy of buys) {
+        if (buy.tx_hash?.startsWith('deposit_')) continue;
+        const amount = parseFloat(buy.amount);
+        const price = parseFloat(buy.price);
+        const fee = parseFloat(buy.fee_paid || '0');
+        initialInvestment += (amount * price) + fee;
+      }
+      const quantityHeldNum = parseFloat(position.quantity_held || '0');
+      if (initialInvestment === 0 && quantityHeldNum > 0) {
+        initialInvestment = quantityHeldNum * entryPrice;
+      }
+
+      const holdingValueNear = quantityHeldNum * currentPrice;
 
       let msg = `📊 *${symbol} Details*\n\n`;
       msg += `💰 *Price Info*:\n`;
-      msg += `  Entry: \`${entryPrice.toFixed(8)} NEAR\`\n`;
-      msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
+      msg += `  Entry: ${formatDualPrice(entryPrice)}\n`;
+      msg += `  Current: ${formatDualPrice(currentPrice)}\n`;
       msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
-      msg += `📈 *Market Cap*: \`${marketCapDisplay} NEAR\`\n\n`;
+      msg += `📈 *Market Cap*: \`${marketCapDisplay}\`\n\n`;
       msg += `💼 *Position*:\n`;
-      msg += `  Holding: \`${position.quantity_held}\`\n`;
-      msg += `  Initial Investment: \`${initialInvestment.toFixed(4)} NEAR\`\n\n`;
+      msg += `  Holding: \`${position.quantity_held}\` (${formatDualValue(holdingValueNear)})\n`;
+      msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n\n`;
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
 
