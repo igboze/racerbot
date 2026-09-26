@@ -22,7 +22,12 @@ import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
-const RPC_URLS = (process.env.RPC_PROVIDERS || 'https://rpc.mainnet.fastnear.com').split(',').map(u => u.trim());
+const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
+const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
+if (qnUrl && !configuredRpcList.includes(qnUrl)) {
+  configuredRpcList.push(qnUrl);
+}
+const RPC_URLS = configuredRpcList.length > 0 ? configuredRpcList : ['https://rpc.mainnet.fastnear.com'];
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────

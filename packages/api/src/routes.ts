@@ -305,6 +305,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     nearUsdFooter +
     balanceText;
 
+  let pnlCardImage: Buffer | null = null;
+
   // If user holds the token, add holdings info and PNL card
   if (holdsToken && userPosition) {
     const entryPrice = parseFloat(userPosition.avg_entry_price) || 0;
@@ -320,7 +322,6 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
 
     // Generate PNL card with image (image will be sent by the calling handler)
-    let pnlCardImage: Buffer | null = null;
     try {
       const pnlCard = await generatePNLCard(userPosition.id);
       if (pnlCard.image) {
@@ -337,7 +338,6 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   // ── Buttons depend on whether trading is supported and if user holds token ──
   let keyboard;
-  let pnlCardImage: Buffer | null = null;
 
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {

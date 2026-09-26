@@ -29,6 +29,32 @@ const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
 
+let lastIndexerFetch = 0;
+let indexerPoolsCache: any[] = [];
+
+export async function getRefIndexerPools(): Promise<any[]> {
+  const now = Date.now();
+  if (indexerPoolsCache.length > 0 && now - lastIndexerFetch < 300_000) {
+    return indexerPoolsCache;
+  }
+  try {
+    const res = await fetch('https://indexer.ref.finance/list-top-pools', {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        indexerPoolsCache = data;
+        lastIndexerFetch = now;
+        return data;
+      }
+    }
+  } catch {
+    // Fall back to existing cache or empty array
+  }
+  return indexerPoolsCache;
+}
+
 export function parseIntearPool(rawBytes: Buffer): { asset1: string; reserve1: string; asset2: string; reserve2: string } | null {
   if (!rawBytes || rawBytes.length < 5 || rawBytes[0] !== 1) return null;
   let offset = 1;
@@ -97,31 +123,39 @@ export class MultiRpcNear {
   constructor(rpcUrls: string[], networkId = 'mainnet') {
     const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
     const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+    const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
+    const initialUrls = [...rpcUrls];
+    if (qnUrl && !initialUrls.includes(qnUrl)) {
+      initialUrls.push(qnUrl);
+    }
+
     // Remove deprecated endpoints like rpc.mainnet.near.org
-    const sanitizedUrls = rpcUrls.filter(url => {
+    const sanitizedUrls = initialUrls.filter(url => {
       if (url.includes('rpc.mainnet.near.org')) return false;
       return true;
     });
     const readUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://rpc.mainnet.fastnear.com'];
     this.readProviders = readUrls.map((url, i) => {
+      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
-      return createProvider(url, `read-rpc-${i}`, false, headers);
+      return createProvider(url, isQn ? `quicknode-read-${i}` : `read-rpc-${i}`, isQn, headers);
     });
 
-    // Trade providers: FastNEAR ONLY for swaps/buys/sells
-    const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com'));
+    // Trade providers: FastNEAR & QuickNode for swaps/buys/sells
+    const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com') || u.includes('quiknode.pro') || u.includes('quicknode'));
     if (tradeUrls.length === 0) {
       tradeUrls.push(...sanitizedUrls);
     }
     this.tradeProviders = tradeUrls.map((url, i) => {
+      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
-      return createProvider(url, `trade-rpc-${i}`, false, headers);
+      return createProvider(url, isQn ? `quicknode-trade-${i}` : `trade-rpc-${i}`, isQn, headers);
     });
 
     this.keyStore = new keyStores.InMemoryKeyStore();
@@ -444,6 +478,23 @@ export class MultiRpcNear {
     if (rheaPoolIdCache.has(cacheKey1)) return rheaPoolIdCache.get(cacheKey1)!;
     if (rheaPoolIdCache.has(cacheKey2)) return rheaPoolIdCache.get(cacheKey2)!;
 
+    // 1. Check Ref Finance indexer top pools (covers thousands of active pools instantly)
+    try {
+      const indexerPools = await getRefIndexerPools();
+      const match = indexerPools.find(
+        (p: any) =>
+          p.token_account_ids &&
+          p.token_account_ids.includes(tokenA) &&
+          p.token_account_ids.includes(tokenB)
+      );
+      if (match && match.id !== undefined && match.id !== null) {
+        const foundId = Number(match.id);
+        rheaPoolIdCache.set(cacheKey1, foundId);
+        rheaPoolIdCache.set(cacheKey2, foundId);
+        return foundId;
+      }
+    } catch {}
+
     const batchSize = 100;
     const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools
 
@@ -612,7 +663,64 @@ export class MultiRpcNear {
       }
     } catch {}
 
-    // 4. Scan recent pools on v2.ref-finance.near if not caught above
+    // 4. Paired via Ref Finance indexer top pools (covers thousands of pools across all pair types)
+    try {
+      const indexerPools = await getRefIndexerPools();
+      const matching = indexerPools.filter(
+        (p: any) => p.token_account_ids && p.token_account_ids.includes(tokenAddress)
+      );
+      if (matching.length > 0) {
+        matching.sort((a: any, b: any) => parseFloat(b.tvl || '0') - parseFloat(a.tvl || '0'));
+        for (const pool of matching) {
+          const poolId = Number(pool.id);
+          const tokens: string[] = pool.token_account_ids || [];
+          const otherToken = tokens.find(t => t !== tokenAddress) || 'wrap.near';
+
+          if (otherToken === 'wrap.near') {
+            const rh = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress).catch(() => null);
+            if (rh) {
+              const rIn = parseFloat(rh.reserveIn) / 1e24;
+              const rOut = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+              if (rIn > 0 && rOut > 0) {
+                return {
+                  poolId,
+                  pairedToken: 'wrap.near',
+                  isDcl: false,
+                  price: rIn / rOut,
+                  liquidityNear: rIn * 2,
+                  reserveNear: rh.reserveIn,
+                  reserveToken: rh.reserveOut,
+                  fee: rh.fee,
+                };
+              }
+            }
+          } else if (otherToken === 'jambo-1679.meme-cooking.near') {
+            const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
+            if (rh) {
+              const rJambo = parseFloat(rh.reserveIn) / 1e18;
+              const rOut = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+              if (rJambo > 0 && rOut > 0) {
+                const nearPerJambo = await getJamboNearRate();
+                return {
+                  poolId,
+                  pairedToken: otherToken,
+                  intermediateToken: otherToken,
+                  intermediatePoolId: 6518,
+                  isDcl: false,
+                  price: (rJambo / rOut) * nearPerJambo,
+                  liquidityNear: rJambo * nearPerJambo * 2,
+                  reserveNear: (rJambo * nearPerJambo * 1e24).toFixed(0),
+                  reserveToken: rh.reserveOut,
+                  fee: rh.fee,
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 5. Scan recent pools on v2.ref-finance.near if not caught above
     try {
       const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
       if (numPools && numPools > 0) {
