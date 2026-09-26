@@ -16,24 +16,14 @@ export class MultiRpcProvider {
     const apiKey = process.env.FASTNEAR_API_KEY?.trim();
     const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
 
-    // Add QuickNode URL to providers if configured
-    const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
-    const allUrls = quickNodeUrl ? [quickNodeUrl, ...providerUrls] : providerUrls;
-
-    this.providers = allUrls.map((url, i) => {
-      const isQuickNode = url === quickNodeUrl;
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
+    this.providers = providerUrls.map((url, i) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       // Add Bearer token for FastNear premium (trading)
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
-        // Store reference to FastNear provider for trading operations
         this.fastNearProvider = { url, name: `provider-${i}`, healthy: true, latency: 0, errorCount: 0, successCount: 0, isQuickNode: false, headers };
       }
-
-      return createProvider(url, `provider-${i}`, isQuickNode, headers);
+      return createProvider(url, `provider-${i}`, false, headers);
     });
 
     this.healthCheckIntervalMs = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || '30000');

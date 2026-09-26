@@ -1,6 +1,5 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
-import { createQuickNodeProvider } from './quicknode.js';
 import { calculateExpectedOutput, calculateMinAmountOut } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 
@@ -105,22 +104,12 @@ export class MultiRpcNear {
     });
     const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
 
-    // Read-only providers: QuickNode ONLY for token updates and on-chain reads
-    const readUrls: string[] = [];
-    if (quickNodeUrl && !readUrls.includes(quickNodeUrl)) {
-      readUrls.push(quickNodeUrl);
-    }
-    // Also add FastNear data URLs to read pool if QuickNode is not available
-    if (readUrls.length === 0) {
-      readUrls.push(...sanitizedUrls);
-    }
-    this.readProviders = readUrls.map((url, i) => createProvider(url, `read-rpc-${i}`, url === quickNodeUrl));
-
-    // Add QuickNode SDK provider for reads if available
-    const qnProvider = createQuickNodeProvider();
-    if (qnProvider && !this.readProviders.some(p => p.url === qnProvider.endpointUrl)) {
-      this.readProviders.push(createProvider(qnProvider.endpointUrl || quickNodeUrl!, 'read-qn-sdk', true));
-    }
+    // Read-only providers: FastNEAR RPC for token metadata, pool reserves, etc.
+    // QuickNode is NOT used here because @quicknode/sdk requires a custom transport
+    // that near-api-js doesn't support. QuickNode is used exclusively via
+    // MultiRpcProvider.data() in rpc.ts.
+    const readUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
+    this.readProviders = readUrls.map((url, i) => createProvider(url, `read-rpc-${i}`));
 
     // Trade providers: FastNEAR ONLY for swaps/buys/sells
     const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com'));
@@ -134,10 +123,6 @@ export class MultiRpcNear {
       }
       return createProvider(url, `trade-rpc-${i}`, false, headers);
     });
-    // Always include FastNear SDK if available for trade
-    if (this.tradeProviders.length === 0 && quickNodeUrl) {
-      this.tradeProviders.push(createProvider(quickNodeUrl, 'trade-qn-sdk', false));
-    }
 
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
