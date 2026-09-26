@@ -493,7 +493,7 @@ async function executeBuyHelper(
   let balanceNear = 0;
   try {
     const balances = await getUserBalances(telegramId);
-    balanceNear = parseFloat(balances.totalNearFormatted);
+    balanceNear = parseFloat(balances.nativeNearFormatted);
   } catch (err: any) {
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
@@ -505,7 +505,7 @@ async function executeBuyHelper(
 
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
-  const info = await getTokenInfo(tokenAddress).catch(() => null);
+  const info = await getTokenInfo(tokenAddress, true).catch(() => null);
   if (!info || !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
@@ -513,35 +513,11 @@ async function executeBuyHelper(
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-
-  // VENUE PRIORITY LOGIC: Check Rhea first, then use detected venue
-  // If token has a Rhea pool (either simple or DCL), prefer it over launchpad
-  let venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
-  let effectiveDclPoolId = info.dcl_pool_id ?? undefined;
-  let effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
-
+  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
+  const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
   const near = getNear();
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-
-  // Check if Rhea pool exists for this token
-  let hasRheaPool = false;
-  try {
-    if (effectiveRheaPoolId || effectiveDclPoolId) {
-      hasRheaPool = true;
-    } else {
-      // Try to find Rhea pool dynamically
-      const rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-      if (rheaPoolId) {
-        hasRheaPool = true;
-        effectiveRheaPoolId = rheaPoolId;
-        venue = 'rhea';
-      }
-    }
-  } catch {
-    // If Rhea check fails, continue with detected venue
-  }
-
-  console.log(`[BUY] Token: ${tokenAddress}, Detected venue: ${info.venue}, Has Rhea pool: ${hasRheaPool}, Final venue: ${venue}`);
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
 
   // FIX: computeMinAmountOut must use the SWAP amount (98.5% after 1.5% fee),
@@ -593,7 +569,7 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
   // The balance returned includes both spendable native NEAR and wNEAR.
   const balances = await getUserBalances(telegramId);
-  const balanceNear = parseFloat(balances.totalNearFormatted);
+  const balanceNear = parseFloat(balances.nativeNearFormatted);
 
   // Retain 0.025 NEAR reserve for gas and token storage deposit
   const usableBalance = Math.max(0, balanceNear - 0.025);
@@ -705,75 +681,73 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── menu_holdings — Token list with name/logo and % change ────────────────
-  bot.action('menu_holdings', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
+bot.action('menu_holdings', async (ctx) => {
+     const telegramId = ctx.from!.id;
+     const user = await getUserByTelegramId(telegramId);
+     if (!user) {
+       await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+       return;
+     }
 
-    // NOTE: External deposit sync now runs in background only, not blocking menu load
-    // This prevents 3.5s+ delays when loading Holdings menu
-    setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
+     setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
-    const positions = await getOpenPositions(user.id).catch(() => []);
-    if (positions.length === 0) {
-      await ctx.answerCbQuery('No holdings.').catch(() => {});
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-        [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-        ],
-      ]);
-      await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      }).catch(() => {});
-      return;
-    }
+     const positions = await getOpenPositions(user.id).catch(() => []);
+     if (positions.length === 0) {
+       await ctx.answerCbQuery('No holdings.').catch(() => {});
+       const keyboard = Markup.inlineKeyboard([
+         [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
+         [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+         [
+           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+         ],
+       ]);
+       await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
+         parse_mode: 'Markdown',
+         ...keyboard,
+       }).catch(() => {});
+       return;
+     }
 
-    await ctx.answerCbQuery().catch(() => {});
+     await ctx.answerCbQuery().catch(() => {});
 
-    // Fetch all token info in parallel
-    const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
-    );
-    const infoMap = new Map<string, TokenInfoResult | null>();
-    positions.forEach((pos, i) => {
-      const r = infoResults[i];
-      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-    });
+     // Fetch all token info in parallel with forceRefresh for live data
+     const infoResults = await Promise.allSettled(
+       positions.map(pos => getTokenInfo(pos.token_address, true))
+     );
+     const infoMap = new Map<string, TokenInfoResult | null>();
+     positions.forEach((pos, i) => {
+       const r = infoResults[i];
+       infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+     });
 
-    let msg = `💼 *Holdings (${positions.length})*\n\n`;
-    const buttons: any[] = [];
+     let msg = `💼 *Holdings (${positions.length})*\n\n`;
+     const buttons: any[] = [];
 
-    for (const pos of positions) {
-      const info = infoMap.get(pos.token_address);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-      const currentPrice = info ? parseFloat(info.price) : 0;
-      const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-        ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+     for (const pos of positions) {
+       const info = infoMap.get(pos.token_address);
+       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+       const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+       const currentPrice = info ? parseFloat(info.price) : 0;
+       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
+         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
+         : 'N/A';
+       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+       const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
-      msg += `${emoji} *${symbol}*\n`;
-      msg += `  Change: \`${pnlDisplay}\`\n\n`;
+       msg += `${emoji} *${displayLabel}*\n`;
+       msg += `  Change: \`${pnlDisplay}\`\n\n`;
 
-      // Add clickable token button
-      buttons.push([Markup.button.callback(`${symbol} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
-    }
+       buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+     }
 
-    buttons.push([
-      Markup.button.callback('🔄 Refresh', 'menu_holdings'),
-      Markup.button.callback('🔙 Main Menu', 'menu_home'),
-    ]);
+     buttons.push([
+       Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+       Markup.button.callback('🔙 Main Menu', 'menu_home'),
+     ]);
 
-    await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-  });
+     await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+   });
 
   // ── token_detail — Individual token detail modal ───────────────────────────
   bot.action(/^token_detail:(.+)$/, async (ctx) => {
@@ -982,10 +956,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.answerCbQuery().catch(() => {});
 
-    // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass.
+    // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass with forceRefresh.
     // Reuse this same map for both the message text and the buttons — no second fetch loop.
     const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address))
+      positions.map(pos => getTokenInfo(pos.token_address, true))
     );
     const infoMap = new Map<string, TokenInfoResult | null>();
     positions.forEach((pos, i) => {
@@ -997,13 +971,14 @@ export function setupRoutes(bot: Telegraf): void {
     for (const pos of positions) {
       const info = infoMap.get(pos.token_address);
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+      const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
       const currentPrice = info ? parseFloat(info.price) : 0;
       const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
         ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
         : 'N/A';
       const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
 
-      msg += `${emoji} *${symbol}*\n`;
+      msg += `${emoji} *${displayLabel}*\n`;
       msg += `  Holding: \`${pos.quantity_held}\`\n`;
       msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
       msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
@@ -1598,10 +1573,10 @@ export function setupRoutes(bot: Telegraf): void {
       [user.id, 'closed']
     );
 
-    // FIX 1: Fetch all fills and token info in parallel.
+    // FIX 1: Fetch all fills and token info in parallel with forceRefresh.
     const [fillsResults, tokenInfoResults] = await Promise.all([
       Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address))),
+      Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
     ]);
 
     let msg = `📊 *PNL Summary*\n\n`;
@@ -2008,13 +1983,17 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         await ctx.reply(`⚡ Sending buy order for ${amt} NEAR of \`${pending.tokenAddress}\`...`, { parse_mode: 'Markdown' });
-        try {
-           const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
-           await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
-         } catch (err: any) {
-           console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
-           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-         }
+try {
+            const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+            await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+          } catch (err: any) {
+            console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
+            try {
+              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+            } catch {
+              console.error(`[BUY] Failed to send error message for ${pending.tokenAddress}:`, err?.message || err);
+            }
+          }
         return; // Always return after handling custom buy
       }
 

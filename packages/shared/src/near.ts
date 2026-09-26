@@ -94,7 +94,15 @@ export class MultiRpcNear {
   private currentIndex = 0;
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
-    this.providers = rpcUrls.map((url, i) => createProvider(url, `near-rpc-${i}`));
+    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+    // Remove deprecated endpoints like rpc.mainnet.near.org
+    const sanitizedUrls = rpcUrls.filter(url => {
+      if (url.includes('rpc.mainnet.near.org')) return false;
+      return true;
+    });
+    const finalUrls = sanitizedUrls.length > 0 ? sanitizedUrls : ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
+    this.providers = finalUrls.map((url, i) => createProvider(url, `near-rpc-${i}`));
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
   }
@@ -183,7 +191,13 @@ export class MultiRpcNear {
           msg.includes('ETIMEDOUT') ||
           msg.includes('EAI_AGAIN') ||
           /\b50[0-4]\b/.test(msg) ||
-          msg.includes('socket hang up');
+          msg.includes('socket hang up') ||
+          msg.includes('429') ||
+          msg.includes('-429') ||
+          msg.includes('TooManyRequestsError') ||
+          msg.includes('DEPRECATED') ||
+          msg.includes('Rate limit') ||
+          msg.includes('rate limit');
         if (isNetworkErr) {
           markProviderError(provider);
         }
@@ -479,6 +493,234 @@ export class MultiRpcNear {
       reserveIn: poolInfo.amounts?.[inIdx] ?? '0',
       reserveOut: poolInfo.amounts?.[outIdx] ?? '0',
       fee: poolInfo.total_fee ?? 30,
+    };
+  }
+
+  /**
+   * Find any active Rhea Finance pool for a token (Rule 1: check Rhea first).
+   * Checks direct wrap.near pool, DCL pool, or 2-hop pool (e.g. jambo-1679.meme-cooking.near).
+   */
+  async findRheaPoolForToken(tokenAddress: string): Promise<{
+    poolId: number | string;
+    pairedToken: string;
+    intermediateToken?: string;
+    intermediatePoolId?: number;
+    isDcl: boolean;
+    price: number;
+    liquidityNear: number;
+    reserveNear?: string;
+    reserveToken?: string;
+    fee?: number;
+  } | null> {
+    const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 24 }));
+    const decimals = meta?.decimals ?? 24;
+
+    // 1. Direct pool with wrap.near on v2.ref-finance.near
+    try {
+      const poolId = await this.findRheaPoolId('wrap.near', tokenAddress);
+      const rh = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+      const reserveIn = parseFloat(rh.reserveIn);   // wNEAR yocto
+      const reserveOut = parseFloat(rh.reserveOut); // token raw
+      if (reserveIn > 0 && reserveOut > 0) {
+        const reserveNearHuman = reserveIn / 1e24;
+        const reserveTokenHuman = reserveOut / Math.pow(10, decimals);
+        const price = reserveNearHuman / reserveTokenHuman;
+        const liquidityNear = reserveNearHuman * 2;
+        return {
+          poolId,
+          pairedToken: 'wrap.near',
+          isDcl: false,
+          price,
+          liquidityNear,
+          reserveNear: rh.reserveIn,
+          reserveToken: rh.reserveOut,
+          fee: rh.fee,
+        };
+      }
+    } catch {}
+
+    // 2. DCL pool on dclv2.ref-labs.near with wrap.near
+    try {
+      const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress);
+      if (dclPoolId) {
+        const st = await this.getDclPoolState(dclPoolId, 'wrap.near');
+        if (st.price > 0 && st.liquidityNear > 0) {
+          return {
+            poolId: dclPoolId,
+            pairedToken: 'wrap.near',
+            isDcl: true,
+            price: st.price,
+            liquidityNear: st.liquidityNear,
+            reserveNear: st.reserveNear,
+            reserveToken: st.reserveToken,
+          };
+        }
+      }
+    } catch {}
+
+    // Helper to get JAMBO/NEAR conversion rate via pool 6518
+    const getJamboNearRate = async (): Promise<number> => {
+      try {
+        const p6518 = await this.getRheaPoolReserves(6518, 'wrap.near', 'jambo-1679.meme-cooking.near');
+        const nearAmt = parseFloat(p6518.reserveIn) / 1e24;
+        const jamboAmt = parseFloat(p6518.reserveOut) / 1e18;
+        return jamboAmt > 0 ? nearAmt / jamboAmt : 0.0003;
+      } catch {
+        return 0.0003;
+      }
+    };
+
+    // 3. Paired with jambo-1679.meme-cooking.near on v2.ref-finance.near
+    try {
+      const poolId = await this.findRheaPoolId('jambo-1679.meme-cooking.near', tokenAddress);
+      const rh = await this.getRheaPoolReserves(poolId, 'jambo-1679.meme-cooking.near', tokenAddress);
+      const reserveJambo = parseFloat(rh.reserveIn) / 1e18;
+      const reserveToken = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+      if (reserveJambo > 0 && reserveToken > 0) {
+        const nearPerJambo = await getJamboNearRate();
+        const price = (reserveJambo / reserveToken) * nearPerJambo;
+        const liquidityNear = reserveJambo * nearPerJambo * 2;
+        return {
+          poolId,
+          pairedToken: 'jambo-1679.meme-cooking.near',
+          intermediateToken: 'jambo-1679.meme-cooking.near',
+          intermediatePoolId: 6518,
+          isDcl: false,
+          price,
+          liquidityNear,
+          reserveNear: (reserveJambo * nearPerJambo * 1e24).toFixed(0),
+          reserveToken: rh.reserveOut,
+          fee: rh.fee,
+        };
+      }
+    } catch {}
+
+    // 4. Scan recent pools on v2.ref-finance.near if not caught above
+    try {
+      const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
+      if (numPools && numPools > 0) {
+        const batchSize = 100;
+        const starts: number[] = [];
+        for (let s = Math.max(0, numPools - batchSize); s >= Math.max(0, numPools - 600); s -= batchSize) {
+          starts.push(s);
+        }
+        const results = await Promise.allSettled(
+          starts.map(async (fromIndex) => {
+            const pools = await this.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize });
+            return { fromIndex, pools: pools || [] };
+          })
+        );
+        for (const res of results) {
+          if (res.status === 'fulfilled') {
+            const { fromIndex, pools } = res.value;
+            for (let i = 0; i < pools.length; i++) {
+              const p = pools[i];
+              const tokens: string[] = p.token_account_ids || [];
+              if (tokens.includes(tokenAddress)) {
+                const poolId = fromIndex + i;
+                const otherToken = tokens.find(t => t !== tokenAddress) || 'wrap.near';
+                if (otherToken === 'wrap.near') {
+                  const rh = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+                  const rIn = parseFloat(rh.reserveIn) / 1e24;
+                  const rOut = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+                  if (rIn > 0 && rOut > 0) {
+                    return {
+                      poolId,
+                      pairedToken: 'wrap.near',
+                      isDcl: false,
+                      price: rIn / rOut,
+                      liquidityNear: rIn * 2,
+                      reserveNear: rh.reserveIn,
+                      reserveToken: rh.reserveOut,
+                      fee: rh.fee,
+                    };
+                  }
+                } else if (otherToken === 'jambo-1679.meme-cooking.near') {
+                  const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress);
+                  const rJambo = parseFloat(rh.reserveIn) / 1e18;
+                  const rOut = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+                  if (rJambo > 0 && rOut > 0) {
+                    const nearPerJambo = await getJamboNearRate();
+                    return {
+                      poolId,
+                      pairedToken: otherToken,
+                      intermediateToken: otherToken,
+                      intermediatePoolId: 6518,
+                      isDcl: false,
+                      price: (rJambo / rOut) * nearPerJambo,
+                      liquidityNear: rJambo * nearPerJambo * 2,
+                      reserveNear: (rJambo * nearPerJambo * 1e24).toFixed(0),
+                      reserveToken: rh.reserveOut,
+                      fee: rh.fee,
+                    };
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    return null;
+  }
+
+  /**
+   * Query Gaypad token state from gaypad.j1-racing.near.
+   */
+  async getGaypadTokenState(tokenAddress: string): Promise<{
+    token: string;
+    tokenHold: string;
+    wnearHold: string;
+    isDeployed: boolean;
+    isTradable: boolean;
+    phase: 'prebonded' | 'bonded';
+    bondingProgressPct: number;
+    price: number;
+    liquidityNear: number;
+    totalSupply: string;
+  }> {
+    const [state, meta, supply] = await Promise.all([
+      this.view<any>('gaypad.j1-racing.near', 'get_swap_state', { token_id: tokenAddress }),
+      this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 24 })),
+      this.getTokenTotalSupply(tokenAddress).catch(() => '1000000000000000000000000000000000'),
+    ]);
+
+    if (!state) {
+      throw new Error(`Token ${tokenAddress} not found on Gaypad`);
+    }
+
+    // Get JAMBO/NEAR conversion rate via pool 6518
+    let nearPerJambo = 0.2968;
+    try {
+      const p6518 = await this.getRheaPoolReserves(6518, 'wrap.near', 'jambo-1679.meme-cooking.near');
+      const nearAmt = parseFloat(p6518.reserveIn) / 1e24;
+      const jamboAmt = parseFloat(p6518.reserveOut) / 1e18;
+      if (jamboAmt > 0) nearPerJambo = nearAmt / jamboAmt;
+    } catch {}
+
+    const decimals = meta?.decimals ?? 24;
+    const jamboHeld = parseFloat(state.wnear_hold || '0') / 1e18;
+    const tokenHeld = parseFloat(state.token_hold || '0') / Math.pow(10, decimals);
+    const price = (tokenHeld > 0 && jamboHeld > 0) ? (jamboHeld / tokenHeld) * nearPerJambo : 0;
+    const liquidityNear = jamboHeld * nearPerJambo * 2;
+    const isDeployed = Boolean(state.is_deployed);
+    const isTradable = Boolean(state.is_tradable);
+    const phase: 'prebonded' | 'bonded' = (!isTradable && isDeployed) ? 'bonded' : 'prebonded';
+    // Gaypad graduates at 7.5 JAMBO
+    const bondingProgressPct = Math.min(100, Math.round((jamboHeld / 7.5) * 100));
+
+    return {
+      token: tokenAddress,
+      tokenHold: state.token_hold || '0',
+      wnearHold: state.wnear_hold || '0',
+      isDeployed,
+      isTradable,
+      phase,
+      bondingProgressPct,
+      price,
+      liquidityNear,
+      totalSupply: supply || '1000000000000000000000000000000000',
     };
   }
 
@@ -948,7 +1190,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub',
+    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -991,11 +1233,68 @@ export class MultiRpcNear {
       }
       let poolId = rheaPoolId;
       if (poolId === null || poolId === undefined) {
-        poolId = await this.findRheaPoolId(tokenIn, tokenOut);
+        try {
+          poolId = await this.findRheaPoolId(tokenIn, tokenOut);
+        } catch {
+          const target = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+          const rhea = await this.findRheaPoolForToken(target);
+          if (rhea && typeof rhea.poolId === 'number') poolId = rhea.poolId;
+        }
       }
 
       const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
       const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
+      // Check if pool is direct or multi-hop (e.g. paired with JAMBO)
+      let isMultiHopJambo = false;
+      if (poolId !== null && poolId !== undefined) {
+        const pInfo = await this.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: poolId }).catch(() => null);
+        const tokens: string[] = pInfo?.token_account_ids || [];
+        if (!tokens.includes(inToken) && tokens.includes('jambo-1679.meme-cooking.near')) {
+          isMultiHopJambo = true;
+        }
+      }
+
+      if (isMultiHopJambo && poolId !== null && poolId !== undefined) {
+        const isBuy = inToken === 'wrap.near';
+        if (isBuy) {
+          const jamboOut = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: 6518,
+            token_in: 'wrap.near',
+            amount_in: amountIn,
+            token_out: 'jambo-1679.meme-cooking.near',
+          });
+          const tokenOutRet = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: poolId,
+            token_in: 'jambo-1679.meme-cooking.near',
+            amount_in: jamboOut,
+            token_out: outToken,
+          });
+          const expected = BigInt(tokenOutRet || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } else {
+          const jamboOut = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: poolId,
+            token_in: inToken,
+            amount_in: amountIn,
+            token_out: 'jambo-1679.meme-cooking.near',
+          });
+          const nearOutRet = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: 6518,
+            token_in: 'jambo-1679.meme-cooking.near',
+            amount_in: jamboOut,
+            token_out: 'wrap.near',
+          });
+          const expected = BigInt(nearOutRet || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        }
+      }
 
       // Try on-chain get_return on v2.ref-finance.near first (supports SIMPLE_POOL, STABLE_SWAP, RATED_SWAP)
       try {
@@ -1014,7 +1313,7 @@ export class MultiRpcNear {
         // Fallback to local reserve calculation
       }
 
-      const reserves = await this.getRheaPoolReserves(poolId, tokenIn, tokenOut);
+      const reserves = await this.getRheaPoolReserves(poolId!, tokenIn, tokenOut);
       const reserveIn = BigInt(reserves.reserveIn);
       const reserveOut = BigInt(reserves.reserveOut);
 
@@ -1110,6 +1409,41 @@ export class MultiRpcNear {
       }
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
+    } else if (venue === 'gaypad') {
+      const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      // Rule 1: Check Rhea first!
+      const rhea = await this.findRheaPoolForToken(targetToken);
+      if (rhea && typeof rhea.poolId === 'number') {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rhea.poolId);
+      }
+      // Otherwise pre-bonded on Gaypad
+      const state = await this.getGaypadTokenState(targetToken);
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      const p6518 = await this.view<string>('v2.ref-finance.near', 'get_return', {
+        pool_id: 6518,
+        token_in: 'wrap.near',
+        amount_in: isBuy ? amountIn : '1000000000000000000000000',
+        token_out: 'jambo-1679.meme-cooking.near',
+      }).catch(() => '0');
+      const jamboIn = BigInt(p6518 || '0');
+      const reserveJambo = BigInt(state.wnearHold || '0');
+      const reserveToken = BigInt(state.tokenHold || '0');
+      const reserveIn = isBuy ? reserveJambo : reserveToken;
+      const reserveOut = isBuy ? reserveToken : reserveJambo;
+      const effectiveAmountIn = isBuy ? jamboIn : BigInt(amountIn);
+      const expectedOut = calculateExpectedOutput(effectiveAmountIn.toString(), reserveIn, reserveOut, 0);
+      if (!isBuy) {
+        const nearOut = await this.view<string>('v2.ref-finance.near', 'get_return', {
+          pool_id: 6518,
+          token_in: 'jambo-1679.meme-cooking.near',
+          amount_in: expectedOut.toString(),
+          token_out: 'wrap.near',
+        }).catch(() => '0');
+        const expected = BigInt(nearOut || '0');
+        return { expectedOutput: expected.toString(), minAmountOut: calculateMinAmountOut(expected, slippagePct) };
+      }
+      const expected = BigInt(expectedOut);
+      return { expectedOutput: expected.toString(), minAmountOut: calculateMinAmountOut(expected, slippagePct) };
     } else {
       throw new Error(`Unsupported venue: ${venue}`);
     }
@@ -1143,27 +1477,29 @@ export class MultiRpcNear {
     decimals: number
   ): Promise<{ price: number; reserveNearYocto: string } | null> {
     if (venue === 'rhea') {
-      const poolId = await this.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-      if (poolId !== null) {
-        const r = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-        const rIn = parseFloat(r.reserveIn);
-        const rOut = parseFloat(r.reserveOut);
-        if (rIn > 0 && rOut > 0) {
-          return {
-            reserveNearYocto: r.reserveIn,
-            price: rIn / 1e24 / (rOut / Math.pow(10, decimals)),
-          };
-        }
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      if (rhea) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || (rhea.liquidityNear * 1e24 / 2).toFixed(0),
+        };
       }
-      const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
-      if (dclPoolId) {
-        const dcl = await this.getDclPoolState(dclPoolId).catch(() => null);
-        if (dcl && dcl.price > 0) {
-          return {
-            reserveNearYocto: dcl.reserveNear,
-            price: dcl.price,
-          };
-        }
+      return null;
+    }
+    if (venue === 'gaypad') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      if (rhea) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || (rhea.liquidityNear * 1e24 / 2).toFixed(0),
+        };
+      }
+      const st = await this.getGaypadTokenState(tokenAddress).catch(() => null);
+      if (st && st.price > 0) {
+        return {
+          price: st.price,
+          reserveNearYocto: (st.liquidityNear * 1e24 / 2).toFixed(0),
+        };
       }
       return null;
     }
