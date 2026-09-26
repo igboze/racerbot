@@ -553,8 +553,8 @@ function rowToPosition(row: any): PositionRecord {
     status: row.status,
     opened_at: row.opened_at,
     closed_at: row.closed_at,
-    is_external_deposit: row.is_external_deposit,
-    external_deposit_detected_at: row.external_deposit_detected_at,
+    is_external_deposit: row.is_external_deposit || false,
+    external_deposit_detected_at: row.external_deposit_detected_at || null,
   };
 }
 
