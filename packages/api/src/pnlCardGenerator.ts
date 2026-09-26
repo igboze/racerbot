@@ -41,9 +41,6 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     const fills = await getFillsByPosition(positionId);
     const buys = fills.filter(f => f.side === 'buy');
     const sells = fills.filter(f => f.side === 'sell');
-
-    if (buys.length === 0) return null;
-
     // Get token info
     const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
@@ -67,10 +64,12 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
       totalFeesPaid += fee;
     }
 
-    // If only external deposit exists, use the entry price as cost basis
-    if (totalInitialInvestment === 0 && isExternalDeposit) {
-      const quantityHeld = parseFloat(position.quantity_held);
-      totalInitialInvestment = quantityHeld * parseFloat(position.avg_entry_price);
+    const quantityHeld = parseFloat(position.quantity_held || '0');
+    const avgEntryPrice = parseFloat(position.avg_entry_price || '0');
+
+    // If no buy fills exist or total investment is 0, use entry price as cost basis
+    if (totalInitialInvestment === 0 && (isExternalDeposit || quantityHeld > 0)) {
+      totalInitialInvestment = quantityHeld * avgEntryPrice;
     }
 
     // Calculate realized PNL from sells using FIFO-like approximation
@@ -85,7 +84,6 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
       const sellValue = (amount * price) - fee;
 
       // Use the avg_entry_price at the time of the sell (stored in position)
-      // This is an approximation - proper FIFO would require tracking lots
       const avgEntry = parseFloat(position.avg_entry_price);
       const costBasis = amount * avgEntry;
       totalRealizedValue += sellValue;
@@ -95,10 +93,9 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
 
     totalRealizedPnl = totalRealizedValue - totalRealizedCost;
 
-    const quantityHeld = parseFloat(position.quantity_held);
     const unrealizedValue = quantityHeld * currentPrice;
     const totalValue = unrealizedValue + totalRealizedValue;
-    const unrealizedPnl = unrealizedValue - (quantityHeld * parseFloat(position.avg_entry_price));
+    const unrealizedPnl = unrealizedValue - (quantityHeld * avgEntryPrice);
 
     const totalPnl = totalValue - totalInitialInvestment;
     const pnlPercent = totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0;
@@ -110,13 +107,14 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     const holdDurationMs = closedAt.getTime() - openedAt.getTime();
     const holdDuration = formatHoldDuration(holdDurationMs);
 
-    // Format market cap
+    // Format market cap (USD + NEAR)
     let marketCapStr = 'N/A';
-    if (tokenInfo?.market_cap && typeof tokenInfo.market_cap === 'number') {
-      const mc = tokenInfo.market_cap;
-      if (mc >= 1_000_000) marketCapStr = `${(mc / 1_000_000).toFixed(2)}M NEAR`;
-      else if (mc >= 1_000) marketCapStr = `${(mc / 1_000).toFixed(2)}K NEAR`;
-      else if (mc > 0) marketCapStr = `${mc.toFixed(2)} NEAR`;
+    if (tokenInfo?.market_cap && typeof tokenInfo.market_cap === 'number' && tokenInfo.market_cap > 0) {
+      const mcNear = tokenInfo.market_cap;
+      const mcUsd = tokenInfo.market_cap_usd || (mcNear * nearUsd);
+      const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
+      const mcNearStr = mcNear >= 1e6 ? `${(mcNear / 1e6).toFixed(2)}M NEAR` : mcNear >= 1e3 ? `${(mcNear / 1e3).toFixed(2)}K NEAR` : `${mcNear.toFixed(2)} NEAR`;
+      marketCapStr = `${mcUsdStr} (${mcNearStr})`;
     }
 
     // Get venue name
