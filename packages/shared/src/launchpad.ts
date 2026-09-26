@@ -1,6 +1,6 @@
 /**
  * Extensible launchpad framework for custom token launchpads
- * Currently supports: NearlyTrade, Intear, OneTokenHub
+ * Currently supports: NearlyTrade, Intear, OneTokenHub, NEARpad
  * Can be extended for: Gaypad, and other custom launchpads
  */
 
@@ -43,6 +43,13 @@ export const LAUNCHPAD_CONFIGS: Record<string, LaunchpadConfig> = {
   },
   onetokenhub: {
     factoryContract: 'pad.onetokenhub.near',
+    getLaunchMethod: 'get_launch_by_token',
+    buyMethod: 'buy',
+    sellMethod: 'sell',
+    pairedToken: 'wrap.near',
+  },
+  nearpad: {
+    factoryContract: 'nearpadfamily.near',
     getLaunchMethod: 'get_launch_by_token',
     buyMethod: 'buy',
     sellMethod: 'sell',

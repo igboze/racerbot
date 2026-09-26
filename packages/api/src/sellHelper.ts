@@ -24,10 +24,10 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   // Always use fresh data from getTokenInfo to avoid stale cache issues
   const info = await getTokenInfo(position.token_address, true).catch(() => null);
   if (!info) return { success: false, reason: 'token_not_found' };
-  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(info.venue)) {
+  if (!['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(info.venue)) {
     return { success: false, reason: 'venue_unknown' };
   }
-  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub';
+  const venue = info.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
