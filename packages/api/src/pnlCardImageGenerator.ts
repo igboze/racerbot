@@ -1,4 +1,6 @@
 import { PNLCardData } from './pnlCardGenerator.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
 // Dynamic import for canvas to avoid build failures on platforms without Python
 let canvasModule: any = null;
