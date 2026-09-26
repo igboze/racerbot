@@ -726,9 +726,13 @@ export interface UserBalances {
   subaccountId: string;
   nativeNearYocto: string;
   nativeNearFormatted: string;
+  nativeNearUsd: string;
   wrapNearYocto: string;
   wrapNearFormatted: string;
+  wrapNearUsd: string;
   totalNearFormatted: string;
+  totalNearUsd: string;
+  nearUsd: number;
 }
 
 /**
@@ -771,13 +775,28 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
   const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
   const totalNear = spendableNativeNear + wrapNear;
 
+  // Get NEAR/USD price
+  const nearUsd = await getNearUsdPrice();
+
+  // Format USD values
+  const formatUSD = (nearValue: number) => {
+    const usdValue = nearValue * nearUsd;
+    if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
+    if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
+    return `$${usdValue.toFixed(4)}`;
+  };
+
   const result: UserBalances = {
     subaccountId,
     nativeNearYocto,
     nativeNearFormatted: spendableNativeNear.toFixed(4),
+    nativeNearUsd: formatUSD(spendableNativeNear),
     wrapNearYocto,
     wrapNearFormatted: wrapNear.toFixed(4),
+    wrapNearUsd: formatUSD(wrapNear),
     totalNearFormatted: totalNear.toFixed(4),
+    totalNearUsd: formatUSD(totalNear),
+    nearUsd,
   };
 
   balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });

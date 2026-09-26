@@ -63,7 +63,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       // getUserBalances uses an 8s in-memory cache — this is fast on repeat calls.
       // Only hit the RPC when forceRefresh=true (Refresh button) or cache is cold.
       const b = await getUserBalances(telegramId, forceRefresh);
-      balanceText = `\`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\``;
+      balanceText = `\`${b.nativeNearFormatted} NEAR\` (\`${b.nativeNearUsd}\`) | \`${b.wrapNearFormatted} wNEAR\` (\`${b.wrapNearUsd}\`)`;
     } catch {
       balanceText = '`0.0000 NEAR`';
     }
@@ -133,9 +133,9 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     `💳 *RacerBot Trading Wallet*\n\n` +
     `🔑 Account: \`${b.subaccountId}\`\n\n` +
     `💰 *Balances*:\n` +
-    `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\`\n` +
-    `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\`\n` +
-    `• *Total*: \`${b.totalNearFormatted} NEAR\`\n\n` +
+    `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\` (\`${b.nativeNearUsd}\`)\n` +
+    `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\` (\`${b.wrapNearUsd}\`)\n` +
+    `• *Total*: \`${b.totalNearFormatted} NEAR\` (\`${b.totalNearUsd}\`)\n\n` +
     `📥 *Deposit Address*:\n` +
     `Send native NEAR directly to:\n` +
     `\`${b.subaccountId}\`\n\n` +
@@ -791,23 +791,50 @@ bot.action('menu_holdings', async (ctx) => {
 
      let msg = `💼 *Holdings (${positions.length})*\n\n`;
      const buttons: any[] = [];
+     let totalPortfolioValueNear = 0;
+     let nearUsd = 4.3; // Default fallback
 
      for (const pos of positions) {
        const info = infoMap.get(pos.token_address);
        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
        const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
        const currentPrice = info ? parseFloat(info.price) : 0;
+       const quantityHeld = parseFloat(pos.quantity_held);
+       const tokenValue = currentPrice * quantityHeld;
+       totalPortfolioValueNear += tokenValue;
+       nearUsd = info?.near_usd || 4.3;
+
        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
          : 'N/A';
        const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
        const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
+       // Format USD value
+       const formatUSD = (nearValue: number) => {
+         const usdValue = nearValue * nearUsd;
+         if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
+         if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
+         return `$${usdValue.toFixed(4)}`;
+       };
+
        msg += `${emoji} *${displayLabel}*\n`;
+       msg += `  Qty: \`${quantityHeld.toFixed(4)}\`\n`;
+       msg += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
        msg += `  Change: \`${pnlDisplay}\`\n\n`;
 
        buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
      }
+
+     // Add total portfolio value
+     const totalPortfolioUsd = totalPortfolioValueNear * nearUsd;
+     const formatTotalUSD = totalPortfolioUsd >= 1000 
+       ? `$${(totalPortfolioUsd / 1000).toFixed(2)}K` 
+       : totalPortfolioUsd >= 1 
+         ? `$${totalPortfolioUsd.toFixed(2)}` 
+         : `$${totalPortfolioUsd.toFixed(4)}`;
+
+     msg += `💎 *Total Portfolio Value*: \`${totalPortfolioValueNear.toFixed(4)} NEAR\` (\`${formatTotalUSD}\`)\n\n`;
 
      buttons.push([
        Markup.button.callback('🔄 Refresh', 'menu_holdings'),
