@@ -148,7 +148,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
 export async function buildTokenCard(tokenAddress: string, telegramId?: number) {
-  // Fetch token info, balance, and user settings in parallel to minimize latency
+  // Fetch token info, balance, and user settings in parallel
   const [info, balances, user] = await Promise.allSettled([
     getTokenInfo(tokenAddress),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
@@ -163,6 +163,20 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
   const b = balances.status === 'fulfilled' ? balances.value : null;
   const userRecord = user.status === 'fulfilled' ? user.value : null;
   const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
+
+  // Fetch positions only if we have a user
+  let userPositions: any[] = [];
+  if (userRecord) {
+    try {
+      userPositions = await getOpenPositions(userRecord.id).catch(() => []);
+    } catch {
+      userPositions = [];
+    }
+  }
+
+  // Check if user holds this token
+  const userPosition = userPositions.find(p => p.token_address === tokenAddress);
+  const holdsToken = !!userPosition;
 
   const balanceText = b
     ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n`
@@ -284,37 +298,90 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number) 
     nearUsdFooter +
     balanceText;
 
-  // ── Buttons depend on whether trading is supported ──
+  // If user holds the token, add holdings info and PNL card
+  if (holdsToken && userPosition) {
+    const entryPrice = parseFloat(userPosition.avg_entry_price) || 0;
+    const pnlPct = priceNum > 0 && entryPrice > 0
+      ? ((priceNum - entryPrice) / entryPrice * 100).toFixed(1)
+      : 'N/A';
+    const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+    const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+
+    text += `\n💼 *Your Holdings*:\n`;
+    text += `  Quantity: \`${userPosition.quantity_held}\`\n`;
+    text += `  Entry Price: \`${entryPrice.toFixed(8)} NEAR\`\n`;
+    text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
+
+    // Generate PNL card
+    try {
+      const pnlData = await generatePNLCardData(userPosition.id);
+      if (pnlData) {
+        const pnlMessage = generatePNLCardMessage(pnlData);
+        text += `${pnlMessage}\n\n`;
+      }
+    } catch (err: any) {
+      console.error('Failed to generate PNL card:', err);
+      // Continue without PNL card if generation fails
+    }
+  }
+
+  // ── Buttons depend on whether trading is supported and if user holds token ──
   let keyboard;
   if (tokenInfo.tradeable) {
-    text += `⚡ *Choose Buy Amount (Fixed or % of Balance)*:`;
-    keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('⚡ 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
-        Markup.button.callback('⚡ 1 N', `buy_fixed:${tokenInfo.address}:1`),
-        Markup.button.callback('⚡ 2 N', `buy_fixed:${tokenInfo.address}:2`),
-        Markup.button.callback('⚡ 5 N', `buy_fixed:${tokenInfo.address}:5`),
-      ],
-      [
-        Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
-        Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
-        Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
-        Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
-      ],
-      [
-        Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
-        Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
-      ],
-      ...linkRows,
-      [
-        Markup.button.callback('⚙️ Settings', 'menu_settings'),
-        Markup.button.callback('🔙 Main Menu', 'menu_home'),
-      ],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-      ],
-    ]);
+    if (holdsToken && userPosition) {
+      // User holds token - show sell buttons instead of buy buttons
+      text += `⚡ *Sell Your Holdings:`;
+      const defaultSellPct = userRecord?.default_sell_pct ? Number(userRecord.default_sell_pct) : 100;
+      keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('Sell 25%', `sell:${userPosition.id}:25`),
+          Markup.button.callback('Sell 50%', `sell:${userPosition.id}:50`),
+        ],
+        [
+          Markup.button.callback('Sell 75%', `sell:${userPosition.id}:75`),
+          Markup.button.callback('Sell 100%', `sell:${userPosition.id}:100`),
+        ],
+        [
+          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+          Markup.button.callback('🔙 Main Menu', 'menu_home'),
+        ],
+        ...linkRows,
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        ],
+      ]);
+    } else {
+      // User doesn't hold token - show buy buttons
+      text += `⚡ *Choose Buy Amount (Fixed or % of Balance)*:`;
+      keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('⚡ 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
+          Markup.button.callback('⚡ 1 N', `buy_fixed:${tokenInfo.address}:1`),
+          Markup.button.callback('⚡ 2 N', `buy_fixed:${tokenInfo.address}:2`),
+          Markup.button.callback('⚡ 5 N', `buy_fixed:${tokenInfo.address}:5`),
+        ],
+        [
+          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
+          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
+          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
+          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
+        ],
+        [
+          Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
+          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+        ],
+        ...linkRows,
+        [
+          Markup.button.callback('⚙️ Settings', 'menu_settings'),
+          Markup.button.callback('🔙 Main Menu', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        ],
+      ]);
+    }
   } else {
     // Non-tradeable venue — info only
     const venueNote = tokenInfo.venue === 'memecooking'
