@@ -683,8 +683,25 @@ export class MultiRpcNear {
   }
 
   /**
-   * Query Gaypad token state from gaypad.j1-racing.near.
-   */
+    * Check if a token is whitelisted on the Ref Finance exchange (no extra storage deposit needed).
+    */
+  async getWhitelistedTokens(): Promise<string[]> {
+    return this.view<string[]>('v2.ref-finance.near', 'get_whitelisted_tokens', {}).catch(() => []);
+  }
+
+  /**
+    * Get accumulated volume for a specific pool.
+    */
+  async getPoolVolumes(poolId: number): Promise<{ volume_24h: string; volume_all_time: string }> {
+    return this.view<any>('v2.ref-finance.near', 'get_pool_volumes', { pool_id: poolId }).catch(() => ({
+      volume_24h: '0',
+      volume_all_time: '0',
+    }));
+  }
+
+  /**
+    * Query Gaypad token state from gaypad.j1-racing.near.
+    */
   async getGaypadTokenState(tokenAddress: string): Promise<{
     token: string;
     tokenHold: string;
