@@ -959,7 +959,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       if (!existing) {
         // Token received as external deposit!
         // Start calculating PNL at that point: fetch market price at deposit discovery
-        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const info = await getTokenInfo(t.contract_id, true).catch(() => null);
         const currentPrice = info?.price && parseFloat(info.price) > 0
           ? parseFloat(info.price)
           : 0;
@@ -1033,7 +1033,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       } else {
         // Sync position quantity if changed
         // Convert raw balance to human-readable using token decimals
-        const info = await getTokenInfo(t.contract_id).catch(() => null);
+        const info = await getTokenInfo(t.contract_id, true).catch(() => null);
         const decimals = info?.decimals ?? 18;
         const rawBalance = BigInt(t.balance);
 

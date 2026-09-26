@@ -45,7 +45,7 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     if (buys.length === 0) return null;
 
     // Get token info
-    const tokenInfo = await getTokenInfo(position.token_address).catch(() => null);
+    const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
     const nearUsd = tokenInfo?.near_usd || 4.3;
 

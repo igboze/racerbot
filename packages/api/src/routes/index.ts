@@ -120,7 +120,7 @@ router.post('/sell', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
 
 router.get('/token/:address', async (req, res) => {
   try {
-    const info = await getTokenInfo(req.params.address);
+    const info = await getTokenInfo(req.params.address, true);
     res.json({ success: true, info });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
