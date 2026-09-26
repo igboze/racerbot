@@ -286,47 +286,21 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
 
-  // Step 1: Rhea first, for every token — try both Simple and DCL pools in parallel
+  // Step 1: Rhea first, for every token — use findRheaPoolForToken (covers Simple + DCL + multi-hop)
   if (price === 0) {
-    const [rheaSimpleRes, rheaDclRes] = await Promise.allSettled([
-      (async () => {
-        const poolId =
-          rheaPoolId !== null
-            ? rheaPoolId
-            : await near.findRheaPoolId('wrap.near', tokenAddress);
-        const rh = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-        const reserveIn = parseFloat(rh.reserveIn);
-        const reserveOut = parseFloat(rh.reserveOut);
-        if (reserveIn <= 0 || reserveOut <= 0) throw new Error('empty rhea pool');
-        return { poolId, reserveIn, reserveOut };
-      })(),
-      (async () => {
-        const pId =
-          dclPoolId !== null
-            ? dclPoolId
-            : await near.findDclPoolId('wrap.near', tokenAddress);
-        if (!pId) throw new Error('empty dcl pool');
-        const st = await near.getDclPoolState(pId);
-        if (!(st.price > 0)) throw new Error('empty dcl pool');
-        return st;
-      })(),
-    ]);
-
-    if (rheaSimpleRes.status === 'fulfilled') {
-      const { poolId, reserveIn, reserveOut } = rheaSimpleRes.value;
-      const reserveInHuman = reserveIn / 1e24;
-      const reserveOutHuman = reserveOut / Math.pow(10, meta.decimals);
-      price = reserveInHuman / reserveOutHuman;
-      liquidity = reserveInHuman * 2;
-      venue = 'rhea';
-      rheaPoolId = poolId;
-    } else if (rheaDclRes.status === 'fulfilled') {
-      const st = rheaDclRes.value;
-      venue = 'rhea';
-      price = st.price;
-      liquidity = st.liquidityNear;
-      dclPoolId = st.poolId;
-    }
+    try {
+      const rhea = await near.findRheaPoolForToken(tokenAddress);
+      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+        price = rhea.price;
+        liquidity = rhea.liquidityNear;
+        venue = 'rhea';
+        if (rhea.isDcl) {
+          dclPoolId = String(rhea.poolId);
+        } else {
+          rheaPoolId = typeof rhea.poolId === 'number' ? rhea.poolId : null;
+        }
+      }
+    } catch {}
   }
 
   // Step 2: Only if Rhea has no liquidity, use address suffix to pick a launchpad prober

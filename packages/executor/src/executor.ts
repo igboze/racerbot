@@ -263,55 +263,10 @@ export class SwapExecutor {
             `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
           );
         }
-      } else {
-        // Sell token on DCL for wrap.near
-        await near.ensureStorageDeposit(subaccountId, 'wrap.near');
-
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dclv2.ref-labs.near',
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: 'wrap.near',
-                  min_output_amount: min_amount_out,
-                },
-              }),
-            },
-            BigInt('180000000000000'),
-            BigInt('1')
-          ),
-        ];
-
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
-      }
-    } else if (venue === 'rhea') {
-      if (dclPoolId) {
-        // Execute Ref DCL swap on dclv2.ref-labs.near
-        const isBuy = token_in === 'wrap.near' || token_in === 'near';
-        if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
-
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'dclv2.ref-labs.near',
-            JSON.stringify({
-              Swap: {
-                pool_ids: [dclPoolId],
-                output_token: token_out,
-                min_output_amount: minOutAdj,
-              },
-            })
-          );
-
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else {
+          // Sell token on DCL for wrap.near
+          // Per docs: always check storage deposit before initiating swaps
+          await near.ensureStorageDeposit(subaccountId, token_in);
           await near.ensureStorageDeposit(subaccountId, 'wrap.near');
 
           const actions = [
@@ -335,29 +290,89 @@ export class SwapExecutor {
 
           result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
         }
-      } else {
-        let rheaPoolId = (event as any).pool_id;
-        if (rheaPoolId === null || rheaPoolId === undefined) {
-          try {
-            rheaPoolId = await near.findRheaPoolId(token_in, token_out);
-          } catch {
-            const target = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
-            const rhea = await near.findRheaPoolForToken(target);
-            if (rhea && typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
-          }
+      } else if (venue === 'rhea') {
+        // Per docs: check whitelisted tokens before swap
+        const whitelisted: string[] = await near.getWhitelistedTokens().catch(() => []);
+        if (whitelisted.length > 0 && !whitelisted.includes(token_in) && !whitelisted.includes(token_out)) {
+          // Token not whitelisted — need storage deposit registration
+          await near.ensureStorageDeposit(subaccountId, token_in);
         }
 
-        let isMultiHopJambo = (event as any).intermediate_token === 'jambo-1679.meme-cooking.near';
-        if (!isMultiHopJambo && rheaPoolId !== null && rheaPoolId !== undefined) {
-          const poolInfo = await near.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: rheaPoolId }).catch(() => null);
-          const tokens: string[] = poolInfo?.token_account_ids || [];
-          if (!tokens.includes(token_in) && tokens.includes('jambo-1679.meme-cooking.near')) {
-            isMultiHopJambo = true;
-          }
-        }
+        if (dclPoolId) {
+          // Execute Ref DCL swap on dclv2.ref-labs.near
+          const isBuy = token_in === 'wrap.near' || token_in === 'near';
+          if (isBuy) {
+            await near.ensureStorageDeposit(subaccountId, token_out);
 
-        const isBuy = token_in === 'wrap.near' || token_in === 'near';
-        if (isBuy) {
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [dclPoolId],
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
+              })
+            );
+
+            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          } else {
+            await near.ensureStorageDeposit(subaccountId, token_in);
+            await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [dclPoolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+
+            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          }
+        } else {
+          let rheaPoolId = (event as any).pool_id;
+          if (rheaPoolId === null || rheaPoolId === undefined) {
+            try {
+              rheaPoolId = await near.findRheaPoolId(token_in, token_out);
+            } catch {
+              const target = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+              const rhea = await near.findRheaPoolForToken(target);
+              if (rhea && typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
+            }
+          }
+
+          const isBuy = token_in === 'wrap.near' || token_in === 'near';
+          // Per docs: check storage deposit on the sell token before swap
+          if (!isBuy) {
+            await near.ensureStorageDeposit(subaccountId, token_in);
+          }
+
+          let isMultiHopJambo = (event as any).intermediate_token === 'jambo-1679.meme-cooking.near';
+          if (!isMultiHopJambo && rheaPoolId !== null && rheaPoolId !== undefined) {
+            const poolInfo = await near.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: rheaPoolId }).catch(() => null);
+            const tokens: string[] = poolInfo?.token_account_ids || [];
+            if (!tokens.includes(token_in) && tokens.includes('jambo-1679.meme-cooking.near')) {
+              isMultiHopJambo = true;
+            }
+          }
+
+          if (isBuy) {
           await near.ensureStorageDeposit(subaccountId, token_out);
 
           const rheaActions = isMultiHopJambo
