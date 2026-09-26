@@ -6,18 +6,19 @@ export class MultiRpcProvider {
   private readonly healthCheckIntervalMs: number;
   private healthCheckTimer: NodeJS.Timeout | null = null;
   private quickNodeProvider: QuickNodeProvider | null = null;
+  private fastNearProvider: RPCProvider | null = null;
 
   constructor(providerUrls: string[]) {
-    // Initialize QuickNode if available
+    // Initialize QuickNode for data updates
     this.quickNodeProvider = createQuickNodeProvider();
+
+    // Prepare FastNear premium API key for trading
+    const apiKey = process.env.FASTNEAR_API_KEY?.trim();
+    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
 
     // Add QuickNode URL to providers if configured
     const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL;
     const allUrls = quickNodeUrl ? [quickNodeUrl, ...providerUrls] : providerUrls;
-
-    // Prepare FastNear premium API key
-    const apiKey = process.env.FASTNEAR_API_KEY?.trim();
-    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
 
     this.providers = allUrls.map((url, i) => {
       const isQuickNode = url === quickNodeUrl;
@@ -25,9 +26,11 @@ export class MultiRpcProvider {
         'Content-Type': 'application/json',
       };
 
-      // Add Bearer token for FastNear premium
+      // Add Bearer token for FastNear premium (trading)
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
+        // Store reference to FastNear provider for trading operations
+        this.fastNearProvider = { url, name: `provider-${i}`, healthy: true, latency: 0, errorCount: 0, successCount: 0, isQuickNode: false, headers };
       }
 
       return createProvider(url, `provider-${i}`, isQuickNode, headers);
@@ -46,7 +49,7 @@ export class MultiRpcProvider {
   }
 
   /**
-   * Get QuickNode provider if available and healthy
+   * Get QuickNode provider for data updates
    */
   getQuickNodeProvider(): QuickNodeProvider | null {
     if (this.quickNodeProvider && this.quickNodeProvider.isHealthy()) {
@@ -55,25 +58,35 @@ export class MultiRpcProvider {
     return null;
   }
 
-  async read<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
-    // Try QuickNode first if available
-    const qn = this.getQuickNodeProvider();
-    if (qn) {
+  /**
+   * Get FastNear provider for trading operations
+   */
+  getFastNearProvider(): RPCProvider | null {
+    if (this.fastNearProvider && this.fastNearProvider.healthy) {
+      return this.fastNearProvider;
+    }
+    return null;
+  }
+
+  /**
+   * Trading operations: Use FastNear (NEAR-optimized)
+   */
+  async trade<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
+    // Use FastNear for trading (swaps, buys, sells)
+    const fastNear = this.getFastNearProvider();
+    if (fastNear) {
+      const start = Date.now();
       try {
-        const start = Date.now();
-        const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL || '';
-        const result = await fn(quickNodeUrl);
-        // Mark QuickNode as healthy
-        qn.markHealthy();
+        const result = await fn(fastNear.url, fastNear.headers);
+        markProviderSuccess(fastNear, Date.now() - start);
         return result;
       } catch (err) {
-        console.error('[RPC] QuickNode failed, falling back to standard providers');
-        qn.markUnhealthy();
+        markProviderError(fastNear);
+        console.error('[RPC] FastNear trading failed, falling back to other providers');
       }
     }
 
-    // Fallback to standard provider rotation
-    // Premium FastNear is already prioritized via RPC_PROVIDERS order
+    // Fallback to any healthy provider
     const provider = rotateProvider(this.providers);
     const start = Date.now();
     try {
@@ -86,7 +99,60 @@ export class MultiRpcProvider {
     }
   }
 
+  /**
+   * Data operations: Use QuickNode (enhanced indexing)
+   */
+  async data<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
+    // Use QuickNode for data updates (block scanning, indexing)
+    const qn = this.getQuickNodeProvider();
+    if (qn) {
+      try {
+        const start = Date.now();
+        const quickNodeUrl = process.env.QUICKNODE_ENDPOINT_URL || '';
+        const result = await fn(quickNodeUrl);
+        qn.markHealthy();
+        return result;
+      } catch (err) {
+        console.error('[RPC] QuickNode data failed, falling back to FastNear');
+        qn.markUnhealthy();
+      }
+    }
+
+    // Fallback to FastNear for data
+    const fastNear = this.getFastNearProvider();
+    if (fastNear) {
+      const start = Date.now();
+      try {
+        const result = await fn(fastNear.url, fastNear.headers);
+        markProviderSuccess(fastNear, Date.now() - start);
+        return result;
+      } catch (err) {
+        markProviderError(fastNear);
+      }
+    }
+
+    // Final fallback to any healthy provider
+    const provider = rotateProvider(this.providers);
+    const start = Date.now();
+    try {
+      const result = await fn(provider.url, provider.headers);
+      markProviderSuccess(provider, Date.now() - start);
+      return result;
+    } catch (err) {
+      markProviderError(provider);
+      throw err;
+    }
+  }
+
+  /**
+   * Legacy read method (defaults to trading/fastNear)
+   */
+  async read<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
+    return this.trade(fn);
+  }
+
   async broadcast<T>(fn: (url: string, headers?: Record<string, string>) => Promise<T>): Promise<T> {
+    // Broadcast to all healthy providers for critical operations
     const results = await Promise.allSettled(
       this.providers.filter(p => p.healthy).map(async (provider) => {
         const start = Date.now();
