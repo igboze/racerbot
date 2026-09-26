@@ -874,6 +874,48 @@ export class MultiRpcNear {
     };
   }
 
+  /**
+   * Get NEARpad launchpad state.
+   */
+  async getNEARpadState(tokenAddress: string): Promise<{
+    token: string;
+    price: number;
+    liquidityNear: number;
+    reserveNear: string;
+    reserveToken: string;
+    totalSupply: string;
+  }> {
+    const launch = await this.view<any>(
+      'nearpadfamily.near',
+      'get_launch_by_token',
+      { token: tokenAddress }
+    ).catch(() => null);
+
+    if (!launch) {
+      throw new Error(`Token ${tokenAddress} not found on NEARpad launchpad`);
+    }
+
+    // Extract pool data from NEARpad structure
+    const pool = launch.pool || launch;
+    const reserveNear = pool.reserve_near || pool.reserve_near_yocto || '0';
+    const reserveToken = pool.reserve_token || pool.reserve_token_yocto || '0';
+    const totalSupply = pool.total_supply || launch.total_supply || '0';
+
+    const reserveNearNum = parseFloat(reserveNear) / 1e24;
+    const reserveTokenNum = parseFloat(reserveToken) / Math.pow(10, pool.decimals || 18);
+    const price = reserveNearNum > 0 && reserveTokenNum > 0 ? reserveNearNum / reserveTokenNum : 0;
+    const liquidityNear = reserveNearNum * 2;
+
+    return {
+      token: tokenAddress,
+      price,
+      liquidityNear,
+      reserveNear,
+      reserveToken,
+      totalSupply,
+    };
+  }
+
 
   /**
    * Get pool reserves from Shardsmarket.
@@ -1190,7 +1232,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad',
+    venue: 'rhea' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -1409,6 +1451,27 @@ export class MultiRpcNear {
       }
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
+    } else if (venue === 'nearpad') {
+      const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      let state;
+      try {
+        state = await this.getNEARpadState(targetToken);
+      } catch {
+        throw new Error(
+          `NEARpad RPC failed for ${targetToken}. Token may be on NEARpad but RPC is unreachable.`
+        );
+      }
+      const reserveNear = BigInt(state.reserveNear);
+      const reserveToken = BigInt(state.reserveToken);
+
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      const reserveIn = isBuy ? reserveNear : reserveToken;
+      const reserveOut = isBuy ? reserveToken : reserveNear;
+
+      // NEARpad XYK pool fee (assuming 30 bps / 0.3% like Intear, adjust if different)
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 30);
+      const minOut = calculateMinAmountOut(expected, slippagePct);
+      return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'gaypad') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
       // Rule 1: Check Rhea first!
@@ -1525,6 +1588,11 @@ export class MultiRpcNear {
     }
     if (venue === 'onetokenhub') {
       const st = await this.getOneTokenHubState(tokenAddress).catch(() => null);
+      if (!st || !(st.price > 0)) return null;
+      return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    if (venue === 'nearpad') {
+      const st = await this.getNEARpadState(tokenAddress).catch(() => null);
       if (!st || !(st.price > 0)) return null;
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
