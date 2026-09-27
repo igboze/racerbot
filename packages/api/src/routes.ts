@@ -2031,9 +2031,14 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
     const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
 
-    const result = await sellAtTarget(user.id, positionId, pct);
-
-    if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+    let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
+    try {
+      result = await sellAtTarget(user.id, positionId, pct);
+    } catch (err: any) {
+      result = { success: false, reason: err.message || 'Swap execution failed' };
+    } finally {
+      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+    }
 
     if (result.success) {
       await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`);
