@@ -369,48 +369,35 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
-      // User holds token - show sell buttons instead of buy buttons
-      text += `⚡ *Sell Your Holdings*:\n`;
+      // User holds token - show BOTH BUY and SELL options with Green / Red color coding
+      text += `⚡ *Manage Position* (Buy More or Sell):\n`;
+      const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       const defaultSellPct = userRecord?.default_sell_pct ? Number(userRecord.default_sell_pct) : 100;
       keyboard = Markup.inlineKeyboard([
+        // BUY Options (Green 🟢)
         [
-          Markup.button.callback('Sell 25%', `sell:${userPosition.id}:25`),
-          Markup.button.callback('Sell 50%', `sell:${userPosition.id}:50`),
+          Markup.button.callback('🟢 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
+          Markup.button.callback('🟢 1 N', `buy_fixed:${tokenInfo.address}:1`),
+          Markup.button.callback('🟢 2 N', `buy_fixed:${tokenInfo.address}:2`),
+          Markup.button.callback('🟢 5 N', `buy_fixed:${tokenInfo.address}:5`),
         ],
         [
-          Markup.button.callback('Sell 75%', `sell:${userPosition.id}:75`),
-          Markup.button.callback('Sell 100%', `sell:${userPosition.id}:100`),
+          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}🟢 Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
+          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}🟢 Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
+          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}🟢 Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
+          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}🟢 Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
         ],
+        // SELL Options (Red 🔴)
         [
-          Markup.button.callback('⚡ Buy More', `buy_custom_prompt:${tokenInfo.address}`),
-          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+          Markup.button.callback('🔴 Sell 25%', `sell:${userPosition.id}:25`),
+          Markup.button.callback('🔴 Sell 50%', `sell:${userPosition.id}:50`),
+          Markup.button.callback('🔴 Sell 75%', `sell:${userPosition.id}:75`),
+          Markup.button.callback('🔴 Sell 100%', `sell:${userPosition.id}:100`),
         ],
-        ...linkRows,
+        // Quick Action Row
         [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-        ],
-      ]);
-    } else {
-      // User doesn't hold token - show buy buttons
-      text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
-      keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('⚡ 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
-          Markup.button.callback('⚡ 1 N', `buy_fixed:${tokenInfo.address}:1`),
-          Markup.button.callback('⚡ 2 N', `buy_fixed:${tokenInfo.address}:2`),
-          Markup.button.callback('⚡ 5 N', `buy_fixed:${tokenInfo.address}:5`),
-        ],
-        [
-          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
-          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
-          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
-          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
-        ],
-        [
-          Markup.button.callback('✏️ Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
+          Markup.button.callback('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
+          Markup.button.callback('🔴 Sell Initial', `sell_initial:${userPosition.id}`),
           Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
         ],
         ...linkRows,
@@ -422,6 +409,36 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else {
+      // User doesn't hold token - show BUY options (Green 🟢)
+      text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
+      keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🟢 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
+          Markup.button.callback('🟢 1 N', `buy_fixed:${tokenInfo.address}:1`),
+          Markup.button.callback('🟢 2 N', `buy_fixed:${tokenInfo.address}:2`),
+          Markup.button.callback('🟢 5 N', `buy_fixed:${tokenInfo.address}:5`),
+        ],
+        [
+          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}🟢 Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
+          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}🟢 Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
+          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}🟢 Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
+          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}🟢 Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
+        ],
+        [
+          Markup.button.callback('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
+          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+        ],
+        ...linkRows,
+        [
+          Markup.button.callback('⚙️ Settings', 'menu_settings'),
+          Markup.button.callback('🔙 Back', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
@@ -516,15 +533,16 @@ export async function sendPnlCardMessage(
 
     if (position.status === 'open' && quantityHeldNum > 0) {
       buttons.push([
-        Markup.button.callback('Sell 25%', `sell:${positionId}:25`),
-        Markup.button.callback('Sell 50%', `sell:${positionId}:50`),
+        Markup.button.callback('🔴 Sell 25%', `sell:${positionId}:25`),
+        Markup.button.callback('🔴 Sell 50%', `sell:${positionId}:50`),
       ]);
       buttons.push([
-        Markup.button.callback('Sell 75%', `sell:${positionId}:75`),
-        Markup.button.callback('Sell 100%', `sell:${positionId}:100`),
+        Markup.button.callback('🔴 Sell 75%', `sell:${positionId}:75`),
+        Markup.button.callback('🔴 Sell 100%', `sell:${positionId}:100`),
       ]);
       buttons.push([
-        Markup.button.callback('💰 Sell Initial', `sell_initial:${positionId}`),
+        Markup.button.callback('🔴 Sell Initial', `sell_initial:${positionId}`),
+        Markup.button.callback('🟢 Buy More', `buy_custom_prompt:${position.token_address}`),
       ]);
     }
 
@@ -611,13 +629,13 @@ export function buildSettingsDashboard(user: UserRecord) {
       Markup.button.callback(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500'),
     ],
     [
-      Markup.button.callback(`Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10'),
+      Markup.button.callback(`🟢 Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10'),
       Markup.button.callback(`${buyPct === 25 ? '✓ ' : ''}25%`, 'set:buy_pct:25'),
       Markup.button.callback(`${buyPct === 50 ? '✓ ' : ''}50%`, 'set:buy_pct:50'),
       Markup.button.callback(`${buyPct === 100 ? '✓ ' : ''}100%`, 'set:buy_pct:100'),
     ],
     [
-      Markup.button.callback(`Sell: ${sellPct === 25 ? '✓ ' : ''}25%`, 'set:sell_pct:25'),
+      Markup.button.callback(`🔴 Sell: ${sellPct === 25 ? '✓ ' : ''}25%`, 'set:sell_pct:25'),
       Markup.button.callback(`${sellPct === 50 ? '✓ ' : ''}50%`, 'set:sell_pct:50'),
       Markup.button.callback(`${sellPct === 75 ? '✓ ' : ''}75%`, 'set:sell_pct:75'),
       Markup.button.callback(`${sellPct === 100 ? '✓ ' : ''}100%`, 'set:sell_pct:100'),
@@ -704,7 +722,7 @@ async function executeBuyHelper(
   telegramId: number,
   tokenAddress: string,
   amountNear: number
-): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string }> {
+): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
     throw new Error('Please run /start to set up your trading wallet first.');
@@ -730,9 +748,8 @@ async function executeBuyHelper(
     throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.025).toFixed(4)} NEAR (including gas & storage deposit reserve). Fees are deducted from your swap amount.`);
   }
 
-  // Always use fresh data from getTokenInfo to avoid stale cache issues
-  // (tokenInfoCache may have dcl_pool_id = null if RPC was down when first fetched)
-  const info = await getTokenInfo(tokenAddress, true).catch(() => null);
+  // Use cached token info to execute immediately without redundant RPC round-trips
+  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
   if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
@@ -773,7 +790,12 @@ async function executeBuyHelper(
     min_amount_out: minAmountOut,
     venue,
     dcl_pool_id: effectiveDclPoolId,
+    pool_id: effectiveRheaPoolId,
   });
+
+  if (swapResult.success === false) {
+    throw new Error('Swap failed on-chain. Please verify slippage settings and balance, then retry.');
+  }
 
   const txInfo = swapResult.txHash
     ? `\n\n🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${swapResult.txHash})`
@@ -783,7 +805,8 @@ async function executeBuyHelper(
     success: true,
     amountNear,
     tokenAddress,
-    message: `⚡ Buy order submitted for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).${txInfo}`,
+    positionId: swapResult.positionId,
+    message: `⚡ Buy order executed for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).${txInfo}`,
   };
 }
 
@@ -1108,20 +1131,28 @@ bot.action('menu_holdings', async (ctx) => {
       const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
       const buttons: any[] = [];
 
-      // Sell percentage buttons
+      // Sell percentage buttons (Red 🔴)
       const sellRow1: any[] = [];
-      sellRow1.push(Markup.button.callback('Sell 25%', `sell:${positionId}:25`));
-      sellRow1.push(Markup.button.callback('Sell 50%', `sell:${positionId}:50`));
+      sellRow1.push(Markup.button.callback('🔴 Sell 25%', `sell:${positionId}:25`));
+      sellRow1.push(Markup.button.callback('🔴 Sell 50%', `sell:${positionId}:50`));
       buttons.push(sellRow1);
 
       const sellRow2: any[] = [];
-      sellRow2.push(Markup.button.callback('Sell 75%', `sell:${positionId}:75`));
-      sellRow2.push(Markup.button.callback('Sell 100%', `sell:${positionId}:100`));
+      sellRow2.push(Markup.button.callback('🔴 Sell 75%', `sell:${positionId}:75`));
+      sellRow2.push(Markup.button.callback('🔴 Sell 100%', `sell:${positionId}:100`));
       buttons.push(sellRow2);
+
+      // Buy buttons (Green 🟢)
+      buttons.push([
+        Markup.button.callback('🟢 Buy 0.5N', `buy_fixed:${position.token_address}:0.5`),
+        Markup.button.callback('🟢 Buy 1N', `buy_fixed:${position.token_address}:1`),
+        Markup.button.callback('🟢 Buy 2N', `buy_fixed:${position.token_address}:2`),
+        Markup.button.callback('🟢 Buy X N', `buy_custom_prompt:${position.token_address}`),
+      ]);
 
       // Sell Initial button
       if (initialInvestment > 0) {
-        buttons.push([Markup.button.callback('💰 Sell Initial', `sell_initial:${positionId}`)]);
+        buttons.push([Markup.button.callback('🔴 Sell Initial', `sell_initial:${positionId}`)]);
       }
 
       // Navigation buttons
@@ -1829,10 +1860,14 @@ bot.action('menu_holdings', async (ctx) => {
 
         const keyboard = Markup.inlineKeyboard([
           [
-            Markup.button.callback('Sell 25%', `sell:${pos.id}:25`),
-            Markup.button.callback('Sell 50%', `sell:${pos.id}:50`),
-            Markup.button.callback('Sell 75%', `sell:${pos.id}:75`),
-            Markup.button.callback('Sell 100%', `sell:${pos.id}:100`),
+            Markup.button.callback('🔴 Sell 25%', `sell:${pos.id}:25`),
+            Markup.button.callback('🔴 Sell 50%', `sell:${pos.id}:50`),
+            Markup.button.callback('🔴 Sell 75%', `sell:${pos.id}:75`),
+            Markup.button.callback('🔴 Sell 100%', `sell:${pos.id}:100`),
+          ],
+          [
+            Markup.button.callback('🟢 Buy More', `buy_custom_prompt:${pos.token_address}`),
+            Markup.button.callback('🔄 Refresh', 'menu_positions'),
           ],
         ]);
 
@@ -1920,8 +1955,9 @@ bot.action('menu_holdings', async (ctx) => {
         const info = infoMap.get(pos.token_address);
         const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
         buttons.push([
-          Markup.button.callback(`Sell 50% ${sym}`, `sell:${pos.id}:50`),
-          Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`),
+          Markup.button.callback(`🔴 Sell 50% ${sym}`, `sell:${pos.id}:50`),
+          Markup.button.callback(`🔴 Sell 100% ${sym}`, `sell:${pos.id}:100`),
+          Markup.button.callback(`🟢 Buy ${sym}`, `buy_custom_prompt:${pos.token_address}`),
         ]);
       }
       buttons.push([
@@ -2031,7 +2067,9 @@ bot.action('menu_holdings', async (ctx) => {
         await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
         try {
           const res = await executeBuyHelper(telegramId, query, amountNear);
-          await ctx.reply(`✅ ${res.message}`, { parse_mode: 'Markdown' });
+          const card = await buildTokenCard(query, telegramId);
+          card.text = `✅ *Snipe Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
+          await sendTokenCard(ctx, card);
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }

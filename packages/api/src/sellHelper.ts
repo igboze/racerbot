@@ -55,9 +55,13 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     venue,
     timestamp: Date.now(),
     dcl_pool_id: effectiveDclPoolId,
+    pool_id: effectiveRheaPoolId,
   };
 
-  await publishSwap(swapEvent);
+  const swapResult = await publishSwap(swapEvent);
+  if (swapResult.success === false) {
+    return { success: false, reason: 'Swap failed on-chain. Please verify liquidity and retry.' };
+  }
 
   return { success: true };
 }
