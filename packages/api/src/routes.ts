@@ -675,15 +675,44 @@ function getUserFriendlyError(error: Error | string): string {
   if (r.includes('failed to fetch wallet balance'))
     return 'Unable to check your wallet balance. Please try again.';
 
+  // ── Auth & Trading Key ───────────────────────────────────────────────
+  if (
+    r.includes('unsupported state') ||
+    r.includes('unable to authenticate data') ||
+    r.includes('wallet key') ||
+    r.includes('key authentication failed')
+  ) {
+    return 'Wallet trading key authentication failed. Please run /rotatekey to refresh your key.';
+  }
+  if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
+    return 'Wallet not found. Please run /start first.';
+  if (r.includes('unauthorized') || r.includes('forbidden'))
+    return 'Authentication required. Please run /start.';
+
   // ── Venue / pool discovery ───────────────────────────────────────────
   if (r.includes('could not determine dex venue') || r.includes('could not determine venue'))
     return 'Unable to find a trading pool for this token. Paste the exact contract address.';
   if (r.includes('token is on') && (r.includes('not yet supported') || r.includes('not supported')))
     return errorMsg.slice(0, 280);
-  if (r.includes('no pool') || r.includes('pool not found') || r.includes('no dcl pool'))
-    return 'No liquidity pool found for this token. It may not yet be tradeable.';
-  if (r.includes('prebonded') || r.includes('not yet bonded'))
+  if (
+    r.includes('no pool') ||
+    r.includes('pool not found') ||
+    r.includes('no dcl pool') ||
+    r.includes('no liquidity pool') ||
+    r.includes('no active rhea') ||
+    r.includes('missing field pool_id') ||
+    r.includes('failed to fetch pool reserves')
+  ) {
+    return 'No active liquidity pool found for this token on DEX. It may not be tradeable yet.';
+  }
+  if (r.includes('prebonded') || r.includes('not yet bonded') || r.includes('bonding curve phase') || r.includes('bonding phase'))
     return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
+  if (r.includes('not paired with near') || r.includes('paired with'))
+    return errorMsg.slice(0, 280);
+
+  // ── Swap failure on-chain ────────────────────────────────────────────
+  if (r.includes('swap failed'))
+    return errorMsg.slice(0, 280);
 
   // ── NEAR Protocol / RPC errors ───────────────────────────────────────
   if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum'))
@@ -696,14 +725,12 @@ function getUserFriendlyError(error: Error | string): string {
     return 'Transaction signing timed out. Please retry.';
   if (r.includes('timeout') || r.includes('timed out'))
     return 'Network timeout — NEAR RPC is slow right now. Please retry.';
-  if (r.includes('panic') || r.includes('wasm execution failed'))
-    return `Contract error: ${sanitizeMd(errorMsg.slice(0, 150))}`;
-
-  // ── Auth / setup ─────────────────────────────────────────────────────
-  if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
-    return 'Wallet not found. Please run /start first.';
-  if (r.includes('unauthorized') || r.includes('forbidden'))
-    return 'Authentication required. Please run /start.';
+  if (r.includes('exceeded the prepaid gas'))
+    return 'Transaction exceeded prepaid gas. Please retry.';
+  if (r.includes('expired') || r.includes('nonce'))
+    return 'Transaction expired due to network latency. Please retry.';
+  if (r.includes('panic') || r.includes('wasm execution failed') || r.includes('executionerror') || r.includes('smart_contract_panic'))
+    return `Contract error: ${sanitizeMd(errorMsg.replace(/.*FunctionCallError.*ExecutionError":"([^"]+)".*$/, '$1').slice(0, 180))}`;
 
   // ── Misc known patterns ───────────────────────────────────────────────
   if (r.includes('too many requests') || r.includes('rate limit'))
@@ -713,9 +740,13 @@ function getUserFriendlyError(error: Error | string): string {
   if (r.includes('insufficient liquidity'))
     return 'Not enough liquidity in the pool for this trade size.';
 
-  // ── Pass through unknown errors server-side only ─────────────────────
+  // ── Pass through clean sanitized error message ───────────────────────
   console.error('[UNHANDLED_ERROR]', errorMsg);
-  return 'Something went wrong. Please try again or contact support.';
+  const clean = errorMsg.split('\n')[0].replace(/ed25519:[a-zA-Z0-9]+/g, '***').trim();
+  if (clean.length > 0 && clean.length < 250) {
+    return sanitizeMd(clean);
+  }
+  return 'Trading operation could not be completed. Please check your balance/settings and try again.';
 }
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
@@ -761,6 +792,11 @@ async function executeBuyHelper(
   const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
+
+  if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
+    throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
+  }
+
   const near = getNear();
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
@@ -795,7 +831,7 @@ async function executeBuyHelper(
   });
 
   if (swapResult.success === false) {
-    throw new Error('Swap failed on-chain. Please verify slippage settings and balance, then retry.');
+    throw new Error(swapResult.reason || 'Swap failed on-chain. Please verify slippage settings and balance, then retry.');
   }
 
   const txInfo = swapResult.txHash
