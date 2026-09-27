@@ -144,11 +144,13 @@ export class MultiRpcNear {
       return createProvider(url, isQn ? `quicknode-read-${i}` : `read-rpc-${i}`, isQn, headers);
     });
 
-    // Trade providers: FastNEAR & QuickNode for swaps/buys/sells
-    const tradeUrls = sanitizedUrls.filter(u => u.includes('fastnear.com') || u.includes('quiknode.pro') || u.includes('quicknode'));
-    if (tradeUrls.length === 0) {
-      tradeUrls.push(...sanitizedUrls);
-    }
+    // Trade providers: QuickNode & FastNEAR prioritized, with reliable public RPC fallbacks
+    const prioritizedTradeUrls = [
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => !u.includes('quiknode') && !u.includes('fastnear.com')),
+    ];
+    const tradeUrls = Array.from(new Set(prioritizedTradeUrls));
     this.tradeProviders = tradeUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -209,6 +211,16 @@ export class MultiRpcNear {
   /** Remove a key (e.g. on user logout or key rotation) */
   async removeKey(accountId: string): Promise<void> {
     await this.keyStore.removeKey(this.networkId, accountId);
+  }
+
+  /** Check if a signing key exists for an account */
+  async hasKey(accountId: string): Promise<boolean> {
+    try {
+      const key = await this.keyStore.getKey(this.networkId, accountId);
+      return key !== null && key !== undefined;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1961,7 +1973,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 90_000
+    waitForMs = 45_000
   ): Promise<any> {
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
@@ -2093,6 +2105,12 @@ export class MultiRpcNear {
             signal: AbortSignal.timeout(6000),
           });
 
+          if (res.status === 429) {
+            const provider = this.tradeProviders.find(p => p.url === providerUrl);
+            if (provider) markProviderError(provider);
+            return null;
+          }
+
           const text = await res.text();
           if (!text || text.trim() === '') {
             throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -2147,9 +2165,20 @@ export class MultiRpcNear {
 
         if (data?.error) {
           const code: number = data.error?.code ?? 0;
-          const errName: string = data.error?.cause?.name ?? data.error?.name ?? data.error?.message ?? '';
-          const errMsg: string = data.error?.message ?? '';
+          const errName: string = data.error?.cause?.name ?? data.error?.name ?? (typeof data.error === 'string' ? data.error : data.error?.message ?? '');
+          const errMsg: string = typeof data.error === 'string' ? data.error : (data.error?.message ?? '');
           const errData: string = typeof data.error?.data === 'string' ? data.error.data : JSON.stringify(data.error?.data ?? '');
+
+          // Rate limit exceeded handling
+          if (
+            errMsg.toLowerCase().includes('rate limit') ||
+            errName.toLowerCase().includes('rate limit') ||
+            errData.toLowerCase().includes('rate limit')
+          ) {
+            const provider = this.tradeProviders.find(p => p.url === providerUrl);
+            if (provider) markProviderError(provider);
+            return null;
+          }
 
           // Transient / "not yet indexed" conditions — return null to retry
           if (
@@ -2173,9 +2202,10 @@ export class MultiRpcNear {
       } catch (err: any) {
         // Network-level or thrown error — record and continue
         lastErr = err as Error;
+        const msg = (err.message || '').toLowerCase();
         
-        // If it's a parse error, mark the provider as unhealthy
-        if (err.message?.includes('Parse error')) {
+        // If it's a parse error or rate limit, mark the provider as unhealthy
+        if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit')) {
           const provider = this.tradeProviders.find(p => p.url === providerUrl);
           if (provider) {
             markProviderError(provider);
@@ -2190,7 +2220,10 @@ export class MultiRpcNear {
       const healthy = this.tradeProviders.filter((p) => p.healthy);
       const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
 
-      const polls = candidates.map((p) => tryRpc(p.url));
+      const polls: Promise<any | null>[] = [
+        tryFastnear(),
+        ...candidates.map((p) => tryRpc(p.url)),
+      ];
 
       const results = await Promise.allSettled(polls);
       for (const r of results) {
@@ -2202,7 +2235,7 @@ export class MultiRpcNear {
         }
       }
 
-      await sleep(350);
+      await sleep(1000);
     }
 
     throw new Error(
@@ -2220,6 +2253,8 @@ export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
   'https://rpc.near.org',
+  'https://near.lava.build',
+  'https://1rpc.io/near',
 ];
 
 /** Singleton factory — call once per process, reuse the connection pool */
