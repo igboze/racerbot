@@ -921,78 +921,85 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
   let newDepositsCount = 0;
   try {
     // 1. Fetch all FT holdings for this subaccount via FastNEAR API
-    let tokens: Array<{ contract_id: string; balance: string }> = [];
+    let contractIds: string[] = [];
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3500);
+      const timeout = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(`https://api.fastnear.com/v1/account/${subaccountId}/ft`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);
       if (res.ok) {
-        const data = await res.json() as any;
-        if (Array.isArray(data.tokens)) {
-          tokens = data.tokens;
+        const data = (await res.json()) as any;
+        if (Array.isArray(data.contract_ids)) {
+          contractIds = data.contract_ids;
+        } else if (Array.isArray(data.tokens)) {
+          contractIds = data.tokens.map((t: any) => t.contract_id || t);
         }
       }
     } catch {
       // FastNEAR timeout/network error — fallback continues gracefully
     }
 
-    if (tokens.length === 0) {
-      return 0;
-    }
-
-    // 2. Fetch existing positions
+    // 2. Fetch existing open positions
     const existingPositions = await getOpenPositions(userId);
     const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
 
-    for (const t of tokens) {
+    // Check all tokens from FastNEAR + existing open positions in DB
+    const allTokensToCheck = Array.from(new Set([...contractIds, ...existingPositions.map(p => p.token_address)]));
+
+    const near = getNear();
+    for (const tokenAddress of allTokensToCheck) {
       // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token)
-      if (t.contract_id === 'wrap.near' || !t.balance || BigInt(t.balance) <= 0n) {
+      if (tokenAddress === 'wrap.near' || tokenAddress === 'near') {
         continue;
       }
 
-      const existing = posMap.get(t.contract_id);
-      if (!existing) {
+      let rawBal = '0';
+      try {
+        rawBal = await near.getTokenBalance(tokenAddress, subaccountId);
+      } catch {
+        continue;
+      }
+
+      const existing = posMap.get(tokenAddress);
+      const rawBalBigInt = BigInt(rawBal || '0');
+
+      const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+      const decimals = info?.decimals ?? 18;
+      const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
+      const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
+
+      if (existing) {
+        if (isDustOrZero) {
+          // User sold or no longer holds the token — close the phantom position
+          await updatePosition({
+            position_id: existing.id,
+            status: 'closed',
+            closed_at: new Date(),
+          });
+          console.log(`[DEPOSIT] Closed phantom/sold position for ${tokenAddress} (user ${userId})`);
+        } else if (existing.quantity_held !== rawBal) {
+          // Update quantity to actual on-chain raw balance
+          await updatePosition({
+            position_id: existing.id,
+            quantity_held: rawBal,
+          });
+        }
+      } else if (!isDustOrZero) {
         // Token received as external deposit!
         // Start calculating PNL at that point: fetch market price at deposit discovery
-        const info = await getTokenInfo(t.contract_id, true).catch(() => null);
-        const currentPrice = info?.price && parseFloat(info.price) > 0
-          ? parseFloat(info.price)
-          : 0;
-
-        // Skip if price is 0 - can't calculate PNL without a baseline
+        const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
         if (currentPrice === 0) {
-          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - price is 0, cannot establish PNL baseline`);
+          console.warn(`[DEPOSIT] Skipping ${tokenAddress} - price is 0, cannot establish PNL baseline`);
           continue;
         }
 
-        // Convert raw balance to human-readable using token decimals
-        const decimals = info?.decimals ?? 18;
-        const rawBalance = BigInt(t.balance);
-
-        // Use BigInt arithmetic for large balances to avoid precision loss
-        // Then convert to number for storage (position system expects numeric strings)
-        const divisor = BigInt(10) ** BigInt(decimals);
-        const humanBalanceBigInt = rawBalance / divisor;
-        const remainder = rawBalance % divisor;
-
-        // Convert to float with proper decimal handling
-        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
-
-        // Validate converted balance is a reasonable number
-        if (!isFinite(humanBalance) || humanBalance <= 0) {
-          console.warn(`[DEPOSIT] Skipping ${t.contract_id} - invalid converted balance: ${humanBalance}`);
-          continue;
-        }
-
-        // Initialize position with zero values - will be updated by fill
         const newPos = await createPosition({
           user_id: userId,
-          token_address: t.contract_id,
-          quantity_held: '0',
-          avg_entry_price: '0',
+          token_address: tokenAddress,
+          quantity_held: rawBal,
+          avg_entry_price: currentPrice.toString(),
         });
 
         // Mark this position as an external deposit
@@ -1002,57 +1009,8 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           [newPos.id]
         );
 
-        const venue = info?.venue && ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(info.venue)
-          ? info.venue as any
-          : 'nearlytrade';
-
-        // Create fill for external deposit
-        await createFill({
-          user_id: userId,
-          position_id: newPos.id,
-          side: 'buy',
-          token_address: t.contract_id,
-          amount: humanBalance.toString(),
-          price: currentPrice.toString(),
-          fee_paid: '0',
-          venue,
-          tx_hash: `deposit_${Date.now()}`,
-        }).catch(() => {});
-
-        // Manually update position with the fill data since external deposits don't go through normal trading flow
-        // This ensures avg_entry_price and quantity_held are correctly set
-        await db.query(
-          'UPDATE positions SET quantity_held = $1, avg_entry_price = $2 WHERE id = $3',
-          [humanBalance.toString(), currentPrice.toString(), newPos.id]
-        );
-
         newDepositsCount++;
-        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${t.contract_id}, balance=${humanBalance.toFixed(4)}, entryPrice=${currentPrice}`);
-      } else {
-        // Sync position quantity if changed
-        // Convert raw balance to human-readable using token decimals
-        const info = await getTokenInfo(t.contract_id, true).catch(() => null);
-        const decimals = info?.decimals ?? 18;
-        const rawBalance = BigInt(t.balance);
-
-        // Use BigInt arithmetic for large balances to avoid precision loss
-        const divisor = BigInt(10) ** BigInt(decimals);
-        const humanBalanceBigInt = rawBalance / divisor;
-        const remainder = rawBalance % divisor;
-        const humanBalance = Number(humanBalanceBigInt) + (Number(remainder) / Number(divisor));
-
-        // Validate converted balance
-        if (!isFinite(humanBalance) || humanBalance < 0) {
-          console.warn(`[DEPOSIT] Skipping balance update for ${t.contract_id} - invalid converted balance: ${humanBalance}`);
-          continue;
-        }
-
-        if (existing.quantity_held !== humanBalance.toString()) {
-          await updatePosition({
-            position_id: existing.id,
-            quantity_held: humanBalance.toString(),
-          });
-        }
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${currentPrice}`);
       }
     }
   } catch (err: any) {
