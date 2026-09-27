@@ -1027,10 +1027,14 @@ export function setupRoutes(bot: Telegraf): void {
         return `$${usdValue.toFixed(4)}`;
       };
 
-      for (const pos of positions) {
+      const MAX_DISPLAY_HOLDINGS = 20;
+      const displayedPositions = positions.slice(0, MAX_DISPLAY_HOLDINGS);
+      const remainingCount = positions.length - displayedPositions.length;
+
+      for (const pos of displayedPositions) {
         const info = infoMap.get(pos.token_address);
-        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-        const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+        const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
+        const displayLabel = sanitizeMd(rawSymbol);
         const currentPrice = info ? parseFloat(info.price) : 0;
         const decimals = info?.decimals ?? 18;
         if (info?.near_usd) nearUsd = info.near_usd;
@@ -1079,6 +1083,21 @@ export function setupRoutes(bot: Telegraf): void {
         buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
       }
 
+      // Add remaining positions value to total portfolio
+      for (const pos of positions.slice(MAX_DISPLAY_HOLDINGS)) {
+        const info = infoMap.get(pos.token_address);
+        const currentPrice = info ? parseFloat(info.price) : 0;
+        const decimals = info?.decimals ?? 18;
+        try {
+          const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
+          totalPortfolioValueNear += currentPrice * (Number(rawBig) / Math.pow(10, decimals));
+        } catch {}
+      }
+
+      if (remainingCount > 0) {
+        holdingsListText += `_... and ${remainingCount} more token(s) held in your wallet._\n\n`;
+      }
+
       const totalUsd = totalPortfolioValueNear * nearUsd;
       const totalUsdDisplay = totalUsd >= 1000 ? `$${(totalUsd / 1000).toFixed(2)}K` : `$${totalUsd.toFixed(2)}`;
 
@@ -1103,7 +1122,10 @@ export function setupRoutes(bot: Telegraf): void {
 
       const canEditMsg = typeof (ctx as any).editMessageText === 'function';
       if (canEditMsg) {
-        await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+        await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) {
+            return;
+          }
           await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
         });
       } else {
@@ -1399,100 +1421,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── menu_positions — Redirect to holdings for backwards compatibility ───────
   bot.action('menu_positions', async (ctx) => {
-    // Redirect to the new holdings menu
-    await ctx.answerCbQuery().catch(() => {});
-    const telegramId = ctx.from!.id;
-    try {
-      const user = await getUserByTelegramId(telegramId);
-      if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-        return;
-      }
-
-      // NOTE: External deposit sync now runs in background only, not blocking menu load
-      // This prevents 3.5s+ delays when loading token detail modal
-      setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
-      const positions = await getOpenPositions(user.id).catch(() => []);
-      if (positions.length === 0) {
-        await ctx.answerCbQuery('No open positions.').catch(() => {});
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Refresh', 'menu_positions')],
-          [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-          [
-            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-          ],
-        ]);
-        await ctx.editMessageText('📊 *Open Positions*\n\n📭 You currently have no open positions.\n\nPaste a token CA into chat to start trading!', {
-          parse_mode: 'Markdown',
-          ...keyboard,
-        }).catch(() => {});
-        return;
-      }
-
-      await ctx.answerCbQuery().catch(() => {});
-
-      // FIX 1 & 2: Fetch all token info in parallel in a SINGLE pass with forceRefresh.
-      // Reuse this same map for both the message text and the buttons — no second fetch loop.
-      const infoResults = await Promise.allSettled(
-        positions.map(pos => getTokenInfo(pos.token_address, true))
-      );
-      const infoMap = new Map<string, TokenInfoResult | null>();
-      positions.forEach((pos, i) => {
-        const r = infoResults[i];
-        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-      });
-
-      let msg = `📊 *Open Positions (${positions.length})*\n\n`;
-      for (const pos of positions) {
-        const info = infoMap.get(pos.token_address);
-        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-        const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
-        const currentPrice = info ? parseFloat(info.price) : 0;
-        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-          : 'N/A';
-        const decimals = info?.decimals ?? 18;
-        const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
-        const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-
-        msg += `${emoji} *${displayLabel}*\n`;
-        msg += `  Holding: \`${formattedQty}\`\n`;
-        msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
-        msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
-        msg += `  PNL: \`${pnlPct}%\`\n`;
-        msg += `  CA: \`${pos.token_address}\`\n\n`;
-      }
-
-      // FIX 2: Reuse the already-fetched infoMap — no second getTokenInfo() loop.
-      const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
-      const buttons: any[] = [];
-      for (const pos of positions.slice(0, 3)) {
-        const info = infoMap.get(pos.token_address);
-        const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-        const row: any[] = [];
-        if (defaultSellPct < 100) {
-          row.push(Markup.button.callback(`⚡ Sell ${defaultSellPct}% ${sym}`, `sell:${pos.id}:${defaultSellPct}`));
-        }
-        row.push(Markup.button.callback(`Sell 100% ${sym}`, `sell:${pos.id}:100`));
-        buttons.push(row);
-      }
-      buttons.push([
-        Markup.button.callback('🔄 Refresh', 'menu_positions'),
-        Markup.button.callback('🔙 Back', 'menu_home'),
-      ]);
-      buttons.push([
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-      ]);
-
-      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-    } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-    }
+    await handleHoldings(ctx, true);
   });
 
   // ── menu_pnl — FIX 1: Parallel token fetches for closed positions ──────────
@@ -2023,65 +1952,7 @@ export function setupRoutes(bot: Telegraf): void {
   // ── /positions & /pnl ─────────────────────────────────────────────────────
   // FIX 1 & 2: Parallel token fetches + single-pass info reuse for buttons.
   bot.command('positions', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    try {
-      const user = await getUserByTelegramId(telegramId).catch(() => null);
-      if (!user) { await ctx.reply('Use /start first.'); return; }
-
-      const positions = await getOpenPositions(user.id).catch(() => []);
-      if (positions.length === 0) {
-        await ctx.reply('📭 No open positions.');
-        return;
-      }
-
-      // FIX 1 & 2: Single parallel fetch; reuse results for both text and buttons.
-      const infoResults = await Promise.allSettled(
-        positions.map(pos => getTokenInfo(pos.token_address, true))
-      );
-      const infoMap = new Map<string, TokenInfoResult | null>();
-      positions.forEach((pos, i) => {
-        const r = infoResults[i];
-        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-      });
-
-      let msg = `📊 *Open Positions (${positions.length})*\n\n`;
-      for (const pos of positions) {
-        const info = infoMap.get(pos.token_address);
-        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-        const currentPrice = info ? parseFloat(info.price) : 0;
-        const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-          ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-          : 'N/A';
-        const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-
-        msg += `${emoji} *${symbol}*\n`;
-        msg += `  Holding: \`${pos.quantity_held}\`\n`;
-        msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
-        msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
-        msg += `  PNL: \`${pnlPct}%\`\n`;
-        msg += `  CA: \`${pos.token_address}\`\n\n`;
-      }
-
-      // FIX 2: Reuse infoMap — no second getTokenInfo() loop.
-      const buttons: any[] = [];
-      for (const pos of positions.slice(0, 3)) {
-        const info = infoMap.get(pos.token_address);
-        const sym = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-        buttons.push([
-          Markup.button.callback(`🔴 Sell 50% ${sym}`, `sell:${pos.id}:50`),
-          Markup.button.callback(`🔴 Sell 100% ${sym}`, `sell:${pos.id}:100`),
-          Markup.button.callback(`🟢 Buy ${sym}`, `buy_custom_prompt:${pos.token_address}`),
-        ]);
-      }
-      buttons.push([
-        Markup.button.callback('🔄 Refresh', 'menu_positions'),
-        Markup.button.callback('🔙 Back', 'menu_home'),
-      ]);
-
-      await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
-    } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-    }
+    await handleHoldings(ctx, false);
   });
 
   // FIX 1: Parallel fills + token info fetches for /pnl command.
