@@ -9,6 +9,7 @@ import {
   updateUserDefaults,
   updateUserSettings,
   updatePosition,
+  createPosition,
   getDb,
   generateReferralCode,
   type UserRecord,
@@ -28,7 +29,9 @@ import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
 import { generatePNLCardData, generatePNLCardMessage, generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
-import { MASTER_KEY } from './config.js';
+import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
+
+const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
 
 // ── Token cache for snipe-by-name fuzzy matching ──────────────────────────────
 export const localTokenNames = new Map<string, { address: string; symbol: string }>();
@@ -39,7 +42,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw';
+  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token';
   tokenAddress?: string;
   expiresAt: number;
 }
@@ -1200,10 +1203,16 @@ export function setupRoutes(bot: Telegraf): void {
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
   bot.action('import_token_prompt', async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'import_token',
+      expiresAt: Date.now() + 2 * 60 * 1000, // 2 minutes expiry
+    });
     await ctx.reply(
       '📝 *Import Token*\n\n' +
       'Please paste the token contract address (CA) you want to import.\n\n' +
-      'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`',
+      'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`\n\n' +
+      '_Send the address within 2 minutes to import it into your holdings._',
       { parse_mode: 'Markdown' }
     );
   });
@@ -2577,6 +2586,131 @@ export function setupRoutes(bot: Telegraf): void {
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
+        return;
+      }
+
+      if (pending.action === 'import_token') {
+        const tokenCA = rawText.trim();
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) {
+          await ctx.reply('❌ User not found. Please run /start first.');
+          return;
+        }
+
+        const validatingMsg = await ctx.reply(`🔍 *Validating Token contract:* \`${tokenCA}\`...`, { parse_mode: 'Markdown' }).catch(() => null);
+
+        // Step 1: Validate NEP-141 contract via ft_metadata
+        let metadata: any;
+        try {
+          metadata = await near.getTokenMetadata(tokenCA);
+          if (!metadata || !metadata.symbol) {
+            throw new Error('Not a valid NEP-141 token contract');
+          }
+        } catch (err: any) {
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `❌ *Invalid Token Contract*\n\n` +
+            `Address \`${tokenCA}\` does not appear to be a valid NEP-141 contract.\n\n` +
+            `_Details: ${sanitizeMd(err.message || 'Metadata query failed')}_`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        // Step 2: Query user's real on-chain balance via ft_balance_of
+        let balanceRaw = '0';
+        try {
+          balanceRaw = await near.getTokenBalance(tokenCA, user.subaccount_id);
+        } catch (err: any) {
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `❌ *Balance Check Failed*\n\nCould not query balance for \`${tokenCA}\`: ${sanitizeMd(err.message)}`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        const balanceBigInt = BigInt(balanceRaw || '0');
+        if (balanceBigInt <= 0n) {
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `⚠️ *Zero Balance*\n\n` +
+            `Your wallet (\`${user.subaccount_id}\`) has a balance of *0 ${metadata.symbol}* on-chain.\n\n` +
+            `Cannot import a position with zero tokens. Please fund your wallet first or buy through the bot.`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        // Step 3: Fetch current price for baseline cost basis
+        let currentPrice = 0;
+        let tokenInfo: any = null;
+        try {
+          tokenInfo = await getTokenInfo(tokenCA);
+          currentPrice = tokenInfo?.price || 0;
+        } catch {
+          // If price lookup fails, currentPrice remains 0
+        }
+
+        const decimals = metadata.decimals ?? 18;
+        const humanBalance = (Number(balanceBigInt) / Math.pow(10, decimals)).toLocaleString(undefined, {
+          maximumFractionDigits: 4,
+        });
+
+        // Step 4: Check if position already exists for this user and token
+        const existingPositions = await getOpenPositions(user.id).catch(() => []);
+        const existing = existingPositions.find(p => p.token_address === tokenCA);
+
+        if (existing) {
+          // Update quantity_held without touching avg_entry_price
+          await updatePosition({
+            position_id: existing.id,
+            quantity_held: balanceRaw,
+          });
+
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `🔄 *Position Refreshed!*\n\n` +
+            `Token: *${metadata.name} (${metadata.symbol})*\n` +
+            `Address: \`${tokenCA}\`\n\n` +
+            `You already had an active position for this token. Balance has been refreshed to:\n` +
+            `💰 *Quantity Held:* \`${humanBalance} ${metadata.symbol}\`\n` +
+            `📊 *Entry Price:* Unchanged at \`${existing.avg_entry_price} NEAR\``,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+                [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+              ]),
+            }
+          );
+          return;
+        }
+
+        // Step 5: Create new position with quantity_held and current price baseline
+        await createPosition({
+          user_id: user.id,
+          token_address: tokenCA,
+          quantity_held: balanceRaw,
+          avg_entry_price: currentPrice.toString(),
+        });
+
+        if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+        await ctx.reply(
+          `✅ *Token Successfully Imported!*\n\n` +
+          `Token: *${metadata.name} (${metadata.symbol})*\n` +
+          `Address: \`${tokenCA}\`\n` +
+          `Balance: *${humanBalance} ${metadata.symbol}*\n` +
+          `Entry Price: *${currentPrice.toFixed(6)} NEAR*\n\n` +
+          `_ℹ️ Note: Tracking started at today's price (${currentPrice.toFixed(6)} NEAR) since the original purchase happened outside RacerBot._`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+              [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+            ]),
+          }
+        );
         return;
       }
     }

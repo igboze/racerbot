@@ -5,7 +5,9 @@ use near_sdk::{
 use near_sdk::json_types::U128;
 use near_sdk::store::LookupMap;
 
-const GAS_FOR_SWAP: Gas = Gas::from_tgas(100);
+const GAS_FOR_SWAP: Gas = Gas::from_tgas(90);
+const GAS_FOR_RESOLVE_RHEA: Gas = Gas::from_tgas(110);
+const GAS_FOR_WITHDRAW: Gas = Gas::from_tgas(50);
 const GAS_FOR_RESOLVE: Gas = Gas::from_tgas(50);
 const GAS_FOR_STORAGE_DEPOSIT: Gas = Gas::from_tgas(20);
 const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(30);
@@ -175,17 +177,29 @@ impl RacerbotRouter {
             min_amount_out: params.min_amount_out,
         });
 
-        let swap_promise = match &params.venue {
-            Venue::Rhea => self.call_rhea(&params),
-            Venue::Shardsmarket => self.call_shardsmarket(&caller, &params),
-            Venue::Nearlytrade => self.call_nearlytrade(&params),
-        };
-
-        swap_promise.then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(GAS_FOR_RESOLVE)
-                .resolve_swap(nonce, caller)
-        )
+        match &params.venue {
+            Venue::Rhea => {
+                self.call_rhea(&params).then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(GAS_FOR_RESOLVE_RHEA)
+                        .resolve_rhea_swap(nonce, caller)
+                )
+            }
+            Venue::Shardsmarket => {
+                self.call_shardsmarket(&caller, &params).then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(GAS_FOR_RESOLVE)
+                        .resolve_swap(nonce, caller)
+                )
+            }
+            Venue::Nearlytrade => {
+                self.call_nearlytrade(&params).then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(GAS_FOR_RESOLVE)
+                        .resolve_swap(nonce, caller)
+                )
+            }
+        }
     }
 
     // ── Venue integrations ────────────────────────────────────────────────────
@@ -217,7 +231,8 @@ impl RacerbotRouter {
 
     fn call_rhea(&self, params: &SwapParams) -> Promise {
         let pool_id = params.pool_id.expect("pool_id is required for Rhea swaps");
-        let args = serde_json::json!({
+        let swap_msg = serde_json::json!({
+            "force": 0,
             "actions": [{
                 "pool_id": pool_id,
                 "token_in": params.token_in,
@@ -226,13 +241,19 @@ impl RacerbotRouter {
                 "min_amount_out": params.min_amount_out,
             }],
             "referral_id": null,
+        }).to_string();
+
+        let transfer_call_args = serde_json::json!({
+            "receiver_id": "v2.ref-finance.near",
+            "amount": params.amount_in,
+            "msg": swap_msg,
         });
 
-        Promise::new("v2.ref-finance.near".parse().unwrap())
+        Promise::new(params.token_in.parse().unwrap())
             .function_call(
-                "swap".to_string(),
-                serde_json::to_vec(&args).unwrap(),
-                NearToken::from_yoctonear(params.amount_in.0),
+                "ft_transfer_call".to_string(),
+                serde_json::to_vec(&transfer_call_args).unwrap(),
+                NearToken::from_yoctonear(1),
                 GAS_FOR_SWAP,
             )
     }
@@ -253,7 +274,114 @@ impl RacerbotRouter {
             )
     }
 
-    // ── Callback ──────────────────────────────────────────────────────────────
+    // ── Callbacks ─────────────────────────────────────────────────────────────
+
+    /// Step 1 for Rhea swaps: Called after `ft_transfer_call` on the input token resolves.
+    /// Reads actual swap output, calls `withdraw` on `v2.ref-finance.near` to move funds out of Ref's internal deposit ledger.
+    #[private]
+    pub fn resolve_rhea_swap(&mut self, nonce: u64, caller: AccountId) -> PromiseOrValue<U128> {
+        let pending = match self.pending_swaps.get(&nonce) {
+            Some(p) => p.clone(),
+            None => {
+                env::log_str(&format!("WARN: no pending swap for nonce {}", nonce));
+                return PromiseOrValue::Value(U128(0));
+            }
+        };
+
+        match env::promise_result_checked(0, 1024) {
+            Ok(bytes) => {
+                let raw_out: U128 = serde_json::from_slice(&bytes).unwrap_or(U128(0));
+
+                if raw_out.0 == 0 {
+                    env::log_str("WARN: venue returned 0 output");
+                    self.pending_swaps.remove(&nonce);
+                    return PromiseOrValue::Value(U128(0));
+                }
+
+                let withdraw_args = serde_json::json!({
+                    "token_id": pending.token_out,
+                    "amount": raw_out,
+                });
+
+                Promise::new("v2.ref-finance.near".parse().unwrap())
+                    .function_call(
+                        "withdraw".to_string(),
+                        serde_json::to_vec(&withdraw_args).unwrap(),
+                        ONE_YOCTO,
+                        GAS_FOR_WITHDRAW,
+                    )
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(GAS_FOR_RESOLVE)
+                            .resolve_rhea_withdraw(nonce, caller, raw_out)
+                    )
+                    .into()
+            }
+            Err(_) => {
+                env::log_str(&format!("SWAP FAILED nonce={} caller={}", nonce, caller));
+                self.pending_swaps.remove(&nonce);
+                PromiseOrValue::Value(U128(0))
+            }
+        }
+    }
+
+    /// Step 2 for Rhea swaps: Called after `withdraw` on `v2.ref-finance.near` resolves.
+    /// Confirms funds have moved into router contract's real NEP-141 balance, then executes fee-split and transfer_out.
+    #[private]
+    pub fn resolve_rhea_withdraw(
+        &mut self,
+        nonce: u64,
+        caller: AccountId,
+        raw_out: U128,
+    ) -> PromiseOrValue<U128> {
+        let pending = match self.pending_swaps.remove(&nonce) {
+            Some(p) => p,
+            None => {
+                env::log_str(&format!("WARN: no pending swap for nonce {}", nonce));
+                return PromiseOrValue::Value(U128(0));
+            }
+        };
+
+        match env::promise_result_checked(0, 1024) {
+            Ok(_) => {
+                if raw_out.0 < pending.min_amount_out.0 {
+                    // Slippage tolerance breached: refund full gross amount to caller without taking fees
+                    let _ = self.transfer_out(&pending.token_out, &caller, raw_out.0);
+                    env::log_str(&format!(
+                        "SWAP SLIPPAGE_REFUND caller={} token_out={} got={} min={}",
+                        caller, pending.token_out, raw_out.0, pending.min_amount_out.0
+                    ));
+                    return PromiseOrValue::Value(U128(0));
+                }
+
+                let fee_amount = (raw_out.0 * pending.fee_bps as u128) / 10_000;
+                let net_amount = raw_out.0 - fee_amount;
+
+                // Send fee (1.5%) to treasury wallet (with storage deposit if FT)
+                if fee_amount > 0 {
+                    let _ = self.transfer_out(&pending.token_out, &self.treasury_id.clone(), fee_amount);
+                }
+
+                // Send net output (98.5%) to caller (with storage deposit if FT)
+                let _ = self.transfer_out(&pending.token_out, &caller, net_amount);
+
+                env::log_str(&format!(
+                    "SWAP OK caller={} token_out={} gross={} fee={} net={}",
+                    caller, pending.token_out, raw_out.0, fee_amount, net_amount
+                ));
+
+                PromiseOrValue::Value(U128(net_amount))
+            }
+            Err(_) => {
+                env::log_str(&format!(
+                    "ERROR: Rhea swap succeeded internally with raw_out={} but withdrawal failed for nonce={} caller={} token_out={}",
+                    raw_out.0, nonce, caller, pending.token_out
+                ));
+                // Do not attempt transfer_out since funds are still in Ref internal deposit ledger
+                PromiseOrValue::Value(U128(0))
+            }
+        }
+    }
 
     /// Called by the contract itself after the venue swap resolves.
     /// Reads actual output from PromiseResult, applies fee split, transfers funds.
