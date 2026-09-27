@@ -460,7 +460,7 @@ export class MultiRpcNear {
       }
       
       // Wait before next polling round
-      await sleep(1000);
+      await sleep(500); // Reduced from 1000ms to 500ms for faster confirmation
     }
 
     // If we exit the loop, transaction wasn't confirmed
@@ -2089,7 +2089,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 45_000
+    waitForMs = 90_000
   ): Promise<any> {
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
@@ -2351,7 +2351,7 @@ export class MultiRpcNear {
         }
       }
 
-      await sleep(1000);
+      await sleep(500); // Reduced from 1000ms to 500ms for faster confirmation polling
     }
 
     throw new Error(
