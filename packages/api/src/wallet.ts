@@ -610,8 +610,10 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
 
   const parentAccount = await nearConn.account(RACERBOT_PARENT_ACCOUNT);
 
-  // Fund subaccount with minimum storage + gas (0.05 NEAR)
-  const initialBalance = nearUtils.format.parseNearAmount('0.05')!;
+  // Fund subaccount with NEAR's storage-stake minimum only (182 bytes at 0.00001 NEAR/byte = 0.00182 NEAR),
+  // not a gas buffer. Gas and trading balance are expected to come from the user's own deposit
+  // before any trade or subaccount-signed action.
+  const initialBalance = nearUtils.format.parseNearAmount('0.00182')!;
 
   // Submit on-chain createAccount and await confirmation
   await parentAccount.createAccount(
