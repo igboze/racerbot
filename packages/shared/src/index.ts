@@ -68,6 +68,7 @@ export type {
 export {
   MultiRpcNear,
   getNear,
+  DEFAULT_RPC_URLS,
   getFastnearAccountTokens,
   getFastnearPublicKeyAccounts,
   getRefIndexerPools,

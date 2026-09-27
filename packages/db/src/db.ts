@@ -458,19 +458,14 @@ export async function getUserByReferralCode(referralCode: string): Promise<UserR
 export async function createReferral(referrerId: string, referredUserId: string): Promise<ReferralRecord> {
   const db = await getDb();
   const id = generateId();
-  await db.query(
-    'INSERT INTO referrals (id, referrer_id, referred_user_id, status, created_at) VALUES ($1, $2, $3, $4, NOW())',
+  const result = await db.query(
+    `INSERT INTO referrals (id, referrer_id, referred_user_id, status, created_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (referrer_id, referred_user_id) DO UPDATE SET referrer_id = EXCLUDED.referrer_id
+     RETURNING *`,
     [id, referrerId, referredUserId, 'pending']
   );
-  return {
-    id,
-    referrer_id: referrerId,
-    referred_user_id: referredUserId,
-    status: 'pending',
-    total_fees_earned: 0,
-    created_at: new Date(),
-    completed_at: null,
-  };
+  return rowToReferral(result.rows[0]);
 }
 
 export async function activateReferral(referralId: string): Promise<void> {

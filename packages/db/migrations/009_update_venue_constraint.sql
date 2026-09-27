@@ -5,4 +5,4 @@ ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check;
 
 -- Add the new constraint with all supported venues
 ALTER TABLE fills ADD CONSTRAINT fills_venue_check 
-CHECK (venue IN ('rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad'));
+CHECK (venue IN ('rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'memecooking', 'onetokenhub', 'nearpad', 'gaypad'));
