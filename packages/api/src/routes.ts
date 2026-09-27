@@ -511,7 +511,8 @@ export async function sendTokenCard(ctx: any, card: { text: string; keyboard: an
 export async function sendPnlCardMessage(
   ctx: Context,
   positionId: string,
-  headerMsg?: string
+  headerMsg?: string,
+  showNetWorthOverride?: boolean
 ) {
   try {
     const position = await getPositionById(positionId);
@@ -522,13 +523,17 @@ export async function sendPnlCardMessage(
       return;
     }
 
-    const pnlCard = await generatePNLCard(positionId);
+    const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
+    const showNetWorth = showNetWorthOverride !== undefined
+      ? showNetWorthOverride
+      : (user ? user.show_net_worth_on_card !== false : true);
+
+    const pnlCard = await generatePNLCard(positionId, showNetWorth);
     let fullText = pnlCard.text;
     if (headerMsg) {
       fullText = `${headerMsg}\n\n${fullText}`;
     }
 
-    const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
     const buttons: any[] = [];
     const quantityHeldNum = parseFloat(position.quantity_held || '0');
 
@@ -548,10 +553,14 @@ export async function sendPnlCardMessage(
     }
 
     buttons.push([
-      Markup.button.callback('🔄 Refresh PnL', `token_detail:${positionId}`),
-      Markup.button.callback('💼 Holdings', 'menu_holdings'),
+      Markup.button.callback(
+        showNetWorth ? '🙈 Hide Net Worth' : '👁 Show Net Worth',
+        `toggle_pnl_nw:${positionId}:${showNetWorth ? 0 : 1}`
+      ),
+      Markup.button.callback('🔄 Refresh PnL', `token_detail:${positionId}${showNetWorthOverride !== undefined ? `:${showNetWorth ? 1 : 0}` : ''}`),
     ]);
     buttons.push([
+      Markup.button.callback('💼 Holdings', 'menu_holdings'),
       Markup.button.callback('🏠 Main Menu', 'menu_home'),
     ]);
 
@@ -592,6 +601,7 @@ export function buildSettingsDashboard(user: UserRecord) {
   const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
   const buyPct = user.default_buy_pct ? Number(user.default_buy_pct) : 10;
   const sellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
+  const showNetWorth = user.show_net_worth_on_card !== false;
 
   const text =
     `⚙️ *Trading & Snipe Settings*\n\n` +
@@ -601,13 +611,20 @@ export function buildSettingsDashboard(user: UserRecord) {
     `• *Min Pool Liquidity*: \`${minLiq} NEAR\`\n` +
     `• *Slippage Tolerance*: \`${slip}%\`\n` +
     `• *Default Manual Buy*: \`${buyPct}%\`\n` +
-    `• *Default Manual Sell*: \`${sellPct}%\``;
+    `• *Default Manual Sell*: \`${sellPct}%\`\n` +
+    `• *Net Worth on PNL Card*: ${showNetWorth ? '🟢 *Shown*' : '🔴 *Hidden*'}`;
 
   const keyboard = Markup.inlineKeyboard([
     [
       Markup.button.callback(
         autoBuy ? '🟢 Auto-Buy: ON (Tap to Disable)' : '🔴 Auto-Buy: OFF (Tap to Enable)',
         'set:toggle_auto_buy'
+      ),
+    ],
+    [
+      Markup.button.callback(
+        showNetWorth ? '👁 Net Worth on Card: SHOWN (Tap to Hide)' : '🙈 Net Worth on Card: HIDDEN (Tap to Show)',
+        'set:toggle_show_net_worth'
       ),
     ],
     [
@@ -1192,8 +1209,9 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── token_detail — Individual token detail modal with PNL card ────────────────
-  bot.action(/^token_detail:(.+)$/, async (ctx) => {
+  bot.action(/^token_detail:([^:]+)(?::([01]))?$/, async (ctx) => {
     const positionId = ctx.match![1];
+    const nwParam    = ctx.match![2];
     const telegramId = ctx.from!.id;
     try {
       const user = await getUserByTelegramId(telegramId);
@@ -1201,6 +1219,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.answerCbQuery('Please run /start first.').catch(() => {});
         return;
       }
+
+      const showNetWorth = nwParam !== undefined
+        ? nwParam === '1'
+        : (user.show_net_worth_on_card !== false);
 
       await ctx.answerCbQuery().catch(() => {});
       const positions = await getOpenPositions(user.id).catch(() => []);
@@ -1291,9 +1313,11 @@ export function setupRoutes(bot: Telegraf): void {
       msg += `  Current: ${formatDualPrice(currentPrice)}\n`;
       msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
       msg += `📈 *Market Cap*: \`${marketCapDisplay}\`\n\n`;
-      msg += `💼 *Position*:\n`;
-      msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
-      msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n\n`;
+      if (showNetWorth) {
+        msg += `💼 *Position*:\n`;
+        msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
+        msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n\n`;
+      }
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
 
@@ -1327,15 +1351,21 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Navigation buttons
       buttons.push([
-        Markup.button.callback('🔄 Refresh', `token_detail:${positionId}`),
-        Markup.button.callback('🔙 Back to Holdings', 'menu_holdings'),
+        Markup.button.callback(
+          showNetWorth ? '🙈 Hide Net Worth' : '👁 Show Net Worth',
+          `token_detail:${positionId}:${showNetWorth ? 0 : 1}`
+        ),
+        Markup.button.callback('🔄 Refresh', `token_detail:${positionId}${nwParam !== undefined ? `:${nwParam}` : ''}`),
       ]);
-      buttons.push([Markup.button.callback('🏠 Main Menu', 'menu_home')]);
+      buttons.push([
+        Markup.button.callback('🔙 Back to Holdings', 'menu_holdings'),
+        Markup.button.callback('🏠 Main Menu', 'menu_home'),
+      ]);
 
       // Generate PNL card with image
       let pnlCardImage: Buffer | null = null;
       try {
-        const pnlCard = await generatePNLCard(positionId);
+        const pnlCard = await generatePNLCard(positionId, showNetWorth);
         if (pnlCard.image) {
           pnlCardImage = pnlCard.image;
         } else {
@@ -1676,6 +1706,25 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
     const dash = buildSettingsDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+  });
+
+  bot.action('set:toggle_show_net_worth', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const current = user.show_net_worth_on_card !== false;
+    const updated = await updateUserSettings(user.id, { show_net_worth_on_card: !current });
+    await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => {});
+    const dash = buildSettingsDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+  });
+
+  bot.action(/^toggle_pnl_nw:([^:]+):([01])$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const showNw = ctx.match![2] === '1';
+    await ctx.answerCbQuery(showNw ? 'Showing net worth...' : 'Hiding net worth...').catch(() => {});
+    await ctx.deleteMessage().catch(() => {});
+    await sendPnlCardMessage(ctx, positionId, undefined, showNw);
   });
 
   bot.action(/^set:slippage:([0-9.]+)$/, async (ctx) => {
