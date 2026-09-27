@@ -997,7 +997,13 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
 
       const decimals = info?.decimals ?? 18;
-      const rawBalBigInt = BigInt((rawBal || '0').split('.')[0] || '0');
+      const cleanRaw = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
+      let rawBalBigInt = 0n;
+      try {
+        rawBalBigInt = BigInt(cleanRaw);
+      } catch {
+        rawBalBigInt = 0n;
+      }
       const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
       const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
 
