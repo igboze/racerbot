@@ -652,7 +652,6 @@ export function buildSettingsDashboard(user: UserRecord) {
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
