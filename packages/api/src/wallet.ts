@@ -36,6 +36,12 @@ const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: numbe
 // ── In-memory user balance cache with 8s TTL ──────────────────────────────────
 const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
 
+// ── Permanent in-memory token metadata cache (never changes for NEP-141) ───────
+const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number }>();
+
+// ── User token deposit sync debounce map (10s TTL) ───────────────────────────
+const lastSyncDepositsMap = new Map<string, number>();
+
 // ── NEAR/USD price cache — refresh every 2 minutes ───────────────────────────
 let nearUsdPrice = 0;
 let nearUsdLastFetch = 0;
@@ -257,37 +263,50 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     return result;
   }
 
-  // Fetch ft_metadata first — this validates the token address is a real NEP-141 contract
+  // Fetch ft_metadata — if cached in memory or in DB, reuse without RPC call
   let meta: { name: string; symbol: string; decimals: number };
-  let totalSupply: string;
-  try {
-    [meta, totalSupply] = await Promise.all([
-      near.getTokenMetadata(tokenAddress),
-      near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
-    ]);
-  } catch {
-    // If RPC metadata fetch fails, fall back to DB cache data if available
-    if (dbCache && dbCache.name) {
-      meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18 };
-      totalSupply = dbCache.total_supply ?? '0';
-    } else {
-      // Last resort: return a minimal result so the caller can still identify the token
-      return {
-        address: tokenAddress,
-        name: 'Unknown',
-        symbol: '???',
-        decimals: 18,
-        total_supply: '0',
-        price: '0',
-        price_usd: '0',
-        liquidity: '0',
-        liquidity_usd: '0',
-        market_cap: 0,
-        market_cap_usd: 0,
-        near_usd: 0,
-        venue: 'unknown',
-        tradeable: false,
-      };
+  let totalSupply = '0';
+
+  if (tokenMetaCache.has(tokenAddress)) {
+    meta = tokenMetaCache.get(tokenAddress)!;
+    totalSupply = dbCache?.total_supply ?? '0';
+  } else if (dbCache && dbCache.name && dbCache.symbol && dbCache.decimals !== null && dbCache.decimals !== undefined) {
+    meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals) };
+    totalSupply = dbCache.total_supply ?? '0';
+    tokenMetaCache.set(tokenAddress, meta);
+  } else {
+    try {
+      const [fetchedMeta, fetchedSupply] = await Promise.all([
+        near.getTokenMetadata(tokenAddress),
+        near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+      ]);
+      meta = fetchedMeta;
+      totalSupply = fetchedSupply;
+      tokenMetaCache.set(tokenAddress, meta);
+    } catch {
+      // If RPC metadata fetch fails, fall back to DB cache data if available
+      if (dbCache && dbCache.name) {
+        meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18 };
+        totalSupply = dbCache.total_supply ?? '0';
+      } else {
+        // Last resort: return a minimal result so the caller can still identify the token
+        return {
+          address: tokenAddress,
+          name: 'Unknown',
+          symbol: '???',
+          decimals: 18,
+          total_supply: '0',
+          price: '0',
+          price_usd: '0',
+          liquidity: '0',
+          liquidity_usd: '0',
+          market_cap: 0,
+          market_cap_usd: 0,
+          near_usd: 0,
+          venue: 'unknown',
+          tradeable: false,
+        };
+      }
     }
   }
 
@@ -301,6 +320,23 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       ? Number(dbCache.bonding_progress_pct)
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
+
+  // Fast-path: if dbCache already knows the exact Rhea pool ID, check it directly in 1 view call
+  if (dbCache && dbCache.rhea_pool_id && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
+    try {
+      const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
+      if (rh) {
+        const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
+        const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, meta.decimals);
+        if (reserveNearHuman > 0 && reserveTokenHuman > 0) {
+          price = reserveNearHuman / reserveTokenHuman;
+          liquidity = reserveNearHuman * 2;
+          venue = 'rhea';
+          rheaPoolId = dbCache.rhea_pool_id;
+        }
+      }
+    } catch {}
+  }
 
   // Step 1: Rhea first, for every token — use findRheaPoolForToken (covers Simple + DCL + multi-hop)
   if (price === 0) {
@@ -888,6 +924,12 @@ export async function withdrawFunds(
  * entry price baseline for PNL calculation from the point of discovery.
  */
 export async function syncUserTokenDeposits(userId: string, subaccountId: string): Promise<number> {
+  const lastSync = lastSyncDepositsMap.get(userId);
+  if (lastSync && Date.now() - lastSync < 10_000) {
+    return 0;
+  }
+  lastSyncDepositsMap.set(userId, Date.now());
+
   let newDepositsCount = 0;
   try {
     const discoveredTokens = new Set<string>();
