@@ -28,6 +28,63 @@ const rheaPoolIdCache = new Map<string, number>();
 const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
+const noRheaPoolCache = new Map<string, number>();
+
+let cachedRefPools: { fromIndex: number; pools: any[] }[] | null = null;
+let lastRefPoolsFetch = 0;
+let fetchRefPoolsInFlight: Promise<{ fromIndex: number; pools: any[] }[]> | null = null;
+
+async function getAllRefPoolsOnChain(near: MultiRpcNear): Promise<{ fromIndex: number; pools: any[] }[]> {
+  const now = Date.now();
+  if (cachedRefPools && now - lastRefPoolsFetch < 300_000) {
+    return cachedRefPools;
+  }
+  if (fetchRefPoolsInFlight) {
+    return fetchRefPoolsInFlight;
+  }
+
+  fetchRefPoolsInFlight = (async () => {
+    try {
+      const numPools = await near.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
+      if (!numPools || numPools <= 0) return cachedRefPools || [];
+
+      console.log(`[findRheaPoolForToken] Refreshing on-chain pool cache across all ${numPools} pools (cached for 5m)...`);
+      const batchSize = 250;
+      const starts: number[] = [];
+      for (let s = Math.max(0, numPools - batchSize); s >= 0; s -= batchSize) {
+        starts.push(s);
+      }
+
+      const results: { fromIndex: number; pools: any[] }[] = [];
+      const concurrency = 6;
+      for (let i = 0; i < starts.length; i += concurrency) {
+        const slice = starts.slice(i, i + concurrency);
+        const batchResults = await Promise.allSettled(
+          slice.map(async (fromIndex) => {
+            const pools = await near.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize });
+            return { fromIndex, pools: pools || [] };
+          })
+        );
+        for (const r of batchResults) {
+          if (r.status === 'fulfilled') {
+            results.push(r.value);
+          }
+        }
+      }
+
+      cachedRefPools = results;
+      lastRefPoolsFetch = Date.now();
+      return results;
+    } catch (err: any) {
+      console.warn('[findRheaPoolForToken] Failed to refresh on-chain pool cache:', err?.message || err);
+      return cachedRefPools || [];
+    } finally {
+      fetchRefPoolsInFlight = null;
+    }
+  })();
+
+  return fetchRefPoolsInFlight;
+}
 
 let lastIndexerFetch = 0;
 let indexerPoolsCache: any[] = [];
@@ -615,6 +672,11 @@ export class MultiRpcNear {
     reserveToken?: string;
     fee?: number;
   } | null> {
+    const lastNotFound = noRheaPoolCache.get(tokenAddress);
+    if (lastNotFound && Date.now() - lastNotFound < 60_000) {
+      return null;
+    }
+
     const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 }));
     const decimals = meta?.decimals ?? 18;
 
@@ -812,67 +874,51 @@ export class MultiRpcNear {
     }
 
     // 4. On-chain scan of ALL Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
-    // NOTE: We scan the full range down to index 0 (batchSize = 250). Ref has over 8,700+ pools.
-    // An earlier implementation bounded this scan to (numPools - 3000), which blinded the bot to older
-    // tokens whose pools were deployed earlier in Ref's history. Full coverage is required to ensure older
-    // memecoins or established pools are discoverable when the indexer REST API fails.
+    // Results are cached globally in memory for 5 minutes across all tokens to prevent repeated scans.
     if (candidates.length === 0) try {
-      const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
-      if (numPools && numPools > 0) {
-        console.warn(`[findRheaPoolForToken] Indexer REST API returned no pools for ${tokenAddress}. Initiating full on-chain pool scan across all ${numPools} pools.`);
-        const batchSize = 250;
-        const starts: number[] = [];
-        for (let s = Math.max(0, numPools - batchSize); s >= 0; s -= batchSize) {
-          starts.push(s);
-        }
-        // Concurrently query pool batches
-        const results = await Promise.allSettled(
-          starts.map(async (fromIndex) => {
-            const pools = await this.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize });
-            return { fromIndex, pools: pools || [] };
-          })
-        );
-        for (const res of results) {
-          if (res.status === 'fulfilled') {
-            const { fromIndex, pools } = res.value;
-            for (let i = 0; i < pools.length; i++) {
-              const p = pools[i];
-              const tokens: string[] = p.token_account_ids || [];
-              if (tokens.includes(tokenAddress)) {
-                const poolId = fromIndex + i;
-                const otherToken = tokens.find(t => t !== tokenAddress) || 'wrap.near';
-                const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
-                if (rh) {
-                  const pairedInfo = await getPairedTokenNearRate(otherToken);
-                  const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
-                  const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
-                  if (rOtherHuman > 0 && rOutHuman > 0) {
-                    const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
-                    const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
-                    candidates.push({
-                      poolId,
-                      pairedToken: otherToken,
-                      intermediateToken: otherToken !== 'wrap.near' ? otherToken : undefined,
-                      intermediatePoolId: pairedInfo.poolId,
-                      isDcl: false,
-                      price: priceInNear,
-                      liquidityNear,
-                      reserveNear: (rOtherHuman * pairedInfo.rateInNear * 1e24).toFixed(0),
-                      reserveToken: rh.reserveOut,
-                      fee: rh.fee,
-                    });
-                  }
-                }
+      const results = await getAllRefPoolsOnChain(this);
+      for (const res of results) {
+        const { fromIndex, pools } = res;
+        for (let i = 0; i < pools.length; i++) {
+          const p = pools[i];
+          const tokens: string[] = p.token_account_ids || [];
+          if (tokens.includes(tokenAddress)) {
+            const poolId = fromIndex + i;
+            const otherToken = tokens.find(t => t !== tokenAddress) || 'wrap.near';
+            const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
+            if (rh) {
+              const pairedInfo = await getPairedTokenNearRate(otherToken);
+              const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
+              const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
+              if (rOtherHuman > 0 && rOutHuman > 0) {
+                const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
+                const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
+                candidates.push({
+                  poolId,
+                  pairedToken: otherToken,
+                  intermediateToken: otherToken !== 'wrap.near' ? otherToken : undefined,
+                  intermediatePoolId: pairedInfo.poolId,
+                  isDcl: false,
+                  price: priceInNear,
+                  liquidityNear,
+                  reserveNear: (rOtherHuman * pairedInfo.rateInNear * 1e24).toFixed(0),
+                  reserveToken: rh.reserveOut,
+                  fee: rh.fee,
+                });
               }
             }
           }
         }
       }
     } catch (err: any) {
-      console.error(`[findRheaPoolForToken] Full on-chain scan failed for ${tokenAddress}:`, err.message);
+      console.warn(`[findRheaPoolForToken] Full on-chain scan failed for ${tokenAddress}:`, err.message);
     }
 
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+      noRheaPoolCache.set(tokenAddress, Date.now());
+      return null;
+    }
+    noRheaPoolCache.delete(tokenAddress);
 
     // Deduplicate candidate pools by poolId to avoid duplicates
     const poolMap = new Map<string | number, typeof candidates[0]>();
