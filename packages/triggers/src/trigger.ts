@@ -208,8 +208,9 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     [position.token_address]
   ).then(r => r.rows[0]).catch(() => null);
 
-  const venue = tokenRow?.venue as 'rhea' | 'shardsmarket' | 'nearlytrade' | undefined;
-  if (!venue) return { success: false };
+  const venueRaw = tokenRow?.venue as string | undefined;
+  if (!isTradableVenue(venueRaw)) return { success: false };
+  const venue = venueRaw;
 
   const userRow = await db.query('SELECT slippage_pct FROM users WHERE id = $1', [userId])
     .then(r => r.rows[0]).catch(() => null);

@@ -86,8 +86,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const pnlPercent = pnl.realizedPnlPercent ?? pnl.pnlPercent ?? 0;
       const pnlSign = pnlPercent >= 0 ? '+' : '';
       const emoji = pnlPercent >= 0 ? '🟢' : '🔴';
-      const tokenSym = pnl.tokenTicker || pnl.tokenSymbol || pnl.tokenName || 'TOKEN';
-      const tokenName = pnl.tokenName || tokenSym;
+      const tokenSym = sanitize(pnl.tokenTicker || pnl.tokenSymbol || pnl.tokenName || 'TOKEN');
+      const tokenName = sanitize(pnl.tokenName || tokenSym);
       const exitPrice = pnl.exitPrice ?? pnl.currentPrice ?? 0;
       const realizedNear = pnl.realizedPnlNear ?? pnl.profitAmount ?? 0;
       const holdDuration = pnl.holdDuration || pnl.duration || '—';
