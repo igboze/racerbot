@@ -75,7 +75,12 @@ export async function warmAllKeys(): Promise<void> {
 
 /** Add a newly onboarded user's key to the warm store without restart. */
 export async function addUserKey(userId: string, subaccountId: string, encryptedKey: string): Promise<void> {
-  const keyStr = decrypt(encryptedKey, MASTER_KEY);
+  let keyStr: string;
+  try {
+    keyStr = decrypt(encryptedKey, MASTER_KEY);
+  } catch (err: any) {
+    throw new Error('Wallet trading key authentication failed. Please run /rotatekey to refresh your trading key.');
+  }
   const keyPair = KeyPair.fromString(keyStr as any);
   warmKeys.set(userId, { keyPair, subaccountId });
   await near.addKey(subaccountId, keyPair);
@@ -144,7 +149,7 @@ export class SwapExecutor {
    * Execute a swap event. Uses the user's pre-warmed scoped key.
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
    */
-  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string }> {
+  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string }> {
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
     const warm = warmKeys.get(user_id);
@@ -241,6 +246,11 @@ export class SwapExecutor {
 
           result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
         } else if (dclPoolId) {
+          const poolTokens = dclPoolId.split('|').slice(0, 2);
+          if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
+            throw new Error(`Token ${token_out} is in a DCL pool paired with ${poolTokens[0]}, not NEAR/wNEAR.`);
+          }
+
           // If no Rhea pool but DCL pool exists, use NearlyTrade DCL
           const actions = await this.buildWrapNearBuyActions(
             subaccountId,
@@ -398,6 +408,10 @@ export class SwapExecutor {
 
           let intermediateToken = (event as any).intermediate_token || rheaState?.intermediateToken;
           let intermediatePoolId = (event as any).intermediate_pool_id || rheaState?.intermediatePoolId;
+
+          if (rheaPoolId === null || rheaPoolId === undefined) {
+            throw new Error(`No active Rhea liquidity pool found for token ${targetToken}.`);
+          }
 
           if (isBuy) {
             const rheaActions = (intermediateToken && intermediatePoolId)
@@ -1115,7 +1129,7 @@ export class SwapExecutor {
         reason: failReason,
         token: token_out !== 'near' && token_out !== 'wrap.near' ? token_out : token_in,
       });
-      return { txHash, success: false };
+      return { txHash, success: false, reason: failReason };
     }
 
     let onChainFeeYocto = feeAmount.toString();
