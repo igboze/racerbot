@@ -37,7 +37,7 @@ const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: numbe
 const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
 
 // ── Permanent in-memory token metadata cache (never changes for NEP-141) ───────
-const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number }>();
+const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number; totalSupply: string }>();
 
 // ── User token deposit sync debounce map (10s TTL) ───────────────────────────
 const lastSyncDepositsMap = new Map<string, number>();
@@ -263,26 +263,37 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     return result;
   }
 
-  // Fetch ft_metadata — if cached in memory or in DB, reuse without RPC call
+  // Fetch ft_metadata & total_supply — if cached in memory or in DB, reuse without RPC call
   let meta: { name: string; symbol: string; decimals: number };
   let totalSupply = '0';
 
-  if (tokenMetaCache.has(tokenAddress)) {
-    meta = tokenMetaCache.get(tokenAddress)!;
-    totalSupply = dbCache?.total_supply ?? '0';
-  } else if (dbCache && dbCache.name && dbCache.symbol && dbCache.decimals !== null && dbCache.decimals !== undefined) {
+  const inMem = tokenMetaCache.get(tokenAddress);
+  if (inMem && inMem.totalSupply && inMem.totalSupply !== '0') {
+    meta = { name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals };
+    totalSupply = inMem.totalSupply;
+  } else if (
+    dbCache &&
+    dbCache.name &&
+    dbCache.symbol &&
+    dbCache.decimals !== null &&
+    dbCache.decimals !== undefined &&
+    dbCache.total_supply &&
+    dbCache.total_supply !== '0'
+  ) {
     meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals) };
-    totalSupply = dbCache.total_supply ?? '0';
-    tokenMetaCache.set(tokenAddress, meta);
+    totalSupply = dbCache.total_supply;
+    tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
   } else {
     try {
       const [fetchedMeta, fetchedSupply] = await Promise.all([
-        near.getTokenMetadata(tokenAddress),
+        inMem
+          ? Promise.resolve({ name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals })
+          : near.getTokenMetadata(tokenAddress),
         near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
       ]);
       meta = fetchedMeta;
       totalSupply = fetchedSupply;
-      tokenMetaCache.set(tokenAddress, meta);
+      tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
     } catch {
       // If RPC metadata fetch fails, fall back to DB cache data if available
       if (dbCache && dbCache.name) {
@@ -308,6 +319,17 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         };
       }
     }
+  }
+
+  // Safety fallback: if totalSupply is still missing or '0', fetch directly from contract
+  if ((!totalSupply || totalSupply === '0') && tokenAddress) {
+    try {
+      const onChainSupply = await near.getTokenTotalSupply(tokenAddress).catch(() => '0');
+      if (onChainSupply && onChainSupply !== '0') {
+        totalSupply = onChainSupply;
+        tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
+      }
+    } catch {}
   }
 
   let price = 0;

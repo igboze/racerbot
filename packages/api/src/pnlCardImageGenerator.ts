@@ -251,16 +251,25 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         gridY + rowGap
       );
 
-      // Row 3 — Realized PNL + Hold Duration
+      // Row 3 — Realized/Unrealized PNL + Hold Duration
+      const pnlLabel = data.positionStatus === 'open' && data.realizedPnl === 0 ? 'UNREALIZED PNL' : 'REALIZED PNL';
+      const pnlValNum = data.positionStatus === 'open' && data.realizedPnl === 0 ? data.unrealizedPnl : data.realizedPnl;
+      const pnlValStr = `${pnlValNum >= 0 ? '+' : ''}${fmtUsd(pnlValNum, nr)}`;
+
       drawRow(
-        'REALIZED PNL',  `${data.realizedPnl >= 0 ? '+' : ''}${fmtUsd(data.realizedPnl, nr)}`,
+        pnlLabel,        pnlValStr,
         'HOLD DURATION', data.holdDuration,
         gridY + rowGap * 2
       );
     } else {
-      // Row 2 (When net worth is hidden) — Realized PNL + Hold Duration
+      // Row 2 (When net worth is hidden)
+      const pnlLabel = data.positionStatus === 'open' && data.realizedPnl === 0 ? 'PRICE CHANGE' : 'REALIZED PNL';
+      const pnlValStr = data.positionStatus === 'open' && data.realizedPnl === 0
+        ? `${data.isProfit ? '+' : ''}${data.pnlPercent.toFixed(2)}%`
+        : `${data.realizedPnl >= 0 ? '+' : ''}${fmtUsd(data.realizedPnl, nr)}`;
+
       drawRow(
-        'REALIZED PNL',  `${data.realizedPnl >= 0 ? '+' : ''}${fmtUsd(data.realizedPnl, nr)}`,
+        pnlLabel,        pnlValStr,
         'HOLD DURATION', data.holdDuration,
         gridY + rowGap
       );

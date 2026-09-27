@@ -1306,8 +1306,18 @@ export function setupRoutes(bot: Telegraf): void {
         return `\`${nearVal.toFixed(4)} NEAR\` (\`${usdStr}\`)`;
       };
 
+      const decimals = info?.decimals ?? 18;
       let marketCapDisplay = 'N/A';
-      const mcNear = info?.market_cap || 0;
+      let mcNear = info?.market_cap || 0;
+      if (mcNear <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
+        try {
+          const rawSupply = BigInt(String(info.total_supply).split('.')[0]);
+          const humanSupply = Number(rawSupply) / Math.pow(10, decimals);
+          if (humanSupply > 0) {
+            mcNear = humanSupply * currentPrice;
+          }
+        } catch {}
+      }
       if (mcNear > 0) {
         const mcUsd = info?.market_cap_usd || (mcNear * nearUsdRate);
         const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
@@ -1326,7 +1336,6 @@ export function setupRoutes(bot: Telegraf): void {
         initialInvestment += (amount * price) + fee;
       }
 
-      const decimals = info?.decimals ?? 18;
       let humanQuantity = 0;
       try {
         const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
@@ -1348,11 +1357,12 @@ export function setupRoutes(bot: Telegraf): void {
       msg += `  Current: ${formatDualPrice(currentPrice)}\n`;
       msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
       msg += `📈 *Market Cap*: \`${marketCapDisplay}\`\n\n`;
+      msg += `💼 *Position*:\n`;
+      msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
       if (showNetWorth) {
-        msg += `💼 *Position*:\n`;
-        msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
-        msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n\n`;
+        msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n`;
       }
+      msg += `\n`;
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
 
