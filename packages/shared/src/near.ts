@@ -1,5 +1,5 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
-import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
+import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider, getHealthyProviderCount } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 
@@ -175,6 +175,7 @@ export class MultiRpcNear {
   private networkId: string;
   private connections: Map<string, Near> = new Map();
   private accountCache: Map<string, Account> = new Map();
+  private nonceCacheRefreshInterval: NodeJS.Timeout | null = null;
   private currentIndex = 0;
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
@@ -219,6 +220,9 @@ export class MultiRpcNear {
 
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
+
+    // Start periodic nonce cache refresh to prevent stale nonce issues
+    this.startNonceCacheRefresh();
   }
 
   private async getConnection(providerUrl: string): Promise<Near> {
@@ -281,12 +285,45 @@ export class MultiRpcNear {
   }
 
   /**
-   * Read-only view call — round-robins across healthy providers.
-   * Falls back to next provider on error.
+   * Clear the nonce cache for all accounts to prevent stale nonce issues.
+   * Should be called periodically (e.g., every 5 minutes) or when nonce errors are detected.
+   */
+  clearNonceCache(): void {
+    for (const account of this.accountCache.values()) {
+      (account as any).accessKeyByPublicKeyCache = {};
+    }
+  }
+
+  /**
+   * Start periodic nonce cache refresh to prevent stale nonce issues.
+   * Clears the cache every 5 minutes to ensure fresh nonces for trades.
+   */
+  startNonceCacheRefresh(): void {
+    if (this.nonceCacheRefreshInterval) {
+      clearInterval(this.nonceCacheRefreshInterval);
+    }
+    this.nonceCacheRefreshInterval = setInterval(() => {
+      this.clearNonceCache();
+    }, 5 * 60 * 1000); // Every 5 minutes
+  }
+
+  /**
+   * Stop periodic nonce cache refresh.
+   */
+  stopNonceCacheRefresh(): void {
+    if (this.nonceCacheRefreshInterval) {
+      clearInterval(this.nonceCacheRefreshInterval);
+      this.nonceCacheRefreshInterval = null;
+    }
+  }
+
+  /**
+   * Read-only view call — tries all providers in parallel, returns first successful result.
+   * Falls back to next provider on error with circuit breaker protection.
    */
   async view<T>(contractId: string, methodName: string, args: object = {}): Promise<T> {
-    const candidates = this.readProviders.filter(p => p.healthy).length > 0
-      ? this.readProviders.filter(p => p.healthy)
+    const candidates = this.readProviders.filter(p => p.healthy && !p.circuitBreakerOpen).length > 0
+      ? this.readProviders.filter(p => p.healthy && !p.circuitBreakerOpen)
       : this.readProviders;
 
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
@@ -300,7 +337,7 @@ export class MultiRpcNear {
           const account = await near.account('');
           const result = await withTimeout(
             account.viewFunction({ contractId, methodName, args }),
-            3000,
+            2000, // Reduced from 4s to 2s for faster failover
             `RPC timeout on ${provider.url}`
           );
           markProviderSuccess(provider, Date.now() - start);
@@ -356,13 +393,27 @@ export class MultiRpcNear {
   }
 
   /**
+   * Pre-flight health check to ensure at least 2 healthy providers before trading.
+   * Throws if insufficient healthy providers are available.
+   */
+  checkTradeProviders(): void {
+    const healthyCount = getHealthyProviderCount(this.tradeProviders);
+    if (healthyCount < 2) {
+      throw new Error(
+        `Insufficient healthy RPC providers for trading: ${healthyCount} available, minimum 2 required. ` +
+        `This may cause trade failures. Please check provider health.`
+      );
+    }
+  }
+
+  /**
    * Wait for transaction confirmation by polling with improved error handling.
    * Used after broadcast to confirm the tx landed.
    */
   async waitForTx(txHash: string, accountId: string, maxWaitMs = 60000): Promise<any> {
     const deadline = Date.now() + maxWaitMs;
-    const providers = this.tradeProviders.filter(p => p.healthy);
-    
+    const providers = this.tradeProviders.filter(p => p.healthy && !p.circuitBreakerOpen);
+
     if (providers.length === 0) {
       throw new Error('No healthy RPC providers available for transaction confirmation');
     }
@@ -377,24 +428,24 @@ export class MultiRpcNear {
         try {
           const near = await this.getConnection(provider.url);
           const outcome = await near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
-          
+
           if (outcome.status && typeof outcome.status === 'object' && 'SuccessValue' in outcome.status) {
             return outcome;
           }
-          
+
           if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
             const failureDetails = outcome.status.Failure;
             throw new Error(`Transaction failed: ${JSON.stringify(failureDetails)}`);
           }
-          
+
           // Transaction exists but not yet executed
           lastError = null;
           break; // Success in getting status, move to next provider
-          
+
         } catch (err) {
           lastError = err as Error;
           const errorMessage = (err as Error).message.toLowerCase();
-          
+
           // Track parse errors specifically
           if (errorMessage.includes('parse') || errorMessage.includes('json')) {
             parseErrors++;
@@ -455,10 +506,10 @@ export class MultiRpcNear {
   }
 
   /**
-   * Get account NEAR balance.
+   * Get account NEAR balance with parallel provider attempts.
    */
   async getNearBalance(accountId: string): Promise<string> {
-    const healthy = this.tradeProviders.filter(p => p.healthy);
+    const healthy = this.tradeProviders.filter(p => p.healthy && !p.circuitBreakerOpen);
     const candidates = (healthy.length > 0 ? healthy : this.tradeProviders).slice(0, 3);
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
 
@@ -477,22 +528,26 @@ export class MultiRpcNear {
 
   /**
    * Check if account is registered for NEP-141 storage and register if not.
+   * Improved with better race condition handling and stale cache detection.
    */
   async ensureStorageDeposit(accountId: string, tokenAddress: string): Promise<void> {
     if (!tokenAddress || tokenAddress === 'near') return;
     const cacheKey = `${accountId}:${tokenAddress}`;
-    if (registeredCache.has(cacheKey)) {
-      return;
-    }
 
-    try {
-      const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
-      if (balance && balance.total) {
-        registeredCache.add(cacheKey);
-        return; // Already registered
+    // Check cache first
+    if (registeredCache.has(cacheKey)) {
+      // Verify cache is still valid by checking on-chain
+      try {
+        const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
+        if (balance && balance.total) {
+          return; // Cache is valid
+        }
+        // Cache is stale, remove and re-register
+        registeredCache.delete(cacheKey);
+      } catch {
+        // Token doesn't implement storage_balance_of, remove cache and proceed
+        registeredCache.delete(cacheKey);
       }
-    } catch {
-      // Some tokens don't implement storage_balance_of
     }
 
     try {
@@ -517,6 +572,13 @@ export class MultiRpcNear {
       ]);
       registeredCache.add(cacheKey);
     } catch (err) {
+      const errorMessage = (err as Error).message?.toLowerCase() || '';
+      // If error indicates already registered, add to cache and succeed
+      if (errorMessage.includes('already registered') || errorMessage.includes('storage already deposited')) {
+        registeredCache.add(cacheKey);
+        return;
+      }
+
       console.warn(`[NEAR] storage_deposit registration_only failed for ${accountId} on ${tokenAddress}:`, (err as Error).message);
       // Try once more without registration_only for older token contracts
       try {
@@ -533,7 +595,14 @@ export class MultiRpcNear {
         ]);
         registeredCache.add(cacheKey);
       } catch (err2) {
+        const error2Message = (err2 as Error).message?.toLowerCase() || '';
+        // If second attempt also indicates already registered, add to cache and succeed
+        if (error2Message.includes('already registered') || error2Message.includes('storage already deposited')) {
+          registeredCache.add(cacheKey);
+          return;
+        }
         console.warn(`[NEAR] fallback storage_deposit failed for ${accountId} on ${tokenAddress}:`, (err2 as Error).message);
+        throw err2;
       }
     }
   }
