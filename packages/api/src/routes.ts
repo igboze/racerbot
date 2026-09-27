@@ -100,12 +100,31 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
 
   return { text, keyboard };
+}
+
+export function formatHoldingQuantity(quantityHeld: string, decimals = 18): string {
+  try {
+    const raw = (quantityHeld || '0').split('.')[0];
+    const rawBig = BigInt(raw);
+    if (rawBig === 0n) return '0';
+    const divisor = BigInt(10) ** BigInt(decimals);
+    const whole = rawBig / divisor;
+    const remainder = rawBig % divisor;
+    const human = Number(whole) + Number(remainder) / Math.pow(10, decimals);
+    if (human >= 1_000_000) return `${(human / 1_000_000).toFixed(2)}M`;
+    if (human >= 1_000) return human.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (human >= 1) return human.toFixed(2);
+    if (human >= 0.0001) return human.toFixed(4);
+    return human.toExponential(2);
+  } catch {
+    const num = parseFloat(quantityHeld);
+    return isNaN(num) ? '0' : (num >= 1000 ? num.toLocaleString('en-US') : num.toFixed(4));
+  }
 }
 
 // ── Helper: Build Wallet Menu ────────────────────────────────────────────────
@@ -131,7 +150,6 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   buttons.push([
     Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
     Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
   ]);
 
@@ -325,8 +343,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
     const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
+    const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
     text += `\n💼 *Your Holdings*:\n`;
-    text += `  Quantity: \`${userPosition.quantity_held}\`\n`;
+    text += `  Quantity: \`${formattedQty}\`\n`;
     text += `  Entry Price: \`${entryPrice.toFixed(8)} NEAR\`\n`;
     text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
 
@@ -1291,10 +1310,12 @@ bot.action('menu_holdings', async (ctx) => {
         const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
           ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
           : 'N/A';
+        const decimals = info?.decimals ?? 18;
+        const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
         const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
 
         msg += `${emoji} *${displayLabel}*\n`;
-        msg += `  Holding: \`${pos.quantity_held}\`\n`;
+        msg += `  Holding: \`${formattedQty}\`\n`;
         msg += `  Entry: \`${parseFloat(pos.avg_entry_price).toFixed(8)} NEAR\`\n`;
         msg += `  Current: \`${currentPrice.toFixed(8)} NEAR\`\n`;
         msg += `  PNL: \`${pnlPct}%\`\n`;

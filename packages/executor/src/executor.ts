@@ -1008,6 +1008,8 @@ export class SwapExecutor {
     const txHash = result.transaction.hash;
     console.log(`[EXECUTOR] Direct swap submitted: user=${user_id} venue=${venue} txHash=${txHash}`);
 
+    const isBuy = token_in === 'wrap.near' || token_in === 'near';
+
     // Parse receipt outcomes to determine actual output amount
     let netAmountOut = '0';
     const receiptsOutcomes = (result as any).receipts_outcome || [];
@@ -1018,17 +1020,31 @@ export class SwapExecutor {
           try {
             const parsed = JSON.parse(log.slice('EVENT_JSON:'.length));
             if (parsed.event === 'ft_transfer') {
-              const data = Array.isArray(parsed.data) ? parsed.data[0] : parsed.data;
-              if (data?.receiver_id === subaccountId && data?.amount) {
-                netAmountOut = data.amount;
+              const dataList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+              for (const d of dataList) {
+                if ((d?.receiver_id === subaccountId || d?.new_owner_id === subaccountId) && d?.amount) {
+                  netAmountOut = d.amount;
+                }
               }
             } else if (parsed.event === 'swap') {
-              const data = Array.isArray(parsed.data) ? parsed.data[0] : parsed.data;
-              if (data?.amount_out) {
-                netAmountOut = data.amount_out;
+              const dataList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+              for (const d of dataList) {
+                if (d?.amount_out) {
+                  netAmountOut = d.amount_out;
+                }
               }
             }
           } catch {}
+        }
+        // Match Ref Finance standard swap log:
+        // "Swapped 492500000000000000000000 wrap.near for 84758622416876153245156 omgy-1992.meme-cooking.near"
+        const refSwapMatch = log.match(/Swapped\s+\d+\s+\S+\s+for\s+(\d+)\s+(\S+)/i);
+        if (refSwapMatch) {
+          const matchedToken = refSwapMatch[2];
+          const expectedToken = isBuy ? token_out : 'wrap.near';
+          if (!expectedToken || matchedToken === expectedToken || matchedToken.includes(expectedToken)) {
+            netAmountOut = refSwapMatch[1];
+          }
         }
         const shardsMatch = log.match(/bought (\d+) tokens/i) || log.match(/amount_out:?\s*(\d+)/i);
         if (shardsMatch) {
@@ -1040,7 +1056,17 @@ export class SwapExecutor {
     if (!netAmountOut || netAmountOut === '0') {
       const hasFailure = (result.status as any)?.Failure;
       if (!hasFailure) {
-        netAmountOut = min_amount_out;
+        if (min_amount_out && min_amount_out !== '0') {
+          netAmountOut = min_amount_out;
+        } else if (isBuy && token_out) {
+          // If the on-chain tx succeeded without failure, fetch the token balance directly
+          try {
+            const bal = await near.getTokenBalance(token_out, subaccountId);
+            if (bal && BigInt(bal) > 0n) {
+              netAmountOut = bal;
+            }
+          } catch {}
+        }
       }
     }
 
@@ -1088,7 +1114,6 @@ export class SwapExecutor {
     }
 
     let onChainFeeYocto = feeAmount.toString();
-    const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
     // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury
     if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && BigInt(netAmountOut) > 0n) {
