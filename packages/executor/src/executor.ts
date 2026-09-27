@@ -144,7 +144,7 @@ export class SwapExecutor {
    * Execute a swap event. Uses the user's pre-warmed scoped key.
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
    */
-  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean }> {
+  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string }> {
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
     const warm = warmKeys.get(user_id);
@@ -323,38 +323,34 @@ export class SwapExecutor {
           }
         }
       } else if (venue === 'rhea' || venue === 'ref') {
-        // Per docs: check whitelisted tokens before swap; register storage if not whitelisted
-        const whitelisted: string[] = await near.getWhitelistedTokens().catch(() => []);
-        if (whitelisted.length > 0) {
-          if (!whitelisted.includes(token_in)) await near.ensureStorageDeposit(subaccountId, token_in);
-          if (!whitelisted.includes(token_out)) await near.ensureStorageDeposit(subaccountId, token_out);
-        }
-
         if (dclPoolId) {
           // Execute Ref DCL swap on dclv2.ref-labs.near
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
           if (isBuy) {
-            await near.ensureStorageDeposit(subaccountId, token_out);
-
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'dclv2.ref-labs.near',
-              JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                },
-              })
-            );
+            const [, actions] = await Promise.all([
+              near.ensureStorageDeposit(subaccountId, token_out),
+              this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'dclv2.ref-labs.near',
+                JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: token_out,
+                    min_output_amount: minOutAdj,
+                  },
+                })
+              ),
+            ]);
 
             result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
           } else {
-            await near.ensureStorageDeposit(subaccountId, token_in);
-            await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+            await Promise.all([
+              near.ensureStorageDeposit(subaccountId, token_in),
+              near.ensureStorageDeposit(subaccountId, 'wrap.near'),
+            ]);
 
             const actions = [
               transactions.functionCall(
@@ -390,23 +386,20 @@ export class SwapExecutor {
           }
 
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
-          // Per docs: check storage deposit on the sell token before swap
+          // Check storage deposit on the sell token before swap
           if (!isBuy) {
             await near.ensureStorageDeposit(subaccountId, token_in);
           }
 
           const targetToken = isBuy ? token_out : token_in;
-          const rheaState = await near.findRheaPoolForToken(targetToken).catch(() => null);
+          const rheaState = (rheaPoolId && !(event as any).intermediate_token)
+            ? null
+            : await near.findRheaPoolForToken(targetToken).catch(() => null);
 
           let intermediateToken = (event as any).intermediate_token || rheaState?.intermediateToken;
           let intermediatePoolId = (event as any).intermediate_pool_id || rheaState?.intermediatePoolId;
 
           if (isBuy) {
-            await near.ensureStorageDeposit(subaccountId, token_out);
-            if (intermediateToken) {
-              await near.ensureStorageDeposit(subaccountId, intermediateToken);
-            }
-
             const rheaActions = (intermediateToken && intermediatePoolId)
               ? [
                   {
@@ -434,15 +427,23 @@ export class SwapExecutor {
                   },
                 ];
 
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'v2.ref-finance.near',
-              JSON.stringify({ actions: rheaActions }),
-              BigInt('250000000000000')
-            );
+            const [, actions] = await Promise.all([
+              intermediateToken
+                ? Promise.all([
+                    near.ensureStorageDeposit(subaccountId, token_out),
+                    near.ensureStorageDeposit(subaccountId, intermediateToken),
+                  ])
+                : near.ensureStorageDeposit(subaccountId, token_out),
+              this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'v2.ref-finance.near',
+                JSON.stringify({ actions: rheaActions }),
+                BigInt('250000000000000')
+              ),
+            ]);
 
             result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
           } else {
@@ -869,36 +870,40 @@ export class SwapExecutor {
         }
       } else {
         // Bonded phase — trade on Rhea Finance / Ref Finance AMM simple pool or DCL pool
-        let rheaPoolId: number | null = null;
-        try {
-          rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
-          if (!rheaPoolId && !dclPoolId) {
-            dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
-          }
-        } catch {}
+        let rheaPoolId: number | null = (event as any).pool_id ?? null;
+        if (!rheaPoolId) {
+          try {
+            rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
+            if (!rheaPoolId && !dclPoolId) {
+              dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+            }
+          } catch {}
+        }
 
         if (rheaPoolId) {
           if (isBuy) {
-            await near.ensureStorageDeposit(subaccountId, token_out);
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'v2.ref-finance.near',
-              JSON.stringify({
-                actions: [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in: 'wrap.near',
-                    token_out,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: minOutAdj,
-                    min_output_amount: minOutAdj,
-                  },
-                ],
-              })
-            );
+            const [, actions] = await Promise.all([
+              near.ensureStorageDeposit(subaccountId, token_out),
+              this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'v2.ref-finance.near',
+                JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: rheaPoolId,
+                      token_in: 'wrap.near',
+                      token_out,
+                      amount_in: swapAmount.toString(),
+                      min_amount_out: minOutAdj,
+                      min_output_amount: minOutAdj,
+                    },
+                  ],
+                })
+              ),
+            ]);
 
             result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
           } else {
@@ -1142,7 +1147,7 @@ export class SwapExecutor {
     }
 
     // Record the fill and update position with real on-chain output
-    await this.recordFill(
+    const positionId = await this.recordFill(
       user_id,
       token_in,
       token_out,
@@ -1152,9 +1157,12 @@ export class SwapExecutor {
       venue,
       txHash,
       event
-    ).catch(err => console.error('[EXECUTOR] recordFill error:', err.message));
+    ).catch(err => {
+      console.error('[EXECUTOR] recordFill error:', err.message);
+      return undefined;
+    });
 
-    return { txHash, success: true };
+    return { txHash, success: true, positionId };
   }
 
   /**
@@ -1363,7 +1371,7 @@ export class SwapExecutor {
     venue: string,
     txHash: string,
     event: SwapEvent,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const db = await getDb();
 
     // Determine buy vs sell direction
@@ -1506,6 +1514,7 @@ export class SwapExecutor {
         }
       }
     }
+    return position?.id;
   }
 
   // ── Notifications ─────────────────────────────────────────────────────────
