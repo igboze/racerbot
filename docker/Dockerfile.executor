@@ -1,6 +1,13 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
+COPY packages/api/package.json ./packages/api/
+COPY packages/contract/package.json ./packages/contract/
+COPY packages/db/package.json ./packages/db/
+COPY packages/detector/package.json ./packages/detector/
+COPY packages/executor/package.json ./packages/executor/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/triggers/package.json ./packages/triggers/
 RUN npm ci
 COPY . .
 RUN npm run build

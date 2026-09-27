@@ -3,7 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "../../.cargo-target/**"]
+      "outputs": ["dist/**", "../../.cargo-target/wasm32-unknown-unknown/release/*.wasm"]
     },
     "dev": {
       "cache": false,
