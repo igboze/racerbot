@@ -46,6 +46,27 @@ const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
 
 const warmKeys = new Map<string, { keyPair: KeyPair; subaccountId: string }>();
 
+// ── Transaction Queue ─────────────────────────────────────────────────────────
+// Queue to prevent nonce conflicts from concurrent operations on the same account
+const transactionQueue = new Map<string, Promise<any>>();
+
+async function queueTransaction<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
+  const existing = transactionQueue.get(accountId);
+  const promise = (existing ? existing.catch(() => {}) : Promise.resolve())
+    .then(async () => {
+      const result = await fn();
+      transactionQueue.delete(accountId);
+      return result;
+    })
+    .catch(async (err) => {
+      transactionQueue.delete(accountId);
+      throw err;
+    });
+
+  transactionQueue.set(accountId, promise);
+  return promise;
+}
+
 // ── Services ─────────────────────────────────────────────────────────────────
 
 const near = getNear(RPC_URLS);
@@ -230,9 +251,18 @@ export class SwapExecutor {
   /**
    * Execute a swap event. Uses the user's pre-warmed scoped key.
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
+   * Queued per account to prevent nonce conflicts from concurrent operations.
    */
   async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
+
+    // Pre-flight health check: ensure at least 2 healthy providers before trading
+    try {
+      near.checkTradeProviders();
+    } catch (err: any) {
+      console.error('[EXECUTOR] Pre-flight health check failed:', err.message);
+      throw new Error(`Cannot execute trade: ${err.message}`);
+    }
 
     const warm = warmKeys.get(user_id);
     if (!warm) {
@@ -245,8 +275,10 @@ export class SwapExecutor {
 
     const { subaccountId, keyPair } = warm;
 
-    // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
-    const account = await near.getAccount(subaccountId);
+    // Queue transaction per account to prevent nonce conflicts
+    return queueTransaction(subaccountId, async () => {
+      // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
+      const account = await near.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
     if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
@@ -1272,6 +1304,7 @@ export class SwapExecutor {
     });
 
     return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent };
+    });
   }
 
   /**
