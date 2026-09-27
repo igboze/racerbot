@@ -18,6 +18,8 @@ export interface UserRecord {
   referred_by: string | null;
   referral_code: string | null;
   username: string | null;
+  /** Whether the user's net worth (investment / unrealized value) is shown on shared PNL cards by default. */
+  show_net_worth_on_card: boolean;
   created_at: Date;
 }
 
@@ -213,6 +215,8 @@ export interface UpdateUserSettingsParams {
   slippage_pct?: number;
   default_buy_pct?: number;
   default_sell_pct?: number;
+  /** Whether to show the user's personal net worth (investment / value) on PNL card images by default. */
+  show_net_worth_on_card?: boolean;
 }
 
 export async function updateUserSettings(userId: string, params: UpdateUserSettingsParams): Promise<UserRecord> {
@@ -244,6 +248,10 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
   if (params.default_sell_pct !== undefined) {
     setParts.push(`default_sell_pct = $${idx++}`);
     values.push(params.default_sell_pct);
+  }
+  if (params.show_net_worth_on_card !== undefined) {
+    setParts.push(`show_net_worth_on_card = $${idx++}`);
+    values.push(params.show_net_worth_on_card);
   }
 
   if (setParts.length === 0) {
@@ -534,6 +542,7 @@ function rowToUser(row: any): UserRecord {
     referred_by: row.referred_by,
     referral_code: row.referral_code,
     username: row.username,
+    show_net_worth_on_card: row.show_net_worth_on_card !== false, // defaults true
     created_at: row.created_at,
   };
 }

@@ -1,4 +1,4 @@
-import { getFillsByPosition, getPositionById } from '@racerbot/db';
+import { getFillsByPosition, getPositionById, getUserById } from '@racerbot/db';
 import { getTokenInfo } from './wallet.js';
 import { computePnL } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
@@ -20,7 +20,10 @@ export interface PNLCardData {
   holdDuration: string;
   positionId: string;
   positionStatus: 'open' | 'closed';
-  marketCap?: string;
+  /** Market cap (in NEAR) at the time the user entered the position */
+  entryMarketCap: number;
+  /** Current market cap (in NEAR) */
+  currentMarketCap: number;
   venue?: string;
   isExternalDeposit: boolean;
   externalDepositDetectedAt?: Date | null;
@@ -28,49 +31,70 @@ export interface PNLCardData {
   totalSells: number;
   totalFeesPaid: number;
   nearUsd: number;
+  /** Whether to show the user's personal net worth (investment / value) on the card */
+  showNetWorth: boolean;
 }
 
 /**
- * Generate PNL card data for a position
+ * Generate PNL card data for a position.
+ * @param showNetWorthOverride - overrides the user's global preference for this render
  */
-export async function generatePNLCardData(positionId: string): Promise<PNLCardData | null> {
+export async function generatePNLCardData(
+  positionId: string,
+  showNetWorthOverride?: boolean
+): Promise<PNLCardData | null> {
   try {
     const position = await getPositionById(positionId);
     if (!position) return null;
 
-    const fills = await getFillsByPosition(positionId);
-    const buys = fills.filter(f => f.side === 'buy');
-    const sells = fills.filter(f => f.side === 'sell');
-    // Get token info
-    const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
-    const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-    const nearUsd = tokenInfo?.near_usd || 4.3;
+    let showNetWorth = true;
+    if (showNetWorthOverride !== undefined) {
+      showNetWorth = showNetWorthOverride;
+    } else if (position.user_id) {
+      const user = await getUserById(position.user_id).catch(() => null);
+      if (user && user.show_net_worth_on_card === false) {
+        showNetWorth = false;
+      }
+    }
 
-    // Check if position is external deposit
-    const isExternalDeposit = position.is_external_deposit || false;
+    const fills = await getFillsByPosition(positionId);
+    const buys  = fills.filter(f => f.side === 'buy');
+    const sells = fills.filter(f => f.side === 'sell');
+
+    // Get token info
+    const tokenInfo   = await getTokenInfo(position.token_address, true).catch(() => null);
+    const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+    const nearUsd      = tokenInfo?.near_usd || 4.3;
+
+    const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
-    const decimals = tokenInfo?.decimals ?? 18;
-    const toHumanAmount = (rawStr: string): number => {
+    const decimals    = tokenInfo?.decimals ?? 18;
+    const toHuman = (rawStr: string): number => {
       const val = parseFloat(rawStr || '0');
-      if (val > 1e10 && decimals > 0) {
-        return val / Math.pow(10, decimals);
-      }
+      if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
       return val;
     };
 
-    // Calculate total initial investment (excluding external deposits)
-    let totalInitialInvestment = 0;
-    let totalFeesPaid = 0;
-    for (const buy of buys) {
-      // Skip synthetic fills from external deposits
-      if (buy.tx_hash?.startsWith('deposit_')) continue;
+    // ── Total supply for market cap ──────────────────────────────────────────
+    let totalSupplyHuman = 0;
+    if (tokenInfo?.total_supply) {
+      try {
+        const raw = BigInt(String(tokenInfo.total_supply).split('.')[0]);
+        totalSupplyHuman = Number(raw) / Math.pow(10, decimals);
+      } catch { /* leave 0 */ }
+    }
 
-      const amount = toHumanAmount(buy.amount);
-      const price = parseFloat(buy.price);
-      const fee = parseFloat(buy.fee_paid || '0');
-      totalInitialInvestment += (amount * price) + fee;
-      totalFeesPaid += fee;
+    // ── Investment calculation (excluding synthetic deposit fills) ───────────
+    let totalInitialInvestment = 0;
+    let totalFeesPaid          = 0;
+    for (const buy of buys) {
+      if (buy.tx_hash?.startsWith('deposit_')) continue;
+      const amount = toHuman(buy.amount);
+      const price  = parseFloat(buy.price);
+      const fee    = parseFloat(buy.fee_paid || '0');
+      totalInitialInvestment += amount * price + fee;
+      totalFeesPaid          += fee;
     }
 
     let quantityHeld = 0;
@@ -82,79 +106,74 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     }
     const avgEntryPrice = parseFloat(position.avg_entry_price || '0');
 
-    // If no buy fills exist or total investment is 0, use entry price as cost basis
     if (totalInitialInvestment === 0 && (isExternalDeposit || quantityHeld > 0)) {
       totalInitialInvestment = quantityHeld * avgEntryPrice;
     }
 
-    // Calculate realized PNL from sells using FIFO-like approximation
-    let totalRealizedPnl = 0;
+    // ── Realized PNL ─────────────────────────────────────────────────────────
+    let totalRealizedPnl   = 0;
     let totalRealizedValue = 0;
-    let totalRealizedCost = 0;
-
+    let totalRealizedCost  = 0;
     for (const sell of sells) {
-      const amount = toHumanAmount(sell.amount);
-      const price = parseFloat(sell.price);
-      const fee = parseFloat(sell.fee_paid || '0');
-      const sellValue = (amount * price) - fee;
-
-      // Use the avg_entry_price at the time of the sell (stored in position)
-      const avgEntry = parseFloat(position.avg_entry_price);
-      const costBasis = amount * avgEntry;
+      const amount   = toHuman(sell.amount);
+      const price    = parseFloat(sell.price);
+      const fee      = parseFloat(sell.fee_paid || '0');
+      const sellValue = amount * price - fee;
+      const costBasis = amount * avgEntryPrice;
       totalRealizedValue += sellValue;
-      totalRealizedCost += costBasis;
-      totalFeesPaid += fee;
+      totalRealizedCost  += costBasis;
+      totalFeesPaid      += fee;
     }
-
     totalRealizedPnl = totalRealizedValue - totalRealizedCost;
 
     const unrealizedValue = quantityHeld * currentPrice;
-    const totalValue = unrealizedValue + totalRealizedValue;
-    const unrealizedPnl = unrealizedValue - (quantityHeld * avgEntryPrice);
+    const totalValue      = unrealizedValue + totalRealizedValue;
+    const unrealizedPnl   = unrealizedValue - quantityHeld * avgEntryPrice;
+    const totalPnl        = totalValue - totalInitialInvestment;
+    const pnlPercent      = totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0;
+    const isProfit        = totalPnl >= 0;
 
-    const totalPnl = totalValue - totalInitialInvestment;
-    const pnlPercent = totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0;
-    const isProfit = totalPnl >= 0;
+    // ── Hold duration ────────────────────────────────────────────────────────
+    const openedAt        = position.opened_at;
+    const closedAt        = position.closed_at || new Date();
+    const holdDuration    = formatHoldDuration(closedAt.getTime() - openedAt.getTime());
 
-    // Calculate hold duration
-    const openedAt = position.opened_at;
-    const closedAt = position.closed_at || new Date();
-    const holdDurationMs = closedAt.getTime() - openedAt.getTime();
-    const holdDuration = formatHoldDuration(holdDurationMs);
-
-    // Format market cap (USD + NEAR)
-    let marketCapStr = 'N/A';
-    if (tokenInfo?.market_cap && typeof tokenInfo.market_cap === 'number' && tokenInfo.market_cap > 0) {
-      const mcNear = tokenInfo.market_cap;
-      const mcUsd = tokenInfo.market_cap_usd || (mcNear * nearUsd);
-      const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
-      const mcNearStr = mcNear >= 1e6 ? `${(mcNear / 1e6).toFixed(2)}M NEAR` : mcNear >= 1e3 ? `${(mcNear / 1e3).toFixed(2)}K NEAR` : `${mcNear.toFixed(2)} NEAR`;
-      marketCapStr = `${mcUsdStr} (${mcNearStr})`;
+    // ── Market caps (NEAR units) ─────────────────────────────────────────────
+    let currentMarketCap = tokenInfo?.market_cap || 0;
+    if (currentMarketCap <= 0 && totalSupplyHuman > 0 && currentPrice > 0) {
+      currentMarketCap = currentPrice * totalSupplyHuman;
     }
 
-    // Get venue name
+    let entryMarketCap = 0;
+    if (totalSupplyHuman > 0 && avgEntryPrice > 0) {
+      entryMarketCap = avgEntryPrice * totalSupplyHuman;
+    } else if (currentPrice > 0 && currentMarketCap > 0 && avgEntryPrice > 0) {
+      entryMarketCap = (avgEntryPrice / currentPrice) * currentMarketCap;
+    }
+
+    // ── Venue name ───────────────────────────────────────────────────────────
     const venueMap: Record<string, string> = {
-      'rhea': 'Rhea Finance',
-      'shardsmarket': 'Shardsmarket',
-      'nearlytrade': 'NearlyTrade',
-      'intear': 'Intear',
-      'onetokenhub': 'OneTokenHub',
-      'memecooking': 'Meme.Cooking',
-      'nearpad': 'NEARpad',
-      'gaypad': 'Gaypad',
+      rhea:         'Rhea Finance',
+      shardsmarket: 'Shardsmarket',
+      nearlytrade:  'NearlyTrade',
+      intear:       'Intear',
+      onetokenhub:  'OneTokenHub',
+      memecooking:  'Meme.Cooking',
+      nearpad:      'NEARpad',
+      gaypad:       'Gaypad',
     };
     const venueName = tokenInfo?.venue ? venueMap[tokenInfo.venue] || tokenInfo.venue : 'Unknown';
 
     return {
-      tokenAddress: position.token_address,
-      tokenName: tokenInfo?.name || position.token_address,
-      tokenSymbol: tokenInfo?.symbol || position.token_address.slice(0, 8),
-      entryPrice: parseFloat(position.avg_entry_price),
+      tokenAddress:   position.token_address,
+      tokenName:      tokenInfo?.name    || position.token_address,
+      tokenSymbol:    tokenInfo?.symbol  || position.token_address.slice(0, 8),
+      entryPrice:     avgEntryPrice,
       currentPrice,
       quantityHeld,
       initialInvestment: totalInitialInvestment,
       unrealizedValue,
-      realizedPnl: totalRealizedPnl,
+      realizedPnl:    totalRealizedPnl,
       unrealizedPnl,
       totalPnl,
       pnlPercent,
@@ -162,14 +181,16 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
       holdDuration,
       positionId,
       positionStatus: position.status as 'open' | 'closed',
-      marketCap: marketCapStr,
-      venue: venueName,
+      entryMarketCap,
+      currentMarketCap,
+      venue:          venueName,
       isExternalDeposit,
       externalDepositDetectedAt,
-      totalBuys: buys.filter(b => !b.tx_hash?.startsWith('deposit_')).length,
-      totalSells: sells.length,
+      totalBuys:      buys.filter(b => !b.tx_hash?.startsWith('deposit_')).length,
+      totalSells:     sells.length,
       totalFeesPaid,
       nearUsd,
+      showNetWorth,
     };
   } catch (err: any) {
     console.error('[PNL_CARD] Error generating PNL card data:', err);
@@ -178,77 +199,81 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
 }
 
 /**
- * Format hold duration in human-readable format
+ * Format hold duration into human-readable string
  */
 function formatHoldDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
+  const hours   = Math.floor(minutes / 60);
+  const days    = Math.floor(hours / 24);
 
-  if (days > 0) return `${days}d ${hours % 24}h`;
-  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (days > 0)    return `${days}d ${hours % 24}h`;
+  if (hours > 0)   return `${hours}h ${minutes % 60}m`;
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
   return `${seconds}s`;
 }
 
 /**
- * Generate PNL card message for Telegram
+ * Generate PNL card Telegram message text
  */
 export function generatePNLCardMessage(data: PNLCardData): string {
-  const emoji = data.isProfit ? '🟢' : '🔴';
-  const pnlSign = data.isProfit ? '+' : '';
+  const emoji       = data.isProfit ? '🟢' : '🔴';
+  const pnlSign     = data.isProfit ? '+' : '';
   const statusEmoji = data.positionStatus === 'open' ? '🟢' : '🔴';
 
-  const safeSymbol = (data.tokenSymbol || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
-  const safeName = (data.tokenName || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
-  const safeAddress = (data.tokenAddress || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ');
+  const safe = (s: string) => (s || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\/]/g, ' ');
+  const safeSymbol  = safe(data.tokenSymbol);
+  const safeName    = safe(data.tokenName);
+  const safeAddress = safe(data.tokenAddress);
 
-  // Format USD values
   const formatUSD = (nearValue: number) => {
-    const usdValue = nearValue * data.nearUsd;
-    if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
-    if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
-    return `$${usdValue.toFixed(4)}`;
+    const v = nearValue * data.nearUsd;
+    if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(2)}K`;
+    if (Math.abs(v) >= 1)    return `$${v.toFixed(2)}`;
+    return `$${v.toFixed(4)}`;
+  };
+
+  const formatMcap = (nearValue: number) => {
+    const v = nearValue * data.nearUsd;
+    if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(2)}B`;
+    if (v >= 1_000_000)     return `$${(v / 1_000_000).toFixed(2)}M`;
+    if (v >= 1_000)         return `$${(v / 1_000).toFixed(2)}K`;
+    return v > 0 ? `$${v.toFixed(2)}` : 'N/A';
   };
 
   let card = `
- ${emoji} *${safeSymbol} PNL CARD* ${statusEmoji}
+${emoji} *${safeSymbol} PNL Card* ${statusEmoji}
 
- 📝 *Token*: \`${safeName}\`
- 🔗 *CA*: \`${safeAddress}\`
- 💧 *Venue*: \`${(data.venue || 'Unknown').replace(/[_*`[\](~|>#+=|{}!@&%$^\\]/g, ' ')}\``;
+📝 *Token*: \`${safeName}\`
+🔗 *CA*: \`${safeAddress}\`
+💧 *Venue*: \`${safe(data.venue || 'Unknown')}\`
 
-  // External deposit indicator
-  if (data.isExternalDeposit) {
-    card += `\n� *External Deposit*: Detected`;
-  }
+📊 *Entry Market Cap*: \`${formatMcap(data.entryMarketCap)}\`
+📊 *Current Market Cap*: \`${formatMcap(data.currentMarketCap)}\`
 
-  card += `
-
-�💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} NEAR\` (${formatUSD(data.entryPrice)})
+💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} NEAR\` (${formatUSD(data.entryPrice)})
 💰 *Current Price*: \`${data.currentPrice.toFixed(8)} NEAR\` (${formatUSD(data.currentPrice)})`;
 
-  if (data.marketCap && data.marketCap !== 'N/A') {
-    card += `\n📊 *Market Cap*: \`${data.marketCap}\``;
+  if (data.showNetWorth) {
+    card += `
+
+📦 *Quantity Held*: \`${data.quantityHeld.toFixed(4)}\`
+💵 *Initial Investment*: \`${formatUSD(data.initialInvestment)}\`
+💵 *Unrealized Value*: \`${formatUSD(data.unrealizedValue)}\`
+
+📊 *Realized PNL*: \`${pnlSign}${formatUSD(data.realizedPnl)}\`
+📊 *Unrealized PNL*: \`${pnlSign}${formatUSD(data.unrealizedPnl)}\`
+📊 *Total PNL*: \`${pnlSign}${formatUSD(data.totalPnl)}\` (\`${pnlSign}${data.pnlPercent.toFixed(2)}%\`)`;
+  } else {
+    card += `
+
+📊 *Total PNL*: \`${pnlSign}${data.pnlPercent.toFixed(2)}%\``;
   }
 
   card += `
 
-📦 *Quantity Held*: \`${data.quantityHeld.toFixed(4)}\`
-💵 *Initial Investment*: \`${data.initialInvestment.toFixed(4)} NEAR\` (${formatUSD(data.initialInvestment)})
-💵 *Unrealized Value*: \`${data.unrealizedValue.toFixed(4)} NEAR\` (${formatUSD(data.unrealizedValue)})
-
-📊 *Realized PNL*: \`${pnlSign}${data.realizedPnl.toFixed(4)} NEAR\` (${formatUSD(data.realizedPnl)})
-📊 *Unrealized PNL*: \`${pnlSign}${data.unrealizedPnl.toFixed(4)} NEAR\` (${formatUSD(data.unrealizedPnl)})
-📊 *Total PNL*: \`${pnlSign}${data.totalPnl.toFixed(4)} NEAR\` (${formatUSD(data.totalPnl)}) (\`${pnlSign}${data.pnlPercent.toFixed(2)}%\`)
-
 ⏱️ *Hold Duration*: \`${data.holdDuration}\`
-🔄 *Trades*: ${data.totalBuys} buys, ${data.totalSells} sells
-💸 *Total Fees*: \`${data.totalFeesPaid.toFixed(4)} NEAR\` (${formatUSD(data.totalFeesPaid)})
-📌 *Status*: \`${data.positionStatus.toUpperCase()}\``;
-
-  card += `
+📌 *Status*: \`${data.positionStatus.toUpperCase()}\`
 
 ---
 _Generated by RacerBot_`.trim();
@@ -257,21 +282,22 @@ _Generated by RacerBot_`.trim();
 }
 
 /**
- * Generate PNL card with both image and text
- * Returns image buffer and text message
+ * Generate PNL card with both image and text.
+ * @param positionId - position to render
+ * @param showNetWorth - whether to show investment / value on the card (overrides global setting if provided)
  */
-export async function generatePNLCard(positionId: string): Promise<{ image: Buffer | null; text: string }> {
+export async function generatePNLCard(
+  positionId: string,
+  showNetWorth?: boolean
+): Promise<{ image: Buffer | null; text: string }> {
   try {
-    const data = await generatePNLCardData(positionId);
-    if (!data) {
-      return { image: null, text: '' };
-    }
+    const data = await generatePNLCardData(positionId, showNetWorth);
+    if (!data) return { image: null, text: '' };
 
-    const text = generatePNLCardMessage(data);
+    const text  = generatePNLCardMessage(data);
     const image = await generatePNLCardImage(data).catch(() => null);
-
     return { image, text };
-  } catch (err) {
+  } catch {
     return { image: null, text: '' };
   }
 }
