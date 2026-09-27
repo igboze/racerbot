@@ -661,9 +661,9 @@ let pubRedis: any = null;
 let directExecutor: any = null;
 
 /**
- * Execute a swap by publishing to executor via Redis.
- * If Redis is unavailable, disconnected, or times out (e.g. single-container Railway deploy),
- * falls back to executing directly on-chain via SwapExecutor so the trade never fails.
+ * Execute a swap directly via SwapExecutor so the trade executes on-chain fast (~1s),
+ * records the fill into the database synchronously, and returns the txHash & positionId
+ * immediately for real-time PnL tracking and UI display.
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
@@ -673,51 +673,22 @@ export async function publishSwap(swapEvent: {
   min_amount_out: string;
   venue: VenueName;
   dcl_pool_id?: string;
-}): Promise<{ txHash?: string }> {
-  const redisUrl = process.env.REDIS_URL;
-  let executedViaRedis = false;
-
-  if (redisUrl && !redisUrl.includes('localhost:6379')) {
-    try {
-      if (!pubRedis) {
-        pubRedis = createRedis(redisUrl);
-      }
-      const pubPromise = pubRedis.publish(
-        CHANNELS.EXECUTE_SWAP,
-        JSON.stringify({
-          type: 'execute_swap',
-          ...swapEvent,
-          timestamp: Date.now(),
-        })
-      );
-      // Wait up to 1.5s for Redis to accept the message
-      await Promise.race([
-        pubPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis publish timeout')), 1500)),
-      ]);
-      executedViaRedis = true;
-    } catch (err: any) {
-      console.warn('[SWAP] Redis publish failed, falling back to direct executor:', err.message);
-    }
+  pool_id?: number;
+}): Promise<{ txHash?: string; success?: boolean; positionId?: string }> {
+  if (!directExecutor) {
+    const { SwapExecutor } = await import('@racerbot/executor');
+    directExecutor = new SwapExecutor();
   }
-
-  // Direct on-chain execution fallback:
-  // When Redis is offline, disconnected, or absent on Railway, execute the swap directly
-  // using the user's encrypted key and on-chain RPC broadcast.
-  if (!executedViaRedis) {
-    if (!directExecutor) {
-      const { SwapExecutor } = await import('@racerbot/executor');
-      directExecutor = new SwapExecutor();
-    }
-    const result = await directExecutor.execute({
-      type: 'execute_swap',
-      ...swapEvent,
-      timestamp: Date.now(),
-    });
-    return { txHash: result.txHash };
-  }
-
-  return {};
+  const result = await directExecutor.execute({
+    type: 'execute_swap',
+    ...swapEvent,
+    timestamp: Date.now(),
+  });
+  return {
+    txHash: result.txHash,
+    success: result.success !== false,
+    positionId: result.positionId,
+  };
 }
 
 export interface UserBalances {

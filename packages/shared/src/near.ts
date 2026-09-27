@@ -2119,10 +2119,7 @@ export class MultiRpcNear {
       const healthy = this.tradeProviders.filter((p) => p.healthy);
       const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
 
-      const polls = [
-        tryFastnear(),
-        ...candidates.map((p) => tryRpc(p.url)),
-      ];
+      const polls = candidates.map((p) => tryRpc(p.url));
 
       const results = await Promise.allSettled(polls);
       for (const r of results) {
@@ -2134,7 +2131,7 @@ export class MultiRpcNear {
         }
       }
 
-      await sleep(800);
+      await sleep(350);
     }
 
     throw new Error(
