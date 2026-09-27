@@ -1528,23 +1528,29 @@ export class MultiRpcNear {
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'rhea' || venue === 'ref') {
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
       if (dclPoolId) {
-        try {
-          const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
-          const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
-          const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-            pool_ids: [dclPoolId],
-            input_token: inToken,
-            output_token: outToken,
-            input_amount: amountIn,
-          });
-          const expected = BigInt(quote?.amount || '0');
-          if (expected > 0n) {
-            const minOut = calculateMinAmountOut(expected, slippagePct);
-            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+        const poolTokens = dclPoolId.split('|').slice(0, 2);
+        const hasTokens = (poolTokens.includes(inToken) || (inToken === 'wrap.near' && poolTokens.includes('wrap.near'))) &&
+                          poolTokens.includes(outToken);
+        if (hasTokens) {
+          try {
+            const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [dclPoolId],
+              input_token: inToken,
+              output_token: outToken,
+              input_amount: amountIn,
+            });
+            const expected = BigInt(quote?.amount || '0');
+            if (expected > 0n) {
+              const minOut = calculateMinAmountOut(expected, slippagePct);
+              return { expectedOutput: expected.toString(), minAmountOut: minOut };
+            }
+          } catch {
+            // fallback to simple pool if quote view fails
           }
-        } catch {
-          // fallback to simple pool if quote view fails
         }
       }
       let poolId = rheaPoolId;
@@ -1557,9 +1563,6 @@ export class MultiRpcNear {
           if (rhea && typeof rhea.poolId === 'number') poolId = rhea.poolId;
         }
       }
-
-      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
-      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
 
       const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
       const rheaState = await this.findRheaPoolForToken(targetToken).catch(() => null);
@@ -1617,30 +1620,34 @@ export class MultiRpcNear {
         }
       }
 
-      // Try on-chain get_return on v2.ref-finance.near first (supports SIMPLE_POOL, STABLE_SWAP, RATED_SWAP)
-      try {
-        const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
-          pool_id: poolId,
-          token_in: inToken,
-          amount_in: amountIn,
-          token_out: outToken,
-        });
-        const expected = BigInt(ret || '0');
-        if (expected > 0n) {
-          const minOut = calculateMinAmountOut(expected, slippagePct);
-          return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      if (typeof poolId === 'number' && poolId >= 0) {
+        // Try on-chain get_return on v2.ref-finance.near first (supports SIMPLE_POOL, STABLE_SWAP, RATED_SWAP)
+        try {
+          const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: poolId,
+            token_in: inToken,
+            amount_in: amountIn,
+            token_out: outToken,
+          });
+          const expected = BigInt(ret || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // Fallback to local reserve calculation
         }
-      } catch {
-        // Fallback to local reserve calculation
+
+        const reserves = await this.getRheaPoolReserves(poolId, tokenIn, tokenOut);
+        const reserveIn = BigInt(reserves.reserveIn);
+        const reserveOut = BigInt(reserves.reserveOut);
+
+        const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, reserves.fee);
+        const minOut = calculateMinAmountOut(expected, slippagePct);
+        return { expectedOutput: expected.toString(), minAmountOut: minOut };
       }
 
-      const reserves = await this.getRheaPoolReserves(poolId!, tokenIn, tokenOut);
-      const reserveIn = BigInt(reserves.reserveIn);
-      const reserveOut = BigInt(reserves.reserveOut);
-
-      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, reserves.fee);
-      const minOut = calculateMinAmountOut(expected, slippagePct);
-      return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      throw new Error(`No active liquidity pool found for token ${outToken} on Rhea / Ref Finance.`);
     } else if (venue === 'nearlytrade') {
       const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
       let state;
