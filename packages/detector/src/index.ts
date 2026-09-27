@@ -5,6 +5,7 @@ import {
   CHANNELS,
   createLogger,
   generateCorrelationId,
+  DEFAULT_RPC_URLS,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
@@ -25,11 +26,12 @@ const tokenNameCache = new Map<string, TokenDetectedEvent>();
 // ── RPC + Redis setup ────────────────────────────────────────────────────────
 
 const REDIS_URL = process.env.REDIS_URL!;
-const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
+const envRpcUrls = (process.env.RPC_PROVIDERS ?? '')
   .split(',')
   .map(u => u.trim())
-  .filter(Boolean); // getNear() falls back to DEFAULT_RPC_URLS when empty
-if (RPC_URLS.length === 0) {
+  .filter(Boolean);
+const RPC_URLS = envRpcUrls.length > 0 ? envRpcUrls : DEFAULT_RPC_URLS;
+if (envRpcUrls.length === 0) {
   console.warn('[DETECTOR] RPC_PROVIDERS not set — using built-in default RPCs');
 }
 const POLL_INTERVAL_MS = 1000; // NEAR block time ~1.2s
@@ -838,7 +840,7 @@ async function refreshTriggerTokenPrices(): Promise<void> {
         try {
           const dbCache = await getTokenCache(tokenAddress).catch(() => null);
           const venue = dbCache?.venue;
-          if (!venue || venue === 'memecooking') return;
+          if (!venue) return;
           const decimals = dbCache?.decimals ?? 18;
           const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
           if (!spot || !(spot.price > 0)) return;

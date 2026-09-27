@@ -50,6 +50,15 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     const isExternalDeposit = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
+    const decimals = tokenInfo?.decimals ?? 18;
+    const toHumanAmount = (rawStr: string): number => {
+      const val = parseFloat(rawStr || '0');
+      if (val > 1e10 && decimals > 0) {
+        return val / Math.pow(10, decimals);
+      }
+      return val;
+    };
+
     // Calculate total initial investment (excluding external deposits)
     let totalInitialInvestment = 0;
     let totalFeesPaid = 0;
@@ -57,14 +66,13 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
       // Skip synthetic fills from external deposits
       if (buy.tx_hash?.startsWith('deposit_')) continue;
 
-      const amount = parseFloat(buy.amount);
+      const amount = toHumanAmount(buy.amount);
       const price = parseFloat(buy.price);
       const fee = parseFloat(buy.fee_paid || '0');
       totalInitialInvestment += (amount * price) + fee;
       totalFeesPaid += fee;
     }
 
-    const decimals = tokenInfo?.decimals ?? 18;
     let quantityHeld = 0;
     try {
       const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
@@ -85,7 +93,7 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
     let totalRealizedCost = 0;
 
     for (const sell of sells) {
-      const amount = parseFloat(sell.amount);
+      const amount = toHumanAmount(sell.amount);
       const price = parseFloat(sell.price);
       const fee = parseFloat(sell.fee_paid || '0');
       const sellValue = (amount * price) - fee;

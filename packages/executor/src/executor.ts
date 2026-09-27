@@ -1121,7 +1121,7 @@ export class SwapExecutor {
     let onChainFeeYocto = feeAmount.toString();
 
     // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && BigInt(netAmountOut) > 0n) {
+    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       onChainFeeYocto = sellFeeNear.toString();
 
@@ -1453,7 +1453,16 @@ export class SwapExecutor {
         }
       }
 
-    } else if (position) {
+    } else {
+      if (!position) {
+        position = await createPosition({
+          user_id: userId,
+          token_address: tokenAddress,
+          quantity_held: tokenQty,
+          avg_entry_price: priceNear.toString(),
+        });
+      }
+
       const fillResult = await createFill({
         user_id: userId,
         position_id: position.id,

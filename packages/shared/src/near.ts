@@ -1902,6 +1902,34 @@ export class MultiRpcNear {
       if (!st || !(st.price > 0)) return null;
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
+    if (venue === 'memecooking') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      if (rhea && rhea.price > 0) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || (rhea.liquidityNear * 1e24 / 2).toFixed(0),
+        };
+      }
+      const memeId = parseMemeCookingId(tokenAddress);
+      if (memeId !== null) {
+        const meme = await this.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+        if (meme) {
+          const hardCapYocto = BigInt(meme.hard_cap || '100000000000000000000000000');
+          const tokensToDistribute = BigInt(meme.amount_to_be_distributed || meme.total_supply || '0');
+          if (hardCapYocto > 0n && tokensToDistribute > 0n) {
+            const hardCapNear = Number(hardCapYocto) / 1e24;
+            const supplyHuman = Number(tokensToDistribute) / Math.pow(10, decimals);
+            if (supplyHuman > 0) {
+              return {
+                price: hardCapNear / supplyHuman,
+                reserveNearYocto: hardCapYocto.toString(),
+              };
+            }
+          }
+        }
+      }
+      return null;
+    }
     return null;
   }
 
