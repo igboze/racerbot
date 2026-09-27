@@ -773,7 +773,7 @@ async function executeBuyHelper(
   telegramId: number,
   tokenAddress: string,
   amountNear: number
-): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string }> {
+): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
     throw new Error('Please run /start to set up your trading wallet first.');
@@ -853,16 +853,33 @@ async function executeBuyHelper(
     throw new Error(swapResult.reason || 'Swap failed on-chain. Please verify slippage settings and balance, then retry.');
   }
 
+  const tokenSym = swapResult.tokenSymbol || tokenAddress.slice(0, 12);
+  const tokenName = swapResult.tokenName || tokenSym;
+  const tokenQtyDisplay = (() => {
+    const qty = Number(swapResult.tokenQty ?? 0);
+    if (qty >= 1_000_000) return `${(qty / 1_000_000).toFixed(3)}M`;
+    if (qty >= 1_000) return qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (qty >= 0.0001) return qty.toFixed(4);
+    return qty > 0 ? qty.toExponential(3) : '—';
+  })();
+  const priceDisplay = swapResult.priceNear && swapResult.priceNear > 0
+    ? swapResult.priceNear.toFixed(8) + ' NEAR'
+    : '—';
   const txInfo = swapResult.txHash
-    ? `\n\n🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${swapResult.txHash})`
-    : `\n\nYou will receive a notification once confirmed.`;
+    ? `\n\n🔗 [View on NearBlocks](https://nearblocks.io/txns/${swapResult.txHash})`
+    : '';
 
   return {
     success: true,
     amountNear,
     tokenAddress,
     positionId: swapResult.positionId,
-    message: `⚡ Buy order executed for ${amountNear.toFixed(4)} NEAR of \`${tokenAddress}\` (Slippage: ${slippagePct}%).${txInfo}`,
+    tokenName: swapResult.tokenName,
+    tokenSymbol: swapResult.tokenSymbol,
+    tokenQty: swapResult.tokenQty,
+    priceNear: swapResult.priceNear,
+    nearSpent: swapResult.nearSpent,
+    message: `✅ *Buy Confirmed!*\n\n🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n📦 Received: \`${tokenQtyDisplay} ${sanitizeMd(tokenSym)}\`\n💵 Price: \`${priceDisplay}\`\n💸 Spent: \`${amountNear.toFixed(4)} NEAR\`${txInfo}`,
   };
 }
 
@@ -1906,9 +1923,10 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-      const card = await buildTokenCard(tokenAddress, telegramId);
-      card.text = `✅ *Buy Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
-      await sendTokenCard(ctx, card);
+      await ctx.reply(res.message, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+      });
     } catch (err: any) {
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
@@ -1928,9 +1946,10 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-      const card = await buildTokenCard(tokenAddress, telegramId);
-      card.text = `✅ *Buy Order Executed!* (\`${res.amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
-      await sendTokenCard(ctx, card);
+      await ctx.reply(res.message, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+      });
     } catch (err: any) {
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
@@ -1983,9 +2002,10 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-      const card = await buildTokenCard(tokenAddress, telegramId);
-      card.text = `✅ *Buy Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
-      await sendTokenCard(ctx, card);
+      await ctx.reply(res.message, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+      });
     } catch (err: any) {
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
@@ -2111,9 +2131,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
         try {
           const res = await executeBuyHelper(telegramId, query, amountNear);
-          const card = await buildTokenCard(query, telegramId);
-          card.text = `✅ *Snipe Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
-          await sendTokenCard(ctx, card);
+          await ctx.reply(res.message, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${query}`)]] },
+          });
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
@@ -2155,9 +2176,10 @@ export function setupRoutes(bot: Telegraf): void {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
       await ctx.deleteMessage().catch(() => {});
 
-      const card = await buildTokenCard(tokenAddress, telegramId);
-      card.text = `✅ *Snipe Order Executed!* (\`${amountNear.toFixed(4)} NEAR\`)\n\n` + card.text;
-      await sendTokenCard(ctx, card);
+      await ctx.reply(res.message, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+      });
     } catch (err: any) {
       await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -2468,9 +2490,10 @@ export function setupRoutes(bot: Telegraf): void {
           const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
-          const card = await buildTokenCard(pending.tokenAddress, telegramId);
-          card.text = `✅ *Buy Order Executed!* (\`${amt.toFixed(4)} NEAR\`)\n\n` + card.text;
-          await sendTokenCard(ctx, card);
+          await ctx.reply(res.message, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${pending.tokenAddress}`)]] },
+          });
         } catch (err: any) {
           console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});

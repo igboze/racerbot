@@ -231,7 +231,7 @@ export class SwapExecutor {
    * Execute a swap event. Uses the user's pre-warmed scoped key.
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
    */
-  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string }> {
+  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
     const warm = warmKeys.get(user_id);
@@ -1256,7 +1256,7 @@ export class SwapExecutor {
     }
 
     // Record the fill and update position with real on-chain output
-    const positionId = await this.recordFill(
+    const fillData = await this.recordFill(
       user_id,
       token_in,
       token_out,
@@ -1271,7 +1271,7 @@ export class SwapExecutor {
       return undefined;
     });
 
-    return { txHash, success: true, positionId };
+    return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent };
   }
 
   /**
@@ -1480,7 +1480,7 @@ export class SwapExecutor {
     venue: string,
     txHash: string,
     event: SwapEvent,
-  ): Promise<string | undefined> {
+  ): Promise<{ positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number } | undefined> {
     const db = await getDb();
 
     // Determine buy vs sell direction
@@ -1560,6 +1560,24 @@ export class SwapExecutor {
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
         }
+
+        // Instant buy confirmation — use only data already computed above, no new RPC calls
+        try {
+          const nearSpentHuman = parseFloat(utils.format.formatNearAmount(amountIn));
+          const tokenQtyHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toString();
+          await this.notifyUser(userId, 'trade_confirmed', {
+            tokenName: (meta as any)?.name ?? tokenAddress,
+            tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+            tokenQty: tokenQtyHuman,
+            priceNear: priceNear,
+            nearSpent: nearSpentHuman,
+            feePaidNear,
+            positionId: position.id,
+            txHash,
+          });
+        } catch (err: any) {
+          console.warn('[EXECUTOR] Failed to send trade_confirmed notification:', err.message);
+        }
       }
 
     } else {
@@ -1632,7 +1650,19 @@ export class SwapExecutor {
         }
       }
     }
-    return position?.id;
+    if (isBuy) {
+      const nearSpentHuman = parseFloat(utils.format.formatNearAmount(amountIn));
+      const tokenQtyHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toString();
+      return {
+        positionId: position?.id,
+        tokenName: (meta as any)?.name ?? tokenAddress,
+        tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+        tokenQty: tokenQtyHuman,
+        priceNear,
+        nearSpent: nearSpentHuman,
+      };
+    }
+    return { positionId: position?.id };
   }
 
   // ── Notifications ─────────────────────────────────────────────────────────
