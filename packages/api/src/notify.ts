@@ -159,6 +159,38 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       break;
     }
 
+
+    case 'trade_confirmed': {
+      const tokenName = sanitize((data.tokenName as string) || (data.tokenSymbol as string) || 'TOKEN');
+      const tokenSym = sanitize((data.tokenSymbol as string) || '???');
+      const tokenQty = Number(data.tokenQty ?? 0);
+      const priceNear = Number(data.priceNear ?? 0);
+      const nearSpent = Number(data.nearSpent ?? 0);
+      const txHash = data.txHash as string | undefined;
+
+      const qtyDisplay = tokenQty >= 1_000_000
+        ? `${(tokenQty / 1_000_000).toFixed(3)}M`
+        : tokenQty >= 1_000
+        ? tokenQty.toLocaleString('en-US', { maximumFractionDigits: 2 })
+        : tokenQty >= 0.0001
+        ? tokenQty.toFixed(4)
+        : tokenQty.toExponential(3);
+
+      const explorerLine = txHash
+        ? `\n🔗 [View on NearBlocks](https://nearblocks.io/txns/${sanitize(txHash)})`
+        : '';
+
+      await _bot.telegram.sendMessage(telegramId,
+        `✅ *Buy Confirmed!*\n\n` +
+        `🪙 *${tokenName}* (${tokenSym})\n` +
+        `📦 Received: \`${qtyDisplay} ${tokenSym}\`\n` +
+        `💵 Price: \`${priceNear > 0 ? priceNear.toFixed(8) : '—'} NEAR\`\n` +
+        `💸 Spent: \`${nearSpent.toFixed(4)} NEAR\`${explorerLine}`,
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
     case 'token_not_found': {
       await _bot.telegram.sendMessage(telegramId,
         `❌ Token not found in cache.\n\nTry pasting the contract address (CA) directly for an exact match.`
