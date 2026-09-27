@@ -95,9 +95,13 @@ let refStorageChecked = false;
  * Per the CLI Trading doc, Ref requires storage deposit to track internal account balances.
  * We deposit 0.1 NEAR once if not already registered.
  */
-export async function ensureRefStorage(accountId: string = ROUTER_CONTRACT_ID): Promise<void> {
+export async function ensureRefStorage(accountId?: string): Promise<void> {
   if (refStorageChecked) return;
+  if (!accountId) return;
   try {
+    const hasKey = await near.hasKey(accountId);
+    if (!hasKey) return;
+
     const storage = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
     if (!storage || !storage.total || storage.total === '0') {
       console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit...`);
@@ -108,7 +112,7 @@ export async function ensureRefStorage(accountId: string = ROUTER_CONTRACT_ID): 
           BigInt('30000000000000'),
           BigInt('100000000000000000000000') // 0.1 NEAR
         ),
-      ]).catch((err) => {
+      ], 15_000).catch((err) => {
         console.warn(`[EXECUTOR] Ref storage_deposit for ${accountId} returned:`, err.message);
       });
     }
@@ -123,13 +127,24 @@ export async function ensureRefStorage(accountId: string = ROUTER_CONTRACT_ID): 
  * If not whitelisted, call register_tokens on v2.ref-finance.near with 1 yoctoNEAR from router contract.
  * Results are cached in confirmedRefRegisteredTokens to avoid redundant checks per trade.
  */
-export async function ensureRefTokenRegistered(tokenAddress: string, accountId: string = ROUTER_CONTRACT_ID): Promise<void> {
+export async function ensureRefTokenRegistered(tokenAddress: string, accountId?: string): Promise<void> {
   if (tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
   if (confirmedRefRegisteredTokens.has(tokenAddress)) return;
 
   try {
     const whitelisted = await near.getWhitelistedTokens();
     if (whitelisted.includes(tokenAddress)) {
+      confirmedRefRegisteredTokens.add(tokenAddress);
+      return;
+    }
+
+    if (!accountId) {
+      confirmedRefRegisteredTokens.add(tokenAddress);
+      return;
+    }
+
+    const hasKey = await near.hasKey(accountId);
+    if (!hasKey) {
       confirmedRefRegisteredTokens.add(tokenAddress);
       return;
     }
@@ -142,7 +157,7 @@ export async function ensureRefTokenRegistered(tokenAddress: string, accountId: 
         BigInt('30000000000000'),
         BigInt('1') // 1 yoctoNEAR
       ),
-    ]).catch((err) => {
+    ], 15_000).catch((err) => {
       console.warn(`[EXECUTOR] register_tokens for ${tokenAddress} on Ref returned:`, err.message);
     });
 
@@ -473,10 +488,10 @@ export class SwapExecutor {
           let intermediatePoolId = (event as any).intermediate_pool_id as number | undefined;
 
           // Ensure Ref exchange storage registration and token whitelist registration
-          await ensureRefStorage();
-          await ensureRefTokenRegistered(targetToken);
+          await ensureRefStorage(subaccountId);
+          await ensureRefTokenRegistered(targetToken, subaccountId);
           if (intermediateToken) {
-            await ensureRefTokenRegistered(intermediateToken);
+            await ensureRefTokenRegistered(intermediateToken, subaccountId);
           }
 
           const rheaState = (rheaPoolId && !intermediateToken)
@@ -486,7 +501,7 @@ export class SwapExecutor {
           intermediateToken = intermediateToken || rheaState?.intermediateToken;
           intermediatePoolId = intermediatePoolId || rheaState?.intermediatePoolId;
           if (intermediateToken) {
-            await ensureRefTokenRegistered(intermediateToken);
+            await ensureRefTokenRegistered(intermediateToken, subaccountId);
           }
 
           if (rheaPoolId === null || rheaPoolId === undefined) {
@@ -534,7 +549,7 @@ export class SwapExecutor {
                 feeAmount,
                 swapAmount,
                 'v2.ref-finance.near',
-                JSON.stringify({ actions: rheaActions }),
+                JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
                 BigInt('250000000000000')
               ),
             ]);
@@ -584,7 +599,7 @@ export class SwapExecutor {
               {
                 receiver_id: 'v2.ref-finance.near',
                 amount: amountInBigInt.toString(),
-                msg: JSON.stringify({ actions: rheaActions }),
+                msg: JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
               },
               BigInt('220000000000000'),
               BigInt('1')
