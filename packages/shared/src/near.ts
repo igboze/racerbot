@@ -459,19 +459,20 @@ export class MultiRpcNear {
    */
   async getNearBalance(accountId: string): Promise<string> {
     const healthy = this.tradeProviders.filter(p => p.healthy);
-    const providersToTry = healthy.length > 0 ? healthy : this.tradeProviders;
-    let lastErr: Error | null = null;
-    for (const provider of providersToTry) {
-      try {
+    const candidates = (healthy.length > 0 ? healthy : this.tradeProviders).slice(0, 3);
+    if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
+
+    return Promise.any(
+      candidates.map(async (provider) => {
         const near = await this.getConnection(provider.url);
         const account = await near.account(accountId);
-        const state = await withTimeout<any>(account.state(), 3500, `RPC timeout on ${provider.url}`);
-        return state.amount;
-      } catch (err) {
-        lastErr = err as Error;
-      }
-    }
-    throw lastErr ?? new Error(`Failed to get NEAR balance for ${accountId}`);
+        const state = await withTimeout<any>(account.state(), 2500, `RPC timeout on ${provider.url}`);
+        return state.amount as string;
+      })
+    ).catch((aggregateErr) => {
+      const err = aggregateErr?.errors?.[0] || aggregateErr;
+      throw new Error(`Failed to get NEAR balance for ${accountId}: ${err?.message || err}`);
+    });
   }
 
   /**

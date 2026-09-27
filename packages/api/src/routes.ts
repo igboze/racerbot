@@ -95,7 +95,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
     [
       Markup.button.callback('🎯 Snipe Rules', 'menu_settings'),
-      Markup.button.callback('🔄 Refresh', 'menu_home'),
+      Markup.button.callback('🔄 Refresh', 'menu_refresh'),
     ],
     [
       Markup.button.callback('🔑 Export Key', 'export_prompt'),
@@ -955,12 +955,24 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('menu_home', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
-      // forceRefresh=true so the Refresh button always shows the latest balance
-      const menu = await buildMainMenu(telegramId, true);
+      const menu = await buildMainMenu(telegramId, false);
       await ctx.answerCbQuery('Main Menu').catch(() => {});
-      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => {});
+      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(async () => {
+        await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => {});
+      });
     } catch {
       await ctx.answerCbQuery().catch(() => {});
+    }
+  });
+
+  bot.action(['menu_refresh', 'menu_home_refresh'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('🔄 Refreshing balance...').catch(() => {});
+    try {
+      const menu = await buildMainMenu(telegramId, true);
+      await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -1017,34 +1029,38 @@ export function setupRoutes(bot: Telegraf): void {
       // 2. Fetch all open positions (including newly synced wallet deposits)
       const positions = await getOpenPositions(user.id).catch(() => []);
 
-      const emptyKeyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-        [Markup.button.callback('🔙 Back', 'menu_home')],
-        [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
-        [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-        ],
-      ]);
+        const emptyKeyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Refresh', 'refresh_holdings')],
+          [Markup.button.callback('🔙 Back', 'menu_home')],
+          [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
+          [
+            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          ],
+        ]);
 
-      if (positions.length === 0) {
-        const emptyMsg =
-          '💼 *Holdings*\n\n' +
-          `👛 Wallet: \`${user.subaccount_id}\`\n\n` +
-          '📭 You currently have no token holdings in your wallet.\n\n' +
-          'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
+        if (positions.length === 0) {
+          const emptyMsg =
+            '💼 *Holdings*\n\n' +
+            `👛 Wallet: \`${user.subaccount_id}\`\n\n` +
+            '📭 You currently have no token holdings in your wallet.\n\n' +
+            'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
 
-        const canEdit = typeof (ctx as any).editMessageText === 'function';
-        if (canEdit) {
-          await (ctx as any).editMessageText(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(async () => {
+          if (isRefresh) {
             await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
-          });
-        } else {
-          await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
+          } else {
+            const canEdit = typeof (ctx as any).editMessageText === 'function';
+            if (canEdit) {
+              await (ctx as any).editMessageText(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(async () => {
+                await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
+              });
+            } else {
+              await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
+            }
+          }
+          return;
         }
-        return;
-      }
 
       // 3. Fetch all token info in parallel with forceRefresh for live prices
       const infoResults = await Promise.allSettled(
@@ -1163,7 +1179,7 @@ export function setupRoutes(bot: Telegraf): void {
         holdingsListText;
 
       buttons.push([
-        Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+        Markup.button.callback('🔄 Refresh', 'refresh_holdings'),
         Markup.button.callback('🔙 Back', 'menu_home'),
         Markup.button.callback('➕ Import Token', 'import_token_prompt'),
       ]);
@@ -1175,16 +1191,21 @@ export function setupRoutes(bot: Telegraf): void {
 
       const keyboard = Markup.inlineKeyboard(buttons);
 
-      const canEditMsg = typeof (ctx as any).editMessageText === 'function';
-      if (canEditMsg) {
-        await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
-          if (err?.message?.includes('message is not modified')) {
-            return;
-          }
-          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
-        });
-      } else {
+      if (isRefresh) {
+        // Instantly send a new text of the updated information
         await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      } else {
+        const canEditMsg = typeof (ctx as any).editMessageText === 'function';
+        if (canEditMsg) {
+          await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
+            if (err?.message?.includes('message is not modified')) {
+              return;
+            }
+            await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+          });
+        } else {
+          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+        }
       }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
@@ -1193,6 +1214,11 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── menu_holdings — Token list with name/logo and % change ────────────────
   bot.action('menu_holdings', async (ctx) => {
+    await handleHoldings(ctx, false);
+  });
+
+  bot.action(['refresh_holdings', 'menu_holdings_refresh'], async (ctx) => {
+    await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
     await handleHoldings(ctx, true);
   });
 
@@ -1498,15 +1524,12 @@ export function setupRoutes(bot: Telegraf): void {
     await handleHoldings(ctx, true);
   });
 
-  // ── menu_pnl — FIX 1: Parallel token fetches for closed positions ──────────
-  bot.action('menu_pnl', async (ctx) => {
+  // ── menu_pnl & refresh_pnl ────────────────────────────────────────────────
+  const handlePnl = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
     try {
-      const user = await getUserByTelegramId(telegramId);
-      if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-        return;
-      }
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.reply('Use /start first.'); return; }
 
       // NOTE: External deposit sync now runs in background only, not blocking menu load
       setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
@@ -1564,15 +1587,21 @@ export function setupRoutes(bot: Telegraf): void {
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
+  };
+
+  bot.action(['menu_pnl', 'refresh_pnl'], async (ctx) => {
+    await ctx.answerCbQuery('🔄 Updated PnL!').catch(() => {});
+    await handlePnl(ctx);
   });
+
+  bot.command('pnl', handlePnl);
 
   // ── /wallet & /balance ────────────────────────────────────────────────────
   const handleWallet = async (ctx: Context) => {
@@ -1591,11 +1620,11 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('wallet_refresh', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
+      await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => {});
       const wallet = await buildWalletMenu(telegramId, true);
-      await ctx.answerCbQuery('Wallet refreshed.').catch(() => {});
-      await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
+      await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -1840,25 +1869,16 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // Refresh token card
+  // Refresh token card — instantly sends a new text message of the updated information
   bot.action(/^token_refresh:(.+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const telegramId = ctx.from!.id;
     try {
+      await ctx.answerCbQuery('🔄 Refreshed!').catch(() => {});
       const card = await buildTokenCard(tokenAddress, telegramId);
-      await ctx.answerCbQuery('Token refreshed.').catch(() => {});
-      if (card.pnlCardImage) {
-        // Send new image with updated text and keyboard
-        await sendTokenCard(ctx, card);
-        // Delete old message to avoid clutter
-        await ctx.deleteMessage().catch(() => {});
-      } else {
-        await ctx.editMessageText(card.text, { parse_mode: 'Markdown', ...card.keyboard }).catch(async () => {
-          await ctx.editMessageText(card.text.replace(/[*_`]/g, ''), card.keyboard).catch(() => {});
-        });
-      }
+      await sendTokenCard(ctx, card);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -2048,79 +2068,11 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── /positions & /pnl ─────────────────────────────────────────────────────
-  // FIX 1 & 2: Parallel token fetches + single-pass info reuse for buttons.
   bot.command('positions', async (ctx) => {
     await handleHoldings(ctx, false);
   });
 
-  // FIX 1: Parallel fills + token info fetches for /pnl command.
-  bot.command('pnl', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    try {
-      const user = await getUserByTelegramId(telegramId).catch(() => null);
-      if (!user) { await ctx.reply('Use /start first.'); return; }
 
-      const [positions, db] = await Promise.all([
-        getOpenPositions(user.id).catch(() => []),
-        getDb(),
-      ]);
-      const closedResult = await db.query(
-        'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
-        [user.id, 'closed']
-      );
-
-      // FIX 1: Fetch all fills and token info in parallel with forceRefresh.
-      const [fillsResults, tokenInfoResults] = await Promise.all([
-        Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-        Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
-      ]);
-
-      let msg = `📊 *PNL Summary*\n\n`;
-      msg += `🟢 Open positions: ${positions.length}\n`;
-      msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
-
-      let totalRealizedNear = 0;
-      for (let i = 0; i < closedResult.rows.length; i++) {
-        const pos = closedResult.rows[i];
-        const fillResult = fillsResults[i];
-        const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
-        const buys = fills.filter((f: any) => f.side === 'buy');
-        const sells = fills.filter((f: any) => f.side === 'sell');
-
-        if (buys.length && sells.length) {
-          const avgEntry = parseFloat(pos.avg_entry_price);
-          const lastSell = sells[sells.length - 1];
-          const sellPrice = parseFloat(lastSell.price);
-          const qty = parseFloat(lastSell.amount);
-          const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
-          const sellFee = parseFloat(lastSell.fee_paid) / qty;
-
-          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
-          totalRealizedNear += pnl.netNear;
-
-          const tiResult = tokenInfoResults[i];
-          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
-          const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
-          const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
-          msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
-        }
-      }
-
-      msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
-        [
-          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-        ],
-      ]);
-      await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
-    } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-    }
-  });
 
   // ── /snipe <token_ca|name> ────────────────────────────────────────────────
   bot.command('snipe', async (ctx) => {
