@@ -799,15 +799,21 @@ export class MultiRpcNear {
       } catch {}
     }
 
-    // 4. On-chain scan of recent Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
+    // 4. On-chain scan of ALL Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
+    // NOTE: We scan the full range down to index 0 (batchSize = 250). Ref has over 8,700+ pools.
+    // An earlier implementation bounded this scan to (numPools - 3000), which blinded the bot to older
+    // tokens whose pools were deployed earlier in Ref's history. Full coverage is required to ensure older
+    // memecoins or established pools are discoverable when the indexer REST API fails.
     if (candidates.length === 0) try {
       const numPools = await this.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
       if (numPools && numPools > 0) {
-        const batchSize = 100;
+        console.warn(`[findRheaPoolForToken] Indexer REST API returned no pools for ${tokenAddress}. Initiating full on-chain pool scan across all ${numPools} pools.`);
+        const batchSize = 250;
         const starts: number[] = [];
-        for (let s = Math.max(0, numPools - batchSize); s >= Math.max(0, numPools - 3000); s -= batchSize) {
+        for (let s = Math.max(0, numPools - batchSize); s >= 0; s -= batchSize) {
           starts.push(s);
         }
+        // Concurrently query pool batches
         const results = await Promise.allSettled(
           starts.map(async (fromIndex) => {
             const pools = await this.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize });
@@ -850,7 +856,9 @@ export class MultiRpcNear {
           }
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.error(`[findRheaPoolForToken] Full on-chain scan failed for ${tokenAddress}:`, err.message);
+    }
 
     if (candidates.length === 0) return null;
 

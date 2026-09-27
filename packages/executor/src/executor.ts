@@ -32,7 +32,7 @@ import {
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
-import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
+import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, ROUTER_CONTRACT_ID } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
@@ -84,6 +84,73 @@ export async function addUserKey(userId: string, subaccountId: string, encrypted
   const keyPair = KeyPair.fromString(keyStr as any);
   warmKeys.set(userId, { keyPair, subaccountId });
   await near.addKey(subaccountId, keyPair);
+}
+
+// ── Ref Finance Storage & Token Whitelist Registration Cache ──────────────────
+const confirmedRefRegisteredTokens = new Set<string>();
+let refStorageChecked = false;
+
+/**
+ * Ensure the router contract (or caller account) has storage deposited on Ref Finance (v2.ref-finance.near).
+ * Per the CLI Trading doc, Ref requires storage deposit to track internal account balances.
+ * We deposit 0.1 NEAR once if not already registered.
+ */
+export async function ensureRefStorage(accountId: string = ROUTER_CONTRACT_ID): Promise<void> {
+  if (refStorageChecked) return;
+  try {
+    const storage = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
+    if (!storage || !storage.total || storage.total === '0') {
+      console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit...`);
+      await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: accountId, registration_only: false },
+          BigInt('30000000000000'),
+          BigInt('100000000000000000000000') // 0.1 NEAR
+        ),
+      ]).catch((err) => {
+        console.warn(`[EXECUTOR] Ref storage_deposit for ${accountId} returned:`, err.message);
+      });
+    }
+    refStorageChecked = true;
+  } catch (err: any) {
+    console.warn(`[EXECUTOR] Error checking Ref storage for ${accountId}:`, err.message);
+  }
+}
+
+/**
+ * Check if a token is whitelisted on Ref Finance before trading.
+ * If not whitelisted, call register_tokens on v2.ref-finance.near with 1 yoctoNEAR from router contract.
+ * Results are cached in confirmedRefRegisteredTokens to avoid redundant checks per trade.
+ */
+export async function ensureRefTokenRegistered(tokenAddress: string, accountId: string = ROUTER_CONTRACT_ID): Promise<void> {
+  if (tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
+  if (confirmedRefRegisteredTokens.has(tokenAddress)) return;
+
+  try {
+    const whitelisted = await near.getWhitelistedTokens();
+    if (whitelisted.includes(tokenAddress)) {
+      confirmedRefRegisteredTokens.add(tokenAddress);
+      return;
+    }
+
+    console.log(`[EXECUTOR] Token ${tokenAddress} is not whitelisted on Ref Finance. Submitting register_tokens...`);
+    await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
+      transactions.functionCall(
+        'register_tokens',
+        { token_ids: [tokenAddress] },
+        BigInt('30000000000000'),
+        BigInt('1') // 1 yoctoNEAR
+      ),
+    ]).catch((err) => {
+      console.warn(`[EXECUTOR] register_tokens for ${tokenAddress} on Ref returned:`, err.message);
+    });
+
+    confirmedRefRegisteredTokens.add(tokenAddress);
+  } catch (err: any) {
+    console.warn(`[EXECUTOR] Error registering token ${tokenAddress} on Ref:`, err.message);
+    confirmedRefRegisteredTokens.add(tokenAddress);
+  }
 }
 
 // ── Swap execution ────────────────────────────────────────────────────────────
@@ -402,12 +469,25 @@ export class SwapExecutor {
           }
 
           const targetToken = isBuy ? token_out : token_in;
-          const rheaState = (rheaPoolId && !(event as any).intermediate_token)
+          let intermediateToken = (event as any).intermediate_token as string | undefined;
+          let intermediatePoolId = (event as any).intermediate_pool_id as number | undefined;
+
+          // Ensure Ref exchange storage registration and token whitelist registration
+          await ensureRefStorage();
+          await ensureRefTokenRegistered(targetToken);
+          if (intermediateToken) {
+            await ensureRefTokenRegistered(intermediateToken);
+          }
+
+          const rheaState = (rheaPoolId && !intermediateToken)
             ? null
             : await near.findRheaPoolForToken(targetToken).catch(() => null);
 
-          let intermediateToken = (event as any).intermediate_token || rheaState?.intermediateToken;
-          let intermediatePoolId = (event as any).intermediate_pool_id || rheaState?.intermediatePoolId;
+          intermediateToken = intermediateToken || rheaState?.intermediateToken;
+          intermediatePoolId = intermediatePoolId || rheaState?.intermediatePoolId;
+          if (intermediateToken) {
+            await ensureRefTokenRegistered(intermediateToken);
+          }
 
           if (rheaPoolId === null || rheaPoolId === undefined) {
             throw new Error(`No active Rhea liquidity pool found for token ${targetToken}.`);
