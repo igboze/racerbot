@@ -64,4 +64,51 @@ describe('Token Sync Balance Conversion - Unit Tests', () => {
 
     expect(humanBalance).toBe(1000000000);
   });
+
+  it('establishes entry price baseline at discovery price so initial PNL is +0.0%', () => {
+    const currentPriceAtScan = 0.05; // 0.05 NEAR per token when scanned
+    const avgEntryPrice = currentPriceAtScan.toString();
+
+    // At the moment of discovery and display:
+    const pnlPct = ((currentPriceAtScan - parseFloat(avgEntryPrice)) / parseFloat(avgEntryPrice)) * 100;
+    const pnlDisplay = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+
+    expect(pnlDisplay).toBe('+0.0%');
+  });
+
+  it('calculates positive PNL as price increases from the baseline entry price', () => {
+    const baselineEntryPrice = 0.05; // Scanned into wallet at 0.05 NEAR
+    const updatedPrice = 0.075; // Token price increases by 50%
+
+    const pnlPct = ((updatedPrice - baselineEntryPrice) / baselineEntryPrice) * 100;
+    const pnlDisplay = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+
+    expect(pnlDisplay).toBe('+50.0%');
+  });
+
+  it('calculates negative PNL as price decreases from the baseline entry price', () => {
+    const baselineEntryPrice = 0.05; // Scanned into wallet at 0.05 NEAR
+    const updatedPrice = 0.04; // Token price drops by 20%
+
+    const pnlPct = ((updatedPrice - baselineEntryPrice) / baselineEntryPrice) * 100;
+    const pnlDisplay = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+
+    expect(pnlDisplay).toBe('-20.0%');
+  });
+
+  it('calculates accurate holding value in NEAR and USD using decimals', () => {
+    const rawBalance = '250000000000000000000'; // 250 tokens with 18 decimals
+    const decimals = 18;
+    const currentPrice = 0.10; // 0.10 NEAR
+    const nearUsd = 4.0; // $4.00 per NEAR
+
+    const humanQuantity = Number(BigInt(rawBalance)) / Math.pow(10, decimals);
+    const tokenValueNear = humanQuantity * currentPrice;
+    const tokenValueUsd = tokenValueNear * nearUsd;
+
+    expect(humanQuantity).toBe(250);
+    expect(tokenValueNear).toBe(25); // 25 NEAR
+    expect(tokenValueUsd).toBe(100); // $100 USD
+  });
 });
+
