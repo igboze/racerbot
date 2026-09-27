@@ -882,95 +882,166 @@ export async function withdrawFunds(
 }
 
 /**
- * Detects external token deposits for a user's wallet subaccount.
- * When a user transfers or receives tokens not purchased directly via RacerBot,
- * this discovers them, fetches their current market price at this point in time,
- * and initializes an open position with that price as the avg_entry_price.
- * PNL calculation starts from that exact point onwards.
+ * Detects on-chain FT holdings for a user's wallet subaccount across indexers (FastNEAR & NearBlocks)
+ * and RPC. Catches all tokens inside the wallet, creates or updates positions, and initializes the
+ * entry price baseline for PNL calculation from the point of discovery.
  */
 export async function syncUserTokenDeposits(userId: string, subaccountId: string): Promise<number> {
   let newDepositsCount = 0;
   try {
-    // 1. Fetch all FT holdings for this subaccount via FastNEAR API
-    let contractIds: string[] = [];
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`https://api.fastnear.com/v1/account/${subaccountId}/ft`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const data = (await res.json()) as any;
-        if (Array.isArray(data.contract_ids)) {
-          contractIds = data.contract_ids;
-        } else if (Array.isArray(data.tokens)) {
-          contractIds = data.tokens.map((t: any) => t.contract_id || t);
+    const discoveredTokens = new Set<string>();
+    const indexerBalances = new Map<string, string>();
+
+    // 1. Fetch FT holdings across FastNEAR and NearBlocks in parallel
+    const fastnearPromise = (async () => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+        const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          if (Array.isArray(data.tokens)) {
+            for (const t of data.tokens) {
+              const cid = t?.contract_id || t;
+              if (typeof cid === 'string' && cid) {
+                discoveredTokens.add(cid);
+                if (t.balance) indexerBalances.set(cid, t.balance.toString());
+              }
+            }
+          } else if (Array.isArray(data.contract_ids)) {
+            for (const cid of data.contract_ids) {
+              if (typeof cid === 'string' && cid) discoveredTokens.add(cid);
+            }
+          }
         }
+      } catch {
+        // FastNEAR timeout/network error — fallback continues gracefully
       }
-    } catch {
-      // FastNEAR timeout/network error — fallback continues gracefully
+    })();
+
+    const nearblocksPromise = (async () => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(`https://api.nearblocks.io/v1/account/${subaccountId}/inventory`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          const fts = data?.inventory?.fts;
+          if (Array.isArray(fts)) {
+            for (const item of fts) {
+              const cid = item?.contract;
+              if (typeof cid === 'string' && cid) {
+                discoveredTokens.add(cid);
+                if (item.amount) indexerBalances.set(cid, item.amount.toString());
+              }
+            }
+          }
+        }
+      } catch {
+        // NearBlocks fallback continues gracefully
+      }
+    })();
+
+    // 2. Fetch existing open positions in DB
+    const [existingPositions] = await Promise.all([
+      getOpenPositions(userId).catch(() => []),
+      Promise.allSettled([fastnearPromise, nearblocksPromise]),
+    ]);
+
+    const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
+    for (const p of existingPositions) {
+      discoveredTokens.add(p.token_address);
     }
 
-    // 2. Fetch existing open positions
-    const existingPositions = await getOpenPositions(userId);
-    const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
+    // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token) and 'near'
+    discoveredTokens.delete('wrap.near');
+    discoveredTokens.delete('near');
 
-    // Check all tokens from FastNEAR + existing open positions in DB
-    const allTokensToCheck = Array.from(new Set([...contractIds, ...existingPositions.map(p => p.token_address)]));
+    const allTokensToCheck = Array.from(discoveredTokens);
+    if (allTokensToCheck.length === 0) {
+      return 0;
+    }
 
     const near = getNear();
-    for (const tokenAddress of allTokensToCheck) {
-      // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token)
-      if (tokenAddress === 'wrap.near' || tokenAddress === 'near') {
-        continue;
-      }
 
-      let rawBal = '0';
-      try {
-        rawBal = await near.getTokenBalance(tokenAddress, subaccountId);
-      } catch {
-        continue;
-      }
+    // 3. Fetch token balances and metadata in parallel
+    const [balanceResults, infoResults] = await Promise.all([
+      Promise.allSettled(
+        allTokensToCheck.map(async (tokenAddress) => {
+          try {
+            return await Promise.race([
+              near.getTokenBalance(tokenAddress, subaccountId),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+            ]);
+          } catch {
+            return indexerBalances.get(tokenAddress) || '0';
+          }
+        })
+      ),
+      Promise.allSettled(
+        allTokensToCheck.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
+      ),
+    ]);
 
-      const existing = posMap.get(tokenAddress);
-      const rawBalBigInt = BigInt(rawBal || '0');
+    for (let i = 0; i < allTokensToCheck.length; i++) {
+      const tokenAddress = allTokensToCheck[i];
+      const balRes = balanceResults[i];
+      const rawBal = balRes.status === 'fulfilled' ? balRes.value : (indexerBalances.get(tokenAddress) || '0');
+      const infoRes = infoResults[i];
+      const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
 
-      const info = await getTokenInfo(tokenAddress, false).catch(() => null);
       const decimals = info?.decimals ?? 18;
+      const rawBalBigInt = BigInt((rawBal || '0').split('.')[0] || '0');
       const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
       const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
 
+      const existing = posMap.get(tokenAddress);
+      const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
+
       if (existing) {
         if (isDustOrZero) {
-          // User sold or no longer holds the token — close the phantom position
+          // User sold or no longer holds the token — close the position
           await updatePosition({
             position_id: existing.id,
             status: 'closed',
             closed_at: new Date(),
           });
           console.log(`[DEPOSIT] Closed phantom/sold position for ${tokenAddress} (user ${userId})`);
-        } else if (existing.quantity_held !== rawBal) {
-          // Update quantity to actual on-chain raw balance
-          await updatePosition({
-            position_id: existing.id,
-            quantity_held: rawBal,
-          });
+        } else {
+          const updates: any = { position_id: existing.id };
+          let hasUpdates = false;
+
+          if (existing.quantity_held !== rawBal) {
+            updates.quantity_held = rawBal;
+            hasUpdates = true;
+          }
+
+          // If entry price wasn't established yet, baseline it now that price is available
+          if ((!existing.avg_entry_price || parseFloat(existing.avg_entry_price) <= 0) && currentPrice > 0) {
+            updates.avg_entry_price = currentPrice.toString();
+            hasUpdates = true;
+          }
+
+          if (hasUpdates) {
+            await updatePosition(updates);
+          }
         }
       } else if (!isDustOrZero) {
-        // Token received as external deposit!
-        // Start calculating PNL at that point: fetch market price at deposit discovery
-        const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
-        if (currentPrice === 0) {
-          console.warn(`[DEPOSIT] Skipping ${tokenAddress} - price is 0, cannot establish PNL baseline`);
-          continue;
-        }
+        // Token detected in wallet!
+        // Start calculating PNL at this discovery point: lock current market price as baseline entry price
+        const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
 
         const newPos = await createPosition({
           user_id: userId,
           token_address: tokenAddress,
           quantity_held: rawBal,
-          avg_entry_price: currentPrice.toString(),
+          avg_entry_price: entryPrice,
         });
 
         // Mark this position as an external deposit
@@ -981,7 +1052,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         );
 
         newDepositsCount++;
-        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${currentPrice}`);
+        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${entryPrice}`);
       }
     }
   } catch (err: any) {
