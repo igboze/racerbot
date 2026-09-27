@@ -2084,19 +2084,26 @@ export class MultiRpcNear {
             body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
             signal: AbortSignal.timeout(6000),
           });
-          
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-          }
-          
+
           const text = await res.text();
           if (!text || text.trim() === '') {
-            throw new Error('Empty response from RPC');
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
           }
-          
-          return JSON.parse(text);
+
+          let parsed: any;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+
+          // If HTTP returned error status and no JSON-RPC error payload was received, throw
+          if (!res.ok && !parsed?.error) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+
+          return parsed;
         } catch (err: any) {
-          // Enhanced error handling for parse errors
           if (err instanceof SyntaxError) {
             throw new Error(`Parse error: Invalid JSON response from ${providerUrl}`);
           }
@@ -2105,24 +2112,45 @@ export class MultiRpcNear {
       };
 
       try {
-        // First attempt: newer `tx` method with array params (NEAR node ≥ 1.30)
-        let data: any = await callRpc('tx', [txHash, accountId, 'EXECUTED_OPTIMISTIC']);
+        // First attempt: EXPERIMENTAL_tx_status with object params and wait_until: 'NONE'
+        // Non-blocking query returns immediately instead of holding connection open
+        let data: any = await callRpc('EXPERIMENTAL_tx_status', {
+          tx_hash: txHash,
+          sender_account_id: accountId,
+          wait_until: 'NONE',
+        });
 
-        // If provider doesn't know `tx`, fall back to EXPERIMENTAL_tx_status
+        // Fallback 1: If provider rejects object params with parse error, try 2-element array [txHash, accountId]
+        if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
+          data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
+        }
+
+        // Fallback 2: If provider doesn't support EXPERIMENTAL_tx_status (-32601), fall back to `tx`
         if (data?.error?.code === -32601) {
-          data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId, 'EXECUTED_OPTIMISTIC']);
+          data = await callRpc('tx', {
+            tx_hash: txHash,
+            sender_account_id: accountId,
+            wait_until: 'NONE',
+          });
+          if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
+            data = await callRpc('tx', [txHash, accountId]);
+          }
         }
 
         if (data?.error) {
           const code: number = data.error?.code ?? 0;
           const errName: string = data.error?.cause?.name ?? data.error?.name ?? data.error?.message ?? '';
+          const errMsg: string = data.error?.message ?? '';
+          const errData: string = typeof data.error?.data === 'string' ? data.error.data : JSON.stringify(data.error?.data ?? '');
+
           // Transient / "not yet indexed" conditions — return null to retry
           if (
             code === -32601 ||                         // method still not available
             errName.includes('TIMEOUT') ||
             errName.includes('HANDLER_ERROR') ||
             errName.includes('UNKNOWN_TRANSACTION') ||
-            errName.includes('does not exist') ||
+            errMsg.includes('does not exist') ||
+            errData.includes('does not exist') ||
             errName.includes('Parse error')           // Treat parse errors as transient
           ) {
             return null;
