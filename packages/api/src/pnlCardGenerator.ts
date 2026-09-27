@@ -64,7 +64,14 @@ export async function generatePNLCardData(positionId: string): Promise<PNLCardDa
       totalFeesPaid += fee;
     }
 
-    const quantityHeld = parseFloat(position.quantity_held || '0');
+    const decimals = tokenInfo?.decimals ?? 18;
+    let quantityHeld = 0;
+    try {
+      const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
+      quantityHeld = Number(rawBig) / Math.pow(10, decimals);
+    } catch {
+      quantityHeld = parseFloat(position.quantity_held || '0');
+    }
     const avgEntryPrice = parseFloat(position.avg_entry_price || '0');
 
     // If no buy fills exist or total investment is 0, use entry price as cost basis

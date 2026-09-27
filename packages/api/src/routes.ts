@@ -8,6 +8,7 @@ import {
   createTrigger,
   updateUserDefaults,
   updateUserSettings,
+  updatePosition,
   getDb,
   generateReferralCode,
   type UserRecord,
@@ -935,99 +936,192 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // ── menu_holdings — Token list with name/logo and % change ────────────────
-bot.action('menu_holdings', async (ctx) => {
-     const telegramId = ctx.from!.id;
-     try {
-       const user = await getUserByTelegramId(telegramId);
-       if (!user) {
-         await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-         return;
-       }
+  // ── Helper: Render & Display Holdings with Live Wallet Scan & PNL Baseline ───
+  async function handleHoldings(ctx: Context, isRefresh = false) {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        if (typeof (ctx as any).answerCbQuery === 'function') {
+          await (ctx as any).answerCbQuery('Please run /start first.').catch(() => {});
+        } else {
+          await ctx.reply('Please run /start first.').catch(() => {});
+        }
+        return;
+      }
 
+      if (typeof (ctx as any).answerCbQuery === 'function') {
+        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing & scanning wallet...' : '💼 Scanning wallet...').catch(() => {});
+      }
 
-       const positions = await getOpenPositions(user.id).catch(() => []);
-       if (positions.length === 0) {
-         await ctx.answerCbQuery('No holdings.').catch(() => {});
-         const keyboard = Markup.inlineKeyboard([
-           [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
-           [Markup.button.callback('🔙 Back', 'menu_home')],
-           [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
-           [
-             Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-             Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-             Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-           ],
-         ]);
-         await ctx.editMessageText('💼 *Holdings*\n\n📭 You currently have no token holdings.\n\nPaste a token CA into chat to start trading!', {
-           parse_mode: 'Markdown',
-           ...keyboard,
-         }).catch(() => {});
-         return;
-       }
+      // 1. Scan user's wallet address immediately to catch all tokens inside
+      await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
+        console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
+      });
 
-       await ctx.answerCbQuery().catch(() => {});
+      // 2. Fetch all open positions (including newly synced wallet deposits)
+      const positions = await getOpenPositions(user.id).catch(() => []);
 
-       // Fetch all token info in parallel with forceRefresh for live data
-       const infoResults = await Promise.allSettled(
-         positions.map(pos => getTokenInfo(pos.token_address, true))
-       );
-       const infoMap = new Map<string, TokenInfoResult | null>();
-       positions.forEach((pos, i) => {
-         const r = infoResults[i];
-         infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-       });
+      const emptyKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'menu_holdings')],
+        [Markup.button.callback('🔙 Back', 'menu_home')],
+        [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
 
-      let msg = "";
-       const buttons: any[] = [];
-       let totalPortfolioValueNear = 0;
-       let nearUsd = 4.3; // Default fallback
+      if (positions.length === 0) {
+        const emptyMsg =
+          '💼 *Holdings*\n\n' +
+          `👛 Wallet: \`${user.subaccount_id}\`\n\n` +
+          '📭 You currently have no token holdings in your wallet.\n\n' +
+          'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
 
-       for (const pos of positions) {
-         const info = infoMap.get(pos.token_address);
-         const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-         const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
-         const currentPrice = info ? parseFloat(info.price) : 0;
-         const quantityHeld = parseFloat(pos.quantity_held);
-         const tokenValue = currentPrice * quantityHeld;
-         totalPortfolioValueNear += tokenValue;
-         nearUsd = info?.near_usd || 4.3;
+        const canEdit = typeof (ctx as any).editMessageText === 'function';
+        if (canEdit) {
+          await (ctx as any).editMessageText(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(async () => {
+            await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
+          });
+        } else {
+          await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
+        }
+        return;
+      }
 
-         const pnlPct = currentPrice > 0 && parseFloat(pos.avg_entry_price) > 0
-           ? ((currentPrice - parseFloat(pos.avg_entry_price)) / parseFloat(pos.avg_entry_price) * 100).toFixed(1)
-           : 'N/A';
-         const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-         const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+      // 3. Fetch all token info in parallel with forceRefresh for live prices
+      const infoResults = await Promise.allSettled(
+        positions.map(pos => getTokenInfo(pos.token_address, true))
+      );
+      const infoMap = new Map<string, TokenInfoResult | null>();
+      positions.forEach((pos, i) => {
+        const r = infoResults[i];
+        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+      });
 
-         // Format USD value
-         const formatUSD = (nearValue: number) => {
-           const usdValue = nearValue * nearUsd;
-           if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
-           if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
-           return `$${usdValue.toFixed(4)}`;
-         };
+      // 4. Baseline entry price for newly detected tokens or unbaselined tokens so PNL calculation starts from here
+      for (const pos of positions) {
+        const info = infoMap.get(pos.token_address);
+        const currentPrice = info ? parseFloat(info.price) : 0;
+        const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+        if (entryPrice <= 0 && currentPrice > 0) {
+          pos.avg_entry_price = currentPrice.toString();
+          updatePosition({
+            position_id: pos.id,
+            avg_entry_price: currentPrice.toString(),
+          }).catch(() => {});
+        }
+      }
 
-         msg += `${emoji} *${displayLabel}*\n`;
-         msg += `  Qty: \`${quantityHeld.toFixed(4)}\`\n`;
-         msg += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
-         msg += `  Change: \`${pnlDisplay}\`\n\n`;
+      let totalPortfolioValueNear = 0;
+      let nearUsd = 4.3; // Default fallback
+      let holdingsListText = '';
+      const buttons: any[] = [];
 
-         buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
-       }
+      const formatUSD = (nearValue: number) => {
+        const usdValue = nearValue * nearUsd;
+        if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
+        if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
+        return `$${usdValue.toFixed(4)}`;
+      };
 
+      for (const pos of positions) {
+        const info = infoMap.get(pos.token_address);
+        const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
+        const displayLabel = info?.symbol ? symbol : pos.token_address.slice(0, 12) + '...';
+        const currentPrice = info ? parseFloat(info.price) : 0;
+        const decimals = info?.decimals ?? 18;
+        if (info?.near_usd) nearUsd = info.near_usd;
 
-       buttons.push([
-         Markup.button.callback('🔄 Refresh', 'menu_holdings'),
-         Markup.button.callback('🔙 Back', 'menu_home'),
+        let humanQuantity = 0;
+        try {
+          const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
+          humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+        } catch {
+          humanQuantity = parseFloat(pos.quantity_held) || 0;
+        }
+
+        const tokenValue = currentPrice * humanQuantity;
+        totalPortfolioValueNear += tokenValue;
+
+        const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+        let pnlDisplay = '+0.0%';
+        let emoji = '🟢';
+
+        if (currentPrice > 0 && entryPrice > 0) {
+          const pnlPctNum = ((currentPrice - entryPrice) / entryPrice) * 100;
+          emoji = pnlPctNum >= 0 ? '🟢' : '🔴';
+          pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
+        } else if (currentPrice > 0 && entryPrice <= 0) {
+          pnlDisplay = '+0.0%';
+          emoji = '🟢';
+        } else {
+          pnlDisplay = 'N/A';
+          emoji = '⚪';
+        }
+
+        const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
+
+        holdingsListText += `${emoji} *${displayLabel}*\n`;
+        holdingsListText += `  Qty: \`${formattedQty}\`\n`;
+        holdingsListText += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
+        if (entryPrice > 0) {
+          holdingsListText += `  Entry: \`${entryPrice.toFixed(6)} NEAR\`\n`;
+        }
+        if (currentPrice > 0) {
+          holdingsListText += `  Current: \`${currentPrice.toFixed(6)} NEAR\`\n`;
+        }
+        holdingsListText += `  Change: \`${pnlDisplay}\`\n`;
+        holdingsListText += `  CA: \`${pos.token_address}\`\n\n`;
+
+        buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+      }
+
+      const totalUsd = totalPortfolioValueNear * nearUsd;
+      const totalUsdDisplay = totalUsd >= 1000 ? `$${(totalUsd / 1000).toFixed(2)}K` : `$${totalUsd.toFixed(2)}`;
+
+      const msg =
+        `💼 *Holdings (${positions.length})*\n` +
+        `👛 Wallet: \`${user.subaccount_id}\`\n` +
+        `💰 Total: \`${totalPortfolioValueNear.toFixed(4)} NEAR\` (\`${totalUsdDisplay}\`)\n\n` +
+        holdingsListText;
+
+      buttons.push([
+        Markup.button.callback('🔄 Refresh', 'menu_holdings'),
+        Markup.button.callback('🔙 Back', 'menu_home'),
         Markup.button.callback('➕ Import Token', 'import_token_prompt'),
-       ]);
+      ]);
+      buttons.push([
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+      ]);
 
-       await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-     } catch (err: any) {
-       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-     }
-   });
+      const keyboard = Markup.inlineKeyboard(buttons);
+
+      const canEditMsg = typeof (ctx as any).editMessageText === 'function';
+      if (canEditMsg) {
+        await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+        });
+      } else {
+        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  }
+
+  // ── menu_holdings — Token list with name/logo and % change ────────────────
+  bot.action('menu_holdings', async (ctx) => {
+    await handleHoldings(ctx, true);
+  });
+
+  bot.command('holdings', async (ctx) => {
+    await handleHoldings(ctx, false);
+  });
 
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
   bot.action('import_token_prompt', async (ctx) => {
@@ -1066,7 +1160,16 @@ bot.action('menu_holdings', async (ctx) => {
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-      const entryPrice = parseFloat(position.avg_entry_price) || 0;
+      let entryPrice = parseFloat(position.avg_entry_price) || 0;
+      if (entryPrice <= 0 && currentPrice > 0) {
+        entryPrice = currentPrice;
+        position.avg_entry_price = currentPrice.toString();
+        updatePosition({
+          position_id: position.id,
+          avg_entry_price: currentPrice.toString(),
+        }).catch(() => {});
+      }
+
       const pnlPct = currentPrice > 0 && entryPrice > 0
         ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
         : 'N/A';
@@ -1108,12 +1211,22 @@ bot.action('menu_holdings', async (ctx) => {
         const fee = parseFloat(buy.fee_paid || '0');
         initialInvestment += (amount * price) + fee;
       }
-      const quantityHeldNum = parseFloat(position.quantity_held || '0');
-      if (initialInvestment === 0 && quantityHeldNum > 0) {
-        initialInvestment = quantityHeldNum * entryPrice;
+
+      const decimals = info?.decimals ?? 18;
+      let humanQuantity = 0;
+      try {
+        const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
+        humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+      } catch {
+        humanQuantity = parseFloat(position.quantity_held || '0');
       }
 
-      const holdingValueNear = quantityHeldNum * currentPrice;
+      if (initialInvestment === 0 && humanQuantity > 0) {
+        initialInvestment = humanQuantity * entryPrice;
+      }
+
+      const holdingValueNear = humanQuantity * currentPrice;
+      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
 
       let msg = `📊 *${symbol} Details*\n\n`;
       msg += `💰 *Price Info*:\n`;
@@ -1122,7 +1235,7 @@ bot.action('menu_holdings', async (ctx) => {
       msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
       msg += `📈 *Market Cap*: \`${marketCapDisplay}\`\n\n`;
       msg += `💼 *Position*:\n`;
-      msg += `  Holding: \`${position.quantity_held}\` (${formatDualValue(holdingValueNear)})\n`;
+      msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
       msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n\n`;
       msg += `🔗 *Contract Address*:\n`;
       msg += `  \`${position.token_address}\`\n`;
