@@ -137,7 +137,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         if (r.includes('no transaction was sent')) return 'Price moved beyond your slippage setting in the seconds before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
         if (r.includes('notenoughallowance') || r.includes('not enough allowance')) return 'Insufficient key allowance — please contact support.';
         if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum')) return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings.';
-        if (r.includes('insufficient') && r.includes('balanc')) return 'Insufficient balance for this trade.';
+        if (r.includes('refunded your input') || r.includes('swap produced no')) return 'Price moved or pool liquidity was too low — the DEX refunded your input. Try increasing slippage in ⚙️ Settings.';
+        if (r.includes('insufficient balance') || (r.includes('insufficient') && r.includes('wnear balance'))) return 'Insufficient balance for this trade.';
         if (r.includes('no pool') || r.includes('pool not found') || r.includes('no dcl pool')) return 'No liquidity pool found for this token. It may not yet be tradeable.';
         if (r.includes('prebonded')) return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
         if (r.includes('liquidity') && r.includes('insufficient')) return 'Pool liquidity too low to fill this order.';
