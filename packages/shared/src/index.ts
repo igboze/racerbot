@@ -116,3 +116,7 @@ export type { LaunchpadPool, LaunchpadConfig } from './launchpad.js';
 
 // Master key — accessed per-service from env, NOT exported as a constant
 // Use process.env.KEY_ENCRYPTION_MASTER_KEY in each service
+
+// Trade errors and log redaction
+export { TradeError, redactSecrets } from './errors.js';
+export type { TradeErrorCode, TradeErrorOptions } from './errors.js';

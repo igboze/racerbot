@@ -116,63 +116,53 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
     expect(near.tradeProviders[1].url).toBe(FN);
   });
 
-  it('view() fails over to QuickNode only when FastNEAR is unavailable', async () => {
+  // The view layer issues raw fetch() JSON-RPC calls (so the AbortSignal can
+  // actually cancel HTTP). Mock fetch and return call_function-shaped bodies.
+  function rpcResponse(value: any): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { result: Array.from(Buffer.from(JSON.stringify(value))), logs: [] },
+      }),
+      text: async () => '',
+    } as unknown as Response;
+  }
+
+  it('view() uses FastNEAR and never touches QuickNode when FastNEAR responds', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
-    // Force FastNEAR read providers into circuit-open state
-    for (const p of near.readProviders.filter((x: any) => !x.isQuickNode)) {
-      p.healthy = false;
-      p.circuitBreakerOpen = true;
-      p.circuitBreakerUntil = Date.now() + 60_000;
-    }
-    // Intercept at the connection layer to record which provider(s) were used
     const attempted: string[] = [];
-    near.getConnection = async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       attempted.push(url);
-      return {
-        account: async () => ({
-          viewFunction: async () => ({ ok: true }),
-        }),
-      };
-    };
+      return rpcResponse({ ok: true });
+    }));
+
     const result = await near.view('token.near', 'ft_metadata', {});
     expect(result).toEqual({ ok: true });
-    expect(attempted).toEqual([QN]); // FastNEAR excluded from the fan-out entirely
+    expect(attempted).toEqual([FN]); // single read provider, QuickNode untouched
 
-    // When FastNEAR is healthy again, QuickNode receives no read traffic
-    for (const p of near.readProviders) {
-      p.healthy = true;
-      p.circuitBreakerOpen = false;
-      p.circuitBreakerUntil = 0;
-    }
-    attempted.length = 0;
-    await near.view('token.near', 'ft_metadata', {});
-    expect(attempted).toEqual([FN]);
+    vi.unstubAllGlobals();
   });
 
-  it('view() immediately fails over to QuickNode if FastNEAR times out or errors during the call', async () => {
+  it('view() hedges to QuickNode when FastNEAR errors during the call', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
     const attempted: string[] = [];
-    near.getConnection = async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       attempted.push(url);
       if (url === FN) {
-        return {
-          account: async () => ({
-            viewFunction: async () => {
-              throw new Error('RPC timeout on ' + FN);
-            },
-          }),
-        };
+        // FastNEAR network-level failure → hedge fires immediately
+        throw new Error('fetch failed: ETIMEDOUT');
       }
-      return {
-        account: async () => ({
-          viewFunction: async () => ({ ok: true, source: 'quicknode' }),
-        }),
-      };
-    };
+      return rpcResponse({ ok: true, source: 'quicknode' });
+    }));
 
     const result = await near.view('token.near', 'ft_metadata', {});
     expect(result).toEqual({ ok: true, source: 'quicknode' });
     expect(attempted).toEqual([FN, QN]);
+
+    vi.unstubAllGlobals();
   });
 });
 

@@ -2,6 +2,7 @@ import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 
 import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider, getHealthyProviderCount, resetProviderState } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
+import { redactSecrets } from './errors.js';
 
 export interface NearConfig {
   rpcUrls: string[];
@@ -349,22 +350,138 @@ export class MultiRpcNear {
   }
 
   // ── Hedged-request constants ─────────────────────────────────────────────────
-  // Send to FastNEAR first. If no response within HEDGE_MS, also fan out to
-  // QuickNode — protecting its paid quota when FastNEAR answers fast. First
-  // success wins; the loser is aborted. Total hard cap = VIEW_TIMEOUT_MS.
+  // Send to FastNEAR immediately. If no reply within HEDGE_MS, also send to
+  // QuickNode. First success wins; the loser is aborted. Hard cap = VIEW_TIMEOUT_MS.
   private static readonly HEDGE_MS = 400;
   private static readonly VIEW_TIMEOUT_MS = 3000;
 
   /**
+   * True when the RPC error originates at the contract / chain layer.
+   * These errors should be returned immediately — hedging cannot help.
+   */
+  private static isContractError(msg: string): boolean {
+    const r = msg.toLowerCase();
+    return (
+      r.includes('wasm execution failed') ||
+      r.includes('functioncallerror') ||
+      r.includes('executionerror') ||
+      r.includes('smart_contract_panic') ||
+      r.includes('method not found') ||
+      r.includes('method panicked') ||
+      r.includes('unknown account') ||
+      r.includes('does not exist while viewing') ||
+      r.includes('panic occurred') ||
+      r.includes('wasm trap') ||
+      // Serialisation errors from passing wrong args to a known method
+      r.includes('failed to deserialize args')
+    );
+  }
+
+  /**
+   * True when the RPC error is a transient network/infra problem that may be
+   * solved by trying another provider.
+   */
+  private static isNetworkError(msg: string): boolean {
+    const r = msg.toLowerCase();
+    return (
+      r.includes('timeout') || r.includes('timed out') ||
+      r.includes('fetch') || r.includes('econn') ||
+      r.includes('etimedout') || r.includes('eai_again') ||
+      /\b50[0-4]\b/.test(r) || r.includes('socket hang up') ||
+      r.includes('429') || r.includes('-429') ||
+      r.includes('toomanyrequestserror') || r.includes('deprecated') ||
+      r.includes('rate limit')
+    );
+  }
+
+  /**
+   * Make a raw JSON-RPC view call using fetch() so the AbortSignal actually
+   * cancels the HTTP request.
+   *
+   * near-api-js's viewFunction does not accept an AbortSignal.  We replicate
+   * the call_function query manually, which is just:
+   *   POST <rpcUrl>  { jsonrpc:"2.0", id:1, method:"query",
+   *                    params:{ request_type:"call_function",
+   *                             finality:"optimistic",
+   *                             account_id, method_name, args_base64 } }
+   * The result.result field is a byte array we decode to JSON.
+   */
+  private async rawViewCall<T>(
+    provider: RPCProvider,
+    contractId: string,
+    methodName: string,
+    args: object,
+    signal: AbortSignal
+  ): Promise<T> {
+    if (signal.aborted) throw new Error(`Aborted before start: ${provider.url}`);
+
+    const start = Date.now();
+    const argsBase64 = Buffer.from(JSON.stringify(args)).toString('base64');
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'query',
+      params: {
+        request_type: 'call_function',
+        finality: 'optimistic',
+        account_id: contractId,
+        method_name: methodName,
+        args_base64: argsBase64,
+      },
+    });
+
+    let res: Response;
+    try {
+      res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body,
+        signal,
+      });
+    } catch (fetchErr: any) {
+      // Network-level error (including abort)
+      if (!signal.aborted && MultiRpcNear.isNetworkError(fetchErr?.message ?? '')) {
+        markProviderError(provider);
+      }
+      throw fetchErr;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      const err = new Error(redactSecrets(`HTTP ${res.status} from ${provider.url}: ${text}`));
+      if (MultiRpcNear.isNetworkError(err.message)) markProviderError(provider);
+      throw err;
+    }
+
+    const json = await res.json() as any;
+    if (json.error) {
+      const errMsg = json.error?.data ?? json.error?.message ?? JSON.stringify(json.error);
+      throw new Error(errMsg);
+    }
+
+    // result.result is a Vec<u8> — decode to JSON
+    const resultBytes: number[] | null = json?.result?.result;
+    if (!resultBytes || resultBytes.length === 0) {
+      // Contract returned empty bytes → treat as null
+      markProviderSuccess(provider, Date.now() - start);
+      return null as unknown as T;
+    }
+
+    const decoded = Buffer.from(resultBytes).toString('utf8');
+    markProviderSuccess(provider, Date.now() - start);
+    return JSON.parse(decoded) as T;
+  }
+
+  /**
    * Read-only view call — FastNEAR-first with hedged QuickNode fallback.
    *
-   * Duty split:
-   *   • FastNEAR is always attempted first (purpose-built for reads).
-   *   • If FastNEAR does not respond within HEDGE_MS (400 ms) the hedge fires
-   *     and QuickNode is also contacted — first success wins.
-   *   • The loser is aborted via AbortController, keeping QuickNode's paid
-   *     quota free when FastNEAR answers in time.
-   *   • Hard cap of VIEW_TIMEOUT_MS (3000 ms) regardless of provider.
+   * Semantics:
+   *   1. Send to ALL eligible FastNEAR providers immediately.
+   *   2. First success wins, abort all others.
+   *   3. If FastNEAR rejects (network error) before HEDGE_MS, launch QN immediately.
+   *      If still no success at HEDGE_MS, launch QN regardless.
+   *   4. Reject only when every started provider has failed OR the 3000 ms cap hits.
+   *   5. Contract-level errors (panic, unknown account) return at once — no hedge.
    *
    * Concurrent identical calls are coalesced: 50 users refreshing the same
    * token price at once produce ONE in-flight RPC, not 50.
@@ -391,105 +508,127 @@ export class MultiRpcNear {
     const HEDGE_MS = MultiRpcNear.HEDGE_MS;
     const VIEW_TIMEOUT_MS = MultiRpcNear.VIEW_TIMEOUT_MS;
 
-    // Call a set of providers (parallel race within the group, first success wins).
-    // Each provider gets its own AbortController so the loser can be cancelled.
-    const callProvider = async (provider: RPCProvider, signal: AbortSignal): Promise<T> => {
-      const start = Date.now();
-      try {
-        const near = await this.getConnection(provider.url);
-        const account = await near.account('');
-        // withTimeout enforces the cap; we also watch the AbortSignal.
-        const result = await withTimeout(
-          (async () => {
-            if (signal.aborted) throw new Error(`Aborted: ${provider.url}`);
-            return account.viewFunction({ contractId, methodName, args });
-          })(),
-          VIEW_TIMEOUT_MS,
-          `RPC timeout on ${provider.url}`
-        );
-        if (signal.aborted) throw new Error(`Aborted after response: ${provider.url}`);
-        markProviderSuccess(provider, Date.now() - start);
-        return result as T;
-      } catch (err: any) {
-        const msg = err?.message || '';
-        const isNetworkErr =
-          msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
-          msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
-          /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
-          msg.includes('429') || msg.includes('-429') ||
-          msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
-          msg.includes('Rate limit') || msg.includes('rate limit');
-        if (isNetworkErr && !signal.aborted) markProviderError(provider);
-        throw err;
-      }
-    };
-
-    // Pick the best available candidates from each group.
+    // Pick best candidates per group (fall back to all in group if none eligible).
     const fnTargets = eligible(fastnear).length > 0 ? eligible(fastnear) : fastnear;
     const qnTargets = eligible(quicknode).length > 0 ? eligible(quicknode) : quicknode;
 
-    // If NO FastNEAR provider is configured, go straight to QuickNode.
     if (fnTargets.length === 0 && qnTargets.length === 0) {
       throw new Error('No NEAR RPC providers configured');
     }
-    if (fnTargets.length === 0) {
-      // QuickNode-only path
-      const ctrl = new AbortController();
-      try {
-        return await withTimeout(
-          Promise.any(qnTargets.map(p => callProvider(p, ctrl.signal))),
-          VIEW_TIMEOUT_MS,
-          'All NEAR RPC providers timed out'
-        );
-      } finally {
-        ctrl.abort();
-      }
-    }
 
-    // ── Hedged request ────────────────────────────────────────────────────────
-    // Phase 1: send to FastNEAR immediately.
+    // Controllers for each group's HTTP requests.
     const fnCtrl = new AbortController();
     const qnCtrl = new AbortController();
 
-    const fnRace = Promise.any(fnTargets.map(p => callProvider(p, fnCtrl.signal)));
-
-    // Overall hard-cap promise.
-    let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
-    const hardCap = new Promise<never>((_, reject) => {
-      hardCapTimer = setTimeout(() => reject(new Error('NEAR RPC view hard cap exceeded (3000 ms)')), VIEW_TIMEOUT_MS);
-    });
-
-    // Phase 2 (hedge): after HEDGE_MS with no FastNEAR response, also send to
-    // QuickNode — keeping QuickNode out of the fan-out when FastNEAR is quick.
     let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
-    const qnRace: Promise<T> = qnTargets.length > 0
-      ? new Promise<T>((resolve, reject) => {
-          hedgeTimer = setTimeout(() => {
-            Promise.any(qnTargets.map(p => callProvider(p, qnCtrl.signal)))
-              .then(resolve, reject);
-          }, HEDGE_MS);
-        })
-      : new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('No QuickNode providers')), VIEW_TIMEOUT_MS)
-        );
+    let capTimer: ReturnType<typeof setTimeout> | null = null;
 
-    try {
-      // Whichever resolves first (FastNEAR direct, hedged QuickNode, or hard-cap)
-      const result = await Promise.race([fnRace, qnRace, hardCap]);
-      return result;
-    } catch (err: any) {
-      // All providers failed — surface the most useful error.
-      const msg = err?.message || String(err);
-      throw new Error(msg.includes('hard cap') || msg.includes('timed out')
-        ? msg
-        : (err?.errors?.[0]?.message ?? msg ?? 'All NEAR RPC providers failed'));
-    } finally {
-      if (hedgeTimer) clearTimeout(hedgeTimer);
-      if (hardCapTimer) clearTimeout(hardCapTimer);
-      // Abort whichever group didn't win (no-op if already settled).
-      fnCtrl.abort();
-      qnCtrl.abort();
-    }
+    // Track all in-flight provider promises so we know when every attempt has
+    // settled (for the "all failed" rejection path).
+    const allAttempts: Promise<{ ok: true; value: T } | { ok: false; err: any; contract: boolean }>[] = [];
+
+    // Wrap a raw call into a tagged result — never throws.
+    const tryProvider = (provider: RPCProvider, signal: AbortSignal) =>
+      this.rawViewCall<T>(provider, contractId, methodName, args, signal)
+        .then((v): { ok: true; value: T } => ({ ok: true, value: v }))
+        .catch((err): { ok: false; err: any; contract: boolean } => ({
+          ok: false,
+          err,
+          contract: MultiRpcNear.isContractError(err?.message ?? ''),
+        }));
+
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let started = 0;
+      let resolved = 0;
+
+      const finish = (value: T) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      const fail = (err: any) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      const cleanup = () => {
+        if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null; }
+        if (capTimer) { clearTimeout(capTimer); capTimer = null; }
+        fnCtrl.abort();
+        qnCtrl.abort();
+      };
+
+      // Called each time a provider attempt settles.
+      const onAttemptDone = (result: { ok: true; value: T } | { ok: false; err: any; contract: boolean }) => {
+        if (settled) return;
+        resolved++;
+
+        if (result.ok) {
+          finish(result.value);
+          return;
+        }
+
+        // Contract error → return immediately, no hedging can help.
+        if (result.contract) {
+          fail(result.err);
+          return;
+        }
+
+        // Network error on FastNEAR before HEDGE_MS → launch QN early.
+        if (!settled && qnTargets.length > 0 && hedgeTimer !== null) {
+          clearTimeout(hedgeTimer);
+          hedgeTimer = null;
+          launchQuickNode();
+        }
+
+        // If all started attempts have failed, reject.
+        if (resolved >= started && settled === false) {
+          fail(result.err ?? new Error('All NEAR RPC providers failed'));
+        }
+      };
+
+      const launchFastNear = () => {
+        for (const p of fnTargets) {
+          started++;
+          const attempt = tryProvider(p, fnCtrl.signal);
+          allAttempts.push(attempt);
+          attempt.then(onAttemptDone);
+        }
+      };
+
+      const launchQuickNode = () => {
+        for (const p of qnTargets) {
+          started++;
+          const attempt = tryProvider(p, qnCtrl.signal);
+          allAttempts.push(attempt);
+          attempt.then(onAttemptDone);
+        }
+      };
+
+      // Hard cap: reject regardless of in-flight state.
+      capTimer = setTimeout(() => {
+        fail(new Error('NEAR RPC view hard cap exceeded (3000 ms)'));
+      }, VIEW_TIMEOUT_MS);
+
+      if (fnTargets.length > 0) {
+        launchFastNear();
+        // Hedge: after HEDGE_MS with no response, also send to QN.
+        if (qnTargets.length > 0) {
+          hedgeTimer = setTimeout(() => {
+            hedgeTimer = null;
+            if (!settled) launchQuickNode();
+          }, HEDGE_MS);
+        }
+      } else {
+        // FastNEAR not configured — go straight to QuickNode.
+        launchQuickNode();
+      }
+    });
   }
 
   /**
@@ -2623,7 +2762,7 @@ export class MultiRpcNear {
         .map((r) => (r.status === 'rejected' ? (r.reason as Error).message : ''))
         .filter(Boolean)
         .join('; ');
-      throw new Error(`All NEAR RPC broadcast failed: ${errors}`);
+      throw new Error(redactSecrets(`All NEAR RPC broadcast failed: ${errors}`));
     }
 
     const broadcastMs = Date.now() - tStart;
@@ -2881,7 +3020,7 @@ export class MultiRpcNear {
       await sleep(250); // Fast confirmation polling (FastNEAR indexer races alongside)
     }
 
-    const errMsg = lastErr ? `: ${(lastErr as any).message}` : '';
+    const errMsg = lastErr ? `: ${redactSecrets((lastErr as any).message ?? String(lastErr))}` : '';
     throw new Error(
       `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`
     );
