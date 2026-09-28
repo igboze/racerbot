@@ -1168,7 +1168,7 @@ export function setupRoutes(bot: Telegraf): void {
         holdingsListText += `  Change: \`${pnlDisplay}\`\n`;
         holdingsListText += `  CA: \`${pos.token_address}\`\n\n`;
 
-        buttons.push([Markup.button.callback(`${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+        buttons.push([Markup.button.callback(`${emoji} ${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
       }
 
       // Add remaining positions value to total portfolio
