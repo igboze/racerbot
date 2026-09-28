@@ -253,9 +253,19 @@ export class SwapExecutor {
     const totalSpend = amountInBigInt; // === feeAmount + swapAmount by construction
     const DEPOSIT_BUFFER = BigInt('10000000000000000000000'); // 0.01 NEAR stale-read headroom
     const shortfallWithBuffer = totalSpend + DEPOSIT_BUFFER - wNearBal;
-    const depositNeeded = shortfallWithBuffer <= 0n ? 0n
+    let depositNeeded = shortfallWithBuffer <= 0n ? 0n
       : shortfallWithBuffer > totalSpend ? totalSpend
       : shortfallWithBuffer;
+
+    // Check if account is registered for storage on wrap.near.
+    // If not registered, wrap.near automatically deducts its 0.00125 NEAR storage registration fee
+    // from the near_deposit attached deposit. To avoid a 0.00125 wNEAR shortfall on ft_transfer_call,
+    // add this fee to depositNeeded when depositNeeded > 0.
+    const WRAP_NEAR_STORAGE_FEE = BigInt('1250000000000000000000'); // 0.00125 NEAR
+    const isWrapRegistered = await this.nearClient.checkStorageRegistered?.(subaccountId, 'wrap.near').catch(() => false) ?? true;
+    if (!isWrapRegistered && depositNeeded > 0n) {
+      depositNeeded += WRAP_NEAR_STORAGE_FEE;
+    }
 
     const actions: any[] = [];
     if (depositNeeded > 0n) {
@@ -425,6 +435,60 @@ export class SwapExecutor {
       ?? (await getUserById(user_id).catch(() => null))?.slippage_pct
       ?? 2;
 
+    // Pre-flight balance check: verify the account has sufficient native balance before burning gas or broadcasting
+    const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
+    if (isBuyPath) {
+      const nativeBalStr = await this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null;
+      if (nativeBalStr !== null && nativeBalStr !== undefined) {
+        const nativeBal = BigInt(nativeBalStr);
+        const wNearBalStr = await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
+        const wNearBal = BigInt(wNearBalStr || '0');
+        const amountInBigInt = BigInt(amount_in);
+        // Required native NEAR if existing wNEAR balance does not cover amount_in
+        const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
+        // 0.025 NEAR reserve for gas, storage deposits, and account baseline
+        const MIN_RESERVE = BigInt('25000000000000000000000');
+        const totalNearRequired = nearNeededForSwap + MIN_RESERVE;
+        if (nativeBal < totalNearRequired) {
+          const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
+          const requiredNear = (Number(totalNearRequired) / 1e24).toFixed(4);
+          throw new Error(
+            `Insufficient balance. You have ${availableNear} NEAR available. Need at least ${requiredNear} NEAR (including gas & storage reserve). Please deposit NEAR to your wallet before trading.`
+          );
+        }
+      }
+    } else {
+      const [tokenBalStr, nativeBalStr] = await Promise.all([
+        this.nearClient.getTokenBalance(token_in, subaccountId).catch(() => null),
+        this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
+      ]);
+
+      if (tokenBalStr !== null && tokenBalStr !== undefined) {
+        const tokenBal = BigInt(tokenBalStr);
+        const amountInBigInt = BigInt(amount_in);
+        if (tokenBal < amountInBigInt) {
+          const tokenMeta = await this.nearClient.getTokenMetadata(token_in).catch(() => ({ symbol: 'tokens', decimals: 24 }));
+          const decimals = tokenMeta.decimals || 24;
+          const available = (Number(tokenBal) / Math.pow(10, decimals)).toFixed(4);
+          const required = (Number(amountInBigInt) / Math.pow(10, decimals)).toFixed(4);
+          throw new Error(
+            `Insufficient token balance. You have ${available} ${tokenMeta.symbol || 'tokens'} available, but tried to sell ${required}.`
+          );
+        }
+      }
+
+      if (nativeBalStr !== null && nativeBalStr !== undefined) {
+        const nativeBal = BigInt(nativeBalStr);
+        const MIN_SELL_GAS_RESERVE = BigInt('10000000000000000000000'); // 0.01 NEAR
+        if (nativeBal < MIN_SELL_GAS_RESERVE) {
+          const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
+          throw new Error(
+            `Insufficient NEAR for gas fees. Your wallet only has ${availableNear} NEAR. Need at least 0.0100 NEAR to cover transaction gas.`
+          );
+        }
+      }
+    }
+
     // Helper to sign and send with distributed per-account lock.
     // Records stage timings: presign (everything before signing incl. quote),
     // sign (lock + sign + broadcast), post (on-chain confirmation + fill).
@@ -514,7 +578,6 @@ export class SwapExecutor {
     // 1.5% fee = 150 bps
     const feeAmount = (amountInBigInt * 150n) / 10000n;
     const swapAmount = amountInBigInt - feeAmount;
-    const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
 
     if (isBuyPath && swapAmount <= 0n) {
       throw new Error(`Amount too small after fee: ${amount_in}`);
@@ -610,8 +673,11 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
       if (isBuy) {
-        // Ensure storage for token_out
-        await ensureStorage(token_out);
+        // Ensure storage for wrap.near and token_out
+        await Promise.all([
+          ensureStorage('wrap.near'),
+          ensureStorage(token_out),
+        ]);
 
         // Also ensure storage for the quote asset when it's non-NEAR (so hop1 output can land)
         if (!ntState.quoteIsNear) {
@@ -941,7 +1007,10 @@ export class SwapExecutor {
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
           if (isBuy) {
             const [, actions] = await Promise.all([
-              ensureStorage(token_out),
+              Promise.all([
+                ensureStorage('wrap.near'),
+                ensureStorage(token_out),
+              ]),
               this.buildWrapNearBuyActions(
                 subaccountId,
                 amountInBigInt,
