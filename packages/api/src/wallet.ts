@@ -87,7 +87,7 @@ export async function warmTokenInfoCache(): Promise<void> {
         tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(row.venue ?? 'unknown'),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
-      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 60000 });
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
       warmed++;
     }
     console.log(`[API] Token cache warmed: ${warmed} tokens pre-loaded from DB.`);
@@ -205,10 +205,22 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
 }
 
 /**
- * Get token info with 30s in-memory TTL cache.
+ * Get token info with a short in-memory TTL cache.
  * Fetches ft_metadata + pool reserves from Shardsmarket, Rhea, NearlyTrade, or other known launchpads.
  * Never returns hardcoded data.
+ *
+ * Freshness contract (volatile meme tokens move 30%+ in seconds):
+ *  - In-memory cache: 15s max.
+ *  - DB token_cache (written by the detector): accepted only when <15s old,
+ *    and re-cached in memory only for the row's REMAINING freshness — a stale
+ *    row must never start a fresh cache window.
+ *  - forceRefresh skips BOTH caches and always reads live pool state. Before
+ *    this, forceRefresh only skipped the in-memory cache, so holdings/PNL
+ *    views could show prices up to ~2 minutes old (150k mcap shown at 200k).
  */
+const TOKEN_INFO_MEM_TTL_MS = 15_000;
+const TOKEN_INFO_DB_MAX_AGE_MS = 15_000;
+
 export async function getTokenInfo(tokenAddress: string, forceRefresh = false): Promise<TokenInfoResult> {
   if (!forceRefresh) {
     const cached = tokenInfoCache.get(tokenAddress);
@@ -220,12 +232,15 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   // Fetch NEAR/USD price in parallel (non-blocking, uses cache if fresh)
   const nearUsdPromise = getNearUsdPrice();
 
-  // Check DB cache first (written by detector — may be fresh enough if price > 0)
+  // Always read the DB row (metadata + pool IDs are stable topology, reused
+  // below), but only ACCEPT its cached price when it's <15s old — and never
+  // on forceRefresh: callers asking for live data get live pool reads.
   const dbCache = await getTokenCache(tokenAddress).catch(() => null);
   if (
+    !forceRefresh &&
     dbCache &&
     dbCache.updated_at &&
-    Date.now() - dbCache.updated_at.getTime() < 60000 &&
+    Date.now() - dbCache.updated_at.getTime() < TOKEN_INFO_DB_MAX_AGE_MS &&
     Number(dbCache.last_price || 0) > 0
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
@@ -255,7 +270,10 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
       tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(dbCache.venue ?? 'unknown'),
     };
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
+    // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
+    // 3s, not a fresh window. Stale data must never renew itself.
+    const remainingFreshMs = Math.max(2_000, TOKEN_INFO_DB_MAX_AGE_MS - (Date.now() - dbCache.updated_at.getTime()));
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + remainingFreshMs });
     return result;
   }
 
@@ -518,7 +536,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     tradeable,
   };
 
-  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 60000 });
+  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
 
   // Async DB update (non-blocking)
   setImmediate(() =>
