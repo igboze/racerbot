@@ -2744,9 +2744,15 @@ export class MultiRpcNear {
   ): Promise<any> {
     const tStart = Date.now();
     const account = await this.getAccount(accountId);
+    const allProviderUrls = this.tradeProviders.map(p => p.url);
+
     // signTransaction is protected on Account — sign via the same code path
     // near-api-js uses internally (returns [txHash, signedTx]).
+    // ALWAYS clear accessKeyByPublicKeyCache before signing to guarantee
+    // a fresh on-chain nonce query from RPC. Never trust an incremented
+    // in-memory nonce across potentially dropped or retried transactions!
     const signOnce = async (): Promise<{ hash: string; signedB64: string }> => {
+      (account as any).accessKeyByPublicKeyCache = {};
       const [txHash, signedTx] = await withTimeout<any[]>(
         (account as any).signTransaction(receiverId, actions),
         8_000,
@@ -2758,58 +2764,62 @@ export class MultiRpcNear {
       };
     };
 
-    let signed = await signOnce();
-    let broadcastErr: Error | null = null;
+    let signed: { hash: string; signedB64: string };
     try {
-      await this.broadcastSigned(signed.signedB64);
-    } catch (err) {
-      broadcastErr = err as Error;
-    }
-
-    // Stale cached access-key nonce → the single RPC rejected the nonce.
-    // Clear it, re-sign with a fresh nonce and rebroadcast exactly once
-    // to the SAME endpoint (a nonce refresh, not an RPC fallback).
-    if (broadcastErr && /nonce/i.test(broadcastErr.message ?? '')) {
-      (account as any).accessKeyByPublicKeyCache = {};
       signed = await signOnce();
-      broadcastErr = null;
       try {
+        await this.broadcastToAll(signed.signedB64);
+      } catch (err: any) {
         await this.broadcastSigned(signed.signedB64);
-      } catch (err) {
-        broadcastErr = err as Error;
       }
-    }
 
-    if (broadcastErr) {
-      throw new Error(redactSecrets(`Trade broadcast failed: ${broadcastErr.message}`));
-    }
+      const broadcastMs = Date.now() - tStart;
+      const seen = { everSeen: false };
+      // Phase 1: Fan-out poll across all trade providers (QuickNode + FastNEAR)
+      const firstWindow = Math.min(15_000, Math.max(5_000, waitForMs - 15_000));
+      let outcome: any;
+      try {
+        outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
+      } catch (firstErr: any) {
+        if (!firstErr?.neverSeen) throw firstErr;
 
-    const broadcastMs = Date.now() - tStart;
-    // Two-phase confirm with an idempotent rescue: mempool admission can
-    // silently drop a structurally valid tx (congestion, relay hiccup) —
-    // observed in production as swaps vanishing while storage txs landed.
-    // Rebroadcasting the SAME signed bytes is safe: same hash, no double-spend.
-    const seen = { everSeen: false };
-    const firstWindow = Math.min(12_000, Math.max(5_000, waitForMs - 10_000));
-    let outcome: any;
-    try {
-      outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen);
-    } catch (firstErr: any) {
-      if (!firstErr?.neverSeen) throw firstErr;
-      // The pinned RPC may have dropped the tx. Fan-out to ALL trade providers
-      // so at least one node has it, then poll all of them in the second window.
-      console.warn(`[NEAR] tx ${signed.hash} not visible after ${firstWindow}ms — fan-out rebroadcast to all providers`);
-      await this.broadcastToAll(signed.signedB64);
-      const allProviderUrls = this.tradeProviders.map(p => p.url);
-      outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs - firstWindow, seen, allProviderUrls);
+        // Phase 2: If the transaction was never seen anywhere after firstWindow,
+        // it was dropped by the mempool (congestion / relay drop).
+        // Clear nonce cache, re-fetch true on-chain nonce from RPC, re-sign, and broadcast fresh.
+        console.warn(`[NEAR] tx ${signed.hash} never seen on any provider after ${firstWindow}ms — re-signing with fresh nonce`);
+        (account as any).accessKeyByPublicKeyCache = {};
+        let freshSigned: { hash: string; signedB64: string };
+        try {
+          freshSigned = await signOnce();
+        } catch {
+          // If re-signing fails, rethrow the original neverSeen error
+          throw firstErr;
+        }
+
+        console.warn(`[NEAR] re-signed fresh tx hash=${freshSigned.hash} — broadcasting to all providers`);
+        try {
+          await this.broadcastToAll(freshSigned.signedB64);
+        } catch {
+          await this.broadcastSigned(freshSigned.signedB64);
+        }
+
+        const seen2 = { everSeen: false };
+        const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
+        outcome = await this.awaitOutcome(freshSigned.hash, accountId, remainingMs, seen2, allProviderUrls);
+      }
+
+      // Perf instrumentation for trade_attempts timings (click→quote→sign→
+      // broadcast→confirm). Attached non-enumerably-safe plain fields.
+      outcome.__perf = {
+        broadcastMs,
+        confirmMs: Date.now() - tStart,
+      };
+      return outcome;
+    } finally {
+      // Invariant: always wipe access key nonce cache when leaving signAndSendTransactionAll,
+      // so no subsequent trade attempt ever uses a stale or gapped in-memory nonce.
+      (account as any).accessKeyByPublicKeyCache = {};
     }
-    // Perf instrumentation for trade_attempts timings (click→quote→sign→
-    // broadcast→confirm). Attached non-enumerably-safe plain fields.
-    outcome.__perf = {
-      broadcastMs,
-      confirmMs: Date.now() - tStart,
-    };
-    return outcome;
   }
 
   /** Broadcast signed bytes to the single pinned trade RPC. No fallback. */
@@ -2913,15 +2923,16 @@ export class MultiRpcNear {
     const tryRpc = async (providerUrl: string): Promise<any | null> => {
       const callRpc = async (method: string, params: any): Promise<any | null> => {
         try {
+          const provider = this.tradeProviders.find(p => p.url === providerUrl);
+          const headers = provider?.headers ?? { 'Content-Type': 'application/json' };
           const res = await fetch(providerUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
             signal: AbortSignal.timeout(6000),
           });
 
           if (res.status === 429) {
-            const provider = this.tradeProviders.find(p => p.url === providerUrl);
             if (provider) markProviderError(provider);
             return null;
           }

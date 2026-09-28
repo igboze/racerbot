@@ -155,6 +155,7 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
   const depositNear = (Number(deposit) / 1e24).toFixed(2);
 
   console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit (${depositNear} NEAR)...`);
+  clearAccessKeyCache(accountId);
 
   const attemptRefDeposit = async (windowMs: number): Promise<'ok' | 'already' | 'never_seen' | Error> => {
     try {
@@ -178,6 +179,7 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
   let result = await attemptRefDeposit(45_000);
 
   if (result === 'ok' || result === 'already') {
+    clearAccessKeyCache(accountId);
     refTracker.confirmStorage(accountId);
     return;
   }
@@ -216,40 +218,11 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
 
 /**
  * Check if a token is whitelisted on Ref Finance before trading.
- * If not whitelisted, call register_tokens on v2.ref-finance.near with 1 yoctoNEAR.
- * A token is cached as confirmed ONLY when whitelisted or the register_tokens
- * transaction succeeded — a failed registration is never cached as success.
+ * Swaps on Ref Finance (v2.ref-finance.near and dclv2.ref-labs.near) execute via ft_transfer_call
+ * with force: 0, which directly transfers output tokens to the user without requiring register_tokens.
  */
 export async function ensureRefTokenRegistered(tokenAddress: string, accountId?: string): Promise<void> {
-  if (tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
-  if (refTracker.isTokenConfirmed(tokenAddress)) return;
-
-  try {
-    const whitelisted = await near.getWhitelistedTokens();
-    if (whitelisted.includes(tokenAddress)) {
-      refTracker.confirmToken(tokenAddress);
-      return;
-    }
-
-    if (!accountId) return;
-
-    const hasKey = await near.hasKey(accountId);
-    if (!hasKey) return;
-
-    console.log(`[EXECUTOR] Token ${tokenAddress} is not whitelisted on Ref Finance. Submitting register_tokens...`);
-    await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
-      transactions.functionCall(
-        'register_tokens',
-        { token_ids: [tokenAddress] },
-        BigInt('30000000000000'),
-        BigInt('1') // 1 yoctoNEAR
-      ),
-    ], 15_000);
-    refTracker.confirmToken(tokenAddress);
-  } catch (err: any) {
-    // Do NOT cache the failure — a later trade must retry registration.
-    console.warn(`[EXECUTOR] Error registering token ${tokenAddress} on Ref:`, err?.message);
-  }
+  return;
 }
 
 // ── Swap execution ────────────────────────────────────────────────────────────
@@ -1119,7 +1092,6 @@ export class SwapExecutor {
               return typeof rheaPoolId === 'number' ? rheaPoolId : null;
             })(),
             ensureRefStorage(subaccountId),
-            ensureRefTokenRegistered(targetToken, subaccountId),
             !isBuy ? ensureStorage(token_in) : Promise.resolve(),
             !isBuy ? ensureStorage('wrap.near') : Promise.resolve(),
           ]);
@@ -1134,11 +1106,8 @@ export class SwapExecutor {
 
           intermediateToken = intermediateToken || rheaState?.intermediateToken;
           intermediatePoolId = intermediatePoolId || rheaState?.intermediatePoolId;
-          if (intermediateToken) {
-            await Promise.all([
-              ensureRefTokenRegistered(intermediateToken, subaccountId),
-              isBuy ? ensureStorage(intermediateToken) : Promise.resolve(),
-            ]);
+          if (intermediateToken && isBuy) {
+            await ensureStorage(intermediateToken);
           }
 
           if (rheaPoolId === null || rheaPoolId === undefined) {
