@@ -18,6 +18,8 @@ import {
   onboardUser,
   rotateUserKey,
   getUserBalances,
+  getTradeSpendableNear,
+  getRefStorageDepositNeeded,
   unwrapUserWrapNear,
   withdrawFunds,
   syncUserTokenDeposits,
@@ -25,6 +27,7 @@ import {
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
+import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -45,6 +48,41 @@ interface PendingAction {
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
+
+// ── SPEED: trade-path prewarm ────────────────────────────────────────────────
+// Fires (fire-and-forget) when a token card is shown: resolves pool ids,
+// ensures output-token storage for the user, ensures Ref whitelist
+// registration, and warms the whitelist cache — so the first tap on Buy
+// reaches signing in milliseconds instead of doing all of this serially.
+async function prewarmTradePath(telegramId: number, tokenAddress: string): Promise<void> {
+  try {
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+    if (!info || !info.tradeable) return;
+
+    const venue = info.venue;
+    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
+
+    const jobs: Promise<unknown>[] = [
+      near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch(() => {}),
+    ];
+    if (rheaLike) {
+      jobs.push(
+        near.findRheaPoolForToken(tokenAddress).catch(() => null),
+        near.findDclPoolId('wrap.near', tokenAddress).catch(() => null),
+        near.getWhitelistedTokens().catch(() => []),
+        (async () => {
+          const { ensureRefTokenRegistered } = await import('@racerbot/executor');
+          await ensureRefTokenRegistered(tokenAddress, user.subaccount_id);
+        })().catch(() => {}),
+      );
+    }
+    await Promise.all(jobs);
+  } catch {
+    // Prewarm is best-effort — never block or error the card.
+  }
+}
 
 // ── Helper: Safe Markdown string sanitization ────────────────────────────────
 function sanitizeMd(str: string): string {
@@ -679,6 +717,7 @@ export function buildSettingsDashboard(user: UserRecord) {
 // ── User-Friendly Error Messages ────────────────────────────────────────
 function getUserFriendlyError(error: Error | string): string {
   const errorMsg = typeof error === 'string' ? error : (error.message || String(error));
+  console.error('[USER_ERROR]', errorMsg);
   const r = errorMsg.toLowerCase();
 
   // ── Wallet / balance ────────────────────────────────────────────────
@@ -731,6 +770,16 @@ function getUserFriendlyError(error: Error | string): string {
     return 'Price moved beyond your slippage setting in the seconds before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
   if (r.includes('swap failed'))
     return errorMsg.slice(0, 280);
+
+  // ── Pending / slow confirmation (do NOT advise immediate blind retry) ───
+  if (r.includes('not confirmed within') || r.includes('taking too long') || r.includes('outcome is unknown')) {
+    return 'Transaction was submitted but confirmation is taking longer than usual. Please check your wallet balance or NearBlocks before retrying to avoid duplicate trades.';
+  }
+
+  // ── Distributed Lock Contention & Timeout ──────────────────────────────
+  if (r.includes('another transaction is already in progress') || r.includes('wallet lock') || r.includes('contention')) {
+    return 'Another transaction is already in progress for this wallet — please wait a moment and try again.';
+  }
 
   // ── NEAR Protocol / RPC errors ───────────────────────────────────────
   if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum'))
@@ -811,20 +860,30 @@ async function executeBuyHelper(
     throw new Error('Minimum buy amount is 0.001 NEAR.');
   }
 
-  // FIX 3: Reuse the cached balance instead of a direct RPC hit.
-  // getUserBalances has its own 8s in-memory cache in wallet.ts.
-  // The balance returned includes both spendable native NEAR and wNEAR.
+  // SPEED: lightweight trade balance — spendable native NEAR only, no USD
+  // price feed, no wNEAR read (5s TTL cache).
   let balanceNear = 0;
   try {
-    const balances = await getUserBalances(telegramId);
-    balanceNear = parseFloat(balances.nativeNearFormatted);
+    balanceNear = await getTradeSpendableNear(telegramId);
   } catch (err: any) {
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  // Check balance including 0.025 NEAR reserve for gas and token storage deposit
-  if (balanceNear < amountNear + 0.025) {
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + 0.025).toFixed(4)} NEAR (including gas & storage deposit reserve). Fees are deducted from your swap amount.`);
+  // FIX 2: when the user's Ref Finance storage is not yet registered, the
+  // one-time deposit must be included in the insufficient-balance check so
+  // the user gets a clear message BEFORE any transaction is attempted
+  // (the on-chain deposit sends real NEAR; the old 0.025 reserve did not
+  // cover the 0.1 NEAR deposit).
+  const refDepositNeeded = await getRefStorageDepositNeeded(user.subaccount_id);
+  const refDepositNear = Number(refDepositNeeded) / 1e24;
+  const reserveNear = 0.025 + refDepositNear;
+
+  // Check balance including gas reserve and the one-time Ref storage deposit
+  if (balanceNear < amountNear + reserveNear) {
+    const refLine = refDepositNear > 0
+      ? ` This includes a one-time ${refDepositNear.toFixed(2)} NEAR Ref Finance registration deposit for your wallet.`
+      : '';
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + reserveNear).toFixed(4)} NEAR (including gas & storage reserve).${refLine} Fees are deducted from your swap amount.`);
   }
 
   // Use cached token info to execute immediately without redundant RPC round-trips
@@ -841,7 +900,12 @@ async function executeBuyHelper(
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
-    throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
+    // NearlyTrade: tokens can be tradable even while still in the bonding range
+    // (step=Done, pool Running), so only block when there's truly no pool yet.
+    if (venue !== 'nearlytrade') {
+      throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
+    }
+    // For nearlytrade, let the executor resolve whether the pool is live.
   }
 
   const near = getNear();
@@ -857,6 +921,7 @@ async function executeBuyHelper(
   const swapAmountYocto = (amountInBigInt - feeAmountBigInt).toString();
 
   onProgress?.('quote');
+  const quoteStartedAt = Date.now();
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     'wrap.near',
@@ -877,6 +942,7 @@ async function executeBuyHelper(
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
+    quoted_at: quoteStartedAt, // executor skips its second quote while < 2s old
   }, onProgress);
 
   if (swapResult.success === false) {
@@ -919,10 +985,8 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
-  // getUserBalances has an 8s TTL cache — avoids a live RPC call on every button tap.
-  // The balance returned includes both spendable native NEAR and wNEAR.
-  const balances = await getUserBalances(telegramId);
-  const balanceNear = parseFloat(balances.nativeNearFormatted);
+  // Lightweight trade balance: spendable native NEAR only, no USD feed (5s TTL).
+  const balanceNear = await getTradeSpendableNear(telegramId);
 
   // Retain 0.025 NEAR reserve for gas and token storage deposit
   const usableBalance = Math.max(0, balanceNear - 0.025);
@@ -1496,84 +1560,99 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^sell_initial:(.+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const telegramId = ctx.from!.id;
-    let procMsg: any = null;
-    try {
-      const user = await getUserByTelegramId(telegramId);
-      if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-        return;
-      }
 
-      await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
-      procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
-      const onStage = makeStageEditor(ctx, procMsg, 'Processing Sell Initial Order');
-      const positions = await getOpenPositions(user.id).catch(() => []);
-      const position = positions.find(p => p.id === positionId);
-      if (!position) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply('Position not found.').catch(() => {});
-        return;
-      }
-
-      const fills = await getFillsByPosition(positionId).catch(() => []);
-      const buys = fills.filter(f => f.side === 'buy');
-
-      if (buys.length === 0) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply('No buy history found for this position.').catch(() => {});
-        return;
-      }
-
-      // Calculate total initial investment across ALL buy fills (not just first)
-      // Include fees paid to get accurate total NEAR invested
-      let totalInitialInvestment = 0;
-      for (const buy of buys) {
-        const amount = parseFloat(buy.amount);
-        const price = parseFloat(buy.price);
-        const fee = parseFloat(buy.fee_paid || '0');
-        totalInitialInvestment += (amount * price) + fee;
-      }
-
-      // Fetch current market price from token info (not avg_entry_price)
-      const tokenInfo = await getTokenInfo(position.token_address, true).catch(() => null);
-      const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-
-      if (currentPrice === 0) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
-        return;
-      }
-
-      const currentHeld = parseFloat(position.quantity_held);
-      if (currentHeld === 0) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply('No tokens held in this position.').catch(() => {});
-        return;
-      }
-
-      // Calculate percentage needed to sell to recover initial investment
-      const currentValue = currentHeld * currentPrice;
-      const sellPercentage = (totalInitialInvestment / currentValue) * 100;
-      const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
-
-      const result = await sellAtTarget(user.id, positionId, adjustedPercentage, onStage);
-
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-      if (result.success) {
-        await sendPnlCardMessage(
-          ctx,
-          positionId,
-          `✅ *Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).*`
-        );
-      } else {
-        await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
-      }
-    } catch (err: any) {
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-      console.error('[SELL_INITIAL] Error:', err);
-      await ctx.reply('Error processing sell. Please try again.').catch(() => {});
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
     }
+    const position = await getPositionById(positionId).catch(() => null);
+    if (!position || position.user_id !== user.id) {
+      await ctx.answerCbQuery('Position not found.').catch(() => {});
+      return;
+    }
+    const tokenAddress = position.token_address;
+
+    const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
+
+    (async () => {
+      let procMsg: any = null;
+      try {
+        procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
+        const onStage = makeStageEditor(ctx, procMsg, 'Processing Sell Initial Order');
+        const positions = await getOpenPositions(user.id).catch(() => []);
+        const livePosition = positions.find(p => p.id === positionId) ?? position;
+        const fills = await getFillsByPosition(positionId).catch(() => []);
+        const buys = fills.filter(f => f.side === 'buy');
+
+        if (buys.length === 0) {
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await ctx.reply('No buy history found for this position.').catch(() => {});
+          return;
+        }
+
+        // Calculate total initial investment across ALL buy fills (not just first)
+        // Include fees paid to get accurate total NEAR invested
+        let totalInitialInvestment = 0;
+        for (const buy of buys) {
+          const amount = parseFloat(buy.amount);
+          const price = parseFloat(buy.price);
+          const fee = parseFloat(buy.fee_paid || '0');
+          totalInitialInvestment += (amount * price) + fee;
+        }
+
+        // Fetch current market price from token info (not avg_entry_price)
+        const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
+        const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+
+        if (currentPrice === 0) {
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
+          return;
+        }
+
+        const currentHeld = parseFloat(livePosition.quantity_held);
+        if (currentHeld === 0) {
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await ctx.reply('No tokens held in this position.').catch(() => {});
+          return;
+        }
+
+        // Calculate percentage needed to sell to recover initial investment
+        const currentValue = currentHeld * currentPrice;
+        const sellPercentage = (totalInitialInvestment / currentValue) * 100;
+        const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
+
+        const result = await sellAtTarget(user.id, positionId, adjustedPercentage, onStage);
+
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+        if (result.success) {
+          await sendPnlCardMessage(
+            ctx,
+            positionId,
+            `✅ *Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).*`
+          ).catch(() => {});
+        } else {
+          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+        }
+      } catch (err: any) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        console.error('[SELL_INITIAL] Error:', err);
+        await ctx.reply('Error processing sell. Please try again.').catch(() => {});
+      } finally {
+        releaseInFlight(guardKey);
+      }
+    })().catch((err: any) => {
+      releaseInFlight(guardKey);
+      console.error('[SELL_INITIAL] Unhandled detached error:', err?.message || err);
+      ctx.reply('Error processing sell. Please try again.').catch(() => {});
+    });
   });
 
   // ── menu_positions — Redirect to holdings for backwards compatibility ───────
@@ -1941,51 +2020,84 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── 1-Click Buy Inline Handlers ───────────────────────────────────────────
   // Fixed NEAR amount buy: buy_fixed:<token>:<amount>
+  //
+  // FIX 4: the handler answers the callback + posts "Processing", then runs
+  // the trade DETACHED. It never awaits the trade, so the webhook response is
+  // released immediately (Telegram cannot time out and resend the update) and
+  // the detached body always sends a final success or error message.
   bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountNear} NEAR...`).catch(() => {});
-    const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-    const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
-
-    try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-      await ctx.reply(res.message, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
-      });
-    } catch (err: any) {
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    // In-flight guard: reject a duplicate tap while a trade for this token is running.
+    const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      return;
     }
+    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountNear} NEAR...`).catch(() => {});
+
+    (async () => {
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
+      try {
+        const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+        await ctx.reply(res.message, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+        });
+      } catch (err: any) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      } finally {
+        releaseInFlight(guardKey);
+      }
+    })().catch((err: any) => {
+      // Last-resort net: the body above always sends a final message; if it
+      // itself crashed (e.g. Telegram API down), still release the guard.
+      releaseInFlight(guardKey);
+      console.error('[BUY] Unhandled detached buy error:', err?.message || err);
+    });
   });
 
   // Percentage buy: buy_pct:<token>:<pct> or legacy buy:<token>:<pct>
+  // Same detached + in-flight-guard structure as buy_fixed.
   bot.action(/^(?:buy_pct|buy):(.+):(\d+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
-    const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-    const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
-
-    try {
-      const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-      await ctx.reply(res.message, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
-      });
-    } catch (err: any) {
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      return;
     }
+    await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
+
+    (async () => {
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
+      try {
+        const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+        await ctx.reply(res.message, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+        });
+      } catch (err: any) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      } finally {
+        releaseInFlight(guardKey);
+      }
+    })().catch((err: any) => {
+      releaseInFlight(guardKey);
+      console.error('[BUY] Unhandled detached pct-buy error:', err?.message || err);
+    });
   });
 
   // Custom buy prompt button
@@ -2022,6 +2134,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (amountNear <= 0) {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
+        prewarmTradePath(telegramId, tokenAddress).catch(() => {});
         await sendTokenCard(ctx, card);
       } catch {
         await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
@@ -2029,20 +2142,33 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
-    const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-    const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
-    try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-      await ctx.reply(res.message, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
-      });
-    } catch (err: any) {
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      return;
     }
+
+    (async () => {
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
+      try {
+        const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+        await ctx.reply(res.message, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+        });
+      } catch (err: any) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      } finally {
+        releaseInFlight(guardKey);
+      }
+    })().catch((err: any) => {
+      releaseInFlight(guardKey);
+      console.error('[BUY] Unhandled detached /buy error:', err?.message || err);
+    });
   });
 
   // ── /sell — Quick-sell open positions ─────────────────────────────────────
@@ -2103,7 +2229,9 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // Sell inline button handler
+  // Sell inline button handler — detached + in-flight guard.
+  // The guard key resolves the position's token address up front so the key
+  // stays telegramId + tokenAddress + side as everywhere else.
   bot.action(/^sell:([^:]+):(\d+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
@@ -2111,24 +2239,44 @@ export function setupRoutes(bot: Telegraf): void {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
+    const position = await getPositionById(positionId).catch(() => null);
+    if (!position || position.user_id !== user.id) {
+      await ctx.answerCbQuery('Position not found.').catch(() => {});
+      return;
+    }
+    const tokenAddress = position.token_address;
+
+    const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      return;
+    }
     await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
-    const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-    const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
 
-    let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
-    try {
-      result = await sellAtTarget(user.id, positionId, pct, onStage);
-    } catch (err: any) {
-      result = { success: false, reason: err.message || 'Swap execution failed' };
-    } finally {
-      if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-    }
+    (async () => {
+      const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
 
-    if (result.success) {
-      await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`);
-    } else {
-      await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
-    }
+      let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
+      try {
+        result = await sellAtTarget(user.id, positionId, pct, onStage);
+      } catch (err: any) {
+        result = { success: false, reason: err.message || 'Swap execution failed' };
+      } finally {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        releaseInFlight(guardKey);
+      }
+
+      if (result.success) {
+        await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`).catch(() => {});
+      } else {
+        await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+      }
+    })().catch((err: any) => {
+      releaseInFlight(guardKey);
+      console.error('[SELL] Unhandled detached sell error:', err?.message || err);
+      ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => {});
+    });
   });
 
   // ── /positions & /pnl ─────────────────────────────────────────────────────
@@ -2521,25 +2669,39 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply('❌ Invalid amount. Buy cancelled.');
           return;
         }
-        const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} NEAR\` for \`${pending.tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-        const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
-        try {
-          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt, onStage);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-          await ctx.reply(res.message, {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${pending.tokenAddress}`)]] },
-          });
-        } catch (err: any) {
-          console.warn(`[BUY] Buy failed for ${pending.tokenAddress}:`, err?.message || err);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          try {
-            await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-          } catch {
-            console.error(`[BUY] Failed to send error message for ${pending.tokenAddress}:`, err?.message || err);
-          }
+        const tokenAddress = pending.tokenAddress;
+        const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+        if (!tryAcquireInFlight(guardKey)) {
+          await ctx.reply('⏳ A trade for this token is already in progress.');
+          return;
         }
+
+        (async () => {
+          const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+          const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
+          try {
+            const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+            await ctx.reply(res.message, {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+            });
+          } catch (err: any) {
+            console.warn(`[BUY] Buy failed for ${tokenAddress}:`, err?.message || err);
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            try {
+              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+            } catch {
+              console.error(`[BUY] Failed to send error message for ${tokenAddress}:`, err?.message || err);
+            }
+          } finally {
+            releaseInFlight(guardKey);
+          }
+        })().catch((err: any) => {
+          releaseInFlight(guardKey);
+          console.error('[BUY] Unhandled detached custom-buy error:', err?.message || err);
+        });
         return; // Always return after handling custom buy
       }
 
@@ -2768,6 +2930,10 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      // SPEED: prewarm the trade path (storage / Ref registration / pool-id
+      // caches) while the user reads the card. Never blocks the card.
+      prewarmTradePath(telegramId, potentialCA.trim()).catch(() => {});
+
       if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
       await sendTokenCard(ctx, card);
       return;
@@ -2778,6 +2944,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (tokenEntry) {
       try {
         const card = await buildTokenCard(tokenEntry.address, telegramId);
+        prewarmTradePath(telegramId, tokenEntry.address).catch(() => {});
         await sendTokenCard(ctx, card);
         return;
       } catch { /* no-op */ }

@@ -1,5 +1,5 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
-import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider, getHealthyProviderCount } from './rpc.js';
+import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider, getHealthyProviderCount, resetProviderState } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 
@@ -33,6 +33,11 @@ const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
 const noRheaPoolCache = new Map<string, number>();
+// Permanent cache for quote-asset decimals (decimals never change after launch).
+const quoteDecimalsCache = new Map<string, number>();
+// 10-second cache for the NEAR-denominated price of a quote asset.
+const quoteNearPriceCache = new Map<string, { at: number; rate: number }>();
+const QUOTE_NEAR_PRICE_TTL_MS = 10_000;
 
 let cachedRefPools: { fromIndex: number; pools: any[] }[] | null = null;
 let lastRefPoolsFetch = 0;
@@ -180,6 +185,7 @@ export class MultiRpcNear {
   private connections: Map<string, Near> = new Map();
   private accountCache: Map<string, Account> = new Map();
   private nonceCacheRefreshInterval: NodeJS.Timeout | null = null;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
   private currentIndex = 0;
   // Coalescing: identical in-flight view calls share one request
   private inflightViews = new Map<string, Promise<any>>();
@@ -373,40 +379,67 @@ export class MultiRpcNear {
     const fastnear = this.readProviders.filter(p => !p.isQuickNode);
     const quicknode = this.readProviders.filter(p => p.isQuickNode);
 
-    let candidates = eligible(fastnear);
-    if (candidates.length === 0) candidates = eligible(quicknode);
-    if (candidates.length === 0) candidates = this.readProviders;
+    const callProviders = async (providers: RPCProvider[], timeoutMs: number): Promise<T> => {
+      const targets = eligible(providers).length > 0 ? eligible(providers) : providers;
+      if (targets.length === 0) throw new Error('No NEAR RPC providers available');
 
-    if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
+      return Promise.any(
+        targets.map(async (provider) => {
+          const start = Date.now();
+          try {
+            const near = await this.getConnection(provider.url);
+            const account = await near.account('');
+            const result = await withTimeout(
+              account.viewFunction({ contractId, methodName, args }),
+              timeoutMs,
+              `RPC timeout on ${provider.url}`
+            );
+            markProviderSuccess(provider, Date.now() - start);
+            return result as T;
+          } catch (err: any) {
+            const msg = err?.message || '';
+            const isNetworkErr =
+              msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
+              msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
+              /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
+              msg.includes('429') || msg.includes('-429') ||
+              msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
+              msg.includes('Rate limit') || msg.includes('rate limit');
+            if (isNetworkErr) markProviderError(provider);
+            throw err;
+          }
+        })
+      );
+    };
 
-    // Try the duty-split candidates in parallel, return first successful result immediately
-    return Promise.any(
-      candidates.map(async (provider) => {
-        const start = Date.now();
-        try {
-          const near = await this.getConnection(provider.url);
-          const account = await near.account('');
-          const result = await withTimeout(
-            account.viewFunction({ contractId, methodName, args }),
-            2000, // Reduced from 4s to 2s for faster failover
-            `RPC timeout on ${provider.url}`
-          );
-          markProviderSuccess(provider, Date.now() - start);
-          return result as T;
-        } catch (err: any) {
-          const msg = err?.message || '';
-          const isNetworkErr =
-            msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
-            msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
-            /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
-            msg.includes('429') || msg.includes('-429') ||
-            msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
-            msg.includes('Rate limit') || msg.includes('rate limit');
-          if (isNetworkErr) markProviderError(provider);
-          throw err;
+    const eligibleFastnear = eligible(fastnear);
+    const eligibleQuicknode = eligible(quicknode);
+
+    // If FastNEAR is healthy, attempt it first (duty split: protects QuickNode quota).
+    if (eligibleFastnear.length > 0) {
+      try {
+        return await callProviders(eligibleFastnear, 3500);
+      } catch (fastnearErr: any) {
+        // FastNEAR failed or timed out — failover to QuickNode immediately instead of throwing
+        const fallback = eligibleQuicknode.length > 0 ? eligibleQuicknode : quicknode;
+        if (fallback.length > 0) {
+          try {
+            return await callProviders(fallback, 4000);
+          } catch (qnErr: any) {
+            const err = qnErr?.errors?.[0] || qnErr || fastnearErr;
+            throw (err ?? new Error('All NEAR RPC providers failed'));
+          }
         }
-      })
-    ).catch((aggregateErr) => {
+        const err = fastnearErr?.errors?.[0] || fastnearErr;
+        throw (err ?? new Error('FastNEAR failed and no fallback RPC configured'));
+      }
+    }
+
+    // FastNEAR is unhealthy or not configured — use QuickNode directly
+    const directTargets = eligibleQuicknode.length > 0 ? eligibleQuicknode : this.readProviders;
+    if (directTargets.length === 0) throw new Error('No NEAR RPC providers configured');
+
+    return callProviders(directTargets, 4000).catch((aggregateErr) => {
       const err = aggregateErr?.errors?.[0] || aggregateErr;
       throw (err ?? new Error('All NEAR RPC providers failed'));
     });
@@ -462,16 +495,34 @@ export class MultiRpcNear {
   }
 
   /**
-   * Pre-flight health check to ensure at least 2 healthy providers before trading.
-   * Throws if insufficient healthy providers are available.
+   * Pre-flight health check before trading.
+   *
+   * The gate requires min(2, configured) healthy providers, never less than 1 —
+   * with a single configured RPC the old ">= 2" rule blocked every trade.
+   * When no provider is healthy, do NOT throw: reset the circuit breakers and
+   * let the attempt go through. A failed attempt is better than a blocked one,
+   * because trades are gated before any broadcast can record a success, so a
+   * thrown gate would never recover by itself (health checks only run in the
+   * detector process).
    */
   checkTradeProviders(): void {
+    const configured = this.tradeProviders.length;
+    if (configured === 0) {
+      throw new Error('No NEAR RPC trade providers configured');
+    }
+    const required = Math.max(1, Math.min(2, configured));
     const healthyCount = getHealthyProviderCount(this.tradeProviders);
-    if (healthyCount < 2) {
-      throw new Error(
-        `Insufficient healthy RPC providers for trading: ${healthyCount} available, minimum 2 required. ` +
-        `This may cause trade failures. Please check provider health.`
+    if (healthyCount < required) {
+      const snapshot = this.tradeProviders
+        .map(p => `${p.name}: healthy=${p.healthy} circuitOpen=${p.circuitBreakerOpen}`)
+        .join(', ');
+      console.warn(
+        `[RPC] Trade provider gate: ${healthyCount}/${configured} healthy (need ${required}). ` +
+        `Resetting circuit breakers and attempting the trade anyway. [${snapshot}]`
       );
+      for (const p of this.tradeProviders) {
+        resetProviderState(p);
+      }
     }
   }
 
@@ -600,7 +651,7 @@ export class MultiRpcNear {
       candidates.map(async (provider) => {
         const near = await this.getConnection(provider.url);
         const account = await near.account(accountId);
-        const state = await withTimeout<any>(account.state(), 2500, `RPC timeout on ${provider.url}`);
+        const state = await withTimeout<any>(account.state(), 4500, `RPC timeout on ${provider.url}`);
         return state.amount as string;
       })
     ).catch((aggregateErr) => {
@@ -651,7 +702,7 @@ export class MultiRpcNear {
           BigInt('30000000000000'),
           deposit
         ),
-      ]);
+      ], 15_000);
       registeredCache.add(cacheKey);
     } catch (err) {
       const errorMessage = (err as Error).message?.toLowerCase() || '';
@@ -674,7 +725,7 @@ export class MultiRpcNear {
             BigInt('30000000000000'),
             deposit
           ),
-        ]);
+        ], 15_000);
         registeredCache.add(cacheKey);
       } catch (err2) {
         const error2Message = (err2 as Error).message?.toLowerCase() || '';
@@ -1090,8 +1141,17 @@ export class MultiRpcNear {
   /**
     * Check if a token is whitelisted on the Ref Finance exchange (no extra storage deposit needed).
     */
+  private whitelistedTokensCache: { at: number; tokens: string[] } | null = null;
+
   async getWhitelistedTokens(): Promise<string[]> {
-    return this.view<string[]>('v2.ref-finance.near', 'get_whitelisted_tokens', {}).catch(() => []);
+    // 5-minute TTL: this view is on the hot trade path (ensureRefTokenRegistered)
+    // and prewarm — it must not be a live RPC call on every tap.
+    if (this.whitelistedTokensCache && Date.now() - this.whitelistedTokensCache.at < 300_000) {
+      return this.whitelistedTokensCache.tokens;
+    }
+    const tokens = await this.view<string[]>('v2.ref-finance.near', 'get_whitelisted_tokens', {}).catch(() => []);
+    this.whitelistedTokensCache = { at: Date.now(), tokens };
+    return tokens;
   }
 
   /**
@@ -1481,6 +1541,16 @@ export class MultiRpcNear {
     reserveNear: string;
     reserveToken: string;
     totalSupply: string;
+    /** The quote asset AccountId (the token paired with the launch token). */
+    quote: string;
+    /** Number of decimals for the quote asset. */
+    quoteDecimals: number;
+    /** True when the quote asset is wNEAR / native NEAR. */
+    quoteIsNear: boolean;
+    /** True when step === 'Done' and the DCL pool state is Running. */
+    live: boolean;
+    /** True when the price cannot be converted to NEAR (no wrap.near<->quote pool). */
+    priceUnavailable?: boolean;
   }> {
     // The launch record, token metadata and total supply are effectively
     // static once a token is created, but a single buy used to fetch them
@@ -1525,6 +1595,44 @@ export class MultiRpcNear {
       throw new Error(`DCL pool ${launch.pool_id} not found on dclv2.ref-labs.near`);
     }
 
+    // ── Determine quote asset ──────────────────────────────────────────────
+    // Older records may lack a quote field; treat as wNEAR in that case.
+    let quote: string = 'wrap.near';
+    if (launch.quote && launch.quote !== 'wrap.near' && launch.quote !== 'near') {
+      quote = launch.quote;
+    } else {
+      // Derive from pool_id if quote field is absent: pool_id = "tokenA|tokenB|fee"
+      const parts = (launch.pool_id as string).split('|');
+      if (parts.length >= 2) {
+        const otherSide = parts[0] === tokenAddress ? parts[1] : parts[0];
+        if (otherSide && otherSide !== tokenAddress) quote = otherSide;
+      }
+    }
+    const quoteIsNear = quote === 'wrap.near' || quote === 'near';
+
+    // ── Resolve quote decimals (cached permanently per quote address) ───────
+    let quoteDecimals: number;
+    if (quoteIsNear) {
+      quoteDecimals = 24;
+    } else if (quoteDecimalsCache.has(quote)) {
+      quoteDecimals = quoteDecimalsCache.get(quote)!;
+    } else {
+      try {
+        // Prefer get_quote on nearlytrade.near (returns { decimals, native, enabled, ... })
+        const quoteInfo = await this.view<any>('nearlytrade.near', 'get_quote', { quote }).catch(() => null);
+        if (quoteInfo && typeof quoteInfo.decimals === 'number') {
+          quoteDecimals = quoteInfo.decimals;
+        } else {
+          // Fallback: ft_metadata on the quote token itself
+          const quoteMeta = await this.getTokenMetadata(quote).catch(() => null);
+          quoteDecimals = quoteMeta?.decimals ?? 18;
+        }
+      } catch {
+        quoteDecimals = 18;
+      }
+      quoteDecimalsCache.set(quote, quoteDecimals);
+    }
+
     const leftPoint = Number(launch.left_point);
     const rightPoint = Number(launch.right_point);
     const currentPoint = Number(pool.current_point);
@@ -1532,27 +1640,75 @@ export class MultiRpcNear {
     const offset = currentPoint - leftPoint;
     const progressPct = span > 0 ? Math.min(100, Math.max(0, (offset / span) * 100)) : 100;
 
+    const live = launch.step === 'Done' && pool.state === 'Running';
     const isBonded = launch.step === 'Done' && (progressPct >= 100 || pool.state !== 'Running');
     const bondingPhase: 'prebonded' | 'bonded' = isBonded ? 'bonded' : 'prebonded';
 
     const isTokenX = launch.token_is_x !== false;
     const reserveToken = isTokenX ? pool.total_x : pool.total_y;
-    const reserveNear = isTokenX ? pool.total_y : pool.total_x;
+    // reserveQuote is the quote-asset side of the pool (in raw quote units)
+    const reserveQuote = isTokenX ? pool.total_y : pool.total_x;
 
     const tokenDecimals = meta?.decimals ?? 18;
-    let price = 0;
+
+    // ── Spot price in quote units (= price of the launch token in the quote asset) ──
+    let priceInQuote = 0;
     if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
-      // In Ref DCL, 1.0001^current_point gives raw price of token_x in token_y base units.
-      // Normalize by token decimals (wrap.near has 24 decimals).
+      // 1.0001^point = raw price of token_x in token_y units.
+      // Multiply by 10^(tokenDecimals - quoteDecimals) to get human-readable ratio.
       if (isTokenX) {
-        price = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - 24);
+        priceInQuote = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - quoteDecimals);
       } else {
-        price = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - 24);
+        priceInQuote = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - quoteDecimals);
       }
     }
 
-    const reserveNearNum = parseFloat(reserveNear || '0') / 1e24;
-    const liquidityNear = reserveNearNum * 2;
+    // ── Convert quote-side reserves and price to NEAR ───────────────────────
+    let quoteNearRate = 1; // quote units to NEAR
+    let priceUnavailable = false;
+    if (!quoteIsNear) {
+      const cached = quoteNearPriceCache.get(quote);
+      if (cached && Date.now() - cached.at < QUOTE_NEAR_PRICE_TTL_MS) {
+        quoteNearRate = cached.rate;
+      } else {
+        try {
+          quoteNearRate = await this.getQuoteNearPrice(quote, quoteDecimals);
+          quoteNearPriceCache.set(quote, { at: Date.now(), rate: quoteNearRate });
+        } catch {
+          // No wrap.near<->quote pool found — cannot express value in NEAR.
+          priceUnavailable = true;
+          quoteNearRate = 0;
+          quoteNearPriceCache.set(quote, { at: Date.now(), rate: 0 });
+        }
+      }
+      if (quoteNearRate === 0) priceUnavailable = true;
+    }
+
+    const price = priceUnavailable ? 0 : priceInQuote * quoteNearRate;
+    let reserveNearConverted = '0';
+    if (!priceUnavailable) {
+      if (quoteIsNear) {
+        reserveNearConverted = reserveQuote || '0';
+      } else {
+        try {
+          const rateBigIntTimes1e6 = BigInt(Math.round(quoteNearRate * 1e6));
+          const rawQuote = BigInt(reserveQuote || '0');
+          const scale = 24 - quoteDecimals;
+          let yocto = (rawQuote * rateBigIntTimes1e6) / 1000000n;
+          if (scale > 0) {
+            yocto = yocto * (10n ** BigInt(scale));
+          } else if (scale < 0) {
+            yocto = yocto / (10n ** BigInt(-scale));
+          }
+          reserveNearConverted = yocto.toString();
+        } catch {
+          reserveNearConverted = '0';
+        }
+      }
+    }
+    const reserveQuoteNum = parseFloat(reserveQuote || '0') / Math.pow(10, quoteDecimals);
+    const liquidityNear = priceUnavailable ? 0 : reserveQuoteNum * quoteNearRate * 2;
+
     const totalSupply = supplyOnChain && supplyOnChain !== '0' ? supplyOnChain : (launch.total_supply || '0');
 
     return {
@@ -1564,10 +1720,75 @@ export class MultiRpcNear {
       bonding_progress_pct: Number(progressPct.toFixed(2)),
       price,
       liquidityNear,
-      reserveNear: reserveNear || '0',
+      reserveNear: reserveNearConverted,
       reserveToken: reserveToken || '0',
       totalSupply,
+      quote,
+      quoteDecimals,
+      quoteIsNear,
+      live,
+      ...(priceUnavailable ? { priceUnavailable: true } : {}),
     };
+  }
+
+  /**
+   * Returns the price of one human-readable unit of `quoteToken` in NEAR.
+   * Searches for a wrap.near <-> quoteToken pool via DCL first, then Ref AMM.
+   * Throws when no pool is found.
+   */
+  private async getQuoteNearPrice(quoteToken: string, quoteDecimals: number): Promise<number> {
+    // 1. Try DCL pool on dclv2.ref-labs.near
+    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
+    if (dclId) {
+      try {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0) return st.price; // st.price = NEAR per token
+      } catch { /* try Ref */ }
+    }
+    // 2. Try Ref AMM (v2.ref-finance.near)
+    const refId = await this.findRheaPoolId('wrap.near', quoteToken).catch(() => null);
+    if (refId !== null && refId !== undefined) {
+      const rh = await this.getRheaPoolReserves(refId, 'wrap.near', quoteToken).catch(() => null);
+      if (rh) {
+        const nearHuman = parseFloat(rh.reserveIn) / 1e24;
+        const quoteHuman = parseFloat(rh.reserveOut) / Math.pow(10, quoteDecimals);
+        if (quoteHuman > 0) return nearHuman / quoteHuman;
+      }
+    }
+    throw new Error(`No wrap.near<->${quoteToken} pool found`);
+  }
+
+  /**
+   * Plan the routing for a NearlyTrade token trade from/to wNEAR.
+   * Returns { kind: 'direct' } when the quote is wNEAR.
+   * Returns { kind: 'multihop', quote, launchPoolId, hop1 } otherwise.
+   * Throws if no wrap.near<->quote pool exists.
+   */
+  async planNearlytradeRoute(tokenAddress: string): Promise<
+    | { kind: 'direct'; launchPoolId: string; quote: 'wrap.near' }
+    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string } }
+  > {
+    const st = await this.getNearlytradeTokenState(tokenAddress);
+    const launchPoolId = st.pool_id;
+
+    if (st.quoteIsNear) {
+      return { kind: 'direct', launchPoolId, quote: 'wrap.near' };
+    }
+
+    const quote = st.quote;
+    // Prefer DCL pool for hop1
+    const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    if (dclHop) {
+      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: dclHop } };
+    }
+    // Fallback: Ref v2 AMM pool
+    const refHop = await this.findRheaPoolId('wrap.near', quote).catch(() => null);
+    if (refHop !== null && refHop !== undefined) {
+      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'v2', poolId: String(refHop) } };
+    }
+    throw new Error(
+      `Token ${tokenAddress} is paired with ${quote}. No NEAR route to ${quote} was found, so it cannot be traded from NEAR.`
+    );
   }
 
   /**
@@ -1888,7 +2109,7 @@ export class MultiRpcNear {
 
       throw new Error(`No active liquidity pool found for token ${outToken} on Rhea / Ref Finance.`);
     } else if (venue === 'nearlytrade') {
-      const targetToken = tokenIn === 'wrap.near' ? tokenOut : tokenIn;
+      const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
       let state;
       try {
         state = await this.getNearlytradeTokenState(targetToken);
@@ -1897,7 +2118,6 @@ export class MultiRpcNear {
         try {
           const rheaPoolId = await this.findRheaPoolId(tokenIn, tokenOut);
           if (rheaPoolId) {
-            // Use Rhea pool calculation
             const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
             const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
             const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
@@ -1922,6 +2142,94 @@ export class MultiRpcNear {
       const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
       const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
 
+      // ── Multi-hop quoting for non-NEAR quote assets ──────────────────────
+      if (!state.quoteIsNear) {
+        const isBuyDirection = inToken === 'wrap.near';
+        const launchPoolId = state.dclPoolId;
+
+        // For a non-NEAR quote, quote each hop separately and chain outputs.
+        // We cannot rely on multi-pool atomic quoting on dclv2.ref-labs.near
+        // (not verified to accept 2 pool_ids in the quote view).
+        try {
+          const route = await this.planNearlytradeRoute(targetToken);
+          if (route.kind === 'multihop') {
+            if (isBuyDirection) {
+              // Hop 1: wNEAR → quote
+              let hop1Out: string;
+              if (route.hop1.type === 'dcl') {
+                const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                  pool_ids: [route.hop1.poolId],
+                  input_token: 'wrap.near',
+                  output_token: route.quote,
+                  input_amount: amountIn,
+                });
+                hop1Out = q1?.amount || '0';
+              } else {
+                const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+                  pool_id: Number(route.hop1.poolId),
+                  token_in: 'wrap.near',
+                  amount_in: amountIn,
+                  token_out: route.quote,
+                });
+                hop1Out = ret || '0';
+              }
+              if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 quote returned 0');
+              // Hop 2: quote → launch token
+              const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: [launchPoolId],
+                input_token: route.quote,
+                output_token: outToken,
+                input_amount: hop1Out,
+              });
+              const finalOut = BigInt(q2?.amount || '0');
+              if (finalOut <= 0n) throw new Error('Hop2 quote returned 0');
+              const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+              const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+              return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
+            } else {
+              // Sell direction: launch token → quote → wNEAR
+              const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: [launchPoolId],
+                input_token: inToken,
+                output_token: route.quote,
+                input_amount: amountIn,
+              });
+              const hop1Out = q1?.amount || '0';
+              if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 sell quote returned 0');
+              let finalOut: string;
+              if (route.hop1.type === 'dcl') {
+                const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                  pool_ids: [route.hop1.poolId],
+                  input_token: route.quote,
+                  output_token: 'wrap.near',
+                  input_amount: hop1Out,
+                });
+                finalOut = q2?.amount || '0';
+              } else {
+                const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+                  pool_id: Number(route.hop1.poolId),
+                  token_in: route.quote,
+                  amount_in: hop1Out,
+                  token_out: 'wrap.near',
+                });
+                finalOut = ret || '0';
+              }
+              if (BigInt(finalOut) <= 0n) throw new Error('Hop2 sell quote returned 0');
+              const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+              const minFinal = calculateMinAmountOut(BigInt(finalOut), slippagePct);
+              return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
+            }
+          }
+        } catch (routeErr: any) {
+          // If it's a 'No NEAR route' error, rethrow clearly. Otherwise fall through.
+          if ((routeErr as Error).message?.includes('No NEAR route')) throw routeErr;
+          throw new Error(
+            `NearlyTrade multi-hop quote failed for ${targetToken} (quote=${state.quote}): ${(routeErr as Error).message}`
+          );
+        }
+      }
+
+      // ── Single-hop (quote is wNEAR) ─────────────────────────────────────
       // NearlyTrade liquidity is a DCL bonding curve (single-sided concentrated
       // liquidity over a point range), so xyk reserve math systematically
       // overestimates output for trades that move the point — producing a
@@ -1930,13 +2238,13 @@ export class MultiRpcNear {
       // quote view is unavailable.
       if (state.dclPoolId) {
         try {
-          const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+          const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
             pool_ids: [state.dclPoolId],
             input_token: inToken,
             output_token: outToken,
             input_amount: amountIn,
           });
-          const expected = BigInt(quote?.amount || '0');
+          const expected = BigInt(quoteRes?.amount || '0');
           if (expected > 0n) {
             const minOut = calculateMinAmountOut(expected, slippagePct);
             return { expectedOutput: expected.toString(), minAmountOut: minOut };
@@ -1944,6 +2252,14 @@ export class MultiRpcNear {
         } catch {
           // quote view failed — fall through to reserve math
         }
+      }
+
+      // Reserve math fallback is only valid for NEAR-paired pools.
+      // For non-NEAR quotes we would need the quote price to convert — skip.
+      if (!state.quoteIsNear) {
+        throw new Error(
+          `NearlyTrade multi-hop quote unavailable for ${targetToken} (quote=${state.quote}). Cannot fall back to reserve math for non-NEAR quote assets.`
+        );
       }
 
       const reserveNear = BigInt(state.reserveNear);
@@ -2090,9 +2406,12 @@ export class MultiRpcNear {
     }
   }
 
-  /** Start health-check interval for all providers */
+  /** Start health-check interval for all providers. Guarded against double-start. */
   startHealthChecks(intervalMs = 30_000): NodeJS.Timeout {
-    return setInterval(async () => {
+    if (this.healthCheckInterval) {
+      return this.healthCheckInterval;
+    }
+    this.healthCheckInterval = setInterval(async () => {
       for (const list of [this.readProviders, this.tradeProviders]) {
         for (const provider of list) {
           const start = Date.now();
@@ -2106,6 +2425,7 @@ export class MultiRpcNear {
         }
       }
     }, intervalMs);
+    return this.healthCheckInterval;
   }
 
   /**
@@ -2157,7 +2477,7 @@ export class MultiRpcNear {
     }
     if (venue === 'nearlytrade') {
       const st = await this.getNearlytradeTokenState(tokenAddress);
-      if (!(st.price > 0)) return null;
+      if (st.priceUnavailable || !(st.price > 0)) return null;
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
     if (venue === 'intear') {
@@ -2219,8 +2539,9 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 90_000
+    waitForMs = 20_000
   ): Promise<any> {
+    const tStart = Date.now();
     const account = await this.getAccount(accountId);
     // signTransaction is protected on Account — sign via the same code path
     // near-api-js uses internally (returns [txHash, signedTx]).
@@ -2258,7 +2579,15 @@ export class MultiRpcNear {
       throw new Error(`All NEAR RPC broadcast failed: ${errors}`);
     }
 
-    return this.awaitOutcome(signed.hash, accountId, waitForMs);
+    const broadcastMs = Date.now() - tStart;
+    const outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs);
+    // Perf instrumentation for trade_attempts timings (click→quote→sign→
+    // broadcast→confirm). Attached non-enumerably-safe plain fields.
+    outcome.__perf = {
+      broadcastMs,
+      confirmMs: Date.now() - tStart,
+    };
+    return outcome;
   }
 
   /** Broadcast identical signed bytes to every healthy provider in parallel. */
@@ -2282,7 +2611,7 @@ export class MultiRpcNear {
               method: 'broadcast_tx_async',
               params: [signedB64],
             }),
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(5000),
           });
           const data: any = await res.json();
           if (data?.error) {
@@ -2493,10 +2822,16 @@ export class MultiRpcNear {
       });
 
       if (outcome) {
-        return outcome;
+        // wait_until 'NONE' returns as soon as the tx is included — receipts
+        // may not have executed yet (empty/partial receipts_outcome). Success
+        // determination inspects receipts, so keep polling until the executed
+        // receipt tree is present.
+        if (Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+          return outcome;
+        }
       }
 
-      await sleep(500); // Reduced from 1000ms to 500ms for faster confirmation polling
+      await sleep(250); // Fast confirmation polling (FastNEAR indexer races alongside)
     }
 
     const errMsg = lastErr ? `: ${(lastErr as any).message}` : '';

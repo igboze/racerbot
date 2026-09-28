@@ -36,6 +36,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   const near = getNear();
   onProgress?.('quote');
+  const quoteStartedAt = Date.now();
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     position.token_address,
@@ -58,6 +59,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
+    quoted_at: quoteStartedAt, // executor skips its second quote while < 2s old
   };
 
   const swapResult = await publishSwap(swapEvent, onProgress);
