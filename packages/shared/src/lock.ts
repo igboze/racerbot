@@ -8,6 +8,15 @@ export const LOCK_CONTENTION_ERROR =
 export const LOCK_ACQUISITION_TIMEOUT_ERROR =
   'Timed out while preparing your transaction (wallet lock). The network is congested — please retry.';
 
+/**
+ * Thrown when Redis itself is broken (commands erroring), as opposed to the
+ * lock being genuinely held by another in-flight trade. The old code conflated
+ * the two — every Redis outage surfaced to users as "Another transaction is
+ * already in progress", which was both wrong and unactionable.
+ */
+export const LOCK_STORAGE_UNAVAILABLE_ERROR =
+  'Trade coordination storage is temporarily unavailable — please retry in a few seconds.';
+
 /** Hard cap on how long lock acquisition may take, even with Redis trouble. */
 const ACQUISITION_TIMEOUT_MS = 8_000;
 
@@ -55,6 +64,11 @@ export async function withAccountLock<T>(
   let acquired = false;
   let attempts = 0;
   let timedOut = false;
+  // Track WHY acquisition failed: a clean `false` from Redis means another
+  // trade genuinely holds the lock; a thrown error means Redis itself is
+  // misbehaving and must be reported honestly (not as lock contention).
+  let sawGenuineContention = false;
+  let lastRedisError: unknown = null;
 
   const releaseLock = async () => {
     try {
@@ -82,7 +96,9 @@ export async function withAccountLock<T>(
           const res = await (redis as any).set(lockKey, token, 'PX', ttlMs, 'NX');
           acquired = res === 'OK' || res === true;
         }
-      } catch {
+        if (!acquired) sawGenuineContention = true;
+      } catch (err) {
+        lastRedisError = err;
         acquired = false;
       }
 
@@ -124,6 +140,13 @@ export async function withAccountLock<T>(
   }
 
   if (!acquired) {
+    // Every attempt errored (never a clean "key exists" answer) → Redis is
+    // down/misconfigured, not contended. Say so instead of blaming another
+    // in-flight transaction that doesn't exist.
+    if (!sawGenuineContention && lastRedisError) {
+      console.warn(`[LOCK] Redis errors during lock acquisition for ${lockKey}:`, (lastRedisError as any)?.message);
+      throw new Error(LOCK_STORAGE_UNAVAILABLE_ERROR);
+    }
     throw new Error(LOCK_CONTENTION_ERROR);
   }
 

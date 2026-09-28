@@ -279,7 +279,7 @@ export class SwapExecutor {
 
   /**
    * Execute a swap event. Uses the user's pre-warmed scoped key.
-   * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
+   * Broadcasts to the single pinned trade RPC (no fallback) and confirms on it.
    * Queued per account to prevent nonce conflicts from concurrent operations.
    */
   /**

@@ -1,5 +1,5 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
-import { rotateProvider, markProviderError, markProviderSuccess, createProvider, RPCProvider, getHealthyProviderCount, resetProviderState } from './rpc.js';
+import { markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 import { redactSecrets } from './errors.js';
@@ -175,8 +175,10 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
 
 /**
  * Multi-RPC NEAR connection.
- * Reads use round-robin across healthy providers.
- * Writes broadcast to all healthy providers simultaneously.
+ * Reads hedge across healthy providers (idempotent, safe to race).
+ * Writes (BUY/SELL: nonce fetch, sign, broadcast, confirm) go to ONE pinned
+ * RPC provider — no fan-out, no fallback. If that RPC fails, the trade fails
+ * with a clear error instead of racing duplicates across endpoints.
  */
 export class MultiRpcNear {
   private readProviders: RPCProvider[];
@@ -223,8 +225,9 @@ export class MultiRpcNear {
     //            protects the free tier by keeping QuickNode out of the fan-out).
     //            QuickNode is the automatic failover when every FastNEAR
     //            provider is unhealthy or circuit-open.
-    //   WRITES → QuickNode first (paid tier, stable under burst), FastNEAR as
-    //            backup. Broadcasts still go to BOTH for redundancy.
+    //   WRITES → ONE pinned provider only (tradeProviders[0]: QuickNode when
+    //            configured, else FastNEAR). No fan-out, no fallback — nonce,
+    //            broadcast and confirmation all use the same endpoint.
     const readUrls = [
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
@@ -255,6 +258,18 @@ export class MultiRpcNear {
 
     // Start periodic nonce cache refresh to prevent stale nonce issues
     this.startNonceCacheRefresh();
+  }
+
+  /**
+   * THE single RPC endpoint for the trade write path (BUY/SELL).
+   * Pinned to tradeProviders[0] — QuickNode when configured, else FastNEAR.
+   * Used for nonce fetch (getAccount), broadcast, and confirmation polling.
+   * There is deliberately NO fallback: if this endpoint fails, the trade fails.
+   */
+  private get tradeProvider(): RPCProvider {
+    const p = this.tradeProviders[0];
+    if (!p) throw new Error('No NEAR RPC trade provider configured');
+    return p;
   }
 
   private async getConnection(providerUrl: string): Promise<Near> {
@@ -656,117 +671,68 @@ export class MultiRpcNear {
   }
 
   /**
-   * Broadcast a signed transaction to ALL healthy providers simultaneously.
-   * Returns the first successful tx hash.
-   * This is the write path — maximum redundancy for lowest miss rate.
+   * Broadcast a signed transaction to the single pinned trade RPC.
+   * No fan-out, no fallback — one endpoint owns the write path.
    */
   async broadcastTransaction(signedTxBase64: string): Promise<string> {
-    const healthy = this.tradeProviders.filter(p => p.healthy);
-    const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
-    if (candidates.length === 0) throw new Error('No healthy NEAR RPC providers');
-
-    return Promise.any(
-      candidates.map(async (provider) => {
-        const start = Date.now();
-        const near = await this.getConnection(provider.url);
-        // Use the JSON-RPC directly for broadcast
-        const result = await (near.connection.provider as any).sendJsonRpc('broadcast_tx_async', [signedTxBase64]);
-        markProviderSuccess(provider, Date.now() - start);
-        return result as string;
-      })
-    ).catch((aggregateErr) => {
-      const err = aggregateErr?.errors?.[0] || aggregateErr;
-      throw new Error(`All NEAR RPC broadcast failed: ${err?.message || err}`);
-    });
+    return this.broadcastSigned(signedTxBase64);
   }
 
   /**
-   * Pre-flight health check before trading.
+   * Pre-flight check before trading.
    *
-   * The gate requires min(2, configured) healthy providers, never less than 1 —
-   * with a single configured RPC the old ">= 2" rule blocked every trade.
-   * When no provider is healthy, do NOT throw: reset the circuit breakers and
-   * let the attempt go through. A failed attempt is better than a blocked one,
-   * because trades are gated before any broadcast can record a success, so a
-   * thrown gate would never recover by itself (health checks only run in the
-   * detector process).
+   * With the single-RPC write path there is nothing to gate: the trade goes
+   * to the one pinned provider regardless of health flags (health is only
+   * informational now). Throws only when no trade RPC is configured at all.
    */
   checkTradeProviders(): void {
-    const configured = this.tradeProviders.length;
-    if (configured === 0) {
-      throw new Error('No NEAR RPC trade providers configured');
-    }
-    const required = Math.max(1, Math.min(2, configured));
-    const healthyCount = getHealthyProviderCount(this.tradeProviders);
-    if (healthyCount < required) {
-      const snapshot = this.tradeProviders
-        .map(p => `${p.name}: healthy=${p.healthy} circuitOpen=${p.circuitBreakerOpen}`)
-        .join(', ');
-      console.warn(
-        `[RPC] Trade provider gate: ${healthyCount}/${configured} healthy (need ${required}). ` +
-        `Resetting circuit breakers and attempting the trade anyway. [${snapshot}]`
-      );
-      for (const p of this.tradeProviders) {
-        resetProviderState(p);
-      }
+    if (this.tradeProviders.length === 0) {
+      throw new Error('No NEAR RPC trade provider configured');
     }
   }
 
   /**
-   * Wait for transaction confirmation by polling with improved error handling.
-   * Used after broadcast to confirm the tx landed.
+   * Wait for transaction confirmation by polling the single pinned trade RPC.
    */
   async waitForTx(txHash: string, accountId: string, maxWaitMs = 60000): Promise<any> {
     const deadline = Date.now() + maxWaitMs;
-    const providers = this.tradeProviders.filter(p => p.healthy && !p.circuitBreakerOpen);
-
-    if (providers.length === 0) {
-      throw new Error('No healthy RPC providers available for transaction confirmation');
-    }
+    const provider = this.tradeProvider;
 
     let lastError: Error | null = null;
     let parseErrors = 0;
     const maxParseErrors = 5;
 
     while (Date.now() < deadline) {
-      // Try each healthy provider in sequence for better resilience
-      for (const provider of providers) {
-        try {
-          const near = await this.getConnection(provider.url);
-          const outcome = await near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
+      try {
+        const near = await this.getConnection(provider.url);
+        const outcome = await near.connection.provider.txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
 
-          if (outcome.status && typeof outcome.status === 'object' && 'SuccessValue' in outcome.status) {
-            return outcome;
+        if (outcome.status && typeof outcome.status === 'object' && 'SuccessValue' in outcome.status) {
+          return outcome;
+        }
+
+        if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
+          const failureDetails = outcome.status.Failure;
+          throw new Error(`Transaction failed: ${JSON.stringify(failureDetails)}`);
+        }
+
+        // Transaction exists but not yet executed
+        lastError = null;
+      } catch (err) {
+        lastError = err as Error;
+        const errorMessage = (err as Error).message.toLowerCase();
+
+        // Track parse errors specifically
+        if (errorMessage.includes('parse') || errorMessage.includes('json')) {
+          parseErrors++;
+          if (parseErrors >= maxParseErrors) {
+            throw new Error(`Transaction ${txHash} confirmation failed after ${parseErrors} parse errors. Last error: ${lastError.message}`);
           }
-
-          if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
-            const failureDetails = outcome.status.Failure;
-            throw new Error(`Transaction failed: ${JSON.stringify(failureDetails)}`);
-          }
-
-          // Transaction exists but not yet executed
-          lastError = null;
-          break; // Success in getting status, move to next provider
-
-        } catch (err) {
-          lastError = err as Error;
-          const errorMessage = (err as Error).message.toLowerCase();
-
-          // Track parse errors specifically
-          if (errorMessage.includes('parse') || errorMessage.includes('json')) {
-            parseErrors++;
-            if (parseErrors >= maxParseErrors) {
-              throw new Error(`Transaction ${txHash} confirmation failed after ${parseErrors} parse errors. Last error: ${lastError.message}`);
-            }
-          }
-          
-          // Try next provider
-          continue;
         }
       }
-      
+
       // Wait before next polling round
-      await sleep(500); // Reduced from 1000ms to 500ms for faster confirmation
+      await sleep(500);
     }
 
     // If we exit the loop, transaction wasn't confirmed
@@ -801,13 +767,15 @@ export class MultiRpcNear {
   /**
    * Get an Account instance connected with the internal KeyStore.
    * Cached per accountId for the process lifetime so the nonce cache persists.
+   * Pinned to the single trade RPC — nonce reads and broadcasts must hit the
+   * same endpoint, otherwise a lagging secondary RPC hands out a stale nonce
+   * and the primary rejects the broadcast with InvalidNonce.
    */
   async getAccount(accountId: string): Promise<Account> {
     if (this.accountCache.has(accountId)) {
       return this.accountCache.get(accountId)!;
     }
-    const provider = rotateProvider(this.tradeProviders);
-    const near = await this.getConnection(provider.url);
+    const near = await this.getConnection(this.tradeProvider.url);
     const account = await near.account(accountId);
     this.accountCache.set(accountId, account);
     return account;
@@ -826,24 +794,14 @@ export class MultiRpcNear {
   }
 
   /**
-   * Get account NEAR balance with parallel provider attempts.
+   * Get account NEAR balance from the single pinned trade RPC.
    */
   async getNearBalance(accountId: string): Promise<string> {
-    const healthy = this.tradeProviders.filter(p => p.healthy && !p.circuitBreakerOpen);
-    const candidates = (healthy.length > 0 ? healthy : this.tradeProviders).slice(0, 3);
-    if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
-
-    return Promise.any(
-      candidates.map(async (provider) => {
-        const near = await this.getConnection(provider.url);
-        const account = await near.account(accountId);
-        const state = await withTimeout<any>(account.state(), 4500, `RPC timeout on ${provider.url}`);
-        return state.amount as string;
-      })
-    ).catch((aggregateErr) => {
-      const err = aggregateErr?.errors?.[0] || aggregateErr;
-      throw new Error(`Failed to get NEAR balance for ${accountId}: ${err?.message || err}`);
-    });
+    const provider = this.tradeProvider;
+    const near = await this.getConnection(provider.url);
+    const account = await near.account(accountId);
+    const state = await withTimeout<any>(account.state(), 4500, `RPC timeout on ${provider.url}`);
+    return state.amount as string;
   }
 
   /**
@@ -2752,25 +2710,29 @@ export class MultiRpcNear {
     };
 
     let signed = await signOnce();
-    let results = await this.broadcastSignedToAll(signed.signedB64);
-
-    // All providers rejected the nonce → the cached access-key nonce is stale.
-    // Clear it, re-sign with a fresh nonce and rebroadcast exactly once.
-    const allNonceErrors = results.every(
-      (r) => r.status === 'rejected' && /nonce/i.test((r.reason as Error)?.message ?? '')
-    );
-    if (allNonceErrors && results.length > 0) {
-      (account as any).accessKeyByPublicKeyCache = {};
-      signed = await signOnce();
-      results = await this.broadcastSignedToAll(signed.signedB64);
+    let broadcastErr: Error | null = null;
+    try {
+      await this.broadcastSigned(signed.signedB64);
+    } catch (err) {
+      broadcastErr = err as Error;
     }
 
-    if (!results.some((r) => r.status === 'fulfilled')) {
-      const errors = results
-        .map((r) => (r.status === 'rejected' ? (r.reason as Error).message : ''))
-        .filter(Boolean)
-        .join('; ');
-      throw new Error(redactSecrets(`All NEAR RPC broadcast failed: ${errors}`));
+    // Stale cached access-key nonce → the single RPC rejected the nonce.
+    // Clear it, re-sign with a fresh nonce and rebroadcast exactly once
+    // to the SAME endpoint (a nonce refresh, not an RPC fallback).
+    if (broadcastErr && /nonce/i.test(broadcastErr.message ?? '')) {
+      (account as any).accessKeyByPublicKeyCache = {};
+      signed = await signOnce();
+      broadcastErr = null;
+      try {
+        await this.broadcastSigned(signed.signedB64);
+      } catch (err) {
+        broadcastErr = err as Error;
+      }
+    }
+
+    if (broadcastErr) {
+      throw new Error(redactSecrets(`Trade broadcast failed: ${broadcastErr.message}`));
     }
 
     const broadcastMs = Date.now() - tStart;
@@ -2784,48 +2746,41 @@ export class MultiRpcNear {
     return outcome;
   }
 
-  /** Broadcast identical signed bytes to every healthy provider in parallel. */
-  private async broadcastSignedToAll(
-    signedB64: string
-  ): Promise<PromiseSettledResult<string>[]> {
-    const healthy = this.tradeProviders.filter((p) => p.healthy);
-    const targets = healthy.length > 0 ? healthy : this.tradeProviders;
-    if (targets.length === 0) throw new Error('No NEAR RPC providers configured');
-
-    return Promise.allSettled(
-      targets.map(async (provider) => {
-        const start = Date.now();
-        try {
-          const res = await fetch(provider.url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 'racerbot-broadcast',
-              method: 'broadcast_tx_async',
-              params: [signedB64],
-            }),
-            signal: AbortSignal.timeout(5000),
-          });
-          const data: any = await res.json();
-          if (data?.error) {
-            throw new Error(data.error.message || JSON.stringify(data.error));
-          }
-          markProviderSuccess(provider, Date.now() - start);
-          return data?.result as string;
-        } catch (err) {
-          markProviderError(provider);
-          throw err;
-        }
-      })
-    );
+  /** Broadcast signed bytes to the single pinned trade RPC. No fallback. */
+  private async broadcastSigned(signedB64: string): Promise<string> {
+    const provider = this.tradeProvider;
+    const start = Date.now();
+    try {
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'racerbot-broadcast',
+          method: 'broadcast_tx_async',
+          params: [signedB64],
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const data: any = await res.json();
+      if (data?.error) {
+        throw new Error(data.error.message || JSON.stringify(data.error));
+      }
+      markProviderSuccess(provider, Date.now() - start);
+      return data?.result as string;
+    } catch (err) {
+      markProviderError(provider);
+      throw err;
+    }
   }
 
   /**
-   * Poll for a transaction outcome using two tracks in parallel:
-   *   A) NEAR JSON-RPC `tx` method with `wait_until: EXECUTED_OPTIMISTIC` — non-long-polling;
-   *      returns immediately once the tx appears in the chain (no receipt-tree wait).
-   *   B) FastNEAR indexer REST API — indexes NEAR in ~1 s, responds instantly.
+   * Poll for a transaction outcome on the single pinned trade RPC.
+   * Uses `EXPERIMENTAL_tx_status` with `wait_until: 'NONE'` — non-long-polling;
+   * returns immediately once the tx appears in the chain (no receipt-tree wait).
+   *
+   * No indexer race, no secondary RPC — the endpoint that accepted the
+   * broadcast is the single source of truth for its outcome.
    *
    * HANDLER_ERROR / TIMEOUT_ERROR from the RPC is treated as "pending, retry" — NOT fatal.
    * The old `txStatus` long-poll was causing false failures when the RPC held the connection
@@ -2834,25 +2789,7 @@ export class MultiRpcNear {
   private async awaitOutcome(txHash: string, accountId: string, maxMs: number): Promise<any> {
     const deadline = Date.now() + maxMs;
     let lastErr: Error | null = null;
-
-    const fastnearApiBase =
-      (process.env.FASTNEAR_API_URL || 'https://api.fastnear.com').replace(/\/$/, '');
-
-    /** Try FastNEAR indexer REST — resolves immediately once tx is indexed */
-    const tryFastnear = async (): Promise<any | null> => {
-      try {
-        const res = await fetch(`${fastnearApiBase}/v0/tx/${txHash}`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!res.ok) return null;
-        const data: any = await res.json();
-        // FastNEAR returns { receipts_outcome, transaction_outcome, ... }
-        if (data && data.transaction_outcome) return data;
-      } catch {
-        // indexer not available — fall through
-      }
-      return null;
-    };
+    const pinnedUrl = this.tradeProvider.url;
 
     /**
      * Try a single RPC provider for tx status.
@@ -2985,34 +2922,11 @@ export class MultiRpcNear {
     };
 
     while (Date.now() < deadline) {
-      // Race FastNEAR indexer and all healthy RPC providers
-      const healthy = this.tradeProviders.filter((p) => p.healthy);
-      const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
-
-      const polls: Promise<any | null>[] = [
-        tryFastnear(),
-        ...candidates.map((p) => tryRpc(p.url)),
-      ];
-
-      // Return as soon as any candidate finds the outcome
-      const outcome = await new Promise<any | null>((resolve) => {
-        let pending = polls.length;
-        let resolved = false;
-        polls.forEach((p) => {
-          p.then((val) => {
-            if (val !== null && !resolved) {
-              resolved = true;
-              resolve(val);
-            }
-          }).catch((err) => {
-            lastErr = err;
-          }).finally(() => {
-            pending--;
-            if (pending === 0 && !resolved) {
-              resolve(null);
-            }
-          });
-        });
+      // Single pinned trade RPC — the endpoint that accepted the broadcast is
+      // the only source of truth for its outcome. No fallback.
+      const outcome = await tryRpc(pinnedUrl).catch((err) => {
+        lastErr = err as Error;
+        return null;
       });
 
       if (outcome) {
@@ -3025,7 +2939,7 @@ export class MultiRpcNear {
         }
       }
 
-      await sleep(250); // Fast confirmation polling (FastNEAR indexer races alongside)
+      await sleep(250); // Fast confirmation polling on the pinned RPC
     }
 
     const errMsg = lastErr ? `: ${redactSecrets((lastErr as any).message ?? String(lastErr))}` : '';
