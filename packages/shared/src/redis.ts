@@ -124,6 +124,19 @@ export interface RedisClient {
   sadd(key: string, ...members: string[]): Promise<number>;
   smembers(key: string): Promise<string[]>;
   disconnect(): Promise<void>;
+  isConnected?(): boolean;
+  getStatus?(): string;
+}
+
+function maskRedisUrl(rawUrl: string): string {
+  if (!rawUrl) return '(undefined)';
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.password) parsed.password = '***';
+    return parsed.toString();
+  } catch {
+    return rawUrl.replace(/:([^:@]+)@/, ':***@');
+  }
 }
 
 /**
@@ -132,6 +145,9 @@ export interface RedisClient {
  * a subscribed connection cannot issue regular commands.
  */
 export function createRedis(url: string): RedisClient {
+  const maskedUrl = maskRedisUrl(url);
+  console.log(`[REDIS] Initializing Redis client for: ${maskedUrl}`);
+
   const options = {
     lazyConnect: false,
     // Bounded: commands reject fast instead of queueing indefinitely.
@@ -157,14 +173,41 @@ export function createRedis(url: string): RedisClient {
     if (handler) handler(message);
   });
 
-  pub.on('error', (_err: Error) => {
-    // suppress repeated connection refuse noise if redis is offline locally
+  let lastPubError = '';
+  let lastSubError = '';
+
+  pub.on('connect', () => console.log(`[REDIS] Pub connected to ${maskedUrl}`));
+  pub.on('ready', () => console.log(`[REDIS] Pub ready (${pub.status})`));
+  pub.on('close', () => console.warn(`[REDIS] Pub connection closed`));
+  pub.on('reconnecting', (ms: number) => console.log(`[REDIS] Pub reconnecting in ${ms}ms...`));
+  pub.on('error', (err: Error) => {
+    const msg = err?.message || String(err);
+    if (msg !== lastPubError) {
+      lastPubError = msg;
+      console.error(`[REDIS] Pub error (${maskedUrl}):`, msg);
+    }
   });
-  sub.on('error', (_err: Error) => {
-    // suppress repeated connection refuse noise if redis is offline locally
+
+  sub.on('connect', () => console.log(`[REDIS] Sub connected to ${maskedUrl}`));
+  sub.on('ready', () => console.log(`[REDIS] Sub ready (${sub.status})`));
+  sub.on('close', () => console.warn(`[REDIS] Sub connection closed`));
+  sub.on('error', (err: Error) => {
+    const msg = err?.message || String(err);
+    if (msg !== lastSubError) {
+      lastSubError = msg;
+      console.error(`[REDIS] Sub error (${maskedUrl}):`, msg);
+    }
   });
 
   return {
+    isConnected() {
+      return pub.status === 'ready';
+    },
+
+    getStatus() {
+      return pub.status;
+    },
+
     async publish(channel, message) {
       return pub.publish(channel, message);
     },

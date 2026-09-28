@@ -34,9 +34,12 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
+  console.log(`[SELL_HELPER] sellAtTarget: user=${userId}, pos=${positionId}, pct=${percentage}%, qty=${sellQty}, token=${position.token_address}`);
+
   const near = getNear();
   onProgress?.('quote');
   const quoteStartedAt = Date.now();
+  console.log(`[SELL_HELPER] Computing minAmountOut for venue=${venue}, token=${position.token_address}, qty=${sellQty}, slippage=${slippagePct}%`);
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     position.token_address,
@@ -46,6 +49,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     effectiveRheaPoolId,
     effectiveDclPoolId
   );
+  console.log(`[SELL_HELPER] Quote obtained: minAmountOut=${minAmountOut} in ${Date.now() - quoteStartedAt}ms. Calling publishSwap...`);
 
   const swapEvent = {
     type: 'execute_swap' as const,
@@ -63,6 +67,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   };
 
   const swapResult = await publishSwap(swapEvent, onProgress);
+  console.log(`[SELL_HELPER] publishSwap result: success=${swapResult.success}, reason=${swapResult.reason || 'ok'}, tx=${swapResult.txHash}`);
   if (swapResult.success === false) {
     // Pass the executor's distilled on-chain reason through so users learn
     // WHY the sell failed (slippage / no pool / contract error), not a generic message.
