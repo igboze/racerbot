@@ -2,7 +2,7 @@ import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 
 import { markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
-import { redactSecrets } from './errors.js';
+import { redactSecrets, TradeError } from './errors.js';
 
 export interface NearConfig {
   rpcUrls: string[];
@@ -2952,6 +2952,10 @@ export class MultiRpcNear {
    * HANDLER_ERROR / TIMEOUT_ERROR from the RPC is treated as "pending, retry" — NOT fatal.
    * The old `txStatus` long-poll was causing false failures when the RPC held the connection
    * open waiting for cross-contract receipt trees, then returned TIMEOUT_ERROR.
+   *
+   * On deadline, throws TradeError with code NOT_CONFIRMED and the tx hash —
+   * the tx WAS broadcast and may still land, so callers must not report a
+   * definitive failure; they should re-check on-chain (waitForOutcome).
    */
   private async awaitOutcome(
     txHash: string,
@@ -3141,13 +3145,163 @@ export class MultiRpcNear {
 
     const neverSeen = !(state?.everSeen);
     const errMsg = lastErr ? `: ${redactSecrets((lastErr as any).message ?? String(lastErr))}` : '';
-    const timeoutErr = new Error(
+    const timeoutErr = new TradeError(
       neverSeen
         ? `Transaction ${txHash} never reached the NEAR network within ${maxMs}ms — it was not executed and no funds were spent`
-        : `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`
+        : `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`,
+      { code: 'NOT_CONFIRMED', txHash }
     );
     (timeoutErr as any).neverSeen = neverSeen;
     throw timeoutErr;
+  }
+
+  /**
+   * Re-check the on-chain outcome of a previously broadcast transaction.
+   * Used when confirmation polling timed out: the tx may have landed even
+   * though the RPC never reported it. Polls up to maxMs and returns the
+   * outcome once the executed receipt tree is present, or null if the
+   * outcome is still unknown (caller must treat it as UNKNOWN, not failed).
+   */
+  async waitForOutcome(txHash: string, accountId: string, maxMs = 60_000): Promise<any | null> {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      const { outcome } = await this.queryOutcomeOnce(txHash, accountId).catch(() => ({ outcome: null, error: null }));
+      if (outcome) return outcome;
+      await sleep(2_000);
+    }
+    return null;
+  }
+
+  /**
+   * Single-shot outcome query on the pinned trade RPC. Returns the outcome
+   * (only once the receipt tree is present) or null for any transient
+   * condition — unknown tx, rate limit, RPC error, empty receipt tree.
+   * Structured as { outcome, error } so callers can surface the last real
+   * error (e.g. in the NOT_CONFIRMED timeout message).
+   */
+  private async queryOutcomeOnce(txHash: string, accountId: string): Promise<{ outcome: any | null; error: Error | null }> {
+    const providerUrl = this.tradeProvider.url;
+    let lastError: Error | null = null;
+
+    const callRpc = async (method: string, params: any): Promise<any | null> => {
+      try {
+        const res = await fetch(providerUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
+          signal: AbortSignal.timeout(6000),
+        });
+
+        if (res.status === 429) {
+          const provider = this.tradeProviders.find(p => p.url === providerUrl);
+          if (provider) markProviderError(provider);
+          return null;
+        }
+
+        const text = await res.text();
+        if (!text || text.trim() === '') {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        // If HTTP returned error status and no JSON-RPC error payload was received, throw
+        if (!res.ok && !parsed?.error) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        return parsed;
+      } catch (err: any) {
+        if (err instanceof SyntaxError) {
+          throw new Error(`Parse error: Invalid JSON response from ${providerUrl}`);
+        }
+        throw err;
+      }
+    };
+
+    try {
+      // First attempt: EXPERIMENTAL_tx_status with object params and wait_until: 'NONE'
+      // Non-blocking query returns immediately instead of holding connection open
+      let data: any = await callRpc('EXPERIMENTAL_tx_status', {
+        tx_hash: txHash,
+        sender_account_id: accountId,
+        wait_until: 'NONE',
+      });
+
+      // Fallback 1: If provider rejects object params with parse error, try 2-element array [txHash, accountId]
+      if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
+        data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
+      }
+
+      // Fallback 2: If provider doesn't support EXPERIMENTAL_tx_status (-32601), fall back to `tx`
+      if (data?.error?.code === -32601) {
+        data = await callRpc('tx', {
+          tx_hash: txHash,
+          sender_account_id: accountId,
+          wait_until: 'NONE',
+        });
+        if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
+          data = await callRpc('tx', [txHash, accountId]);
+        }
+      }
+
+      if (data?.error) {
+        const code: number = data.error?.code ?? 0;
+        const errName: string = data.error?.cause?.name ?? data.error?.name ?? (typeof data.error === 'string' ? data.error : data.error?.message ?? '');
+        const errMsg: string = typeof data.error === 'string' ? data.error : (data.error?.message ?? '');
+        const errData: string = typeof data.error?.data === 'string' ? data.error.data : JSON.stringify(data.error?.data ?? '');
+
+        // Rate limit exceeded handling
+        if (
+          errMsg.toLowerCase().includes('rate limit') ||
+          errName.toLowerCase().includes('rate limit') ||
+          errData.toLowerCase().includes('rate limit')
+        ) {
+          const provider = this.tradeProviders.find(p => p.url === providerUrl);
+          if (provider) markProviderError(provider);
+          return { outcome: null, error: null };
+        }
+
+        // Transient / "not yet indexed" conditions — return null to retry
+        if (
+          code === -32601 ||                         // method still not available
+          errName.includes('TIMEOUT') ||
+          errName.includes('HANDLER_ERROR') ||
+          errName.includes('UNKNOWN_TRANSACTION') ||
+          errMsg.includes('does not exist') ||
+          errData.includes('does not exist') ||
+          errName.includes('Parse error')           // Treat parse errors as transient
+        ) {
+          return { outcome: null, error: null };
+        }
+        throw new Error(data.error.message || JSON.stringify(data.error));
+      }
+
+      const outcome = data?.result;
+      if (outcome && outcome.status !== undefined && outcome.status !== null
+        && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+        return { outcome, error: null };
+      }
+      return { outcome: null, error: null };
+    } catch (err: any) {
+      // Network-level or thrown error — record and continue
+      lastError = err as Error;
+      const msg = (err.message || '').toLowerCase();
+
+      // If it's a parse error or rate limit, mark the provider as unhealthy
+      if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit')) {
+        const provider = this.tradeProviders.find(p => p.url === providerUrl);
+        if (provider) {
+          markProviderError(provider);
+        }
+      }
+      return { outcome: null, error: lastError };
+    }
   }
 }
 
