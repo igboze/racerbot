@@ -2760,7 +2760,21 @@ export class MultiRpcNear {
     }
 
     const broadcastMs = Date.now() - tStart;
-    const outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs);
+    // Two-phase confirm with an idempotent rescue: mempool admission can
+    // silently drop a structurally valid tx (congestion, relay hiccup) —
+    // observed in production as swaps vanishing while storage txs landed.
+    // Rebroadcasting the SAME signed bytes is safe: same hash, no double-spend.
+    const seen = { everSeen: false };
+    const firstWindow = Math.min(12_000, Math.max(5_000, waitForMs - 10_000));
+    let outcome: any;
+    try {
+      outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen);
+    } catch (firstErr: any) {
+      if (!firstErr?.neverSeen) throw firstErr;
+      console.warn(`[NEAR] tx ${signed.hash} not visible after ${firstWindow}ms — rebroadcasting same signed bytes (idempotent rescue)`);
+      await this.broadcastSigned(signed.signedB64).catch(() => { /* best effort */ });
+      outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs - firstWindow, seen);
+    }
     // Perf instrumentation for trade_attempts timings (click→quote→sign→
     // broadcast→confirm). Attached non-enumerably-safe plain fields.
     outcome.__perf = {
@@ -2810,7 +2824,7 @@ export class MultiRpcNear {
    * The old `txStatus` long-poll was causing false failures when the RPC held the connection
    * open waiting for cross-contract receipt trees, then returned TIMEOUT_ERROR.
    */
-  private async awaitOutcome(txHash: string, accountId: string, maxMs: number): Promise<any> {
+  private async awaitOutcome(txHash: string, accountId: string, maxMs: number, state?: { everSeen: boolean }): Promise<any> {
     const deadline = Date.now() + maxMs;
     let lastErr: Error | null = null;
     const pinnedUrl = this.tradeProvider.url;
@@ -2926,8 +2940,13 @@ export class MultiRpcNear {
         }
 
         const outcome = data?.result;
-        if (outcome && outcome.status !== undefined && outcome.status !== null) {
-          return outcome;
+        if (outcome) {
+          // The node KNOWS this transaction — even if receipts are still
+          // executing. Distinguishes "slow confirmation" from "tx vanished".
+          if (state) state.everSeen = true;
+          if (outcome.status !== undefined && outcome.status !== null) {
+            return outcome;
+          }
         }
       } catch (err: any) {
         // Network-level or thrown error — record and continue
@@ -2972,10 +2991,15 @@ export class MultiRpcNear {
       await sleep(Math.min(250 * 2 ** Math.max(0, polls - 4), 2000));
     }
 
+    const neverSeen = !(state?.everSeen);
     const errMsg = lastErr ? `: ${redactSecrets((lastErr as any).message ?? String(lastErr))}` : '';
-    throw new Error(
-      `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`
+    const timeoutErr = new Error(
+      neverSeen
+        ? `Transaction ${txHash} never reached the NEAR network within ${maxMs}ms — it was not executed and no funds were spent`
+        : `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`
     );
+    (timeoutErr as any).neverSeen = neverSeen;
+    throw timeoutErr;
   }
 }
 
