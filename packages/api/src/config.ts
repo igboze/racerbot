@@ -25,3 +25,14 @@ export const DATABASE_URL: string = process.env.DATABASE_URL || 'postgres://loca
 export const REDIS_URL: string = process.env.REDIS_URL || 'redis://localhost:6379';
 export const PUBLIC_URL: string = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
 export const TELEGRAM_WEBHOOK_SECRET: string = process.env.TELEGRAM_WEBHOOK_SECRET || '';
+
+// ── Admin monitoring ─────────────────────────────────────────────────────────
+// Comma-separated Telegram usernames (with or without @) allowed to run admin
+// commands and receive monitoring alerts, e.g. ADMIN_USERNAMES=israel_igboze
+export const ADMIN_USERNAMES: string[] = (process.env.ADMIN_USERNAMES || '')
+  .split(',')
+  .map((s) => s.trim().replace(/^@/, '').toLowerCase())
+  .filter(Boolean);
+// Optional hard override: a numeric Telegram user id that is always admin.
+export const ADMIN_TELEGRAM_ID: string = (process.env.ADMIN_TELEGRAM_ID || '').trim();
+export const MONITOR_INTERVAL_MS: number = parseInt(process.env.MONITOR_INTERVAL_MS || '300000');

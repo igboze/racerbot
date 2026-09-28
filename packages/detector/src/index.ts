@@ -102,6 +102,7 @@ async function main() {
   }
 
   // Steady-state polling loop: fetch next block directly from neardata without polling block height
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       if (lastBlock === 0) {
@@ -774,7 +775,7 @@ async function checkAutoBuySignals(
   tokenAddress: string,
   venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   liquidityStr: string,
-  marketCap: number
+  _marketCap: number
 ): Promise<void> {
   // NEARpad can be auto-bought
   try {

@@ -63,6 +63,8 @@ export interface SwapEvent {
   dcl_pool_id?: string;
   pool_id?: number | null;
   intermediate_token?: string | null;
+  /** User slippage preference (percent) used for this trade, e.g. 2 = 2%. */
+  slippage_pct?: number;
   timestamp?: number;
 }
 
@@ -107,6 +109,8 @@ export interface RedisClient {
   unsubscribe(channel?: string): Promise<void>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+  setNxPx(key: string, value: string, ttlMs: number): Promise<boolean>;
+  eval(script: string, numkeys: number, ...args: (string | number)[]): Promise<unknown>;
   del(key: string): Promise<void>;
   hget(key: string, field: string): Promise<string | null>;
   hset(key: string, fields: Record<string, string>): Promise<void>;
@@ -142,10 +146,10 @@ export function createRedis(url: string): RedisClient {
     if (handler) handler(message);
   });
 
-  pub.on('error', (err: Error) => {
+  pub.on('error', (_err: Error) => {
     // suppress repeated connection refuse noise if redis is offline locally
   });
-  sub.on('error', (err: Error) => {
+  sub.on('error', (_err: Error) => {
     // suppress repeated connection refuse noise if redis is offline locally
   });
 
@@ -179,6 +183,15 @@ export function createRedis(url: string): RedisClient {
       } else {
         await pub.set(key, value);
       }
+    },
+
+    async setNxPx(key, value, ttlMs) {
+      const res = await (pub as any).set(key, value, 'PX', ttlMs, 'NX');
+      return res === 'OK';
+    },
+
+    async eval(script, numkeys, ...args) {
+      return (pub as any).eval(script, numkeys, ...args);
     },
 
     async del(key) {

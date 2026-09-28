@@ -1,6 +1,5 @@
 import { getFillsByPosition, getPositionById, getUserById } from '@racerbot/db';
 import { getTokenInfo } from './wallet.js';
-import { computePnL } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {

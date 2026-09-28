@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
 import { metrics, MetricNames } from '@racerbot/shared';
-import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
+import { metricsMiddleware } from './monitoring.js';
 
 describe('API Monitoring Middleware', () => {
   beforeEach(() => {

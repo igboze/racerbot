@@ -187,12 +187,25 @@ export class MultiRpcNear {
       initialUrls.push(qnUrl);
     }
 
-    // Remove deprecated endpoints like rpc.mainnet.near.org
-    const sanitizedUrls = initialUrls.filter(url => {
-      if (url.includes('rpc.mainnet.near.org')) return false;
-      return true;
+    // Strictly filter: allow ONLY FastNEAR and QuickNode endpoints
+    const fastnearAndQnUrls = initialUrls.filter(url => {
+      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
+      const isFn = url.includes('fastnear.com');
+      return isQn || isFn;
     });
-    const readUrls = sanitizedUrls.length > 0 ? [...sanitizedUrls] : ['https://rpc.mainnet.fastnear.com'];
+
+    const sanitizedUrls = fastnearAndQnUrls.length > 0
+      ? Array.from(new Set(fastnearAndQnUrls))
+      : ['https://rpc.mainnet.fastnear.com'];
+
+    // Prioritize QuickNode first, then FastNEAR
+    const prioritizedUrls = [
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+    ];
+    const tradeUrls = Array.from(new Set(prioritizedUrls));
+    const readUrls = [...tradeUrls];
+
     this.readProviders = readUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -202,13 +215,6 @@ export class MultiRpcNear {
       return createProvider(url, isQn ? `quicknode-read-${i}` : `read-rpc-${i}`, isQn, headers);
     });
 
-    // Trade providers: QuickNode & FastNEAR prioritized, with reliable public RPC fallbacks
-    const prioritizedTradeUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
-      ...sanitizedUrls.filter(u => !u.includes('quiknode') && !u.includes('fastnear.com')),
-    ];
-    const tradeUrls = Array.from(new Set(prioritizedTradeUrls));
     this.tradeProviders = tradeUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -328,8 +334,8 @@ export class MultiRpcNear {
 
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
 
-    // Try all providers in parallel, return first successful result
-    const results = await Promise.allSettled(
+    // Try all providers in parallel, return first successful result immediately
+    return Promise.any(
       candidates.map(async (provider) => {
         const start = Date.now();
         try {
@@ -355,13 +361,10 @@ export class MultiRpcNear {
           throw err;
         }
       })
-    );
-
-    // Return first successful result
-    for (const result of results) {
-      if (result.status === 'fulfilled') return result.value;
-    }
-    throw (results[0] as PromiseRejectedResult).reason ?? new Error('All NEAR RPC providers failed');
+    ).catch((aggregateErr) => {
+      const err = aggregateErr?.errors?.[0] || aggregateErr;
+      throw (err ?? new Error('All NEAR RPC providers failed'));
+    });
   }
 
   /**
@@ -371,10 +374,11 @@ export class MultiRpcNear {
    */
   async broadcastTransaction(signedTxBase64: string): Promise<string> {
     const healthy = this.tradeProviders.filter(p => p.healthy);
-    if (healthy.length === 0) throw new Error('No healthy NEAR RPC providers');
+    const candidates = healthy.length > 0 ? healthy : this.tradeProviders;
+    if (candidates.length === 0) throw new Error('No healthy NEAR RPC providers');
 
-    const results = await Promise.allSettled(
-      healthy.map(async (provider) => {
+    return Promise.any(
+      candidates.map(async (provider) => {
         const start = Date.now();
         const near = await this.getConnection(provider.url);
         // Use the JSON-RPC directly for broadcast
@@ -382,14 +386,10 @@ export class MultiRpcNear {
         markProviderSuccess(provider, Date.now() - start);
         return result as string;
       })
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') return r.value;
-    }
-
-    const errors = results.map(r => r.status === 'rejected' ? (r.reason as Error).message : '').join('; ');
-    throw new Error(`All NEAR RPC broadcast failed: ${errors}`);
+    ).catch((aggregateErr) => {
+      const err = aggregateErr?.errors?.[0] || aggregateErr;
+      throw new Error(`All NEAR RPC broadcast failed: ${err?.message || err}`);
+    });
   }
 
   /**
@@ -506,6 +506,18 @@ export class MultiRpcNear {
   }
 
   /**
+   * Clear the cached access key / nonce info for an account.
+   * Resets accessKeyByPublicKeyCache on the cached Account instance so near-api-js
+   * queries the RPC for the current on-chain nonce on the next signTransaction call.
+   */
+  clearAccessKeyCache(accountId: string): void {
+    const account = this.accountCache.get(accountId);
+    if (account) {
+      (account as any).accessKeyByPublicKeyCache = {};
+    }
+  }
+
+  /**
    * Get account NEAR balance with parallel provider attempts.
    */
   async getNearBalance(accountId: string): Promise<string> {
@@ -534,20 +546,19 @@ export class MultiRpcNear {
     if (!tokenAddress || tokenAddress === 'near') return;
     const cacheKey = `${accountId}:${tokenAddress}`;
 
-    // Check cache first
-    if (registeredCache.has(cacheKey)) {
-      // Verify cache is still valid by checking on-chain
-      try {
-        const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
-        if (balance && balance.total) {
-          return; // Cache is valid
-        }
-        // Cache is stale, remove and re-register
-        registeredCache.delete(cacheKey);
-      } catch {
-        // Token doesn't implement storage_balance_of, remove cache and proceed
-        registeredCache.delete(cacheKey);
+    // Fast path: already known to be registered
+    if (registeredCache.has(cacheKey)) return;
+
+    // Check on-chain before attempting to sign — avoids a signing round-trip
+    // when the account is already registered (common case after first trade).
+    try {
+      const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
+      if (balance && balance.total) {
+        registeredCache.add(cacheKey);
+        return;
       }
+    } catch {
+      // Token doesn't implement storage_balance_of — proceed to deposit
     }
 
     try {
@@ -632,7 +643,7 @@ export class MultiRpcNear {
         rheaPoolIdCache.set(cacheKey2, foundId);
         return foundId;
       }
-    } catch {}
+    } catch { /* no-op */ }
 
     // 2. Fast REST lookup via api.ref.finance (covers ALL Ref Finance pools)
     // Resolves any pool in <5s — avoids slow 30x on-chain batch scanning.
@@ -656,7 +667,7 @@ export class MultiRpcNear {
           }
         }
       }
-    } catch {}
+    } catch { /* no-op */ }
     const batchSize = 100;
     const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools
 
@@ -763,7 +774,7 @@ export class MultiRpcNear {
           if (nearRes > 0 && linearRes > 0) {
             return { rateInNear: nearRes / linearRes, poolId: 4474, decimals: 24 };
           }
-        } catch {}
+        } catch { /* no-op */ }
         return { rateInNear: 1.048, poolId: 4474, decimals: 24 };
       }
       if (pairedToken === 'jambo-1679.meme-cooking.near') {
@@ -774,7 +785,7 @@ export class MultiRpcNear {
           if (nearRes > 0 && jamboRes > 0) {
             return { rateInNear: nearRes / jamboRes, poolId: 6518, decimals: 18 };
           }
-        } catch {}
+        } catch { /* no-op */ }
         return { rateInNear: 0.0003, poolId: 6518, decimals: 18 };
       }
       if (pairedToken === 'usdt.tether-token.near' || pairedToken === 'usdc.near') {
@@ -788,7 +799,7 @@ export class MultiRpcNear {
               return { rateInNear: nearRes / stableRes, poolId: pId, decimals: 6 };
             }
           }
-        } catch {}
+        } catch { /* no-op */ }
         return { rateInNear: 0.23, decimals: 6 };
       }
       // General fallback: check if pairedToken has a wNEAR pool on Ref
@@ -804,7 +815,7 @@ export class MultiRpcNear {
             return { rateInNear: nearRes / pairedRes, poolId: pId, decimals: pDec };
           }
         }
-      } catch {}
+      } catch { /* no-op */ }
       return { rateInNear: 1, decimals: 18 };
     };
 
@@ -843,7 +854,7 @@ export class MultiRpcNear {
           fee: rh.fee,
         });
       }
-    } catch {}
+    } catch { /* no-op */ }
 
     // Early exit: if we already have a direct wrap.near pool, no need to scan further
     if (candidates.length > 0) return candidates[0];
@@ -865,7 +876,7 @@ export class MultiRpcNear {
           });
         }
       }
-    } catch {}
+    } catch { /* no-op */ }
 
     // 3. Check Ref indexer top pools (covers thousands of active pools across all pair types)
     try {
@@ -903,7 +914,7 @@ export class MultiRpcNear {
           }
         }
       }
-    } catch {}
+    } catch { /* no-op */ }
 
     // Fast REST path via api.ref.finance before slow on-chain scan
     if (candidates.length === 0) {
@@ -940,7 +951,7 @@ export class MultiRpcNear {
             }
           }
         }
-      } catch {}
+      } catch { /* no-op */ }
     }
 
     // 4. On-chain scan of ALL Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
@@ -1054,7 +1065,7 @@ export class MultiRpcNear {
       const nearAmt = parseFloat(p6518.reserveIn) / 1e24;
       const jamboAmt = parseFloat(p6518.reserveOut) / 1e18;
       if (jamboAmt > 0) nearPerJambo = nearAmt / jamboAmt;
-    } catch {}
+    } catch { /* no-op */ }
 
     const decimals = meta?.decimals ?? 24;
     const jamboHeld = parseFloat(state.wnear_hold || '0') / 1e18;
@@ -1816,6 +1827,33 @@ export class MultiRpcNear {
           `NearlyTrade token ${targetToken} is not yet bonded and has no Rhea pool. Wait for bonding or pool creation.`
         );
       }
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
+      // NearlyTrade liquidity is a DCL bonding curve (single-sided concentrated
+      // liquidity over a point range), so xyk reserve math systematically
+      // overestimates output for trades that move the point — producing a
+      // min_amount_out the pool can never satisfy. Quote from the same DCL view
+      // the executor swaps against, and only fall back to reserve math when the
+      // quote view is unavailable.
+      if (state.dclPoolId) {
+        try {
+          const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [state.dclPoolId],
+            input_token: inToken,
+            output_token: outToken,
+            input_amount: amountIn,
+          });
+          const expected = BigInt(quote?.amount || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // quote view failed — fall through to reserve math
+        }
+      }
+
       const reserveNear = BigInt(state.reserveNear);
       const reserveToken = BigInt(state.reserveToken);
 
@@ -2152,7 +2190,7 @@ export class MultiRpcNear {
               method: 'broadcast_tx_async',
               params: [signedB64],
             }),
-            signal: AbortSignal.timeout(7000),
+            signal: AbortSignal.timeout(3000),
           });
           const data: any = await res.json();
           if (data?.error) {
@@ -2341,21 +2379,37 @@ export class MultiRpcNear {
         ...candidates.map((p) => tryRpc(p.url)),
       ];
 
-      const results = await Promise.allSettled(polls);
-      for (const r of results) {
-        if (r.status === 'fulfilled' && r.value !== null) {
-          return r.value;
-        }
-        if (r.status === 'rejected') {
-          lastErr = (r as PromiseRejectedResult).reason as Error;
-        }
+      // Return as soon as any candidate finds the outcome
+      const outcome = await new Promise<any | null>((resolve) => {
+        let pending = polls.length;
+        let resolved = false;
+        polls.forEach((p) => {
+          p.then((val) => {
+            if (val !== null && !resolved) {
+              resolved = true;
+              resolve(val);
+            }
+          }).catch((err) => {
+            lastErr = err;
+          }).finally(() => {
+            pending--;
+            if (pending === 0 && !resolved) {
+              resolve(null);
+            }
+          });
+        });
+      });
+
+      if (outcome) {
+        return outcome;
       }
 
       await sleep(500); // Reduced from 1000ms to 500ms for faster confirmation polling
     }
 
+    const errMsg = lastErr ? `: ${(lastErr as any).message}` : '';
     throw new Error(
-      `Transaction ${txHash} not confirmed within ${maxMs}ms${lastErr ? `: ${lastErr.message}` : ''}`
+      `Transaction ${txHash} not confirmed within ${maxMs}ms${errMsg}`
     );
   }
 }
@@ -2364,13 +2418,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service. */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR only). */
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
-  'https://rpc.near.org',
-  'https://near.lava.build',
-  'https://1rpc.io/near',
 ];
 
 /** Singleton factory — call once per process, reuse the connection pool */
@@ -2387,6 +2438,15 @@ export function getNear(rpcUrls?: string[]): MultiRpcNear {
     _nearInstance = new MultiRpcNear(urls.length > 0 ? urls : DEFAULT_RPC_URLS);
   }
   return _nearInstance;
+}
+
+/**
+ * Clear the cached access key / nonce info on the singleton MultiRpcNear instance.
+ */
+export function clearAccessKeyCache(accountId: string): void {
+  if (_nearInstance) {
+    _nearInstance.clearAccessKeyCache(accountId);
+  }
 }
 
 /**
