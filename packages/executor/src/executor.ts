@@ -155,25 +155,63 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
   const depositNear = (Number(deposit) / 1e24).toFixed(2);
 
   console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit (${depositNear} NEAR)...`);
-  try {
-    await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
-      transactions.functionCall(
-        'storage_deposit',
-        { account_id: accountId, registration_only: false },
-        BigInt('30000000000000'),
-        deposit
-      ),
-    ], 15_000);
-  } catch (err: any) {
-    const msg = (err?.message ?? String(err)).toLowerCase();
-    if (msg.includes('already registered') || msg.includes('storage already deposited')) {
+
+  const attemptRefDeposit = async (windowMs: number): Promise<'ok' | 'already' | 'never_seen' | Error> => {
+    try {
+      await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: accountId, registration_only: false },
+          BigInt('30000000000000'),
+          deposit
+        ),
+      ], windowMs);
+      return 'ok';
+    } catch (err: any) {
+      const msg = (err?.message ?? String(err)).toLowerCase();
+      if (msg.includes('already registered') || msg.includes('storage already deposited')) return 'already';
+      if (err?.neverSeen) return 'never_seen';
+      return err instanceof Error ? err : new Error(String(err));
+    }
+  };
+
+  let result = await attemptRefDeposit(45_000);
+
+  if (result === 'ok' || result === 'already') {
+    refTracker.confirmStorage(accountId);
+    return;
+  }
+
+  if (result === 'never_seen') {
+    // tx may have landed after our polling window — re-read chain state before giving up
+    console.warn(`[EXECUTOR] Ref storage_deposit neverSeen for ${accountId} — re-reading chain state`);
+    await new Promise(r => setTimeout(r, 2_000));
+    const recheck = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
+    if (recheck && recheck.total && recheck.total !== '0') {
       refTracker.confirmStorage(accountId);
       return;
     }
-    console.error(`[EXECUTOR] Ref storage_deposit failed for ${accountId}:`, err?.message);
-    throw new Error(`Could not register your wallet on Ref Finance. Add at least ${depositNear} NEAR and retry.`);
+    // Still not registered — retry with fresh 45s window
+    result = await attemptRefDeposit(45_000);
+    if (result === 'ok' || result === 'already') {
+      refTracker.confirmStorage(accountId);
+      return;
+    }
+    if (result === 'never_seen') {
+      await new Promise(r => setTimeout(r, 2_000));
+      const finalCheck = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
+      if (finalCheck && finalCheck.total && finalCheck.total !== '0') {
+        refTracker.confirmStorage(accountId);
+        return;
+      }
+      throw new Error(`Could not register your wallet on Ref Finance — NEAR network is congested. Please retry in a moment.`);
+    }
   }
-  refTracker.confirmStorage(accountId);
+
+  // result is an Error
+  console.error(`[EXECUTOR] Ref storage_deposit failed for ${accountId}:`, (result as Error).message);
+  throw new Error(`Could not register your wallet on Ref Finance. Add at least ${depositNear} NEAR and retry.`);
+
 }
 
 /**
