@@ -847,6 +847,26 @@ export class MultiRpcNear {
   }
 
   /**
+   * Check if account is already registered for NEP-141 storage using a read-only view call.
+   * If registered, caches the result in registeredCache. Never sends an on-chain transaction.
+   */
+  async checkStorageRegistered(accountId: string, tokenAddress: string): Promise<boolean> {
+    if (!tokenAddress || tokenAddress === 'near') return true;
+    const cacheKey = `${accountId}:${tokenAddress}`;
+    if (registeredCache.has(cacheKey)) return true;
+    try {
+      const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
+      if (balance && balance.total) {
+        registeredCache.add(cacheKey);
+        return true;
+      }
+    } catch {
+      // Token doesn't implement storage_balance_of
+    }
+    return false;
+  }
+
+  /**
    * Check if account is registered for NEP-141 storage and register if not.
    * Improved with better race condition handling and stale cache detection.
    */
@@ -854,20 +874,8 @@ export class MultiRpcNear {
     if (!tokenAddress || tokenAddress === 'near') return;
     const cacheKey = `${accountId}:${tokenAddress}`;
 
-    // Fast path: already known to be registered
-    if (registeredCache.has(cacheKey)) return;
-
-    // Check on-chain before attempting to sign — avoids a signing round-trip
-    // when the account is already registered (common case after first trade).
-    try {
-      const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
-      if (balance && balance.total) {
-        registeredCache.add(cacheKey);
-        return;
-      }
-    } catch {
-      // Token doesn't implement storage_balance_of — proceed to deposit
-    }
+    // Fast path: already known to be registered (or confirmed via read-only check)
+    if (await this.checkStorageRegistered(accountId, tokenAddress)) return;
 
     try {
       // Query token's storage balance bounds to get exact required deposit if possible
