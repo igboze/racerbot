@@ -859,61 +859,86 @@ export class MultiRpcNear {
     // Fast path: already known to be registered (or confirmed via read-only check)
     if (await this.checkStorageRegistered(accountId, tokenAddress)) return;
 
-    try {
-      // Query token's storage balance bounds to get exact required deposit if possible
-      let deposit = BigInt('12500000000000000000000'); // 0.0125 NEAR fallback
-      if (tokenAddress === 'wrap.near') {
-        deposit = BigInt('1250000000000000000000'); // 0.00125 NEAR
-      } else {
-        const bounds = await this.view<any>(tokenAddress, 'storage_balance_bounds', {}).catch(() => null);
-        if (bounds && bounds.min) {
-          deposit = BigInt(bounds.min);
-        }
-      }
+    // Helper: compute deposit amount
+    const getDeposit = async (): Promise<bigint> => {
+      if (tokenAddress === 'wrap.near') return BigInt('1250000000000000000000'); // 0.00125 NEAR
+      const bounds = await this.view<any>(tokenAddress, 'storage_balance_bounds', {}).catch(() => null);
+      return (bounds?.min) ? BigInt(bounds.min) : BigInt('12500000000000000000000');
+    };
 
-      await this.signAndSendTransactionAll(accountId, tokenAddress, [
-        transactions.functionCall(
-          'storage_deposit',
-          { account_id: accountId, registration_only: true },
-          BigInt('30000000000000'),
-          deposit
-        ),
-      ], 15_000);
+    // Helper: attempt one storage_deposit with `registration_only`, with neverSeen recovery.
+    // On neverSeen the tx may have landed after our polling window — re-read chain state
+    // before declaring failure. This avoids false "never reached" errors under congestion.
+    const tryDeposit = async (registrationOnly: boolean, windowMs: number): Promise<'ok' | 'already' | 'never_seen' | Error> => {
+      const deposit = await getDeposit();
+      const args = registrationOnly
+        ? { account_id: accountId, registration_only: true }
+        : { account_id: accountId };
+      try {
+        await this.signAndSendTransactionAll(accountId, tokenAddress, [
+          transactions.functionCall('storage_deposit', args, BigInt('30000000000000'), deposit),
+        ], windowMs);
+        return 'ok';
+      } catch (err: any) {
+        const msg = (err?.message ?? '').toLowerCase();
+        if (msg.includes('already registered') || msg.includes('storage already deposited')) return 'already';
+        if (err?.neverSeen) return 'never_seen';
+        return err instanceof Error ? err : new Error(String(err));
+      }
+    };
+
+    // Attempt 1: registration_only=true with 45s window
+    let result = await tryDeposit(true, 45_000);
+
+    if (result === 'ok' || result === 'already') {
       registeredCache.add(cacheKey);
-    } catch (err) {
-      const errorMessage = (err as Error).message?.toLowerCase() || '';
-      // If error indicates already registered, add to cache and succeed
-      if (errorMessage.includes('already registered') || errorMessage.includes('storage already deposited')) {
+      return;
+    }
+
+    if (result === 'never_seen') {
+      // tx was broadcast but RPC polling timed out — wait 2s then re-read chain state.
+      // Under congestion, the tx can land after our polling window.
+      console.warn(`[NEAR] storage_deposit neverSeen for ${accountId} on ${tokenAddress} — re-reading chain state`);
+      await new Promise(r => setTimeout(r, 2_000));
+      if (await this.checkStorageRegistered(accountId, tokenAddress)) {
         registeredCache.add(cacheKey);
         return;
       }
-
-      console.warn(`[NEAR] storage_deposit registration_only failed for ${accountId} on ${tokenAddress}:`, (err as Error).message);
-      // Try once more without registration_only for older token contracts
-      try {
-        const deposit = tokenAddress === 'wrap.near'
-          ? BigInt('1250000000000000000000')
-          : BigInt('12500000000000000000000');
-        await this.signAndSendTransactionAll(accountId, tokenAddress, [
-          transactions.functionCall(
-            'storage_deposit',
-            { account_id: accountId },
-            BigInt('30000000000000'),
-            deposit
-          ),
-        ], 15_000);
+      // Still not registered — try once more with the fallback (no registration_only) and a fresh 45s window
+      console.warn(`[NEAR] storage_deposit retrying without registration_only for ${accountId} on ${tokenAddress}`);
+      result = await tryDeposit(false, 45_000);
+      if (result === 'ok' || result === 'already') {
         registeredCache.add(cacheKey);
-      } catch (err2) {
-        const error2Message = (err2 as Error).message?.toLowerCase() || '';
-        // If second attempt also indicates already registered, add to cache and succeed
-        if (error2Message.includes('already registered') || error2Message.includes('storage already deposited')) {
+        return;
+      }
+      if (result === 'never_seen') {
+        // Re-read one final time before giving up
+        await new Promise(r => setTimeout(r, 2_000));
+        if (await this.checkStorageRegistered(accountId, tokenAddress)) {
           registeredCache.add(cacheKey);
           return;
         }
-        console.warn(`[NEAR] fallback storage_deposit failed for ${accountId} on ${tokenAddress}:`, (err2 as Error).message);
-        throw err2;
+        throw new Error(`Storage registration for ${tokenAddress} timed out twice — NEAR network is congested. No funds spent. Please retry.`);
       }
     }
+
+    // result is an Error — try fallback without registration_only for older token contracts
+    console.warn(`[NEAR] storage_deposit registration_only failed for ${accountId} on ${tokenAddress}:`, (result as Error).message);
+    const fallback = await tryDeposit(false, 45_000);
+    if (fallback === 'ok' || fallback === 'already') {
+      registeredCache.add(cacheKey);
+      return;
+    }
+    if (fallback === 'never_seen') {
+      await new Promise(r => setTimeout(r, 2_000));
+      if (await this.checkStorageRegistered(accountId, tokenAddress)) {
+        registeredCache.add(cacheKey);
+        return;
+      }
+      throw new Error(`Storage registration for ${tokenAddress} timed out — NEAR network is congested. No funds spent. Please retry.`);
+    }
+    console.warn(`[NEAR] fallback storage_deposit failed for ${accountId} on ${tokenAddress}:`, (fallback as Error).message);
+    throw fallback;
   }
 
   /**

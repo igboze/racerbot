@@ -767,9 +767,17 @@ function getUserFriendlyError(error: Error | string): string {
   if (r.includes('swap failed'))
     return errorMsg.slice(0, 280);
 
+  // ── Storage registration timeouts (never reached / congestion) ───────────
+  if (r.includes('storage registration') && (r.includes('timed out') || r.includes('congested'))) {
+    return '⏳ Wallet registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
+  }
+  if (r.includes('ref finance') && r.includes('congested')) {
+    return '⏳ Ref Finance registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
+  }
+
   // ── Pending / slow confirmation (do NOT advise immediate blind retry) ───
   if (r.includes('storage') && r.includes('never reached the near network')) {
-    return 'Wallet storage registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
+    return '⏳ Wallet storage registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
   }
   if (r.includes('never reached the near network')) {
     return 'Your transaction never reached the NEAR network — it was NOT executed and no funds were spent. The network is congested right now; it is safe to retry in a moment.';
@@ -777,6 +785,7 @@ function getUserFriendlyError(error: Error | string): string {
   if (r.includes('not confirmed within') || r.includes('taking too long') || r.includes('outcome is unknown')) {
     return 'Transaction was submitted but confirmation is taking longer than usual. Please check your wallet balance or NearBlocks before retrying to avoid duplicate trades.';
   }
+
 
   // ── Distributed Lock Contention & Timeout ──────────────────────────────
   if (r.includes('another transaction is already in progress') || r.includes('wallet lock') || r.includes('contention')) {
