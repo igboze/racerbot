@@ -556,6 +556,18 @@ export class SwapExecutor {
       );
     }
 
+    // Pre-broadcast budget: all view calls (quote + storage checks + pool lookup)
+    // must complete within 6 000 ms of the trade start. If they stack beyond this,
+    // throw now — no transaction has been sent, so the user can safely retry.
+    const PRE_BROADCAST_BUDGET_MS = 6_000;
+    const preBroadcastElapsed = Date.now() - t0;
+    if (preBroadcastElapsed > PRE_BROADCAST_BUDGET_MS) {
+      throw new Error(
+        `Pre-broadcast setup took too long (${preBroadcastElapsed} ms). ` +
+        'No transaction was sent — no funds were spent. Please retry.'
+      );
+    }
+
     let result: any;
 
     if (venue === 'nearlytrade') {
