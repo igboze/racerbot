@@ -300,3 +300,57 @@ describe('near: single pinned trade RPC (no fallback)', () => {
     clearInterval(t1);
   });
 });
+
+describe('near: awaitOutcome neverSeen classification (mempool blackhole detection)', () => {
+  const FN = 'https://rpc.mainnet.fastnear.com';
+
+  const unknownTxResponse = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'await-outcome',
+      error: {
+        name: 'HANDLER_ERROR',
+        cause: { info: {}, name: 'UNKNOWN_TRANSACTION' },
+        code: -32000,
+        message: 'Server error',
+        data: "Transaction abc doesn't exist",
+      },
+    }),
+  }) as unknown as Response;
+
+  it('flags neverSeen when the node never knew the tx (safe to retry)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => unknownTxResponse()));
+    const near = new MultiRpcNear([FN]) as any;
+    const state = { everSeen: false };
+    const err = await near.awaitOutcome('abc', 'alice.near', 1_500, state).catch((e: any) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.neverSeen).toBe(true);
+    expect(err.message).toMatch(/never reached the NEAR network/);
+    expect(state.everSeen).toBe(false);
+    vi.unstubAllGlobals();
+  }, 15_000);
+
+  it('does NOT flag neverSeen once the node reports the tx (slow confirmation)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'await-outcome',
+        result: {
+          final_execution_status: 'FINAL',
+          status: { SuccessValue: '' },
+          receipts_outcome: [{ outcome: { status: { SuccessValue: '' }, logs: [] } }],
+        },
+      }),
+    }) as unknown as Response));
+    const near = new MultiRpcNear([FN]) as any;
+    const state = { everSeen: false };
+    const outcome = await near.awaitOutcome('abc', 'alice.near', 3_000, state);
+    expect(outcome.final_execution_status).toBe('FINAL');
+    expect(state.everSeen).toBe(true);
+    vi.unstubAllGlobals();
+  }, 15_000);
+});

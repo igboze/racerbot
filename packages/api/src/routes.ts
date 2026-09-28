@@ -768,6 +768,9 @@ function getUserFriendlyError(error: Error | string): string {
     return errorMsg.slice(0, 280);
 
   // ── Pending / slow confirmation (do NOT advise immediate blind retry) ───
+  if (r.includes('never reached the near network')) {
+    return 'Your transaction never reached the NEAR network — it was NOT executed and no funds were spent. The network is congested right now; it is safe to retry in a moment.';
+  }
   if (r.includes('not confirmed within') || r.includes('taking too long') || r.includes('outcome is unknown')) {
     return 'Transaction was submitted but confirmation is taking longer than usual. Please check your wallet balance or NearBlocks before retrying to avoid duplicate trades.';
   }
