@@ -2025,10 +2025,12 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = ctx.match![1];
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
+    console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountNear} NEAR`);
 
     // In-flight guard: reject a duplicate tap while a trade for this token is running.
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
     if (!tryAcquireInFlight(guardKey)) {
+      console.warn(`[BUY_FIXED] Duplicate tap rejected: guardKey=${guardKey}`);
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
@@ -2038,7 +2040,9 @@ export function setupRoutes(bot: Telegraf): void {
       const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
       try {
+        console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountNear}`);
         const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+        console.log(`[BUY_FIXED] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
         await ctx.reply(res.message, {
@@ -2046,6 +2050,7 @@ export function setupRoutes(bot: Telegraf): void {
           reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
         });
       } catch (err: any) {
+        console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
       } finally {
@@ -2065,9 +2070,11 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
+    console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
     if (!tryAcquireInFlight(guardKey)) {
+      console.warn(`[BUY_PCT] Duplicate tap rejected: guardKey=${guardKey}`);
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
@@ -2077,7 +2084,9 @@ export function setupRoutes(bot: Telegraf): void {
       const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
       try {
+        console.log(`[BUY_PCT] Starting executeBuyPctHelper: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
         const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
+        console.log(`[BUY_PCT] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
         await ctx.reply(res.message, {
@@ -2085,6 +2094,7 @@ export function setupRoutes(bot: Telegraf): void {
           reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
         });
       } catch (err: any) {
+        console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
       } finally {
@@ -2232,6 +2242,7 @@ export function setupRoutes(bot: Telegraf): void {
     const positionId = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
+    console.log(`[SELL] Click: user=${telegramId}, positionId=${positionId}, pct=${pct}%`);
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
@@ -2255,8 +2266,11 @@ export function setupRoutes(bot: Telegraf): void {
 
       let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
       try {
+        console.log(`[SELL] Starting sellAtTarget: user=${user.id}, positionId=${positionId}, pct=${pct}%, token=${tokenAddress}`);
         result = await sellAtTarget(user.id, positionId, pct, onStage);
+        console.log(`[SELL] sellAtTarget completed: user=${user.id}, success=${result.success}, reason=${result.reason || 'ok'}`);
       } catch (err: any) {
+        console.error(`[SELL] sellAtTarget threw: user=${user.id}, error=${err?.message}`, err);
         result = { success: false, reason: err.message || 'Swap execution failed' };
       } finally {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});

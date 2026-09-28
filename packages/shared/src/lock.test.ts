@@ -269,4 +269,29 @@ describe('withAccountLock', () => {
     const current = await redis.get(`lock:swap:${accountId}`);
     expect(current).toBe('other-process-token');
   });
+
+  it('falls back to in-memory lock when Redis is offline/not ready', async () => {
+    const offlineRedis: RedisClient = {
+      ...createMockRedis(),
+      isConnected() {
+        return false;
+      },
+      getStatus() {
+        return 'connecting';
+      },
+      async setNxPx() {
+        throw new Error('ECONNREFUSED');
+      },
+    };
+
+    const accountId = 'user-sub-offline.racer.near';
+    let executed = false;
+    const result = await withAccountLock(offlineRedis, accountId, async () => {
+      executed = true;
+      return 'offline-ok';
+    });
+
+    expect(executed).toBe(true);
+    expect(result).toBe('offline-ok');
+  });
 });

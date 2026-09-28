@@ -39,6 +39,57 @@ export interface LockOptions {
   onContended?: (accountId: string) => void | Promise<void>;
 }
 
+const inMemoryLocks = new Map<string, Promise<void>>();
+
+/**
+ * Fallback mutex per accountId when Redis is unavailable/offline.
+ * Prevents transaction collisions in single-instance environments even if Redis fails.
+ */
+async function withInMemoryLock<T>(
+  accountId: string,
+  fn: () => Promise<T>,
+  ttlMs = 30_000
+): Promise<T> {
+  const lockKey = `lock:swap:${accountId}`;
+  const t0 = Date.now();
+  console.log(`[LOCK:IN-MEM] Requesting in-memory lock for ${lockKey}`);
+
+  while (inMemoryLocks.has(accountId)) {
+    try {
+      await inMemoryLocks.get(accountId);
+    } catch {
+      // previous lock settled with error
+    }
+  }
+
+  let releaseLock: () => void = () => {};
+  const lockPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  const timer = setTimeout(() => {
+    if (inMemoryLocks.get(accountId) === lockPromise) {
+      console.warn(`[LOCK:IN-MEM] In-memory lock for ${lockKey} expired after ${ttlMs}ms`);
+      inMemoryLocks.delete(accountId);
+    }
+    releaseLock();
+  }, ttlMs);
+
+  inMemoryLocks.set(accountId, lockPromise);
+  console.log(`[LOCK:IN-MEM] In-memory lock acquired for ${lockKey} in ${Date.now() - t0}ms`);
+
+  try {
+    return await fn();
+  } finally {
+    clearTimeout(timer);
+    if (inMemoryLocks.get(accountId) === lockPromise) {
+      inMemoryLocks.delete(accountId);
+    }
+    releaseLock();
+    console.log(`[LOCK:IN-MEM] In-memory lock released for ${lockKey}`);
+  }
+}
+
 /**
  * Executes an async action protected by a distributed Redis lock per accountId.
  * Lock key: lock:swap:<accountId>
@@ -60,6 +111,17 @@ export async function withAccountLock<T>(
   const retryDelayMs = options?.retryDelayMs ?? 100;
   const lockKey = `lock:swap:${accountId}`;
   const token = randomUUID();
+  const t0 = Date.now();
+
+  // If Redis is explicitly offline or not ready, fallback to in-memory lock
+  // so trades never hang for 8s and fail when Redis is unavailable.
+  if (typeof redis.isConnected === 'function' && !redis.isConnected()) {
+    const status = typeof redis.getStatus === 'function' ? redis.getStatus() : 'unknown';
+    console.warn(`[LOCK] Redis client not ready (status: ${status}). Falling back to in-memory lock for ${accountId}.`);
+    return withInMemoryLock(accountId, fn, ttlMs);
+  }
+
+  console.log(`[LOCK] Requesting lock for account=${accountId}, key=${lockKey}, ttl=${ttlMs}ms`);
 
   let acquired = false;
   let attempts = 0;
@@ -80,6 +142,7 @@ export async function withAccountLock<T>(
           await redis.del(lockKey);
         }
       }
+      console.log(`[LOCK] Lock released for ${lockKey} in ${Date.now() - t0}ms`);
     } catch (err: any) {
       console.warn(`[LOCK] Failed to release lock ${lockKey}:`, err?.message);
     }
@@ -97,8 +160,9 @@ export async function withAccountLock<T>(
           acquired = res === 'OK' || res === true;
         }
         if (!acquired) sawGenuineContention = true;
-      } catch (err) {
+      } catch (err: any) {
         lastRedisError = err;
+        console.warn(`[LOCK] Attempt ${i}/${maxAttempts} for ${lockKey} error:`, err?.message || err);
         acquired = false;
       }
 
@@ -114,6 +178,7 @@ export async function withAccountLock<T>(
       }
 
       if (acquired) {
+        console.log(`[LOCK] Lock acquired for ${lockKey} on attempt ${attempts} in ${Date.now() - t0}ms`);
         break;
       }
 
@@ -129,6 +194,9 @@ export async function withAccountLock<T>(
   const timeout = new Promise<never>((_, reject) => {
     timeoutTimer = setTimeout(() => {
       timedOut = true;
+      const elapsed = Date.now() - t0;
+      const redisStatus = typeof redis.getStatus === 'function' ? redis.getStatus() : 'unknown';
+      console.error(`[LOCK] TIMEOUT after ${elapsed}ms acquiring ${lockKey} (attempts: ${attempts}, redisStatus: ${redisStatus})`);
       reject(new Error(LOCK_ACQUISITION_TIMEOUT_ERROR));
     }, ACQUISITION_TIMEOUT_MS);
   });
@@ -147,6 +215,7 @@ export async function withAccountLock<T>(
       console.warn(`[LOCK] Redis errors during lock acquisition for ${lockKey}:`, (lastRedisError as any)?.message);
       throw new Error(LOCK_STORAGE_UNAVAILABLE_ERROR);
     }
+    console.warn(`[LOCK] Contention: failed to acquire ${lockKey} after ${attempts} attempts in ${Date.now() - t0}ms`);
     throw new Error(LOCK_CONTENTION_ERROR);
   }
 

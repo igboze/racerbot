@@ -122,27 +122,31 @@ async function main(): Promise<void> {
 
   // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
   let redis: any = null;
-  try {
-    redis = createRedis(REDIS_URL);
-    await redis.subscribe(CHANNELS.NEW_TOKENS, (message: string) => {
-      try {
-        const event: TokenDetectedEvent = JSON.parse(message);
-        localTokenNames.set(event.name.toLowerCase(), {
-          address: event.token_address,
-          symbol: event.symbol,
-        });
-        logger.debug('Token name cached', { token: event.name, address: event.token_address });
-      } catch { /* ignore malformed */ }
-    });
-  } catch (err: any) {
-    logger.warn('Redis pub/sub unavailable, token name caching inactive', { error: err.message });
-  }
+  if (!REDIS_URL) {
+    console.warn('[API] REDIS_URL environment variable is not set. Operating with in-memory wallet locking.');
+  } else {
+    try {
+      redis = createRedis(REDIS_URL);
+      await redis.subscribe(CHANNELS.NEW_TOKENS, (message: string) => {
+        try {
+          const event: TokenDetectedEvent = JSON.parse(message);
+          localTokenNames.set(event.name.toLowerCase(), {
+            address: event.token_address,
+            symbol: event.symbol,
+          });
+          logger.debug('Token name cached', { token: event.name, address: event.token_address });
+        } catch { /* ignore malformed */ }
+      });
+    } catch (err: any) {
+      console.warn('[API] Redis pub/sub unavailable, token name caching inactive:', err?.message || err);
+    }
 
-  // ── Start notification listener (async, non-blocking) ──────────────────────
-  try {
-    await startNotifyListener(REDIS_URL);
-  } catch (err: any) {
-    logger.warn('Redis notification listener inactive', { error: err.message });
+    // ── Start notification listener (async, non-blocking) ──────────────────────
+    try {
+      await startNotifyListener(REDIS_URL);
+    } catch (err: any) {
+      console.warn('[API] Redis notification listener inactive:', err?.message || err);
+    }
   }
 
   // ── Start background sync for external token deposits ─────────────────────
