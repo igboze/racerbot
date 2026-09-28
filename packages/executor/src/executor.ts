@@ -449,6 +449,11 @@ export class SwapExecutor {
           subaccountId,
           () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
           {
+            // Must outlive the whole sign+broadcast+confirm window (40s
+            // default + rebroadcast rescue + overhead). The old 30s TTL
+            // expired mid-flight, letting a retry sign with the same key
+            // while the first tx could still land — a nonce/double-spend race.
+            ttlMs: 95_000,
             onContended: (accId) => {
               console.warn(`[EXECUTOR:SIGN] Contention on ${accId}, clearing access key cache`);
               this.nearClient.clearAccessKeyCache?.(accId);
