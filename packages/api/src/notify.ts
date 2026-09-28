@@ -170,7 +170,6 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const tokenQty = Number(data.tokenQty ?? 0);
       const priceNear = Number(data.priceNear ?? 0);
       const nearSpent = Number(data.nearSpent ?? 0);
-      const txHash = data.txHash as string | undefined;
 
       const qtyDisplay = tokenQty >= 1_000_000
         ? `${(tokenQty / 1_000_000).toFixed(3)}M`
@@ -180,16 +179,23 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         ? tokenQty.toFixed(4)
         : tokenQty.toExponential(3);
 
-      const explorerLine = txHash
-        ? `\n🔗 [View on NearBlocks](https://nearblocks.io/txns/${sanitize(txHash)})`
-        : '';
+      // PNL snapshot at entry instead of an explorer link: position value vs
+      // amount spent (the t=0 delta is the entry cost — fee + token tax).
+      const valueNear = tokenQty * priceNear;
+      const pnlNear = valueNear - nearSpent;
+      const pnlPct = nearSpent > 0 ? (pnlNear / nearSpent) * 100 : 0;
+      const pnlEmoji = pnlNear >= 0 ? '📈' : '📉';
+      const pnlSign = pnlNear >= 0 ? '+' : '';
 
       await _bot.telegram.sendMessage(telegramId,
         `✅ *Buy Confirmed!*\n\n` +
         `🪙 *${tokenName}* (${tokenSym})\n` +
         `📦 Received: \`${qtyDisplay} ${tokenSym}\`\n` +
-        `💵 Price: \`${priceNear > 0 ? priceNear.toFixed(8) : '—'} NEAR\`\n` +
-        `💸 Spent: \`${nearSpent.toFixed(4)} NEAR\`${explorerLine}`,
+        `💸 Spent: \`${nearSpent.toFixed(4)} NEAR\`\n` +
+        `💵 Entry: \`${priceNear > 0 ? priceNear.toFixed(8) : '—'} NEAR\`\n\n` +
+        `📊 *Position*\n` +
+        `💰 Value: \`${valueNear.toFixed(4)} NEAR\`\n` +
+        `${pnlEmoji} PnL: \`${pnlSign}${pnlPct.toFixed(1)}%\` (\`${pnlSign}${pnlNear.toFixed(4)} NEAR\`)`,
         { parse_mode: 'Markdown' }
       );
       break;

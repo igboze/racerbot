@@ -114,6 +114,13 @@ function parseOutputAmounts(result: any, subaccountId: string, outputToken: stri
       if (executorId === outputToken) {
         const m = log.match(new RegExp(`^Transfer (\\d+) from \\S+ to ${escapeRegExp(subaccountId)}$`));
         if (m) amounts.push(m[1]);
+        // DCL sells pay out NATIVE NEAR: the DEX contract calls near_withdraw
+        // on wrap.near, which logs "Withdraw N NEAR from dclv2.ref-labs.near"
+        // and forwards native NEAR to the user. The user's wrap.near balance
+        // delta is therefore 0 — without this, a successful DCL sell looks
+        // like a refund. Only counted when output IS wrap.near (sells).
+        const w = log.match(/^Withdraw (\d+) NEAR from \S+$/);
+        if (w) amounts.push(w[1]);
       }
       // DEX-emitted swap logs — output-denominated by definition.
       const refSwapMatch = log.match(/Swapped\s+\d+\s+\S+\s+for\s+(\d+)\s+(\S+)/i);
