@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { withAccountLock, LOCK_CONTENTION_ERROR } from './lock.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { withAccountLock, LOCK_CONTENTION_ERROR, LOCK_ACQUISITION_TIMEOUT_ERROR } from './lock.js';
 import type { RedisClient } from './redis.js';
 
 function createMockRedis(): RedisClient {
@@ -69,6 +69,29 @@ function createMockRedis(): RedisClient {
 }
 
 describe('withAccountLock', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('rejects with timeout error when a Redis command never resolves (connection drop)', async () => {
+    vi.useFakeTimers();
+
+    // Simulates a hung ioredis command queue: setNxPx never settles,
+    // which previously made withAccountLock wait forever.
+    const hungRedis: RedisClient = {
+      ...createMockRedis(),
+      async setNxPx(): Promise<boolean> {
+        return new Promise<boolean>(() => {});
+      },
+    };
+
+    const promise = withAccountLock(hungRedis, 'user-sub-hang.racer.near', async () => 'never');
+    const assertion = expect(promise).rejects.toThrow(LOCK_ACQUISITION_TIMEOUT_ERROR);
+
+    await vi.advanceTimersByTimeAsync(8_000);
+    await assertion;
+  });
+
   it('acquires the lock, runs fn, and releases the lock', async () => {
     const redis = createMockRedis();
     const accountId = 'user-sub-1.racer.near';
