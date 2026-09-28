@@ -246,7 +246,7 @@ export class SwapExecutor {
    * Execute a swap event with observability: records a trade_attempts row with
    * per-stage timings, updated on success/failure. Throws propagate unchanged.
    */
-  async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  async execute(event: SwapEvent, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
     const attemptId = await recordTradeAttempt({
       user_id: event.user_id,
@@ -264,7 +264,7 @@ export class SwapExecutor {
 
     const timings: Record<string, number> = {};
     try {
-      const result = await this.executeInner(event, timings);
+      const result = await this.executeInner(event, timings, onProgress);
       if (attemptId) {
         await updateTradeAttempt(attemptId, {
           status: result.success === false ? 'failed' : 'success',
@@ -295,7 +295,7 @@ export class SwapExecutor {
     }
   }
 
-  private async executeInner(event: SwapEvent, timings: Record<string, number>): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
@@ -313,7 +313,7 @@ export class SwapExecutor {
       const user = await getUserById(user_id);
       if (!user) throw new Error(`User ${user_id} not found`);
       await addUserKey(user_id, user.subaccount_id, user.scoped_key_encrypted);
-      return this.executeInner(event, timings); // retry with warm key
+      return this.executeInner(event, timings, onProgress); // retry with warm key
     }
 
     const { subaccountId } = warm;
@@ -326,9 +326,14 @@ export class SwapExecutor {
     // Helper to sign and send with distributed per-account lock.
     // Records stage timings: presign (everything before signing), sign
     // (lock + sign + broadcast + confirmation), post (fee/unwrap + fill).
+    // Emits UI progress stages so the user sees movement instead of a frozen
+    // "Processing…" message; 'confirming_slow' fires if on-chain confirmation
+    // exceeds 15s (RPC/indexer congestion) to reassure the user.
     const signAndSend = (receiverId: string, actions: transactions.Action[], waitForMs?: number) => {
       timings.presign_ms = Date.now() - t0;
       timings.signStart = Date.now();
+      onProgress?.('signing');
+      const slowTimer = setTimeout(() => onProgress?.('confirming_slow'), 15_000);
       return withAccountLock(
         this.redisClient,
         subaccountId,
@@ -339,7 +344,14 @@ export class SwapExecutor {
             clearAccessKeyCache(accId);
           },
         }
-      );
+      ).finally(() => clearTimeout(slowTimer));
+    };
+
+    // Storage-registration wrapper — emits a progress stage so a one-time
+    // storage_deposit transaction doesn't look like a frozen swap.
+    const ensureStorage = (tokenAddress: string) => {
+      onProgress?.('storage');
+      return near.ensureStorageDeposit(subaccountId, tokenAddress);
     };
 
     // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
@@ -392,6 +404,7 @@ export class SwapExecutor {
     // (price moved between the upstream quote and now), fail fast with an exact
     // reason instead of submitting a transaction that must revert on-chain.
     // Never executes at a price worse than the user agreed to.
+    onProgress?.('quote');
     const freshQuote = await near.computeMinAmountOut(
       venue,
       token_in,
@@ -422,7 +435,7 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       if (isBuy) {
         // Ensure user is registered for NEP-141 storage on token_out
-        await near.ensureStorageDeposit(subaccountId, token_out);
+        await ensureStorage( token_out);
 
         // If Rhea pool exists, use Rhea DEX
         if (rheaPoolId) {
@@ -479,8 +492,8 @@ export class SwapExecutor {
         } else {
           // Sell token on Rhea or DCL for wrap.near
           // Per docs: always check storage deposit before initiating swaps
-          await near.ensureStorageDeposit(subaccountId, token_in);
-          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          await ensureStorage( token_in);
+          await ensureStorage( 'wrap.near');
 
           if (rheaPoolId) {
             const actions = [
@@ -540,7 +553,7 @@ export class SwapExecutor {
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
           if (isBuy) {
             const [, actions] = await Promise.all([
-              near.ensureStorageDeposit(subaccountId, token_out),
+              ensureStorage( token_out),
               this.buildWrapNearBuyActions(
                 subaccountId,
                 amountInBigInt,
@@ -560,8 +573,8 @@ export class SwapExecutor {
             result = await signAndSend('wrap.near', actions);
           } else {
             await Promise.all([
-              near.ensureStorageDeposit(subaccountId, token_in),
-              near.ensureStorageDeposit(subaccountId, 'wrap.near'),
+              ensureStorage( token_in),
+              ensureStorage( 'wrap.near'),
             ]);
 
             const actions = [
@@ -600,7 +613,7 @@ export class SwapExecutor {
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
           // Check storage deposit on the sell token before swap
           if (!isBuy) {
-            await near.ensureStorageDeposit(subaccountId, token_in);
+            await ensureStorage( token_in);
           }
 
           const targetToken = isBuy ? token_out : token_in;
@@ -659,10 +672,10 @@ export class SwapExecutor {
             const [, actions] = await Promise.all([
               intermediateToken
                 ? Promise.all([
-                    near.ensureStorageDeposit(subaccountId, token_out),
-                    near.ensureStorageDeposit(subaccountId, intermediateToken),
+                    ensureStorage( token_out),
+                    ensureStorage( intermediateToken),
                   ])
-                : near.ensureStorageDeposit(subaccountId, token_out),
+                : ensureStorage( token_out),
               this.buildWrapNearBuyActions(
                 subaccountId,
                 amountInBigInt,
@@ -682,9 +695,9 @@ export class SwapExecutor {
               );
             }
 
-            await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+            await ensureStorage( 'wrap.near');
             if (intermediateToken) {
-              await near.ensureStorageDeposit(subaccountId, intermediateToken);
+              await ensureStorage( intermediateToken);
             }
 
             const rheaActions = (intermediateToken && intermediatePoolId)
@@ -741,7 +754,7 @@ export class SwapExecutor {
       const poolMsg = poolBuf.toString('base64');
 
       if (isBuy) {
-        await near.ensureStorageDeposit(subaccountId, token_out);
+        await ensureStorage( token_out);
 
         // Buy on dex.intear.near — atomic transaction with fee skimmed from input
         // User deposits full amount_in, fee is taken from that amount before swap
@@ -835,7 +848,7 @@ export class SwapExecutor {
 
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       if (isBuy) {
-        await near.ensureStorageDeposit(subaccountId, token_out);
+        await ensureStorage( token_out);
 
         const actions = await this.buildWrapNearBuyActions(
           subaccountId,
@@ -855,7 +868,7 @@ export class SwapExecutor {
         result = await signAndSend('wrap.near', actions);
       } else {
         // Sell OneTokenHub token for the paired quote token
-        await near.ensureStorageDeposit(subaccountId, token_out);
+        await ensureStorage( token_out);
 
         const actions = [
           transactions.functionCall(
@@ -889,7 +902,7 @@ export class SwapExecutor {
       if (dclPoolId) {
         const isBuy = token_in === 'wrap.near' || token_in === 'near';
         if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
+          await ensureStorage( token_out);
 
           const actions = await this.buildWrapNearBuyActions(
             subaccountId,
@@ -909,8 +922,8 @@ export class SwapExecutor {
           result = await signAndSend('wrap.near', actions);
         } else {
           // Sell NEARpad token
-          await near.ensureStorageDeposit(subaccountId, token_in);
-          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          await ensureStorage( token_in);
+          await ensureStorage( 'wrap.near');
 
           const actions = [
             transactions.functionCall(
@@ -945,7 +958,7 @@ export class SwapExecutor {
         const rheaPoolId = rhea.poolId;
         const isMultiHopJambo = rhea.intermediateToken === 'jambo-1679.meme-cooking.near';
         if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
+          await ensureStorage( token_out);
           const rheaActions = isMultiHopJambo
             ? [
                 { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
@@ -960,7 +973,7 @@ export class SwapExecutor {
           );
           result = await signAndSend('wrap.near', actions);
         } else {
-          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          await ensureStorage( 'wrap.near');
           const rheaActions = isMultiHopJambo
             ? [
                 { pool_id: rheaPoolId, token_in, token_out: 'jambo-1679.meme-cooking.near', amount_in: amountInBigInt.toString(), min_amount_out: '0' },
@@ -981,8 +994,8 @@ export class SwapExecutor {
       } else {
         // Pre-bonded on Gaypad
         if (isBuy) {
-          await near.ensureStorageDeposit(subaccountId, token_out);
-          await near.ensureStorageDeposit(subaccountId, 'jambo-1679.meme-cooking.near');
+          await ensureStorage( token_out);
+          await ensureStorage( 'jambo-1679.meme-cooking.near');
           // Swap wrap.near -> jambo on Ref, then jambo -> gaypad
           const buyActions = await this.buildWrapNearBuyActions(
             subaccountId, amountInBigInt, feeAmount, swapAmount,
@@ -1013,8 +1026,8 @@ export class SwapExecutor {
             result = await signAndSend('jambo-1679.meme-cooking.near', gpAction);
           }
         } else {
-          await near.ensureStorageDeposit(subaccountId, 'jambo-1679.meme-cooking.near');
-          await near.ensureStorageDeposit(subaccountId, 'wrap.near');
+          await ensureStorage( 'jambo-1679.meme-cooking.near');
+          await ensureStorage( 'wrap.near');
           // Sell token on gaypad for jambo
           const gpAction = [
             transactions.functionCall(
@@ -1112,7 +1125,7 @@ export class SwapExecutor {
         if (rheaPoolId) {
           if (isBuy) {
             const [, actions] = await Promise.all([
-              near.ensureStorageDeposit(subaccountId, token_out),
+              ensureStorage( token_out),
               this.buildWrapNearBuyActions(
                 subaccountId,
                 amountInBigInt,
@@ -1163,7 +1176,7 @@ export class SwapExecutor {
           }
         } else if (dclPoolId) {
           if (isBuy) {
-            await near.ensureStorageDeposit(subaccountId, token_out);
+            await ensureStorage( token_out);
             // dclv2.ref-labs.near expects the Swap action wrapper — the same
             // schema the rhea/ref DCL branch uses. The previous flat
             // {pool_id, token_in, token_out} format was rejected by the
@@ -1214,7 +1227,7 @@ export class SwapExecutor {
       // Shardsmarket
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       if (isBuy) {
-        await near.ensureStorageDeposit(subaccountId, token_out);
+        await ensureStorage( token_out);
 
         const actions = await this.buildWrapNearBuyActions(
           subaccountId,

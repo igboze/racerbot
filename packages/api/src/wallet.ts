@@ -730,7 +730,7 @@ export async function publishSwap(swapEvent: {
   dcl_pool_id?: string;
   pool_id?: number;
   slippage_pct?: number;
-}): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+}, onProgress?: (stage: string) => void): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
   if (!directExecutor) {
     const { SwapExecutor } = await import('@racerbot/executor');
     directExecutor = new SwapExecutor();
@@ -739,7 +739,7 @@ export async function publishSwap(swapEvent: {
     type: 'execute_swap',
     ...swapEvent,
     timestamp: Date.now(),
-  });
+  }, onProgress);
   return {
     txHash: result.txHash,
     success: result.success !== false,

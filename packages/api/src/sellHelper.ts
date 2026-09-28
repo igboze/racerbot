@@ -6,7 +6,7 @@ import { getTokenInfo, publishSwap } from './wallet.js';
  * Sell a percentage of a position by publishing EXECUTE_SWAP to Redis.
  * Called from both the Telegram bot sell buttons and REST API.
  */
-export async function sellAtTarget(userId: string, positionId: string, percentage: number): Promise<{ success: boolean; reason?: string }> {
+export async function sellAtTarget(userId: string, positionId: string, percentage: number, onProgress?: (stage: string) => void): Promise<{ success: boolean; reason?: string }> {
   const position = await getPositionById(positionId);
   if (!position) return { success: false, reason: 'position_not_found' };
   if (position.status === 'closed') return { success: false, reason: 'position_already_closed' };
@@ -35,6 +35,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   const near = getNear();
+  onProgress?.('quote');
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     position.token_address,
@@ -59,7 +60,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     slippage_pct: slippagePct,
   };
 
-  const swapResult = await publishSwap(swapEvent);
+  const swapResult = await publishSwap(swapEvent, onProgress);
   if (swapResult.success === false) {
     // Pass the executor's distilled on-chain reason through so users learn
     // WHY the sell failed (slippage / no pool / contract error), not a generic message.
