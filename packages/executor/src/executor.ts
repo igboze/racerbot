@@ -1644,7 +1644,18 @@ export class SwapExecutor {
     // parsed receipt logs are a fallback when balance reads are unavailable.
     // The old code fell back to min_amount_out — recording fills for tokens
     // the user never received — and never happens again.
-    const postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => null);
+    let postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => null);
+    if (
+      capturedPreOutBalance !== null &&
+      postOutBalance !== null &&
+      BigInt(postOutBalance) <= BigInt(capturedPreOutBalance)
+    ) {
+      // FastNEAR / read RPC indexers may be 1 block behind the trade provider.
+      // Wait 300ms and re-fetch once to give indexer time to catch up.
+      await new Promise(r => setTimeout(r, 300));
+      postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => postOutBalance);
+    }
+
     const swapOutcome = determineSwapOutcome({
       result,
       subaccountId,
@@ -1663,7 +1674,7 @@ export class SwapExecutor {
       // Slippage-breach retry: re-quote with +2pp slippage and try once more.
       // The failed transaction reverted on-chain, so no funds moved; this only
       // rescues trades caught by fast price movement between quote and execution.
-      const isSlippageBreach = failReason.startsWith('Slippage too high');
+      const isSlippageBreach = failReason.startsWith('Slippage too high') || failReason.includes('refunded your input');
       if (isSlippageBreach && !(event as any).__slippage_retry) {
         const bumpedSlippage = userSlippage + 2;
         const bumpedQuote = await near.computeMinAmountOut(
