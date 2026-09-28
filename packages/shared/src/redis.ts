@@ -128,10 +128,17 @@ export interface RedisClient {
 export function createRedis(url: string): RedisClient {
   const options = {
     lazyConnect: false,
-    maxRetriesPerRequest: null,
+    // Bounded: a lost command must reject after 10s instead of queueing
+    // forever. Previously maxRetriesPerRequest:null + no commandTimeout meant
+    // a dropped Redis connection hung every awaiting caller indefinitely —
+    // this is what froze buys at "Still confirming on-chain" while the trade
+    // attempt sat in 'pending' forever (the lock acquisition never resolved).
+    maxRetriesPerRequest: 2,
+    commandTimeout: 10_000,
+    connectTimeout: 10_000,
     enableOfflineQueue: true,
-    // NEVER give up: a Redis restart must not permanently kill swap/trigger
-    // pub-sub (returning null ends the connection forever). Bounded backoff.
+    // NEVER give up reconnecting: a Redis restart must not permanently kill
+    // swap/trigger pub-sub. Bounded backoff between attempts.
     retryStrategy(times: number) {
       return Math.min(50 * times, 2000);
     },

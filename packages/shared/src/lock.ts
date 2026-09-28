@@ -5,6 +5,12 @@ import { clearAccessKeyCache } from './near.js';
 export const LOCK_CONTENTION_ERROR =
   'Another transaction is already in progress for this wallet — please wait a moment and try again';
 
+export const LOCK_ACQUISITION_TIMEOUT_ERROR =
+  'Timed out while preparing your transaction (wallet lock). The network is congested — please retry.';
+
+/** Hard cap on how long lock acquisition may take, even with Redis trouble. */
+const ACQUISITION_TIMEOUT_MS = 8_000;
+
 export const RELEASE_LOCK_SCRIPT = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
   return redis.call("del", KEYS[1])
@@ -48,27 +54,38 @@ export async function withAccountLock<T>(
   let acquired = false;
   let attempts = 0;
 
-  for (let i = 1; i <= maxAttempts; i++) {
-    attempts = i;
-    try {
-      if (typeof redis.setNxPx === 'function') {
-        acquired = await redis.setNxPx(lockKey, token, ttlMs);
-      } else {
-        const res = await (redis as any).set(lockKey, token, 'PX', ttlMs, 'NX');
-        acquired = res === 'OK' || res === true;
+  const acquisition = (async () => {
+    for (let i = 1; i <= maxAttempts; i++) {
+      attempts = i;
+      try {
+        if (typeof redis.setNxPx === 'function') {
+          acquired = await redis.setNxPx(lockKey, token, ttlMs);
+        } else {
+          const res = await (redis as any).set(lockKey, token, 'PX', ttlMs, 'NX');
+          acquired = res === 'OK' || res === true;
+        }
+      } catch {
+        acquired = false;
       }
-    } catch {
-      acquired = false;
-    }
 
-    if (acquired) {
-      break;
-    }
+      if (acquired) {
+        break;
+      }
 
-    if (i < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      if (i < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
     }
-  }
+  })();
+
+  // Hard ceiling: even if Redis commands hang (connection drop, lost reply),
+  // acquisition must give up within ACQUISITION_TIMEOUT_MS. The stray SET may
+  // still land later — the TTL (default 100s) expires it automatically.
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(LOCK_ACQUISITION_TIMEOUT_ERROR)), ACQUISITION_TIMEOUT_MS)
+  );
+
+  await Promise.race([acquisition, timeout]);
 
   if (!acquired) {
     throw new Error(LOCK_CONTENTION_ERROR);
