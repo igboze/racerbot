@@ -110,7 +110,12 @@ describe('SwapExecutor distributed locking', () => {
     vi.spyOn(realNear, 'getWhitelistedTokens').mockResolvedValue(['token.near', 'wrap.near']);
     vi.spyOn(realNear, 'hasKey').mockResolvedValue(true);
     vi.spyOn(realNear, 'view').mockResolvedValue({ total: '1000' });
-    vi.spyOn(realNear, 'getTokenBalance').mockResolvedValue('10000000000000000000000000');
+    let tokenBal = 10000000000000000000000000n;
+    vi.spyOn(realNear, 'getTokenBalance').mockImplementation(async () => {
+      const b = tokenBal;
+      tokenBal += 1000000000000000000000n;
+      return b.toString();
+    });
     vi.spyOn(realNear, 'ensureStorageDeposit').mockResolvedValue(undefined);
     vi.spyOn(realNear, 'findRheaPoolId').mockResolvedValue(123);
     // Pre-flight price check: a huge fresh quote so it never blocks test trades.
@@ -132,12 +137,17 @@ describe('SwapExecutor distributed locking', () => {
     const testRedis = createTestRedis();
     const timestamps: { start: number; end: number }[] = [];
 
+    let bal1 = 10000000000000000000000000n;
     const mockNear = {
       getAccount: vi.fn().mockResolvedValue({
         functionCall: vi.fn().mockResolvedValue({}),
         sendMoney: vi.fn().mockResolvedValue({}),
       }),
-      getTokenBalance: vi.fn().mockResolvedValue('10000000000000000000000000'),
+      getTokenBalance: vi.fn().mockImplementation(async () => {
+        const current = bal1;
+        bal1 += 1000000000000000000000n;
+        return current.toString();
+      }),
       ensureStorageDeposit: vi.fn().mockResolvedValue(undefined),
       findRheaPoolId: vi.fn().mockResolvedValue(123),
       clearAccessKeyCache: vi.fn(),
@@ -149,7 +159,20 @@ describe('SwapExecutor distributed locking', () => {
         timestamps.push({ start, end });
         return {
           transaction: { hash: `tx-${timestamps.length}` },
-          receipts_outcome: [],
+          receipts_outcome: [
+            {
+              outcome: {
+                logs: [
+                  `EVENT_JSON:${JSON.stringify({
+                    standard: 'nep141',
+                    version: '1.0.0',
+                    event: 'ft_transfer',
+                    data: [{ receiver_id: subaccountId, amount: '1000000' }],
+                  })}`,
+                ],
+              },
+            },
+          ],
           status: { SuccessValue: '' },
         };
       }),
@@ -227,12 +250,17 @@ describe('SwapExecutor distributed locking', () => {
     const testRedis = createTestRedis();
 
     let shouldFail = true;
+    let bal3 = 10000000000000000000000000n;
     const mockNear = {
       getAccount: vi.fn().mockResolvedValue({
         functionCall: vi.fn().mockResolvedValue({}),
         sendMoney: vi.fn().mockResolvedValue({}),
       }),
-      getTokenBalance: vi.fn().mockResolvedValue('10000000000000000000000000'),
+      getTokenBalance: vi.fn().mockImplementation(async () => {
+        const current = bal3;
+        bal3 += 1000000000000000000000n;
+        return current.toString();
+      }),
       ensureStorageDeposit: vi.fn().mockResolvedValue(undefined),
       findRheaPoolId: vi.fn().mockResolvedValue(123),
       clearAccessKeyCache: vi.fn(),
@@ -242,7 +270,20 @@ describe('SwapExecutor distributed locking', () => {
         }
         return {
           transaction: { hash: 'tx-success-after-failure' },
-          receipts_outcome: [],
+          receipts_outcome: [
+            {
+              outcome: {
+                logs: [
+                  `EVENT_JSON:${JSON.stringify({
+                    standard: 'nep141',
+                    version: '1.0.0',
+                    event: 'ft_transfer',
+                    data: [{ receiver_id: subaccountId, amount: '1000000' }],
+                  })}`,
+                ],
+              },
+            },
+          ],
           status: { SuccessValue: '' },
         };
       }),
@@ -274,5 +315,31 @@ describe('SwapExecutor distributed locking', () => {
     const res = await executor.execute(swapEvent);
     expect(res.success).toBe(true);
     expect(res.txHash).toBe('tx-success-after-failure');
+  });
+});
+
+describe('RefRegistrationTracker (Fix 2 — per-account storage caching)', () => {
+  it('tracks Ref storage confirmation per account, not process-wide', async () => {
+    const { RefRegistrationTracker } = await import('./executor.js');
+    const tracker = new RefRegistrationTracker();
+
+    expect(tracker.isStorageConfirmed('alice.near')).toBe(false);
+    tracker.confirmStorage('alice.near');
+    expect(tracker.isStorageConfirmed('alice.near')).toBe(true);
+
+    // The old code used one global boolean: after the first account checked
+    // out, EVERY later user skipped registration and could be refunded by Ref.
+    // A second account must still require its own check.
+    expect(tracker.isStorageConfirmed('bob.near')).toBe(false);
+  });
+
+  it('confirms tokens independently of storage accounts', async () => {
+    const { RefRegistrationTracker } = await import('./executor.js');
+    const tracker = new RefRegistrationTracker();
+
+    expect(tracker.isTokenConfirmed('token-a.near')).toBe(false);
+    tracker.confirmToken('token-a.near');
+    expect(tracker.isTokenConfirmed('token-a.near')).toBe(true);
+    expect(tracker.isStorageConfirmed('token-a.near')).toBe(false);
   });
 });

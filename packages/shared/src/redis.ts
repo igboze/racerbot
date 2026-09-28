@@ -65,6 +65,12 @@ export interface SwapEvent {
   intermediate_token?: string | null;
   /** User slippage preference (percent) used for this trade, e.g. 2 = 2%. */
   slippage_pct?: number;
+  /**
+   * ms timestamp of the upstream quote (set right after computeMinAmountOut in
+   * the buy/sell helpers). When under 2s old at execution time, the executor
+   * skips its second pre-flight quote.
+   */
+  quoted_at?: number;
   timestamp?: number;
 }
 

@@ -102,6 +102,24 @@ export function markProviderError(provider: RPCProvider): void {
   }
 }
 
+/** True when the provider is usable right now (healthy and circuit closed). */
+export function isProviderAvailable(provider: RPCProvider): boolean {
+  return provider.healthy && !isCircuitBreakerOpen(provider);
+}
+
+/**
+ * Force-reset a provider's circuit-breaker / unhealthy state so a trade can
+ * be attempted anyway. Used by the trade gate: a failed attempt is better
+ * than a permanently blocked one, because nothing restores health while
+ * trades are gated (the gate runs before any broadcast can record success).
+ */
+export function resetProviderState(provider: RPCProvider): void {
+  provider.circuitBreakerOpen = false;
+  provider.circuitBreakerUntil = 0;
+  provider.healthy = true;
+  provider.errorCount = 0;
+}
+
 export function markProviderSuccess(provider: RPCProvider, latencyMs: number): void {
   provider.successCount++;
   provider.lastSuccessTime = Date.now();
@@ -131,5 +149,5 @@ export function markProviderSuccess(provider: RPCProvider, latencyMs: number): v
 }
 
 export function getHealthyProviderCount(providers: RPCProvider[]): number {
-  return providers.filter(p => p.healthy && !isCircuitBreakerOpen(p)).length;
+  return providers.filter(isProviderAvailable).length;
 }

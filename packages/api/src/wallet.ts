@@ -730,6 +730,7 @@ export async function publishSwap(swapEvent: {
   dcl_pool_id?: string;
   pool_id?: number;
   slippage_pct?: number;
+  quoted_at?: number;
 }, onProgress?: (stage: string) => void): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
   if (!directExecutor) {
     const { SwapExecutor } = await import('@racerbot/executor');
@@ -832,6 +833,63 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
 
   balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });
   return result;
+}
+
+// ── Lightweight trade-path balance (SPEED) ────────────────────────────────────
+// Trades must not wait on the NEAR/USD price feed. This returns ONLY the
+// spendable native NEAR (same 0.05 reserve math as getUserBalances) with a
+// short TTL cache, skipping the wNEAR read and USD conversion entirely.
+// Display paths keep using getUserBalances.
+
+const tradeBalanceCache = new Map<number, { data: number; expiresAt: number }>();
+const TRADE_BALANCE_TTL_MS = 5_000;
+
+export async function getTradeSpendableNear(telegramId: number): Promise<number> {
+  const cached = tradeBalanceCache.get(telegramId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('User not found. Run /start first.');
+  }
+
+  const nativeNearYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
+  const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
+  const spendable = Math.max(0, nativeNear - 0.05); // same reserve as getUserBalances
+
+  tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
+  return spendable;
+}
+
+/**
+ * One-time Ref Finance storage deposit needed for an account that is not yet
+ * registered on v2.ref-finance.near (0 when already registered). Cached 60s —
+ * used to include the deposit in the pre-trade insufficient-balance check so
+ * the user gets a clear message BEFORE any transaction is attempted.
+ */
+const refStorageNeededCache = new Map<string, { neededYocto: bigint; at: number }>();
+
+export async function getRefStorageDepositNeeded(subaccountId: string): Promise<bigint> {
+  const cached = refStorageNeededCache.get(subaccountId);
+  if (cached && Date.now() - cached.at < 60_000) {
+    return cached.neededYocto;
+  }
+
+  let neededYocto = 0n;
+  try {
+    const storage = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: subaccountId });
+    if (!storage || !storage.total || storage.total === '0') {
+      const bounds = await near.view<any>('v2.ref-finance.near', 'storage_balance_bounds', {}).catch(() => null);
+      neededYocto = bounds?.min && BigInt(bounds.min) > 0n ? BigInt(bounds.min) : BigInt('100000000000000000000000');
+    }
+  } catch {
+    // view failed — do not block the trade path over a check; treat as 0
+  }
+
+  refStorageNeededCache.set(subaccountId, { neededYocto, at: Date.now() });
+  return neededYocto;
 }
 
 /**

@@ -2,7 +2,7 @@ import './config.js';
 import express from 'express';
 import cors from 'cors';
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, type TokenDetectedEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
@@ -48,16 +48,29 @@ async function main(): Promise<void> {
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
   setBotInstance(bot);
 
-  // Global error handler to catch expired callback queries or minor Telegram API errors
+  // RPC provider health checks every 30s. Without this, providers marked
+  // unhealthy in THIS process were never restored (only the detector ran
+  // health checks), and the trade gate would block every trade forever.
+  getNear().startHealthChecks(30_000);
+
+  // Global error handler: stale 400s (expired callback queries) are ignored;
+  // anything else gets logged AND the user is told something went wrong, so
+  // an unhandled handler error never leaves the user staring at silence.
   bot.catch((err: any, ctx) => {
     if (err?.response?.error_code === 400 || err?.code === 400 || String(err?.message).includes('query is too old')) {
-      logger.warn('Ignored stale Telegram 400 error', { 
-        error: err.message, 
-        updateId: ctx?.update?.update_id 
+      logger.warn('Ignored stale Telegram 400 error', {
+        error: err.message,
+        updateId: ctx?.update?.update_id
       });
       return;
     }
     logger.error('Telegraf unhandled error', err, { updateId: ctx?.update?.update_id });
+    const chatId = ctx?.chat?.id;
+    if (chatId) {
+      ctx.telegram.sendMessage(chatId, 'Something went wrong, please retry.').catch(() => {
+        // message may fail for the same underlying reason — already logged above
+      });
+    }
   });
 
   // Admin monitoring (commands + background alerts) registered BEFORE the
