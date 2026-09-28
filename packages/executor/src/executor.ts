@@ -229,6 +229,15 @@ export class SwapExecutor {
    * - If user holds partial wNEAR, only wraps the shortfall depositNeeded.
    * - Otherwise wraps the full amountInBigInt.
    * Batches near_deposit (if needed) + ft_transfer (fee to treasury) + ft_transfer_call (swap on DEX).
+   *
+   * The shortfall is computed against totalSpend (fee + swap) PLUS a buffer,
+   * then clamped to totalSpend. Balance view calls can lag the latest block
+   * (or race concurrent wallet activity), and exact-equality top-ups then
+   * leave the final ft_transfer_call a few dust-yocto short — the whole tx
+   * panics with "The account doesn't have enough balance" even though the
+   * user holds plenty of NEAR (mainnet tx 2zciEK9b…). The clamp guarantees
+   * the deposit alone can always cover the full spend, and never exceeds
+   * the amount the user authorized.
    */
   private async buildWrapNearBuyActions(
     subaccountId: string,
@@ -239,9 +248,14 @@ export class SwapExecutor {
     dexMsg: string,
     swapGas: bigint = BigInt('180000000000000')
   ): Promise<any[]> {
-    const wNearBalStr = await near.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
+    const wNearBalStr = await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
     const wNearBal = BigInt(wNearBalStr || '0');
-    const depositNeeded = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
+    const totalSpend = amountInBigInt; // === feeAmount + swapAmount by construction
+    const DEPOSIT_BUFFER = BigInt('10000000000000000000000'); // 0.01 NEAR stale-read headroom
+    const shortfallWithBuffer = totalSpend + DEPOSIT_BUFFER - wNearBal;
+    const depositNeeded = shortfallWithBuffer <= 0n ? 0n
+      : shortfallWithBuffer > totalSpend ? totalSpend
+      : shortfallWithBuffer;
 
     const actions: any[] = [];
     if (depositNeeded > 0n) {
@@ -307,11 +321,11 @@ export class SwapExecutor {
     });
 
     // One overall deadline per trade. Waits can otherwise stack (storage
-    // deposit + swap) beyond any individual timeout and leave the user
-    // staring at "Processing" forever. 60s: single-RPC confirmation (no
-    // indexer race anymore) needs generous headroom under congestion —
-    // 45s was still tripping "confirmation is taking longer" for users.
-    const TRADE_DEADLINE_MS = 60_000;
+    // deposit + swap, or two-tx multihop buys: 2 × 40s confirms) beyond any
+    // individual timeout and leave the user staring at "Processing" forever.
+    // 90s covers the worst-case stacked two-tx path under congestion while
+    // the 'confirming_slow' progress ping keeps the user informed at 15s.
+    const TRADE_DEADLINE_MS = 90_000;
     const timings: Record<string, number> = {};
     let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
     try {
