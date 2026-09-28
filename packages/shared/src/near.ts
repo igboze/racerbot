@@ -671,6 +671,30 @@ export class MultiRpcNear {
   }
 
   /**
+   * View call executed against the single pinned trade RPC only.
+   *
+   * Used by the BUY/SELL path for post-trade balance reads: the read must come
+   * from the SAME endpoint that confirmed the transaction. The hedged read
+   * RPCs (view()) can lag a block behind and return the pre-swap balance —
+   * which made successful swaps look like refunds (delta = 0).
+   * No hedging, no coalescing, no fallback.
+   */
+  async viewOnTradeRpc<T>(contractId: string, methodName: string, args: object = {}): Promise<T> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MultiRpcNear.VIEW_TIMEOUT_MS);
+    try {
+      return await this.rawViewCall<T>(this.tradeProvider, contractId, methodName, args, ctrl.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** ft_balance_of read on the pinned trade RPC (post-trade verification). */
+  async getTokenBalanceOnTradeRpc(tokenAddress: string, accountId: string): Promise<string> {
+    return this.viewOnTradeRpc<string>(tokenAddress, 'ft_balance_of', { account_id: accountId });
+  }
+
+  /**
    * Broadcast a signed transaction to the single pinned trade RPC.
    * No fan-out, no fallback — one endpoint owns the write path.
    */
@@ -2691,7 +2715,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 20_000
+    waitForMs = 30_000
   ): Promise<any> {
     const tStart = Date.now();
     const account = await this.getAccount(accountId);
