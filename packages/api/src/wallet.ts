@@ -739,6 +739,9 @@ export async function publishSwap(swapEvent: {
   const result = await directExecutor.execute({
     type: 'execute_swap',
     ...swapEvent,
+    // Manual API-initiated trade: the caller renders the success message, so
+    // the executor must not ALSO publish 'trade_confirmed' (duplicate message).
+    notify_user: false,
     timestamp: Date.now(),
   }, onProgress);
   return {

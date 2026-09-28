@@ -947,19 +947,24 @@ async function executeBuyHelper(
 
   const tokenSym = swapResult.tokenSymbol || tokenAddress.slice(0, 12);
   const tokenName = swapResult.tokenName || tokenSym;
+  const tokenQtyHuman = Number(swapResult.tokenQty ?? 0);
   const tokenQtyDisplay = (() => {
-    const qty = Number(swapResult.tokenQty ?? 0);
+    const qty = tokenQtyHuman;
     if (qty >= 1_000_000) return `${(qty / 1_000_000).toFixed(3)}M`;
     if (qty >= 1_000) return qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
     if (qty >= 0.0001) return qty.toFixed(4);
     return qty > 0 ? qty.toExponential(3) : '—';
   })();
-  const priceDisplay = swapResult.priceNear && swapResult.priceNear > 0
-    ? swapResult.priceNear.toFixed(8) + ' NEAR'
-    : '—';
-  const txInfo = swapResult.txHash
-    ? `\n\n🔗 [View on NearBlocks](https://nearblocks.io/txns/${swapResult.txHash})`
-    : '';
+  const entryPrice = swapResult.priceNear && swapResult.priceNear > 0 ? swapResult.priceNear : 0;
+  const priceDisplay = entryPrice > 0 ? `${entryPrice.toFixed(8)} NEAR` : '—';
+
+  // PNL snapshot at entry: position value vs amount spent. At t=0 the delta
+  // is the entry cost (fee + token tax) — shown honestly instead of a link.
+  const valueNear = tokenQtyHuman * entryPrice;
+  const pnlNear = valueNear - amountNear;
+  const pnlPct = amountNear > 0 ? (pnlNear / amountNear) * 100 : 0;
+  const pnlEmoji = pnlNear >= 0 ? '📈' : '📉';
+  const pnlSign = pnlNear >= 0 ? '+' : '';
 
   return {
     success: true,
@@ -971,7 +976,15 @@ async function executeBuyHelper(
     tokenQty: swapResult.tokenQty,
     priceNear: swapResult.priceNear,
     nearSpent: swapResult.nearSpent,
-    message: `✅ *Buy Confirmed!*\n\n🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n📦 Received: \`${tokenQtyDisplay} ${sanitizeMd(tokenSym)}\`\n💵 Price: \`${priceDisplay}\`\n💸 Spent: \`${amountNear.toFixed(4)} NEAR\`${txInfo}`,
+    message:
+      `✅ *Buy Confirmed!*\n\n` +
+      `🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n` +
+      `📦 Received: \`${tokenQtyDisplay} ${sanitizeMd(tokenSym)}\`\n` +
+      `💸 Spent: \`${amountNear.toFixed(4)} NEAR\`\n` +
+      `💵 Entry: \`${priceDisplay}\`\n\n` +
+      `📊 *Position*\n` +
+      `💰 Value: \`${valueNear.toFixed(4)} NEAR\`\n` +
+      `${pnlEmoji} PnL: \`${pnlSign}${pnlPct.toFixed(1)}%\` (\`${pnlSign}${pnlNear.toFixed(4)} NEAR\`)`,
   };
 }
 
@@ -1195,15 +1208,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       let totalPortfolioValueNear = 0;
       let nearUsd = 4.3; // Default fallback
-      let holdingsListText = '';
       const buttons: any[] = [];
-
-      const formatUSD = (nearValue: number) => {
-        const usdValue = nearValue * nearUsd;
-        if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
-        if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
-        return `$${usdValue.toFixed(4)}`;
-      };
 
       const MAX_DISPLAY_HOLDINGS = 20;
       const displayedPositions = positions.slice(0, MAX_DISPLAY_HOLDINGS);
@@ -1234,7 +1239,10 @@ export function setupRoutes(bot: Telegraf): void {
 
         if (currentPrice > 0 && entryPrice > 0) {
           const pnlPctNum = ((currentPrice - entryPrice) / entryPrice) * 100;
-          emoji = pnlPctNum >= 0 ? '🟢' : '🔴';
+          // Profit tiers: 🔥 500%+, 🚀 100%+, 🟢 profit, 🔴 loss
+          if (pnlPctNum >= 500) emoji = '🔥';
+          else if (pnlPctNum >= 100) emoji = '🚀';
+          else emoji = pnlPctNum >= 0 ? '🟢' : '🔴';
           pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
         } else if (currentPrice > 0 && entryPrice <= 0) {
           pnlDisplay = '+0.0%';
@@ -1244,20 +1252,8 @@ export function setupRoutes(bot: Telegraf): void {
           emoji = '⚪';
         }
 
-        const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
-
-        holdingsListText += `${emoji} *${displayLabel}*\n`;
-        holdingsListText += `  Qty: \`${formattedQty}\`\n`;
-        holdingsListText += `  Value: \`${tokenValue.toFixed(4)} NEAR\` (\`${formatUSD(tokenValue)}\`)\n`;
-        if (entryPrice > 0) {
-          holdingsListText += `  Entry: \`${entryPrice.toFixed(6)} NEAR\`\n`;
-        }
-        if (currentPrice > 0) {
-          holdingsListText += `  Current: \`${currentPrice.toFixed(6)} NEAR\`\n`;
-        }
-        holdingsListText += `  Change: \`${pnlDisplay}\`\n`;
-        holdingsListText += `  CA: \`${pos.token_address}\`\n\n`;
-
+        // Buttons-only list: per-token details render when the user taps the
+        // token button (token_detail:<id>) — keeps the holdings view scannable.
         buttons.push([Markup.button.callback(`${emoji} ${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
       }
 
@@ -1272,18 +1268,19 @@ export function setupRoutes(bot: Telegraf): void {
         } catch { /* no-op */ }
       }
 
-      if (remainingCount > 0) {
-        holdingsListText += `_... and ${remainingCount} more token(s) held in your wallet._\n\n`;
-      }
-
       const totalUsd = totalPortfolioValueNear * nearUsd;
       const totalUsdDisplay = totalUsd >= 1000 ? `$${(totalUsd / 1000).toFixed(2)}K` : `$${totalUsd.toFixed(2)}`;
+
+      const overflowNote = remainingCount > 0
+        ? `_... and ${remainingCount} more token(s) held in your wallet._\n\n`
+        : '';
 
       const msg =
         `💼 *Holdings (${positions.length})*\n` +
         `👛 Wallet: \`${user.subaccount_id}\`\n` +
         `💰 Total: \`${totalPortfolioValueNear.toFixed(4)} NEAR\` (\`${totalUsdDisplay}\`)\n\n` +
-        holdingsListText;
+        overflowNote +
+        `_Tap a token below to view details & trade._`;
 
       buttons.push([
         Markup.button.callback('🔄 Refresh', 'refresh_holdings'),
