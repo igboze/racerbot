@@ -353,4 +353,55 @@ describe('near: awaitOutcome neverSeen classification (mempool blackhole detecti
     expect(state.everSeen).toBe(true);
     vi.unstubAllGlobals();
   }, 15_000);
+
+  it('keeps polling while the receipt tree is still executing (fes=INCLUDED), returns when FINAL', async () => {
+    // A 2.4s "confirm" with a partial receipt tree made a successful DCL sell
+    // look like a refund (production tx BGMBn3YV…). The poller must wait for
+    // full execution even when receipts_outcome is already non-empty.
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls++;
+      const final = calls >= 3;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'await-outcome',
+          result: {
+            final_execution_status: final ? 'FINAL' : 'INCLUDED',
+            status: { SuccessValue: '' },
+            receipts_outcome: [{ outcome: { status: { SuccessValue: '' }, logs: [] } }],
+          },
+        }),
+      } as unknown as Response;
+    }));
+    const near = new MultiRpcNear([FN]) as any;
+    const outcome = await near.awaitOutcome('abc', 'alice.near', 5_000, { everSeen: false });
+    expect(outcome.final_execution_status).toBe('FINAL');
+    expect(calls).toBeGreaterThanOrEqual(3);
+    vi.unstubAllGlobals();
+  }, 15_000);
+
+  it('times out as slow-confirmation (not neverSeen) when stuck at INCLUDED', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'await-outcome',
+        result: {
+          final_execution_status: 'INCLUDED',
+          status: { SuccessValue: '' },
+          receipts_outcome: [{ outcome: { status: { SuccessValue: '' }, logs: [] } }],
+        },
+      }),
+    }) as unknown as Response));
+    const near = new MultiRpcNear([FN]) as any;
+    const err = await near.awaitOutcome('abc', 'alice.near', 1_500, { everSeen: false }).catch((e: any) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.neverSeen).toBe(false);
+    expect(err.message).toMatch(/not confirmed within/);
+    vi.unstubAllGlobals();
+  }, 15_000);
 });
