@@ -308,9 +308,10 @@ export class SwapExecutor {
 
     // One overall deadline per trade. Waits can otherwise stack (storage
     // deposit + swap) beyond any individual timeout and leave the user
-    // staring at "Processing" forever. 45s: single-RPC confirmation (no
-    // indexer race anymore) needs more headroom under congestion.
-    const TRADE_DEADLINE_MS = 45_000;
+    // staring at "Processing" forever. 60s: single-RPC confirmation (no
+    // indexer race anymore) needs generous headroom under congestion —
+    // 45s was still tripping "confirmation is taking longer" for users.
+    const TRADE_DEADLINE_MS = 60_000;
     const timings: Record<string, number> = {};
     let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
     try {
@@ -1722,30 +1723,37 @@ export class SwapExecutor {
     const netAmountOut = swapOutcome.netAmountOut!;
     let onChainFeeYocto = feeAmount.toString();
 
-    // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury
+    // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury.
+    // The fee transfer is INDEPENDENT of the unwrap: DCL pays sells in native NEAR
+    // (no wNEAR to unwrap, near_withdraw would throw), but the fee must still be
+    // collected. Both go through the locked, pinned-RPC signAndSend helper to
+    // avoid nonce collisions with in-flight trades.
     if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
-      onChainFeeYocto = sellFeeNear.toString();
+      let feePaid = false;
 
       try {
         console.log(`[EXECUTOR] Auto-unwrapping ${netAmountOut} yoctoNEAR of wrap.near for ${subaccountId}`);
-        await account.functionCall({
-          contractId: 'wrap.near',
-          methodName: 'near_withdraw',
-          args: { amount: netAmountOut },
-          gas: BigInt('30000000000000'),
-          attachedDeposit: BigInt('1'),
-        });
+        await signAndSend('wrap.near', [
+          transactions.functionCall('near_withdraw', { amount: netAmountOut }, BigInt('30000000000000'), BigInt('1')),
+        ], 15_000);
         console.log(`[EXECUTOR] Auto-unwrapped to native NEAR successfully for ${subaccountId}`);
-
-        if (sellFeeNear > 0n) {
-          await account.sendMoney(TREASURY_ACCOUNT_ID, sellFeeNear).catch(err =>
-            console.warn('[EXECUTOR] Sell fee transfer warning:', err.message)
-          );
-        }
       } catch (err: any) {
-        console.warn('[EXECUTOR] Auto-unwrap error:', err.message);
+        // Non-fatal: DCL sells pay native NEAR directly, so there may be no
+        // wNEAR to unwrap. The user keeps their funds either way.
+        console.warn('[EXECUTOR] Auto-unwrap skipped/failed (likely native-NEAR payout):', err.message);
       }
+
+      if (sellFeeNear > 0n) {
+        try {
+          await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 15_000);
+          feePaid = true;
+          console.log(`[EXECUTOR] Sell fee ${sellFeeNear} yoctoNEAR sent to treasury for ${subaccountId}`);
+        } catch (err: any) {
+          console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED for ${subaccountId} amount=${sellFeeNear}:`, err.message);
+        }
+      }
+      onChainFeeYocto = feePaid ? sellFeeNear.toString() : '0';
     }
 
     // Record the fill and update position with real on-chain output
@@ -2060,22 +2068,26 @@ export class SwapExecutor {
           await addReferralReward(referral.id, rewardAmount);
         }
 
-        // Instant buy confirmation — use only data already computed above, no new RPC calls
-        try {
-          const nearSpentHuman = parseFloat(utils.format.formatNearAmount(amountIn));
-          const tokenQtyHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toString();
-          await this.notifyUser(userId, 'trade_confirmed', {
-            tokenName: (meta as any)?.name ?? tokenAddress,
-            tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
-            tokenQty: tokenQtyHuman,
-            priceNear: priceNear,
-            nearSpent: nearSpentHuman,
-            feePaidNear,
-            positionId: position.id,
-            txHash,
-          });
-        } catch (err: any) {
-          console.warn('[EXECUTOR] Failed to send trade_confirmed notification:', err.message);
+        // Instant buy confirmation — use only data already computed above, no new RPC calls.
+        // Skipped for API-initiated manual trades (notify_user === false): the
+        // API sends its own success message, publishing here would duplicate it.
+        if (_event.notify_user !== false) {
+          try {
+            const nearSpentHuman = parseFloat(utils.format.formatNearAmount(amountIn));
+            const tokenQtyHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toString();
+            await this.notifyUser(userId, 'trade_confirmed', {
+              tokenName: (meta as any)?.name ?? tokenAddress,
+              tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+              tokenQty: tokenQtyHuman,
+              priceNear: priceNear,
+              nearSpent: nearSpentHuman,
+              feePaidNear,
+              positionId: position.id,
+              txHash,
+            });
+          } catch (err: any) {
+            console.warn('[EXECUTOR] Failed to send trade_confirmed notification:', err.message);
+          }
         }
       }
 

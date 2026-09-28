@@ -266,6 +266,101 @@ describe('determineSwapOutcome (Fix 3)', () => {
     expect(outcome.netAmountOut).toBe('42580917209303043573973');
   });
 
+  it('detects DCL sells paid in native NEAR via wrap.near Withdraw logs', () => {
+    // Mirrors mainnet tx 6AXNbx8k… (screnearly sell): DCL swaps to wNEAR then
+    // immediately near_withdraws it, paying the user NATIVE NEAR. The user's
+    // wrap.near balance delta is 0 — the only evidence is the swap event and
+    // the wrap.near "Withdraw N NEAR from dclv2.ref-labs.near" log. Without
+    // this, a successful DCL sell is misreported as a DEX refund.
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'dclv2.ref-labs.near',
+            logs: [
+              `EVENT_JSON:{"data":[{"amount_in":"117839114753311225139451","amount_out":"921131067414805846755856","pool_id":"screnearly.nearlytrade.near|wrap.near|10000","swapper":"${USER}","token_in":"screnearly.nearlytrade.near","token_out":"wrap.near"}],"event":"swap","standard":"dcl"}`,
+            ],
+          },
+        },
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'wrap.near',
+            logs: [`Withdraw 921131067414805846755856 NEAR from dclv2.ref-labs.near`],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: false,
+      tokenOut: 'wrap.near',
+      preBalance: '1000',
+      postBalance: '1000', // native payout — wrap.near balance never changes
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.netAmountOut).toBe('921131067414805846755856');
+  });
+
+  it('detects a DCL native-NEAR sell even when the swap event is missing (Withdraw log only)', () => {
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'wrap.near',
+            logs: [`Withdraw 500000000000000000000000 NEAR from dclv2.ref-labs.near`],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: false,
+      tokenOut: 'wrap.near',
+      preBalance: null,
+      postBalance: null,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.netAmountOut).toBe('500000000000000000000000');
+  });
+
+  it('does not count wrap.near Withdraw logs as BUY output', () => {
+    // A buy must never succeed on wrap.near activity — output is the token.
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'wrap.near',
+            logs: [`Withdraw 500000000000000000000000 NEAR from dclv2.ref-labs.near`],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: true,
+      tokenOut: TOKEN_OUT,
+      preBalance: '1000',
+      postBalance: '1000',
+    });
+    expect(outcome.ok).toBe(false);
+  });
+
   it('recovers output amount from receipt logs if RPC view read was stale (delta <= 0)', () => {
     const result = {
       status: { SuccessValue: '' },

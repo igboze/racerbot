@@ -2715,7 +2715,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 30_000
+    waitForMs = 40_000
   ): Promise<any> {
     const tStart = Date.now();
     const account = await this.getAccount(accountId);

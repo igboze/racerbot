@@ -71,6 +71,14 @@ export interface SwapEvent {
    * skips its second pre-flight quote.
    */
   quoted_at?: number;
+  /**
+   * When false, the executor does NOT publish the 'trade_confirmed' user
+   * notification for this swap. Manual API-initiated trades set this because
+   * the API sends its own success message — otherwise the user gets the
+   * "Buy Confirmed!" message twice. Trigger/auto-buy flows leave it unset
+   * (default true) since no other message reaches the user.
+   */
+  notify_user?: boolean;
   timestamp?: number;
 }
 
