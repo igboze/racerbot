@@ -152,6 +152,35 @@ describe('determineSwapOutcome (Fix 3)', () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.netAmountOut).toBe('5000'); // delta wins over the 999 log
   });
+
+  it('recovers output amount from receipt logs if RPC view read was stale (delta <= 0)', () => {
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            executor_id: TOKEN_OUT,
+            status: { SuccessValue: '' },
+            logs: [
+              `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dclv2.ref-labs.near","new_owner_id":"${USER}","amount":"52751050585155686507261"}]}`,
+            ],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: true,
+      tokenOut: TOKEN_OUT,
+      preBalance: '1000',
+      postBalance: '1000', // stale RPC read
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.netAmountOut).toBe('52751050585155686507261');
+  });
 });
 
 describe('distillFailureReason', () => {
