@@ -2796,9 +2796,12 @@ export class MultiRpcNear {
       outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen);
     } catch (firstErr: any) {
       if (!firstErr?.neverSeen) throw firstErr;
-      console.warn(`[NEAR] tx ${signed.hash} not visible after ${firstWindow}ms — rebroadcasting same signed bytes (idempotent rescue)`);
-      await this.broadcastSigned(signed.signedB64).catch(() => { /* best effort */ });
-      outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs - firstWindow, seen);
+      // The pinned RPC may have dropped the tx. Fan-out to ALL trade providers
+      // so at least one node has it, then poll all of them in the second window.
+      console.warn(`[NEAR] tx ${signed.hash} not visible after ${firstWindow}ms — fan-out rebroadcast to all providers`);
+      await this.broadcastToAll(signed.signedB64);
+      const allProviderUrls = this.tradeProviders.map(p => p.url);
+      outcome = await this.awaitOutcome(signed.hash, accountId, waitForMs - firstWindow, seen, allProviderUrls);
     }
     // Perf instrumentation for trade_attempts timings (click→quote→sign→
     // broadcast→confirm). Attached non-enumerably-safe plain fields.
@@ -2838,6 +2841,40 @@ export class MultiRpcNear {
   }
 
   /**
+   * Fan-out broadcast: send signed bytes to ALL trade providers in parallel.
+   * Used as the neverSeen rescue so that if the pinned provider dropped the tx,
+   * at least one other node picks it up. Same signed bytes = same hash = idempotent.
+   * Never throws — failures are logged and swallowed (best-effort).
+   */
+  private async broadcastToAll(signedB64: string): Promise<void> {
+    await Promise.allSettled(
+      this.tradeProviders.map(async (provider) => {
+        try {
+          const res = await fetch(provider.url, {
+            method: 'POST',
+            headers: provider.headers ?? { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'racerbot-fanout',
+              method: 'broadcast_tx_async',
+              params: [signedB64],
+            }),
+            signal: AbortSignal.timeout(5000),
+          });
+          const data: any = await res.json();
+          if (data?.error) {
+            console.warn(`[NEAR] broadcastToAll ${provider.url} error:`, data.error.message || JSON.stringify(data.error));
+          } else {
+            console.log(`[NEAR] broadcastToAll ${provider.url} accepted tx`);
+          }
+        } catch (err: any) {
+          console.warn(`[NEAR] broadcastToAll ${provider.url} failed:`, err.message);
+        }
+      })
+    );
+  }
+
+  /**
    * Poll for a transaction outcome on the single pinned trade RPC.
    * Uses `EXPERIMENTAL_tx_status` with `wait_until: 'NONE'` — non-long-polling;
    * returns immediately once the tx appears in the chain (no receipt-tree wait).
@@ -2849,10 +2886,19 @@ export class MultiRpcNear {
    * The old `txStatus` long-poll was causing false failures when the RPC held the connection
    * open waiting for cross-contract receipt trees, then returned TIMEOUT_ERROR.
    */
-  private async awaitOutcome(txHash: string, accountId: string, maxMs: number, state?: { everSeen: boolean }): Promise<any> {
+  private async awaitOutcome(
+    txHash: string,
+    accountId: string,
+    maxMs: number,
+    state?: { everSeen: boolean },
+    extraUrls?: string[]
+  ): Promise<any> {
     const deadline = Date.now() + maxMs;
     let lastErr: Error | null = null;
     const pinnedUrl = this.tradeProvider.url;
+    // All URLs to poll in round-robin. Always starts with pinned.
+    // extraUrls are queried after pinned each iteration (fan-out polling after rescue).
+    const allPollUrls: string[] = [pinnedUrl, ...((extraUrls ?? []).filter(u => u !== pinnedUrl))];
 
     /**
      * Try a single RPC provider for tx status.
@@ -2991,25 +3037,29 @@ export class MultiRpcNear {
 
     let polls = 0;
     while (Date.now() < deadline) {
-      // Single pinned trade RPC — the endpoint that accepted the broadcast is
-      // the only source of truth for its outcome. No fallback.
-      const outcome = await tryRpc(pinnedUrl).catch((err) => {
-        lastErr = err as Error;
-        return null;
-      });
+      // Poll all URLs in round-robin. For the first window this is just pinnedUrl.
+      // After a neverSeen rescue, extraUrls fan out to all trade providers so if
+      // any node sees the tx, we set everSeen=true and continue waiting for EXECUTED.
+      for (const url of allPollUrls) {
+        if (Date.now() >= deadline) break;
+        const outcome = await tryRpc(url).catch((err) => {
+          lastErr = err as Error;
+          return null;
+        });
 
-      if (outcome) {
-        // wait_until 'NONE' returns as soon as the tx is included — the
-        // receipt tree is usually still EXECUTING (partial receipts_outcome).
-        // Success determination parses transfer/withdraw logs across the
-        // WHOLE tree, so a partial tree makes successful swaps look like
-        // refunds (production: BGMBn3YV… confirmed in 2.4s with only the
-        // first receipts, DCL payout logs not yet present → false failure).
-        // Wait until the node reports full execution.
-        const fes = outcome.final_execution_status;
-        const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
-        if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
-          return outcome;
+        if (outcome) {
+          // wait_until 'NONE' returns as soon as the tx is included — the
+          // receipt tree is usually still EXECUTING (partial receipts_outcome).
+          // Success determination parses transfer/withdraw logs across the
+          // WHOLE tree, so a partial tree makes successful swaps look like
+          // refunds (production: BGMBn3YV… confirmed in 2.4s with only the
+          // first receipts, DCL payout logs not yet present → false failure).
+          // Wait until the node reports full execution.
+          const fes = outcome.final_execution_status;
+          const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
+          if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+            return outcome;
+          }
         }
       }
 
