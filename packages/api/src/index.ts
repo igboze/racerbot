@@ -2,13 +2,14 @@ import './config.js';
 import express from 'express';
 import cors from 'cors';
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type TokenDetectedEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import apiRouter from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
+import { setupMonitor } from './monitor.js';
 import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
 
 const logger = createLogger('api');
@@ -58,6 +59,10 @@ async function main(): Promise<void> {
     }
     logger.error('Telegraf unhandled error', err, { updateId: ctx?.update?.update_id });
   });
+
+  // Admin monitoring (commands + background alerts) registered BEFORE the
+  // generic text handler so /monitor, /failures, /slow take precedence.
+  setupMonitor(bot);
 
   setupRoutes(bot);
 

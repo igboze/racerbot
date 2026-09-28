@@ -4,9 +4,7 @@ import {
   getOpenPositions,
   getFillsByPosition,
   getPositionById,
-  getTokenCache,
   createTrigger,
-  updateUserDefaults,
   updateUserSettings,
   updatePosition,
   createPosition,
@@ -27,7 +25,7 @@ import {
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
 import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
-import { generatePNLCardData, generatePNLCardMessage, generatePNLCard } from './pnlCardGenerator.js';
+import { generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
 
@@ -376,7 +374,6 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       // User holds token - show BOTH BUY and SELL options with Green / Red color coding
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
-      const defaultSellPct = userRecord?.default_sell_pct ? Number(userRecord.default_sell_pct) : 100;
       keyboard = Markup.inlineKeyboard([
         // BUY Options (Green 🟢)
         [
@@ -730,6 +727,8 @@ function getUserFriendlyError(error: Error | string): string {
     return errorMsg.slice(0, 280);
 
   // ── Swap failure on-chain ────────────────────────────────────────────
+  if (r.includes('no transaction was sent'))
+    return 'Price moved beyond your slippage setting in the seconds before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
   if (r.includes('swap failed'))
     return errorMsg.slice(0, 280);
 
@@ -847,6 +846,7 @@ async function executeBuyHelper(
     venue,
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
+    slippage_pct: slippagePct,
   });
 
   if (swapResult.success === false) {
@@ -1179,7 +1179,7 @@ export function setupRoutes(bot: Telegraf): void {
         try {
           const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
           totalPortfolioValueNear += currentPrice * (Number(rawBig) / Math.pow(10, decimals));
-        } catch {}
+        } catch { /* no-op */ }
       }
 
       if (remainingCount > 0) {
@@ -1311,15 +1311,15 @@ export function setupRoutes(bot: Telegraf): void {
 
       const formatDualPrice = (priceNear: number) => {
         if (priceNear <= 0) return '`0.00000000 NEAR` ($0.00)';
-        let nearStr = priceNear >= 1 ? priceNear.toFixed(4) : priceNear >= 0.0001 ? priceNear.toFixed(6) : priceNear.toFixed(8);
+        const nearStr = priceNear >= 1 ? priceNear.toFixed(4) : priceNear >= 0.0001 ? priceNear.toFixed(6) : priceNear.toFixed(8);
         const usdVal = priceNear * nearUsdRate;
-        let usdStr = usdVal >= 1 ? `$${usdVal.toFixed(2)}` : usdVal >= 0.0001 ? `$${usdVal.toFixed(6)}` : `$${usdVal.toFixed(8)}`;
+        const usdStr = usdVal >= 1 ? `$${usdVal.toFixed(2)}` : usdVal >= 0.0001 ? `$${usdVal.toFixed(6)}` : `$${usdVal.toFixed(8)}`;
         return `\`${nearStr} NEAR\` (\`${usdStr}\`)`;
       };
 
       const formatDualValue = (nearVal: number) => {
         const usdVal = nearVal * nearUsdRate;
-        let usdStr = usdVal >= 1000 ? `$${(usdVal / 1000).toFixed(2)}K` : `$${usdVal.toFixed(2)}`;
+        const usdStr = usdVal >= 1000 ? `$${(usdVal / 1000).toFixed(2)}K` : `$${usdVal.toFixed(2)}`;
         return `\`${nearVal.toFixed(4)} NEAR\` (\`${usdStr}\`)`;
       };
 
@@ -1333,7 +1333,7 @@ export function setupRoutes(bot: Telegraf): void {
           if (humanSupply > 0) {
             mcNear = humanSupply * currentPrice;
           }
-        } catch {}
+        } catch { /* no-op */ }
       }
       if (mcNear > 0) {
         const mcUsd = info?.market_cap_usd || (mcNear * nearUsdRate);
@@ -1384,7 +1384,6 @@ export function setupRoutes(bot: Telegraf): void {
       msg += `  \`${position.token_address}\`\n`;
 
       // Build keyboard buttons first (needed for both text and image paths)
-      const defaultSellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
       const buttons: any[] = [];
 
       // Sell percentage buttons (Red 🔴)
@@ -2707,7 +2706,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     // 2. Direct Token Contract Address Detection (Upon pasting a token address)
     // Match any string ending in .near, .tg, or .testnet, or 64-char hex addresses
-    const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_\-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
+    const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
     const hex64Regex = /(?:^|\s)([0-9a-fA-F]{64})(?:\s|$)/;
     const caMatch = nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
     const potentialCA = caMatch ? (caMatch[1] || caMatch[0]).trim() : null;
@@ -2743,7 +2742,7 @@ export function setupRoutes(bot: Telegraf): void {
         const card = await buildTokenCard(tokenEntry.address, telegramId);
         await sendTokenCard(ctx, card);
         return;
-      } catch {}
+      } catch { /* no-op */ }
     }
 
     // 4. Default helpful guide with Main Menu button

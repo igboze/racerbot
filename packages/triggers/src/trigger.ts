@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, type PriceUpdateEvent, type SwapEvent } from '@racerbot/shared';
-import { getDb, getActiveTriggers, getPositionById, getTokenCache, markTriggerFired, updatePosition } from '@racerbot/db';
+import { createRedis, CHANNELS, isTradableVenue, getNear, type SwapEvent } from '@racerbot/shared';
+import { getDb, getActiveTriggers, getPositionById, getTokenCache, markTriggerFired } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
 const redis = createRedis(REDIS_URL);

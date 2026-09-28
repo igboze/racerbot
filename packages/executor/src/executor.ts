@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import {
   getNear,
+  clearAccessKeyCache,
+  withAccountLock,
   createRedis,
   CHANNELS,
   decrypt,
@@ -11,6 +13,8 @@ import {
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
+  type RedisClient,
+  type MultiRpcNear,
 } from '@racerbot/shared';
 
 export { calculateMinOutAdj };
@@ -23,16 +27,17 @@ import {
   getPositionById,
   getFillsByPosition,
   createPosition,
-  updatePosition,
   getTokenCache,
   recordFee,
+  recordTradeAttempt,
+  updateTradeAttempt,
   getReferralByReferredUser,
   activateReferral,
   addReferralReward,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
-import { MAIN_WALLET_PRIVATE_KEY, PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, ROUTER_CONTRACT_ID } from './config.js';
+import { TREASURY_ACCOUNT_ID } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
@@ -46,26 +51,6 @@ const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
 
 const warmKeys = new Map<string, { keyPair: KeyPair; subaccountId: string }>();
 
-// ── Transaction Queue ─────────────────────────────────────────────────────────
-// Queue to prevent nonce conflicts from concurrent operations on the same account
-const transactionQueue = new Map<string, Promise<any>>();
-
-async function queueTransaction<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
-  const existing = transactionQueue.get(accountId);
-  const promise = (existing ? existing.catch(() => {}) : Promise.resolve())
-    .then(async () => {
-      const result = await fn();
-      transactionQueue.delete(accountId);
-      return result;
-    })
-    .catch(async (err) => {
-      transactionQueue.delete(accountId);
-      throw err;
-    });
-
-  transactionQueue.set(accountId, promise);
-  return promise;
-}
 
 // ── Services ─────────────────────────────────────────────────────────────────
 
@@ -192,6 +177,10 @@ export async function ensureRefTokenRegistered(tokenAddress: string, accountId?:
 // ── Swap execution ────────────────────────────────────────────────────────────
 
 export class SwapExecutor {
+  constructor(
+    private redisClient: RedisClient = redis,
+    private nearClient: MultiRpcNear = near
+  ) {}
 
   /**
    * Helper to build atomic actions on wrap.near for buy orders.
@@ -253,7 +242,61 @@ export class SwapExecutor {
    * Broadcasts to ALL RPC providers simultaneously; accepts first confirmation.
    * Queued per account to prevent nonce conflicts from concurrent operations.
    */
+  /**
+   * Execute a swap event with observability: records a trade_attempts row with
+   * per-stage timings, updated on success/failure. Throws propagate unchanged.
+   */
   async execute(event: SwapEvent): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+    const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
+    const attemptId = await recordTradeAttempt({
+      user_id: event.user_id,
+      side: isBuy ? 'buy' : 'sell',
+      venue: event.venue,
+      token_in: event.token_in,
+      token_out: event.token_out,
+      amount_in: event.amount_in,
+      min_amount_out: event.min_amount_out,
+      slippage_pct: event.slippage_pct ?? null,
+    }).catch((err: any) => {
+      console.warn('[EXECUTOR] recordTradeAttempt failed:', err?.message);
+      return null;
+    });
+
+    const timings: Record<string, number> = {};
+    try {
+      const result = await this.executeInner(event, timings);
+      if (attemptId) {
+        await updateTradeAttempt(attemptId, {
+          status: result.success === false ? 'failed' : 'success',
+          tx_hash: result.txHash ?? null,
+          error: result.success === false ? (result.reason ?? null) : null,
+          timings: {
+            presign_ms: timings.presign_ms ?? 0,
+            sign_ms: timings.sign_ms ?? 0,
+            post_ms: timings.post_ms ?? 0,
+          },
+        }).catch(() => { /* no-op */ });
+      }
+      return result;
+    } catch (err: any) {
+      if (attemptId) {
+        await updateTradeAttempt(attemptId, {
+          status: 'failed',
+          tx_hash: null,
+          error: err?.message ?? String(err),
+          timings: {
+            presign_ms: timings.presign_ms ?? 0,
+            sign_ms: timings.sign_ms ?? 0,
+            post_ms: timings.post_ms ?? 0,
+          },
+        }).catch(() => { /* no-op */ });
+      }
+      throw err;
+    }
+  }
+
+  private async executeInner(event: SwapEvent, timings: Record<string, number>): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+    const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
     // Pre-flight health check: ensure at least 2 healthy providers before trading
@@ -270,15 +313,37 @@ export class SwapExecutor {
       const user = await getUserById(user_id);
       if (!user) throw new Error(`User ${user_id} not found`);
       await addUserKey(user_id, user.subaccount_id, user.scoped_key_encrypted);
-      return this.execute(event); // retry with warm key
+      return this.executeInner(event, timings); // retry with warm key
     }
 
-    const { subaccountId, keyPair } = warm;
+    const { subaccountId } = warm;
 
-    // Queue transaction per account to prevent nonce conflicts
-    return queueTransaction(subaccountId, async () => {
-      // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
-      const account = await near.getAccount(subaccountId);
+    // Resolve the user's slippage preference (event field wins, then user record).
+    const userSlippage = event.slippage_pct
+      ?? (await getUserById(user_id).catch(() => null))?.slippage_pct
+      ?? 2;
+
+    // Helper to sign and send with distributed per-account lock.
+    // Records stage timings: presign (everything before signing), sign
+    // (lock + sign + broadcast + confirmation), post (fee/unwrap + fill).
+    const signAndSend = (receiverId: string, actions: transactions.Action[], waitForMs?: number) => {
+      timings.presign_ms = Date.now() - t0;
+      timings.signStart = Date.now();
+      return withAccountLock(
+        this.redisClient,
+        subaccountId,
+        () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
+        {
+          onContended: (accId) => {
+            this.nearClient.clearAccessKeyCache?.(accId);
+            clearAccessKeyCache(accId);
+          },
+        }
+      );
+    };
+
+    // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
+    const account = await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
     if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
@@ -305,20 +370,43 @@ export class SwapExecutor {
     // 1.5% fee = 150 bps
     const feeAmount = (amountInBigInt * 150n) / 10000n;
     const swapAmount = amountInBigInt - feeAmount;
+    const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
 
-    if (swapAmount <= 0n) {
+    if (isBuyPath && swapAmount <= 0n) {
       throw new Error(`Amount too small after fee: ${amount_in}`);
     }
 
-    // The 1.5% fee is skimmed from the INPUT on buy paths and on the
-    // intear/shardsmarket sells, but min_amount_out is computed against the
-    // FULL input upstream. Rescale it to the amount actually swapped —
-    // otherwise every trade carries a hidden 1.5% slippage deficit (buys
-    // structurally fail at slippage < 1.5% and pass with only ~0.5% margin
-    // at the 2% default). AMM output is concave in input, so proportional
-    // scaling is conservative: it can never demand more than the pool gives.
-    const minOutAdj = calculateMinOutAdj(min_amount_out, amountInBigInt);
+    // The 1.5% fee is skimmed from the INPUT on buy paths, but min_amount_out
+    // is computed against the FULL input upstream. Rescale it to the amount
+    // actually swapped — otherwise every buy carries a hidden 1.5% slippage
+    // deficit (buys structurally fail at slippage < 1.5% and pass with only
+    // ~0.5% margin at the 2% default). AMM output is concave in input, so
+    // proportional scaling is conservative: it can never demand more than the
+    // pool gives. Sell paths must NOT be rescaled: the fee there is taken from
+    // the OUTPUT after the swap, so rescaling would silently lower the user's
+    // price floor by 1.5%.
+    const minOutAdj = isBuyPath ? calculateMinOutAdj(min_amount_out, amountInBigInt) : min_amount_out;
 
+    // Pre-flight price check: re-quote against current on-chain state before
+    // burning gas. If the pool can no longer satisfy the user's min_amount_out
+    // (price moved between the upstream quote and now), fail fast with an exact
+    // reason instead of submitting a transaction that must revert on-chain.
+    // Never executes at a price worse than the user agreed to.
+    const freshQuote = await near.computeMinAmountOut(
+      venue,
+      token_in,
+      token_out,
+      (isBuyPath ? swapAmount : amountInBigInt).toString(),
+      userSlippage,
+      (event as any).pool_id ?? null,
+      dclPoolId
+    ).catch(() => null);
+    if (freshQuote && BigInt(freshQuote.minAmountOut) < BigInt(minOutAdj)) {
+      throw new Error(
+        'Price moved beyond your slippage setting before execution. No transaction was sent — no funds spent. ' +
+        'Retry now for a fresh quote, or increase slippage in Settings.'
+      );
+    }
 
     let result: any;
 
@@ -358,7 +446,7 @@ export class SwapExecutor {
             })
           );
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await signAndSend('wrap.near', actions);
         } else if (dclPoolId) {
           const poolTokens = dclPoolId.split('|').slice(0, 2);
           if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
@@ -381,7 +469,7 @@ export class SwapExecutor {
             })
           );
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await signAndSend('wrap.near', actions);
         } else {
           // No pool exists - token is still in launchpad/bonding phase
           throw new Error(
@@ -418,7 +506,7 @@ export class SwapExecutor {
               ),
             ];
 
-            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await signAndSend(token_in, actions);
           } else if (dclPoolId) {
             const actions = [
               transactions.functionCall(
@@ -439,7 +527,7 @@ export class SwapExecutor {
               ),
             ];
 
-            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await signAndSend(token_in, actions);
           } else {
             throw new Error(
               `Token ${token_in} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
@@ -469,7 +557,7 @@ export class SwapExecutor {
               ),
             ]);
 
-            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+            result = await signAndSend('wrap.near', actions);
           } else {
             await Promise.all([
               near.ensureStorageDeposit(subaccountId, token_in),
@@ -495,7 +583,7 @@ export class SwapExecutor {
               ),
             ];
 
-            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await signAndSend(token_in, actions);
           }
         } else {
           let rheaPoolId = (event as any).pool_id;
@@ -586,7 +674,7 @@ export class SwapExecutor {
               ),
             ]);
 
-            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+            result = await signAndSend('wrap.near', actions);
           } else {
             if (rheaPoolId === null || rheaPoolId === undefined) {
               throw new Error(
@@ -638,7 +726,7 @@ export class SwapExecutor {
             ),
           ];
 
-          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          result = await signAndSend(token_in, actions);
         }
       }
     } else if (venue === 'intear') {
@@ -657,7 +745,7 @@ export class SwapExecutor {
 
         // Buy on dex.intear.near — atomic transaction with fee skimmed from input
         // User deposits full amount_in, fee is taken from that amount before swap
-        result = await near.signAndSendTransactionAll(subaccountId, 'dex.intear.near', [
+        result = await signAndSend('dex.intear.near', [
           transactions.functionCall(
             'deposit_near',
             {
@@ -732,7 +820,7 @@ export class SwapExecutor {
           ),
         ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        result = await signAndSend(token_in, actions);
       }
     } else if (venue === 'onetokenhub') {
       // OneTokenHub: DCL on dclv2.ref-labs.near with the launch's pool_id
@@ -764,7 +852,7 @@ export class SwapExecutor {
           })
         );
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        result = await signAndSend('wrap.near', actions);
       } else {
         // Sell OneTokenHub token for the paired quote token
         await near.ensureStorageDeposit(subaccountId, token_out);
@@ -788,7 +876,7 @@ export class SwapExecutor {
           ),
         ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        result = await signAndSend(token_in, actions);
       }
     } else if (venue === 'nearpad') {
       // NEARpad: swaps execute on Ref DCL (dclv2.ref-labs.near)
@@ -818,7 +906,7 @@ export class SwapExecutor {
             })
           );
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await signAndSend('wrap.near', actions);
         } else {
           // Sell NEARpad token
           await near.ensureStorageDeposit(subaccountId, token_in);
@@ -843,7 +931,7 @@ export class SwapExecutor {
             ),
           ];
 
-          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          result = await signAndSend(token_in, actions);
         }
       } else {
         throw new Error('DCL pool not found for NEARpad token');
@@ -852,7 +940,7 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
       // First check if token is on Rhea (Rule 1)
-      let rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
       if (rhea && typeof rhea.poolId === 'number') {
         const rheaPoolId = rhea.poolId;
         const isMultiHopJambo = rhea.intermediateToken === 'jambo-1679.meme-cooking.near';
@@ -870,7 +958,7 @@ export class SwapExecutor {
             subaccountId, amountInBigInt, feeAmount, swapAmount,
             'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), BigInt('250000000000000')
           );
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await signAndSend('wrap.near', actions);
         } else {
           await near.ensureStorageDeposit(subaccountId, 'wrap.near');
           const rheaActions = isMultiHopJambo
@@ -888,7 +976,7 @@ export class SwapExecutor {
               BigInt('220000000000000'), BigInt('1')
             ),
           ];
-          result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+          result = await signAndSend(token_in, actions);
         }
       } else {
         // Pre-bonded on Gaypad
@@ -906,7 +994,7 @@ export class SwapExecutor {
             }),
             BigInt('200000000000000')
           );
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', buyActions);
+          result = await signAndSend('wrap.near', buyActions);
           // Transfer jambo to gaypad.j1-racing.near
           const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
           if (BigInt(jamboBal || '0') > 0n) {
@@ -922,7 +1010,7 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-            result = await near.signAndSendTransactionAll(subaccountId, 'jambo-1679.meme-cooking.near', gpAction);
+            result = await signAndSend('jambo-1679.meme-cooking.near', gpAction);
           }
         } else {
           await near.ensureStorageDeposit(subaccountId, 'jambo-1679.meme-cooking.near');
@@ -940,7 +1028,7 @@ export class SwapExecutor {
               BigInt('1')
             ),
           ];
-          result = await near.signAndSendTransactionAll(subaccountId, token_in, gpAction);
+          result = await signAndSend(token_in, gpAction);
           // Then swap jambo to wrap.near via Ref 6518
           const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
           if (BigInt(jamboBal || '0') > 0n) {
@@ -960,7 +1048,7 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-            result = await near.signAndSendTransactionAll(subaccountId, 'jambo-1679.meme-cooking.near', sellJamboAction);
+            result = await signAndSend('jambo-1679.meme-cooking.near', sellJamboAction);
           }
         }
       }
@@ -978,7 +1066,7 @@ export class SwapExecutor {
           if (meme) {
             isPrebonded = true;
           }
-        } catch {}
+        } catch { /* no-op */ }
       }
 
       if (isPrebonded) {
@@ -993,7 +1081,7 @@ export class SwapExecutor {
             BigInt('200000000000000')
           );
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+          result = await signAndSend('wrap.near', actions);
         } else {
           const actions = [
             transactions.functionCall(
@@ -1007,7 +1095,7 @@ export class SwapExecutor {
             ),
           ];
 
-          result = await near.signAndSendTransactionAll(subaccountId, 'meme-cooking.near', actions);
+          result = await signAndSend('meme-cooking.near', actions);
         }
       } else {
         // Bonded phase — trade on Rhea Finance / Ref Finance AMM simple pool or DCL pool
@@ -1018,7 +1106,7 @@ export class SwapExecutor {
             if (!rheaPoolId && !dclPoolId) {
               dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
             }
-          } catch {}
+          } catch { /* no-op */ }
         }
 
         if (rheaPoolId) {
@@ -1046,7 +1134,7 @@ export class SwapExecutor {
               ),
             ]);
 
-            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+            result = await signAndSend('wrap.near', actions);
           } else {
             const actions = [
               transactions.functionCall(
@@ -1071,11 +1159,15 @@ export class SwapExecutor {
               ),
             ];
 
-            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await signAndSend(token_in, actions);
           }
         } else if (dclPoolId) {
           if (isBuy) {
             await near.ensureStorageDeposit(subaccountId, token_out);
+            // dclv2.ref-labs.near expects the Swap action wrapper — the same
+            // schema the rhea/ref DCL branch uses. The previous flat
+            // {pool_id, token_in, token_out} format was rejected by the
+            // contract, so bonded Meme.Cooking DCL trades always reverted.
             const actions = await this.buildWrapNearBuyActions(
               subaccountId,
               amountInBigInt,
@@ -1083,14 +1175,15 @@ export class SwapExecutor {
               swapAmount,
               'dclv2.ref-labs.near',
               JSON.stringify({
-                pool_id: dclPoolId,
-                token_in: 'wrap.near',
-                token_out,
-                min_output_amount: minOutAdj,
+                Swap: {
+                  pool_ids: [dclPoolId],
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
               })
             );
 
-            result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+            result = await signAndSend('wrap.near', actions);
           } else {
             const actions = [
               transactions.functionCall(
@@ -1099,10 +1192,11 @@ export class SwapExecutor {
                   receiver_id: 'dclv2.ref-labs.near',
                   amount: amountInBigInt.toString(),
                   msg: JSON.stringify({
-                    pool_id: dclPoolId,
-                    token_in,
-                    token_out: 'wrap.near',
-                    min_output_amount: min_amount_out,
+                    Swap: {
+                      pool_ids: [dclPoolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
                   }),
                 },
                 BigInt('180000000000000'),
@@ -1110,7 +1204,7 @@ export class SwapExecutor {
               ),
             ];
 
-            result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+            result = await signAndSend(token_in, actions);
           }
         } else {
           throw new Error(`No Rhea or DCL pool found for bonded Meme.Cooking token ${targetToken}.`);
@@ -1132,7 +1226,7 @@ export class SwapExecutor {
           BigInt('200000000000000')
         );
 
-        result = await near.signAndSendTransactionAll(subaccountId, 'wrap.near', actions);
+        result = await signAndSend('wrap.near', actions);
       } else {
         const actions = [
           transactions.functionCall(
@@ -1147,11 +1241,12 @@ export class SwapExecutor {
           ),
         ];
 
-        result = await near.signAndSendTransactionAll(subaccountId, token_in, actions);
+        result = await signAndSend(token_in, actions);
       }
     }
 
     const txHash = result.transaction.hash;
+    timings.sign_ms = Date.now() - (timings.signStart ?? t0);
     console.log(`[EXECUTOR] Direct swap submitted: user=${user_id} venue=${venue} txHash=${txHash}`);
 
     const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -1180,7 +1275,7 @@ export class SwapExecutor {
                 }
               }
             }
-          } catch {}
+          } catch { /* no-op */ }
         }
         // Match Ref Finance standard swap log:
         // "Swapped 492500000000000000000000 wrap.near for 84758622416876153245156 omgy-1992.meme-cooking.near"
@@ -1211,7 +1306,7 @@ export class SwapExecutor {
             if (bal && BigInt(bal) > 0n) {
               netAmountOut = bal;
             }
-          } catch {}
+          } catch { /* no-op */ }
         }
       }
     }
@@ -1247,6 +1342,37 @@ export class SwapExecutor {
             }
             break;
           }
+        }
+      }
+
+      // Slippage-breach retry: re-quote with +2pp slippage and try once more.
+      // The failed transaction reverted on-chain, so no funds moved; this only
+      // rescues trades caught by fast price movement between quote and execution.
+      const isSlippageBreach = failReason.startsWith('Slippage too high');
+      if (isSlippageBreach && !(event as any).__slippage_retry) {
+        const bumpedSlippage = userSlippage + 2;
+        const bumpedQuote = await near.computeMinAmountOut(
+          venue,
+          token_in,
+          token_out,
+          (isBuyPath ? swapAmount : amountInBigInt).toString(),
+          bumpedSlippage,
+          (event as any).pool_id ?? null,
+          dclPoolId
+        ).catch(() => null);
+        if (bumpedQuote) {
+          console.log(`[EXECUTOR] Retrying with ${bumpedSlippage}% slippage (user setting ${userSlippage}%) user=${user_id}`);
+          const retryEvent = {
+            ...event,
+            min_amount_out: bumpedQuote.minAmountOut,
+            slippage_pct: bumpedSlippage,
+            __slippage_retry: true,
+          } as SwapEvent;
+          const retryResult = await this.execute(retryEvent).catch(() => null);
+          if (retryResult && retryResult.success) {
+            return { ...retryResult, reason: `Executed with ${bumpedSlippage}% slippage after price moved.` };
+          }
+          console.warn(`[EXECUTOR] Slippage-bump retry also failed user=${user_id}`);
         }
       }
 
@@ -1303,8 +1429,9 @@ export class SwapExecutor {
       return undefined;
     });
 
+    timings.post_ms = Date.now() - (timings.signStart ?? t0) - (timings.sign_ms ?? 0);
+
     return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent };
-    });
   }
 
   /**
@@ -1392,6 +1519,7 @@ export class SwapExecutor {
       amount_in: inYocto,
       min_amount_out: minAmountOut,
       venue,
+      slippage_pct: slippagePct,
       timestamp: Date.now(),
     };
     if (rheaPoolId !== null) {
@@ -1512,14 +1640,11 @@ export class SwapExecutor {
     onChainFeeYocto: string,
     venue: string,
     txHash: string,
-    event: SwapEvent,
+    _event: SwapEvent,
   ): Promise<{ positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number } | undefined> {
-    const db = await getDb();
-
     // Determine buy vs sell direction
     const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
     const tokenAddress = isBuy ? tokenOut : tokenIn;
-    const side = isBuy ? 'buy' : 'sell';
 
     const meta = await near.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 24 }));
     const decimals = meta?.decimals ?? 24;
