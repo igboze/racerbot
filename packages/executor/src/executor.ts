@@ -36,7 +36,7 @@ import {
   addReferralReward,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
-import { isTradableVenue } from '@racerbot/shared';
+import { isTradableVenue, TradeError } from '@racerbot/shared';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
@@ -344,9 +344,10 @@ export class SwapExecutor {
     // One overall deadline per trade. Waits can otherwise stack (storage
     // deposit + swap, or two-tx multihop buys: 2 × 40s confirms) beyond any
     // individual timeout and leave the user staring at "Processing" forever.
-    // 90s covers the worst-case stacked two-tx path under congestion while
+    // Budget: ~6s pre-sign + 2×45s storage windows + 40s swap confirm +
+    // 60s confirmation re-check grace (see signAndSend) ≈ 200s worst case —
     // the 'confirming_slow' progress ping keeps the user informed at 15s.
-    const TRADE_DEADLINE_MS = 90_000;
+    const TRADE_DEADLINE_MS = 210_000;
     const timings: Record<string, number> = {};
     let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
     try {
@@ -547,6 +548,40 @@ export class SwapExecutor {
         }
         return outcome;
       } catch (err: any) {
+        // Confirmation timeout is NOT a trade failure. The tx was already
+        // broadcast (broadcast_tx_async succeeded before the poll), so it may
+        // land on-chain regardless of whether the pinned RPC ever reports it.
+        // Re-check on-chain for a grace window before giving up: if the tx
+        // landed, process it exactly like a normally-confirmed trade so the
+        // fill is recorded instead of falsely reporting failure.
+        const isNotConfirmed =
+          (err instanceof TradeError && err.code === 'NOT_CONFIRMED') ||
+          /not confirmed within/.test(err?.message ?? '');
+        const timedOutHash: string | null =
+          err?.txHash ??
+          (/Transaction\s+([A-Za-z0-9]{40,50})\s+not confirmed/.exec(err?.message ?? '')?.[1] || null);
+
+        if (isNotConfirmed && timedOutHash) {
+          onProgress?.('confirming_slow');
+          const graceMs = 60_000;
+          console.warn(`[EXECUTOR:SIGN] Confirmation timed out for tx=${timedOutHash}; re-checking on-chain for up to ${graceMs}ms`);
+          const recovered = await this.nearClient.waitForOutcome(timedOutHash, subaccountId, graceMs).catch(() => null);
+          if (recovered) {
+            console.log(`[EXECUTOR:SIGN] Re-check confirmed tx=${timedOutHash} for subaccount=${subaccountId}; processing as a fill`);
+            timings.sign_ms = Date.now() - (timings.signStart ?? t0);
+            timings.confirm_ms = 0;
+            return recovered;
+          }
+          // Still unknown after the grace window — report UNKNOWN, not failed.
+          // The user must check the wallet/NearBlocks before retrying; a blind
+          // retry can duplicate a trade that lands late.
+          throw new TradeError(
+            `Transaction was submitted but its outcome is unknown (tx ${timedOutHash}) — the RPC never confirmed it within the grace window. ` +
+            'Check your wallet balance or look up the tx on NearBlocks before retrying, to avoid a duplicate trade.',
+            { code: 'NOT_CONFIRMED', txHash: timedOutHash }
+          );
+        }
+
         console.error(`[EXECUTOR:SIGN] Failed for subaccount=${subaccountId}:`, err?.message);
         throw err;
       } finally {
