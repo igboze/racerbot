@@ -350,3 +350,44 @@ describe('RefRegistrationTracker (Fix 2 — per-account storage caching)', () =>
     expect(tracker.isStorageConfirmed('token-a.near')).toBe(false);
   });
 });
+
+describe('buildWrapNearBuyActions deposit buffering', () => {
+  const sub = 'alice.racerbot.near';
+  const ONE = 10n ** 24n;
+  const amount = 25n * ONE;
+  const fee = (amount * 150n) / 10000n;
+  const swap = amount - fee;
+  const BUFFER = 10n ** 22n; // 0.01 NEAR
+
+  const mockNearWithBalance = (bal: bigint) =>
+    ({ getTokenBalance: vi.fn().mockResolvedValue(bal.toString()) }) as unknown as MultiRpcNear;
+
+  const depositOf = (actions: any[]) => BigInt(actions[0].functionCall.deposit.toString());
+
+  it('deposits the FULL spend when a stale balance read reports dust (mainnet tx 2zciEK9b…)', async () => {
+    // The pre-trade read claimed 0.00125 wNEAR, so the old code topped up to
+    // exact equality — the real (lower) balance left ft_transfer_call short
+    // and the whole tx panicked. The clamped buffer must make the deposit
+    // alone cover fee + swap.
+    const executor = new SwapExecutor(createTestRedis(), mockNearWithBalance(ONE / 800n));
+    const actions = await (executor as any).buildWrapNearBuyActions(sub, amount, fee, swap, 'dclv2.ref-labs.near', '{}');
+    expect(actions[0].functionCall.methodName).toBe('near_deposit');
+    expect(depositOf(actions)).toBe(amount);
+  });
+
+  it('skips near_deposit when the balance covers spend plus buffer', async () => {
+    const executor = new SwapExecutor(createTestRedis(), mockNearWithBalance(amount + ONE));
+    const actions = await (executor as any).buildWrapNearBuyActions(sub, amount, fee, swap, 'dclv2.ref-labs.near', '{}');
+    expect(actions).toHaveLength(2);
+    expect(actions[0].functionCall.methodName).toBe('ft_transfer');
+  });
+
+  it('adds headroom on partial balances without exceeding the authorized amount', async () => {
+    const bal = amount - 5n * ONE; // 5 NEAR short
+    const executor = new SwapExecutor(createTestRedis(), mockNearWithBalance(bal));
+    const actions = await (executor as any).buildWrapNearBuyActions(sub, amount, fee, swap, 'dclv2.ref-labs.near', '{}');
+    const dep = depositOf(actions);
+    expect(dep).toBe(5n * ONE + BUFFER); // shortfall + buffer
+    expect(dep).toBeLessThanOrEqual(amount);
+  });
+});
