@@ -25,6 +25,10 @@ export interface PoolReserves {
 }
 
 const rheaPoolIdCache = new Map<string, number>();
+
+// NearlyTrade launch record + token metadata + total supply cache (60s TTL).
+// Static per token; the DCL pool view inside getNearlytradeTokenState stays fresh.
+const ntStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
 const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
@@ -1411,21 +1415,42 @@ export class MultiRpcNear {
     reserveToken: string;
     totalSupply: string;
   }> {
-    // FIX 7: Start metadata + supply fetches in parallel with the launch lookup
-    // instead of waiting for it first. All 3 calls are independent at this point.
-    const [launchRes, metaRes, supplyRes] = await Promise.allSettled([
-      this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: tokenAddress }),
-      this.getTokenMetadata(tokenAddress),
-      this.view<string>(tokenAddress, 'ft_total_supply', {}),
-    ]);
+    // The launch record, token metadata and total supply are effectively
+    // static once a token is created, but a single buy used to fetch them
+    // THREE times (upstream quote, executor pool-id resolution, pre-flight
+    // re-quote). Cache them briefly; the DCL pool view below is always
+    // fresh so price/bonding state is never stale.
+    const NT_STATIC_TTL_MS = 60_000;
+    let launch: any = null;
+    let meta: any = null;
+    let supplyOnChain: string = '0';
 
-    const launch = launchRes.status === 'fulfilled' ? launchRes.value : null;
+    const cached = ntStaticCache.get(tokenAddress);
+    if (cached && Date.now() - cached.at < NT_STATIC_TTL_MS) {
+      launch = cached.launch;
+      meta = cached.meta;
+      supplyOnChain = cached.supply;
+    } else {
+      // FIX 7: Start metadata + supply fetches in parallel with the launch lookup
+      // instead of waiting for it first. All 3 calls are independent at this point.
+      const [launchRes, metaRes, supplyRes] = await Promise.allSettled([
+        this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: tokenAddress }),
+        this.getTokenMetadata(tokenAddress),
+        this.view<string>(tokenAddress, 'ft_total_supply', {}),
+      ]);
+
+      launch = launchRes.status === 'fulfilled' ? launchRes.value : null;
+      meta = metaRes.status === 'fulfilled' ? metaRes.value : { decimals: 18 };
+      supplyOnChain = supplyRes.status === 'fulfilled' ? supplyRes.value : '0';
+
+      if (launch && launch.pool_id) {
+        ntStaticCache.set(tokenAddress, { at: Date.now(), launch, meta, supply: supplyOnChain });
+      }
+    }
+
     if (!launch || !launch.pool_id) {
       throw new Error(`NearlyTrade token ${tokenAddress} not found or has no pool_id`);
     }
-
-    const meta = metaRes.status === 'fulfilled' ? metaRes.value : { decimals: 18 };
-    const supplyOnChain = supplyRes.status === 'fulfilled' ? supplyRes.value : (launch.total_supply || '0');
 
     const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id });
 
