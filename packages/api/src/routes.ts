@@ -880,21 +880,18 @@ async function executeBuyHelper(
     throw new Error(`Failed to fetch wallet balance: ${err.message}`);
   }
 
-  // FIX 2: when the user's Ref Finance storage is not yet registered, the
-  // one-time deposit must be included in the insufficient-balance check so
-  // the user gets a clear message BEFORE any transaction is attempted
-  // (the on-chain deposit sends real NEAR; the old 0.025 reserve did not
-  // cover the 0.1 NEAR deposit).
+  // Note: balanceNear is ALREADY net of the 0.05 NEAR gas/storage reserve
+  // computed in getTradeSpendableNear — do not deduct the 0.025 reserve twice!
+  // Only add refDepositNear if a one-time Ref storage deposit is required.
   const refDepositNeeded = await getRefStorageDepositNeeded(user.subaccount_id);
   const refDepositNear = Number(refDepositNeeded) / 1e24;
-  const reserveNear = 0.025 + refDepositNear;
 
-  // Check balance including gas reserve and the one-time Ref storage deposit
-  if (balanceNear < amountNear + reserveNear) {
+  // Check balance including the one-time Ref storage deposit
+  if (balanceNear < amountNear + refDepositNear) {
     const refLine = refDepositNear > 0
       ? ` This includes a one-time ${refDepositNear.toFixed(2)} NEAR Ref Finance registration deposit for your wallet.`
       : '';
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + reserveNear).toFixed(4)} NEAR (including gas & storage reserve).${refLine} Fees are deducted from your swap amount.`);
+    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + refDepositNear).toFixed(4)} NEAR.${refLine} Fees are deducted from your swap amount.`);
   }
 
   // Use cached token info to execute immediately without redundant RPC round-trips
@@ -1010,13 +1007,13 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   // Lightweight trade balance: spendable native NEAR only, no USD feed (5s TTL).
+  // balanceNear is ALREADY net of the 0.05 NEAR gas/storage reserve.
   const balanceNear = await getTradeSpendableNear(telegramId);
 
-  // Retain 0.025 NEAR reserve for gas and token storage deposit
-  const usableBalance = Math.max(0, balanceNear - 0.025);
+  const usableBalance = balanceNear;
   const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
-    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.025 gas/storage reserve) is too low to buy.`);
+    throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after gas/storage reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)), onProgress);
 }

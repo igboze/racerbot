@@ -187,6 +187,7 @@ export class MultiRpcNear {
   private networkId: string;
   private connections: Map<string, Near> = new Map();
   private accountCache: Map<string, Account> = new Map();
+  private highestUsedNonce: Map<string, bigint> = new Map();
   private nonceCacheRefreshInterval: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private currentIndex = 0;
@@ -2746,27 +2747,75 @@ export class MultiRpcNear {
     const account = await this.getAccount(accountId);
     const allProviderUrls = this.tradeProviders.map(p => p.url);
 
-    // signTransaction is protected on Account — sign via the same code path
-    // near-api-js uses internally (returns [txHash, signedTx]).
-    // ALWAYS clear accessKeyByPublicKeyCache before signing to guarantee
-    // a fresh on-chain nonce query from RPC. Never trust an incremented
-    // in-memory nonce across potentially dropped or retried transactions!
-    const signOnce = async (): Promise<{ hash: string; signedB64: string }> => {
+    // Build and sign transaction with monotonic nonce tracking.
+    // Near requires tx.nonce > ak.nonce. When a transaction is dropped by mempool
+    // under congestion, its nonce is never committed to chain, leaving on-chain ak.nonce
+    // un-advanced. To prevent repeating the exact same dropped/stale nonce across retries
+    // or phase-2 re-signs, we maintain highestUsedNonce per account+key and strictly
+    // advance past it.
+    const signOnce = async (forceIncrement = false): Promise<{ hash: string; signedB64: string; nonce: bigint }> => {
+      const publicKey = await account.connection.signer.getPublicKey(accountId, account.connection.networkId);
+      if (!publicKey) {
+        throw new Error(`No matching key pair found for ${accountId}`);
+      }
+      const pkStr = publicKey.toString();
+      const nonceCacheKey = `${accountId}:${pkStr}`;
+
       (account as any).accessKeyByPublicKeyCache = {};
+      const rawAccessKey = await account.connection.provider.query<any>({
+        request_type: 'view_access_key',
+        account_id: accountId,
+        public_key: pkStr,
+        finality: 'optimistic',
+      }).catch(async () => {
+        return account.connection.provider.query<any>({
+          request_type: 'view_access_key',
+          account_id: accountId,
+          public_key: pkStr,
+          finality: 'final',
+        });
+      });
+      const chainNonce = BigInt(rawAccessKey?.nonce || 0);
+
+      const prevTracked = this.highestUsedNonce.get(nonceCacheKey) ?? 0n;
+      let baseNonce = chainNonce > prevTracked ? chainNonce : prevTracked;
+      if (forceIncrement && baseNonce <= prevTracked) {
+        baseNonce = prevTracked;
+      }
+      const nextNonce = baseNonce + 1n;
+      this.highestUsedNonce.set(nonceCacheKey, nextNonce);
+
+      const block = await withTimeout<any>(
+        account.connection.provider.block({ finality: 'final' }),
+        5_000,
+        `Block fetch timed out for ${accountId}`
+      );
+      const blockHash = utils.serialize.base_decode(block.header.hash);
+
       const [txHash, signedTx] = await withTimeout<any[]>(
-        (account as any).signTransaction(receiverId, actions),
+        transactions.signTransaction(
+          receiverId,
+          nextNonce,
+          actions,
+          blockHash,
+          account.connection.signer,
+          accountId,
+          account.connection.networkId
+        ),
         8_000,
         `Signing timed out for ${accountId}`
       );
+
       return {
         hash: utils.serialize.base_encode(txHash as Uint8Array),
         signedB64: Buffer.from(transactions.encodeTransaction(signedTx)).toString('base64'),
+        nonce: nextNonce,
       };
     };
 
-    let signed: { hash: string; signedB64: string };
+    let signed: { hash: string; signedB64: string; nonce: bigint };
     try {
-      signed = await signOnce();
+      signed = await signOnce(false);
       try {
         await this.broadcastToAll(signed.signedB64);
       } catch (err: any) {
@@ -2785,18 +2834,18 @@ export class MultiRpcNear {
 
         // Phase 2: If the transaction was never seen anywhere after firstWindow,
         // it was dropped by the mempool (congestion / relay drop).
-        // Clear nonce cache, re-fetch true on-chain nonce from RPC, re-sign, and broadcast fresh.
-        console.warn(`[NEAR] tx ${signed.hash} never seen on any provider after ${firstWindow}ms — re-signing with fresh nonce`);
-        (account as any).accessKeyByPublicKeyCache = {};
-        let freshSigned: { hash: string; signedB64: string };
+        // Re-sign with a strictly incremented fresh nonce so the mempool receives
+        // a brand-new nonce that cannot conflict with the dropped transaction.
+        console.warn(`[NEAR] tx ${signed.hash} (nonce ${signed.nonce}) never seen on any provider after ${firstWindow}ms — re-signing with fresh incremented nonce`);
+        let freshSigned: { hash: string; signedB64: string; nonce: bigint };
         try {
-          freshSigned = await signOnce();
+          freshSigned = await signOnce(true);
         } catch {
           // If re-signing fails, rethrow the original neverSeen error
           throw firstErr;
         }
 
-        console.warn(`[NEAR] re-signed fresh tx hash=${freshSigned.hash} — broadcasting to all providers`);
+        console.warn(`[NEAR] re-signed fresh tx hash=${freshSigned.hash} nonce=${freshSigned.nonce} — broadcasting to all providers`);
         try {
           await this.broadcastToAll(freshSigned.signedB64);
         } catch {
@@ -2852,36 +2901,44 @@ export class MultiRpcNear {
 
   /**
    * Fan-out broadcast: send signed bytes to ALL trade providers in parallel.
-   * Used as the neverSeen rescue so that if the pinned provider dropped the tx,
-   * at least one other node picks it up. Same signed bytes = same hash = idempotent.
-   * Never throws — failures are logged and swallowed (best-effort).
+   * Broadcasts to all trade providers simultaneously. If at least one provider accepts,
+   * returns success. If ALL providers reject the broadcast, throws immediately with
+   * the rejection reason so caller fails fast instead of hanging on a doomed poll.
    */
   private async broadcastToAll(signedB64: string): Promise<void> {
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       this.tradeProviders.map(async (provider) => {
-        try {
-          const res = await fetch(provider.url, {
-            method: 'POST',
-            headers: provider.headers ?? { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 'racerbot-fanout',
-              method: 'broadcast_tx_async',
-              params: [signedB64],
-            }),
-            signal: AbortSignal.timeout(5000),
-          });
-          const data: any = await res.json();
-          if (data?.error) {
-            console.warn(`[NEAR] broadcastToAll ${provider.url} error:`, data.error.message || JSON.stringify(data.error));
-          } else {
-            console.log(`[NEAR] broadcastToAll ${provider.url} accepted tx`);
-          }
-        } catch (err: any) {
-          console.warn(`[NEAR] broadcastToAll ${provider.url} failed:`, err.message);
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: provider.headers ?? { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'racerbot-fanout',
+            method: 'broadcast_tx_async',
+            params: [signedB64],
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data: any = await res.json();
+        if (data?.error) {
+          const errMsg = data.error.message || JSON.stringify(data.error);
+          console.warn(`[NEAR] broadcastToAll ${provider.name || provider.url} error:`, errMsg);
+          throw new Error(`${provider.name || provider.url}: ${errMsg}`);
         }
+        console.log(`[NEAR] broadcastToAll ${provider.name || provider.url} accepted tx`);
+        return data?.result;
       })
     );
+
+    const hasSuccess = results.some(r => r.status === 'fulfilled');
+    if (!hasSuccess) {
+      const errors = results
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map(r => r.reason?.message ?? String(r.reason));
+      const firstError = errors[0] || 'Unknown broadcast error';
+      console.error('[NEAR] All providers rejected broadcast:', errors);
+      throw new Error(`Transaction broadcast rejected by all RPC nodes: ${firstError}`);
+    }
   }
 
   /**
