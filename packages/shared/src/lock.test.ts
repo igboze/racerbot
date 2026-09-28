@@ -92,6 +92,40 @@ describe('withAccountLock', () => {
     await assertion;
   });
 
+  it('releases orphaned lock if setNxPx resolves after timeout has fired', async () => {
+    vi.useFakeTimers();
+
+    let resolveLateSetNxPx: ((val: boolean) => void) | null = null;
+    const baseRedis = createMockRedis();
+    const slowRedis: RedisClient = {
+      ...baseRedis,
+      async setNxPx(key: string, value: string, ttlMs: number): Promise<boolean> {
+        return new Promise<boolean>((resolve) => {
+          resolveLateSetNxPx = () => {
+            baseRedis.setNxPx(key, value, ttlMs).then(resolve);
+          };
+        });
+      },
+    };
+
+    const accountId = 'user-sub-late.racer.near';
+    const promise = withAccountLock(slowRedis, accountId, async () => 'never');
+    const assertion = expect(promise).rejects.toThrow(LOCK_ACQUISITION_TIMEOUT_ERROR);
+
+    // Advance to trigger timeout at 8s
+    await vi.advanceTimersByTimeAsync(8_000);
+    await assertion;
+
+    // Now the delayed setNxPx finally resolves in the background
+    expect(resolveLateSetNxPx).toBeTruthy();
+    resolveLateSetNxPx!(true);
+    await vi.runAllTimersAsync();
+
+    // Lock key must NOT be left orphaned in Redis
+    const lockVal = await baseRedis.get(`lock:swap:${accountId}`);
+    expect(lockVal).toBeNull();
+  });
+
   it('acquires the lock, runs fn, and releases the lock', async () => {
     const redis = createMockRedis();
     const accountId = 'user-sub-1.racer.near';

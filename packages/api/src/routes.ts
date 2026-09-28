@@ -51,9 +51,9 @@ const userPendingActions = new Map<number, PendingAction>();
 
 // ── SPEED: trade-path prewarm ────────────────────────────────────────────────
 // Fires (fire-and-forget) when a token card is shown: resolves pool ids,
-// ensures output-token storage for the user, ensures Ref whitelist
-// registration, and warms the whitelist cache — so the first tap on Buy
-// reaches signing in milliseconds instead of doing all of this serially.
+// warms storage registration cache (read-only view check), and warms the
+// whitelist cache — so the first tap on Buy reaches signing in milliseconds
+// without firing speculative on-chain transactions that cause nonce collisions.
 async function prewarmTradePath(telegramId: number, tokenAddress: string): Promise<void> {
   try {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -65,17 +65,13 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
 
     const jobs: Promise<unknown>[] = [
-      near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch(() => {}),
+      near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
     ];
     if (rheaLike) {
       jobs.push(
         near.findRheaPoolForToken(tokenAddress).catch(() => null),
         near.findDclPoolId('wrap.near', tokenAddress).catch(() => null),
         near.getWhitelistedTokens().catch(() => []),
-        (async () => {
-          const { ensureRefTokenRegistered } = await import('@racerbot/executor');
-          await ensureRefTokenRegistered(tokenAddress, user.subaccount_id);
-        })().catch(() => {}),
       );
     }
     await Promise.all(jobs);
