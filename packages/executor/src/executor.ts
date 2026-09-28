@@ -426,6 +426,7 @@ export class SwapExecutor {
       onProgress?.('signing');
       capturedPreOutBalance = await preOutBalanceP;
       const slowTimer = setTimeout(() => onProgress?.('confirming_slow'), 15_000);
+      console.log(`[EXECUTOR:SIGN] Requesting lock & signing for subaccount=${subaccountId}, receiver=${receiverId}`);
       try {
         const outcome = await withAccountLock(
           this.redisClient,
@@ -433,11 +434,13 @@ export class SwapExecutor {
           () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
           {
             onContended: (accId) => {
+              console.warn(`[EXECUTOR:SIGN] Contention on ${accId}, clearing access key cache`);
               this.nearClient.clearAccessKeyCache?.(accId);
               clearAccessKeyCache(accId);
             },
           }
         );
+        console.log(`[EXECUTOR:SIGN] Transaction completed for subaccount=${subaccountId}, hash=${outcome?.transaction?.hash}`);
         const perf = (outcome as any)?.__perf;
         if (perf) {
           timings.sign_ms = perf.broadcastMs ?? (Date.now() - (timings.signStart ?? t0));
@@ -447,6 +450,9 @@ export class SwapExecutor {
           timings.confirm_ms = 0;
         }
         return outcome;
+      } catch (err: any) {
+        console.error(`[EXECUTOR:SIGN] Failed for subaccount=${subaccountId}:`, err?.message);
+        throw err;
       } finally {
         clearTimeout(slowTimer);
       }
