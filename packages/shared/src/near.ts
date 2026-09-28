@@ -181,6 +181,10 @@ export class MultiRpcNear {
   private accountCache: Map<string, Account> = new Map();
   private nonceCacheRefreshInterval: NodeJS.Timeout | null = null;
   private currentIndex = 0;
+  // Coalescing: identical in-flight view calls share one request
+  private inflightViews = new Map<string, Promise<any>>();
+  // Short-TTL result cache for display-path reads only (see viewCached)
+  private viewResultCache = new Map<string, { at: number; value: any }>();
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
     const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
@@ -207,8 +211,17 @@ export class MultiRpcNear {
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
     ];
-    const tradeUrls = Array.from(new Set(prioritizedUrls));
-    const readUrls = [...tradeUrls];
+    // Duty split:
+    //   READS  → FastNEAR first (purpose-built for fast read-heavy workloads;
+    //            protects the free tier by keeping QuickNode out of the fan-out).
+    //            QuickNode is the automatic failover when every FastNEAR
+    //            provider is unhealthy or circuit-open.
+    //   WRITES → QuickNode first (paid tier, stable under burst), FastNEAR as
+    //            backup. Broadcasts still go to BOTH for redundancy.
+    const readUrls = [
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+    ];
 
     this.readProviders = readUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
@@ -216,8 +229,10 @@ export class MultiRpcNear {
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
-      return createProvider(url, isQn ? `quicknode-read-${i}` : `read-rpc-${i}`, isQn, headers);
+      return createProvider(url, isQn ? `quicknode-read-${i}` : `fastnear-read-${i}`, isQn, headers);
     });
+
+    const tradeUrls = Array.from(new Set(prioritizedUrls));
 
     this.tradeProviders = tradeUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
@@ -328,17 +343,43 @@ export class MultiRpcNear {
   }
 
   /**
-   * Read-only view call — tries all providers in parallel, returns first successful result.
-   * Falls back to next provider on error with circuit breaker protection.
+   * Read-only view call — FastNEAR-first duty split with QuickNode failover.
+   *
+   * Duty split: only FastNEAR providers fan out (parallel race, first success
+   * wins, 2s timeout). QuickNode read-providers are used ONLY when every
+   * FastNEAR provider is unhealthy or circuit-open — this keeps read latency
+   * optimal on the provider purpose-built for reads while protecting
+   * QuickNode's paid quota from read traffic.
+   *
+   * Concurrent identical calls are coalesced: 50 users refreshing the same
+   * token price at once produce ONE in-flight RPC, not 50.
    */
   async view<T>(contractId: string, methodName: string, args: object = {}): Promise<T> {
-    const candidates = this.readProviders.filter(p => p.healthy && !p.circuitBreakerOpen).length > 0
-      ? this.readProviders.filter(p => p.healthy && !p.circuitBreakerOpen)
-      : this.readProviders;
+    const key = `${contractId}|${methodName}|${JSON.stringify(args)}`;
+
+    // Coalesce concurrent identical calls onto one in-flight request.
+    const inflight = this.inflightViews.get(key);
+    if (inflight) return inflight as Promise<T>;
+
+    const promise = this.viewOnce<T>(contractId, methodName, args)
+      .finally(() => this.inflightViews.delete(key));
+    this.inflightViews.set(key, promise);
+    return promise;
+  }
+
+  private async viewOnce<T>(contractId: string, methodName: string, args: object): Promise<T> {
+    const eligible = (list: RPCProvider[]) => list.filter(p => p.healthy && !p.circuitBreakerOpen);
+
+    const fastnear = this.readProviders.filter(p => !p.isQuickNode);
+    const quicknode = this.readProviders.filter(p => p.isQuickNode);
+
+    let candidates = eligible(fastnear);
+    if (candidates.length === 0) candidates = eligible(quicknode);
+    if (candidates.length === 0) candidates = this.readProviders;
 
     if (candidates.length === 0) throw new Error('No NEAR RPC providers configured');
 
-    // Try all providers in parallel, return first successful result immediately
+    // Try the duty-split candidates in parallel, return first successful result immediately
     return Promise.any(
       candidates.map(async (provider) => {
         const start = Date.now();
@@ -369,6 +410,30 @@ export class MultiRpcNear {
       const err = aggregateErr?.errors?.[0] || aggregateErr;
       throw (err ?? new Error('All NEAR RPC providers failed'));
     });
+  }
+
+  /**
+   * Read-only view call with a short result cache for DISPLAY paths only
+   * (token cards, holdings lists). Default TTL 1.5s — fast enough that price
+   * movement is imperceptible to a user, big enough to collapse refresh
+   * storms into a single RPC.
+   *
+   * NEVER use this on the trade path — quotes that guard user funds must be
+   * always-fresh (use view()).
+   */
+  async viewCached<T>(contractId: string, methodName: string, args: object = {}, ttlMs = 1500): Promise<T> {
+    const key = `${contractId}|${methodName}|${JSON.stringify(args)}`;
+    const hit = this.viewResultCache.get(key);
+    if (hit && Date.now() - hit.at < ttlMs) return hit.value as T;
+    const value = await this.view<T>(contractId, methodName, args);
+    this.viewResultCache.set(key, { at: Date.now(), value });
+    if (this.viewResultCache.size > 500) {
+      const cutoff = Date.now() - ttlMs;
+      for (const [k, v] of this.viewResultCache) {
+        if (v.at < cutoff) this.viewResultCache.delete(k);
+      }
+    }
+    return value;
   }
 
   /**
@@ -477,7 +542,9 @@ export class MultiRpcNear {
    * Returns name, symbol, decimals, total_supply.
    */
   async getTokenMetadata(tokenAddress: string): Promise<TokenMetadata> {
-    return this.view<TokenMetadata>(tokenAddress, 'ft_metadata', {});
+    // Metadata is immutable per token — safe for the display-path cache and
+    // it is fetched on nearly every token card / holdings / quote path.
+    return this.viewCached<TokenMetadata>(tokenAddress, 'ft_metadata', {}, 60_000);
   }
 
   /**
