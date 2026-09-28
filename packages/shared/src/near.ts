@@ -2974,11 +2974,16 @@ export class MultiRpcNear {
       });
 
       if (outcome) {
-        // wait_until 'NONE' returns as soon as the tx is included — receipts
-        // may not have executed yet (empty/partial receipts_outcome). Success
-        // determination inspects receipts, so keep polling until the executed
-        // receipt tree is present.
-        if (Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+        // wait_until 'NONE' returns as soon as the tx is included — the
+        // receipt tree is usually still EXECUTING (partial receipts_outcome).
+        // Success determination parses transfer/withdraw logs across the
+        // WHOLE tree, so a partial tree makes successful swaps look like
+        // refunds (production: BGMBn3YV… confirmed in 2.4s with only the
+        // first receipts, DCL payout logs not yet present → false failure).
+        // Wait until the node reports full execution.
+        const fes = outcome.final_execution_status;
+        const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
+        if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
           return outcome;
         }
       }
