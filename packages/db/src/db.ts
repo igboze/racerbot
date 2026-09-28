@@ -483,6 +483,10 @@ export interface UpdateTradeAttemptParams {
 
 export async function updateTradeAttempt(id: string, params: UpdateTradeAttemptParams): Promise<void> {
   const db = await getDb();
+  // NOTE: every parameter must be referenced — Postgres rejects statements
+  // with unreferenced params (42P18 "could not determine data type of
+  // parameter $1"). An earlier version of this query passed id twice with
+  // WHERE id = $6, so EVERY update threw and trade_attempts stayed pending.
   await db.query(
     `UPDATE trade_attempts
      SET status = $2,
@@ -490,8 +494,8 @@ export async function updateTradeAttempt(id: string, params: UpdateTradeAttemptP
          error = $4,
          timings = COALESCE($5, timings),
          updated_at = NOW()
-     WHERE id = $6`,
-    [id, params.status, params.tx_hash ?? null, params.error ?? null, params.timings ? JSON.stringify(params.timings) : null, id]
+     WHERE id = $1`,
+    [id, params.status, params.tx_hash ?? null, params.error ?? null, params.timings ? JSON.stringify(params.timings) : null]
   );
 }
 
