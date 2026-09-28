@@ -100,3 +100,146 @@ describe('near: nearlytrade bonding-curve quotes', () => {
     viewSpy.mockRestore();
   });
 });
+
+
+describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
+  const FN = 'https://rpc.mainnet.fastnear.com';
+  const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
+
+  it('orders read providers FastNEAR-first and trade providers QuickNode-first', () => {
+    const near = new MultiRpcNear([QN, FN]) as any;
+    expect(near.readProviders[0].url).toBe(FN);
+    expect(near.readProviders[0].isQuickNode).toBe(false);
+    expect(near.readProviders[1].url).toBe(QN);
+    expect(near.readProviders[1].isQuickNode).toBe(true);
+    expect(near.tradeProviders[0].url).toBe(QN);
+    expect(near.tradeProviders[1].url).toBe(FN);
+  });
+
+  it('view() fails over to QuickNode only when FastNEAR is unavailable', async () => {
+    const near = new MultiRpcNear([FN, QN]) as any;
+    // Force FastNEAR read providers into circuit-open state
+    for (const p of near.readProviders.filter((x: any) => !x.isQuickNode)) {
+      p.healthy = false;
+      p.circuitBreakerOpen = true;
+      p.circuitBreakerUntil = Date.now() + 60_000;
+    }
+    // Intercept at the connection layer to record which provider(s) were used
+    const attempted: string[] = [];
+    near.getConnection = async (url: string) => {
+      attempted.push(url);
+      return {
+        account: async () => ({
+          viewFunction: async () => ({ ok: true }),
+        }),
+      };
+    };
+    const result = await near.view('token.near', 'ft_metadata', {});
+    expect(result).toEqual({ ok: true });
+    expect(attempted).toEqual([QN]); // FastNEAR excluded from the fan-out entirely
+
+    // When FastNEAR is healthy again, QuickNode receives no read traffic
+    for (const p of near.readProviders) {
+      p.healthy = true;
+      p.circuitBreakerOpen = false;
+      p.circuitBreakerUntil = 0;
+    }
+    attempted.length = 0;
+    await near.view('token.near', 'ft_metadata', {});
+    expect(attempted).toEqual([FN]);
+  });
+});
+
+describe('near: view request coalescing', () => {
+  it('serves concurrent identical view calls from a single in-flight request', async () => {
+    const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']) as any;
+    let calls = 0;
+    near.viewOnce = vi.fn(async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20)); // simulate RPC latency
+      return { value: 42 };
+    });
+
+    const [a, b, c] = await Promise.all([
+      near.view('token.near', 'ft_metadata', {}),
+      near.view('token.near', 'ft_metadata', {}),
+      near.view('token.near', 'ft_metadata', {}),
+    ]);
+    expect(a.value).toBe(42);
+    expect(b.value).toBe(42);
+    expect(c.value).toBe(42);
+    expect(calls).toBe(1); // one RPC for three concurrent callers
+
+    // After settle, a new call issues a fresh request
+    await near.view('token.near', 'ft_metadata', {});
+    expect(calls).toBe(2);
+  });
+
+  it('does not coalesce different args', async () => {
+    const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']) as any;
+    let calls = 0;
+    near.viewOnce = vi.fn(async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return calls;
+    });
+    await Promise.all([
+      near.view('token.near', 'ft_balance_of', { account_id: 'a.near' }),
+      near.view('token.near', 'ft_balance_of', { account_id: 'b.near' }),
+    ]);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('near: viewCached display-path cache', () => {
+  it('serves repeat calls within TTL and refetches after expiry', async () => {
+    const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']) as any;
+    let calls = 0;
+    near.view = vi.fn(async () => {
+      calls++;
+      return { price: calls };
+    });
+
+    const first = await near.viewCached('ref-finance.near', 'ft_price', {}, 30);
+    const second = await near.viewCached('ref-finance.near', 'ft_price', {}, 30);
+    expect(first).toEqual(second);
+    expect(calls).toBe(1);
+
+    await new Promise((r) => setTimeout(r, 45)); // outlive the 30ms TTL
+    const third = await near.viewCached('ref-finance.near', 'ft_price', {}, 30);
+    expect(third.price).toBe(2);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('near: nearlytrade static launch cache', () => {
+  it('fetches launch/metadata/supply once across repeated state calls', async () => {
+    const token = `cached-${Date.now()}.nearlytrade.near`;
+    const poolId = `${token}|wrap.near|10000`;
+    const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']);
+    const counts: Record<string, number> = {};
+    const viewSpy = vi.spyOn(near, 'view').mockImplementation(async (contractId: string, method: string) => {
+      const k = `${contractId}:${method}`;
+      counts[k] = (counts[k] || 0) + 1;
+      if (contractId === 'nearlytrade.near' && method === 'get_launch_by_token') {
+        return { pool_id: poolId, left_point: 200, right_point: 500000, step: 'Running', token_is_x: true, total_supply: '1' };
+      }
+      if (method === 'ft_metadata') return { name: 'T', symbol: 'T', decimals: 18 };
+      if (method === 'ft_total_supply') return '1000';
+      if (contractId === 'dclv2.ref-labs.near' && method === 'get_pool') {
+        return { state: 'Running', current_point: 1000, total_x: '5e27'.replace('e', ''), total_y: '25000000000000000000000000' };
+      }
+      return null;
+    });
+
+    await near.getNearlytradeTokenState(token);
+    await near.getNearlytradeTokenState(token);
+
+    // Static trio fetched exactly once; pool view stays fresh (twice)
+    expect(counts['nearlytrade.near:get_launch_by_token']).toBe(1);
+    expect(counts[`${token}:ft_metadata`]).toBe(1);
+    expect(counts[`${token}:ft_total_supply`]).toBe(1);
+    expect(counts['dclv2.ref-labs.near:get_pool']).toBe(2);
+    viewSpy.mockRestore();
+  });
+});
