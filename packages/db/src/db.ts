@@ -441,6 +441,109 @@ export async function recordFee(fillId: string, amount: string): Promise<void> {
   await db.query('INSERT INTO fee_ledger (id, fill_id, amount, created_at) VALUES ($1, $2, $3, NOW())', [id, fillId, amount]);
 }
 
+// ── Trade Attempt Observability ───────────────────────────────────────────────
+
+export interface RecordTradeAttemptParams {
+  user_id: string;
+  side: 'buy' | 'sell';
+  venue: string;
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  min_amount_out?: string | null;
+  slippage_pct?: number | null;
+}
+
+export async function recordTradeAttempt(params: RecordTradeAttemptParams): Promise<string> {
+  const db = await getDb();
+  const result = await db.query(
+    `INSERT INTO trade_attempts (user_id, side, venue, token_in, token_out, amount_in, min_amount_out, slippage_pct)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
+    [
+      params.user_id,
+      params.side,
+      params.venue,
+      params.token_in,
+      params.token_out,
+      params.amount_in,
+      params.min_amount_out ?? null,
+      params.slippage_pct ?? null,
+    ]
+  );
+  return result.rows[0].id as string;
+}
+
+export interface UpdateTradeAttemptParams {
+  status: 'pending' | 'success' | 'failed';
+  tx_hash?: string | null;
+  error?: string | null;
+  timings?: Record<string, number> | null;
+}
+
+export async function updateTradeAttempt(id: string, params: UpdateTradeAttemptParams): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE trade_attempts
+     SET status = $2,
+         tx_hash = COALESCE($3, tx_hash),
+         error = $4,
+         timings = COALESCE($5, timings),
+         updated_at = NOW()
+     WHERE id = $6`,
+    [id, params.status, params.tx_hash ?? null, params.error ?? null, params.timings ? JSON.stringify(params.timings) : null, id]
+  );
+}
+
+// ── Bot Settings (key-value) ──────────────────────────────────────────────────
+
+export async function setBotSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO bot_settings (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [key, value]
+  );
+}
+
+export async function getBotSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT value FROM bot_settings WHERE key = $1', [key]);
+  return result.rows.length > 0 ? (result.rows[0].value as string) : null;
+}
+
+// ── Trade Attempt Queries ─────────────────────────────────────────────────────
+
+export interface TradeAttemptRow {
+  id: string;
+  user_id: string;
+  side: string;
+  venue: string;
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  status: string;
+  tx_hash: string | null;
+  error: string | null;
+  timings: { presign_ms?: number; sign_ms?: number; post_ms?: number } | null;
+  slippage_pct: number | null;
+  created_at: Date;
+}
+
+export async function getRecentTradeAttempts(windowMinutes: number, limit = 200): Promise<TradeAttemptRow[]> {
+  const db = await getDb();
+  const result = await db.query(
+    `SELECT id, user_id, side, venue, token_in, token_out, amount_in, status, tx_hash, error, timings, slippage_pct, created_at
+     FROM trade_attempts
+     WHERE created_at >= NOW() - ($1 || ' minutes')::INTERVAL
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [String(windowMinutes), limit]
+  );
+  return result.rows as TradeAttemptRow[];
+}
+
 // ── Referral System Functions ─────────────────────────────────────────────────
 
 export async function generateReferralCode(userId: string, username: string): Promise<string> {

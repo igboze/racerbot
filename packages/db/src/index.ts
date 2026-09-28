@@ -31,6 +31,11 @@ export {
   getReferralsByReferrer,
   getReferralByReferredUser,
   getTotalReferralEarnings,
+  recordTradeAttempt,
+  updateTradeAttempt,
+  setBotSetting,
+  getBotSetting,
+  getRecentTradeAttempts,
 } from './db.js';
 
 export type {
@@ -46,4 +51,5 @@ export type {
   CreateTriggerParams,
   UpdatePositionParams,
   UpdateUserSettingsParams,
+  TradeAttemptRow,
 } from './db.js';

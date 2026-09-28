@@ -165,7 +165,7 @@ export function perUserRateLimit(windowMs: number, maxRequests: number) {
   };
 }
 
-const ACCOUNT_ID_RE = /^[a-z0-9_\-]+(\.[a-z0-9_\-]+)+$/;
+const ACCOUNT_ID_RE = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/;
 const UINT_RE = /^\d+$/;
 const HEX_RE = /^[0-9a-fA-F]+$/;
 const FLOAT_RE = /^\d+(\.\d+)?$/;

@@ -56,11 +56,14 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     timestamp: Date.now(),
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
+    slippage_pct: slippagePct,
   };
 
   const swapResult = await publishSwap(swapEvent);
   if (swapResult.success === false) {
-    return { success: false, reason: 'Swap failed on-chain. Please verify liquidity and retry.' };
+    // Pass the executor's distilled on-chain reason through so users learn
+    // WHY the sell failed (slippage / no pool / contract error), not a generic message.
+    return { success: false, reason: swapResult.reason || 'Swap failed on-chain. Please verify liquidity and retry.' };
   }
 
   return { success: true };

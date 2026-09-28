@@ -7,7 +7,7 @@ let _bot: Telegraf | null = null;
 
 /** Strip Telegram Markdown control chars so user/data strings can't break messages. */
 function sanitize(s: string): string {
-  return String(s ?? '').replace(/[_*`\[]/g, ' ').slice(0, 300);
+  return String(s ?? '').replace(/[_*`[]/g, ' ').slice(0, 300);
 }
 
 export function setBotInstance(bot: Telegraf): void {
@@ -134,6 +134,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       // Map raw NEAR / RPC errors to user-friendly language
       const friendlyReason = (() => {
         const r = rawReason.toLowerCase();
+        if (r.includes('no transaction was sent')) return 'Price moved beyond your slippage setting in the seconds before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
         if (r.includes('notenoughallowance') || r.includes('not enough allowance')) return 'Insufficient key allowance — please contact support.';
         if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum')) return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings.';
         if (r.includes('insufficient') && r.includes('balanc')) return 'Insufficient balance for this trade.';

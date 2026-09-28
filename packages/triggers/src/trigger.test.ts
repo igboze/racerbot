@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { getDb, createUser, createPosition, createTrigger, getPositionById } from '@racerbot/db';
+import { getDb, createUser, createPosition, createTrigger } from '@racerbot/db';
 import { CHANNELS, getNear } from '@racerbot/shared';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 

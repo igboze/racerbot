@@ -68,12 +68,20 @@ export type {
 export {
   MultiRpcNear,
   getNear,
+  clearAccessKeyCache,
   DEFAULT_RPC_URLS,
   getFastnearAccountTokens,
   getFastnearPublicKeyAccounts,
   getRefIndexerPools,
 } from './near.js';
 export type { NearConfig, TokenMetadata, PoolReserves } from './near.js';
+
+// Distributed per-account lock
+export {
+  withAccountLock,
+  LOCK_CONTENTION_ERROR,
+} from './lock.js';
+export type { LockOptions } from './lock.js';
 
 
 

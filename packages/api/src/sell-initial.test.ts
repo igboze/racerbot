@@ -75,8 +75,6 @@ describe('SELL INITIAL - Total Investment Calculation', () => {
   });
 
   it('prevents division by zero with zero current price', () => {
-    const totalInitialInvestment = 100;
-    const currentHeld = 50;
     const currentPrice = 0;
 
     if (currentPrice === 0) {
@@ -85,26 +83,18 @@ describe('SELL INITIAL - Total Investment Calculation', () => {
       return;
     }
 
-    const currentValue = currentHeld * currentPrice;
-    const sellPercentage = (totalInitialInvestment / currentValue) * 100;
-
     // Should not reach here
     expect(false).toBe(true);
   });
 
   it('prevents division by zero with zero current held', () => {
-    const totalInitialInvestment = 100;
     const currentHeld = 0;
-    const currentPrice = 2.0;
 
     if (currentHeld === 0) {
       // Should skip calculation
       expect(true).toBe(true);
       return;
     }
-
-    const currentValue = currentHeld * currentPrice;
-    const sellPercentage = (totalInitialInvestment / currentValue) * 100;
 
     // Should not reach here
     expect(false).toBe(true);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createLogger, generateCorrelationId, LogLevel } from './logger.js';
+import { createLogger, generateCorrelationId } from './logger.js';
 
 describe('Structured Logging', () => {
   it('should create logger with service name', () => {

@@ -1,8 +1,5 @@
 import { createCipheriv, createDecipheriv, scryptSync, randomFillSync } from 'crypto';
 import { KeyPair } from 'near-api-js';
-import { generateMnemonic, mnemonicToEntropy } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
-import { randomBytes } from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;

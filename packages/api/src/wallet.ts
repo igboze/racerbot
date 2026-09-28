@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, createRedis, CHANNELS, parseMemeCookingId, type VenueName } from '@racerbot/shared';
+import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import {
   getDb,
   createUser,
@@ -9,14 +9,10 @@ import {
   upsertTokenCache,
   getOpenPositions,
   createPosition,
-  createFill,
   updatePosition,
   generateReferralCode,
   getUserByReferralCode,
   createReferral,
-  activateReferral,
-  addReferralReward,
-  getReferralByReferredUser,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
@@ -196,14 +192,14 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
       const progress = hardCap > 0 ? Math.min(100, (totalStaked / hardCap) * 100) : 0;
       return { price, liquidity: totalStaked, phase: 'prebonded', progress };
     }
-  } catch {}
+  } catch { /* no-op */ }
 
   try {
     const fin = await near.view<any>('meme-cooking.near', 'get_finalized_meme', { meme_id: memeId }).catch(() => null);
     if (fin) {
       return { price: 0, liquidity: 0, phase: 'bonded', progress: 100 };
     }
-  } catch {}
+  } catch { /* no-op */ }
 
   return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
 }
@@ -329,7 +325,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         totalSupply = onChainSupply;
         tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
       }
-    } catch {}
+    } catch { /* no-op */ }
   }
 
   let price = 0;
@@ -357,7 +353,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
           rheaPoolId = dbCache.rhea_pool_id;
         }
       }
-    } catch {}
+    } catch { /* no-op */ }
   }
 
   // Step 1: Rhea first, for every token — use findRheaPoolForToken (covers Simple + DCL + multi-hop)
@@ -374,7 +370,7 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
           rheaPoolId = typeof rhea.poolId === 'number' ? rhea.poolId : null;
         }
       }
-    } catch {}
+    } catch { /* no-op */ }
   }
 
   // Step 2: Only if Rhea has no liquidity, use address suffix to pick a launchpad prober
@@ -717,7 +713,6 @@ export async function rotateUserKey(telegramId: number): Promise<RotateKeyResult
   }
 }
 
-let pubRedis: any = null;
 let directExecutor: any = null;
 
 /**
@@ -734,6 +729,7 @@ export async function publishSwap(swapEvent: {
   venue: VenueName;
   dcl_pool_id?: string;
   pool_id?: number;
+  slippage_pct?: number;
 }): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
   if (!directExecutor) {
     const { SwapExecutor } = await import('@racerbot/executor');

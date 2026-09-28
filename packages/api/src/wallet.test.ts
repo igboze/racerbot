@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import { getDb } from '@racerbot/db';
 
 process.env.KEY_ENCRYPTION_MASTER_KEY =

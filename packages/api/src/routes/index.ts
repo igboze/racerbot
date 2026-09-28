@@ -1,31 +1,16 @@
 import { Router } from 'express';
 import { getTokenInfo, publishSwap } from '../wallet.js';
-import {
-  getOpenPositions,
-  getFillsByPosition,
-  createTrigger,
-  getUserByTelegramId,
-  createUser,
-  updateUserScopedKey,
-  getPositionById,
-  getUserById,
-  getTokenCache,
-  getDb,
-} from '@racerbot/db';
+import { createTrigger } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { computePnL, getNear, encrypt, isTradableVenue, createLogger } from '@racerbot/shared';
-import { KeyPair } from 'near-api-js';
+import { createLogger } from '@racerbot/shared';
 import {
   ensureTelegramInitData,
   ensureTelegramUser,
-  isValidAccountId,
   perUserRateLimit,
 } from '../middleware.js';
 import {
   ROUTER_CONTRACT_ID,
   RACERBOT_PARENT_ACCOUNT,
-  MAIN_WALLET_PRIVATE_KEY,
-  MASTER_KEY
 } from '../config.js';
 
 const logger = createLogger('api-routes');
@@ -70,7 +55,6 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
     const userId = (req as any).userId;
     const tokenAddress = req.body.tokenAddress;
     const amountNear = req.body.amountNear;
-    const slippagePct = req.body.slippagePct;
 
     if (!tokenAddress || !amountNear) {
       res.status(400).json({ error: 'Missing required fields: tokenAddress, amountNear' });

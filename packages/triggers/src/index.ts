@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, createLogger, type PriceUpdateEvent } from '@racerbot/shared';
+import { CHANNELS, createLogger, type PriceUpdateEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
