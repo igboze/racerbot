@@ -20,7 +20,7 @@ end
 `;
 
 export interface LockOptions {
-  /** TTL in milliseconds. Default: 100_000 (100 seconds) */
+  /** TTL in milliseconds. Default: 30_000 (30 seconds) */
   ttlMs?: number;
   /** Maximum acquisition attempts (initial attempt + retries). Default: 20 */
   maxAttempts?: number;
@@ -33,12 +33,12 @@ export interface LockOptions {
 /**
  * Executes an async action protected by a distributed Redis lock per accountId.
  * Lock key: lock:swap:<accountId>
- * Lock TTL: 100_000ms (100 seconds)
+ * Lock TTL: 30_000ms (30 seconds, matches trade deadline)
  *
  * Safe release: only deletes the lock if the stored token matches the caller's token.
- * Contention: retries up to maxAttempts (20) with retryDelayMs (100ms) — same ~2s
- * window as before, but a contending trade picks the lock up within 100ms of it
- * being released instead of up to 500ms.
+ * Contention: retries up to maxAttempts (20) with retryDelayMs (100ms) — ~2s
+ * window, but a contending trade picks the lock up within 100ms of it
+ * being released.
  */
 export async function withAccountLock<T>(
   redis: RedisClient,
@@ -46,7 +46,7 @@ export async function withAccountLock<T>(
   fn: () => Promise<T>,
   options?: LockOptions
 ): Promise<T> {
-  const ttlMs = options?.ttlMs ?? 100_000;
+  const ttlMs = options?.ttlMs ?? 30_000;
   const maxAttempts = options?.maxAttempts ?? 20;
   const retryDelayMs = options?.retryDelayMs ?? 100;
   const lockKey = `lock:swap:${accountId}`;
@@ -54,9 +54,26 @@ export async function withAccountLock<T>(
 
   let acquired = false;
   let attempts = 0;
+  let timedOut = false;
+
+  const releaseLock = async () => {
+    try {
+      if (typeof redis.eval === 'function') {
+        await redis.eval(RELEASE_LOCK_SCRIPT, 1, lockKey, token);
+      } else {
+        const current = await redis.get(lockKey);
+        if (current === token) {
+          await redis.del(lockKey);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[LOCK] Failed to release lock ${lockKey}:`, err?.message);
+    }
+  };
 
   const acquisition = (async () => {
     for (let i = 1; i <= maxAttempts; i++) {
+      if (timedOut) break;
       attempts = i;
       try {
         if (typeof redis.setNxPx === 'function') {
@@ -67,6 +84,17 @@ export async function withAccountLock<T>(
         }
       } catch {
         acquired = false;
+      }
+
+      if (timedOut) {
+        // If the timeout fired while the Redis command was in flight, and the
+        // command ended up acquiring the lock, immediately release it so no
+        // orphaned lock is left in Redis.
+        if (acquired) {
+          await releaseLock();
+          acquired = false;
+        }
+        break;
       }
 
       if (acquired) {
@@ -80,13 +108,20 @@ export async function withAccountLock<T>(
   })();
 
   // Hard ceiling: even if Redis commands hang (connection drop, lost reply),
-  // acquisition must give up within ACQUISITION_TIMEOUT_MS. The stray SET may
-  // still land later — the TTL (default 100s) expires it automatically.
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(LOCK_ACQUISITION_TIMEOUT_ERROR)), ACQUISITION_TIMEOUT_MS)
-  );
+  // acquisition must give up within ACQUISITION_TIMEOUT_MS.
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(LOCK_ACQUISITION_TIMEOUT_ERROR));
+    }, ACQUISITION_TIMEOUT_MS);
+  });
 
-  await Promise.race([acquisition, timeout]);
+  try {
+    await Promise.race([acquisition, timeout]);
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
 
   if (!acquired) {
     throw new Error(LOCK_CONTENTION_ERROR);
@@ -105,17 +140,6 @@ export async function withAccountLock<T>(
   try {
     return await fn();
   } finally {
-    try {
-      if (typeof redis.eval === 'function') {
-        await redis.eval(RELEASE_LOCK_SCRIPT, 1, lockKey, token);
-      } else {
-        const current = await redis.get(lockKey);
-        if (current === token) {
-          await redis.del(lockKey);
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[LOCK] Failed to release lock ${lockKey}:`, err?.message);
-    }
+    await releaseLock();
   }
 }
