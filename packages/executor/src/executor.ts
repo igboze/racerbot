@@ -673,11 +673,12 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
       if (isBuy) {
-        // Ensure storage for wrap.near and token_out
-        await Promise.all([
-          ensureStorage('wrap.near'),
-          ensureStorage(token_out),
-        ]);
+        // Ensure storage for token_out (and the quote asset when non-NEAR).
+        // Do NOT call ensureStorage('wrap.near') on buy: near_deposit inside
+        // buildWrapNearBuyActions registers wrap.near storage atomically, so
+        // a separate storage_deposit tx is redundant and causes a neverSeen
+        // timeout for new users whose wrap.near account doesn't exist yet.
+        await ensureStorage(token_out);
 
         // Also ensure storage for the quote asset when it's non-NEAR (so hop1 output can land)
         if (!ntState.quoteIsNear) {
@@ -1006,11 +1007,10 @@ export class SwapExecutor {
           // Execute Ref DCL swap on dclv2.ref-labs.near
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
           if (isBuy) {
+            // Do NOT ensureStorage('wrap.near') on buy — near_deposit in
+            // buildWrapNearBuyActions handles it atomically in the same tx.
             const [, actions] = await Promise.all([
-              Promise.all([
-                ensureStorage('wrap.near'),
-                ensureStorage(token_out),
-              ]),
+              ensureStorage(token_out),
               this.buildWrapNearBuyActions(
                 subaccountId,
                 amountInBigInt,
