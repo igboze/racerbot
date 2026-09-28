@@ -24,6 +24,30 @@ async function main(): Promise<void> {
   // Connect DB
   await logger.time('Connected to database', () => getDb());
 
+  // Reap orphaned 'pending' trade attempts. A service restart or hard crash
+  // mid-trade leaves rows pending forever; users then believe a trade is still
+  // running and stop retrying. Any attempt older than 5 minutes is a corpse —
+  // the trade deadline (30s) guarantees live trades resolve far sooner.
+  const reapStaleAttempts = async () => {
+    try {
+      const db = await getDb();
+      const res = await db.query(
+        `UPDATE trade_attempts
+         SET status = 'failed',
+             error = 'Expired: trade never completed (service restart or hard timeout)'
+         WHERE status = 'pending' AND created_at < now() - interval '5 minutes'`
+      );
+      const reaped = res.rowCount ?? 0;
+      if (reaped > 0) {
+        logger.warn('Reaped stale pending trade attempts', { count: reaped });
+      }
+    } catch (err: any) {
+      logger.warn('Stale-attempt reaper failed (will retry next tick)', { error: err?.message });
+    }
+  };
+  await reapStaleAttempts();
+  setInterval(reapStaleAttempts, 60_000);
+
   // RPC provider health checks every 30s in this process too — without them
   // providers marked unhealthy here were never restored and the trade gate
   // would block every trade forever.

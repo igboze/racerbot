@@ -259,41 +259,34 @@ describe('near: nearlytrade static launch cache', () => {
   });
 });
 
-describe('near: trade provider gate (Fix 1)', () => {
+describe('near: single pinned trade RPC (no fallback)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
+  const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
 
-  function makeUnhealthy(near: any): void {
+  it('pins the write path to tradeProviders[0] (QuickNode when configured)', () => {
+    const near = new MultiRpcNear([FN, QN]) as any;
+    expect(near.tradeProvider.url).toBe(QN);
+
+    const fnOnly = new MultiRpcNear([FN]) as any;
+    expect(fnOnly.tradeProvider.url).toBe(FN);
+  });
+
+  it('never blocks trades while a provider is configured — regardless of health flags', () => {
+    const near = new MultiRpcNear([FN]) as any;
+    expect(() => near.checkTradeProviders()).not.toThrow();
+
+    // Even fully unhealthy / circuit-open, the gate must NOT throw: with a
+    // single-RPC write path, health flags are informational only.
     for (const p of near.tradeProviders) {
       p.healthy = false;
       p.errorCount = 99;
       p.circuitBreakerOpen = true;
       p.circuitBreakerUntil = Date.now() + 60_000;
     }
-  }
-
-  it('requires min(2, configured): a single configured provider never blocks trades', () => {
-    const near = new MultiRpcNear([FN]) as any;
-    expect(near.tradeProviders.length).toBe(1);
-    expect(() => near.checkTradeProviders()).not.toThrow();
-
-    // Even fully unhealthy, the gate must NOT throw — it resets and lets the
-    // attempt through (a failed attempt beats a blocked one).
-    makeUnhealthy(near);
     expect(() => near.checkTradeProviders()).not.toThrow();
   });
 
-  it('resets circuit breakers and unhealthy state when the gate triggers', () => {
-    const near = new MultiRpcNear([FN, 'https://free.rpc.fastnear.com']) as any;
-    makeUnhealthy(near);
-    near.checkTradeProviders();
-    for (const p of near.tradeProviders) {
-      expect(p.circuitBreakerOpen).toBe(false);
-      expect(p.healthy).toBe(true);
-      expect(p.errorCount).toBe(0);
-    }
-  });
-
-  it('throws only when no trade providers are configured at all', () => {
+  it('throws only when no trade provider is configured at all', () => {
     const near = new MultiRpcNear([FN]) as any;
     near.tradeProviders = [];
     expect(() => near.checkTradeProviders()).toThrow(/configured/i);
