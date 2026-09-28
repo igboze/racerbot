@@ -58,10 +58,15 @@ export function distillFailureReason(failure: any): string {
 }
 
 /** Sum ft_transfer "amount" events received by the account from EVENT_JSON logs. */
-function parseLogAmounts(result: any, subaccountId: string): string[] {
+function parseLogAmounts(result: any, subaccountId: string, expectedToken?: string): string[] {
   const amounts: string[] = [];
   const receiptsOutcomes = result?.receipts_outcome || [];
   for (const r of receiptsOutcomes) {
+    const executorId = r?.outcome?.executor_id;
+    // If executor_id is known and expectedToken is specified, ignore transfers from other contracts
+    if (executorId && expectedToken && executorId !== expectedToken) {
+      continue;
+    }
     const logs: string[] = r?.outcome?.logs || [];
     for (const log of logs) {
       if (!log.startsWith('EVENT_JSON:')) continue;
@@ -77,7 +82,9 @@ function parseLogAmounts(result: any, subaccountId: string): string[] {
         } else if (parsed.event === 'swap') {
           const dataList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
           for (const d of dataList) {
-            if (d?.amount_out) amounts.push(String(d.amount_out));
+            if ((!d?.token_out || !expectedToken || d.token_out === expectedToken) && d?.amount_out) {
+              amounts.push(String(d.amount_out));
+            }
           }
         }
       } catch { /* no-op */ }
@@ -114,24 +121,38 @@ export function determineSwapOutcome(input: SwapOutcomeInput): SwapOutcome {
     return { ok: false, reason: distillFailureReason(txFailure), detail: JSON.stringify(txFailure).slice(0, 300) };
   }
 
-  // 2. Balance delta is authoritative when both reads succeeded.
+  const expectedOutToken = isBuy ? tokenOut : 'wrap.near';
+  const logAmounts = parseLogAmounts(result, subaccountId, expectedOutToken);
+  const finalLogAmount = logAmounts.length > 0 ? logAmounts[logAmounts.length - 1] : null;
+
+  // 2. Balance delta is authoritative when positive.
   if (preBalance !== null && postBalance !== null) {
     const delta = BigInt(postBalance) - BigInt(preBalance);
-    if (delta <= 0n) {
+    if (delta > 0n) {
+      return { ok: true, netAmountOut: delta.toString() };
+    }
+    // If balance delta is non-positive (e.g. preBalance === postBalance),
+    // check if the transaction receipts definitively prove tokens were transferred
+    // to the subaccount. If so, the view RPC balance read was stale due to
+    // indexer/RPC replication lag on the read endpoint.
+    if (finalLogAmount && BigInt(finalLogAmount) > 0n) {
       return {
-        ok: false,
-        reason: `Swap produced no ${isBuy ? 'tokens' : 'wNEAR'} — the DEX refunded your input (price moved or insufficient liquidity). No fill was recorded. Check your wallet balance, then retry.`,
-        detail: `pre=${preBalance} post=${postBalance}`,
+        ok: true,
+        netAmountOut: finalLogAmount,
+        detail: `recovered from receipts: logAmount=${finalLogAmount} (stale RPC pre=${preBalance} post=${postBalance})`,
       };
     }
-    return { ok: true, netAmountOut: delta.toString() };
+    return {
+      ok: false,
+      reason: `Swap produced no ${isBuy ? 'tokens' : 'wNEAR'} — the DEX refunded your input (price moved or insufficient liquidity). No fill was recorded. Check your wallet balance, then retry.`,
+      detail: `pre=${preBalance} post=${postBalance}`,
+    };
   }
 
-  // 3. Fall back to parsed logs only when balance reads are unavailable.
-  const amounts = parseLogAmounts(result, subaccountId);
-  if (amounts.length > 0) {
+  // 3. Fall back to parsed logs when balance reads are unavailable.
+  if (finalLogAmount && BigInt(finalLogAmount) > 0n) {
     // Last transfer to the user in the receipt tree is the final output.
-    return { ok: true, netAmountOut: amounts[amounts.length - 1] };
+    return { ok: true, netAmountOut: finalLogAmount };
   }
 
   // 4. Nothing verifiable → fail closed. Never invent an amount.
