@@ -38,6 +38,7 @@ import {
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue } from '@racerbot/shared';
 import { TREASURY_ACCOUNT_ID } from './config.js';
+import { determineSwapOutcome } from './tradeResult.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
@@ -93,67 +94,109 @@ export async function addUserKey(userId: string, subaccountId: string, encrypted
 }
 
 // ── Ref Finance Storage & Token Whitelist Registration Cache ──────────────────
-const confirmedRefRegisteredTokens = new Set<string>();
-let refStorageChecked = false;
+//
+// Per-ACCOUNT and per-TOKEN confirmation sets. The old code used one global
+// boolean for storage (the first account to trade marked Ref storage "checked"
+// for the whole process — every later user skipped the check and could be
+// refunded by Ref) and cached token registration even when register_tokens
+// failed. An id lands in a set only after the on-chain state proves it.
+export class RefRegistrationTracker {
+  private readonly storageConfirmedAccounts = new Set<string>();
+  private readonly confirmedTokens = new Set<string>();
+
+  isStorageConfirmed(accountId: string): boolean {
+    return this.storageConfirmedAccounts.has(accountId);
+  }
+  confirmStorage(accountId: string): void {
+    this.storageConfirmedAccounts.add(accountId);
+  }
+
+  isTokenConfirmed(tokenAddress: string): boolean {
+    return this.confirmedTokens.has(tokenAddress);
+  }
+  confirmToken(tokenAddress: string): void {
+    this.confirmedTokens.add(tokenAddress);
+  }
+}
+
+export const refTracker = new RefRegistrationTracker();
 
 /**
- * Ensure the router contract (or caller account) has storage deposited on Ref Finance (v2.ref-finance.near).
- * Per the CLI Trading doc, Ref requires storage deposit to track internal account balances.
- * We deposit 0.1 NEAR once if not already registered.
+ * Ensure the account has storage deposited on Ref Finance (v2.ref-finance.near).
+ * Ref requires a storage deposit to track internal balances; an unregistered
+ * account's swap succeeds on-chain but is REFUNDED — silent failure.
+ *
+ * - Per-account: every distinct account is checked/registered once.
+ * - Deposit amount: real storage_balance_bounds minimum from the contract,
+ *   falling back to 0.1 NEAR only when the view call fails.
+ * - On deposit failure: throws with a plain user-actionable message. The
+ *   failure is never cached as success.
  */
 export async function ensureRefStorage(accountId?: string): Promise<void> {
-  if (refStorageChecked) return;
   if (!accountId) return;
-  try {
-    const hasKey = await near.hasKey(accountId);
-    if (!hasKey) return;
+  if (refTracker.isStorageConfirmed(accountId)) return;
 
-    const storage = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
-    if (!storage || !storage.total || storage.total === '0') {
-      console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit...`);
-      await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
-        transactions.functionCall(
-          'storage_deposit',
-          { account_id: accountId, registration_only: false },
-          BigInt('30000000000000'),
-          BigInt('100000000000000000000000') // 0.1 NEAR
-        ),
-      ], 15_000).catch((err) => {
-        console.warn(`[EXECUTOR] Ref storage_deposit for ${accountId} returned:`, err.message);
-      });
-    }
-    refStorageChecked = true;
-  } catch (err: any) {
-    console.warn(`[EXECUTOR] Error checking Ref storage for ${accountId}:`, err.message);
+  const hasKey = await near.hasKey(accountId);
+  if (!hasKey) return;
+
+  const storage = await near.view<any>('v2.ref-finance.near', 'storage_balance_of', { account_id: accountId }).catch(() => null);
+  if (storage && storage.total && storage.total !== '0') {
+    refTracker.confirmStorage(accountId);
+    return;
   }
+
+  // Read the real minimum deposit from the contract; fall back to 0.1 NEAR.
+  const FALLBACK_DEPOSIT_YOCTO = BigInt('100000000000000000000000');
+  const bounds = await near.view<any>('v2.ref-finance.near', 'storage_balance_bounds', {}).catch(() => null);
+  let deposit = FALLBACK_DEPOSIT_YOCTO;
+  if (bounds?.min && BigInt(bounds.min) > 0n) {
+    deposit = BigInt(bounds.min);
+  }
+  const depositNear = (Number(deposit) / 1e24).toFixed(2);
+
+  console.log(`[EXECUTOR] Account ${accountId} not registered on Ref Finance. Performing storage_deposit (${depositNear} NEAR)...`);
+  try {
+    await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
+      transactions.functionCall(
+        'storage_deposit',
+        { account_id: accountId, registration_only: false },
+        BigInt('30000000000000'),
+        deposit
+      ),
+    ], 15_000);
+  } catch (err: any) {
+    const msg = (err?.message ?? String(err)).toLowerCase();
+    if (msg.includes('already registered') || msg.includes('storage already deposited')) {
+      refTracker.confirmStorage(accountId);
+      return;
+    }
+    console.error(`[EXECUTOR] Ref storage_deposit failed for ${accountId}:`, err?.message);
+    throw new Error(`Could not register your wallet on Ref Finance. Add at least ${depositNear} NEAR and retry.`);
+  }
+  refTracker.confirmStorage(accountId);
 }
 
 /**
  * Check if a token is whitelisted on Ref Finance before trading.
- * If not whitelisted, call register_tokens on v2.ref-finance.near with 1 yoctoNEAR from router contract.
- * Results are cached in confirmedRefRegisteredTokens to avoid redundant checks per trade.
+ * If not whitelisted, call register_tokens on v2.ref-finance.near with 1 yoctoNEAR.
+ * A token is cached as confirmed ONLY when whitelisted or the register_tokens
+ * transaction succeeded — a failed registration is never cached as success.
  */
 export async function ensureRefTokenRegistered(tokenAddress: string, accountId?: string): Promise<void> {
   if (tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
-  if (confirmedRefRegisteredTokens.has(tokenAddress)) return;
+  if (refTracker.isTokenConfirmed(tokenAddress)) return;
 
   try {
     const whitelisted = await near.getWhitelistedTokens();
     if (whitelisted.includes(tokenAddress)) {
-      confirmedRefRegisteredTokens.add(tokenAddress);
+      refTracker.confirmToken(tokenAddress);
       return;
     }
 
-    if (!accountId) {
-      confirmedRefRegisteredTokens.add(tokenAddress);
-      return;
-    }
+    if (!accountId) return;
 
     const hasKey = await near.hasKey(accountId);
-    if (!hasKey) {
-      confirmedRefRegisteredTokens.add(tokenAddress);
-      return;
-    }
+    if (!hasKey) return;
 
     console.log(`[EXECUTOR] Token ${tokenAddress} is not whitelisted on Ref Finance. Submitting register_tokens...`);
     await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
@@ -163,14 +206,11 @@ export async function ensureRefTokenRegistered(tokenAddress: string, accountId?:
         BigInt('30000000000000'),
         BigInt('1') // 1 yoctoNEAR
       ),
-    ], 15_000).catch((err) => {
-      console.warn(`[EXECUTOR] register_tokens for ${tokenAddress} on Ref returned:`, err.message);
-    });
-
-    confirmedRefRegisteredTokens.add(tokenAddress);
+    ], 15_000);
+    refTracker.confirmToken(tokenAddress);
   } catch (err: any) {
-    console.warn(`[EXECUTOR] Error registering token ${tokenAddress} on Ref:`, err.message);
-    confirmedRefRegisteredTokens.add(tokenAddress);
+    // Do NOT cache the failure — a later trade must retry registration.
+    console.warn(`[EXECUTOR] Error registering token ${tokenAddress} on Ref:`, err?.message);
   }
 }
 
@@ -246,9 +286,14 @@ export class SwapExecutor {
    * Execute a swap event with observability: records a trade_attempts row with
    * per-stage timings, updated on success/failure. Throws propagate unchanged.
    */
-  async execute(event: SwapEvent, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
-    const attemptId = await recordTradeAttempt({
+
+    // Record the attempt WITHOUT blocking the trade — the DB insert overlaps
+    // with the pre-trade RPC work. Awaited only when the id is needed for the
+    // post-trade update.
+    let attemptId: string | null = null;
+    const attemptReady = recordTradeAttempt({
       user_id: event.user_id,
       side: isBuy ? 'buy' : 'sell',
       venue: event.venue,
@@ -257,28 +302,46 @@ export class SwapExecutor {
       amount_in: event.amount_in,
       min_amount_out: event.min_amount_out,
       slippage_pct: event.slippage_pct ?? null,
-    }).catch((err: any) => {
+    }).then((id) => { attemptId = id; }).catch((err: any) => {
       console.warn('[EXECUTOR] recordTradeAttempt failed:', err?.message);
-      return null;
     });
 
+    // One overall deadline per trade. Waits can otherwise stack (storage
+    // deposit + swap) beyond any individual timeout and leave the user
+    // staring at "Processing" forever.
+    const TRADE_DEADLINE_MS = 30_000;
     const timings: Record<string, number> = {};
+    let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
     try {
-      const result = await this.executeInner(event, timings, onProgress);
+      inner = this.executeInner(event, timings, onProgress);
+    } catch (err: any) {
+      // synchronous throw path (defensive — executeInner is async)
+      await attemptReady;
       if (attemptId) {
         await updateTradeAttempt(attemptId, {
-          status: result.success === false ? 'failed' : 'success',
-          tx_hash: result.txHash ?? null,
-          error: result.success === false ? (result.reason ?? null) : null,
-          timings: {
-            presign_ms: timings.presign_ms ?? 0,
-            sign_ms: timings.sign_ms ?? 0,
-            post_ms: timings.post_ms ?? 0,
-          },
+          status: 'failed', tx_hash: null, error: err?.message ?? String(err),
+          timings: { presign_ms: 0, sign_ms: 0, post_ms: 0 },
         }).catch(() => { /* no-op */ });
       }
-      return result;
+      throw err;
+    }
+
+    let result: { txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number };
+    let deadlineTimer: NodeJS.Timeout | null = null;
+    try {
+      result = await Promise.race([
+        inner,
+        new Promise<never>((_, reject) => {
+          deadlineTimer = setTimeout(() => reject(new Error(
+            'This trade is taking too long — the outcome is unknown. Check your wallet balance or look up your account on NearBlocks before retrying, to avoid a duplicate trade.'
+          )), TRADE_DEADLINE_MS);
+        }),
+      ]);
     } catch (err: any) {
+      // The inner promise keeps running in the background; swallow its
+      // eventual settlement so it never surfaces as an unhandled rejection.
+      inner.catch(() => { /* outcome unknown — the deadline error stands */ });
+      await attemptReady;
       if (attemptId) {
         await updateTradeAttempt(attemptId, {
           status: 'failed',
@@ -292,14 +355,37 @@ export class SwapExecutor {
         }).catch(() => { /* no-op */ });
       }
       throw err;
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
     }
+
+    await attemptReady;
+    if (attemptId) {
+      await updateTradeAttempt(attemptId, {
+        status: result.success === false ? 'failed' : 'success',
+        tx_hash: result.txHash ?? null,
+        error: result.success === false ? (result.reason ?? null) : null,
+        timings: {
+          // Click→quote (pre-sign work incl. quote and registration checks)
+          presign_ms: timings.presign_ms ?? 0,
+          // Quote→broadcast (lock + sign + multi-RPC broadcast)
+          sign_ms: timings.sign_ms ?? 0,
+          // Broadcast→confirmed on-chain + post-processing
+          post_ms: timings.post_ms ?? 0,
+        },
+      }).catch(() => { /* no-op */ });
+    }
+    return result;
   }
 
   private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
-    // Pre-flight health check: ensure at least 2 healthy providers before trading
+    // Pre-flight health gate. min(2, configured) providers required; if none
+    // are healthy the gate resets circuit breakers and lets the attempt through
+    // (see MultiRpcNear.checkTradeProviders) — a failed attempt beats a blocked
+    // one. Only a completely unconfigured provider list throws here.
     try {
       near.checkTradeProviders();
     } catch (err: any) {
@@ -324,27 +410,46 @@ export class SwapExecutor {
       ?? 2;
 
     // Helper to sign and send with distributed per-account lock.
-    // Records stage timings: presign (everything before signing), sign
-    // (lock + sign + broadcast + confirmation), post (fee/unwrap + fill).
+    // Records stage timings: presign (everything before signing incl. quote),
+    // sign (lock + sign + broadcast), post (on-chain confirmation + fill).
     // Emits UI progress stages so the user sees movement instead of a frozen
     // "Processing…" message; 'confirming_slow' fires if on-chain confirmation
     // exceeds 15s (RPC/indexer congestion) to reassure the user.
-    const signAndSend = (receiverId: string, actions: transactions.Action[], waitForMs?: number) => {
+    //
+    // FIX 3: the output-token balance read (fired in parallel with the quote)
+    // is awaited BEFORE signing so the pre-balance snapshot always predates
+    // the swap — success is later measured as the balance increase.
+    let capturedPreOutBalance: string | null = null;
+    const signAndSend = async (receiverId: string, actions: transactions.Action[], waitForMs?: number) => {
       timings.presign_ms = Date.now() - t0;
       timings.signStart = Date.now();
       onProgress?.('signing');
+      capturedPreOutBalance = await preOutBalanceP;
       const slowTimer = setTimeout(() => onProgress?.('confirming_slow'), 15_000);
-      return withAccountLock(
-        this.redisClient,
-        subaccountId,
-        () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
-        {
-          onContended: (accId) => {
-            this.nearClient.clearAccessKeyCache?.(accId);
-            clearAccessKeyCache(accId);
-          },
+      try {
+        const outcome = await withAccountLock(
+          this.redisClient,
+          subaccountId,
+          () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
+          {
+            onContended: (accId) => {
+              this.nearClient.clearAccessKeyCache?.(accId);
+              clearAccessKeyCache(accId);
+            },
+          }
+        );
+        const perf = (outcome as any)?.__perf;
+        if (perf) {
+          timings.sign_ms = perf.broadcastMs ?? (Date.now() - (timings.signStart ?? t0));
+          timings.confirm_ms = Math.max(0, (perf.confirmMs ?? 0) - (perf.broadcastMs ?? 0));
+        } else {
+          timings.sign_ms = Date.now() - (timings.signStart ?? t0);
+          timings.confirm_ms = 0;
         }
-      ).finally(() => clearTimeout(slowTimer));
+        return outcome;
+      } finally {
+        clearTimeout(slowTimer);
+      }
     };
 
     // Storage-registration wrapper — emits a progress stage so a one-time
@@ -399,11 +504,26 @@ export class SwapExecutor {
     // price floor by 1.5%.
     const minOutAdj = isBuyPath ? calculateMinOutAdj(min_amount_out, amountInBigInt) : min_amount_out;
 
+    // FIX 3: fire the output-token balance read NOW so it overlaps with the
+    // pre-flight quote — it adds no wall-clock time, and the awaited snapshot
+    // inside signAndSend always predates the swap.
+    const outTokenForBalance = isBuyPath ? token_out : 'wrap.near';
+    const preOutBalanceP: Promise<string | null> = near
+      .getTokenBalance(outTokenForBalance, subaccountId)
+      .catch(() => null);
+
     // Pre-flight price check: re-quote against current on-chain state before
     // burning gas. If the pool can no longer satisfy the user's min_amount_out
     // (price moved between the upstream quote and now), fail fast with an exact
     // reason instead of submitting a transaction that must revert on-chain.
     // Never executes at a price worse than the user agreed to.
+    //
+    // SPEED: when the event carries a fresh quote (quoted_at < 2s old, set by
+    // executeBuyHelper/sellAtTarget right after computeMinAmountOut), skip the
+    // second quote entirely. Events without quoted_at (triggers, auto-buy)
+    // keep the full re-quote. NearlyTrade is excluded: its two-transaction
+    // multihop paths read minHop1AmountOut from the fresh quote for hop-1
+    // slippage protection, and skipping would weaken slippage.
     //
     // The NearlyTrade Rhea-pool lookup runs CONCURRENTLY with the pre-flight
     // quote — they are independent RPC reads and previously ran in sequence,
@@ -414,15 +534,21 @@ export class SwapExecutor {
         ? near.findRheaPoolId('wrap.near', token_in === 'wrap.near' ? token_out : token_in).catch(() => null)
         : null;
 
-    const freshQuote = await near.computeMinAmountOut(
-      venue,
-      token_in,
-      token_out,
-      (isBuyPath ? swapAmount : amountInBigInt).toString(),
-      userSlippage,
-      (event as any).pool_id ?? null,
-      dclPoolId
-    ).catch(() => null);
+    const quotedAt = (event as any).quoted_at as number | undefined;
+    const quoteFresh = venue !== 'nearlytrade'
+      && typeof quotedAt === 'number'
+      && Date.now() - quotedAt < 2_000;
+    const freshQuote = quoteFresh
+      ? null
+      : await near.computeMinAmountOut(
+          venue,
+          token_in,
+          token_out,
+          (isBuyPath ? swapAmount : amountInBigInt).toString(),
+          userSlippage,
+          (event as any).pool_id ?? null,
+          dclPoolId
+        ).catch(() => null);
     if (freshQuote && BigInt(freshQuote.minAmountOut) < BigInt(minOutAdj)) {
       throw new Error(
         'Price moved beyond your slippage setting before execution. No transaction was sent — no funds spent. ' +
@@ -433,76 +559,202 @@ export class SwapExecutor {
     let result: any;
 
     if (venue === 'nearlytrade') {
-      // Await the Rhea pool lookup fired in parallel with the pre-flight quote
-      let rheaPoolId: number | null = null;
-      try {
-        rheaPoolId = nearlytradeRheaLookup ? await nearlytradeRheaLookup : null;
-      } catch {
-        // Ignore Rhea pool lookup errors
-      }
+      // Resolve the route (direct wNEAR pair or multihop via a non-NEAR quote asset).
+      const ntState = await near.getNearlytradeTokenState(
+        token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
+      );
+      console.log(
+        `[EXECUTOR] NearlyTrade route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
+        ` pool=${ntState.pool_id} quote=${ntState.quote} quoteIsNear=${ntState.quoteIsNear} live=${ntState.live}`
+      );
 
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
+
       if (isBuy) {
-        // Ensure user is registered for NEP-141 storage on token_out
+        // Ensure storage for token_out
         await ensureStorage(token_out);
 
-        // If Rhea pool exists, use Rhea DEX
-        if (rheaPoolId) {
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'v2.ref-finance.near',
-            JSON.stringify({
-              actions: [
-                {
-                  pool_id: rheaPoolId,
-                  token_in: 'wrap.near',
-                  token_out,
-                  amount_in: swapAmount.toString(),
-                  min_amount_out: minOutAdj,
+        // Also ensure storage for the quote asset when it's non-NEAR (so hop1 output can land)
+        if (!ntState.quoteIsNear) {
+          await ensureStorage(ntState.quote);
+        }
+
+        if (ntState.quoteIsNear) {
+          // ── Direct path: wNEAR → launch token via Rhea or DCL ─────────
+          // Await the Rhea pool lookup fired in parallel with the pre-flight quote
+          let rheaPoolId: number | null = null;
+          try {
+            rheaPoolId = nearlytradeRheaLookup ? await nearlytradeRheaLookup : null;
+          } catch { /* ignore */ }
+
+          if (rheaPoolId) {
+            console.log(`[EXECUTOR] NearlyTrade route=direct-rhea pool=${rheaPoolId}`);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: rheaPoolId,
+                    token_in: 'wrap.near',
+                    token_out,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minOutAdj,
+                    min_output_amount: minOutAdj,
+                  },
+                ],
+              })
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else if (dclPoolId) {
+            // Verify the pool is actually wNEAR-paired
+            const poolTokens = dclPoolId.split('|').slice(0, 2);
+            const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
+            if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
+              throw new Error(
+                `Token ${token_out} is in a DCL pool paired with ${nonTokenSide}, not NEAR/wNEAR.`
+              );
+            }
+            console.log(`[EXECUTOR] NearlyTrade route=direct-dcl pool=${dclPoolId}`);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [dclPoolId],
+                  output_token: token_out,
                   min_output_amount: minOutAdj,
                 },
-              ],
-            })
+              })
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            throw new Error(
+              `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
+            );
+          }
+        } else {
+          // ── Two-transaction path: wNEAR → quote → launch token ────────
+          // Atomic multi-pool DCL routing is NOT verified; use 2-tx always.
+          const route = await near.planNearlytradeRoute(token_out);
+          if (route.kind !== 'multihop') throw new Error('Expected multihop route');
+
+          // Retrieve the hop1 min from the extended quote result (may be undefined for legacy)
+          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+          console.log(
+            `[EXECUTOR] NearlyTrade route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
+            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
           );
 
-          result = await signAndSend('wrap.near', actions);
-        } else if (dclPoolId) {
-          const poolTokens = dclPoolId.split('|').slice(0, 2);
-          if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
-            throw new Error(`Token ${token_out} is in a DCL pool paired with ${poolTokens[0]}, not NEAR/wNEAR.`);
+          // Tx 1: wNEAR → quote (via DCL or Ref v2)
+          let tx1Result: any;
+          if (route.hop1.type === 'dcl') {
+            const tx1Actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [route.hop1.poolId],
+                  output_token: route.quote,
+                  min_output_amount: minHop1,
+                },
+              })
+            );
+            tx1Result = await signAndSend('wrap.near', tx1Actions);
+          } else {
+            const tx1Actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: Number(route.hop1.poolId),
+                    token_in: 'wrap.near',
+                    token_out: route.quote,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minHop1,
+                  },
+                ],
+              })
+            );
+            tx1Result = await signAndSend('wrap.near', tx1Actions);
           }
 
-          // If no Rhea pool but DCL pool exists, use NearlyTrade DCL
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'dclv2.ref-labs.near',
-            JSON.stringify({
-              Swap: {
-                pool_ids: [dclPoolId],
-                output_token: token_out,
-                min_output_amount: minOutAdj,
-              },
-            })
-          );
+          console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          // No pool exists - token is still in launchpad/bonding phase
-          throw new Error(
-            `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
-          );
+          // Read how much quote we actually received
+          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          const quoteBalBigInt = BigInt(quoteBal || '0');
+
+          if (quoteBalBigInt <= 0n) {
+            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+            throw new Error(
+              `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
+              `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
+            );
+          }
+
+          // Tx 2: quote → launch token via launch DCL pool
+          let tx2Result: any;
+          try {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.launchPoolId],
+                      output_token: token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          } catch (tx2Err: any) {
+            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+            // Step 2 failed — do NOT record a fill or position for the launch token.
+            // Return a failure reason telling the user about the quote balance.
+            const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(6);
+            throw new Error(
+              `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
+              `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+            );
+          }
+          result = tx2Result;
         }
-        } else {
-          // Sell token on Rhea or DCL for wrap.near
-          // Per docs: always check storage deposit before initiating swaps
-          await ensureStorage(token_in);
-          await ensureStorage('wrap.near');
+      } else {
+        // ── Sell token on Rhea or DCL for wrap.near ────────────────────
+        await ensureStorage(token_in);
+        await ensureStorage('wrap.near');
+        if (!ntState.quoteIsNear) {
+          await ensureStorage(ntState.quote);
+        }
+
+        if (ntState.quoteIsNear) {
+          // Direct sell via Rhea or launch DCL pool
+          let rheaPoolId: number | null = null;
+          try {
+            rheaPoolId = nearlytradeRheaLookup ? await nearlytradeRheaLookup : null;
+          } catch { /* ignore */ }
 
           if (rheaPoolId) {
             const actions = [
@@ -527,7 +779,6 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-
             result = await signAndSend(token_in, actions);
           } else if (dclPoolId) {
             const actions = [
@@ -548,15 +799,104 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-
             result = await signAndSend(token_in, actions);
           } else {
             throw new Error(
               `Token ${token_in} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
             );
           }
+        } else {
+          // ── Two-transaction sell: launch token → quote → wNEAR ───────
+          const route = await near.planNearlytradeRoute(token_in);
+          if (route.kind !== 'multihop') throw new Error('Expected multihop route');
+
+          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+          console.log(
+            `[EXECUTOR] NearlyTrade route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
+            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
+          );
+
+          // Tx 1: launch token → quote via launch DCL pool
+          const tx1Actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [route.launchPoolId],
+                    output_token: route.quote,
+                    min_output_amount: minHop1,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+          await signAndSend(token_in, tx1Actions);
+
+          // Read quote balance and forward to Ref/DCL for wNEAR
+          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          const quoteBalBigInt = BigInt(quoteBal || '0');
+          if (quoteBalBigInt <= 0n) {
+            throw new Error(
+              `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+            );
+          }
+
+          let tx2Result: any;
+          if (route.hop1.type === 'dcl') {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.hop1.poolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          } else {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: Number(route.hop1.poolId),
+                        token_in: route.quote,
+                        token_out: 'wrap.near',
+                        amount_in: quoteBalBigInt.toString(),
+                        min_amount_out: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          }
+          result = tx2Result;
         }
-      } else if (venue === 'rhea' || venue === 'ref') {
+      }
+    } else if (venue === 'rhea' || venue === 'ref') {
         if (dclPoolId) {
           // Execute Ref DCL swap on dclv2.ref-labs.near
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
@@ -608,34 +948,40 @@ export class SwapExecutor {
             result = await signAndSend(token_in, actions);
           }
         } else {
-          let rheaPoolId = (event as any).pool_id;
-          if (rheaPoolId === null || rheaPoolId === undefined) {
-            try {
-              rheaPoolId = await near.findRheaPoolId(token_in, token_out);
-            } catch {
-              const target = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
-              const rhea = await near.findRheaPoolForToken(target);
-              if (rhea && typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
-            }
-          }
-
+          // ── Rhea/Ref non-DCL branch ────────────────────────────────────────
+          // SPEED: the independent pre-trade work — Rhea pool resolution, Ref
+          // storage registration, token whitelist registration, sell-side
+          // storage checks and the wNEAR read inside buildWrapNearBuyActions —
+          // all runs in ONE Promise.all instead of sequential awaits. Cache
+          // hits return instantly; nothing is skipped on a miss.
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
-          // Check storage deposit on the sell token before swap
-          if (!isBuy) {
-            await ensureStorage(token_in);
-          }
-
           const targetToken = isBuy ? token_out : token_in;
           let intermediateToken = (event as any).intermediate_token as string | undefined;
           let intermediatePoolId = (event as any).intermediate_pool_id as number | undefined;
 
-          // Ensure Ref exchange storage registration and token whitelist registration
-          await ensureRefStorage(subaccountId);
-          await ensureRefTokenRegistered(targetToken, subaccountId);
-          if (intermediateToken) {
-            await ensureRefTokenRegistered(intermediateToken, subaccountId);
-          }
+          const preWork = await Promise.all([
+            (async (): Promise<number | null> => {
+              let rheaPoolId = (event as any).pool_id;
+              if (rheaPoolId === null || rheaPoolId === undefined) {
+                try {
+                  rheaPoolId = await near.findRheaPoolId(token_in, token_out);
+                } catch {
+                  const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+                  if (rhea && typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
+                }
+              }
+              return typeof rheaPoolId === 'number' ? rheaPoolId : null;
+            })(),
+            ensureRefStorage(subaccountId),
+            ensureRefTokenRegistered(targetToken, subaccountId),
+            !isBuy ? ensureStorage(token_in) : Promise.resolve(),
+            !isBuy ? ensureStorage('wrap.near') : Promise.resolve(),
+          ]);
 
+          const rheaPoolId = preWork[0];
+
+          // Intermediate-hop discovery depends on the pool resolution above;
+          // it only runs when the event did not already pin the hop.
           const rheaState = (rheaPoolId && !intermediateToken)
             ? null
             : await near.findRheaPoolForToken(targetToken).catch(() => null);
@@ -643,7 +989,10 @@ export class SwapExecutor {
           intermediateToken = intermediateToken || rheaState?.intermediateToken;
           intermediatePoolId = intermediatePoolId || rheaState?.intermediatePoolId;
           if (intermediateToken) {
-            await ensureRefTokenRegistered(intermediateToken, subaccountId);
+            await Promise.all([
+              ensureRefTokenRegistered(intermediateToken, subaccountId),
+              isBuy ? ensureStorage(intermediateToken) : Promise.resolve(),
+            ]);
           }
 
           if (rheaPoolId === null || rheaPoolId === undefined) {
@@ -1268,103 +1617,29 @@ export class SwapExecutor {
     }
 
     const txHash = result.transaction.hash;
-    timings.sign_ms = Date.now() - (timings.signStart ?? t0);
     console.log(`[EXECUTOR] Direct swap submitted: user=${user_id} venue=${venue} txHash=${txHash}`);
 
     const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
-    // Parse receipt outcomes to determine actual output amount
-    let netAmountOut = '0';
-    const receiptsOutcomes = (result as any).receipts_outcome || [];
-    for (const r of receiptsOutcomes) {
-      const logs: string[] = r.outcome?.logs || [];
-      for (const log of logs) {
-        if (log.startsWith('EVENT_JSON:')) {
-          try {
-            const parsed = JSON.parse(log.slice('EVENT_JSON:'.length));
-            if (parsed.event === 'ft_transfer') {
-              const dataList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
-              for (const d of dataList) {
-                if ((d?.receiver_id === subaccountId || d?.new_owner_id === subaccountId) && d?.amount) {
-                  netAmountOut = d.amount;
-                }
-              }
-            } else if (parsed.event === 'swap') {
-              const dataList = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
-              for (const d of dataList) {
-                if (d?.amount_out) {
-                  netAmountOut = d.amount_out;
-                }
-              }
-            }
-          } catch { /* no-op */ }
-        }
-        // Match Ref Finance standard swap log:
-        // "Swapped 492500000000000000000000 wrap.near for 84758622416876153245156 omgy-1992.meme-cooking.near"
-        const refSwapMatch = log.match(/Swapped\s+\d+\s+\S+\s+for\s+(\d+)\s+(\S+)/i);
-        if (refSwapMatch) {
-          const matchedToken = refSwapMatch[2];
-          const expectedToken = isBuy ? token_out : 'wrap.near';
-          if (!expectedToken || matchedToken === expectedToken || matchedToken.includes(expectedToken)) {
-            netAmountOut = refSwapMatch[1];
-          }
-        }
-        const shardsMatch = log.match(/bought (\d+) tokens/i) || log.match(/amount_out:?\s*(\d+)/i);
-        if (shardsMatch) {
-          netAmountOut = shardsMatch[1];
-        }
-      }
-    }
+    // FIX 3: determine the REAL received amount. The balance delta of the
+    // output token (read before signing and again now) is authoritative;
+    // parsed receipt logs are a fallback when balance reads are unavailable.
+    // The old code fell back to min_amount_out — recording fills for tokens
+    // the user never received — and never happens again.
+    const postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => null);
+    const swapOutcome = determineSwapOutcome({
+      result,
+      subaccountId,
+      isBuy,
+      tokenOut: token_out,
+      preBalance: capturedPreOutBalance,
+      postBalance: postOutBalance,
+    });
 
-    if (!netAmountOut || netAmountOut === '0') {
-      const hasFailure = (result.status as any)?.Failure;
-      if (!hasFailure) {
-        if (min_amount_out && min_amount_out !== '0') {
-          netAmountOut = min_amount_out;
-        } else if (isBuy && token_out) {
-          // If the on-chain tx succeeded without failure, fetch the token balance directly
-          try {
-            const bal = await near.getTokenBalance(token_out, subaccountId);
-            if (bal && BigInt(bal) > 0n) {
-              netAmountOut = bal;
-            }
-          } catch { /* no-op */ }
-        }
-      }
-    }
-
-    if (!netAmountOut || netAmountOut === '0') {
-      // Extract the real on-chain failure reason from receipt outcomes
-      let failReason = 'Transaction failed or slippage breach';
-      const txStatusFailure = (result.status as any)?.Failure;
-      if (txStatusFailure) {
-        const errStr = JSON.stringify(txStatusFailure).toLowerCase();
-        if (errStr.includes('slippage') || errStr.includes('min_amount') || errStr.includes('less than minimum')) {
-          failReason = 'Slippage too high — price moved against you. Increase slippage in Settings and retry.';
-        } else if (errStr.includes('insufficient') && errStr.includes('balanc')) {
-          failReason = 'Insufficient wNEAR balance for this swap. Please retry.';
-        } else if (errStr.includes('no pool') || errStr.includes('pool_not_found')) {
-          failReason = 'No liquidity pool found on-chain for this token.';
-        } else if (errStr.includes('panic')) {
-          // Extract panic message for debugging
-          const panicMatch = JSON.stringify(txStatusFailure).match(/"FunctionCallError".*?"ExecutionError":"([^"]+)"/);
-          if (panicMatch) failReason = `Contract error: ${panicMatch[1].slice(0, 150)}`;
-        }
-      } else {
-        // Check individual receipt outcomes for failure messages
-        for (const r of receiptsOutcomes) {
-          const outcomeStatus = r.outcome?.status;
-          if (outcomeStatus && typeof outcomeStatus === 'object' && 'Failure' in outcomeStatus) {
-            const rErrStr = JSON.stringify(outcomeStatus.Failure).toLowerCase();
-            if (rErrStr.includes('slippage') || rErrStr.includes('min_amount')) {
-              failReason = 'Slippage too high — price moved against you. Increase slippage in Settings and retry.';
-            } else if (rErrStr.includes('panic')) {
-              const panicMatch = JSON.stringify(outcomeStatus.Failure).match(/"ExecutionError":"([^"]+)"/);
-              if (panicMatch) failReason = `Contract error: ${panicMatch[1].slice(0, 150)}`;
-            }
-            break;
-          }
-        }
+    if (!swapOutcome.ok) {
+      const failReason = swapOutcome.reason ?? 'Transaction failed or slippage breach';
+      if (swapOutcome.detail) {
+        console.warn(`[EXECUTOR] Failure detail txHash=${txHash}:`, swapOutcome.detail);
       }
 
       // Slippage-breach retry: re-quote with +2pp slippage and try once more.
@@ -1407,6 +1682,7 @@ export class SwapExecutor {
       return { txHash, success: false, reason: failReason };
     }
 
+    const netAmountOut = swapOutcome.netAmountOut!;
     let onChainFeeYocto = feeAmount.toString();
 
     // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury
@@ -1496,7 +1772,10 @@ export class SwapExecutor {
 
     if (venue === 'nearlytrade') {
       const ntState = await near.getNearlytradeTokenState(token_address);
-      if (ntState.phase === 'prebonded') {
+      if (ntState.priceUnavailable) {
+        return { success: false, reason: 'nearlytrade_no_near_route_to_quote' };
+      }
+      if (ntState.phase === 'prebonded' && !ntState.live) {
         return { success: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
       }
       dclPoolId = ntState.dclPoolId;
@@ -1592,7 +1871,10 @@ export class SwapExecutor {
         }
       } else if (venue === 'nearlytrade') {
         const ntState = await near.getNearlytradeTokenState(tokenAddress);
-        if (ntState.phase === 'prebonded') {
+        if (ntState.priceUnavailable) {
+          return { safe: false, reason: 'nearlytrade_no_near_route_to_quote' };
+        }
+        if (ntState.phase === 'prebonded' && !ntState.live) {
           return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
         }
         liquidityNear = ntState.liquidityNear;
@@ -1856,6 +2138,6 @@ export class SwapExecutor {
       event: eventType,
       data,
     };
-    await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify(notify));
+    await (this.redisClient ?? redis).publish(CHANNELS.NOTIFY_USER, JSON.stringify(notify));
   }
 }

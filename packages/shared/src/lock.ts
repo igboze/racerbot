@@ -22,9 +22,9 @@ end
 export interface LockOptions {
   /** TTL in milliseconds. Default: 100_000 (100 seconds) */
   ttlMs?: number;
-  /** Maximum acquisition attempts (initial attempt + retries). Default: 5 */
+  /** Maximum acquisition attempts (initial attempt + retries). Default: 20 */
   maxAttempts?: number;
-  /** Delay between attempts in milliseconds. Default: 500 */
+  /** Delay between attempts in milliseconds. Default: 100 */
   retryDelayMs?: number;
   /** Callback fired when lock was acquired after contention (attempts > 1) */
   onContended?: (accountId: string) => void | Promise<void>;
@@ -36,8 +36,9 @@ export interface LockOptions {
  * Lock TTL: 100_000ms (100 seconds)
  *
  * Safe release: only deletes the lock if the stored token matches the caller's token.
- * Contention: retries up to maxAttempts (5) with retryDelayMs (500ms). If contended (attempts > 1),
- * clears the cached access key / nonce so the fresh on-chain nonce is fetched.
+ * Contention: retries up to maxAttempts (20) with retryDelayMs (100ms) — same ~2s
+ * window as before, but a contending trade picks the lock up within 100ms of it
+ * being released instead of up to 500ms.
  */
 export async function withAccountLock<T>(
   redis: RedisClient,
@@ -46,8 +47,8 @@ export async function withAccountLock<T>(
   options?: LockOptions
 ): Promise<T> {
   const ttlMs = options?.ttlMs ?? 100_000;
-  const maxAttempts = options?.maxAttempts ?? 5;
-  const retryDelayMs = options?.retryDelayMs ?? 500;
+  const maxAttempts = options?.maxAttempts ?? 20;
+  const retryDelayMs = options?.retryDelayMs ?? 100;
   const lockKey = `lock:swap:${accountId}`;
   const token = randomUUID();
 

@@ -148,6 +148,32 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
     await near.view('token.near', 'ft_metadata', {});
     expect(attempted).toEqual([FN]);
   });
+
+  it('view() immediately fails over to QuickNode if FastNEAR times out or errors during the call', async () => {
+    const near = new MultiRpcNear([FN, QN]) as any;
+    const attempted: string[] = [];
+    near.getConnection = async (url: string) => {
+      attempted.push(url);
+      if (url === FN) {
+        return {
+          account: async () => ({
+            viewFunction: async () => {
+              throw new Error('RPC timeout on ' + FN);
+            },
+          }),
+        };
+      }
+      return {
+        account: async () => ({
+          viewFunction: async () => ({ ok: true, source: 'quicknode' }),
+        }),
+      };
+    };
+
+    const result = await near.view('token.near', 'ft_metadata', {});
+    expect(result).toEqual({ ok: true, source: 'quicknode' });
+    expect(attempted).toEqual([FN, QN]);
+  });
 });
 
 describe('near: view request coalescing', () => {
@@ -213,8 +239,7 @@ describe('near: viewCached display-path cache', () => {
 });
 
 describe('near: nearlytrade static launch cache', () => {
-  it('fetches launch/metadata/supply once across repeated state calls', async () => {
-    const token = `cached-${Date.now()}.nearlytrade.near`;
+  it('fetches launch/metadata/supply once across repeated state calls', async () => {    const token = `cached-${Date.now()}.nearlytrade.near`;
     const poolId = `${token}|wrap.near|10000`;
     const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']);
     const counts: Record<string, number> = {};
@@ -241,5 +266,54 @@ describe('near: nearlytrade static launch cache', () => {
     expect(counts[`${token}:ft_total_supply`]).toBe(1);
     expect(counts['dclv2.ref-labs.near:get_pool']).toBe(2);
     viewSpy.mockRestore();
+  });
+});
+
+describe('near: trade provider gate (Fix 1)', () => {
+  const FN = 'https://rpc.mainnet.fastnear.com';
+
+  function makeUnhealthy(near: any): void {
+    for (const p of near.tradeProviders) {
+      p.healthy = false;
+      p.errorCount = 99;
+      p.circuitBreakerOpen = true;
+      p.circuitBreakerUntil = Date.now() + 60_000;
+    }
+  }
+
+  it('requires min(2, configured): a single configured provider never blocks trades', () => {
+    const near = new MultiRpcNear([FN]) as any;
+    expect(near.tradeProviders.length).toBe(1);
+    expect(() => near.checkTradeProviders()).not.toThrow();
+
+    // Even fully unhealthy, the gate must NOT throw — it resets and lets the
+    // attempt through (a failed attempt beats a blocked one).
+    makeUnhealthy(near);
+    expect(() => near.checkTradeProviders()).not.toThrow();
+  });
+
+  it('resets circuit breakers and unhealthy state when the gate triggers', () => {
+    const near = new MultiRpcNear([FN, 'https://free.rpc.fastnear.com']) as any;
+    makeUnhealthy(near);
+    near.checkTradeProviders();
+    for (const p of near.tradeProviders) {
+      expect(p.circuitBreakerOpen).toBe(false);
+      expect(p.healthy).toBe(true);
+      expect(p.errorCount).toBe(0);
+    }
+  });
+
+  it('throws only when no trade providers are configured at all', () => {
+    const near = new MultiRpcNear([FN]) as any;
+    near.tradeProviders = [];
+    expect(() => near.checkTradeProviders()).toThrow(/configured/i);
+  });
+
+  it('startHealthChecks is idempotent (guard against double-start)', () => {
+    const near = new MultiRpcNear([FN]) as any;
+    const t1 = near.startHealthChecks(30_000);
+    const t2 = near.startHealthChecks(30_000);
+    expect(t2).toBe(t1);
+    clearInterval(t1);
   });
 });

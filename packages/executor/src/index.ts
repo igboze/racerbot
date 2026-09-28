@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'url';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, getNear, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import { SwapExecutor, warmAllKeys, ensureRefStorage } from './executor.js';
 import { PARENT_ACCOUNT, MASTER_KEY } from './config.js';
@@ -23,6 +23,11 @@ async function main(): Promise<void> {
 
   // Connect DB
   await logger.time('Connected to database', () => getDb());
+
+  // RPC provider health checks every 30s in this process too — without them
+  // providers marked unhealthy here were never restored and the trade gate
+  // would block every trade forever.
+  getNear().startHealthChecks(30_000);
 
   // Pre-warm ALL user scoped keys into memory before accepting events
   await logger.time('Warmed user keys', () => warmAllKeys());
@@ -142,4 +147,4 @@ if (isDirectRun) {
   });
 }
 
-export { addUserKey, warmAllKeys, SwapExecutor } from './executor.js';
+export { addUserKey, warmAllKeys, SwapExecutor, ensureRefStorage, ensureRefTokenRegistered, RefRegistrationTracker } from './executor.js';
