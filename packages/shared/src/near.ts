@@ -348,14 +348,23 @@ export class MultiRpcNear {
     }
   }
 
+  // ── Hedged-request constants ─────────────────────────────────────────────────
+  // Send to FastNEAR first. If no response within HEDGE_MS, also fan out to
+  // QuickNode — protecting its paid quota when FastNEAR answers fast. First
+  // success wins; the loser is aborted. Total hard cap = VIEW_TIMEOUT_MS.
+  private static readonly HEDGE_MS = 400;
+  private static readonly VIEW_TIMEOUT_MS = 3000;
+
   /**
-   * Read-only view call — FastNEAR-first duty split with QuickNode failover.
+   * Read-only view call — FastNEAR-first with hedged QuickNode fallback.
    *
-   * Duty split: only FastNEAR providers fan out (parallel race, first success
-   * wins, 2s timeout). QuickNode read-providers are used ONLY when every
-   * FastNEAR provider is unhealthy or circuit-open — this keeps read latency
-   * optimal on the provider purpose-built for reads while protecting
-   * QuickNode's paid quota from read traffic.
+   * Duty split:
+   *   • FastNEAR is always attempted first (purpose-built for reads).
+   *   • If FastNEAR does not respond within HEDGE_MS (400 ms) the hedge fires
+   *     and QuickNode is also contacted — first success wins.
+   *   • The loser is aborted via AbortController, keeping QuickNode's paid
+   *     quota free when FastNEAR answers in time.
+   *   • Hard cap of VIEW_TIMEOUT_MS (3000 ms) regardless of provider.
    *
    * Concurrent identical calls are coalesced: 50 users refreshing the same
    * token price at once produce ONE in-flight RPC, not 50.
@@ -379,70 +388,108 @@ export class MultiRpcNear {
     const fastnear = this.readProviders.filter(p => !p.isQuickNode);
     const quicknode = this.readProviders.filter(p => p.isQuickNode);
 
-    const callProviders = async (providers: RPCProvider[], timeoutMs: number): Promise<T> => {
-      const targets = eligible(providers).length > 0 ? eligible(providers) : providers;
-      if (targets.length === 0) throw new Error('No NEAR RPC providers available');
+    const HEDGE_MS = MultiRpcNear.HEDGE_MS;
+    const VIEW_TIMEOUT_MS = MultiRpcNear.VIEW_TIMEOUT_MS;
 
-      return Promise.any(
-        targets.map(async (provider) => {
-          const start = Date.now();
-          try {
-            const near = await this.getConnection(provider.url);
-            const account = await near.account('');
-            const result = await withTimeout(
-              account.viewFunction({ contractId, methodName, args }),
-              timeoutMs,
-              `RPC timeout on ${provider.url}`
-            );
-            markProviderSuccess(provider, Date.now() - start);
-            return result as T;
-          } catch (err: any) {
-            const msg = err?.message || '';
-            const isNetworkErr =
-              msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
-              msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
-              /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
-              msg.includes('429') || msg.includes('-429') ||
-              msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
-              msg.includes('Rate limit') || msg.includes('rate limit');
-            if (isNetworkErr) markProviderError(provider);
-            throw err;
-          }
-        })
-      );
+    // Call a set of providers (parallel race within the group, first success wins).
+    // Each provider gets its own AbortController so the loser can be cancelled.
+    const callProvider = async (provider: RPCProvider, signal: AbortSignal): Promise<T> => {
+      const start = Date.now();
+      try {
+        const near = await this.getConnection(provider.url);
+        const account = await near.account('');
+        // withTimeout enforces the cap; we also watch the AbortSignal.
+        const result = await withTimeout(
+          (async () => {
+            if (signal.aborted) throw new Error(`Aborted: ${provider.url}`);
+            return account.viewFunction({ contractId, methodName, args });
+          })(),
+          VIEW_TIMEOUT_MS,
+          `RPC timeout on ${provider.url}`
+        );
+        if (signal.aborted) throw new Error(`Aborted after response: ${provider.url}`);
+        markProviderSuccess(provider, Date.now() - start);
+        return result as T;
+      } catch (err: any) {
+        const msg = err?.message || '';
+        const isNetworkErr =
+          msg.includes('timeout') || msg.includes('fetch') || msg.includes('ECONN') ||
+          msg.includes('ETIMEDOUT') || msg.includes('EAI_AGAIN') ||
+          /\b50[0-4]\b/.test(msg) || msg.includes('socket hang up') ||
+          msg.includes('429') || msg.includes('-429') ||
+          msg.includes('TooManyRequestsError') || msg.includes('DEPRECATED') ||
+          msg.includes('Rate limit') || msg.includes('rate limit');
+        if (isNetworkErr && !signal.aborted) markProviderError(provider);
+        throw err;
+      }
     };
 
-    const eligibleFastnear = eligible(fastnear);
-    const eligibleQuicknode = eligible(quicknode);
+    // Pick the best available candidates from each group.
+    const fnTargets = eligible(fastnear).length > 0 ? eligible(fastnear) : fastnear;
+    const qnTargets = eligible(quicknode).length > 0 ? eligible(quicknode) : quicknode;
 
-    // If FastNEAR is healthy, attempt it first (duty split: protects QuickNode quota).
-    if (eligibleFastnear.length > 0) {
+    // If NO FastNEAR provider is configured, go straight to QuickNode.
+    if (fnTargets.length === 0 && qnTargets.length === 0) {
+      throw new Error('No NEAR RPC providers configured');
+    }
+    if (fnTargets.length === 0) {
+      // QuickNode-only path
+      const ctrl = new AbortController();
       try {
-        return await callProviders(eligibleFastnear, 3500);
-      } catch (fastnearErr: any) {
-        // FastNEAR failed or timed out — failover to QuickNode immediately instead of throwing
-        const fallback = eligibleQuicknode.length > 0 ? eligibleQuicknode : quicknode;
-        if (fallback.length > 0) {
-          try {
-            return await callProviders(fallback, 4000);
-          } catch (qnErr: any) {
-            const err = qnErr?.errors?.[0] || qnErr || fastnearErr;
-            throw (err ?? new Error('All NEAR RPC providers failed'));
-          }
-        }
-        const err = fastnearErr?.errors?.[0] || fastnearErr;
-        throw (err ?? new Error('FastNEAR failed and no fallback RPC configured'));
+        return await withTimeout(
+          Promise.any(qnTargets.map(p => callProvider(p, ctrl.signal))),
+          VIEW_TIMEOUT_MS,
+          'All NEAR RPC providers timed out'
+        );
+      } finally {
+        ctrl.abort();
       }
     }
 
-    // FastNEAR is unhealthy or not configured — use QuickNode directly
-    const directTargets = eligibleQuicknode.length > 0 ? eligibleQuicknode : this.readProviders;
-    if (directTargets.length === 0) throw new Error('No NEAR RPC providers configured');
+    // ── Hedged request ────────────────────────────────────────────────────────
+    // Phase 1: send to FastNEAR immediately.
+    const fnCtrl = new AbortController();
+    const qnCtrl = new AbortController();
 
-    return callProviders(directTargets, 4000).catch((aggregateErr) => {
-      const err = aggregateErr?.errors?.[0] || aggregateErr;
-      throw (err ?? new Error('All NEAR RPC providers failed'));
+    const fnRace = Promise.any(fnTargets.map(p => callProvider(p, fnCtrl.signal)));
+
+    // Overall hard-cap promise.
+    let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
+    const hardCap = new Promise<never>((_, reject) => {
+      hardCapTimer = setTimeout(() => reject(new Error('NEAR RPC view hard cap exceeded (3000 ms)')), VIEW_TIMEOUT_MS);
     });
+
+    // Phase 2 (hedge): after HEDGE_MS with no FastNEAR response, also send to
+    // QuickNode — keeping QuickNode out of the fan-out when FastNEAR is quick.
+    let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
+    const qnRace: Promise<T> = qnTargets.length > 0
+      ? new Promise<T>((resolve, reject) => {
+          hedgeTimer = setTimeout(() => {
+            Promise.any(qnTargets.map(p => callProvider(p, qnCtrl.signal)))
+              .then(resolve, reject);
+          }, HEDGE_MS);
+        })
+      : new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('No QuickNode providers')), VIEW_TIMEOUT_MS)
+        );
+
+    try {
+      // Whichever resolves first (FastNEAR direct, hedged QuickNode, or hard-cap)
+      const result = await Promise.race([fnRace, qnRace, hardCap]);
+      return result;
+    } catch (err: any) {
+      // All providers failed — surface the most useful error.
+      const msg = err?.message || String(err);
+      throw new Error(msg.includes('hard cap') || msg.includes('timed out')
+        ? msg
+        : (err?.errors?.[0]?.message ?? msg ?? 'All NEAR RPC providers failed'));
+    } finally {
+      if (hedgeTimer) clearTimeout(hedgeTimer);
+      if (hardCapTimer) clearTimeout(hardCapTimer);
+      // Abort whichever group didn't win (no-op if already settled).
+      fnCtrl.abort();
+      qnCtrl.abort();
+    }
   }
 
   /**
