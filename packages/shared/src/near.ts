@@ -2945,6 +2945,7 @@ export class MultiRpcNear {
       return null;
     };
 
+    let polls = 0;
     while (Date.now() < deadline) {
       // Single pinned trade RPC — the endpoint that accepted the broadcast is
       // the only source of truth for its outcome. No fallback.
@@ -2963,7 +2964,12 @@ export class MultiRpcNear {
         }
       }
 
-      await sleep(250); // Fast confirmation polling on the pinned RPC
+      // Fast polling for the first ~1s (normal confirms land here), then back
+      // off exponentially. Dozens of concurrent trades each hammering the one
+      // pinned endpoint at 4 req/s triggers 429 rate limits that slow
+      // confirmation for EVERY user — a self-inflicted congestion loop.
+      polls++;
+      await sleep(Math.min(250 * 2 ** Math.max(0, polls - 4), 2000));
     }
 
     const errMsg = lastErr ? `: ${redactSecrets((lastErr as any).message ?? String(lastErr))}` : '';
