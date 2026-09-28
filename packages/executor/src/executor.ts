@@ -308,8 +308,9 @@ export class SwapExecutor {
 
     // One overall deadline per trade. Waits can otherwise stack (storage
     // deposit + swap) beyond any individual timeout and leave the user
-    // staring at "Processing" forever.
-    const TRADE_DEADLINE_MS = 30_000;
+    // staring at "Processing" forever. 45s: single-RPC confirmation (no
+    // indexer race anymore) needs more headroom under congestion.
+    const TRADE_DEADLINE_MS = 45_000;
     const timings: Record<string, number> = {};
     let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
     try {
@@ -1644,18 +1645,25 @@ export class SwapExecutor {
     // parsed receipt logs are a fallback when balance reads are unavailable.
     // The old code fell back to min_amount_out — recording fills for tokens
     // the user never received — and never happens again.
-    let postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => null);
-    if (
-      capturedPreOutBalance !== null &&
-      postOutBalance !== null &&
-      BigInt(postOutBalance) <= BigInt(capturedPreOutBalance)
-    ) {
-      // FastNEAR / read RPC indexers may be 1 block behind the trade provider.
-      // Wait 300ms and re-fetch once to give indexer time to catch up.
-      await new Promise(r => setTimeout(r, 300));
-      postOutBalance = await near.getTokenBalance(outTokenForBalance, subaccountId).catch(() => postOutBalance);
+    //
+    // FIX 4: the post-trade read goes to the SAME pinned trade RPC that
+    // confirmed the transaction, retried briefly. The hedged read RPCs can
+    // lag a block behind and return the pre-swap balance, which made
+    // successful on-chain swaps look like refunds (delta = 0 → "swap
+    // produced no tokens" for a trade the user actually received).
+    let postOutBalance: string | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      postOutBalance = await near.getTokenBalanceOnTradeRpc(outTokenForBalance, subaccountId).catch(() => null);
+      if (postOutBalance !== null) {
+        // With a pre-balance to compare against, keep polling until the
+        // increase is visible (or the retry budget runs out). Without one,
+        // a single read is all we can do — the receipt logs will decide.
+        if (capturedPreOutBalance === null || BigInt(postOutBalance) > BigInt(capturedPreOutBalance)) {
+          break;
+        }
+      }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 750));
     }
-
     const swapOutcome = determineSwapOutcome({
       result,
       subaccountId,

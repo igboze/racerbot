@@ -116,6 +116,13 @@ describe('SwapExecutor distributed locking', () => {
       tokenBal += 1000000000000000000000n;
       return b.toString();
     });
+    // Post-trade verification now reads on the pinned trade RPC — mirror the
+    // same incrementing-balance behavior for that method.
+    vi.spyOn(realNear, 'getTokenBalanceOnTradeRpc').mockImplementation(async () => {
+      const b = tokenBal;
+      tokenBal += 1000000000000000000000n;
+      return b.toString();
+    });
     vi.spyOn(realNear, 'ensureStorageDeposit').mockResolvedValue(undefined);
     vi.spyOn(realNear, 'findRheaPoolId').mockResolvedValue(123);
     // Pre-flight price check: a huge fresh quote so it never blocks test trades.
