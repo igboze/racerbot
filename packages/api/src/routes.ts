@@ -767,11 +767,40 @@ function getUserFriendlyError(error: Error | string): string {
   return 'Trading operation could not be completed. Please check your balance/settings and try again.';
 }
 
+// ── Live stage progress on the "Processing order…" message ───────────────────
+// Telegram inline/text messages can't animate, so instead of one frozen
+// message for the whole pipeline, we edit it as the trade moves through
+// stages: fetching a fresh pool quote, one-time storage registration,
+// signing/broadcasting, and a slow-confirmation reassurance after 15s.
+const ORDER_STAGE_LINES: Record<string, string> = {
+  quote: '🔎 Checking current pool price…',
+  storage: '📦 Registering token storage (one-time, fast)…',
+  signing: '✍️ Signing & broadcasting your transaction…',
+  confirming_slow:
+    '⛓ Still confirming on-chain — NEAR validators are busy right now.\n\n' +
+    'Your funds are safe: wNEAR only leaves your wallet when the swap executes. ' +
+    'Keep waiting, I\'ll confirm the moment it lands…',
+};
+
+function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, orderLabel: string) {
+  let currentStage = '';
+  return async (stage: string): Promise<void> => {
+    if (!procMsg || !ctx.chat || stage === currentStage) return;
+    const line = ORDER_STAGE_LINES[stage];
+    if (!line) return;
+    currentStage = stage;
+    await ctx.telegram
+      .editMessageText(ctx.chat.id, procMsg.message_id, undefined, `⏳ *${orderLabel}*\n\n${line}`, { parse_mode: 'Markdown' })
+      .catch(() => { /* message may be deleted or unchanged — non-fatal */ });
+  };
+}
+
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
 async function executeBuyHelper(
   telegramId: number,
   tokenAddress: string,
-  amountNear: number
+  amountNear: number,
+  onProgress?: (stage: string) => void
 ): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -827,6 +856,7 @@ async function executeBuyHelper(
   const feeAmountBigInt = (amountInBigInt * 150n) / 10000n;
   const swapAmountYocto = (amountInBigInt - feeAmountBigInt).toString();
 
+  onProgress?.('quote');
   const { minAmountOut } = await near.computeMinAmountOut(
     venue,
     'wrap.near',
@@ -847,7 +877,7 @@ async function executeBuyHelper(
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
-  });
+  }, onProgress);
 
   if (swapResult.success === false) {
     throw new Error(swapResult.reason || 'Swap failed on-chain. Please verify slippage settings and balance, then retry.');
@@ -885,7 +915,7 @@ async function executeBuyHelper(
 
 // ── Core Helper: Execute Percentage Buy for User ─────────────────────────────
 // FIX 3 (continued): Use the cached getUserBalances rather than a raw RPC balance call.
-async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct: number) {
+async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
@@ -900,7 +930,7 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
   if (amountNear < 0.005) {
     throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after 0.025 gas/storage reserve) is too low to buy.`);
   }
-  return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)));
+  return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)), onProgress);
 }
 
 export function setupRoutes(bot: Telegraf): void {
@@ -1476,6 +1506,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
       procMsg = await ctx.reply('⏳ *Processing Sell Initial Order...*\n\nCalculating and selling initial investment...\n_Executing swap on DEX..._', { parse_mode: 'Markdown' }).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, 'Processing Sell Initial Order');
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
@@ -1525,7 +1556,7 @@ export function setupRoutes(bot: Telegraf): void {
       const sellPercentage = (totalInitialInvestment / currentValue) * 100;
       const adjustedPercentage = Math.min(100, Math.max(1, sellPercentage));
 
-      const result = await sellAtTarget(user.id, positionId, adjustedPercentage);
+      const result = await sellAtTarget(user.id, positionId, adjustedPercentage, onStage);
 
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
@@ -1917,9 +1948,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.answerCbQuery(`⚡ Processing buy order for ${amountNear} NEAR...`).catch(() => {});
     const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+    const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
 
     try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
       await ctx.reply(res.message, {
@@ -1940,9 +1972,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
     const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+    const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
 
     try {
-      const res = await executeBuyPctHelper(telegramId, tokenAddress, pct);
+      const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
       await ctx.reply(res.message, {
@@ -1997,8 +2030,9 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+    const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
     try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
       if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
       await ctx.reply(res.message, {
@@ -2079,10 +2113,11 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
     const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+    const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
 
     let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
     try {
-      result = await sellAtTarget(user.id, positionId, pct);
+      result = await sellAtTarget(user.id, positionId, pct, onStage);
     } catch (err: any) {
       result = { success: false, reason: err.message || 'Swap execution failed' };
     } finally {
@@ -2170,9 +2205,11 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     await ctx.answerCbQuery('Processing snipe order...').catch(() => {});
+    const snipeMsgId = (ctx.callbackQuery as any)?.message?.message_id ?? null;
     await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => {});
+    const onStage = makeStageEditor(ctx, snipeMsgId ? { message_id: snipeMsgId } : null, 'Processing Snipe Order');
     try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear);
+      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
       await ctx.deleteMessage().catch(() => {});
 
       await ctx.reply(res.message, {
@@ -2485,8 +2522,9 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} NEAR\` for \`${pending.tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
         try {
-          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt);
+          const res = await executeBuyHelper(telegramId, pending.tokenAddress, amt, onStage);
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
           await ctx.reply(res.message, {
