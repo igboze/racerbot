@@ -106,6 +106,7 @@ describe('determineSwapOutcome (Fix 3)', () => {
         {
           outcome: {
             status: { SuccessValue: '' },
+            executor_id: TOKEN_OUT, // transfer emitted BY the output token
             logs: [
               `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dex.near","new_owner_id":"${USER}","amount":"123456789"}]}`,
             ],
@@ -125,7 +126,10 @@ describe('determineSwapOutcome (Fix 3)', () => {
     expect(outcome.netAmountOut).toBe('123456789');
   });
 
-  it('prefers the balance delta over logs when both are available', () => {
+  it('trusts confirmed output-token transfer logs over a stale balance read', () => {
+    // The confirmed receipt tree is the chain's own record. A lagging
+    // post-trade balance read (pre-swap state) must not override it —
+    // that exact race made successful swaps report "produced no tokens".
     const result = {
       status: { SuccessValue: '' },
       transaction: { hash: 'abc123' },
@@ -134,6 +138,7 @@ describe('determineSwapOutcome (Fix 3)', () => {
         {
           outcome: {
             status: { SuccessValue: '' },
+            executor_id: TOKEN_OUT,
             logs: [
               `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dex.near","new_owner_id":"${USER}","amount":"999"}]}`,
             ],
@@ -147,10 +152,118 @@ describe('determineSwapOutcome (Fix 3)', () => {
       isBuy: true,
       tokenOut: TOKEN_OUT,
       preBalance: '1000',
-      postBalance: '6000',
+      postBalance: '1000', // stale read — equals pre-balance
     });
     expect(outcome.ok).toBe(true);
-    expect(outcome.netAmountOut).toBe('5000'); // delta wins over the 999 log
+    expect(outcome.netAmountOut).toBe('999');
+  });
+
+  it('never counts a refunded input token as swap output', () => {
+    // Refunded buy: the DEX sends the wNEAR INPUT back. The ft_transfer lands
+    // on the user but is emitted by wrap.near, NOT the output token — it must
+    // be excluded, or every refund would record a fake fill.
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'wrap.near',
+            logs: [
+              `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dex.near","new_owner_id":"${USER}","amount":"777"}]}`,
+            ],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: true,
+      tokenOut: TOKEN_OUT,
+      preBalance: '1000',
+      postBalance: '1000',
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toMatch(/produced no tokens/i);
+  });
+
+  it('detects sell output from plain wrap.near Transfer logs', () => {
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'v2.ref-finance.near',
+            logs: [`Swapped 117839114753311225139451 some.token.near for 6879098348856606685300749 wrap.near`],
+          },
+        },
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'wrap.near',
+            logs: [`Transfer 6879098348856606685300749 from v2.ref-finance.near to ${USER}`],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: false,
+      tokenOut: 'wrap.near',
+      preBalance: null,
+      postBalance: null,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.netAmountOut).toBe('6879098348856606685300749');
+  });
+
+  it('reports the actually received amount (after token tax), not the DEX gross output', () => {
+    // Mirrors mainnet tx HJ2Kkudu… (kaida buy): the DCL swap event reports
+    // amount_out BEFORE the token contract's 1% tax; the ft_transfer to the
+    // user is the true received amount and appears later in the tree.
+    const result = {
+      status: { SuccessValue: '' },
+      transaction: { hash: 'abc123' },
+      transaction_outcome: { outcome: { status: { SuccessValue: '' }, logs: [] } },
+      receipts_outcome: [
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: 'dclv2.ref-labs.near',
+            logs: [
+              `EVENT_JSON:{"data":[{"amount_in":"492499999999999999999998","amount_out":"43011027484144488458558","pool_id":"kaida.nearlytrade.near|wrap.near|10000","swapper":"${USER}","token_in":"wrap.near","token_out":"${TOKEN_OUT}"}],"event":"swap","standard":"dcl"}`,
+            ],
+          },
+        },
+        {
+          outcome: {
+            status: { SuccessValue: '' },
+            executor_id: TOKEN_OUT,
+            logs: [
+              `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dclv2.ref-labs.near","new_owner_id":"${USER}","amount":"42580917209303043573973"}]}`,
+              `EVENT_JSON:{"standard":"nep141","version":"1.0.0","event":"ft_transfer","data":[{"old_owner_id":"dclv2.ref-labs.near","new_owner_id":"${TOKEN_OUT}","amount":"430110274841444884585","memo":"tax"}]}`,
+            ],
+          },
+        },
+      ],
+    };
+    const outcome = determineSwapOutcome({
+      result,
+      subaccountId: USER,
+      isBuy: true,
+      tokenOut: TOKEN_OUT,
+      preBalance: null,
+      postBalance: null,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.netAmountOut).toBe('42580917209303043573973');
   });
 
   it('recovers output amount from receipt logs if RPC view read was stale (delta <= 0)', () => {
