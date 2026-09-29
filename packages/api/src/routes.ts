@@ -970,13 +970,10 @@ async function executeBuyHelper(
   const entryPrice = swapResult.priceNear && swapResult.priceNear > 0 ? swapResult.priceNear : 0;
   const priceDisplay = entryPrice > 0 ? `${entryPrice.toFixed(8)} NEAR` : '—';
 
-  // PNL snapshot at entry: position value vs amount spent. At t=0 the delta
-  // is the entry cost (fee + token tax) — shown honestly instead of a link.
+  // Position baseline at entry (t=0): position value is initialized at entry price, PnL starts at +0.0%
   const valueNear = tokenQtyHuman * entryPrice;
-  const pnlNear = valueNear - amountNear;
-  const pnlPct = amountNear > 0 ? (pnlNear / amountNear) * 100 : 0;
-  const pnlEmoji = pnlNear >= 0 ? '📈' : '📉';
-  const pnlSign = pnlNear >= 0 ? '+' : '';
+  const pnlDisplay = '+0.0%';
+  const pnlEmoji = '📈';
 
   return {
     success: true,
@@ -996,7 +993,7 @@ async function executeBuyHelper(
       `💵 Entry: \`${priceDisplay}\`\n\n` +
       `📊 *Position*\n` +
       `💰 Value: \`${valueNear.toFixed(4)} NEAR\`\n` +
-      `${pnlEmoji} PnL: \`${pnlSign}${pnlPct.toFixed(1)}%\` (\`${pnlSign}${pnlNear.toFixed(4)} NEAR\`)`,
+      `${pnlEmoji} PnL: \`${pnlDisplay}\``,
   };
 }
 
