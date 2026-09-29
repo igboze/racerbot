@@ -81,28 +81,38 @@ async function main(): Promise<void> {
     logger.warn('Price cache warm-up error', (err as Error));
   }
 
-  // Run trigger evaluation on interval
-  const interval = setInterval(async () => {
-    try {
-      await engine.checkAllTriggers();
-    } catch (err) {
-      logger.error('Trigger check error', (err as Error));
+  // Run trigger evaluation in a self-rescheduling loop: each run finishes
+  // before the next is scheduled, so runs can never overlap or stack even
+  // when a single check exceeds TRIGGER_INTERVAL_MS.
+  let stopped = false;
+  const loop = (async () => {
+    while (!stopped) {
+      const startedAt = Date.now();
+      try {
+        await engine.checkAllTriggers();
+      } catch (err) {
+        logger.error('Trigger check error', (err as Error));
+      }
+      const elapsed = Date.now() - startedAt;
+      const remaining = TRIGGER_INTERVAL_MS - elapsed;
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
     }
-  }, TRIGGER_INTERVAL_MS);
+  })();
 
   logger.info('Ready — evaluating triggers on interval', { intervalMs: TRIGGER_INTERVAL_MS });
 
-  process.on('SIGINT', async () => {
-    clearInterval(interval);
+  const shutdown = async () => {
+    stopped = true;
     await triggerRedis.disconnect();
     process.exit(0);
-  });
+  };
 
-  process.on('SIGTERM', async () => {
-    clearInterval(interval);
-    await triggerRedis.disconnect();
-    process.exit(0);
-  });
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  await loop;
 }
 
 main().catch(err => {

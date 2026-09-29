@@ -185,11 +185,17 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
 const USER_CACHE_TTL_MS = 10_000;
 const USER_CACHE_MAX = 5_000;
 const userCache = new Map<number, { user: UserRecord | null; expiresAt: number }>();
+const userIdCache = new Map<string, { user: UserRecord | null; expiresAt: number }>();
 const userIdToTelegramId = new Map<string, number>();
 
 function invalidateUserCache(userId?: string, telegramId?: number) {
-  if (telegramId !== undefined) userCache.delete(telegramId);
+  if (telegramId !== undefined) {
+    const hit = userCache.get(telegramId);
+    userCache.delete(telegramId);
+    if (hit?.user) userIdCache.delete(hit.user.id);
+  }
   if (userId) {
+    userIdCache.delete(userId);
     const tid = userIdToTelegramId.get(userId);
     if (tid !== undefined) userCache.delete(tid);
     userIdToTelegramId.delete(userId);
@@ -216,10 +222,21 @@ export async function getUserByTelegramId(telegramId: number): Promise<UserRecor
 }
 
 export async function getUserById(id: string): Promise<UserRecord | null> {
+  const hit = userIdCache.get(id);
+  if (hit && Date.now() < hit.expiresAt) {
+    return hit.user ? { ...hit.user } : null;
+  }
   const db = await getDb();
   const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-  if (result.rows.length === 0) return null;
-  return rowToUser(result.rows[0]);
+  const user = result.rows.length === 0 ? null : rowToUser(result.rows[0]);
+  if (userIdCache.size >= USER_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of userIdCache) {
+      if (now >= v.expiresAt) userIdCache.delete(k);
+    }
+  }
+  userIdCache.set(id, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+  return user ? { ...user } : null;
 }
 
 export async function getUserBySubaccount(subaccountId: string): Promise<UserRecord | null> {
@@ -322,6 +339,13 @@ export async function getPositionById(positionId: string): Promise<PositionRecor
   const result = await db.query('SELECT * FROM positions WHERE id = $1', [positionId]);
   if (result.rows.length === 0) return null;
   return rowToPosition(result.rows[0]);
+}
+
+export async function getPositionsByIds(positionIds: string[]): Promise<PositionRecord[]> {
+  if (positionIds.length === 0) return [];
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM positions WHERE id = ANY($1)', [positionIds]);
+  return result.rows.map(rowToPosition);
 }
 
 export async function updatePosition(params: UpdatePositionParams): Promise<void> {

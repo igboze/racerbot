@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createRedis, CHANNELS, isTradableVenue, getNear, type SwapEvent } from '@racerbot/shared';
-import { getDb, getActiveTriggers, getPositionById, getTokenCache, markTriggerFired } from '@racerbot/db';
+import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
 const redis = createRedis(REDIS_URL);
@@ -51,25 +51,61 @@ export class TriggerEngine {
    */
   async checkAllTriggers(): Promise<void> {
     const activeTriggers = await getActiveTriggers();
+    if (activeTriggers.length === 0) return;
 
+    // All positions in one query instead of N serial per-trigger lookups
+    const positionIds = [...new Set(activeTriggers.map(t => t.position_id))];
+    const positions = await getPositionsByIds(positionIds);
+    const positionById = new Map(positions.map(p => [p.id, p]));
+
+    // One stale-price refresh per unique token per cycle (deduplicated)
+    const refreshedThisCycle = new Set<string>();
+    const staleTokens = new Set<string>();
     for (const trigger of activeTriggers) {
-      try {
-        await this.evaluateTrigger(trigger);
-      } catch (err) {
-        console.error(`[TRIGGERS] Error evaluating trigger ${trigger.id}:`, (err as Error).message);
+      const position = positionById.get(trigger.position_id);
+      if (!position || position.status === 'closed') continue;
+      const cached = localPriceCache.get(position.token_address);
+      if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
+        staleTokens.add(position.token_address);
       }
+    }
+    await Promise.all([...staleTokens].map(async (tokenAddress) => {
+      await refreshTokenPrice(tokenAddress);
+      refreshedThisCycle.add(tokenAddress);
+    }));
+
+    // Bounded-concurrency evaluation — per-trigger try/catch so one
+    // failure can't reject the batch
+    const CONCURRENCY = 8;
+    for (let i = 0; i < activeTriggers.length; i += CONCURRENCY) {
+      const chunk = activeTriggers.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(async (trigger) => {
+        try {
+          await this.evaluateTrigger(trigger, positionById, refreshedThisCycle);
+        } catch (err) {
+          console.error(`[TRIGGERS] Error evaluating trigger ${trigger.id}:`, (err as Error).message);
+        }
+      }));
     }
   }
 
-  async evaluateTrigger(trigger: any): Promise<void> {
-    const position = await getPositionById(trigger.position_id);
+  async evaluateTrigger(
+    trigger: any,
+    positionById?: Map<string, PositionRecord>,
+    refreshedThisCycle?: Set<string>,
+  ): Promise<void> {
+    const position = positionById?.get(trigger.position_id) ?? await getPositionById(trigger.position_id);
     if (!position || position.status === 'closed') return;
 
     let cached = localPriceCache.get(position.token_address);
 
     // Staleness guard: never evaluate a stop-loss against old data.
     if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
-      const refreshed = await refreshTokenPrice(position.token_address);
+      // checkAllTriggers already refreshed each stale token once this cycle;
+      // only fall back to a live refresh when called outside that path.
+      const refreshed = refreshedThisCycle?.has(position.token_address)
+        ? false
+        : await refreshTokenPrice(position.token_address);
       cached = localPriceCache.get(position.token_address);
       if (!cached) {
         console.warn(

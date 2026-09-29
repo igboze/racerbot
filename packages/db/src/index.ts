@@ -13,6 +13,7 @@ export {
   createPosition,
   getOpenPositions,
   getPositionById,
+  getPositionsByIds,
   updatePosition,
   createFill,
   getFillsByPosition,
