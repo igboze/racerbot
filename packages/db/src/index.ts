@@ -31,6 +31,8 @@ export {
   getReferralsByReferrer,
   getReferralByReferredUser,
   getTotalReferralEarnings,
+  createReferralClaim,
+  getTotalReferralClaimed,
   recordTradeAttempt,
   updateTradeAttempt,
   setBotSetting,
