@@ -60,8 +60,13 @@ export async function generatePNLCardData(
     const buys  = fills.filter(f => f.side === 'buy');
     const sells = fills.filter(f => f.side === 'sell');
 
-    // Get token info
-    const tokenInfo   = await getTokenInfo(position.token_address, true).catch(() => null);
+    // Get token info. Live price reads can flake (RPC timeout) — retry once
+    // before accepting a zero-price render; getTokenInfo itself falls back to
+    // the last known DB price when discovery fails.
+    let tokenInfo     = await getTokenInfo(position.token_address, true).catch(() => null);
+    if (!tokenInfo || parseFloat(tokenInfo.price || '0') <= 0) {
+      tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
+    }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
     const nearUsd      = tokenInfo?.near_usd || 4.3;
 

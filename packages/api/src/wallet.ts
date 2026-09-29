@@ -273,8 +273,9 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     }
   }
 
-  // Fetch NEAR/USD price in parallel (non-blocking, uses cache if fresh)
-  const nearUsdPromise = getNearUsdPrice();
+  // Fetch NEAR/USD price in parallel (non-blocking, uses cache if fresh).
+  // Guarded: a rate-feed failure must never throw the whole token-info call.
+  const nearUsdPromise = getNearUsdPrice().catch(() => 0);
 
   // Always read the DB row (metadata + pool IDs are stable topology, reused
   // below), but only ACCEPT its cached price when it's <15s old — and never
@@ -656,6 +657,22 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     liquidity = rheaCandidate.liquidity;
     rheaPoolId = rheaCandidate.rheaPoolId;
     dclPoolId = rheaCandidate.dclPoolId;
+  }
+
+  // Last-known-good fallback: live pool discovery can intermittently fail
+  // (RPC timeout/flake). Rendering a stale-but-real price from token_cache is
+  // strictly better than the zero price that would otherwise hit PNL cards,
+  // holdings and quotes.
+  if (price <= 0 && dbCache && Number(dbCache.last_price || 0) > 0) {
+    price = Number(dbCache.last_price);
+    liquidity = Number(dbCache.last_liquidity || 0);
+    venue = (dbCache.venue as any) ?? venue;
+    rheaPoolId = rheaPoolId ?? dbCache.rhea_pool_id ?? null;
+    dclPoolId = dclPoolId ?? dbCache.dcl_pool_id ?? null;
+    bondingPhase = bondingPhase ?? (dbCache.bonding_phase as any) ?? null;
+    if (bondingProgressPct === null && dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined) {
+      bondingProgressPct = Number(dbCache.bonding_progress_pct);
+    }
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
