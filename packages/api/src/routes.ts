@@ -34,6 +34,18 @@ import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
 
+// ── Colored inline buttons (Bot API 9.4) ─────────────────────────────────────
+// InlineKeyboardButton.style: 'success' (green), 'danger' (red), 'primary'
+// (blue). Telegraf's Markup builder doesn't expose the field yet, but the
+// Bot API server honors the raw JSON; older clients ignore it and render
+// default buttons — safe graceful fallback.
+type BtnStyle = 'success' | 'danger' | 'primary';
+function cb(text: string, callbackData: string, style?: BtnStyle): any {
+  const btn: any = { text, callback_data: callbackData };
+  if (style) btn.style = style;
+  return btn;
+}
+
 // ── Token cache for snipe-by-name fuzzy matching ──────────────────────────────
 export const localTokenNames = new Map<string, { address: string; symbol: string }>();
 
@@ -118,20 +130,20 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const keyboard = Markup.inlineKeyboard([
     [
-      Markup.button.callback('💳 Wallet', 'menu_wallet'),
-      Markup.button.callback('⚙️ Settings', 'menu_settings'),
+      cb('💳 Wallet', 'menu_wallet', 'primary'),
+      cb('💼 Holdings', 'menu_holdings', 'primary'),
     ],
     [
-      Markup.button.callback('� Holdings', 'menu_holdings'),
-      Markup.button.callback('📈 PnL', 'menu_pnl'),
+      cb('📈 PnL', 'menu_pnl', 'primary'),
+      cb('🎯 Snipe Rules', 'menu_snipe', 'primary'),
     ],
     [
-      Markup.button.callback('🎯 Snipe Rules', 'menu_settings'),
-      Markup.button.callback('🔄 Refresh', 'menu_refresh'),
+      cb('⚙️ Settings', 'menu_settings', 'primary'),
+      cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
-      Markup.button.callback('🔑 Export Key', 'export_prompt'),
-      Markup.button.callback('🔄 Rotate Key', 'rotate_prompt'),
+      cb('🔑 Export Key', 'export_prompt'),
+      cb('🔄 Rotate Key', 'rotate_prompt'),
     ],
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -168,19 +180,19 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const b = await getUserBalances(telegramId, forceRefresh);
   const buttons: any[] = [
     [
-      Markup.button.callback('🔄 Refresh', 'wallet_refresh'),
-      Markup.button.callback('💸 Withdraw', 'wallet_withdraw_prompt'),
+      cb('🔄 Refresh', 'wallet_refresh', 'primary'),
+      cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
     ],
   ];
 
   if (Number(b.wrapNearFormatted) > 0.0001) {
-    buttons.push([Markup.button.callback(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR to NEAR`, 'wallet_unwrap')]);
+    buttons.push([cb(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR`, 'wallet_unwrap', 'primary')]);
   }
 
   buttons.push([
-    Markup.button.callback('💼 Holdings', 'menu_holdings'),
-    Markup.button.callback('⚙️ Settings', 'menu_settings'),
-    Markup.button.callback('🔙 Main Menu', 'menu_home'),
+    cb('💼 Holdings', 'menu_holdings', 'primary'),
+    cb('⚙️ Settings', 'menu_settings', 'primary'),
+    cb('🔙 Menu', 'menu_home', 'primary'),
   ]);
 
   buttons.push([
@@ -409,36 +421,32 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
-        // BUY Options (Green 🟢)
+        // Quick-buy fixed amounts (green)
         [
-          Markup.button.callback('🟢 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
-          Markup.button.callback('🟢 1 N', `buy_fixed:${tokenInfo.address}:1`),
-          Markup.button.callback('🟢 2 N', `buy_fixed:${tokenInfo.address}:2`),
-          Markup.button.callback('🟢 5 N', `buy_fixed:${tokenInfo.address}:5`),
+          cb('1 N', `buy_fixed:${tokenInfo.address}:1`, 'success'),
+          cb('5 N', `buy_fixed:${tokenInfo.address}:5`, 'success'),
+          cb('10 N', `buy_fixed:${tokenInfo.address}:10`, 'success'),
         ],
+        // Custom amount — full width
+        [cb('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`, 'success')],
+        // Buy % of balance (green)
         [
-          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}🟢 Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
-          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}🟢 Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
-          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}🟢 Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
-          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}🟢 Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${tokenInfo.address}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${tokenInfo.address}:100`, 'success'),
         ],
-        // SELL Options (Red 🔴)
+        // Sell % (red)
         [
-          Markup.button.callback('🔴 Sell 25%', `sell:${userPosition.id}:25`),
-          Markup.button.callback('🔴 Sell 50%', `sell:${userPosition.id}:50`),
-          Markup.button.callback('🔴 Sell 75%', `sell:${userPosition.id}:75`),
-          Markup.button.callback('🔴 Sell 100%', `sell:${userPosition.id}:100`),
+          cb('25%', `sell:${userPosition.id}:25`, 'danger'),
+          cb('50%', `sell:${userPosition.id}:50`, 'danger'),
+          cb('100%', `sell:${userPosition.id}:100`, 'danger'),
         ],
-        // Quick Action Row
-        [
-          Markup.button.callback('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
-          Markup.button.callback('🔴 Sell Initial', `sell_initial:${userPosition.id}`),
-          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
-        ],
+        [cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger')],
         ...linkRows,
         [
-          Markup.button.callback('⚙️ Settings', 'menu_settings'),
-          Markup.button.callback('🔙 Back', 'menu_home'),
+          cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
+          cb('⚙️ Settings', 'menu_settings', 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -451,25 +459,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback('🟢 0.5 N', `buy_fixed:${tokenInfo.address}:0.5`),
-          Markup.button.callback('🟢 1 N', `buy_fixed:${tokenInfo.address}:1`),
-          Markup.button.callback('🟢 2 N', `buy_fixed:${tokenInfo.address}:2`),
-          Markup.button.callback('🟢 5 N', `buy_fixed:${tokenInfo.address}:5`),
+          cb('1 N', `buy_fixed:${tokenInfo.address}:1`, 'success'),
+          cb('5 N', `buy_fixed:${tokenInfo.address}:5`, 'success'),
+          cb('10 N', `buy_fixed:${tokenInfo.address}:10`, 'success'),
         ],
+        [cb('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`, 'success')],
         [
-          Markup.button.callback(`${defaultBuyPct === 10 ? '✓ ' : ''}🟢 Buy 10%`, `buy_pct:${tokenInfo.address}:10`),
-          Markup.button.callback(`${defaultBuyPct === 25 ? '✓ ' : ''}🟢 Buy 25%`, `buy_pct:${tokenInfo.address}:25`),
-          Markup.button.callback(`${defaultBuyPct === 50 ? '✓ ' : ''}🟢 Buy 50%`, `buy_pct:${tokenInfo.address}:50`),
-          Markup.button.callback(`${defaultBuyPct === 100 ? '✓ ' : ''}🟢 Buy 100%`, `buy_pct:${tokenInfo.address}:100`),
-        ],
-        [
-          Markup.button.callback('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`),
-          Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${tokenInfo.address}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${tokenInfo.address}:100`, 'success'),
         ],
         ...linkRows,
         [
-          Markup.button.callback('⚙️ Settings', 'menu_settings'),
-          Markup.button.callback('🔙 Back', 'menu_home'),
+          cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
+          cb('⚙️ Settings', 'menu_settings', 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -573,29 +577,27 @@ export async function sendPnlCardMessage(
 
     if (position.status === 'open' && quantityHeldNum > 0) {
       buttons.push([
-        Markup.button.callback('🔴 Sell 25%', `sell:${positionId}:25`),
-        Markup.button.callback('🔴 Sell 50%', `sell:${positionId}:50`),
+        cb('25%', `sell:${positionId}:25`, 'danger'),
+        cb('50%', `sell:${positionId}:50`, 'danger'),
+        cb('100%', `sell:${positionId}:100`, 'danger'),
       ]);
       buttons.push([
-        Markup.button.callback('🔴 Sell 75%', `sell:${positionId}:75`),
-        Markup.button.callback('🔴 Sell 100%', `sell:${positionId}:100`),
-      ]);
-      buttons.push([
-        Markup.button.callback('🔴 Sell Initial', `sell_initial:${positionId}`),
-        Markup.button.callback('🟢 Buy More', `buy_custom_prompt:${position.token_address}`),
+        cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'),
+        cb('🟢 Buy More', `buy_custom_prompt:${position.token_address}`, 'success'),
       ]);
     }
 
     buttons.push([
-      Markup.button.callback(
-        showNetWorth ? '🙈 Hide Net Worth' : '👁 Show Net Worth',
-        `toggle_pnl_nw:${positionId}:${showNetWorth ? 0 : 1}`
+      cb(
+        showNetWorth ? '🙈 Hide NW' : '👁 Show NW',
+        `toggle_pnl_nw:${positionId}:${showNetWorth ? 0 : 1}`,
+        'primary'
       ),
-      Markup.button.callback('🔄 Refresh PnL', `token_detail:${positionId}${showNetWorthOverride !== undefined ? `:${showNetWorth ? 1 : 0}` : ''}`),
+      cb('🔄 Refresh', `token_detail:${positionId}${showNetWorthOverride !== undefined ? `:${showNetWorth ? 1 : 0}` : ''}`, 'primary'),
     ]);
     buttons.push([
-      Markup.button.callback('💼 Holdings', 'menu_holdings'),
-      Markup.button.callback('🏠 Main Menu', 'menu_home'),
+      cb('💼 Holdings', 'menu_holdings', 'primary'),
+      cb('🏠 Menu', 'menu_home', 'primary'),
     ]);
 
     const keyboard = Markup.inlineKeyboard(buttons);
@@ -629,20 +631,14 @@ export async function sendPnlCardMessage(
 
 // ── Helper: Build Settings Dashboard with Checkmark Indicators ──────────────
 export function buildSettingsDashboard(user: UserRecord) {
-  const autoBuy = user.auto_buy_enabled;
   const slip = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
-  const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
-  const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
   const buyPct = user.default_buy_pct ? Number(user.default_buy_pct) : 10;
   const sellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
   const showNetWorth = user.show_net_worth_on_card !== false;
 
   const text =
-    `⚙️ *Trading & Snipe Settings*\n\n` +
-    `Configure your trading defaults and automated sniping rules below. Tap any button to toggle or update instantly:\n\n` +
-    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 *Enabled*' : '🔴 *Disabled*'}\n` +
-    `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
-    `• *Min Pool Liquidity*: \`${minLiq} NEAR\`\n` +
+    `⚙️ *Trading Settings*\n\n` +
+    `Configure your manual trading defaults below. Snipe automation lives in 🎯 Snipe Rules.\n\n` +
     `• *Slippage Tolerance*: \`${slip}%\`\n` +
     `• *Default Manual Buy*: \`${buyPct}%\`\n` +
     `• *Default Manual Sell*: \`${sellPct}%\`\n` +
@@ -650,55 +646,84 @@ export function buildSettingsDashboard(user: UserRecord) {
 
   const keyboard = Markup.inlineKeyboard([
     [
-      Markup.button.callback(
-        autoBuy ? '🟢 Auto-Buy: ON (Tap to Disable)' : '🔴 Auto-Buy: OFF (Tap to Enable)',
-        'set:toggle_auto_buy'
+      cb(
+        showNetWorth ? '👁 Net Worth: Shown' : '🙈 Net Worth: Hidden',
+        'set:toggle_show_net_worth',
+        'primary'
       ),
     ],
     [
-      Markup.button.callback(
-        showNetWorth ? '👁 Net Worth on Card: SHOWN (Tap to Hide)' : '🙈 Net Worth on Card: HIDDEN (Tap to Show)',
-        'set:toggle_show_net_worth'
+      cb(`${slip === 0.5 ? '✓ ' : ''}0.5%`, 'set:slippage:0.5', 'primary'),
+      cb(`${slip === 1 ? '✓ ' : ''}1%`, 'set:slippage:1', 'primary'),
+      cb(`${slip === 2 ? '✓ ' : ''}2%`, 'set:slippage:2', 'primary'),
+      cb(`${slip === 5 ? '✓ ' : ''}5%`, 'set:slippage:5', 'primary'),
+      cb(`${slip === 10 ? '✓ ' : ''}10%`, 'set:slippage:10', 'primary'),
+    ],
+    [
+      cb(`🟢 Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10', 'success'),
+      cb(`${buyPct === 50 ? '✓ ' : ''}50%`, 'set:buy_pct:50', 'success'),
+      cb(`${buyPct === 100 ? '✓ ' : ''}100%`, 'set:buy_pct:100', 'success'),
+    ],
+    [
+      cb(`🔴 Sell: ${sellPct === 25 ? '✓ ' : ''}25%`, 'set:sell_pct:25', 'danger'),
+      cb(`${sellPct === 50 ? '✓ ' : ''}50%`, 'set:sell_pct:50', 'danger'),
+      cb(`${sellPct === 100 ? '✓ ' : ''}100%`, 'set:sell_pct:100', 'danger'),
+    ],
+    [
+      cb('✏️ Custom Slippage', 'prompt:custom_slippage', 'primary'),
+    ],
+    [
+      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+    ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+    ],
+  ]);
+
+  return { text, keyboard };
+}
+
+// ── Helper: Build Snipe Rules Dashboard ─────────────────────────────────────
+export function buildSnipeDashboard(user: UserRecord) {
+  const autoBuy = user.auto_buy_enabled;
+  const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
+  const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
+
+  const text =
+    `🎯 *Snipe Rules*\n\n` +
+    `Automatically buy new token launches the moment they appear. Configure your rules below:\n\n` +
+    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 *Enabled*' : '🔴 *Disabled*'}\n` +
+    `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
+    `• *Min Pool Liquidity*: \`${minLiq} NEAR\``;
+
+  const keyboard = Markup.inlineKeyboard([
+    [
+      cb(
+        autoBuy ? '🟢 Auto-Buy: ON' : '🔴 Auto-Buy: OFF',
+        'set:toggle_auto_buy',
+        autoBuy ? 'success' : 'danger'
       ),
     ],
     [
-      Markup.button.callback(`${slip === 0.5 ? '✓ ' : ''}0.5%`, 'set:slippage:0.5'),
-      Markup.button.callback(`${slip === 1 ? '✓ ' : ''}1%`, 'set:slippage:1'),
-      Markup.button.callback(`${slip === 2 ? '✓ ' : ''}2%`, 'set:slippage:2'),
-      Markup.button.callback(`${slip === 5 ? '✓ ' : ''}5%`, 'set:slippage:5'),
-      Markup.button.callback(`${slip === 10 ? '✓ ' : ''}10%`, 'set:slippage:10'),
+      cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
+      cb(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1', 'primary'),
+      cb(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2', 'primary'),
+      cb(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5', 'primary'),
     ],
     [
-      Markup.button.callback(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5'),
-      Markup.button.callback(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1'),
-      Markup.button.callback(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2'),
-      Markup.button.callback(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5'),
+      cb(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0', 'primary'),
+      cb(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10', 'primary'),
+      cb(`${minLiq === 50 ? '✓ ' : ''}50N`, 'set:min_liq:50', 'primary'),
+      cb(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500', 'primary'),
     ],
     [
-      Markup.button.callback(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0'),
-      Markup.button.callback(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10'),
-      Markup.button.callback(`${minLiq === 50 ? '✓ ' : ''}50N`, 'set:min_liq:50'),
-      Markup.button.callback(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500'),
+      cb('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy', 'primary'),
+      cb('✏️ Custom Min Liq', 'prompt:custom_min_liq', 'primary'),
     ],
     [
-      Markup.button.callback(`🟢 Buy: ${buyPct === 10 ? '✓ ' : ''}10%`, 'set:buy_pct:10'),
-      Markup.button.callback(`${buyPct === 25 ? '✓ ' : ''}25%`, 'set:buy_pct:25'),
-      Markup.button.callback(`${buyPct === 50 ? '✓ ' : ''}50%`, 'set:buy_pct:50'),
-      Markup.button.callback(`${buyPct === 100 ? '✓ ' : ''}100%`, 'set:buy_pct:100'),
-    ],
-    [
-      Markup.button.callback(`🔴 Sell: ${sellPct === 25 ? '✓ ' : ''}25%`, 'set:sell_pct:25'),
-      Markup.button.callback(`${sellPct === 50 ? '✓ ' : ''}50%`, 'set:sell_pct:50'),
-      Markup.button.callback(`${sellPct === 75 ? '✓ ' : ''}75%`, 'set:sell_pct:75'),
-      Markup.button.callback(`${sellPct === 100 ? '✓ ' : ''}100%`, 'set:sell_pct:100'),
-    ],
-    [
-      Markup.button.callback('✏️ Custom Slippage', 'prompt:custom_slippage'),
-      Markup.button.callback('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy'),
-      Markup.button.callback('✏️ Custom Min Liq', 'prompt:custom_min_liq'),
-    ],
-    [
-      Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
     ],
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -1132,6 +1157,22 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  bot.action('menu_snipe', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+      const dash = buildSnipeDashboard(user);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
   // ── Helper: Render & Display Holdings with Live Wallet Scan & PNL Baseline ───
   async function handleHoldings(ctx: Context, isRefresh = false) {
     const telegramId = ctx.from!.id;
@@ -1263,7 +1304,9 @@ export function setupRoutes(bot: Telegraf): void {
 
         // Buttons-only list: per-token details render when the user taps the
         // token button (token_detail:<id>) — keeps the holdings view scannable.
-        buttons.push([Markup.button.callback(`${emoji} ${displayLabel} (${pnlDisplay})`, `token_detail:${pos.id}`)]);
+        const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
+        const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
+        buttons.push([cb(cappedLabel, `token_detail:${pos.id}`)]);
       }
 
       // Add remaining positions value to total portfolio
@@ -1483,40 +1526,37 @@ export function setupRoutes(bot: Telegraf): void {
       const buttons: any[] = [];
 
       // Sell percentage buttons (Red 🔴)
-      const sellRow1: any[] = [];
-      sellRow1.push(Markup.button.callback('🔴 Sell 25%', `sell:${positionId}:25`));
-      sellRow1.push(Markup.button.callback('🔴 Sell 50%', `sell:${positionId}:50`));
-      buttons.push(sellRow1);
-
-      const sellRow2: any[] = [];
-      sellRow2.push(Markup.button.callback('🔴 Sell 75%', `sell:${positionId}:75`));
-      sellRow2.push(Markup.button.callback('🔴 Sell 100%', `sell:${positionId}:100`));
-      buttons.push(sellRow2);
+      buttons.push([
+        cb('25%', `sell:${positionId}:25`, 'danger'),
+        cb('50%', `sell:${positionId}:50`, 'danger'),
+        cb('100%', `sell:${positionId}:100`, 'danger'),
+      ]);
 
       // Buy buttons (Green 🟢)
       buttons.push([
-        Markup.button.callback('🟢 Buy 0.5N', `buy_fixed:${position.token_address}:0.5`),
-        Markup.button.callback('🟢 Buy 1N', `buy_fixed:${position.token_address}:1`),
-        Markup.button.callback('🟢 Buy 2N', `buy_fixed:${position.token_address}:2`),
-        Markup.button.callback('🟢 Buy X N', `buy_custom_prompt:${position.token_address}`),
+        cb('1 N', `buy_fixed:${position.token_address}:1`, 'success'),
+        cb('5 N', `buy_fixed:${position.token_address}:5`, 'success'),
+        cb('10 N', `buy_fixed:${position.token_address}:10`, 'success'),
       ]);
+      buttons.push([cb('🟢 Buy X NEAR', `buy_custom_prompt:${position.token_address}`, 'success')]);
 
       // Sell Initial button
       if (initialInvestment > 0) {
-        buttons.push([Markup.button.callback('🔴 Sell Initial', `sell_initial:${positionId}`)]);
+        buttons.push([cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger')]);
       }
 
       // Navigation buttons
       buttons.push([
-        Markup.button.callback(
-          showNetWorth ? '🙈 Hide Net Worth' : '👁 Show Net Worth',
-          `token_detail:${positionId}:${showNetWorth ? 0 : 1}`
+        cb(
+          showNetWorth ? '🙈 Hide NW' : '👁 Show NW',
+          `token_detail:${positionId}:${showNetWorth ? 0 : 1}`,
+          'primary'
         ),
-        Markup.button.callback('🔄 Refresh', `token_detail:${positionId}${nwParam !== undefined ? `:${nwParam}` : ''}`),
+        cb('🔄 Refresh', `token_detail:${positionId}${nwParam !== undefined ? `:${nwParam}` : ''}`, 'primary'),
       ]);
       buttons.push([
-        Markup.button.callback('🔙 Back to Holdings', 'menu_holdings'),
-        Markup.button.callback('🏠 Main Menu', 'menu_home'),
+        cb('💼 Holdings', 'menu_holdings', 'primary'),
+        cb('🏠 Menu', 'menu_home', 'primary'),
       ]);
 
       // Generate PNL card with image
@@ -1880,7 +1920,7 @@ export function setupRoutes(bot: Telegraf): void {
     const newStatus = !user.auto_buy_enabled;
     const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
     await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
+    const dash = buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -1921,7 +1961,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!user) return;
     const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
     await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
+    const dash = buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -1932,7 +1972,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!user) return;
     const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
     await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
+    const dash = buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -2216,15 +2256,12 @@ export function setupRoutes(bot: Telegraf): void {
 
         const keyboard = Markup.inlineKeyboard([
           [
-            Markup.button.callback('🔴 Sell 25%', `sell:${pos.id}:25`),
-            Markup.button.callback('🔴 Sell 50%', `sell:${pos.id}:50`),
-            Markup.button.callback('🔴 Sell 75%', `sell:${pos.id}:75`),
-            Markup.button.callback('🔴 Sell 100%', `sell:${pos.id}:100`),
+            cb('25%', `sell:${pos.id}:25`, 'danger'),
+            cb('50%', `sell:${pos.id}:50`, 'danger'),
+            cb('100%', `sell:${pos.id}:100`, 'danger'),
           ],
-          [
-            Markup.button.callback('🟢 Buy More', `buy_custom_prompt:${pos.token_address}`),
-            Markup.button.callback('🔄 Refresh', 'menu_positions'),
-          ],
+          [cb('🟢 Buy More', `buy_custom_prompt:${pos.token_address}`, 'success')],
+          [cb('🔄 Refresh', 'menu_positions', 'primary')],
         ]);
 
         await ctx.reply(
@@ -2747,7 +2784,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
           await ctx.reply(`✅ Auto-buy amount updated to ${amt} NEAR!`);
-          const dash = buildSettingsDashboard(updated);
+          const dash = buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
         return;
@@ -2763,7 +2800,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
           await ctx.reply(`✅ Min pool liquidity updated to ${liq} NEAR!`);
-          const dash = buildSettingsDashboard(updated);
+          const dash = buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
         return;
@@ -2969,11 +3006,11 @@ export function setupRoutes(bot: Telegraf): void {
     // 4. Default helpful guide with Main Menu button
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback('💳 Open Wallet', 'menu_wallet'),
-        Markup.button.callback('⚙️ Settings', 'menu_settings'),
+        cb('💳 Open Wallet', 'menu_wallet', 'primary'),
+        cb('⚙️ Settings', 'menu_settings', 'primary'),
       ],
       [
-        Markup.button.callback('🔙 Back', 'menu_home'),
+        cb('🔙 Back', 'menu_home', 'primary'),
       ],
     ]);
 
