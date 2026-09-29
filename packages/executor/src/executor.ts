@@ -2188,11 +2188,13 @@ export class SwapExecutor {
 
         // Handle referral rewards (30% of fee goes to referrer)
         const referral = await getReferralByReferredUser(userId);
+        let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
         if (referral && referral.status === 'pending') {
-          // Activate referral on first trade
+          // Activate referral on first trade — and count THIS trade's reward too
           await activateReferral(referral.id);
+          referralActive = true;
         }
-        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+        if (referral && referralActive) {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
@@ -2249,7 +2251,13 @@ export class SwapExecutor {
 
         // Handle referral rewards (30% of fee goes to referrer)
         const referral = await getReferralByReferredUser(userId);
-        if (referral && (referral.status === 'active' || referral.status === 'completed')) {
+        let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
+        if (referral && referral.status === 'pending') {
+          // First tracked trade may be a sell — activate and count it too
+          await activateReferral(referral.id);
+          referralActive = true;
+        }
+        if (referral && referralActive) {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);

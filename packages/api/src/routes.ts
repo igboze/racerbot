@@ -10,6 +10,8 @@ import {
   createPosition,
   getDb,
   generateReferralCode,
+  getTotalReferralClaimed,
+  createReferralClaim,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -23,6 +25,8 @@ import {
   unwrapUserWrapNear,
   withdrawFunds,
   syncUserTokenDeposits,
+  getNearUsdPrice,
+  payReferralReward,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -2657,6 +2661,57 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── /referral — Show referral link and stats ───────────────────────────────
+  const REFERRAL_CLAIM_MIN_USD = 10;
+
+  const buildReferralView = async (user: UserRecord) => {
+    const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
+
+    const db = await getDb();
+    const referralsResult = await db.query(
+      'SELECT * FROM referrals WHERE referrer_id = $1',
+      [user.id]
+    );
+    const referrals = referralsResult.rows;
+
+    const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
+    const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+    const totalClaimed = await getTotalReferralClaimed(user.id).catch(() => 0);
+    const claimableNear = Math.max(0, totalEarnings - totalClaimed);
+    const nearUsd = await getNearUsdPrice().catch(() => 0);
+    const claimableUsd = claimableNear * nearUsd;
+    const claimReady = claimableUsd >= REFERRAL_CLAIM_MIN_USD;
+
+    const text =
+      `🎁 *Referral Program*\n\n` +
+      `Your referral link:\n` +
+      `\`${referralLink}\`\n\n` +
+      `📊 *Your Stats*:\n` +
+      `• Total referrals: ${referrals.length}\n` +
+      `• Active referrals: ${activeReferrals}\n` +
+      `• Total earned: \`${totalEarnings.toFixed(4)} NEAR\`\n` +
+      `• Already claimed: \`${totalClaimed.toFixed(4)} NEAR\`\n` +
+      `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~$${claimableUsd.toFixed(2)})\n\n` +
+      `💰 *Rewards*:\n` +
+      `• Earn 30% of fees from every user you refer\n` +
+      `• Claim once your rewards reach $${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet\n` +
+      `• Share your link and earn while your friends trade!`;
+
+    const buttons: any[] = [];
+    if (claimableNear > 0) {
+      buttons.push([
+        cb(
+          claimReady ? '💰 Claim Rewards' : `🔒 Claim unlocks at $${REFERRAL_CLAIM_MIN_USD}`,
+          'referral_claim',
+          claimReady ? 'success' : undefined
+        ),
+      ]);
+    }
+    buttons.push([cb('🔄 Refresh', 'referral_refresh', 'primary')]);
+    buttons.push([cb('🔙 Back', 'menu_home', 'primary')]);
+
+    return { text, keyboard: Markup.inlineKeyboard(buttons) };
+  };
+
   bot.command('referral', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
@@ -2672,35 +2727,93 @@ export function setupRoutes(bot: Telegraf): void {
         user.referral_code = code;
       }
 
-      const referralLink = `https://t.me/racertradingbot?start=${user.referral_code}`;
+      const view = await buildReferralView(user);
+      await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
 
-      // Get referral stats
+  bot.action('referral_refresh', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+      if (!user.referral_code) {
+        const username = ctx.from!.username || 'user';
+        const code = await generateReferralCode(user.id, username);
+        user.referral_code = code;
+      }
+      const view = await buildReferralView(user);
+      await ctx.answerCbQuery('🔄 Updated!').catch(() => {});
+      await ctx.editMessageText(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch((err: any) => {
+        if (!err?.message?.includes('message is not modified')) {
+          ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+        }
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
+  // ── referral_claim — Pay accrued rewards from treasury ($10 minimum) ───────
+  bot.action('referral_claim', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const guardKey = `referral_claim:${telegramId}`;
+    if (!tryAcquireInFlight(guardKey)) {
+      await ctx.answerCbQuery('Claim already in progress — please wait.').catch(() => {});
+      return;
+    }
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+
       const db = await getDb();
       const referralsResult = await db.query(
-        'SELECT * FROM referrals WHERE referrer_id = $1',
+        'SELECT COALESCE(SUM(total_fees_earned), 0) as total FROM referrals WHERE referrer_id = $1',
         [user.id]
       );
-      const referrals = referralsResult.rows;
+      const totalEarned = parseFloat(referralsResult.rows[0]?.total || '0');
+      const totalClaimed = await getTotalReferralClaimed(user.id);
+      const claimableNear = Math.max(0, totalEarned - totalClaimed);
 
-      const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
-      const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+      if (claimableNear <= 0) {
+        await ctx.answerCbQuery('No rewards to claim yet — share your link to start earning!').catch(() => {});
+        return;
+      }
+
+      const nearUsd = await getNearUsdPrice();
+      const claimableUsd = claimableNear * nearUsd;
+      if (claimableUsd < REFERRAL_CLAIM_MIN_USD) {
+        await ctx.answerCbQuery(
+          `Minimum claim is $${REFERRAL_CLAIM_MIN_USD} — you have $${claimableUsd.toFixed(2)} (${claimableNear.toFixed(4)} NEAR).`
+        ).catch(() => {});
+        return;
+      }
+
+      await ctx.answerCbQuery('💸 Processing your claim...').catch(() => {});
+
+      // Pay first, then record — a failed payout must never mark rewards claimed
+      const { txHash } = await payReferralReward(user.subaccount_id, claimableNear);
+      await createReferralClaim(user.id, claimableNear, txHash);
 
       await ctx.reply(
-        `🎁 *Referral Program*\n\n` +
-        `Your referral link:\n` +
-        `\`${referralLink}\`\n\n` +
-        `📊 *Your Stats*:\n` +
-        `• Total referrals: ${referrals.length}\n` +
-        `• Active referrals: ${activeReferrals}\n` +
-        `• Total earnings: ${totalEarnings.toFixed(4)} NEAR\n\n` +
-        `💰 *Rewards*:\n` +
-        `• Earn 30% of fees from every user you refer\n` +
-        `• Rewards are automatically credited to your account\n` +
-        `• Share your link and earn while your friends trade!`,
+        `✅ *Referral Rewards Claimed!*\n\n` +
+        `💰 Amount: \`${claimableNear.toFixed(4)} NEAR\` (~$${claimableUsd.toFixed(2)})\n` +
+        `🧾 TX: [View on NearBlocks](https://nearblocks.io/txns/${txHash})\n\n` +
+        `The rewards have landed in your RacerBot wallet. Use /wallet to check.`,
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    } finally {
+      releaseInFlight(guardKey);
     }
   });
 
