@@ -968,6 +968,9 @@ async function executeBuyHelper(
     effectiveRheaPoolId,
     effectiveDclPoolId
   );
+  // Start the short executor quote-freshness window only once the live quote
+  // is available, never while waiting for the quote RPC itself.
+  const quoteCompletedAt = Date.now();
 
   const swapResult = await publishSwap({
     user_id: user.id,
@@ -979,7 +982,7 @@ async function executeBuyHelper(
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
-    quoted_at: quoteStartedAt, // executor skips its second quote while < 2s old
+    quoted_at: quoteCompletedAt, // executor skips its second quote while < 2s old
   }, onProgress);
 
   if (swapResult.success === false) {
@@ -2130,13 +2133,51 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── 1-Click Buy Inline Handlers ───────────────────────────────────────────
-  // Fixed NEAR amount buy: buy_fixed:<token>:<amount>
+  // Fixed NEAR amount buy: first show a live-price confirmation. Token cards
+  // may be up to 15 seconds old; executing directly from that display made a
+  // fast-moving token look like it was bought above the price the user tapped.
+  bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const amountNear = parseFloat(ctx.match![2]);
+    await ctx.answerCbQuery('Refreshing executable price…').catch(() => {});
+    try {
+      const info = await getTokenInfo(tokenAddress, true);
+      const mcap = Number(info.market_cap_usd || 0);
+      const mcapLabel = mcap >= 1_000_000
+        ? `$${(mcap / 1_000_000).toFixed(2)}M`
+        : mcap >= 1_000
+        ? `$${(mcap / 1_000).toFixed(2)}K`
+        : `$${mcap.toFixed(2)}`;
+      await ctx.reply(
+        `🔄 *Live buy quote*\n\n` +
+        `Amount: \`${amountNear} NEAR\`\n` +
+        `Current market cap: \`${mcapLabel}\`\n\n` +
+        `_This is a fresh pool read. Confirm to submit the swap; it will still cancel if price moves beyond your slippage setting._`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            Markup.button.callback(`✅ Confirm ${amountNear} NEAR buy`, `buy_confirm_fixed:${tokenAddress}:${amountNear}`),
+            Markup.button.callback('✖ Cancel', 'buy_quote_cancel'),
+          ]] },
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Could not fetch a live price: ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
+  bot.action('buy_quote_cancel', async (ctx) => {
+    await ctx.answerCbQuery('Buy cancelled.').catch(() => {});
+    await ctx.editMessageText('Buy cancelled.').catch(() => {});
+  });
+
+  // Fixed NEAR amount buy: buy_confirm_fixed:<token>:<amount>
   //
   // FIX 4: the handler answers the callback + posts "Processing", then runs
   // the trade DETACHED. It never awaits the trade, so the webhook response is
   // released immediately (Telegram cannot time out and resend the update) and
   // the detached body always sends a final success or error message.
-  bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
+  bot.action(/^buy_confirm_fixed:(.+):([0-9.]+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
@@ -2179,9 +2220,39 @@ export function setupRoutes(bot: Telegraf): void {
     });
   });
 
-  // Percentage buy: buy_pct:<token>:<pct> or legacy buy:<token>:<pct>
-  // Same detached + in-flight-guard structure as buy_fixed.
+  // Percentage buys get the same fresh-price confirmation as fixed buys.
   bot.action(/^(?:buy_pct|buy):(.+):(\d+)$/, async (ctx) => {
+    const tokenAddress = ctx.match![1];
+    const pct = parseInt(ctx.match![2]);
+    await ctx.answerCbQuery('Refreshing executable price…').catch(() => {});
+    try {
+      const info = await getTokenInfo(tokenAddress, true);
+      const mcap = Number(info.market_cap_usd || 0);
+      const mcapLabel = mcap >= 1_000_000
+        ? `$${(mcap / 1_000_000).toFixed(2)}M`
+        : mcap >= 1_000
+        ? `$${(mcap / 1_000).toFixed(2)}K`
+        : `$${mcap.toFixed(2)}`;
+      await ctx.reply(
+        `🔄 *Live buy quote*\n\n` +
+        `Amount: \`${pct}% of your available NEAR\`\n` +
+        `Current market cap: \`${mcapLabel}\`\n\n` +
+        `_Confirm to submit the swap. It will cancel if price moves beyond your slippage setting._`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            Markup.button.callback(`✅ Confirm ${pct}% buy`, `buy_confirm_pct:${tokenAddress}:${pct}`),
+            Markup.button.callback('✖ Cancel', 'buy_quote_cancel'),
+          ]] },
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Could not fetch a live price: ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
+  // Same detached + in-flight-guard structure as buy_fixed.
+  bot.action(/^buy_confirm_pct:(.+):(\d+)$/, async (ctx) => {
     const tokenAddress = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
@@ -2347,10 +2418,45 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // Sell buttons first show a fresh pool price. This makes the user explicitly
+  // approve an exit at the current market instead of the cached holdings view.
+  bot.action(/^sell:([^:]+):(\d+)$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const pct = parseInt(ctx.match![2]);
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('Refreshing executable price…').catch(() => {});
+    try {
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!user || !position || position.user_id !== user.id) {
+        await ctx.reply('❌ Position not found.').catch(() => {});
+        return;
+      }
+      const info = await getTokenInfo(position.token_address, true);
+      const price = Number(info.price || 0);
+      const priceLabel = price >= 0.0001 ? price.toFixed(8) : price.toExponential(4);
+      await ctx.reply(
+        `🔄 *Live sell quote*\n\n` +
+        `Amount: \`${pct}%\` of your position\n` +
+        `Current price: \`${priceLabel} NEAR\`\n\n` +
+        `_Confirm to submit the swap. It will cancel if price moves beyond your slippage setting._`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[
+            Markup.button.callback(`✅ Confirm ${pct}% sell`, `sell_confirm:${positionId}:${pct}`),
+            Markup.button.callback('✖ Cancel', 'buy_quote_cancel'),
+          ]] },
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Could not fetch a live price: ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
   // Sell inline button handler — detached + in-flight guard.
   // The guard key resolves the position's token address up front so the key
   // stays telegramId + tokenAddress + side as everywhere else.
-  bot.action(/^sell:([^:]+):(\d+)$/, async (ctx) => {
+  bot.action(/^sell_confirm:([^:]+):(\d+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;

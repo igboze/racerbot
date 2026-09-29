@@ -49,6 +49,10 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     effectiveRheaPoolId,
     effectiveDclPoolId
   );
+  // This timestamp must be taken after the live quote completes. Starting the
+  // freshness window before an RPC call can make an already-old quote look
+  // "fresh" to the executor and skip its final pre-broadcast re-quote.
+  const quoteCompletedAt = Date.now();
   console.log(`[SELL_HELPER] Quote obtained: minAmountOut=${minAmountOut} in ${Date.now() - quoteStartedAt}ms. Calling publishSwap...`);
 
   const swapEvent = {
@@ -63,7 +67,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
-    quoted_at: quoteStartedAt, // executor skips its second quote while < 2s old
+    quoted_at: quoteCompletedAt, // executor skips its second quote while < 2s old
   };
 
   const swapResult = await publishSwap(swapEvent, onProgress);
