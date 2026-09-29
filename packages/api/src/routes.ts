@@ -1482,11 +1482,17 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // Calculate initial investment across all buy fills, or fallback to position entry * qty
+      // Fills store raw on-chain token units; prices are NEAR per whole token.
+      const toHuman = (rawStr: string): number => {
+        const val = parseFloat(rawStr || '0');
+        if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+        return val;
+      };
       const buys = fills.filter(f => f.side === 'buy');
       let initialInvestment = 0;
       for (const buy of buys) {
         if (buy.tx_hash?.startsWith('deposit_')) continue;
-        const amount = parseFloat(buy.amount);
+        const amount = toHuman(buy.amount);
         const price = parseFloat(buy.price);
         const fee = parseFloat(buy.fee_paid || '0');
         initialInvestment += (amount * price) + fee;
@@ -1638,19 +1644,26 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
+        // Fetch current market price from token info (not avg_entry_price)
+        const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
+        const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+        const decimals = tokenInfo?.decimals ?? 18;
+        // Fills store raw on-chain token units; prices are NEAR per whole token.
+        const toHuman = (rawStr: string): number => {
+          const val = parseFloat(rawStr || '0');
+          if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+          return val;
+        };
+
         // Calculate total initial investment across ALL buy fills (not just first)
         // Include fees paid to get accurate total NEAR invested
         let totalInitialInvestment = 0;
         for (const buy of buys) {
-          const amount = parseFloat(buy.amount);
+          const amount = toHuman(buy.amount);
           const price = parseFloat(buy.price);
           const fee = parseFloat(buy.fee_paid || '0');
           totalInitialInvestment += (amount * price) + fee;
         }
-
-        // Fetch current market price from token info (not avg_entry_price)
-        const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
-        const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
 
         if (currentPrice === 0) {
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
@@ -1658,7 +1671,7 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        const currentHeld = parseFloat(livePosition.quantity_held);
+        const currentHeld = toHuman(livePosition.quantity_held);
         if (currentHeld === 0) {
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
           await ctx.reply('No tokens held in this position.').catch(() => {});
@@ -1740,18 +1753,30 @@ export function setupRoutes(bot: Telegraf): void {
         const sells = fills.filter((f: any) => f.side === 'sell');
 
         if (buys.length && sells.length) {
+          const tiResult = tokenInfoResults[i];
+          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
+          const decimals = tokenInfo?.decimals ?? 18;
+          // Fills store raw on-chain token units; prices are NEAR per whole token.
+          const toHuman = (rawStr: string): number => {
+            const val = parseFloat(rawStr || '0');
+            if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+            return val;
+          };
+
           const avgEntry = parseFloat(pos.avg_entry_price);
           const lastSell = sells[sells.length - 1];
           const sellPrice = parseFloat(lastSell.price);
-          const qty = parseFloat(lastSell.amount);
-          const buyFee = parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1'));
-          const sellFee = parseFloat(lastSell.fee_paid) / qty;
+          const qty = toHuman(lastSell.amount);
+
+          // fee_paid is stored in NEAR — express as a fraction of trade value
+          const buyCost = qty * avgEntry;
+          const sellValue = qty * sellPrice;
+          const buyFee = buyCost > 0 ? parseFloat(buys[0]?.fee_paid ?? '0') / buyCost : 0;
+          const sellFee = sellValue > 0 ? parseFloat(lastSell.fee_paid || '0') / sellValue : 0;
 
           const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
           totalRealizedNear += pnl.netNear;
 
-          const tiResult = tokenInfoResults[i];
-          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
           const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
           const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
           msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
@@ -2859,10 +2884,11 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        // Step 2: Query user's real on-chain balance via ft_balance_of
+        // Step 2: Query user's real on-chain balance via ft_balance_of (pinned
+        // trade RPC — hedged read RPCs can lag a block and return stale balances)
         let balanceRaw = '0';
         try {
-          balanceRaw = await near.getTokenBalance(tokenCA, user.subaccount_id);
+          balanceRaw = await near.getTokenBalanceOnTradeRpc(tokenCA, user.subaccount_id);
         } catch (err: any) {
           if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
           await ctx.reply(

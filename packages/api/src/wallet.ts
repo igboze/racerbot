@@ -1245,14 +1245,18 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     // 3. Fetch token balances and metadata in parallel
     const [balanceResults, infoResults] = await Promise.all([
       Promise.allSettled(
-        allTokensToCheck.map(async (tokenAddress) => {
+        allTokensToCheck.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
           try {
-            return await Promise.race([
-              near.getTokenBalance(tokenAddress, subaccountId),
+            const value = await Promise.race([
+              near.getTokenBalanceOnTradeRpc(tokenAddress, subaccountId),
               new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
             ]);
+            return { value, trusted: true };
           } catch {
-            return indexerBalances.get(tokenAddress) || '0';
+            const idx = indexerBalances.get(tokenAddress);
+            // Indexer entry counts as a real reading; absence of data does NOT
+            // mean zero balance — never trust a synthetic '0'.
+            return idx !== undefined ? { value: idx, trusted: true } : { value: '0', trusted: false };
           }
         })
       ),
@@ -1264,7 +1268,12 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     for (let i = 0; i < allTokensToCheck.length; i++) {
       const tokenAddress = allTokensToCheck[i];
       const balRes = balanceResults[i];
-      const rawBal = balRes.status === 'fulfilled' ? balRes.value : (indexerBalances.get(tokenAddress) || '0');
+      const bal = balRes.status === 'fulfilled'
+        ? balRes.value
+        : (indexerBalances.has(tokenAddress)
+            ? { value: indexerBalances.get(tokenAddress)!, trusted: true }
+            : { value: '0', trusted: false });
+      const rawBal = bal.value;
       const infoRes = infoResults[i];
       const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
 
@@ -1283,7 +1292,11 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
 
       if (existing) {
-        if (isDustOrZero) {
+        if (!bal.trusted) {
+          // Could not verify the real balance (RPC timeout, no indexer data) —
+          // leave the position untouched rather than closing it on a phantom zero.
+          console.warn(`[DEPOSIT] Skipped reconcile for ${tokenAddress} (user ${userId}): balance unverifiable`);
+        } else if (isDustOrZero) {
           // User sold or no longer holds the token — close the position
           await updatePosition({
             position_id: existing.id,
