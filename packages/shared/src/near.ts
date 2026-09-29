@@ -888,8 +888,10 @@ export class MultiRpcNear {
       }
     };
 
-    // Attempt 1: registration_only=true with 45s window
-    let result = await tryDeposit(true, 45_000);
+    // Attempt 1: registration_only=true with 25s window (neverSeen recovery
+    // re-reads chain state before retrying, so a short first window can't
+    // false-negative into a worse outcome)
+    let result = await tryDeposit(true, 25_000);
 
     if (result === 'ok' || result === 'already') {
       registeredCache.add(cacheKey);
@@ -2241,18 +2243,22 @@ export class MultiRpcNear {
         }
       }
       let poolId = rheaPoolId;
+      const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+      // Reused below: when the catch branch already fetched pool state, don't
+      // pay for a second findRheaPoolForToken round trip.
+      let rheaState: Awaited<ReturnType<typeof this.findRheaPoolForToken>> | undefined;
       if (poolId === null || poolId === undefined) {
         try {
           poolId = await this.findRheaPoolId(tokenIn, tokenOut);
         } catch {
-          const target = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
-          const rhea = await this.findRheaPoolForToken(target);
-          if (rhea && typeof rhea.poolId === 'number') poolId = rhea.poolId;
+          rheaState = await this.findRheaPoolForToken(targetToken);
+          if (rheaState && typeof rheaState.poolId === 'number') poolId = rheaState.poolId;
         }
       }
 
-      const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
-      const rheaState = await this.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rheaState === undefined) {
+        rheaState = await this.findRheaPoolForToken(targetToken).catch(() => null);
+      }
 
       if (rheaState && rheaState.intermediateToken && rheaState.intermediatePoolId) {
         const interToken = rheaState.intermediateToken;
@@ -2787,19 +2793,28 @@ export class MultiRpcNear {
       const nonceCacheKey = `${accountId}:${pkStr}`;
 
       (account as any).accessKeyByPublicKeyCache = {};
-      const rawAccessKey = await account.connection.provider.query<any>({
-        request_type: 'view_access_key',
-        account_id: accountId,
-        public_key: pkStr,
-        finality: 'optimistic',
-      }).catch(async () => {
-        return account.connection.provider.query<any>({
+      // Access-key nonce query and block fetch are independent — issue both
+      // concurrently instead of sequentially.
+      const [rawAccessKey, block] = await Promise.all([
+        account.connection.provider.query<any>({
           request_type: 'view_access_key',
           account_id: accountId,
           public_key: pkStr,
-          finality: 'final',
-        });
-      });
+          finality: 'optimistic',
+        }).catch(async () => {
+          return account.connection.provider.query<any>({
+            request_type: 'view_access_key',
+            account_id: accountId,
+            public_key: pkStr,
+            finality: 'final',
+          });
+        }),
+        withTimeout<any>(
+          account.connection.provider.block({ finality: 'final' }),
+          5_000,
+          `Block fetch timed out for ${accountId}`
+        ),
+      ]);
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
 
       const prevTracked = this.highestUsedNonce.get(nonceCacheKey) ?? 0n;
@@ -2810,11 +2825,6 @@ export class MultiRpcNear {
       const nextNonce = baseNonce + 1n;
       this.highestUsedNonce.set(nonceCacheKey, nextNonce);
 
-      const block = await withTimeout<any>(
-        account.connection.provider.block({ finality: 'final' }),
-        5_000,
-        `Block fetch timed out for ${accountId}`
-      );
       const blockHash = utils.serialize.base_decode(block.header.hash);
 
       const [txHash, signedTx] = await withTimeout<any[]>(
@@ -3165,7 +3175,7 @@ export class MultiRpcNear {
       // pinned endpoint at 4 req/s triggers 429 rate limits that slow
       // confirmation for EVERY user — a self-inflicted congestion loop.
       polls++;
-      await sleep(Math.min(250 * 2 ** Math.max(0, polls - 4), 2000));
+      await sleep(Math.min(250 * 2 ** Math.max(0, polls - 5), 1000));
     }
 
     const neverSeen = !(state?.everSeen);

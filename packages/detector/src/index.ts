@@ -11,7 +11,7 @@ import {
   type PriceUpdateEvent,
   type AutoBuySignal,
 } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionById } from '@racerbot/db';
+import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds } from '@racerbot/db';
 
 const logger = createLogger('detector');
 
@@ -856,8 +856,11 @@ async function refreshTriggerTokenPrices(): Promise<void> {
     if (triggers.length === 0) return;
 
     const tokenSet = new Set<string>();
-    for (const t of triggers) {
-      const pos = await getPositionById(t.position_id).catch(() => null);
+    // Positions are independent read-only rows — fetch them in one parallel
+    // round instead of one serial DB hop per trigger.
+    const positionIds = [...new Set(triggers.map(t => t.position_id))];
+    const positions = await getPositionsByIds(positionIds).catch(() => []);
+    for (const pos of positions) {
       if (pos?.token_address && pos.status === 'open') {
         tokenSet.add(pos.token_address);
       }
