@@ -716,31 +716,59 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
       rheaPoolId = await near.findRheaPoolId(data.token_in, data.token_out).catch(() => null);
     }
     if (typeof rheaPoolId === 'number') {
-      const reserves = await near.getRheaPoolReserves(rheaPoolId, data.token_in, data.token_out);
-      const reserveInHuman = parseFloat(reserves.reserveIn) / 1e24;
-      const reserveOutHuman = parseFloat(reserves.reserveOut) / Math.pow(10, decimals ?? 18);
-      if (reserveOutHuman > 0) {
-        price = reserveInHuman / reserveOutHuman;
-        liquidity = reserveInHuman * 2;
-      }
+      try {
+        const reserves = await near.getRheaPoolReserves(rheaPoolId, data.token_in, data.token_out);
+        const isTokenInNear = data.token_in === 'wrap.near' || data.token_in === 'near';
+        const isTokenOutNear = data.token_out === 'wrap.near' || data.token_out === 'near';
+        let nearReserveRaw = '0';
+        let tokenReserveRaw = '0';
+        if (isTokenInNear) {
+          nearReserveRaw = reserves.reserveIn;
+          tokenReserveRaw = reserves.reserveOut;
+        } else if (isTokenOutNear) {
+          nearReserveRaw = reserves.reserveOut;
+          tokenReserveRaw = reserves.reserveIn;
+        }
+        const reserveNearHuman = parseFloat(nearReserveRaw) / 1e24;
+        const reserveTokenHuman = parseFloat(tokenReserveRaw) / Math.pow(10, decimals ?? 18);
+        if (reserveTokenHuman > 0 && reserveNearHuman > 0) {
+          price = reserveNearHuman / reserveTokenHuman;
+          liquidity = reserveNearHuman * 2;
+        }
+      } catch { /* skip */ }
     }
   } else if (venue === 'nearlytrade.near' || venue === 'dclv2.ref-labs.near' || venue.includes('nearlytrade') || venue.includes('dclv2')) {
     try {
-      const ntState = await near.getNearlytradeTokenState(tokenAddress);
-      if (ntState && ntState.price > 0) {
-        price = ntState.price;
-        liquidity = ntState.liquidityNear;
+      if (tokenAddress.endsWith('.nearlytrade.near')) {
+        const ntState = await near.getNearlytradeTokenState(tokenAddress);
+        if (ntState && ntState.price > 0) {
+          price = ntState.price;
+          liquidity = ntState.liquidityNear;
+        }
+      } else {
+        const dclId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
+        if (dclId) {
+          const dcl = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
+          if (dcl && dcl.price > 0) {
+            price = dcl.price;
+            liquidity = dcl.liquidityNear;
+          }
+        }
       }
     } catch {
       // skip
     }
   } else if (venue === 'factory.shardsmarket.near' || venue.includes('shardsmarket')) {
-    const reserves = await near.getShardsmarketPoolReserves(tokenAddress);
-    const reserveNearHuman = parseFloat(reserves.reserveNear) / 1e24;
-    const reserveTokenHuman = parseFloat(reserves.reserveToken) / Math.pow(10, decimals ?? 18);
-    if (reserveTokenHuman > 0) {
-      price = reserveNearHuman / reserveTokenHuman;
-      liquidity = reserveNearHuman * 2;
+    try {
+      const reserves = await near.getShardsmarketPoolReserves(tokenAddress);
+      const reserveNearHuman = parseFloat(reserves.reserveNear) / 1e24;
+      const reserveTokenHuman = parseFloat(reserves.reserveToken) / Math.pow(10, decimals ?? 18);
+      if (reserveTokenHuman > 0) {
+        price = reserveNearHuman / reserveTokenHuman;
+        liquidity = reserveNearHuman * 2;
+      }
+    } catch {
+      // skip
     }
   }
 

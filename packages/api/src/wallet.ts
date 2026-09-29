@@ -13,6 +13,7 @@ import {
   generateReferralCode,
   getUserByReferralCode,
   createReferral,
+  getUserById,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
@@ -357,113 +358,89 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       : null;
   let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
 
-  // Fast-path: if dbCache already knows the exact Rhea pool ID, check it directly in 1 view call
-  if (dbCache && dbCache.rhea_pool_id && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
-    try {
-      const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
-      if (rh) {
-        const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
-        const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, meta.decimals);
-        if (reserveNearHuman > 0 && reserveTokenHuman > 0) {
-          price = reserveNearHuman / reserveTokenHuman;
-          liquidity = reserveNearHuman * 2;
+  // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
+  if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
+    if (dbCache.dcl_pool_id) {
+      try {
+        const parts = dbCache.dcl_pool_id.split('|');
+        const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
+        const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
+        if (st.price > 0 && st.liquidityNear > 0) {
+          price = st.price;
+          liquidity = st.liquidityNear;
           venue = 'rhea';
-          rheaPoolId = dbCache.rhea_pool_id;
+          dclPoolId = dbCache.dcl_pool_id;
         }
-      }
-    } catch { /* no-op */ }
+      } catch { /* fallback to discovery below */ }
+    } else if (dbCache.rhea_pool_id) {
+      try {
+        const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
+        if (rh) {
+          const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
+          const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, meta.decimals);
+          const poolLiq = reserveNearHuman * 2;
+          // Only trust cached simple pool if it has meaningful liquidity (>= 5 NEAR).
+          // Dust/spam pools (e.g. < 5 NEAR) shouldn't prevent discovery of deep DCL or launchpad pools.
+          if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq >= 5) {
+            price = reserveNearHuman / reserveTokenHuman;
+            liquidity = poolLiq;
+            venue = 'rhea';
+            rheaPoolId = dbCache.rhea_pool_id;
+          }
+        }
+      } catch { /* fallback to discovery below */ }
+    }
   }
 
-  // Step 1: Rhea first, for every token — use findRheaPoolForToken (covers Simple + DCL + multi-hop)
-  if (price === 0) {
+  // Step 1: Probe Rhea Finance pools (covers Simple + DCL + multi-hop)
+  let rheaCandidate: { venue: 'rhea'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null } | null = null;
+  if (price > 0 && liquidity >= 5) {
+    rheaCandidate = { venue: 'rhea', price, liquidity, rheaPoolId, dclPoolId };
+  } else {
     try {
       const rhea = await near.findRheaPoolForToken(tokenAddress);
       if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
-        price = rhea.price;
-        liquidity = rhea.liquidityNear;
-        venue = 'rhea';
-        if (rhea.isDcl) {
-          dclPoolId = String(rhea.poolId);
-        } else {
-          rheaPoolId = typeof rhea.poolId === 'number' ? rhea.poolId : null;
-        }
+        rheaCandidate = {
+          venue: 'rhea',
+          price: rhea.price,
+          liquidity: rhea.liquidityNear,
+          rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
+          dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
+        };
       }
     } catch { /* no-op */ }
   }
 
-  // Step 2: Only if Rhea has no liquidity, use address suffix to pick a launchpad prober
-  if (price === 0) {
-    if (isMemooCookingToken(tokenAddress)) {
-      venue = 'memecooking';
+  // Step 2: Check launchpad state for tokens matching known launchpad suffixes
+  // Compare launchpad liquidity against Rhea liquidity to always pick the pool with the deepest liquidity
+  if (isMemooCookingToken(tokenAddress)) {
+    try {
       const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
-      price = mcInfo.price;
-      liquidity = mcInfo.liquidity;
-      bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
-      bondingProgressPct = mcInfo.progress;
-    } else if (isIntearToken(tokenAddress)) {
-      venue = 'intear';
-      try {
-        const intearState = await near.getIntearTokenState(tokenAddress);
-        price = intearState.price;
-        liquidity = intearState.liquidityNear;
-      } catch {
-        // If pool lookup failed, keep metadata with 0 price
+      if (mcInfo.price > 0 && (!rheaCandidate || mcInfo.liquidity >= rheaCandidate.liquidity)) {
+        venue = 'memecooking';
+        price = mcInfo.price;
+        liquidity = mcInfo.liquidity;
+        bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
+        bondingProgressPct = mcInfo.progress;
+      } else if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
       }
-    } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
-      // Shardsmarket: token IS its own AMM pool — call get_state() directly
-      try {
-        const smState = await near.getShardsmarketTokenState(tokenAddress);
-        const reserveNearYocto = parseFloat(smState.poolQuote);
-        const reserveTokenRaw = parseFloat(smState.poolToken);
-        if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
-          const reserveNearHuman = reserveNearYocto / 1e24;
-          const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
-          price = reserveNearHuman / reserveTokenHuman;
-          liquidity = reserveNearHuman * 2;
-          venue = 'shardsmarket';
-          if (smState.totalSupply && smState.totalSupply !== '0') {
-            totalSupply = smState.totalSupply;
-          }
-        }
-      } catch {
-        // Not a live Shardsmarket pool (presale phase or not found)
-      }
-    } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
-      venue = 'onetokenhub';
-      try {
-        const hubState = await near.getOneTokenHubState(tokenAddress);
-        price = hubState.price;
-        liquidity = hubState.liquidityNear;
-        dclPoolId = hubState.dclPoolId;
-        if (hubState.totalSupply && hubState.totalSupply !== '0') {
-          totalSupply = hubState.totalSupply;
-        }
-      } catch {
-        // If state lookup failed, keep metadata
-      }
-    } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
-      venue = 'nearpad';
-      try {
-        const padState = await near.getNEARpadState(tokenAddress);
-        price = padState.price;
-        liquidity = padState.liquidityNear;
-        dclPoolId = padState.dclPoolId;
-        if (padState.totalSupply && padState.totalSupply !== '0') {
-          totalSupply = padState.totalSupply;
-        }
-      } catch {
-        // If state lookup failed, keep metadata
-      }
-    } else {
-      // Venue probing for tokens matching no known address suffix
-      const [ntRes, hubRes, padRes] = await Promise.allSettled([
-        near.getNearlytradeTokenState(tokenAddress),
-        near.getOneTokenHubState(tokenAddress),
-        near.getNEARpadState(tokenAddress),
-      ]);
-
-      if (ntRes.status === 'fulfilled' && ntRes.value) {
-        const ntState = ntRes.value;
+    } catch { /* no-op */ }
+  } else if (isIntearToken(tokenAddress)) {
+    venue = 'intear';
+    try {
+      const intearState = await near.getIntearTokenState(tokenAddress);
+      price = intearState.price;
+      liquidity = intearState.liquidityNear;
+    } catch { /* no-op */ }
+  } else if (tokenAddress.endsWith('.nearlytrade.near')) {
+    try {
+      const ntState = await near.getNearlytradeTokenState(tokenAddress);
+      if (ntState && ntState.price > 0 && (!rheaCandidate || ntState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'nearlytrade';
         price = ntState.price;
         liquidity = ntState.liquidityNear;
@@ -473,8 +450,60 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         if (ntState.totalSupply && ntState.totalSupply !== '0') {
           totalSupply = ntState.totalSupply;
         }
-      } else if (hubRes.status === 'fulfilled' && hubRes.value) {
-        const hubState = hubRes.value;
+      } else if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    } catch {
+      if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    }
+  } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+    try {
+      const smState = await near.getShardsmarketTokenState(tokenAddress);
+      const reserveNearYocto = parseFloat(smState.poolQuote);
+      const reserveTokenRaw = parseFloat(smState.poolToken);
+      if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+        const reserveNearHuman = reserveNearYocto / 1e24;
+        const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+        const smPrice = reserveNearHuman / reserveTokenHuman;
+        const smLiquidity = reserveNearHuman * 2;
+        if (!rheaCandidate || smLiquidity >= rheaCandidate.liquidity) {
+          price = smPrice;
+          liquidity = smLiquidity;
+          venue = 'shardsmarket';
+          if (smState.totalSupply && smState.totalSupply !== '0') {
+            totalSupply = smState.totalSupply;
+          }
+        } else {
+          venue = 'rhea';
+          price = rheaCandidate.price;
+          liquidity = rheaCandidate.liquidity;
+          rheaPoolId = rheaCandidate.rheaPoolId;
+          dclPoolId = rheaCandidate.dclPoolId;
+        }
+      }
+    } catch {
+      if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    }
+  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+    try {
+      const hubState = await near.getOneTokenHubState(tokenAddress);
+      if (hubState && hubState.price > 0 && (!rheaCandidate || hubState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'onetokenhub';
         price = hubState.price;
         liquidity = hubState.liquidityNear;
@@ -482,8 +511,26 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         if (hubState.totalSupply && hubState.totalSupply !== '0') {
           totalSupply = hubState.totalSupply;
         }
-      } else if (padRes.status === 'fulfilled' && padRes.value) {
-        const padState = padRes.value;
+      } else if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    } catch {
+      if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    }
+  } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
+    try {
+      const padState = await near.getNEARpadState(tokenAddress);
+      if (padState && padState.price > 0 && (!rheaCandidate || padState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'nearpad';
         price = padState.price;
         liquidity = padState.liquidityNear;
@@ -491,23 +538,81 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         if (padState.totalSupply && padState.totalSupply !== '0') {
           totalSupply = padState.totalSupply;
         }
-      } else {
-        // Intear last resort — full scan, only when cheap probes missed
-        try {
-          const intearState = await near.getIntearTokenState(tokenAddress);
-          if (intearState && intearState.price > 0) {
-            venue = 'intear';
-            price = intearState.price;
-            liquidity = intearState.liquidityNear;
-            if (intearState.totalSupply && intearState.totalSupply !== '0') {
-              totalSupply = intearState.totalSupply;
-            }
-          }
-        } catch {
-          /* not on Intear */
-        }
+      } else if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      }
+    } catch {
+      if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
       }
     }
+  } else if (!rheaCandidate) {
+    // Venue probing for tokens matching no known address suffix
+    const [ntRes, hubRes, padRes] = await Promise.allSettled([
+      near.getNearlytradeTokenState(tokenAddress),
+      near.getOneTokenHubState(tokenAddress),
+      near.getNEARpadState(tokenAddress),
+    ]);
+
+    if (ntRes.status === 'fulfilled' && ntRes.value) {
+      const ntState = ntRes.value;
+      venue = 'nearlytrade';
+      price = ntState.price;
+      liquidity = ntState.liquidityNear;
+      bondingPhase = ntState.phase;
+      bondingProgressPct = ntState.bondingProgressPct;
+      dclPoolId = ntState.dclPoolId;
+      if (ntState.totalSupply && ntState.totalSupply !== '0') {
+        totalSupply = ntState.totalSupply;
+      }
+    } else if (hubRes.status === 'fulfilled' && hubRes.value) {
+      const hubState = hubRes.value;
+      venue = 'onetokenhub';
+      price = hubState.price;
+      liquidity = hubState.liquidityNear;
+      dclPoolId = hubState.dclPoolId;
+      if (hubState.totalSupply && hubState.totalSupply !== '0') {
+        totalSupply = hubState.totalSupply;
+      }
+    } else if (padRes.status === 'fulfilled' && padRes.value) {
+      const padState = padRes.value;
+      venue = 'nearpad';
+      price = padState.price;
+      liquidity = padState.liquidityNear;
+      dclPoolId = padState.dclPoolId;
+      if (padState.totalSupply && padState.totalSupply !== '0') {
+        totalSupply = padState.totalSupply;
+      }
+    } else {
+      // Intear last resort — full scan, only when cheap probes missed
+      try {
+        const intearState = await near.getIntearTokenState(tokenAddress);
+        if (intearState && intearState.price > 0) {
+          venue = 'intear';
+          price = intearState.price;
+          liquidity = intearState.liquidityNear;
+          if (intearState.totalSupply && intearState.totalSupply !== '0') {
+            totalSupply = intearState.totalSupply;
+          }
+        }
+      } catch {
+        /* not on Intear */
+      }
+    }
+  } else {
+    venue = 'rhea';
+    price = rheaCandidate.price;
+    liquidity = rheaCandidate.liquidity;
+    rheaPoolId = rheaCandidate.rheaPoolId;
+    dclPoolId = rheaCandidate.dclPoolId;
   }
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
@@ -762,6 +867,18 @@ export async function publishSwap(swapEvent: {
     notify_user: false,
     timestamp: Date.now(),
   }, onProgress);
+
+  if (result.success !== false) {
+    // Invalidate cached token info and balance immediately so user sees fresh on-chain data
+    tokenInfoCache.delete(swapEvent.token_in);
+    tokenInfoCache.delete(swapEvent.token_out);
+    getUserById(swapEvent.user_id).then(u => {
+      if (u?.telegram_id) {
+        balanceCache.delete(u.telegram_id);
+      }
+    }).catch(() => {});
+  }
+
   return {
     txHash: result.txHash,
     success: result.success !== false,
@@ -773,6 +890,14 @@ export async function publishSwap(swapEvent: {
     priceNear: result.priceNear,
     nearSpent: result.nearSpent,
   };
+}
+
+export function invalidateBalanceCache(telegramId: number): void {
+  balanceCache.delete(telegramId);
+}
+
+export function invalidateTokenInfoCache(tokenAddress: string): void {
+  tokenInfoCache.delete(tokenAddress);
 }
 
 export interface UserBalances {
