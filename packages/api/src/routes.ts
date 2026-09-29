@@ -1285,18 +1285,27 @@ export function setupRoutes(bot: Telegraf): void {
 
         const entryPrice = parseFloat(pos.avg_entry_price) || 0;
         let pnlDisplay = '+0.0%';
-        let emoji = '🟢';
+        let emoji = '⚪';
+        let pnlStyle: BtnStyle | undefined = undefined; // undefined = default grey button
 
         if (currentPrice > 0 && entryPrice > 0) {
           const pnlPctNum = ((currentPrice - entryPrice) / entryPrice) * 100;
-          // Profit tiers: 🔥 500%+, 🚀 100%+, 🟢 profit, 🔴 loss
-          if (pnlPctNum >= 500) emoji = '🔥';
-          else if (pnlPctNum >= 100) emoji = '🚀';
-          else emoji = pnlPctNum >= 0 ? '🟢' : '🔴';
+          // Profit tiers: 🔥 500%+, 🚀 100%+, 🟢 profit, 🔴 loss, ⚪ flat
+          if (pnlPctNum > 0) {
+            pnlStyle = 'success';
+            if (pnlPctNum >= 500) emoji = '🔥';
+            else if (pnlPctNum >= 100) emoji = '🚀';
+            else emoji = '🟢';
+          } else if (pnlPctNum < 0) {
+            pnlStyle = 'danger';
+            emoji = '🔴';
+          } else {
+            emoji = '⚪';
+          }
           pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
         } else if (currentPrice > 0 && entryPrice <= 0) {
           pnlDisplay = '+0.0%';
-          emoji = '🟢';
+          emoji = '⚪';
         } else {
           pnlDisplay = 'N/A';
           emoji = '⚪';
@@ -1304,9 +1313,10 @@ export function setupRoutes(bot: Telegraf): void {
 
         // Buttons-only list: per-token details render when the user taps the
         // token button (token_detail:<id>) — keeps the holdings view scannable.
+        // Button color follows PNL: green profit, red loss, grey flat/unknown.
         const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
         const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
-        buttons.push([cb(cappedLabel, `token_detail:${pos.id}`)]);
+        buttons.push([cb(cappedLabel, `token_detail:${pos.id}`, pnlStyle)]);
       }
 
       // Add remaining positions value to total portfolio
