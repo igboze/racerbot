@@ -612,7 +612,15 @@ export class SwapExecutor {
           const ntState = await near.getNearlytradeTokenState(tokenTarget).catch(() => null);
           dclPoolId = ntState?.dclPoolId ?? null;
         } else if (venue === 'rhea' || venue === 'ref') {
-          dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+          // Zombie-pool guard: only hunt for a DCL pool when NO simple pool is
+          // known. Otherwise an unrelated thin DCL pool sitting far off the
+          // market price (e.g. JAMBO's |10000 pool, priced ~10× the real AMM
+          // pool with <3 NEAR of quote depth) would override the correct
+          // simple-pool route and the user would massively overpay.
+          const pinnedSimplePool = (event as any).pool_id ?? dbCache?.rhea_pool_id ?? null;
+          if (pinnedSimplePool === null || pinnedSimplePool === undefined) {
+            dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+          }
         } else if (venue === 'onetokenhub') {
           const hubState = await near.getOneTokenHubState(tokenTarget).catch(() => null);
           dclPoolId = hubState?.dclPoolId ?? null;
@@ -1052,6 +1060,46 @@ export class SwapExecutor {
         }
       }
     } else if (venue === 'rhea' || venue === 'ref') {
+        // Cross-pool guard: a DCL pool chosen upstream (or hunted above) can
+        // sit far off the market price with near-zero depth — slippage settings
+        // only protect WITHIN a pool, never against trading the WRONG pool.
+        // When a simple AMM pool also exists for this pair, quote both with the
+        // real swap amount and route through whichever pays out more.
+        if (dclPoolId) {
+          const isBuyQ = token_in === 'wrap.near' || token_in === 'near';
+          const targetTokenQ = isBuyQ ? token_out : token_in;
+          let simplePoolId: number | null = (event as any).pool_id ?? null;
+          if (simplePoolId === null || simplePoolId === undefined) {
+            simplePoolId = await near.findRheaPoolId('wrap.near', targetTokenQ).catch(() => null);
+          }
+          if (typeof simplePoolId === 'number' && simplePoolId >= 0) {
+            const quoteAmount = (isBuyQ ? swapAmount : amountInBigInt).toString();
+            const inTok = isBuyQ ? 'wrap.near' : token_in;
+            const outTok = isBuyQ ? token_out : 'wrap.near';
+            const [dclOut, simpleOut] = await Promise.all([
+              near.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: [dclPoolId],
+                input_token: inTok,
+                output_token: outTok,
+                input_amount: quoteAmount,
+              }).then(q => BigInt(q?.amount || '0')).catch(() => 0n),
+              near.view<any>('v2.ref-finance.near', 'get_return', {
+                pool_id: simplePoolId,
+                token_in: inTok,
+                amount_in: quoteAmount,
+                token_out: outTok,
+              }).then(r => BigInt(r || '0')).catch(() => 0n),
+            ]);
+            if (simpleOut > 0n && simpleOut > dclOut) {
+              console.log(
+                `[EXECUTOR] DCL pool ${dclPoolId} pays less than simple pool ${simplePoolId} ` +
+                `(${dclOut} < ${simpleOut}) — rerouting via simple pool to protect user funds.`
+              );
+              dclPoolId = null;
+              (event as any).pool_id = simplePoolId;
+            }
+          }
+        }
         if (dclPoolId) {
           // Execute Ref DCL swap on dclv2.ref-labs.near
           const isBuy = token_in === 'wrap.near' || token_in === 'near';

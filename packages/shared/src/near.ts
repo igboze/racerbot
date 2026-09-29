@@ -1455,20 +1455,31 @@ export class MultiRpcNear {
 
     const tokenX = tokenA < tokenB ? tokenA : tokenB;
     const tokenY = tokenA < tokenB ? tokenB : tokenA;
+    // Compare fee tiers by the QUOTE side's reserves. total_x + total_y adds
+    // raw amounts of two different tokens, so a pool holding a huge heap of a
+    // worthless base token (e.g. a zombie pool 10× off market) would look like
+    // the "deepest" tier. Prefer the wrap.near side when the pair includes it.
+    const quoteToken = tokenA === 'wrap.near' || tokenB === 'wrap.near'
+      ? 'wrap.near'
+      : tokenA;
     const feeTiers = [10000, 2000, 3000, 400, 100];
     const results = await Promise.allSettled(
       feeTiers.map(async (fee) => {
         const poolId = `${tokenX}|${tokenY}|${fee}`;
         const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
         if (pool && pool.state === 'Running') {
-          const totalReserve = BigInt(pool.total_x || '0') + BigInt(pool.total_y || '0');
-          return { poolId, totalReserve };
+          const quoteReserve = BigInt(
+            pool.token_x === quoteToken ? (pool.total_x || '0')
+            : pool.token_y === quoteToken ? (pool.total_y || '0')
+            : '0'
+          );
+          return { poolId, quoteReserve };
         }
         throw new Error('not running');
       })
     );
 
-    const runningPools: Array<{ poolId: string; totalReserve: bigint }> = [];
+    const runningPools: Array<{ poolId: string; quoteReserve: bigint }> = [];
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value) {
         runningPools.push(r.value);
@@ -1476,8 +1487,8 @@ export class MultiRpcNear {
     }
 
     if (runningPools.length > 0) {
-      // Pick the DCL pool with the highest reserves
-      runningPools.sort((a, b) => (b.totalReserve > a.totalReserve ? 1 : b.totalReserve < a.totalReserve ? -1 : 0));
+      // Pick the DCL pool with the deepest quote-side reserves
+      runningPools.sort((a, b) => (b.quoteReserve > a.quoteReserve ? 1 : b.quoteReserve < a.quoteReserve ? -1 : 0));
       const bestPoolId = runningPools[0].poolId;
       dclPoolIdCache.set(key, bestPoolId);
       dclPoolIdCache.set(`${tokenB}:${tokenA}`, bestPoolId);
