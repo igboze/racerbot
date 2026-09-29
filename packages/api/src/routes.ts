@@ -1173,69 +1173,37 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // ── Helper: Render & Display Holdings with Live Wallet Scan & PNL Baseline ───
-  async function handleHoldings(ctx: Context, isRefresh = false) {
-    const telegramId = ctx.from!.id;
-    try {
-      const user = await getUserByTelegramId(telegramId);
-      if (!user) {
-        if (typeof (ctx as any).answerCbQuery === 'function') {
-          await (ctx as any).answerCbQuery('Please run /start first.').catch(() => {});
-        } else {
-          await ctx.reply('Please run /start first.').catch(() => {});
-        }
-        return;
-      }
+  // ── Helper: Build Holdings view (text + keyboard) ─────────────────────────
+  // forceRefresh=false renders from cache (instant paint); forceRefresh=true
+  // pulls live pool prices (background reconcile pass).
+  async function buildHoldingsView(user: UserRecord, forceRefresh: boolean) {
+    // Fetch all open positions (including previously synced wallet deposits)
+    const positions = await getOpenPositions(user.id).catch(() => []);
 
-      if (typeof (ctx as any).answerCbQuery === 'function') {
-        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing & scanning wallet...' : '💼 Scanning wallet...').catch(() => {});
-      }
+    const emptyKeyboard = Markup.inlineKeyboard([
+      [cb('🔄 Refresh', 'refresh_holdings', 'primary')],
+      [cb('🔙 Back', 'menu_home', 'primary')],
+      [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
+      [
+        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+        Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+      ],
+    ]);
 
-      // 1. Scan user's wallet address immediately to catch all tokens inside
-      await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
-        console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
-      });
+    if (positions.length === 0) {
+      const emptyMsg =
+        '💼 *Holdings*\n\n' +
+        `👛 Wallet: \`${user.subaccount_id}\`\n\n` +
+        '📭 You currently have no token holdings in your wallet.\n\n' +
+        'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
+      return { msg: emptyMsg, keyboard: emptyKeyboard };
+    }
 
-      // 2. Fetch all open positions (including newly synced wallet deposits)
-      const positions = await getOpenPositions(user.id).catch(() => []);
-
-        const emptyKeyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Refresh', 'refresh_holdings')],
-          [Markup.button.callback('🔙 Back', 'menu_home')],
-          [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
-          [
-            Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-            Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-            Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-          ],
-        ]);
-
-        if (positions.length === 0) {
-          const emptyMsg =
-            '💼 *Holdings*\n\n' +
-            `👛 Wallet: \`${user.subaccount_id}\`\n\n` +
-            '📭 You currently have no token holdings in your wallet.\n\n' +
-            'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
-
-          if (isRefresh) {
-            await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
-          } else {
-            const canEdit = typeof (ctx as any).editMessageText === 'function';
-            if (canEdit) {
-              await (ctx as any).editMessageText(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(async () => {
-                await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
-              });
-            } else {
-              await ctx.reply(emptyMsg, { parse_mode: 'Markdown', ...emptyKeyboard }).catch(() => {});
-            }
-          }
-          return;
-        }
-
-      // 3. Fetch all token info in parallel with forceRefresh for live prices
-      const infoResults = await Promise.allSettled(
-        positions.map(pos => getTokenInfo(pos.token_address, true))
-      );
+    // Fetch all token info in parallel; forceRefresh pulls live pool prices
+    const infoResults = await Promise.allSettled(
+      positions.map(pos => getTokenInfo(pos.token_address, forceRefresh))
+    );
       const infoMap = new Map<string, TokenInfoResult | null>();
       positions.forEach((pos, i) => {
         const r = infoResults[i];
@@ -1356,23 +1324,85 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
 
       const keyboard = Markup.inlineKeyboard(buttons);
+      return { msg, keyboard };
+  }
+
+  // ── Helper: Render & Display Holdings — instant paint + background reconcile ─
+  // 1. Paint immediately from DB + cached prices (no waiting on wallet scan).
+  // 2. In the background, scan the wallet for deposits/sales, refresh prices,
+  //    and patch the painted message only if something actually changed.
+  async function handleHoldings(ctx: Context, isRefresh = false) {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        if (typeof (ctx as any).answerCbQuery === 'function') {
+          await (ctx as any).answerCbQuery('Please run /start first.').catch(() => {});
+        } else {
+          await ctx.reply('Please run /start first.').catch(() => {});
+        }
+        return;
+      }
+
+      if (typeof (ctx as any).answerCbQuery === 'function') {
+        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing & scanning wallet...' : '💼 Loading holdings...').catch(() => {});
+      }
+
+      const fingerprintOf = (v: { msg: string; keyboard: any }) =>
+        v.msg + '|' + JSON.stringify(
+          (v.keyboard?.reply_markup?.inline_keyboard ?? []).map((row: any[]) => row.map((b: any) => b.text))
+        );
+
+      // 1. Instant paint from DB + cached prices
+      const view = await buildHoldingsView(user, false);
+      let paintedChatId: number | undefined;
+      let paintedMessageId: number | undefined;
+
+      const replyPaint = async () => {
+        const sent = await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => null);
+        paintedChatId = (sent as any)?.chat?.id ?? (ctx.chat as any)?.id;
+        paintedMessageId = (sent as any)?.message_id;
+      };
 
       if (isRefresh) {
-        // Instantly send a new text of the updated information
-        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+        await replyPaint();
       } else {
         const canEditMsg = typeof (ctx as any).editMessageText === 'function';
+        const cbMsg = (ctx as any).callbackQuery?.message;
         if (canEditMsg) {
-          await (ctx as any).editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
-            if (err?.message?.includes('message is not modified')) {
-              return;
-            }
-            await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
-          });
+          let edited = false;
+          await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
+            .then(() => { edited = true; })
+            .catch(async (err: any) => {
+              if (err?.message?.includes('message is not modified')) { edited = true; return; }
+              await replyPaint();
+            });
+          if (edited && cbMsg) {
+            paintedChatId = cbMsg.chat?.id ?? cbMsg.chat_id;
+            paintedMessageId = cbMsg.message_id;
+          }
         } else {
-          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+          await replyPaint();
         }
       }
+
+      // 2. Background reconcile (detached — never blocks the user's paint)
+      (async () => {
+        try {
+          await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
+            console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
+          });
+          const fresh = await buildHoldingsView(user, true);
+          if (fingerprintOf(fresh) === fingerprintOf(view)) return;
+          if (paintedChatId && paintedMessageId) {
+            await ctx.telegram
+              .editMessageText(paintedChatId, paintedMessageId, undefined, fresh.msg, { parse_mode: 'Markdown', ...fresh.keyboard })
+              .catch(() => {});
+          }
+        } catch (err: any) {
+          console.warn('[HOLDINGS] Background reconcile error:', err?.message || err);
+        }
+      })();
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
