@@ -174,14 +174,45 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
      RETURNING *`,
     [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
   );
+  invalidateUserCache(undefined, params.telegram_id);
   return rowToUser(result.rows[0]);
 }
 
+// ── Short-TTL user cache ────────────────────────────────────────────────────
+// Every Telegram interaction re-reads the user row; a brief in-memory cache
+// removes that round trip. All mutation paths below invalidate immediately,
+// so cached reads never observe stale settings.
+const USER_CACHE_TTL_MS = 10_000;
+const USER_CACHE_MAX = 5_000;
+const userCache = new Map<number, { user: UserRecord | null; expiresAt: number }>();
+const userIdToTelegramId = new Map<string, number>();
+
+function invalidateUserCache(userId?: string, telegramId?: number) {
+  if (telegramId !== undefined) userCache.delete(telegramId);
+  if (userId) {
+    const tid = userIdToTelegramId.get(userId);
+    if (tid !== undefined) userCache.delete(tid);
+    userIdToTelegramId.delete(userId);
+  }
+}
+
 export async function getUserByTelegramId(telegramId: number): Promise<UserRecord | null> {
+  const hit = userCache.get(telegramId);
+  if (hit && Date.now() < hit.expiresAt) {
+    return hit.user ? { ...hit.user } : null;
+  }
   const db = await getDb();
   const result = await db.query('SELECT * FROM users WHERE telegram_id = $1', [telegramId]);
-  if (result.rows.length === 0) return null;
-  return rowToUser(result.rows[0]);
+  const user = result.rows.length === 0 ? null : rowToUser(result.rows[0]);
+  if (userCache.size >= USER_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of userCache) {
+      if (now >= v.expiresAt) userCache.delete(k);
+    }
+  }
+  userCache.set(telegramId, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+  if (user) userIdToTelegramId.set(user.id, telegramId);
+  return user ? { ...user } : null;
 }
 
 export async function getUserById(id: string): Promise<UserRecord | null> {
@@ -201,11 +232,13 @@ export async function getUserBySubaccount(subaccountId: string): Promise<UserRec
 export async function updateUserScopedKey(userId: string, encryptedKey: string): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET scoped_key_encrypted = $1 WHERE id = $2', [encryptedKey, userId]);
+  invalidateUserCache(userId);
 }
 
 export async function updateUserDefaults(userId: string, buyPct?: number, sellPct?: number): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET default_buy_pct = $1, default_sell_pct = $2 WHERE id = $3', [buyPct, sellPct, userId]);
+  invalidateUserCache(userId);
 }
 
 export interface UpdateUserSettingsParams {
@@ -264,6 +297,7 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
     `UPDATE users SET ${setParts.join(', ')} WHERE id = $${idx} RETURNING *`,
     values
   );
+  invalidateUserCache(userId);
   return rowToUser(result.rows[0]);
 }
 
