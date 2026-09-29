@@ -2125,8 +2125,8 @@ export class SwapExecutor {
     const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
     const tokenAddress = isBuy ? tokenOut : tokenIn;
 
-    const meta = await near.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 24 }));
-    const decimals = meta?.decimals ?? 24;
+    const meta = await near.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 }));
+    const decimals = meta?.decimals ?? 18;
 
     let tokenQty: string;
     let priceNear: number;

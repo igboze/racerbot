@@ -1156,51 +1156,68 @@ export class MultiRpcNear {
       fee?: number;
     }> = [];
 
-    // 1. Direct pool with wrap.near on v2.ref-finance.near
-    try {
-      const poolId = await this.findRheaPoolId('wrap.near', tokenAddress);
-      const rh = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-      const reserveIn = parseFloat(rh.reserveIn);   // wNEAR yocto
-      const reserveOut = parseFloat(rh.reserveOut); // token raw
-      if (reserveIn > 0 && reserveOut > 0) {
-        const reserveNearHuman = reserveIn / 1e24;
-        const reserveTokenHuman = reserveOut / Math.pow(10, decimals);
-        const price = reserveNearHuman / reserveTokenHuman;
-        const liquidityNear = reserveNearHuman * 2;
-        candidates.push({
-          poolId,
-          pairedToken: 'wrap.near',
-          isDcl: false,
-          price,
-          liquidityNear,
-          reserveNear: rh.reserveIn,
-          reserveToken: rh.reserveOut,
-          fee: rh.fee,
-        });
-      }
-    } catch { /* no-op */ }
+    // 1. Direct pool with wrap.near on v2.ref-finance.near AND DCL pool on dclv2.ref-labs.near in parallel
+    const [simpleRes, dclRes] = await Promise.allSettled([
+      (async () => {
+        try {
+          const poolId = await this.findRheaPoolId('wrap.near', tokenAddress);
+          const rh = await this.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
+          const reserveIn = parseFloat(rh.reserveIn);   // wNEAR yocto
+          const reserveOut = parseFloat(rh.reserveOut); // token raw
+          if (reserveIn > 0 && reserveOut > 0) {
+            const reserveNearHuman = reserveIn / 1e24;
+            const reserveTokenHuman = reserveOut / Math.pow(10, decimals);
+            const price = reserveNearHuman / reserveTokenHuman;
+            const liquidityNear = reserveNearHuman * 2;
+            return {
+              poolId,
+              pairedToken: 'wrap.near',
+              isDcl: false,
+              price,
+              liquidityNear,
+              reserveNear: rh.reserveIn,
+              reserveToken: rh.reserveOut,
+              fee: rh.fee,
+            };
+          }
+        } catch { /* no-op */ }
+        return null;
+      })(),
+      (async () => {
+        try {
+          const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress);
+          if (dclPoolId) {
+            const st = await this.getDclPoolState(dclPoolId, 'wrap.near');
+            if (st.price > 0 && st.liquidityNear > 0) {
+              return {
+                poolId: dclPoolId,
+                pairedToken: 'wrap.near',
+                isDcl: true,
+                price: st.price,
+                liquidityNear: st.liquidityNear,
+                reserveNear: st.reserveNear,
+                reserveToken: st.reserveToken,
+              };
+            }
+          }
+        } catch { /* no-op */ }
+        return null;
+      })(),
+    ]);
 
-    // Early exit: if we already have a direct wrap.near pool, no need to scan further
-    if (candidates.length > 0) return candidates[0];
+    if (simpleRes.status === 'fulfilled' && simpleRes.value) {
+      candidates.push(simpleRes.value);
+    }
+    if (dclRes.status === 'fulfilled' && dclRes.value) {
+      candidates.push(dclRes.value);
+    }
 
-    // 2. DCL pool on dclv2.ref-labs.near with wrap.near
-    try {
-      const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress);
-      if (dclPoolId) {
-        const st = await this.getDclPoolState(dclPoolId, 'wrap.near');
-        if (st.price > 0 && st.liquidityNear > 0) {
-          candidates.push({
-            poolId: dclPoolId,
-            pairedToken: 'wrap.near',
-            isDcl: true,
-            price: st.price,
-            liquidityNear: st.liquidityNear,
-            reserveNear: st.reserveNear,
-            reserveToken: st.reserveToken,
-          });
-        }
-      }
-    } catch { /* no-op */ }
+    // Fast-path: if we found a direct wrap.near pool (simple or DCL) with substantial liquidity (>= 5 NEAR),
+    // pick the higher liquidity pool immediately without waiting on slow multi-hop/indexer scans!
+    const bestDirect = candidates.reduce((best, c) => (!best || c.liquidityNear > best.liquidityNear ? c : best), null as (typeof candidates)[0] | null);
+    if (bestDirect && bestDirect.liquidityNear >= 5) {
+      return bestDirect;
+    }
 
     // 3. Check Ref indexer top pools (covers thousands of active pools across all pair types)
     try {
@@ -1436,25 +1453,33 @@ export class MultiRpcNear {
 
     const tokenX = tokenA < tokenB ? tokenA : tokenB;
     const tokenY = tokenA < tokenB ? tokenB : tokenA;
-    const feeTiers = [10000, 3000, 2000, 400, 100];
-
+    const feeTiers = [10000, 2000, 3000, 400, 100];
     const results = await Promise.allSettled(
       feeTiers.map(async (fee) => {
         const poolId = `${tokenX}|${tokenY}|${fee}`;
         const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
         if (pool && pool.state === 'Running') {
-          return poolId;
+          const totalReserve = BigInt(pool.total_x || '0') + BigInt(pool.total_y || '0');
+          return { poolId, totalReserve };
         }
         throw new Error('not running');
       })
     );
 
+    const runningPools: Array<{ poolId: string; totalReserve: bigint }> = [];
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value) {
-        dclPoolIdCache.set(key, r.value);
-        dclPoolIdCache.set(`${tokenB}:${tokenA}`, r.value);
-        return r.value;
+        runningPools.push(r.value);
       }
+    }
+
+    if (runningPools.length > 0) {
+      // Pick the DCL pool with the highest reserves
+      runningPools.sort((a, b) => (b.totalReserve > a.totalReserve ? 1 : b.totalReserve < a.totalReserve ? -1 : 0));
+      const bestPoolId = runningPools[0].poolId;
+      dclPoolIdCache.set(key, bestPoolId);
+      dclPoolIdCache.set(`${tokenB}:${tokenA}`, bestPoolId);
+      return bestPoolId;
     }
     return null;
   }
