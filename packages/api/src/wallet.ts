@@ -16,7 +16,7 @@ import {
   getUserById,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
-import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT } from './config.js';
+import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
@@ -1145,6 +1145,38 @@ export async function withdrawFunds(
     amountWithdrawn: formattedWithdrawn,
     destination,
   };
+}
+
+/**
+ * Pay accrued referral rewards from the treasury wallet to a referrer's
+ * RacerBot subaccount. Signed with the treasury key (TREASURY_PRIVATE_KEY env).
+ */
+export async function payReferralReward(
+  destinationSubaccount: string,
+  amountNear: number
+): Promise<{ txHash: string }> {
+  const treasuryKey = (process.env.TREASURY_PRIVATE_KEY || '').trim();
+  if (!treasuryKey) {
+    throw new Error('Reward payouts are not configured on the server yet. Please contact support.');
+  }
+  if (!(amountNear > 0)) {
+    throw new Error('Claim amount must be greater than 0.');
+  }
+
+  const keyPair = KeyPair.fromString(treasuryKey as any);
+  const keyStore = new keyStores.InMemoryKeyStore();
+  await keyStore.setKey('mainnet', TREASURY_ACCOUNT_ID, keyPair);
+
+  const nearConn = await connect({
+    networkId: 'mainnet',
+    keyStore,
+    nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+  });
+  const account = await nearConn.account(TREASURY_ACCOUNT_ID);
+
+  const yocto = BigInt(nearUtils.format.parseNearAmount(amountNear.toFixed(8))!);
+  const res = await account.sendMoney(destinationSubaccount, yocto);
+  return { txHash: res.transaction.hash };
 }
 
 /**

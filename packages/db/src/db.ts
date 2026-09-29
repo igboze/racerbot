@@ -655,6 +655,33 @@ export async function getTotalReferralEarnings(referrerId: string): Promise<numb
   return parseFloat(result.rows[0].total);
 }
 
+// ── Referral Claims (payouts from treasury to referrers) ────────────────────
+
+export interface ReferralClaimRecord {
+  id: string;
+  referrer_id: string;
+  amount_near: number;
+  tx_hash: string | null;
+  created_at: Date;
+}
+
+export async function createReferralClaim(referrerId: string, amountNear: number, txHash: string | null): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'INSERT INTO referral_claims (referrer_id, amount_near, tx_hash, created_at) VALUES ($1, $2, $3, NOW())',
+    [referrerId, amountNear, txHash]
+  );
+}
+
+export async function getTotalReferralClaimed(referrerId: string): Promise<number> {
+  const db = await getDb();
+  const result = await db.query(
+    'SELECT COALESCE(SUM(amount_near), 0) as total FROM referral_claims WHERE referrer_id = $1',
+    [referrerId]
+  );
+  return parseFloat(result.rows[0].total);
+}
+
 function rowToReferral(row: any): ReferralRecord {
   return {
     id: row.id,
