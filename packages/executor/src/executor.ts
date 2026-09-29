@@ -221,7 +221,7 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
  * Swaps on Ref Finance (v2.ref-finance.near and dclv2.ref-labs.near) execute via ft_transfer_call
  * with force: 0, which directly transfers output tokens to the user without requiring register_tokens.
  */
-export async function ensureRefTokenRegistered(tokenAddress: string, accountId?: string): Promise<void> {
+export async function ensureRefTokenRegistered(_tokenAddress: string, _accountId?: string): Promise<void> {
   return;
 }
 
@@ -450,10 +450,13 @@ export class SwapExecutor {
     // Pre-flight balance check: verify the account has sufficient native balance before burning gas or broadcasting
     const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
     if (isBuyPath) {
-      const nativeBalStr = await this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null;
+      // Both reads are independent — fetch in parallel like the sell path below.
+      const [nativeBalStr, wNearBalStr] = await Promise.all([
+        this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
+        this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+      ]);
       if (nativeBalStr !== null && nativeBalStr !== undefined) {
         const nativeBal = BigInt(nativeBalStr);
-        const wNearBalStr = await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
         const wNearBal = BigInt(wNearBalStr || '0');
         const amountInBigInt = BigInt(amount_in);
         // Required native NEAR if existing wNEAR balance does not cover amount_in
@@ -597,7 +600,7 @@ export class SwapExecutor {
     };
 
     // Use near-api-js to build, sign, and broadcast the FunctionCall transaction
-    const account = await this.nearClient.getAccount(subaccountId);
+    await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
     if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
@@ -1793,7 +1796,7 @@ export class SwapExecutor {
           break;
         }
       }
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 750));
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 300));
     }
     const swapOutcome = determineSwapOutcome({
       result,
@@ -1863,11 +1866,28 @@ export class SwapExecutor {
       let feePaid = false;
 
       try {
-        console.log(`[EXECUTOR] Auto-unwrapping ${netAmountOut} yoctoNEAR of wrap.near for ${subaccountId}`);
-        await signAndSend('wrap.near', [
-          transactions.functionCall('near_withdraw', { amount: netAmountOut }, BigInt('30000000000000'), BigInt('1')),
-        ], 15_000);
-        console.log(`[EXECUTOR] Auto-unwrapped to native NEAR successfully for ${subaccountId}`);
+        // Skip the unwrap when the sell provably paid out native NEAR (wNEAR
+        // balance unchanged across the swap, e.g. DCL) — the full
+        // sign+broadcast+confirm cycle would fail harmlessly anyway. When
+        // balance reads are unavailable (null) or the delta is unexpected,
+        // fall back to unwrapping netAmountOut as before.
+        let unwrapAmount: string | null = netAmountOut;
+        if (capturedPreOutBalance !== null && postOutBalance !== null) {
+          const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
+          if (wNearDelta === 0n) {
+            console.log(`[EXECUTOR] Sell paid out native NEAR (wNEAR delta 0) — skipping near_unwrap for ${subaccountId}`);
+            unwrapAmount = null;
+          } else if (wNearDelta > 0n) {
+            unwrapAmount = wNearDelta.toString();
+          }
+        }
+        if (unwrapAmount !== null) {
+          console.log(`[EXECUTOR] Auto-unwrapping ${unwrapAmount} yoctoNEAR of wrap.near for ${subaccountId}`);
+          await signAndSend('wrap.near', [
+            transactions.functionCall('near_withdraw', { amount: unwrapAmount }, BigInt('30000000000000'), BigInt('1')),
+          ], 10_000);
+          console.log(`[EXECUTOR] Auto-unwrapped to native NEAR successfully for ${subaccountId}`);
+        }
       } catch (err: any) {
         // Non-fatal: DCL sells pay native NEAR directly, so there may be no
         // wNEAR to unwrap. The user keeps their funds either way.
@@ -1876,7 +1896,7 @@ export class SwapExecutor {
 
       if (sellFeeNear > 0n) {
         try {
-          await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 15_000);
+          await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000);
           feePaid = true;
           console.log(`[EXECUTOR] Sell fee ${sellFeeNear} yoctoNEAR sent to treasury for ${subaccountId}`);
         } catch (err: any) {
