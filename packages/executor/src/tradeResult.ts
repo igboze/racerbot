@@ -44,21 +44,88 @@ export interface SwapOutcome {
 export function distillFailureReason(failure: any): string {
   const errStr = JSON.stringify(failure ?? {}).toLowerCase();
   const raw = JSON.stringify(failure ?? {});
+
+  // ── Slippage / min amount ────────────────────────────────────────────────
   if (errStr.includes('slippage') || errStr.includes('min_amount') || errStr.includes('less than minimum')) {
-    return 'Slippage too high — price moved against you. Increase slippage in Settings and retry.';
+    return 'Slippage too high — price moved against you. Increase slippage in ⚙️ Settings and retry.';
+  }
+
+  // ── Native NEAR / wNEAR balance ──────────────────────────────────────────
+  if (
+    errStr.includes("doesn't have enough balance") ||
+    errStr.includes('does not have enough balance') ||
+    errStr.includes('not enough balance')
+  ) {
+    return 'Insufficient NEAR balance — your wallet does not have enough NEAR to complete this transaction. Please deposit more NEAR and retry.';
   }
   if (errStr.includes('insufficient') && errStr.includes('balanc')) {
-    return 'Insufficient wNEAR balance for this swap. Please retry.';
+    if (errStr.includes('wrap.near') || errStr.includes('wnear') || errStr.includes('wrapped')) {
+      return 'Insufficient wNEAR balance for this swap. Please retry (your wNEAR will be wrapped automatically).';
+    }
+    return 'Insufficient balance — your wallet does not have enough NEAR. Please deposit more and retry.';
   }
-  if (errStr.includes('no pool') || errStr.includes('pool_not_found')) {
-    return 'No liquidity pool found on-chain for this token.';
+
+  // ── Token not registered / storage ──────────────────────────────────────
+  if (
+    errStr.includes('not registered') ||
+    errStr.includes('account is not registered') ||
+    errStr.includes('storage deposit')
+  ) {
+    return 'Your wallet needs to be registered with this token contract. This is usually handled automatically — please retry.';
   }
-  if (errStr.includes('panic') || errStr.includes('executionerror')) {
+
+  // ── Pool / liquidity ─────────────────────────────────────────────────────
+  if (
+    errStr.includes('no pool') ||
+    errStr.includes('pool_not_found') ||
+    errStr.includes('pool not found') ||
+    errStr.includes('no active pool')
+  ) {
+    return 'No active liquidity pool found on-chain for this token. It may have been removed or is not yet live.';
+  }
+  if (errStr.includes('insufficient liquidity') || errStr.includes('not enough liquidity')) {
+    return 'Not enough liquidity in the pool for this trade size. Try a smaller amount.';
+  }
+
+  // ── Access key / auth ────────────────────────────────────────────────────
+  if (
+    errStr.includes('notenoughallowance') ||
+    errStr.includes('not enough allowance') ||
+    errStr.includes('access key') ||
+    errStr.includes('lacking access key')
+  ) {
+    return 'Wallet key allowance exhausted or missing. Please run /rotatekey to refresh your trading key.';
+  }
+
+  // ── Gas ──────────────────────────────────────────────────────────────────
+  if (errStr.includes('exceeded the prepaid gas') || errStr.includes('gas exceeded')) {
+    return 'Transaction ran out of gas. Please retry — this usually resolves on the next attempt.';
+  }
+
+  // ── Expired / nonce ──────────────────────────────────────────────────────
+  if (errStr.includes('expired') || errStr.includes('nonce')) {
+    return 'Transaction expired (network latency). Please retry.';
+  }
+
+  // ── Contract panic — surface the actual panic message ───────────────────
+  if (errStr.includes('panic') || errStr.includes('executionerror') || errStr.includes('functioncallerror')) {
     const panicMatch = raw.match(/"ExecutionError":"([^"]+)"/);
-    if (panicMatch) return `Contract error: ${panicMatch[1].slice(0, 150)}`;
+    if (panicMatch) {
+      const msg = panicMatch[1].slice(0, 200);
+      const msgLower = msg.toLowerCase();
+      if (msgLower.includes('balance') || msgLower.includes('insufficient')) {
+        return `Insufficient balance on-chain: ${msg}`;
+      }
+      if (msgLower.includes('slippage') || msgLower.includes('min_amount')) {
+        return 'Slippage too high — price moved against you. Increase slippage in ⚙️ Settings and retry.';
+      }
+      return `Contract error: ${msg}`;
+    }
   }
-  return 'Transaction failed or slippage breach';
+
+  return 'Transaction failed on-chain. Please check your wallet balance and settings, then retry.';
 }
+
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
