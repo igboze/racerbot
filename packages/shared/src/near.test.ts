@@ -467,3 +467,62 @@ describe('near: awaitOutcome neverSeen classification (mempool blackhole detecti
     vi.unstubAllGlobals();
   }, 15_000);
 });
+
+
+describe('near: waitForOutcome recovery fan-out', () => {
+  const QN = 'https://example.quiknode.pro/abc';
+  const FN = 'https://rpc.mainnet.fastnear.com';
+
+  const unknownTxResponse = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'await-outcome',
+      error: {
+        name: 'HANDLER_ERROR',
+        cause: { info: {}, name: 'UNKNOWN_TRANSACTION' },
+        code: -32000,
+        message: 'Server error',
+        data: "Transaction abc doesn't exist",
+      },
+    }),
+  }) as unknown as Response;
+
+  const finalOutcomeResponse = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'await-outcome',
+      result: {
+        final_execution_status: 'FINAL',
+        status: { SuccessValue: '' },
+        receipts_outcome: [{ outcome: { status: { SuccessValue: '' }, logs: [] } }],
+      },
+    }),
+  }) as unknown as Response;
+
+  it('recovers via a peer provider when the pinned RPC never sees the tx', async () => {
+    // Regression: recovery polling used to query ONLY the pinned trade RPC —
+    // when that endpoint lagged or rate-limited, landed transactions were
+    // reported as "confirmation is taking longer than usual".
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === QN) return unknownTxResponse();
+      return finalOutcomeResponse();
+    }));
+    const near = new MultiRpcNear([QN, FN]) as any;
+    const outcome = await near.waitForOutcome('abc', 'alice.near', 8_000);
+    expect(outcome).toBeTruthy();
+    expect(outcome.final_execution_status).toBe('FINAL');
+    vi.unstubAllGlobals();
+  }, 15_000);
+
+  it('returns null when no provider can confirm within the window', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => unknownTxResponse()));
+    const near = new MultiRpcNear([QN, FN]) as any;
+    const outcome = await near.waitForOutcome('abc', 'alice.near', 3_000);
+    expect(outcome).toBeNull();
+    vi.unstubAllGlobals();
+  }, 15_000);
+});
