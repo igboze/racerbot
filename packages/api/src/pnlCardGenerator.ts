@@ -134,8 +134,20 @@ export async function generatePNLCardData(
     const totalValue      = unrealizedValue + totalRealizedValue;
     const unrealizedPnl   = unrealizedValue - quantityHeld * avgEntryPrice;
     const totalPnl        = totalValue - totalInitialInvestment;
-    const pnlPercent      = totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0;
-    const isProfit        = totalPnl >= 0;
+
+    // ── PnL % for the hero display ────────────────────────────────────────────
+    // We derive pnlPercent from avgEntryPrice vs currentPrice so it is always
+    // consistent with the entryMarketCap shown on the card (both use avgEntryPrice
+    // as the cost basis). Using totalInitialInvestment (which bundles fees across
+    // multiple buys at different prices) produced a different number than what
+    // the market-cap columns implied, confusing users who added to their position.
+    const costBasisHeld = quantityHeld * avgEntryPrice; // excludes fees — same as entryMcap basis
+    const pnlPercent = costBasisHeld > 0
+      ? (unrealizedPnl / costBasisHeld) * 100
+      : totalInitialInvestment > 0
+        ? (totalPnl / totalInitialInvestment) * 100
+        : 0;
+    const isProfit = totalPnl >= 0;
 
     // ── Hold duration ────────────────────────────────────────────────────────
     const openedAt        = position.opened_at;
