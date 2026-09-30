@@ -849,17 +849,13 @@ function getUserFriendlyError(error: Error | string): string {
   console.error('[USER_ERROR]', errorMsg);
   const r = errorMsg.toLowerCase();
 
-  // ── Wallet / balance ────────────────────────────────────────────────
-  if (r.includes('insufficient balance') || (r.includes('insufficient') && r.includes('balanc')))
-    return errorMsg.slice(0, 280); // pass through — already human-readable from executeBuyHelper
-  if (r.includes('minimum buy amount') || r.includes('minimum is 0.001'))
-    return 'The amount is too small. Minimum is 0.001 NEAR.';
-  if (r.includes('available balance') && r.includes('too low'))
-    return errorMsg.slice(0, 280);
-  if (r.includes('failed to fetch wallet balance'))
-    return 'Unable to check your wallet balance. Please try again.';
+  // ── Wallet not set up ────────────────────────────────────────────────────
+  if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
+    return 'Wallet not found. Please run /start first.';
+  if (r.includes('unauthorized') || r.includes('forbidden'))
+    return 'Authentication required. Please run /start.';
 
-  // ── Auth & Trading Key ───────────────────────────────────────────────
+  // ── Auth & Trading Key ───────────────────────────────────────────────────
   if (
     r.includes('unsupported state') ||
     r.includes('unable to authenticate data') ||
@@ -868,12 +864,36 @@ function getUserFriendlyError(error: Error | string): string {
   ) {
     return 'Wallet trading key authentication failed. Please run /rotatekey to refresh your key.';
   }
-  if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
-    return 'Wallet not found. Please run /start first.';
-  if (r.includes('unauthorized') || r.includes('forbidden'))
-    return 'Authentication required. Please run /start.';
+  if (
+    r.includes('notenoughallowance') ||
+    r.includes('not enough allowance') ||
+    r.includes('lacking access key') ||
+    r.includes('allowance exhausted')
+  ) {
+    return 'Key allowance exhausted. Please run /rotatekey to reset your trading key.';
+  }
 
-  // ── Venue / pool discovery ───────────────────────────────────────────
+  // ── Balance errors (check BEFORE generic timeouts — stale balance cache can
+  //    let a trade reach the executor where it fails on-chain; that error must
+  //    not be swallowed into the generic "confirmation taking longer" message) ─
+  if (r.includes('insufficient balance') || (r.includes('insufficient') && r.includes('balanc')))
+    return errorMsg.slice(0, 280); // already human-readable from executeBuyHelper / executor
+  if (r.includes('available balance') && r.includes('too low'))
+    return errorMsg.slice(0, 280);
+  if (r.includes('insufficient near') || r.includes('not enough near'))
+    return errorMsg.slice(0, 280);
+  if (r.includes('insufficient token balance'))
+    return errorMsg.slice(0, 280);
+  if (r.includes("doesn't have enough balance") || r.includes('does not have enough balance') || r.includes('not enough balance'))
+    return 'Insufficient NEAR balance — your wallet does not have enough NEAR. Please deposit more NEAR and retry.';
+  if (r.includes('insufficient near for gas') || (r.includes('insufficient') && r.includes('gas')))
+    return errorMsg.slice(0, 280);
+  if (r.includes('minimum buy amount') || r.includes('minimum is 0.001'))
+    return 'The amount is too small. Minimum is 0.001 NEAR.';
+  if (r.includes('failed to fetch wallet balance'))
+    return 'Unable to check your wallet balance right now. Please try again in a moment.';
+
+  // ── Venue / pool discovery ───────────────────────────────────────────────
   if (r.includes('could not determine dex venue') || r.includes('could not determine venue'))
     return 'Unable to find a trading pool for this token. Paste the exact contract address.';
   if (r.includes('token is on') && (r.includes('not yet supported') || r.includes('not supported')))
@@ -885,79 +905,93 @@ function getUserFriendlyError(error: Error | string): string {
     r.includes('no liquidity pool') ||
     r.includes('no active rhea') ||
     r.includes('missing field pool_id') ||
-    r.includes('failed to fetch pool reserves')
+    r.includes('failed to fetch pool reserves') ||
+    r.includes('no active pool') ||
+    r.includes('pool_not_found')
   ) {
     return 'No active liquidity pool found for this token on DEX. It may not be tradeable yet.';
   }
+  if (r.includes('insufficient liquidity') || r.includes('not enough liquidity'))
+    return 'Not enough liquidity in the pool for this trade size. Try a smaller amount.';
   if (r.includes('prebonded') || r.includes('not yet bonded') || r.includes('bonding curve phase') || r.includes('bonding phase'))
     return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
   if (r.includes('not paired with near') || r.includes('paired with'))
     return errorMsg.slice(0, 280);
 
-  // ── Swap failure on-chain ────────────────────────────────────────────
+  // ── Swap failure on-chain ────────────────────────────────────────────────
   if (r.includes('no transaction was sent'))
-    return 'Price moved beyond your slippage setting in the seconds before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
+    return 'Price moved beyond your slippage setting before execution. The trade was NOT sent — no funds spent. Retry for a fresh quote, or increase slippage in ⚙️ Settings.';
+  if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum'))
+    return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings, then retry.';
+  if (r.includes('swap produced no') || r.includes('dex refunded'))
+    return errorMsg.slice(0, 280);
   if (r.includes('swap failed'))
     return errorMsg.slice(0, 280);
 
-  // ── Storage registration timeouts (never reached / congestion) ───────────
+  // ── Token storage / registration ─────────────────────────────────────────
+  if (r.includes('not registered') || r.includes('account is not registered'))
+    return 'Your wallet needs to be registered with this token. This is usually done automatically — please retry.';
+
+  // ── Gas ──────────────────────────────────────────────────────────────────
+  if (r.includes('exceeded the prepaid gas') || r.includes('gas exceeded'))
+    return 'Transaction exceeded prepaid gas. Please retry.';
+
+  // ── Contract panics that contain balance info ─────────────────────────────
+  if (r.includes('contract error: insufficient') || r.includes('insufficient balance on-chain'))
+    return errorMsg.slice(0, 280);
+  if (r.includes('contract error:') || r.includes('smart_contract_panic'))
+    return `Contract error: ${sanitizeMd(errorMsg.replace(/.*FunctionCallError.*ExecutionError\":\"([^"]+)\".*$/, '$1').slice(0, 180))}`;
+  if ((r.includes('panic') || r.includes('wasm execution failed') || r.includes('executionerror')))
+    return `Contract error: ${sanitizeMd(errorMsg.replace(/.*FunctionCallError.*ExecutionError\":\"([^"]+)\".*$/, '$1').slice(0, 180))}`;
+
+  // ── Storage registration timeouts ────────────────────────────────────────
   if (r.includes('storage registration') && (r.includes('timed out') || r.includes('congested'))) {
     return '⏳ Wallet registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
   }
   if (r.includes('ref finance') && r.includes('congested')) {
     return '⏳ Ref Finance registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
   }
-
-  // ── Pending / slow confirmation (do NOT advise immediate blind retry) ───
   if (r.includes('storage') && r.includes('never reached the near network')) {
     return '⏳ Wallet storage registration timed out — the NEAR network is congested. No funds were spent. Please retry in a moment.';
   }
   if (r.includes('never reached the near network')) {
-    return 'Your transaction never reached the NEAR network — it was NOT executed and no funds were spent. The network is congested right now; it is safe to retry in a moment.';
+    return 'Your transaction never reached the NEAR network \u2014 it was NOT executed and no funds were spent. The network is congested right now; it is safe to retry in a moment.';
   }
+
+  // ── Pending / slow confirmation ───────────────────────────────────────────────
+  // Fires AFTER all specific errors so balance/pool errors never reach this.
   if (r.includes('not confirmed within') || r.includes('taking too long') || r.includes('outcome is unknown')) {
-    return 'Transaction was submitted but confirmation is taking longer than usual. Please check your wallet balance or NearBlocks before retrying to avoid duplicate trades.';
+    return '\u23f3 Transaction was submitted but confirmation is taking longer than usual. Please check your wallet balance or NearBlocks before retrying to avoid duplicate trades.';
   }
 
-
-  // ── Distributed Lock Contention & Timeout ──────────────────────────────
+  // ── Distributed Lock Contention ──────────────────────────────────────────────
   if (r.includes('another transaction is already in progress') || r.includes('wallet lock') || r.includes('contention')) {
-    return 'Another transaction is already in progress for this wallet — please wait a moment and try again.';
+    return 'Another transaction is already in progress for this wallet \u2014 please wait a moment and try again.';
   }
 
-  // ── NEAR Protocol / RPC errors ───────────────────────────────────────
-  if (r.includes('slippage') || r.includes('min_amount_out') || r.includes('less than minimum'))
-    return 'Slippage too high — price moved against you. Try increasing slippage in ⚙️ Settings, then retry.';
-  if (r.includes('notenoughallowance') || r.includes('not enough allowance'))
-    return 'Key allowance exhausted. Please contact support to reset your trading key.';
+  // ── NEAR RPC errors ───────────────────────────────────────────────────
   if (r.includes('all near rpc broadcast failed'))
     return 'All NEAR RPC nodes rejected the transaction. Please retry in a moment.';
   if (r.includes('signing timed out'))
     return 'Transaction signing timed out. Please retry.';
   if (r.includes('timeout') || r.includes('timed out'))
-    return 'Network timeout — NEAR RPC is slow right now. Please retry.';
-  if (r.includes('exceeded the prepaid gas'))
-    return 'Transaction exceeded prepaid gas. Please retry.';
+    return 'Network timeout \u2014 NEAR RPC is slow right now. Please retry.';
   if (r.includes('expired') || r.includes('nonce'))
     return 'Transaction expired due to network latency. Please retry.';
-  if (r.includes('panic') || r.includes('wasm execution failed') || r.includes('executionerror') || r.includes('smart_contract_panic'))
-    return `Contract error: ${sanitizeMd(errorMsg.replace(/.*FunctionCallError.*ExecutionError":"([^"]+)".*$/, '$1').slice(0, 180))}`;
 
-  // ── Misc known patterns ───────────────────────────────────────────────
+  // ── Misc known patterns ────────────────────────────────────────────────
   if (r.includes('too many requests') || r.includes('rate limit'))
     return 'You\'re doing this too fast. Please wait a moment.';
   if (r.includes('token not found') || r.includes('token lookup failed'))
     return 'Unable to find this token. Please verify the contract address.';
-  if (r.includes('insufficient liquidity'))
-    return 'Not enough liquidity in the pool for this trade size.';
 
-  // ── Pass through clean sanitized error message ───────────────────────
+  // ── Pass through clean sanitized error message ──────────────────────────────
   console.error('[UNHANDLED_ERROR]', errorMsg);
   const clean = errorMsg.split('\n')[0].replace(/ed25519:[a-zA-Z0-9]+/g, '***').trim();
   if (clean.length > 0 && clean.length < 250) {
     return sanitizeMd(clean);
   }
-  return 'Trading operation could not be completed. Please check your balance/settings and try again.';
+  return 'Trading operation could not be completed. Please check your balance and settings, then retry.';
 }
 
 // ── Live stage progress on the "Processing order…" message ───────────────────
