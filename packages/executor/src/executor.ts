@@ -1988,56 +1988,32 @@ export class SwapExecutor {
       return { success: false, reason: `unsupported_venue:${venue}` };
     }
 
-    // Run all rug checks. Any failure = skip buy, notify user.
-    let rugResult: { safe: boolean; reason?: string };
-    try {
-      rugResult = await this.rugCheck(token_address, venue);
-    } catch (err) {
-      rugResult = { safe: false, reason: `check_failed: ${(err as Error).message}` };
-    }
+    // PRIORITY PATH: rug checks, pool resolution and the user lookup are
+    // independent reads — run them concurrently so the snipe fires with the
+    // lowest possible latency after the detector signal.
+    const [rugResult, poolIds, user] = await Promise.all([
+      this.rugCheck(token_address)
+        .catch((err) => ({ safe: false, reason: `check_failed: ${(err as Error).message}` }) as { safe: boolean; reason?: string }),
+      this.resolveAutoBuyPoolIds(token_address, venue),
+      getUserById(user_id).catch(() => null),
+    ]);
 
     if (!rugResult.safe) {
       console.log(`[EXECUTOR] Auto-buy skipped for ${token_address}: ${rugResult.reason}`);
       await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason: rugResult.reason });
       return { success: false, reason: rugResult.reason };
     }
+    if (poolIds.blocked) {
+      return { success: false, reason: poolIds.blocked };
+    }
+    const { rheaPoolId, dclPoolId } = poolIds;
 
     // Dynamic slippage calculation (default 2% or user's preference)
-    const user = await getUserById(user_id);
     const slippagePct = user?.slippage_pct ?? 2;
 
     const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
     if (BigInt(inYocto) <= 0n) {
       return { success: false, reason: 'invalid_amount' };
-    }
-
-    let rheaPoolId: number | null = null;
-    let dclPoolId: string | null = null;
-
-    if (venue === 'nearlytrade') {
-      const ntState = await near.getNearlytradeTokenState(token_address);
-      if (ntState.priceUnavailable) {
-        return { success: false, reason: 'nearlytrade_no_near_route_to_quote' };
-      }
-      if (ntState.phase === 'prebonded' && !ntState.live) {
-        return { success: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
-      }
-      dclPoolId = ntState.dclPoolId;
-    } else if (venue === 'rhea' || venue === 'ref') {
-      const dbCache = await getTokenCache(token_address).catch(() => null);
-      dclPoolId = dbCache?.dcl_pool_id ?? null;
-      if (!dclPoolId) {
-        dclPoolId = await near.findDclPoolId('wrap.near', token_address).catch(() => null);
-      }
-      if (!dclPoolId) {
-        rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', token_address).catch(() => null));
-      }
-    } else if (venue === 'onetokenhub') {
-      const hubState = await near.getOneTokenHubState(token_address);
-      dclPoolId = hubState.dclPoolId;
-    } else if (venue === 'nearpad') {
-      const padState = await near.getNEARpadState(token_address);
-      dclPoolId = padState.dclPoolId;
     }
 
     // FIX Bug 2: Compute minAmountOut against the SWAP amount (98.5% after 1.5% fee).
@@ -2073,105 +2049,98 @@ export class SwapExecutor {
     if (dclPoolId !== null) {
       (swapEvent as any).dcl_pool_id = dclPoolId;
     }
+    // PRIORITY: the quote we just computed is fresh — stamp it so execute()
+    // skips its redundant pre-flight re-quote (saves a full RPC round-trip).
+    (swapEvent as any).quoted_at = Date.now();
 
     return this.execute(swapEvent)
       .then(r => ({ success: r.success }))
       .catch(err => ({ success: false, reason: err.message }));
   }
 
+  /**
+   * Resolve executable pool ids for an auto-buy without doing a full quote.
+   * Runs concurrently with rugCheck so a snipe fires with minimal latency.
+   * Returns `blocked` with a reason when the token has no usable NEAR route.
+   */
+  private async resolveAutoBuyPoolIds(
+    tokenAddress: string,
+    venue: AutoBuySignal['venue']
+  ): Promise<{ rheaPoolId: number | null; dclPoolId: string | null; blocked?: string }> {
+    let rheaPoolId: number | null = null;
+    let dclPoolId: string | null = null;
+
+    if (venue === 'nearlytrade') {
+      const ntState = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
+      if (!ntState || ntState.priceUnavailable) {
+        return { rheaPoolId, dclPoolId, blocked: 'nearlytrade_no_near_route_to_quote' };
+      }
+      if (ntState.phase === 'prebonded' && !ntState.live) {
+        return { rheaPoolId, dclPoolId, blocked: 'nearlytrade_prebonded_excluded_from_autobuy' };
+      }
+      dclPoolId = ntState.dclPoolId;
+    } else if (venue === 'rhea' || venue === 'ref') {
+      const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+      dclPoolId = dbCache?.dcl_pool_id ?? null;
+      if (!dclPoolId) {
+        dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
+      }
+      if (!dclPoolId) {
+        rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null));
+      }
+    } else if (venue === 'onetokenhub') {
+      const hubState = await near.getOneTokenHubState(tokenAddress).catch(() => null);
+      dclPoolId = hubState?.dclPoolId ?? null;
+    } else if (venue === 'nearpad') {
+      const padState = await near.getNEARpadState(tokenAddress).catch(() => null);
+      dclPoolId = padState?.dclPoolId ?? null;
+    }
+
+    if (!rheaPoolId && !dclPoolId) {
+      return { rheaPoolId, dclPoolId, blocked: 'no_executable_pool' };
+    }
+    return { rheaPoolId, dclPoolId };
+  }
+
   // ── Rug / honeypot checks ─────────────────────────────────────────────────
 
   /**
-   * Returns { safe: true } only if ALL checks pass.
-   * Any thrown exception propagates to the caller, which treats it as unsafe (fail-closed).
+   * Fast pre-trade sanity checks for auto-buy.
+   *
+   * NOTE: there is deliberately NO hard liquidity floor here. Liquidity gating
+   * is the user's own auto_buy_min_liquidity_near setting, enforced by the
+   * detector at signal time. A protocol-side floor blocked every real new
+   * launch (bonding curves start with only a few NEAR of liquidity), which is
+   * why snipes silently never executed.
+   *
+   * All reads run in parallel for latency. Fail-closed: if metadata or total
+   * supply cannot be read, the token is treated as unsafe.
    */
-  private async rugCheck(tokenAddress: string, venue: string): Promise<{ safe: boolean; reason?: string }> {
-    const HOLDER_CONCENTRATION_THRESHOLD = 0.8; // fail if top holder > 80%
-    const MIN_LIQUIDITY_NEAR = 100; // fail if < 100 NEAR liquidity
+  private async rugCheck(tokenAddress: string): Promise<{ safe: boolean; reason?: string }> {
+    const HOLDER_CONCENTRATION_THRESHOLD = 0.8; // fail if contract holds > 80% of supply
 
-    // 1. Fetch token metadata — if it doesn't respond, fail closed
-    const meta = await near.getTokenMetadata(tokenAddress);
-    if (!meta.name || !meta.symbol) {
+    // Metadata read has no catch — a throw must fail the check (fail-closed).
+    const [meta, totalSupplyStr, contractBalance] = await Promise.all([
+      near.getTokenMetadata(tokenAddress),
+      near.getTokenTotalSupply(tokenAddress).catch(() => null),
+      near.getTokenBalance(tokenAddress, tokenAddress).catch(() => null),
+    ]);
+
+    if (!meta?.name || !meta?.symbol) {
       return { safe: false, reason: 'no_metadata' };
     }
 
-    // 2. Check liquidity using the KNOWN venue directly (no waterfall probing)
-    let liquidityNear = 0;
-    try {
-      if (venue === 'shardsmarket') {
-        const smReserves = await near.getShardsmarketPoolReserves(tokenAddress);
-        liquidityNear = parseFloat(smReserves.reserveNear) / 1e24;
-      } else if (venue === 'rhea' || venue === 'ref') {
-        // Try simple pool first, then DCL
-        try {
-          const poolId = await near.findRheaPoolId('wrap.near', tokenAddress);
-          const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-          liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
-        } catch {
-          const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress);
-          if (!dclPoolId) throw new Error('no dcl pool');
-          const dclState = await near.getDclPoolState(dclPoolId);
-          liquidityNear = dclState.liquidityNear;
-        }
-      } else if (venue === 'nearlytrade') {
-        const ntState = await near.getNearlytradeTokenState(tokenAddress);
-        if (ntState.priceUnavailable) {
-          return { safe: false, reason: 'nearlytrade_no_near_route_to_quote' };
-        }
-        if (ntState.phase === 'prebonded' && !ntState.live) {
-          return { safe: false, reason: 'nearlytrade_prebonded_excluded_from_autobuy' };
-        }
-        liquidityNear = ntState.liquidityNear;
-      } else if (venue === 'intear') {
-        const intearState = await near.getIntearTokenState(tokenAddress);
-        liquidityNear = intearState.liquidityNear;
-      } else if (venue === 'onetokenhub') {
-        const hubState = await near.getOneTokenHubState(tokenAddress);
-        liquidityNear = hubState.liquidityNear;
-      } else if (venue === 'memecooking') {
-        const memeId = parseMemeCookingId(tokenAddress);
-        const mcInfo = memeId !== null ? await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null) : null;
-        if (mcInfo) {
-          liquidityNear = parseFloat(mcInfo.total_staked || '0') / 1e24;
-        } else {
-          const poolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
-          if (poolId) {
-            const rheaReserves = await near.getRheaPoolReserves(poolId, 'wrap.near', tokenAddress);
-            liquidityNear = parseFloat(rheaReserves.reserveIn) / 1e24;
-          }
-        }
-      } else {
-        return { safe: false, reason: `liquidity_check_failed` };
-      }
-    } catch {
-      return { safe: false, reason: 'liquidity_check_failed' };
-    }
-
-    if (liquidityNear < MIN_LIQUIDITY_NEAR) {
-      return { safe: false, reason: `insufficient_liquidity_${liquidityNear.toFixed(2)}_near` };
-    }
-
-    // 3. Check total supply vs holder concentration
-    // Check deployer/contract account balance vs total supply
-    let totalSupplyStr = '0';
-    try {
-      totalSupplyStr = await near.getTokenTotalSupply(tokenAddress);
-    } catch {
+    if (!totalSupplyStr) {
       return { safe: false, reason: 'total_supply_check_failed' };
     }
 
+    // Contract holding > 80% of its own supply = never distributed (rug signal).
     const totalSupply = parseFloat(totalSupplyStr);
-
-    // Check the token contract itself for any remaining mint authority
-    // (Shardsmarket tokens are immutable; Rhea tokens should have no owner after launch)
-    try {
-      const contractBalance = await near.getTokenBalance(tokenAddress, tokenAddress);
+    if (contractBalance !== null && totalSupply > 0) {
       const contractHolding = parseFloat(contractBalance) / totalSupply;
       if (contractHolding > HOLDER_CONCENTRATION_THRESHOLD) {
         return { safe: false, reason: `contract_holds_${(contractHolding * 100).toFixed(0)}pct` };
       }
-    } catch {
-      // Some tokens don't have balances — not a rug signal by itself
     }
 
     return { safe: true };
