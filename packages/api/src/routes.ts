@@ -2127,95 +2127,207 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── menu_pnl & refresh_pnl ────────────────────────────────────────────────
-  const handlePnl = async (ctx: Context) => {
+  type PnlTimeframe = '24h' | '7d' | '30d' | 'all';
+
+  // ── menu_pnl & refresh_pnl with Timeframe Selection (24h, 7d, 30d, all) ───
+  const handlePnl = async (ctx: Context, timeframe: PnlTimeframe = '24h') => {
     const telegramId = ctx.from!.id;
     try {
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) { await ctx.reply('Use /start first.'); return; }
 
-      // NOTE: External deposit sync now runs in background only, not blocking menu load
+      // Background sync of external deposits
       setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
 
-      const [positions, db] = await Promise.all([
+      let timeFilter = '';
+      let periodLabel = '24 Hours';
+      if (timeframe === '24h') {
+        timeFilter = "AND f.created_at >= NOW() - INTERVAL '24 hours'";
+        periodLabel = '24 Hours';
+      } else if (timeframe === '7d') {
+        timeFilter = "AND f.created_at >= NOW() - INTERVAL '7 days'";
+        periodLabel = '1 Week';
+      } else if (timeframe === '30d') {
+        timeFilter = "AND f.created_at >= NOW() - INTERVAL '30 days'";
+        periodLabel = '1 Month';
+      } else {
+        periodLabel = 'All Time';
+      }
+
+      const [openPositions, db] = await Promise.all([
         getOpenPositions(user.id).catch(() => []),
         getDb(),
       ]);
-      const closedResult = await db.query(
-        'SELECT * FROM positions WHERE user_id = $1 AND status = $2 ORDER BY closed_at DESC LIMIT 10',
-        [user.id, 'closed']
+
+      // Query all sell fills for user in this timeframe
+      const sellFillsQuery = `
+        SELECT 
+          f.id, f.position_id, f.token_address, f.amount, f.price, f.fee_paid, f.created_at,
+          p.avg_entry_price, p.status as pos_status
+        FROM fills f
+        LEFT JOIN positions p ON f.position_id = p.id
+        WHERE f.user_id = $1 AND f.side = 'sell' ${timeFilter}
+        ORDER BY f.created_at DESC
+      `;
+      const sellsResult = await db.query(sellFillsQuery, [user.id]);
+      const sells = sellsResult.rows;
+
+      // Parallel token info fetch for unique tokens traded
+      const uniqueTokens = Array.from(new Set(sells.map((s: any) => s.token_address)));
+      const tokenInfoMap = new Map<string, any>();
+      await Promise.allSettled(
+        uniqueTokens.map(async (tokenAddr) => {
+          try {
+            const info = await getTokenInfo(tokenAddr as string, false);
+            if (info) tokenInfoMap.set(tokenAddr as string, info);
+          } catch {}
+        })
       );
 
-      // FIX 1: Fetch all fills and token info for closed positions in parallel.
-      const [fillsResults, tokenInfoResults] = await Promise.all([
-        Promise.allSettled(closedResult.rows.map((pos: any) => getFillsByPosition(pos.id))),
-        Promise.allSettled(closedResult.rows.map((pos: any) => getTokenInfo(pos.token_address, true))),
-      ]);
-
-      let msg = `📊 *PNL Summary*\n\n`;
-      msg += `🟢 Open positions: ${positions.length}\n`;
-      msg += `✅ Closed positions (last 10): ${closedResult.rows.length}\n\n`;
-
-      let totalRealizedNear = 0;
-      for (let i = 0; i < closedResult.rows.length; i++) {
-        const pos = closedResult.rows[i];
-        const fillResult = fillsResults[i];
-        const fills = fillResult.status === 'fulfilled' ? fillResult.value : [];
-        const buys = fills.filter((f: any) => f.side === 'buy');
-        const sells = fills.filter((f: any) => f.side === 'sell');
-
-        if (buys.length && sells.length) {
-          const tiResult = tokenInfoResults[i];
-          const tokenInfo = tiResult.status === 'fulfilled' ? tiResult.value : null;
-          const decimals = tokenInfo?.decimals ?? 18;
-          // Fills store raw on-chain token units; prices are NEAR per whole token.
-          const toHuman = (rawStr: string): number => {
-            const val = parseFloat(rawStr || '0');
-            if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
-            return val;
-          };
-
-          const avgEntry = parseFloat(pos.avg_entry_price);
-          const lastSell = sells[sells.length - 1];
-          const sellPrice = parseFloat(lastSell.price);
-          const qty = toHuman(lastSell.amount);
-
-          // fee_paid is stored in NEAR — express as a fraction of trade value
-          const buyCost = qty * avgEntry;
-          const sellValue = qty * sellPrice;
-          const buyFee = buyCost > 0 ? parseFloat(buys[0]?.fee_paid ?? '0') / buyCost : 0;
-          const sellFee = sellValue > 0 ? parseFloat(lastSell.fee_paid || '0') / sellValue : 0;
-
-          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
-          totalRealizedNear += pnl.netNear;
-
-          const symbol = tokenInfo?.symbol ? sanitizeMd(tokenInfo.symbol) : pos.token_address.slice(0, 8);
-          const emoji = pnl.pnlPercent >= 0 ? '🟢' : '🔴';
-          msg += `${emoji} *${symbol}*: \`${pnl.netNear.toFixed(4)} NEAR\` (${pnl.pnlPercent >= 0 ? '+' : ''}${pnl.pnlPercent.toFixed(2)}%)\n`;
+      let nearUsdRate = 4.3;
+      for (const info of tokenInfoMap.values()) {
+        if (info?.near_usd && info.near_usd > 0) {
+          nearUsdRate = info.near_usd;
+          break;
         }
       }
 
-      msg += `\n💰 *Total Realized: ${totalRealizedNear.toFixed(4)} NEAR*`;
+      // Group trades by token and calculate exact PNL
+      const tokenGroups: Record<string, { token: string; count: number; cost: number; revenue: number; netPnl: number }> = {};
+      let totalCost = 0;
+      let totalRevenue = 0;
+      let wins = 0;
+      let losses = 0;
+
+      for (const s of sells) {
+        const token = s.token_address;
+        if (!tokenGroups[token]) {
+          tokenGroups[token] = { token, count: 0, cost: 0, revenue: 0, netPnl: 0 };
+        }
+        const grp = tokenGroups[token];
+        grp.count++;
+
+        const info = tokenInfoMap.get(token);
+        const rawAmt = parseFloat(s.amount || '0');
+        const decimals = info?.decimals ?? (rawAmt > 1e25 ? 24 : 18);
+        const humanQty = rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt;
+        const sellPrice = parseFloat(s.price || '0');
+        const sellFee = parseFloat(s.fee_paid || '0');
+        const entryPrice = parseFloat(s.avg_entry_price || s.price || '0');
+
+        const tradeRevenue = (humanQty * sellPrice) - sellFee;
+        const tradeCost = humanQty * entryPrice;
+        const tradePnl = tradeRevenue - tradeCost;
+
+        grp.cost += tradeCost;
+        grp.revenue += tradeRevenue;
+        grp.netPnl += tradePnl;
+
+        totalCost += tradeCost;
+        totalRevenue += tradeRevenue;
+
+        if (tradePnl >= 0) wins++;
+        else losses++;
+      }
+
+      const netRealizedPnl = totalRevenue - totalCost;
+      const netPnlPct = totalCost > 0 ? (netRealizedPnl / totalCost) * 100 : 0;
+      const totalTrades = wins + losses;
+      const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+      const usdVal = Math.abs(netRealizedPnl * nearUsdRate);
+      const usdSign = netRealizedPnl >= 0 ? '+' : '-';
+      const pctSign = netPnlPct >= 0 ? '+' : '';
+      const statusWord = netRealizedPnl >= 0 ? 'PROFIT' : 'LOSS';
+      const pnlEmoji = netRealizedPnl >= 0 ? '🟢' : '🔴';
+
+      let msg = `📊 *PNL Performance Summary*\n`;
+      msg += `⏱ *Timeframe*: *${periodLabel}*\n\n`;
+
+      if (totalTrades === 0) {
+        msg += `ℹ️ _No realized trades found in the last ${periodLabel.toLowerCase()}._\n\n`;
+      } else {
+        msg += `💰 *Net Realized PNL*:\n`;
+        msg += `${pnlEmoji} *${netRealizedPnl >= 0 ? '+' : ''}${netRealizedPnl.toFixed(4)} NEAR* (\`${usdSign}$${usdVal.toFixed(2)} USD\`)\n`;
+        msg += `📈 *Exact Return*: \`${pctSign}${netPnlPct.toFixed(2)}%\` (${statusWord})\n\n`;
+
+        msg += `🎯 *Trade Performance*:\n`;
+        msg += `• *Wins*: \`${wins}\` | *Losses*: \`${losses}\`\n`;
+        msg += `• *Win Rate*: \`${winRate.toFixed(1)}%\`\n`;
+        msg += `• *Total Volume*: \`${totalRevenue.toFixed(2)} NEAR\` (${totalTrades} sell${totalTrades > 1 ? 's' : ''})\n\n`;
+
+        msg += `🪙 *Token Breakdown*:\n`;
+        const sortedTokens = Object.values(tokenGroups).sort((a, b) => b.netPnl - a.netPnl);
+        for (const t of sortedTokens.slice(0, 8)) {
+          const tPct = t.cost > 0 ? (t.netPnl / t.cost) * 100 : 0;
+          const tEmoji = t.netPnl >= 0 ? '🟢' : '🔴';
+          const info = tokenInfoMap.get(t.token);
+          const sym = info?.symbol ? sanitizeMd(info.symbol) : t.token.split('.')[0].toUpperCase();
+          msg += `${tEmoji} *$${sym}*: \`${t.netPnl >= 0 ? '+' : ''}${t.netPnl.toFixed(4)} N\` (\`${tPct >= 0 ? '+' : ''}${tPct.toFixed(1)}%\`) [${t.count} trade${t.count > 1 ? 's' : ''}]\n`;
+        }
+        if (sortedTokens.length > 8) {
+          msg += `_...and ${sortedTokens.length - 8} more tokens_\n`;
+        }
+        msg += `\n`;
+      }
+
+      // Open positions summary (unrealized)
+      if (openPositions.length > 0) {
+        msg += `💼 *Open Portfolio*:\n`;
+        msg += `• Active Holdings: \`${openPositions.length}\`\n`;
+        msg += `_Tap 💼 Holdings below to manage live positions._\n\n`;
+      }
+
+      msg += `_Select a timeframe below to view your stats:_`;
+
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔄 Refresh', 'menu_pnl')],
-        [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+        [
+          cb(timeframe === '24h' ? '✓ 24 Hours' : '24 Hours', 'pnl_tf:24h', timeframe === '24h' ? 'success' : 'primary'),
+          cb(timeframe === '7d' ? '✓ 1 Week' : '1 Week', 'pnl_tf:7d', timeframe === '7d' ? 'success' : 'primary'),
+        ],
+        [
+          cb(timeframe === '30d' ? '✓ 1 Month' : '1 Month', 'pnl_tf:30d', timeframe === '30d' ? 'success' : 'primary'),
+          cb(timeframe === 'all' ? '✓ All Time' : 'All Time', 'pnl_tf:all', timeframe === 'all' ? 'success' : 'primary'),
+        ],
+        [
+          cb('🔄 Refresh', `pnl_tf:${timeframe}`, 'primary'),
+          cb('💼 Holdings', 'menu_holdings', 'primary'),
+        ],
+        [
+          cb('🏠 Main Menu', 'menu_home', 'primary'),
+        ],
         [
           Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
           Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
-      await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+        });
+      } else {
+        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   };
 
-  bot.action(['menu_pnl', 'refresh_pnl'], async (ctx) => {
-    await ctx.answerCbQuery('🔄 Updated PnL!').catch(() => {});
-    await handlePnl(ctx);
+  bot.action(/^pnl_tf:(24h|7d|30d|all)$/, async (ctx) => {
+    const tf = ctx.match![1] as PnlTimeframe;
+    await ctx.answerCbQuery().catch(() => {});
+    await handlePnl(ctx, tf);
   });
 
-  bot.command('pnl', handlePnl);
+  bot.action(['menu_pnl', 'refresh_pnl'], async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await handlePnl(ctx, '24h');
+  });
+
+  bot.command('pnl', async (ctx) => {
+    await handlePnl(ctx, '24h');
+  });
 
   // ── /wallet & /balance ────────────────────────────────────────────────────
   const handleWallet = async (ctx: Context) => {
