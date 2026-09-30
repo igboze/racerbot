@@ -1,6 +1,8 @@
 import { Telegraf, Markup, Context } from 'telegraf';
 import {
   getUserByTelegramId,
+  getUserById,
+  getUserByReferralCode,
   getOpenPositions,
   getFillsByPosition,
   getPositionById,
@@ -10,8 +12,12 @@ import {
   createPosition,
   getDb,
   generateReferralCode,
+  getTotalReferralEarnings,
   getTotalReferralClaimed,
   createReferralClaim,
+  getOrCreateTokenShare,
+  getTokenShareByCode,
+  recordTokenReferral,
   getPointsSummary,
   getPointsLeaderboard,
   createSnipeOrder,
@@ -488,6 +494,20 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   }
 
   // ── Buttons depend on whether trading is supported and if user holds token ──
+  let shareButtonRow: any[] = [];
+  if (userRecord) {
+    try {
+      const shareCode = await getOrCreateTokenShare(userRecord.id, tokenAddress);
+      const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
+      const sym = tokenInfo.symbol || 'TOKEN';
+      const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+      const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+      shareButtonRow = [[Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]];
+    } catch (err: any) {
+      console.warn('[buildTokenCard] Failed to generate share link:', err?.message);
+    }
+  }
+
   let keyboard;
 
   if (tokenInfo.tradeable) {
@@ -518,6 +538,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ],
         [cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger')],
         ...linkRows,
+        ...shareButtonRow,
         [
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
           cb('⚙️ Settings', 'menu_settings', 'primary'),
@@ -545,6 +566,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
           cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${tokenInfo.address}:100`, 'success'),
         ],
         ...linkRows,
+        ...shareButtonRow,
         [
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
           cb('⚙️ Settings', 'menu_settings', 'primary'),
@@ -562,6 +584,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     text += venueNote;
     keyboard = Markup.inlineKeyboard([
       ...linkRows,
+      ...shareButtonRow,
       [
         Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
         Markup.button.callback('🔙 Back', 'menu_home'),
@@ -569,7 +592,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
         Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       ],
     ]);
   }
@@ -1134,11 +1157,55 @@ export function setupRoutes(bot: Telegraf): void {
   bot.command('start', async (ctx) => {
     const telegramId = ctx.from!.id;
     const args = ctx.message!.text!.split(' ').slice(1);
-    const referralCode = args[0] || undefined;
+    const payload = args[0] || undefined;
     const username = ctx.from!.username || undefined;
 
     try {
-      const result = await onboardUser(telegramId, referralCode, username);
+      // ── Token share deep link: /start t_XXXXXXXX ─────────────────────────────
+      // When a user taps a token share link, the payload starts with "t_".
+      // We onboard them normally (registering any account referral in the payload
+      // only if it is NOT a token-share code), then record the token referral and
+      // immediately surface the token card.
+      const isTokenShare = payload?.startsWith('t_') ?? false;
+
+      // For standard referral codes we pass the code to onboardUser; for token-share
+      // codes we pass undefined so no account-level referral is (mis)attributed.
+      const accountReferralCode = isTokenShare ? undefined : payload;
+
+      const result = await onboardUser(telegramId, accountReferralCode, username);
+
+      if (isTokenShare && payload) {
+        // Look up the token share record
+        const shareRecord = await getTokenShareByCode(payload).catch(() => null);
+
+        if (shareRecord) {
+          // Record token referral (no-op on self-referral or duplicate)
+          try {
+            await recordTokenReferral(result.userId, shareRecord.token_address, shareRecord.referrer_id);
+          } catch (e) {
+            console.warn('[/start] recordTokenReferral failed (non-fatal):', e);
+          }
+
+          // Show the token card directly
+          try {
+            const card = await buildTokenCard(shareRecord.token_address, telegramId);
+            // Prewarm trade path in background
+            prewarmTradePath(telegramId, shareRecord.token_address).catch(() => {});
+            await sendTokenCard(ctx, card);
+          } catch (cardErr: any) {
+            // Token may be invalid/delisted — fall through to main menu
+            console.warn('[/start] Token share card failed:', cardErr?.message);
+            const menu = await buildMainMenu(telegramId);
+            await ctx.reply(
+              `⚠️ This share link points to a token that is no longer available.\n\n` + menu.text,
+              { parse_mode: 'Markdown', ...menu.keyboard }
+            );
+          }
+          return;
+        }
+        // Unknown token share code — fall through to normal start
+      }
+
       const menu = await buildMainMenu(telegramId);
 
       if (result.isExisting) {
@@ -2873,8 +2940,17 @@ export function setupRoutes(bot: Telegraf): void {
     );
     const referrals = referralsResult.rows;
 
+    // Token share earnings (from token_referrals table)
+    const tokenShareResult = await db.query(
+      'SELECT COALESCE(SUM(total_fees_earned), 0) as total, COUNT(*) as cnt FROM token_referrals WHERE referrer_id = $1',
+      [user.id]
+    );
+    const tokenShareEarnings = parseFloat(tokenShareResult.rows[0]?.total || '0');
+    const tokenShareCount = parseInt(tokenShareResult.rows[0]?.cnt || '0', 10);
+
     const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
-    const totalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+    const globalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
+    const totalEarnings = globalEarnings + tokenShareEarnings;
     const totalClaimed = await getTotalReferralClaimed(user.id).catch(() => 0);
     const claimableNear = Math.max(0, totalEarnings - totalClaimed);
     const nearUsd = await getNearUsdPrice().catch(() => 0);
@@ -2885,16 +2961,21 @@ export function setupRoutes(bot: Telegraf): void {
       `🎁 *Referral Program*\n\n` +
       `Your referral link:\n` +
       `\`${referralLink}\`\n\n` +
-      `📊 *Your Stats*:\n` +
+      `📊 *Global Referrals* (account sign-ups):\n` +
       `• Total referrals: ${referrals.length}\n` +
       `• Active referrals: ${activeReferrals}\n` +
+      `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\` (30% fee share)\n\n` +
+      `📤 *Token Share Links*:\n` +
+      `• Traders via your links: ${tokenShareCount}\n` +
+      `• Earnings: \`${tokenShareEarnings.toFixed(4)} NEAR\` (5% fee share)\n\n` +
+      `💰 *Combined Totals*:\n` +
       `• Total earned: \`${totalEarnings.toFixed(4)} NEAR\`\n` +
       `• Already claimed: \`${totalClaimed.toFixed(4)} NEAR\`\n` +
       `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~$${claimableUsd.toFixed(2)})\n\n` +
-      `💰 *Rewards*:\n` +
-      `• Earn 30% of fees from every user you refer\n` +
-      `• Claim once your rewards reach $${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet\n` +
-      `• Share your link and earn while your friends trade!`;
+      `💡 *How to earn more*:\n` +
+      `• Earn *30%* of fees from every user you refer with your referral link\n` +
+      `• Earn *5%* of fees when someone trades via your *📤 Share Token* links\n` +
+      `• Claim once your rewards reach $${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet`;
 
     const buttons: any[] = [];
     if (claimableNear > 0) {

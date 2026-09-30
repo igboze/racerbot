@@ -87,6 +87,24 @@ export interface ReferralRecord {
   completed_at: Date | null;
 }
 
+export interface TokenShareRecord {
+  id: string;
+  code: string;
+  token_address: string;
+  referrer_id: string;
+  created_at: Date;
+}
+
+export interface TokenReferralRecord {
+  id: string;
+  user_id: string;
+  token_address: string;
+  referrer_id: string;
+  total_fees_earned: number;
+  created_at: Date;
+  last_trade_at: Date | null;
+}
+
 export interface CreateUserParams {
   telegram_id: number;
   subaccount_id: string;
@@ -673,10 +691,123 @@ export async function getReferralByReferredUser(referredUserId: string): Promise
 export async function getTotalReferralEarnings(referrerId: string): Promise<number> {
   const db = await getDb();
   const result = await db.query(
-    'SELECT COALESCE(SUM(total_fees_earned), 0) as total FROM referrals WHERE referrer_id = $1',
+    `SELECT (
+       (SELECT COALESCE(SUM(total_fees_earned), 0) FROM referrals WHERE referrer_id = $1)
+       +
+       (SELECT COALESCE(SUM(total_fees_earned), 0) FROM token_referrals WHERE referrer_id = $1)
+     ) as total`,
     [referrerId]
   );
-  return parseFloat(result.rows[0].total);
+  return parseFloat(result.rows[0]?.total || '0');
+}
+
+// ── Token Share Links & Token-Specific Referrals ───────────────────────────
+
+function generateShortSlug(length = 8): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+export async function getOrCreateTokenShare(referrerId: string, tokenAddress: string): Promise<string> {
+  const db = await getDb();
+  // Check if an existing share code already exists for this user and token
+  const existing = await db.query(
+    'SELECT code FROM token_shares WHERE referrer_id = $1 AND token_address = $2',
+    [referrerId, tokenAddress]
+  );
+  if (existing.rows.length > 0) {
+    return existing.rows[0].code;
+  }
+
+  // Create new unique code
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = `t_${generateShortSlug(8)}`;
+    try {
+      const res = await db.query(
+        `INSERT INTO token_shares (id, code, token_address, referrer_id, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (referrer_id, token_address) DO UPDATE SET referrer_id = EXCLUDED.referrer_id
+         RETURNING code`,
+        [generateId(), code, tokenAddress, referrerId]
+      );
+      return res.rows[0].code;
+    } catch (err: any) {
+      // Code collision - retry with new random slug
+      if (err.code === '23505' && err.constraint === 'token_shares_code_key') {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to generate unique token share code');
+}
+
+export async function getTokenShareByCode(code: string): Promise<TokenShareRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM token_shares WHERE code = $1', [code]);
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    code: row.code,
+    token_address: row.token_address,
+    referrer_id: row.referrer_id,
+    created_at: row.created_at,
+  };
+}
+
+export async function recordTokenReferral(userId: string, tokenAddress: string, referrerId: string): Promise<TokenReferralRecord | null> {
+  // Prevent self-referral
+  if (userId === referrerId) return null;
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO token_referrals (id, user_id, token_address, referrer_id, created_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (user_id, token_address) DO UPDATE SET referrer_id = EXCLUDED.referrer_id, created_at = NOW()
+     RETURNING *`,
+    [generateId(), userId, tokenAddress, referrerId]
+  );
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    token_address: row.token_address,
+    referrer_id: row.referrer_id,
+    total_fees_earned: parseFloat(row.total_fees_earned || '0'),
+    created_at: row.created_at,
+    last_trade_at: row.last_trade_at,
+  };
+}
+
+export async function getTokenReferral(userId: string, tokenAddress: string): Promise<TokenReferralRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM token_referrals WHERE user_id = $1 AND token_address = $2',
+    [userId, tokenAddress]
+  );
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    token_address: row.token_address,
+    referrer_id: row.referrer_id,
+    total_fees_earned: parseFloat(row.total_fees_earned || '0'),
+    created_at: row.created_at,
+    last_trade_at: row.last_trade_at,
+  };
+}
+
+export async function addTokenReferralReward(tokenReferralId: string, rewardAmount: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE token_referrals SET total_fees_earned = total_fees_earned + $1, last_trade_at = NOW() WHERE id = $2',
+    [rewardAmount, tokenReferralId]
+  );
 }
 
 // ── Referral Claims (payouts from treasury to referrers) ────────────────────
