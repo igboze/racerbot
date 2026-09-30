@@ -739,6 +739,58 @@ function rowToUser(row: any): UserRecord {
   };
 }
 
+// ── Volume stats (admin daily update) ───────────────────────────────────────
+
+export interface VolumeStats {
+  volume24hNear: number;
+  fees24hNear: number;
+  trades24h: number;
+  buys24h: number;
+  sells24h: number;
+  activeTraders24h: number;
+  volumeTotalNear: number;
+  feesTotalNear: number;
+  tradesTotal: number;
+  usersTotal: number;
+}
+
+/**
+ * Trading volume derived from fee_paid (the platform fee is exactly 1.5% of
+ * NEAR volume and is always recorded in NEAR units, unlike fill amounts whose
+ * raw/human units vary across legacy rows).
+ */
+export async function getVolumeStats(): Promise<VolumeStats> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT
+       COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
+       COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'buy')::int AS buys24,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'sell')::int AS sells24,
+       COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS traders24,
+       COUNT(*)::int AS trades_total
+     FROM fills
+     WHERE side IN ('buy', 'sell')
+       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\\_%')`
+  );
+  const u = await db.query('SELECT COUNT(*)::int AS n FROM users');
+  const row = r.rows[0];
+  return {
+    volume24hNear: row.fees24 / 0.015,
+    fees24hNear: row.fees24,
+    trades24h: row.trades24,
+    buys24h: row.buys24,
+    sells24h: row.sells24,
+    activeTraders24h: row.traders24,
+    volumeTotalNear: row.fees_total / 0.015,
+    feesTotalNear: row.fees_total,
+    tradesTotal: row.trades_total,
+    usersTotal: u.rows[0].n,
+  };
+}
+
 function rowToPosition(row: any): PositionRecord {
   return {
     id: row.id,
