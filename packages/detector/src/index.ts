@@ -817,7 +817,7 @@ async function checkAutoBuySignals(
     const liquidity = parseFloat(liquidityStr) / 1e24; // Convert yoctoNEAR to NEAR
 
     for (const user of result.rows) {
-      const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '500');
+      const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '10');
       if (liquidity < minLiquidity) continue;
 
       const signal: AutoBuySignal = {
