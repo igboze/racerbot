@@ -2870,7 +2870,18 @@ export class MultiRpcNear {
       try {
         outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
       } catch (firstErr: any) {
-        if (!firstErr?.neverSeen) throw firstErr;
+        if (!firstErr?.neverSeen) {
+          // The tx WAS seen on-chain but not fully executed within the first
+          // window (congestion, slow receipt tree). Do NOT give up early —
+          // keep polling the SAME hash for the remaining wait budget. Giving
+          // up here pushed every slow confirm into the executor's recovery
+          // path and surfaced false "confirmation is taking longer" errors.
+          if (firstErr?.code !== 'NOT_CONFIRMED') throw firstErr;
+          const remainMs = waitForMs - (Date.now() - tStart);
+          if (remainMs <= 2_000) throw firstErr;
+          console.warn(`[NEAR] tx ${signed.hash} seen on-chain but not fully executed within ${firstWindow}ms — continuing to poll for ${remainMs}ms`);
+          outcome = await this.awaitOutcome(signed.hash, accountId, remainMs, seen, allProviderUrls);
+        } else {
 
         // Phase 2: If the transaction was never seen anywhere after firstWindow,
         // it was dropped by the mempool (congestion / relay drop).
@@ -2895,6 +2906,7 @@ export class MultiRpcNear {
         const seen2 = { everSeen: false };
         const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
         outcome = await this.awaitOutcome(freshSigned.hash, accountId, remainingMs, seen2, allProviderUrls);
+        }
       }
 
       // Perf instrumentation for trade_attempts timings (click→quote→sign→
@@ -3272,33 +3284,41 @@ export class MultiRpcNear {
    * though the RPC never reported it. Polls up to maxMs and returns the
    * outcome once the executed receipt tree is present, or null if the
    * outcome is still unknown (caller must treat it as UNKNOWN, not failed).
+   *
+   * Fans out across ALL trade providers in round-robin — the pinned RPC
+   * that accepted the broadcast is often the one lagging or rate-limited
+   * on status polls, while a peer node already sees the same tx.
    */
   async waitForOutcome(txHash: string, accountId: string, maxMs = 60_000): Promise<any | null> {
     const deadline = Date.now() + maxMs;
+    const urls = this.tradeProviders.map(p => p.url);
+    let i = 0;
     while (Date.now() < deadline) {
-      const { outcome } = await this.queryOutcomeOnce(txHash, accountId).catch(() => ({ outcome: null, error: null }));
+      const url = urls[i++ % urls.length]; // undefined → queryOutcomeOnce default (pinned)
+      const { outcome } = await this.queryOutcomeOnce(txHash, accountId, url).catch(() => ({ outcome: null, error: null }));
       if (outcome) return outcome;
-      await sleep(2_000);
+      await sleep(1_000);
     }
     return null;
   }
 
   /**
-   * Single-shot outcome query on the pinned trade RPC. Returns the outcome
-   * (only once the receipt tree is present) or null for any transient
+   * Single-shot outcome query on ONE trade RPC (pinned by default). Returns the
+   * outcome (only once the receipt tree is present) or null for any transient
    * condition — unknown tx, rate limit, RPC error, empty receipt tree.
    * Structured as { outcome, error } so callers can surface the last real
    * error (e.g. in the NOT_CONFIRMED timeout message).
    */
-  private async queryOutcomeOnce(txHash: string, accountId: string): Promise<{ outcome: any | null; error: Error | null }> {
-    const providerUrl = this.tradeProvider.url;
+  private async queryOutcomeOnce(txHash: string, accountId: string, providerUrl: string = this.tradeProvider.url): Promise<{ outcome: any | null; error: Error | null }> {
     let lastError: Error | null = null;
 
     const callRpc = async (method: string, params: any): Promise<any | null> => {
       try {
+        const provider = this.tradeProviders.find(p => p.url === providerUrl);
+        const headers = provider?.headers ?? { 'Content-Type': 'application/json' };
         const res = await fetch(providerUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
           signal: AbortSignal.timeout(6000),
         });
