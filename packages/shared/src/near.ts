@@ -176,9 +176,12 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
 /**
  * Multi-RPC NEAR connection.
  * Reads hedge across healthy providers (idempotent, safe to race).
- * Writes (BUY/SELL: nonce fetch, sign, broadcast, confirm) go to ONE pinned
- * RPC provider — no fan-out, no fallback. If that RPC fails, the trade fails
- * with a clear error instead of racing duplicates across endpoints.
+ * Writes (BUY/SELL): signing reads (nonce, block hash) hedge across ALL trade
+ * providers — chain-global values, safe to race; max nonce wins. Broadcast
+ * fans out identical signed bytes to all trade providers (idempotent — NEAR
+ * dedupes the same signed tx), confirmation polls across them too. The
+ * per-account Redis lock + highestUsedNonce tracking keep nonce discipline,
+ * so hedging never produces duplicate or conflicting transactions.
  */
 export class MultiRpcNear {
   private readProviders: RPCProvider[];
@@ -226,9 +229,10 @@ export class MultiRpcNear {
     //            protects the free tier by keeping QuickNode out of the fan-out).
     //            QuickNode is the automatic failover when every FastNEAR
     //            provider is unhealthy or circuit-open.
-    //   WRITES → ONE pinned provider only (tradeProviders[0]: QuickNode when
-    //            configured, else FastNEAR). No fan-out, no fallback — nonce,
-    //            broadcast and confirmation all use the same endpoint.
+    //   WRITES → all trade providers hedge the sign reads (nonce: max wins;
+    //            block hash: first success), broadcast fans out identical
+    //            signed bytes, confirmation polls across providers. Order is
+    //            QuickNode-first when configured.
     const readUrls = [
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
@@ -262,10 +266,11 @@ export class MultiRpcNear {
   }
 
   /**
-   * THE single RPC endpoint for the trade write path (BUY/SELL).
-   * Pinned to tradeProviders[0] — QuickNode when configured, else FastNEAR.
-   * Used for nonce fetch (getAccount), broadcast, and confirmation polling.
-   * There is deliberately NO fallback: if this endpoint fails, the trade fails.
+   * The primary trade RPC (QuickNode when configured, else FastNEAR).
+   * Broadcast order starts here and confirmation polls it first; nonce and
+   * block-hash reads hedge across ALL trade providers (see
+   * queryAccessKeyHedged / fetchBlockHashHedged) so a stalled endpoint can no
+   * longer stall signing.
    */
   private get tradeProvider(): RPCProvider {
     const p = this.tradeProviders[0];
@@ -2807,27 +2812,13 @@ export class MultiRpcNear {
       const nonceCacheKey = `${accountId}:${pkStr}`;
 
       (account as any).accessKeyByPublicKeyCache = {};
-      // Access-key nonce query and block fetch are independent — issue both
-      // concurrently instead of sequentially.
-      const [rawAccessKey, block] = await Promise.all([
-        account.connection.provider.query<any>({
-          request_type: 'view_access_key',
-          account_id: accountId,
-          public_key: pkStr,
-          finality: 'optimistic',
-        }).catch(async () => {
-          return account.connection.provider.query<any>({
-            request_type: 'view_access_key',
-            account_id: accountId,
-            public_key: pkStr,
-            finality: 'final',
-          });
-        }),
-        withTimeout<any>(
-          account.connection.provider.block({ finality: 'final' }),
-          5_000,
-          `Block fetch timed out for ${accountId}`
-        ),
+      // Access-key nonce and block hash are hedged across ALL trade providers
+      // (QuickNode + FastNEAR). Both are chain-global reads, so racing endpoints
+      // is safe and removes the single-pinned-RPC stall from the sign path;
+      // the nonce read takes the MAX answer across providers.
+      const [rawAccessKey, blockHashB58] = await Promise.all([
+        this.queryAccessKeyHedged(accountId, pkStr),
+        this.fetchBlockHashHedged(),
       ]);
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
 
@@ -2839,7 +2830,7 @@ export class MultiRpcNear {
       const nextNonce = baseNonce + 1n;
       this.highestUsedNonce.set(nonceCacheKey, nextNonce);
 
-      const blockHash = utils.serialize.base_decode(block.header.hash);
+      const blockHash = utils.serialize.base_decode(blockHashB58);
 
       const [txHash, signedTx] = await withTimeout<any[]>(
         transactions.signTransaction(
@@ -2918,6 +2909,77 @@ export class MultiRpcNear {
       // so no subsequent trade attempt ever uses a stale or gapped in-memory nonce.
       (account as any).accessKeyByPublicKeyCache = {};
     }
+  }
+
+  /**
+   * Access-key (nonce) read for signing, hedged across ALL trade providers in
+   * parallel. The nonce is account state — identical on every endpoint — so
+   * racing providers is safe; among successful answers we take the MAX nonce
+   * (a fresher provider may already see a just-landed tx; a stale lower nonce
+   * would collide with it). Falls back from optimistic to final finality.
+   */
+  private async queryAccessKeyHedged(accountId: string, publicKey: string): Promise<any> {
+    const attempt = async (provider: RPCProvider, finality: string): Promise<any> => {
+      const start = Date.now();
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'racerbot-ak',
+          method: 'query',
+          params: { request_type: 'view_access_key', account_id: accountId, public_key: publicKey, finality },
+        }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const data: any = await res.json();
+      if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      markProviderSuccess(provider, Date.now() - start);
+      return data?.result;
+    };
+    const maxNonce = (results: PromiseSettledResult<any>[]) => {
+      const ok = results.filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value != null);
+      if (ok.length === 0) return null;
+      return ok.reduce((a, b) => (BigInt(b.value?.nonce ?? 0) > BigInt(a.value?.nonce ?? 0) ? b : a)).value;
+    };
+
+    const optimistic = await Promise.allSettled(this.tradeProviders.map(p => attempt(p, 'optimistic')));
+    const best = maxNonce(optimistic);
+    if (best) return best;
+
+    console.warn('[NEAR] view_access_key (optimistic) failed on all trade providers — retrying with final finality');
+    const fin = await Promise.allSettled(this.tradeProviders.map(p => attempt(p, 'final')));
+    const bestFinal = maxNonce(fin);
+    if (bestFinal) return bestFinal;
+    throw new Error('view_access_key failed on all trade RPC providers');
+  }
+
+  /**
+   * Recent block hash for tx validity, hedged across ALL trade providers —
+   * first success wins. A block hash is chain-global, so any healthy endpoint
+   * answers identically; hedging removes the single-endpoint stall from the
+   * sign path.
+   */
+  private async fetchBlockHashHedged(): Promise<string> {
+    const results = await Promise.allSettled(
+      this.tradeProviders.map(async (provider) => {
+        const start = Date.now();
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: provider.headers ?? { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'racerbot-block', method: 'block', params: { finality: 'final' } }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data: any = await res.json();
+        const hash = data?.result?.header?.hash;
+        if (!hash) throw new Error(data?.error?.message || 'no block hash in response');
+        markProviderSuccess(provider, Date.now() - start);
+        return hash as string;
+      })
+    );
+    const first = results.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
+    if (first) return first.value;
+    throw new Error('Block fetch failed on all trade RPC providers');
   }
 
   /** Broadcast signed bytes to the single pinned trade RPC. No fallback. */

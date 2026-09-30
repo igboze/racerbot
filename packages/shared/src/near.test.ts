@@ -301,6 +301,68 @@ describe('near: single pinned trade RPC (no fallback)', () => {
   });
 });
 
+describe('near: sign-path nonce/block hedged across trade providers', () => {
+  const FN = 'https://rpc.mainnet.fastnear.com';
+  const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
+
+  function queryResult(value: any): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: value }),
+      text: async () => '',
+    } as unknown as Response;
+  }
+
+  it('nonce read races all trade providers and takes the MAX nonce', async () => {
+    const near = new MultiRpcNear([QN, FN]) as any;
+    const attempted: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      attempted.push(url);
+      return queryResult({ nonce: url === QN ? 100 : 97 });
+    }));
+
+    const ak = await near.queryAccessKeyHedged('a.near', 'ed25519:xyz');
+    expect(ak.nonce).toBe(100); // max wins — a stale lower nonce would collide
+    expect(attempted).toContain(QN);
+    expect(attempted).toContain(FN);
+    vi.unstubAllGlobals();
+  });
+
+  it('nonce read falls back when the pinned provider errors', async () => {
+    const near = new MultiRpcNear([QN, FN]) as any;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === QN) throw new Error('fetch failed: ETIMEDOUT');
+      return queryResult({ nonce: 42 });
+    }));
+
+    const ak = await near.queryAccessKeyHedged('a.near', 'ed25519:xyz');
+    expect(ak.nonce).toBe(42);
+    vi.unstubAllGlobals();
+  });
+
+  it('block hash hedge returns a healthy provider answer when pinned is down', async () => {
+    const near = new MultiRpcNear([QN, FN]) as any;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === QN) throw new Error('down');
+      return queryResult({ header: { hash: 'HASH_FROM_FN' } });
+    }));
+
+    const hash = await near.fetchBlockHashHedged();
+    expect(hash).toBe('HASH_FROM_FN');
+    vi.unstubAllGlobals();
+  });
+
+  it('throws only when every trade provider fails', async () => {
+    const near = new MultiRpcNear([QN, FN]) as any;
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
+
+    await expect(near.queryAccessKeyHedged('a.near', 'ed25519:xyz')).rejects.toThrow(/all trade RPC/);
+    await expect(near.fetchBlockHashHedged()).rejects.toThrow(/all trade RPC/);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('near: awaitOutcome neverSeen classification (mempool blackhole detection)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
 
