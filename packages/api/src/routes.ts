@@ -14,6 +14,15 @@ import {
   createReferralClaim,
   getPointsSummary,
   getPointsLeaderboard,
+  createSnipeOrder,
+  countActiveSnipeOrders,
+  getSnipeOrdersByUser,
+  cancelSnipeOrder,
+  recordSnipeTrigger,
+  markSnipeTriggerFilled,
+  markSnipeTriggerFailed,
+  markSnipeOrderResult,
+  MAX_ACTIVE_SNIPE_ORDERS_PER_USER,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -61,11 +70,21 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token';
+  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token'
+    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount';
   tokenAddress?: string;
+  deployerAddress?: string;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
+
+// NEAR account id: named (sub.)account.near or a 64-char hex implicit account
+const NEAR_NAMED_ACCOUNT_RE = /^(([a-z0-9]+[-_])*[a-z0-9]+\.)*([a-z0-9]+[-_])*[a-z0-9]+$/;
+function isValidNearAccountId(id: string): boolean {
+  if (!id || id.length < 2 || id.length > 64) return false;
+  if (/^[0-9a-f]{64}$/.test(id)) return true;
+  return NEAR_NAMED_ACCOUNT_RE.test(id);
+}
 
 // ── SPEED: trade-path prewarm ────────────────────────────────────────────────
 // Fires (fire-and-forget) when a token card is shown: resolves pool ids,
@@ -752,7 +771,10 @@ export function buildSnipeDashboard(user: UserRecord) {
     `Automatically buy new token launches the moment they appear. Configure your rules below:\n\n` +
     `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 *Enabled*' : '🔴 *Disabled*'}\n` +
     `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
-    `• *Min Pool Liquidity*: \`${minLiq} NEAR\``;
+    `• *Min Pool Liquidity*: \`${minLiq} NEAR\`\n\n` +
+    `*Targeted Snipes* (custom amount each):\n` +
+    `• 🎯 *Token CA* — snipe one specific token, now or the moment it launches\n` +
+    `• 👤 *Deployer* — snipe EVERY token a chosen wallet launches`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -761,6 +783,13 @@ export function buildSnipeDashboard(user: UserRecord) {
         'set:toggle_auto_buy',
         autoBuy ? 'success' : 'danger'
       ),
+    ],
+    [
+      cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'),
+      cb('👤 Snipe by Dev', 'snipe_dev_start', 'success'),
+    ],
+    [
+      cb('📋 My Snipe Orders', 'snipe_orders', 'primary'),
     ],
     [
       cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
@@ -1229,6 +1258,109 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  // ── Targeted snipes: by token contract address / by deployer wallet ───────
+
+  bot.action('snipe_token_start', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+    if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `🎯 *Snipe by Token Contract*\n\n` +
+      `Reply with the token contract address (CA), e.g. \`token.nearlytrade.near\`\n\n` +
+      `• Already tradable → the buy executes *immediately*\n` +
+      `• Not launched/bonded yet → the snipe stays *armed* and fires the moment a pool goes live\n\n` +
+      `Type /cancel to abort.`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action('snipe_dev_start', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+    if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, { action: 'snipe_dev_addr', expiresAt: Date.now() + 120_000 });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `👤 *Snipe by Deployer*\n\n` +
+      `Reply with the NEAR wallet address whose launches you want to snipe, e.g. \`someuser.near\`\n\n` +
+      `Every new token that wallet launches will be auto-bought — until you cancel the order.\n\n` +
+      `Type /cancel to abort.`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action('snipe_orders', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const orders = await getSnipeOrdersByUser(user.id).catch(() => []);
+    await ctx.answerCbQuery().catch(() => {});
+    if (orders.length === 0) {
+      await ctx.reply(
+        `📋 *Snipe Orders*\n\nNo orders yet. Set one up with 🎯 Snipe Token CA or 👤 Snipe by Dev.`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]] } }
+      );
+      return;
+    }
+    const statusEmoji: Record<string, string> = { active: '🟢', filled: '✅', cancelled: '⚪', failed: '🔴' };
+    const lines = orders.map((o) => {
+      const target = o.snipe_type === 'token' ? `🪙 \`${o.token_address}\`` : `👤 \`${o.deployer_address}\``;
+      const extra = o.snipe_type === 'deployer' && o.trigger_count > 0 ? ` · fired ${o.trigger_count}×` : '';
+      const err = o.status === 'failed' && o.last_error ? ` · _${o.last_error.slice(0, 60)}_` : '';
+      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} NEAR*${extra}${err}`;
+    });
+    const buttons: any[] = orders
+      .filter((o) => o.status === 'active')
+      .map((o) => [
+        cb(
+          `❌ Cancel ${o.snipe_type === 'token' ? o.token_address : 'dev ' + o.deployer_address}`.slice(0, 60),
+          `snipe_order_cancel:${o.id}`,
+          'danger'
+        ),
+      ]);
+    buttons.push([cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]);
+    await ctx.reply(`📋 *Snipe Orders*\n\n` + lines.join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons },
+    });
+  });
+
+  bot.action(/^snipe_order_cancel:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const orderId = ctx.match![1];
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const ok = await cancelSnipeOrder(orderId, user.id).catch(() => false);
+    await ctx.answerCbQuery(ok ? 'Snipe order cancelled.' : 'Order not found or already closed.').catch(() => {});
+    if (ok) {
+      await ctx.editMessageText('✅ Snipe order cancelled.').catch(() => {});
     }
   });
 
@@ -3049,6 +3181,139 @@ export function setupRoutes(bot: Telegraf): void {
           const dash = buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
+        return;
+      }
+
+      // ── Targeted snipe FSM ──────────────────────────────────────────────
+
+      if (pending.action === 'snipe_token_ca') {
+        const ca = rawText.toLowerCase();
+        if (!isValidNearAccountId(ca)) {
+          await ctx.reply('❌ That does not look like a valid NEAR contract address. Try again (e.g. `token.nearlytrade.near`) or /cancel.', { parse_mode: 'Markdown' });
+          userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
+          return;
+        }
+        const meta = await near.getTokenMetadata(ca).catch(() => null);
+        if (!meta?.name && !meta?.symbol) {
+          await ctx.reply('❌ No token found at that contract address on-chain. Check the CA and try again, or /cancel.');
+          userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
+          return;
+        }
+        userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress: ca, expiresAt: Date.now() + 120_000 });
+        await ctx.reply(
+          `🪙 Token found: *${meta.name}* (${meta.symbol})\n\nReply with the amount in NEAR to snipe (e.g. \`2.5\`):\nType /cancel to abort.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (pending.action === 'snipe_token_amount' && pending.tokenAddress) {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR. Snipe setup cancelled.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (!user) {
+          await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+        const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+        if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+          await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`);
+          return;
+        }
+        const tokenAddress = pending.tokenAddress;
+        const order = await createSnipeOrder({
+          user_id: user.id,
+          snipe_type: 'token',
+          token_address: tokenAddress,
+          amount_near: amt,
+        });
+
+        // Already tradable → fire immediately through the normal buy path.
+        // Not tradable yet → the order stays armed; the detector fires it the
+        // moment the token launches / bonds.
+        const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+        if (info?.tradeable) {
+          const triggerId = await recordSnipeTrigger(order.id, tokenAddress, info.venue ?? '').catch(() => null);
+          const procMsg = await ctx.reply(
+            `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} NEAR\` now...`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => null);
+          const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
+          try {
+            const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => {});
+            await markSnipeOrderResult(order.id, true).catch(() => {});
+            await ctx.reply(res.message, {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+            });
+          } catch (err: any) {
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => {});
+            await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
+            await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`);
+          }
+        } else {
+          await ctx.reply(
+            `🎯 *Snipe Armed!*\n\n` +
+            `🪙 Token: \`${tokenAddress}\`\n` +
+            `💰 Amount: \`${amt} NEAR\`\n\n` +
+            `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.\n` +
+            `Manage it in 🎯 Snipe Rules → 📋 My Snipe Orders.`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+        return;
+      }
+
+      if (pending.action === 'snipe_dev_addr') {
+        const dev = rawText.toLowerCase();
+        if (!isValidNearAccountId(dev)) {
+          await ctx.reply('❌ Invalid NEAR wallet address. Try again (e.g. `someuser.near`) or /cancel.', { parse_mode: 'Markdown' });
+          userPendingActions.set(telegramId, { action: 'snipe_dev_addr', expiresAt: Date.now() + 120_000 });
+          return;
+        }
+        userPendingActions.set(telegramId, { action: 'snipe_dev_amount', deployerAddress: dev, expiresAt: Date.now() + 120_000 });
+        await ctx.reply(
+          `👤 Deployer: \`${dev}\`\n\nReply with the amount in NEAR to snipe *every* new token this wallet launches (e.g. \`1.5\`):\nType /cancel to abort.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (pending.action === 'snipe_dev_amount' && pending.deployerAddress) {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR. Snipe setup cancelled.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (!user) {
+          await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+        const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+        if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+          await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`);
+          return;
+        }
+        await createSnipeOrder({
+          user_id: user.id,
+          snipe_type: 'deployer',
+          deployer_address: pending.deployerAddress,
+          amount_near: amt,
+        });
+        await ctx.reply(
+          `👤 *Deployer Snipe Armed!*\n\n` +
+          `🧑‍💻 Deployer: \`${pending.deployerAddress}\`\n` +
+          `💰 Amount per launch: \`${amt} NEAR\`\n\n` +
+          `Every new token launched by this wallet will be auto-bought the moment it's detected — until you cancel in 🎯 Snipe Rules → 📋 My Snipe Orders.`,
+          { parse_mode: 'Markdown' }
+        );
         return;
       }
 

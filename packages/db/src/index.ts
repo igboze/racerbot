@@ -40,6 +40,17 @@ export {
   getBotSetting,
   getRecentTradeAttempts,
   getVolumeStats,
+  createSnipeOrder,
+  countActiveSnipeOrders,
+  getSnipeOrdersByUser,
+  cancelSnipeOrder,
+  getActiveTokenSnipes,
+  getActiveDeployerSnipes,
+  recordSnipeTrigger,
+  markSnipeTriggerFilled,
+  markSnipeTriggerFailed,
+  markSnipeOrderResult,
+  MAX_ACTIVE_SNIPE_ORDERS_PER_USER,
 } from './db.js';
 
 export {
@@ -68,4 +79,5 @@ export type {
   UpdateUserSettingsParams,
   TradeAttemptRow,
   VolumeStats,
+  SnipeOrderRecord,
 } from './db.js';
