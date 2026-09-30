@@ -89,6 +89,10 @@ export interface AutoBuySignal {
   amount_near: string;
   venue: EventVenue;
   timestamp: number;
+  /** Present when the signal originates from a targeted snipe order. */
+  snipe_order_id?: string;
+  snipe_trigger_id?: string;
+  snipe_type?: 'token' | 'deployer';
 }
 
 export interface PriceUpdateEvent {
