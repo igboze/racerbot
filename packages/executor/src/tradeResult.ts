@@ -81,7 +81,7 @@ export function distillFailureReason(failure: any): string {
     errStr.includes('pool not found') ||
     errStr.includes('no active pool')
   ) {
-    return 'No active liquidity pool found on-chain for this token. It may have been removed or is not yet live.';
+    return 'No liquidity pool found on-chain for this token. It may have been removed or is not yet live.';
   }
   if (errStr.includes('insufficient liquidity') || errStr.includes('not enough liquidity')) {
     return 'Not enough liquidity in the pool for this trade size. Try a smaller amount.';

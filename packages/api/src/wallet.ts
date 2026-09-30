@@ -460,7 +460,17 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   if (isMemooCookingToken(tokenAddress)) {
     try {
       const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
-      if (mcInfo.price > 0 && (!rheaCandidate || mcInfo.liquidity >= rheaCandidate.liquidity)) {
+      if (rheaCandidate) {
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId ?? dclPoolId;
+      }
+      if (mcInfo.phase === 'bonded' && rheaCandidate && rheaCandidate.liquidity >= 5) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        bondingPhase = 'bonded';
+        bondingProgressPct = 100;
+      } else if (mcInfo.price > 0 && (!rheaCandidate || mcInfo.liquidity >= rheaCandidate.liquidity)) {
         venue = 'memecooking';
         price = mcInfo.price;
         liquidity = mcInfo.liquidity;
@@ -470,8 +480,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         venue = 'rhea';
         price = rheaCandidate.price;
         liquidity = rheaCandidate.liquidity;
-        rheaPoolId = rheaCandidate.rheaPoolId;
-        dclPoolId = rheaCandidate.dclPoolId;
       }
     } catch { /* no-op */ }
   } else if (isIntearToken(tokenAddress)) {
@@ -484,13 +492,47 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   } else if (tokenAddress.endsWith('.nearlytrade.near')) {
     try {
       const ntState = await near.getNearlytradeTokenState(tokenAddress);
-      if (ntState && ntState.price > 0 && (!rheaCandidate || ntState.liquidityNear >= rheaCandidate.liquidity)) {
+      if (rheaCandidate) {
+        rheaPoolId = rheaCandidate.rheaPoolId;
+      }
+      if (ntState?.dclPoolId) {
+        dclPoolId = ntState.dclPoolId;
+      }
+
+      // Check whether Rhea pool takes priority over NearlyTrade:
+      // 1. If Rhea pool exists with meaningful liquidity (>= 5 NEAR):
+      //    a. If NearlyTrade is NOT paired to NEAR (!ntState.quoteIsNear), Rhea is a direct wrap.near pool and MUST take precedence.
+      //    b. If token is bonded (ntState.phase === 'bonded').
+      //    c. If Rhea price is higher than NearlyTrade price (reflecting on-chain market cap pump on DexScreener/Rhea).
+      //    d. If Rhea liquidity is >= 50 NEAR.
+      const preferRhea = !!(
+        rheaCandidate &&
+        rheaCandidate.liquidity >= 5 &&
+        (
+          !ntState?.quoteIsNear ||
+          ntState?.phase === 'bonded' ||
+          rheaCandidate.price > (ntState?.price || 0) ||
+          rheaCandidate.liquidity >= 50
+        )
+      );
+
+      if (preferRhea && rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        if (ntState) {
+          bondingPhase = ntState.phase;
+          bondingProgressPct = ntState.bondingProgressPct;
+          if (ntState.totalSupply && ntState.totalSupply !== '0') {
+            totalSupply = ntState.totalSupply;
+          }
+        }
+      } else if (ntState && ntState.price > 0 && (!rheaCandidate || ntState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'nearlytrade';
         price = ntState.price;
         liquidity = ntState.liquidityNear;
         bondingPhase = ntState.phase;
         bondingProgressPct = ntState.bondingProgressPct;
-        dclPoolId = ntState.dclPoolId;
         if (ntState.totalSupply && ntState.totalSupply !== '0') {
           totalSupply = ntState.totalSupply;
         }
@@ -498,8 +540,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         venue = 'rhea';
         price = rheaCandidate.price;
         liquidity = rheaCandidate.liquidity;
-        rheaPoolId = rheaCandidate.rheaPoolId;
-        dclPoolId = rheaCandidate.dclPoolId;
       }
     } catch {
       if (rheaCandidate) {
@@ -513,6 +553,10 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
     try {
       const smState = await near.getShardsmarketTokenState(tokenAddress);
+      if (rheaCandidate) {
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId ?? dclPoolId;
+      }
       const reserveNearYocto = parseFloat(smState.poolQuote);
       const reserveTokenRaw = parseFloat(smState.poolToken);
       if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
@@ -520,19 +564,26 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
         const smPrice = reserveNearHuman / reserveTokenHuman;
         const smLiquidity = reserveNearHuman * 2;
-        if (!rheaCandidate || smLiquidity >= rheaCandidate.liquidity) {
+        const preferRhea = !!(
+          rheaCandidate &&
+          rheaCandidate.liquidity >= 5 &&
+          (rheaCandidate.price > smPrice || rheaCandidate.liquidity >= 50 || smLiquidity < 5)
+        );
+        if (preferRhea && rheaCandidate) {
+          venue = 'rhea';
+          price = rheaCandidate.price;
+          liquidity = rheaCandidate.liquidity;
+        } else if (!rheaCandidate || smLiquidity >= rheaCandidate.liquidity) {
           price = smPrice;
           liquidity = smLiquidity;
           venue = 'shardsmarket';
           if (smState.totalSupply && smState.totalSupply !== '0') {
             totalSupply = smState.totalSupply;
           }
-        } else {
+        } else if (rheaCandidate) {
           venue = 'rhea';
           price = rheaCandidate.price;
           liquidity = rheaCandidate.liquidity;
-          rheaPoolId = rheaCandidate.rheaPoolId;
-          dclPoolId = rheaCandidate.dclPoolId;
         }
       }
     } catch {
@@ -547,11 +598,25 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
     try {
       const hubState = await near.getOneTokenHubState(tokenAddress);
-      if (hubState && hubState.price > 0 && (!rheaCandidate || hubState.liquidityNear >= rheaCandidate.liquidity)) {
+      if (rheaCandidate) {
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId ?? hubState?.dclPoolId ?? dclPoolId;
+      } else if (hubState?.dclPoolId) {
+        dclPoolId = hubState.dclPoolId;
+      }
+      const preferRhea = !!(
+        rheaCandidate &&
+        rheaCandidate.liquidity >= 5 &&
+        (rheaCandidate.price > (hubState?.price || 0) || rheaCandidate.liquidity >= 50)
+      );
+      if (preferRhea && rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+      } else if (hubState && hubState.price > 0 && (!rheaCandidate || hubState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'onetokenhub';
         price = hubState.price;
         liquidity = hubState.liquidityNear;
-        dclPoolId = hubState.dclPoolId;
         if (hubState.totalSupply && hubState.totalSupply !== '0') {
           totalSupply = hubState.totalSupply;
         }
@@ -559,8 +624,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         venue = 'rhea';
         price = rheaCandidate.price;
         liquidity = rheaCandidate.liquidity;
-        rheaPoolId = rheaCandidate.rheaPoolId;
-        dclPoolId = rheaCandidate.dclPoolId;
       }
     } catch {
       if (rheaCandidate) {
@@ -574,11 +637,25 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
   } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
     try {
       const padState = await near.getNEARpadState(tokenAddress);
-      if (padState && padState.price > 0 && (!rheaCandidate || padState.liquidityNear >= rheaCandidate.liquidity)) {
+      if (rheaCandidate) {
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId ?? padState?.dclPoolId ?? dclPoolId;
+      } else if (padState?.dclPoolId) {
+        dclPoolId = padState.dclPoolId;
+      }
+      const preferRhea = !!(
+        rheaCandidate &&
+        rheaCandidate.liquidity >= 5 &&
+        (rheaCandidate.price > (padState?.price || 0) || rheaCandidate.liquidity >= 50)
+      );
+      if (preferRhea && rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+      } else if (padState && padState.price > 0 && (!rheaCandidate || padState.liquidityNear >= rheaCandidate.liquidity)) {
         venue = 'nearpad';
         price = padState.price;
         liquidity = padState.liquidityNear;
-        dclPoolId = padState.dclPoolId;
         if (padState.totalSupply && padState.totalSupply !== '0') {
           totalSupply = padState.totalSupply;
         }
@@ -586,8 +663,6 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         venue = 'rhea';
         price = rheaCandidate.price;
         liquidity = rheaCandidate.liquidity;
-        rheaPoolId = rheaCandidate.rheaPoolId;
-        dclPoolId = rheaCandidate.dclPoolId;
       }
     } catch {
       if (rheaCandidate) {
@@ -694,10 +769,10 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     market_cap_usd: marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0,
     near_usd: nearUsd,
     venue,
-    rhea_pool_id: rheaPoolId,
+    rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId ?? null,
     bonding_phase: bondingPhase,
     bonding_progress_pct: bondingProgressPct,
-    dcl_pool_id: dclPoolId,
+    dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId ?? null,
     tradeable,
   };
 
