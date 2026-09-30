@@ -39,6 +39,7 @@ export {
   setBotSetting,
   getBotSetting,
   getRecentTradeAttempts,
+  getVolumeStats,
 } from './db.js';
 
 export {
@@ -66,4 +67,5 @@ export type {
   UpdatePositionParams,
   UpdateUserSettingsParams,
   TradeAttemptRow,
+  VolumeStats,
 } from './db.js';

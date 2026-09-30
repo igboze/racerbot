@@ -4,8 +4,11 @@ import {
   getBotSetting,
   setBotSetting,
   getRecentTradeAttempts,
+  getVolumeStats,
   type TradeAttemptRow,
+  type VolumeStats,
 } from '@racerbot/db';
+import { getNearUsdPrice } from './wallet.js';
 import {
   ADMIN_USERNAMES,
   ADMIN_TELEGRAM_ID,
@@ -24,6 +27,11 @@ const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // per-alert-type cooldown to avoid sp
 
 const ADMIN_CHAT_SETTING_KEY = 'admin_chat_id';
 const MANUAL_WINDOW_MINUTES = 60;   // /monitor looks back 1 hour
+
+// Daily volume update → admin DM
+const VOLUME_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const VOLUME_UPDATE_CHECK_MS = 30 * 60 * 1000; // how often we check whether 24h elapsed
+const VOLUME_LAST_SENT_KEY = 'admin_volume_update_last';
 
 let adminChatId: number | null = null;
 let adminWarnedOnce = false;
@@ -147,8 +155,45 @@ function summaryReport(summary: AttemptSummary, windowMinutes: number): string {
   );
 }
 
-function attemptsTable(rows: TradeAttemptRow[], max = 10): string {
-  if (rows.length === 0) return 'No attempts in window.';
+// ── Daily volume update ─────────────────────────────────────────────────────
+
+export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number): string {
+  const near = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const usd = (nearAmount: number) =>
+    nearUsd > 0 ? ` (~$${(nearAmount * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+  return (
+    `📊 *RacerBot Volume — Daily Update*\n\n` +
+    `🔥 *Last 24h*\n` +
+    `• Volume: \`${near(s.volume24hNear)} NEAR\`${usd(s.volume24hNear)}\n` +
+    `• Trades: \`${s.trades24h}\` (${s.buys24h} buys / ${s.sells24h} sells)\n` +
+    `• Active traders: \`${s.activeTraders24h}\`\n` +
+    `• Fees earned: \`${s.fees24hNear.toFixed(4)} NEAR\`${usd(s.fees24hNear)}\n\n` +
+    `📈 *All time*\n` +
+    `• Volume: \`${near(s.volumeTotalNear)} NEAR\`${usd(s.volumeTotalNear)}\n` +
+    `• Trades: \`${s.tradesTotal.toLocaleString('en-US')}\`\n` +
+    `• Fees earned: \`${s.feesTotalNear.toFixed(4)} NEAR\`\n` +
+    `• Users: \`${s.usersTotal.toLocaleString('en-US')}\``
+  );
+}
+
+/** Sends the volume update if ≥24h since the last one (persisted in bot_settings, so redeploys don't reset or duplicate it). */
+async function maybeSendDailyVolumeUpdate(bot: Telegraf): Promise<void> {
+  const chatId = await resolveAdminChatId();
+  if (!chatId) return; // admin hasn't interacted yet — keep retrying on the check timer
+  const lastRaw = await getBotSetting(VOLUME_LAST_SENT_KEY).catch(() => null);
+  const last = lastRaw ? parseInt(lastRaw, 10) : 0;
+  if (Number.isFinite(last) && Date.now() - last < VOLUME_UPDATE_INTERVAL_MS) return;
+
+  const stats = await getVolumeStats();
+  const nearUsd = await getNearUsdPrice().catch(() => 0);
+  await sendAdminAlert(bot, buildVolumeUpdateText(stats, nearUsd));
+  await setBotSetting(VOLUME_LAST_SENT_KEY, String(Date.now())).catch((err: any) => {
+    logger.warn('Failed to persist volume-update timestamp', { error: err.message });
+  });
+  logger.info('Daily volume update sent to admin');
+}
+
+function attemptsTable(rows: TradeAttemptRow[], max = 10): string {  if (rows.length === 0) return 'No attempts in window.';
   return rows.slice(0, max).map((r) => {
     const t = r.timings;
     const timing = t
@@ -225,11 +270,33 @@ export function setupMonitor(bot: Telegraf): void {
     }
   });
 
+  bot.command('volume', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    try {
+      const stats = await getVolumeStats();
+      const nearUsd = await getNearUsdPrice().catch(() => 0);
+      await ctx.replyWithMarkdown(buildVolumeUpdateText(stats, nearUsd));
+    } catch (err: any) {
+      await ctx.reply('Volume query failed — check logs.').catch(() => {});
+      logger.error('/volume failed', err);
+    }
+  });
+
   // 3. Periodic background check. Unref'd so it never holds the process open.
   const timer = setInterval(() => {
     checkAndAlert(bot).catch((err: any) => logger.error('Monitor check failed', err));
   }, MONITOR_INTERVAL_MS);
   timer.unref?.();
+
+  // 4. Daily volume update: checks every 30 min whether 24h have elapsed since
+  // the last send (timestamp persisted in bot_settings, so redeploys neither
+  // reset the schedule nor double-send). The boot-time call catches up if the
+  // process was down when the update fell due.
+  const volTimer = setInterval(() => {
+    maybeSendDailyVolumeUpdate(bot).catch((err: any) => logger.error('Volume update failed', err));
+  }, VOLUME_UPDATE_CHECK_MS);
+  volTimer.unref?.();
+  maybeSendDailyVolumeUpdate(bot).catch((err: any) => logger.error('Volume update failed', err));
 
   // Recover admin chat id from DB at startup so alerts work before the admin's
   // next interaction.
