@@ -314,7 +314,19 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   const tokenInfo = info.value;
   const b = balances.status === 'fulfilled' ? balances.value : null;
-  const userRecord = user.status === 'fulfilled' ? user.value : null;
+  let userRecord = user.status === 'fulfilled' ? user.value : null;
+
+  // If user tapped a token card without ever running /start, auto-onboard them so
+  // their user record exists, wallet subaccount is ready, and token share links can be generated
+  if (!userRecord && telegramId) {
+    try {
+      await onboardUser(telegramId);
+      userRecord = await getUserByTelegramId(telegramId).catch(() => null);
+    } catch (err: any) {
+      console.warn('[buildTokenCard] Auto-onboard user failed:', err?.message);
+    }
+  }
+
   const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
 
   // Fetch positions only if we have a user
@@ -683,6 +695,19 @@ export async function sendPnlCardMessage(
         cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'),
         cb('🟢 Buy More', `buy_custom_prompt:${position.token_address}`, 'success'),
       ]);
+    }
+
+    if (user) {
+      try {
+        const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
+        const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
+        const sym = (pnlCard as any).tokenTicker || 'TOKEN';
+        const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+        const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+        buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
+      } catch (err: any) {
+        console.warn('[sendPnlCardMessage] Failed to generate share link:', err?.message);
+      }
     }
 
     buttons.push([
@@ -1183,6 +1208,25 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
     throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after gas/storage reserve) is too low to buy.`);
   }
   return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)), onProgress);
+}
+
+async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string, tokenSymbol?: string) {
+  const rows: any[] = [];
+  try {
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (user) {
+      const shareCode = await getOrCreateTokenShare(user.id, tokenAddress);
+      const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
+      const sym = tokenSymbol && tokenSymbol !== '???' ? tokenSymbol : 'TOKEN';
+      const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+      const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+      rows.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
+    }
+  } catch (err: any) {
+    console.warn('[buildBuySuccessKeyboard] Failed to generate share button:', err?.message);
+  }
+  rows.push([Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]);
+  return Markup.inlineKeyboard(rows).reply_markup;
 }
 
 export function setupRoutes(bot: Telegraf): void {
@@ -1896,6 +1940,28 @@ export function setupRoutes(bot: Telegraf): void {
         buttons.push([cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger')]);
       }
 
+      // External explorer & chart links
+      const linkRows = (() => {
+        const links = tokenLinks(info?.venue || 'nearlytrade', position.token_address);
+        const rows: any[] = [];
+        if (links.length > 0) rows.push(links.slice(0, 2).map(l => Markup.button.url(l.label, l.url)));
+        if (links.length > 2) rows.push(links.slice(2).map(l => Markup.button.url(l.label, l.url)));
+        return rows;
+      })();
+      buttons.push(...linkRows);
+
+      // Share Token (Earn 5% Fees)
+      try {
+        const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
+        const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
+        const sym = symbol !== '???' ? symbol : 'TOKEN';
+        const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+        const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+        buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
+      } catch (err: any) {
+        console.warn('[token_detail] Failed to generate share link:', err?.message);
+      }
+
       // Navigation buttons
       buttons.push([
         cb(
@@ -2463,7 +2529,7 @@ export function setupRoutes(bot: Telegraf): void {
 
         await ctx.reply(res.message, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
         });
       } catch (err: any) {
         console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
@@ -2507,7 +2573,7 @@ export function setupRoutes(bot: Telegraf): void {
 
         await ctx.reply(res.message, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
         });
       } catch (err: any) {
         console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
@@ -2579,7 +2645,7 @@ export function setupRoutes(bot: Telegraf): void {
 
         await ctx.reply(res.message, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
         });
       } catch (err: any) {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
@@ -2738,7 +2804,7 @@ export function setupRoutes(bot: Telegraf): void {
           const res = await executeBuyHelper(telegramId, query, amountNear);
           await ctx.reply(res.message, {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${query}`)]] },
+            reply_markup: await buildBuySuccessKeyboard(telegramId, query, res.tokenSymbol),
           });
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
@@ -2785,7 +2851,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.reply(res.message, {
         parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+        reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
       });
     } catch (err: any) {
       await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
@@ -3231,7 +3297,7 @@ export function setupRoutes(bot: Telegraf): void {
 
             await ctx.reply(res.message, {
               parse_mode: 'Markdown',
-              reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+              reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
             });
           } catch (err: any) {
             console.warn(`[BUY] Buy failed for ${tokenAddress}:`, err?.message || err);
@@ -3364,7 +3430,7 @@ export function setupRoutes(bot: Telegraf): void {
             await markSnipeOrderResult(order.id, true).catch(() => {});
             await ctx.reply(res.message, {
               parse_mode: 'Markdown',
-              reply_markup: { inline_keyboard: [[Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]] },
+              reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol),
             });
           } catch (err: any) {
             if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});

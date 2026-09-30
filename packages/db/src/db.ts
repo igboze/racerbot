@@ -714,10 +714,11 @@ function generateShortSlug(length = 8): string {
 
 export async function getOrCreateTokenShare(referrerId: string, tokenAddress: string): Promise<string> {
   const db = await getDb();
+  const cleanToken = tokenAddress.trim().toLowerCase();
   // Check if an existing share code already exists for this user and token
   const existing = await db.query(
-    'SELECT code FROM token_shares WHERE referrer_id = $1 AND token_address = $2',
-    [referrerId, tokenAddress]
+    'SELECT code FROM token_shares WHERE referrer_id = $1 AND LOWER(token_address) = $2',
+    [referrerId, cleanToken]
   );
   if (existing.rows.length > 0) {
     return existing.rows[0].code;
@@ -732,7 +733,7 @@ export async function getOrCreateTokenShare(referrerId: string, tokenAddress: st
          VALUES ($1, $2, $3, $4, NOW())
          ON CONFLICT (referrer_id, token_address) DO UPDATE SET referrer_id = EXCLUDED.referrer_id
          RETURNING code`,
-        [generateId(), code, tokenAddress, referrerId]
+        [generateId(), code, cleanToken, referrerId]
       );
       return res.rows[0].code;
     } catch (err: any) {
@@ -748,7 +749,7 @@ export async function getOrCreateTokenShare(referrerId: string, tokenAddress: st
 
 export async function getTokenShareByCode(code: string): Promise<TokenShareRecord | null> {
   const db = await getDb();
-  const res = await db.query('SELECT * FROM token_shares WHERE code = $1', [code]);
+  const res = await db.query('SELECT * FROM token_shares WHERE code = $1', [code.trim()]);
   if (res.rows.length === 0) return null;
   const row = res.rows[0];
   return {
