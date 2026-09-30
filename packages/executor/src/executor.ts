@@ -34,6 +34,7 @@ import {
   getReferralByReferredUser,
   activateReferral,
   addReferralReward,
+  awardPointsForTradeFill,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError } from '@racerbot/shared';
@@ -2268,6 +2269,14 @@ export class SwapExecutor {
           await addReferralReward(referral.id, rewardAmount);
         }
 
+        // Season 1 points — idempotent, and must never fail or delay the trade
+        try {
+          const qtyHumanPts = parseFloat(tokenQty) / Math.pow(10, decimals);
+          await awardPointsForTradeFill(userId, fillResult.fillId, txHash, qtyHumanPts * priceNear, new Date());
+        } catch (err: any) {
+          console.warn('[POINTS] Failed to award points for buy fill:', err.message);
+        }
+
         // Instant buy confirmation — use only data already computed above, no new RPC calls.
         // Skipped for API-initiated manual trades (notify_user === false): the
         // API sends its own success message, publishing here would duplicate it.
@@ -2329,6 +2338,14 @@ export class SwapExecutor {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
+        }
+
+        // Season 1 points — idempotent, and must never fail or delay the trade
+        try {
+          const qtyHumanPts = parseFloat(tokenQty) / Math.pow(10, decimals);
+          await awardPointsForTradeFill(userId, fillResult.fillId, txHash, qtyHumanPts * priceNear, new Date());
+        } catch (err: any) {
+          console.warn('[POINTS] Failed to award points for sell fill:', err.message);
         }
 
         // Notify user with PNL card summary and link

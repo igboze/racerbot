@@ -41,6 +41,17 @@ export {
   getRecentTradeAttempts,
 } from './db.js';
 
+export {
+  POINTS_CONFIG,
+  awardPoints,
+  awardPointsForTradeFill,
+  getPointsSummary,
+  getPointsLeaderboard,
+  backfillAllPoints,
+} from './points.js';
+
+export type { PointsAction, PointsSummary, LeaderboardEntry } from './points.js';
+
 export type {
   UserRecord,
   PositionRecord,
