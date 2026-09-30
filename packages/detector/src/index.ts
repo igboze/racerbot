@@ -11,7 +11,7 @@ import {
   type PriceUpdateEvent,
   type AutoBuySignal,
 } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds } from '@racerbot/db';
+import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds, getActiveTokenSnipes, getActiveDeployerSnipes, recordSnipeTrigger } from '@racerbot/db';
 
 const logger = createLogger('detector');
 
@@ -513,7 +513,7 @@ async function handlePoolCreated(
 
   const poolAddress = rawData?.pool_id ?? rawData?.pool_address ?? tokenAddress;
   let initialLiquidity = rawData?.near_amount ?? rawData?.initial_liquidity ?? '0';
-  const creator = rawData?.creator_id ?? rawData?.owner_id ?? '';
+  let creator = rawData?.creator_id ?? rawData?.owner_id ?? '';
 
   let bondingPhase: 'prebonded' | 'bonded' | null = null;
   let bondingProgressPct: number | null = null;
@@ -529,6 +529,11 @@ async function handlePoolCreated(
         dclPoolId = ntState.dclPoolId;
         initialPrice = ntState.price;
         initialLiquidity = (ntState.liquidityNear * 1e24).toString();
+        // The launch record carries the real creator wallet — needed for
+        // deployer sniping when the detection event didn't include it.
+        if (!creator && ntState.creator) {
+          creator = ntState.creator;
+        }
       }
     } catch (err) {
       logger.warn('Could not fetch NearlyTrade state', { correlationId, tokenAddress, error: (err as Error).message });
@@ -659,8 +664,8 @@ async function handlePoolCreated(
     }).catch(err => console.error('[DETECTOR] DB cache write error:', err.message));
   });
 
-  // 5. Check auto-buy signals (async, non-blocking)
-  setImmediate(() => checkAutoBuySignals(tokenAddress, venue, initialLiquidity, marketCap));
+  // 5. Check auto-buy signals + targeted snipe orders (async, non-blocking)
+  setImmediate(() => checkAutoBuySignals(tokenAddress, venue, initialLiquidity, marketCap, creator));
 }
 
 /** When a swap is detected, extract the new price and publish a price update */
@@ -803,7 +808,8 @@ async function checkAutoBuySignals(
   tokenAddress: string,
   venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
   liquidityStr: string,
-  _marketCap: number
+  _marketCap: number,
+  creator = ''
 ): Promise<void> {
   // NEARpad can be auto-bought
   try {
@@ -832,6 +838,39 @@ async function checkAutoBuySignals(
     }
   } catch (err) {
     console.error('[DETECTOR] Auto-buy signal error:', (err as Error).message);
+  }
+
+  // ── Targeted snipe orders ─────────────────────────────────────────────────
+  // Token-address snipes match this exact contract; deployer snipes match the
+  // creator wallet. Both bypass the min-liquidity gate — the user explicitly
+  // chose this target. The trigger insert is the dedup gate: a token detected
+  // twice (chunk path + event path) never double-fires an order.
+  try {
+    const [tokenOrders, deployerOrders] = await Promise.all([
+      getActiveTokenSnipes(tokenAddress).catch(() => []),
+      creator ? getActiveDeployerSnipes(creator).catch(() => []) : Promise.resolve([]),
+    ]);
+
+    for (const order of [...tokenOrders, ...deployerOrders]) {
+      const triggerId = await recordSnipeTrigger(order.id, tokenAddress, venue).catch(() => null);
+      if (!triggerId) continue; // already fired/firing for this token
+
+      const signal: AutoBuySignal = {
+        type: 'auto_buy_signal',
+        user_id: order.user_id,
+        token_address: tokenAddress,
+        amount_near: order.amount_near.toString(),
+        venue,
+        timestamp: Date.now(),
+        snipe_order_id: order.id,
+        snipe_trigger_id: triggerId,
+        snipe_type: order.snipe_type,
+      };
+      await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
+      console.log(`[DETECTOR] Snipe ${order.snipe_type} order ${order.id} fired for ${tokenAddress} (user ${order.user_id})`);
+    }
+  } catch (err) {
+    console.error('[DETECTOR] Snipe order match error:', (err as Error).message);
   }
 }
 

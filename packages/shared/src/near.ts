@@ -1791,6 +1791,8 @@ export class MultiRpcNear {
     live: boolean;
     /** True when the price cannot be converted to NEAR (no wrap.near<->quote pool). */
     priceUnavailable?: boolean;
+    /** The wallet that launched the token (from the launch record). */
+    creator: string;
   }> {
     // The launch record, token metadata and total supply are effectively
     // static once a token is created, but a single buy used to fetch them
@@ -1967,6 +1969,7 @@ export class MultiRpcNear {
       quoteDecimals,
       quoteIsNear,
       live,
+      creator: launch.creator ?? '',
       ...(priceUnavailable ? { priceUnavailable: true } : {}),
     };
   }

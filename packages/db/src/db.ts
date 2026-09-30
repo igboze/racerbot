@@ -836,3 +836,183 @@ function rowToTokenCache(row: any): TokenCacheRecord {
 function generateId(): string {
   return randomUUID();
 }
+
+// ── Targeted snipe orders ────────────────────────────────────────────────────
+
+export interface SnipeOrderRecord {
+  id: string;
+  user_id: string;
+  snipe_type: 'token' | 'deployer';
+  token_address: string | null;
+  deployer_address: string | null;
+  amount_near: string;
+  status: 'active' | 'filled' | 'cancelled' | 'failed';
+  last_error: string | null;
+  trigger_count: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+function rowToSnipeOrder(row: any): SnipeOrderRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    snipe_type: row.snipe_type,
+    token_address: row.token_address ?? null,
+    deployer_address: row.deployer_address ?? null,
+    amount_near: String(row.amount_near),
+    status: row.status,
+    last_error: row.last_error ?? null,
+    trigger_count: row.trigger_count != null ? Number(row.trigger_count) : 0,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/** Guard against runaway order creation. */
+export const MAX_ACTIVE_SNIPE_ORDERS_PER_USER = 10;
+
+export async function createSnipeOrder(params: {
+  user_id: string;
+  snipe_type: 'token' | 'deployer';
+  token_address?: string;
+  deployer_address?: string;
+  amount_near: number;
+}): Promise<SnipeOrderRecord> {
+  const db = await getDb();
+  const result = await db.query(
+    `INSERT INTO snipe_orders (user_id, snipe_type, token_address, deployer_address, amount_near)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [
+      params.user_id,
+      params.snipe_type,
+      params.token_address ? params.token_address.toLowerCase() : null,
+      params.deployer_address ? params.deployer_address.toLowerCase() : null,
+      params.amount_near,
+    ]
+  );
+  return rowToSnipeOrder(result.rows[0]);
+}
+
+export async function countActiveSnipeOrders(userId: string): Promise<number> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT COUNT(*)::int AS n FROM snipe_orders WHERE user_id = $1 AND status = 'active'`,
+    [userId]
+  );
+  return r.rows[0].n;
+}
+
+export async function getSnipeOrdersByUser(userId: string): Promise<SnipeOrderRecord[]> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT * FROM snipe_orders WHERE user_id = $1
+     ORDER BY (status = 'active') DESC, created_at DESC LIMIT 25`,
+    [userId]
+  );
+  return r.rows.map(rowToSnipeOrder);
+}
+
+/** Cancel only the caller's own active order. Returns false when nothing changed. */
+export async function cancelSnipeOrder(orderId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  const r = await db.query(
+    `UPDATE snipe_orders SET status = 'cancelled', updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND status = 'active'`,
+    [orderId, userId]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/** Active one-shot token snipes watching this exact contract address. */
+export async function getActiveTokenSnipes(tokenAddress: string): Promise<SnipeOrderRecord[]> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT * FROM snipe_orders
+     WHERE snipe_type = 'token' AND status = 'active' AND lower(token_address) = lower($1)`,
+    [tokenAddress]
+  );
+  return r.rows.map(rowToSnipeOrder);
+}
+
+/** Active standing deployer snipes watching this creator wallet. */
+export async function getActiveDeployerSnipes(deployerAddress: string): Promise<SnipeOrderRecord[]> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT * FROM snipe_orders
+     WHERE snipe_type = 'deployer' AND status = 'active' AND lower(deployer_address) = lower($1)`,
+    [deployerAddress]
+  );
+  return r.rows.map(rowToSnipeOrder);
+}
+
+/**
+ * Dedup gate: inserts a pending trigger for (order, token) and returns its id.
+ * Returns null when a pending/filled trigger already exists — the snipe has
+ * fired (or is firing) and must not double-fire. A FAILED trigger row is
+ * re-armed (up to 5 attempts) so e.g. a token snipe that fired while the pool
+ * was still prebonded retries when the token bonds / gains liquidity.
+ */
+export async function recordSnipeTrigger(orderId: string, tokenAddress: string, venue: string): Promise<string | null> {
+  const db = await getDb();
+  const result = await db.query(
+    `INSERT INTO snipe_triggers (order_id, token_address, venue)
+     SELECT $1, $2, $3
+     WHERE NOT EXISTS (
+       SELECT 1 FROM snipe_triggers
+       WHERE order_id = $1 AND lower(token_address) = lower($2) AND status IN ('pending', 'filled')
+     )
+     ON CONFLICT (order_id, token_address) DO UPDATE
+       SET status = 'pending', error = NULL, tx_hash = NULL, venue = EXCLUDED.venue,
+           attempts = snipe_triggers.attempts + 1, updated_at = NOW()
+       WHERE snipe_triggers.status = 'failed' AND snipe_triggers.attempts < 5
+     RETURNING id`,
+    [orderId, tokenAddress, venue]
+  );
+  return result.rows.length > 0 ? result.rows[0].id : null;
+}
+
+export async function markSnipeTriggerFilled(triggerId: string, txHash: string | null): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE snipe_triggers SET status = 'filled', tx_hash = $2, updated_at = NOW() WHERE id = $1`,
+    [triggerId, txHash]
+  );
+}
+
+export async function markSnipeTriggerFailed(triggerId: string, error: string): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE snipe_triggers SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1`,
+    [triggerId, error.slice(0, 500)]
+  );
+}
+
+/**
+ * Post-execution bookkeeping. Token orders are one-shot → 'filled' (or 'failed'
+ * after a failed fire). Deployer orders stay active and only count triggers.
+ */
+export async function markSnipeOrderResult(orderId: string, success: boolean, error?: string): Promise<void> {
+  const db = await getDb();
+  if (success) {
+    await db.query(
+      `UPDATE snipe_orders
+       SET status = CASE WHEN snipe_type = 'token' THEN 'filled' ELSE status END,
+           trigger_count = trigger_count + 1,
+           last_error = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [orderId]
+    );
+  } else {
+    await db.query(
+      `UPDATE snipe_orders
+       SET status = CASE WHEN snipe_type = 'token' THEN 'failed' ELSE status END,
+           last_error = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [orderId, (error ?? 'unknown').slice(0, 500)]
+    );
+  }
+}

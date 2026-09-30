@@ -35,6 +35,9 @@ import {
   activateReferral,
   addReferralReward,
   awardPointsForTradeFill,
+  markSnipeTriggerFilled,
+  markSnipeTriggerFailed,
+  markSnipeOrderResult,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError } from '@racerbot/shared';
@@ -1988,6 +1991,30 @@ export class SwapExecutor {
       return { success: false, reason: `unsupported_venue:${venue}` };
     }
 
+    // ── Targeted-snipe bookkeeping (present only on snipe-originated signals) ──
+    const snipeOrderId = signal.snipe_order_id;
+    const snipeTriggerId = signal.snipe_trigger_id;
+    const finalizeSnipe = async (
+      success: boolean,
+      opts: { error?: string; permanent?: boolean; txHash?: string | null } = {}
+    ): Promise<void> => {
+      if (!snipeOrderId) return;
+      try {
+        if (snipeTriggerId) {
+          if (success) await markSnipeTriggerFilled(snipeTriggerId, opts.txHash ?? null);
+          else await markSnipeTriggerFailed(snipeTriggerId, opts.error ?? 'unknown');
+        }
+        // Token orders are one-shot: resolve them on success or on a PERMANENT
+        // failure (rug, bad amount, execution error). Transient blocks (pool
+        // not live yet) keep the order armed so a later detection retries.
+        // Deployer orders always stay armed for the dev's next launch.
+        if (success) await markSnipeOrderResult(snipeOrderId, true);
+        else if (opts.permanent) await markSnipeOrderResult(snipeOrderId, false, opts.error);
+      } catch (err) {
+        console.warn('[EXECUTOR] Snipe finalize failed:', (err as Error).message);
+      }
+    };
+
     // PRIORITY PATH: rug checks, pool resolution and the user lookup are
     // independent reads — run them concurrently so the snipe fires with the
     // lowest possible latency after the detector signal.
@@ -2001,9 +2028,13 @@ export class SwapExecutor {
     if (!rugResult.safe) {
       console.log(`[EXECUTOR] Auto-buy skipped for ${token_address}: ${rugResult.reason}`);
       await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason: rugResult.reason });
+      await finalizeSnipe(false, { error: `rug_check: ${rugResult.reason}`, permanent: true });
       return { success: false, reason: rugResult.reason };
     }
     if (poolIds.blocked) {
+      // Transient for targeted snipes — the pool may not be live yet; the
+      // order stays armed and retries on the next detection (attempt-capped).
+      await finalizeSnipe(false, { error: poolIds.blocked });
       return { success: false, reason: poolIds.blocked };
     }
     const { rheaPoolId, dclPoolId } = poolIds;
@@ -2013,6 +2044,7 @@ export class SwapExecutor {
 
     const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
     if (BigInt(inYocto) <= 0n) {
+      await finalizeSnipe(false, { error: 'invalid_amount', permanent: true });
       return { success: false, reason: 'invalid_amount' };
     }
 
@@ -2054,8 +2086,16 @@ export class SwapExecutor {
     (swapEvent as any).quoted_at = Date.now();
 
     return this.execute(swapEvent)
-      .then(r => ({ success: r.success }))
-      .catch(err => ({ success: false, reason: err.message }));
+      .then(async r => {
+        await finalizeSnipe(r.success, r.success
+          ? { txHash: (r as any).txHash ?? null }
+          : { error: 'execute_returned_failure', permanent: true });
+        return { success: r.success };
+      })
+      .catch(async err => {
+        await finalizeSnipe(false, { error: err.message ?? 'execute_error', permanent: true });
+        return { success: false, reason: err.message };
+      });
   }
 
   /**
