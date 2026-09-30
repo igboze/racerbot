@@ -34,6 +34,8 @@ import {
   getReferralByReferredUser,
   activateReferral,
   addReferralReward,
+  getTokenReferral,
+  addTokenReferralReward,
   awardPointsForTradeFill,
   markSnipeTriggerFilled,
   markSnipeTriggerFailed,
@@ -2264,7 +2266,20 @@ export class SwapExecutor {
       if (fillResult.inserted) {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
-        // Handle referral rewards (30% of fee goes to referrer)
+        // Handle token share link referral (5% fee to token sharer)
+        let tokenSharerId: string | null = null;
+        try {
+          const tokenRef = await getTokenReferral(userId, tokenAddress);
+          if (tokenRef && tokenRef.referrer_id !== userId) {
+            tokenSharerId = tokenRef.referrer_id;
+            const tokenRewardAmount = (parseFloat(feePaidNear.toString()) * 0.05);
+            await addTokenReferralReward(tokenRef.id, tokenRewardAmount);
+          }
+        } catch (err: any) {
+          console.warn('[EXECUTOR] Failed to award token referral reward:', err?.message);
+        }
+
+        // Handle global referral rewards (30% of fee goes to account referrer)
         const referral = await getReferralByReferredUser(userId);
         let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
         if (referral && referral.status === 'pending') {
@@ -2272,7 +2287,7 @@ export class SwapExecutor {
           await activateReferral(referral.id);
           referralActive = true;
         }
-        if (referral && referralActive) {
+        if (referral && referralActive && referral.referrer_id !== userId) {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
@@ -2335,7 +2350,20 @@ export class SwapExecutor {
       if (fillResult.inserted) {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
-        // Handle referral rewards (30% of fee goes to referrer)
+        // Handle token share link referral (5% fee to token sharer)
+        let tokenSharerId: string | null = null;
+        try {
+          const tokenRef = await getTokenReferral(userId, tokenAddress);
+          if (tokenRef && tokenRef.referrer_id !== userId) {
+            tokenSharerId = tokenRef.referrer_id;
+            const tokenRewardAmount = (parseFloat(feePaidNear.toString()) * 0.05);
+            await addTokenReferralReward(tokenRef.id, tokenRewardAmount);
+          }
+        } catch (err: any) {
+          console.warn('[EXECUTOR] Failed to award token referral reward:', err?.message);
+        }
+
+        // Handle global referral rewards (30% of fee goes to account referrer)
         const referral = await getReferralByReferredUser(userId);
         let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
         if (referral && referral.status === 'pending') {
@@ -2343,7 +2371,7 @@ export class SwapExecutor {
           await activateReferral(referral.id);
           referralActive = true;
         }
-        if (referral && referralActive) {
+        if (referral && referralActive && referral.referrer_id !== userId) {
           // Calculate 30% reward
           const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
           await addReferralReward(referral.id, rewardAmount);
