@@ -10,9 +10,9 @@
 import 'dotenv/config';
 import { getDb } from '../packages/db/src/db.js';
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
-  console.error('BOT_TOKEN is not set. Exiting.');
+  console.error('TELEGRAM_BOT_TOKEN (or BOT_TOKEN) is not set. Exiting.');
   process.exit(1);
 }
 

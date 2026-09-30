@@ -2717,20 +2717,52 @@ export class MultiRpcNear {
       }
       return null;
     }
-    if (venue === 'shardsmarket') {
-      const st = await this.getShardsmarketTokenState(tokenAddress);
-      const rNear = parseFloat(st.poolQuote);
-      const rTok = parseFloat(st.poolToken);
-      if (rNear <= 0 || rTok <= 0) return null;
-      return {
-        reserveNearYocto: st.poolQuote,
-        price: rNear / 1e24 / (rTok / Math.pow(10, decimals)),
-      };
-    }
     if (venue === 'nearlytrade') {
-      const st = await this.getNearlytradeTokenState(tokenAddress);
-      if (st.priceUnavailable || !(st.price > 0)) return null;
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      const st = await this.getNearlytradeTokenState(tokenAddress).catch(() => null);
+      if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5) {
+        if (!st || !st.quoteIsNear || st.phase === 'bonded' || rhea.price > (st.price || 0) || rhea.liquidityNear >= 50) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+      }
+      if (!st || st.priceUnavailable || !(st.price > 0)) {
+        if (rhea && rhea.price > 0) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+        return null;
+      }
       return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    if (venue === 'shardsmarket') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      const st = await this.getShardsmarketTokenState(tokenAddress).catch(() => null);
+      if (st) {
+        const rNear = parseFloat(st.poolQuote);
+        const rTok = parseFloat(st.poolToken);
+        const smPrice = rNear > 0 && rTok > 0 ? (rNear / 1e24) / (rTok / Math.pow(10, decimals)) : 0;
+        if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5 && (rhea.price > smPrice || rhea.liquidityNear >= 50)) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+        if (smPrice > 0) {
+          return { reserveNearYocto: st.poolQuote, price: smPrice };
+        }
+      }
+      if (rhea && rhea.price > 0) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+        };
+      }
+      return null;
     }
     if (venue === 'intear') {
       const st = await this.getIntearTokenState(tokenAddress);
@@ -2738,13 +2770,43 @@ export class MultiRpcNear {
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
     if (venue === 'onetokenhub') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
       const st = await this.getOneTokenHubState(tokenAddress).catch(() => null);
-      if (!st || !(st.price > 0)) return null;
+      if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5 && (!st || rhea.price > (st.price || 0) || rhea.liquidityNear >= 50)) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+        };
+      }
+      if (!st || !(st.price > 0)) {
+        if (rhea && rhea.price > 0) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+        return null;
+      }
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
     if (venue === 'nearpad') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
       const st = await this.getNEARpadState(tokenAddress).catch(() => null);
-      if (!st || !(st.price > 0)) return null;
+      if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5 && (!st || rhea.price > (st.price || 0) || rhea.liquidityNear >= 50)) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+        };
+      }
+      if (!st || !(st.price > 0)) {
+        if (rhea && rhea.price > 0) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+        return null;
+      }
       return { reserveNearYocto: st.reserveNear, price: st.price };
     }
     if (venue === 'memecooking') {

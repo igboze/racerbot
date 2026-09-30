@@ -749,6 +749,15 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
         if (ntState && ntState.price > 0) {
           price = ntState.price;
           liquidity = ntState.liquidityNear;
+
+          // Check if a direct wrap.near pool exists on Rhea
+          const rhea = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
+          if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5) {
+            if (!ntState.quoteIsNear || ntState.phase === 'bonded' || rhea.price > ntState.price || rhea.liquidityNear >= 50) {
+              price = rhea.price;
+              liquidity = rhea.liquidityNear;
+            }
+          }
         }
       } else {
         const dclId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
