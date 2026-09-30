@@ -31,6 +31,7 @@ vi.mock('@racerbot/db', () => ({
   getReferralByReferredUser: vi.fn().mockResolvedValue(null),
   activateReferral: vi.fn().mockResolvedValue({}),
   addReferralReward: vi.fn().mockResolvedValue({}),
+  awardPointsForTradeFill: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createTestRedis(): RedisClient {

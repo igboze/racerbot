@@ -12,6 +12,8 @@ import {
   generateReferralCode,
   getTotalReferralClaimed,
   createReferralClaim,
+  getPointsSummary,
+  getPointsLeaderboard,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -138,11 +140,14 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('💼 Holdings', 'menu_holdings', 'primary'),
     ],
     [
+      cb('🏆 Points', 'menu_points', 'success'),
       cb('📈 PnL', 'menu_pnl', 'primary'),
-      cb('🎯 Snipe Rules', 'menu_snipe', 'primary'),
     ],
     [
+      cb('🎯 Snipe Rules', 'menu_snipe', 'primary'),
       cb('⚙️ Settings', 'menu_settings', 'primary'),
+    ],
+    [
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
@@ -154,6 +159,53 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
+  ]);
+
+  return { text, keyboard };
+}
+
+// ── Helper: Build Points (Season 1) view ────────────────────────────────────
+export async function buildPointsView(telegramId: number) {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('Please run /start first.');
+
+  const s = await getPointsSummary(user.id);
+  const leaders = await getPointsLeaderboard(5).catch(() => []);
+
+  const msLeft = s.seasonEnd.getTime() - Date.now();
+  const timeLeft = msLeft > 0
+    ? `${Math.floor(msLeft / 86_400_000)}d ${Math.floor((msLeft % 86_400_000) / 3_600_000)}h left`
+    : 'Season ended — snapshot taken';
+
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  const bd = s.breakdown;
+  const bdLines: string[] = [];
+  if (bd.trade) bdLines.push(`📈 Trading: \`${fmt(bd.trade)}\``);
+  if (bd.referral_qualified || bd.referral_override || bd.referral_welcome) {
+    const refTotal = (bd.referral_qualified || 0) + (bd.referral_override || 0) + (bd.referral_welcome || 0);
+    bdLines.push(`👥 Referrals: \`${fmt(refTotal)}\``);
+  }
+  if (bd.daily_active) bdLines.push(`🔥 Daily activity: \`${fmt(bd.daily_active)}\``);
+  if (bd.first_trade) bdLines.push(`✨ First trade bonus: \`${fmt(bd.first_trade)}\``);
+
+  const lbLines = leaders.map((l, i) => `${i + 1}. ${sanitizeMd(l.label)} — \`${fmt(l.points)}\``);
+
+  const text =
+    `🏆 *RacerBot Points — Season 1*\n\n` +
+    `⭐ *Your points*: \`${fmt(s.effectivePoints)}\`${s.earlyBird ? ` (base \`${fmt(s.basePoints)}\` × 1.25 🐣 Early Bird)` : ''}\n` +
+    `🎖 *Rank*: \`#${s.rank}\` of ${fmt(Math.max(s.totalUsers, 1))}\n` +
+    `⏳ *Snapshot*: Oct 15, 23:59 UTC (${timeLeft})\n\n` +
+    (bdLines.length > 0 ? `📊 *Breakdown*\n${bdLines.join('\n')}\n\n` : '') +
+    (lbLines.length > 0 ? `🏅 *Top Racers*\n${lbLines.join('\n')}\n\n` : '') +
+    `*How to earn*\n` +
+    `📈 1.5 pts per 1 NEAR traded (buys & sells)\n` +
+    `👥 500 pts per qualified referral + 5% of their trading points\n` +
+    `🔥 25 pts every day you trade — streaks boost up to ×2\n\n` +
+    `_Points convert to $RACER pro-rata at TGE. Points are not tokens and carry no promise of value._`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [cb('🔄 Refresh', 'menu_points_refresh', 'primary')],
+    [cb('🔙 Back', 'menu_home', 'primary')],
   ]);
 
   return { text, keyboard };
@@ -1177,6 +1229,19 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(['menu_points', 'menu_points_refresh'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const view = await buildPointsView(telegramId);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(async () => {
+        await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
