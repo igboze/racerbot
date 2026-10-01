@@ -589,7 +589,12 @@ export class SwapExecutor {
 
         if (isNotConfirmed && timedOutHash) {
           onProgress?.('confirming_slow');
-          const graceMs = 15_000;
+          // DCL/NEP-141 swaps can produce a long chain of cross-contract
+          // receipts (wrap → DEX → token tax/transfer → callbacks). The tx in
+          // this path is already submitted, so keep reconciling long enough to
+          // record a late real fill instead of falsely telling the user it is
+          // unknown. The outer 210s trade deadline still bounds this wait.
+          const graceMs = 120_000;
           console.warn(`[EXECUTOR:SIGN] Confirmation timed out for tx=${timedOutHash}; re-checking on-chain for up to ${graceMs}ms`);
           const recovered = await this.nearClient.waitForOutcome(timedOutHash, subaccountId, graceMs).catch(() => null);
           if (recovered) {
