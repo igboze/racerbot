@@ -24,6 +24,10 @@ export const POINTS_CONFIG = {
   REFERRAL_WELCOME: 250,
   /** Share of the referee's trade points paid to the referrer */
   REFERRAL_OVERRIDE_PCT: 0.05,
+  /** Fixed bonus pts awarded to the copier per successful copy-trade fill */
+  COPY_TRADE_BONUS: 25,
+  /** Share of the copier's volume-pts awarded to the wallet being copied (leader bonus) */
+  COPY_LEADER_PCT: 0.10,
   /** Users registered before this date get the Early Bird multiplier */
   EARLY_BIRD_CUTOFF: new Date('2026-09-30T00:00:00Z'),
   EARLY_BIRD_MULT: 1.25,
@@ -43,7 +47,11 @@ export type PointsAction =
   | 'daily_active'
   | 'referral_qualified'
   | 'referral_welcome'
-  | 'referral_override';
+  | 'referral_override'
+  /** Fixed per-fill bonus for the user who executed a copy trade */
+  | 'copy_trade'
+  /** 10% of copier's volume points awarded to the wallet being followed */
+  | 'copy_leader';
 
 /**
  * Award points idempotently. Returns true only when the row was inserted
@@ -383,4 +391,41 @@ export async function backfillAllPoints(
   }
 
   return { fillsProcessed: processed, awardsQueued: rows.length };
+}
+
+/**
+ * Award points for a successful copy-trade fill:
+ *  - Copier gets volume-pts (1.5 pts/NEAR) + fixed COPY_TRADE_BONUS (25 pts)
+ *  - The wallet being copied (leader) gets COPY_LEADER_PCT (10%) of the copier's volume pts
+ *
+ * @param copierUserId  Internal user.id of the follower
+ * @param copyFillId    copy_trade_fills.id — used as the idempotency key
+ * @param volumeNear    NEAR value of the copy-trade (the buy_amount_near)
+ * @param leaderUserId  Internal user.id of the user whose wallet was being copied
+ *                      (undefined if the leader isn't a RacerBot user)
+ */
+export async function awardPointsForCopyTrade(
+  copierUserId: string,
+  copyFillId: string,
+  volumeNear: number,
+  leaderUserId: string | undefined
+): Promise<void> {
+  if (!Number.isFinite(volumeNear) || volumeNear <= 0) return;
+
+  // 1. Volume points for the copier (same rate as normal trades)
+  const tradePts = volumeNear * POINTS_CONFIG.TRADE_POINTS_PER_NEAR;
+  await awardPoints(copierUserId, 'trade', tradePts, `copy:${copyFillId}`);
+
+  // 2. Fixed copy-trade bonus
+  await awardPoints(copierUserId, 'copy_trade', POINTS_CONFIG.COPY_TRADE_BONUS, copyFillId);
+
+  // 3. Leader bonus — only if the target wallet belongs to a RacerBot user
+  if (leaderUserId && tradePts >= 1) {
+    await awardPoints(
+      leaderUserId,
+      'copy_leader',
+      tradePts * POINTS_CONFIG.COPY_LEADER_PCT,
+      `lead:${copyFillId}`
+    );
+  }
 }

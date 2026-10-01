@@ -56,12 +56,32 @@ export {
   markSnipeTriggerFailed,
   markSnipeOrderResult,
   MAX_ACTIVE_SNIPE_ORDERS_PER_USER,
+  // Copy Trading
+  createCopyTradeTarget,
+  getCopyTradeTargetsByUser,
+  getCopyTargetFollowersByWallet,
+  getAllActiveCopyTargetWallets,
+  updateCopyTradeTargetStatus,
+  updateCopyTradeTarget,
+  recordCopyTradeFill,
+  updateCopyTradeFillResult,
+  getRecentCopyFillsByUser,
+  getCopyTradeDailySpend,
+  // DCA Orders
+  createDcaOrder,
+  getDcaOrdersByUser,
+  getDueDcaOrders,
+  advanceDcaOrder,
+  failDcaOrderTick,
+  updateDcaOrderStatus,
+  getDcaOrderById,
 } from './db.js';
 
 export {
   POINTS_CONFIG,
   awardPoints,
   awardPointsForTradeFill,
+  awardPointsForCopyTrade,
   getPointsSummary,
   getPointsLeaderboard,
   backfillAllPoints,
@@ -78,6 +98,11 @@ export type {
   ReferralRecord,
   TokenShareRecord,
   TokenReferralRecord,
+  CopyTradeTargetRecord,
+  CopyTradeFillRecord,
+  DcaOrderRecord,
+  CreateCopyTradeTargetParams,
+  CreateDcaOrderParams,
   CreateUserParams,
   CreatePositionParams,
   CreateFillParams,
@@ -87,4 +112,4 @@ export type {
   TradeAttemptRow,
   VolumeStats,
   SnipeOrderRecord,
-} from './db.js';
+} from './db.js';
