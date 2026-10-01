@@ -1035,10 +1035,10 @@ const ORDER_STAGE_LINES: Record<string, string> = {
   quote: '🔎 Checking current pool price…',
   storage: '📦 Registering token storage (one-time, fast)…',
   signing: '✍️ Signing & broadcasting your transaction…',
+  submitted: '🚀 *Trade submitted to NEAR.*\n\nWaiting for on-chain execution and final confirmation…',
   confirming_slow:
-    '⛓ Still confirming on-chain — NEAR validators are busy right now.\n\n' +
-    'Your funds are safe: wNEAR only leaves your wallet when the swap executes. ' +
-    'Keep waiting, I\'ll confirm the moment it lands…',
+    '⏳ *Trade was submitted, but confirmation is taking longer than usual.*\n\n' +
+    'The RPC is still waiting for the on-chain result. Do not retry yet: I\'ll confirm the outcome as soon as it arrives.',
 };
 
 function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, orderLabel: string) {
@@ -1070,25 +1070,11 @@ async function executeBuyHelper(
     throw new Error('Minimum buy amount is 0.001 NEAR.');
   }
 
-  // SPEED: run spendable balance check, ref storage deposit check, and token info lookup in parallel!
-  const [balanceNearRes, refDepositNeeded, info] = await Promise.all([
-    getTradeSpendableNear(telegramId).catch((err: any) => {
-      throw new Error(`Failed to fetch wallet balance: ${err.message}`);
-    }),
-    getRefStorageDepositNeeded(user.subaccount_id),
-    getTokenInfo(tokenAddress, false).catch(() => null),
-  ]);
-
-  const balanceNear = balanceNearRes;
-  const refDepositNear = Number(refDepositNeeded) / 1e24;
-
-  // Check balance including the one-time Ref storage deposit
-  if (balanceNear < amountNear + refDepositNear) {
-    const refLine = refDepositNear > 0
-      ? ` This includes a one-time ${refDepositNear.toFixed(2)} NEAR Ref Finance registration deposit for your wallet.`
-      : '';
-    throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + refDepositNear).toFixed(4)} NEAR.${refLine} Fees are deducted from your swap amount.`);
-  }
+  // Hot path: resolve only the token route needed for a quote. The executor
+  // performs the authoritative native/wNEAR balance check immediately before
+  // signing, so duplicating balance and Ref-storage RPC reads here only delays
+  // broadcast without improving safety.
+  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
   if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
