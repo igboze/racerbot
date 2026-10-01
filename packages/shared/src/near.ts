@@ -3028,13 +3028,42 @@ export class MultiRpcNear {
       return ok.reduce((a, b) => (BigInt(b.value?.nonce ?? 0) > BigInt(a.value?.nonce ?? 0) ? b : a)).value;
     };
 
-    const optimistic = await Promise.allSettled(this.tradeProviders.map(p => attempt(p, 'optimistic')));
-    const best = maxNonce(optimistic);
+    // Fast-path: query all trade providers in parallel.
+    // If the primary provider (FastNEAR, index 0) resolves quickly, wait at most 100ms for others to compare max nonce.
+    // This prevents a slow secondary provider (QuickNode) from blocking signing for 800ms+!
+    const queryWithHedging = async (finality: string): Promise<any | null> => {
+      if (this.tradeProviders.length === 1) {
+        return attempt(this.tradeProviders[0], finality).catch(() => null);
+      }
+      const attempts = this.tradeProviders.map(p => attempt(p, finality));
+      const primaryPromise = attempts[0];
+      const otherAttempts = attempts.slice(1);
+
+      try {
+        const primaryRes = await primaryPromise;
+        if (primaryRes != null) {
+          const otherResults = await Promise.allSettled(
+            otherAttempts.map(p => Promise.race([
+              p,
+              new Promise<null>(r => setTimeout(() => r(null), 100))
+            ]))
+          );
+          const okOthers = otherResults
+            .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value != null);
+          const allOk = [primaryRes, ...okOthers.map(o => o.value)];
+          return allOk.reduce((a, b) => (BigInt(b?.nonce ?? 0) > BigInt(a?.nonce ?? 0) ? b : a));
+        }
+      } catch {}
+
+      const allSettled = await Promise.allSettled(attempts);
+      return maxNonce(allSettled);
+    };
+
+    const best = await queryWithHedging('optimistic');
     if (best) return best;
 
     console.warn('[NEAR] view_access_key (optimistic) failed on all trade providers — retrying with final finality');
-    const fin = await Promise.allSettled(this.tradeProviders.map(p => attempt(p, 'final')));
-    const bestFinal = maxNonce(fin);
+    const bestFinal = await queryWithHedging('final');
     if (bestFinal) return bestFinal;
 
     // Fallback to read providers
@@ -3088,15 +3117,15 @@ export class MultiRpcNear {
       return hash as string;
     };
 
-    const results = await Promise.allSettled(this.tradeProviders.map(fetchFrom));
-    const first = results.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
-    if (first) return first.value;
-
-    // Fallback across read providers if all trade providers failed
-    if (this.readProviders.length > 0) {
-      const fallbackResults = await Promise.allSettled(this.readProviders.map(fetchFrom));
-      const firstFallback = fallbackResults.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
-      if (firstFallback) return firstFallback.value;
+    try {
+      return await Promise.any(this.tradeProviders.map(fetchFrom));
+    } catch {
+      // Fallback across read providers if all trade providers failed
+      if (this.readProviders.length > 0) {
+        try {
+          return await Promise.any(this.readProviders.map(fetchFrom));
+        } catch {}
+      }
     }
 
     // Direct emergency fallbacks to free FastNEAR and QuickNode default
@@ -3150,32 +3179,34 @@ export class MultiRpcNear {
    * the rejection reason so caller fails fast instead of hanging on a doomed poll.
    */
   private async broadcastToAll(signedB64: string): Promise<void> {
-    const results = await Promise.allSettled(
-      this.tradeProviders.map(async (provider) => {
-        const res = await fetch(provider.url, {
-          method: 'POST',
-          headers: provider.headers ?? { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'racerbot-fanout',
-            method: 'broadcast_tx_async',
-            params: [signedB64],
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-        const data: any = await res.json();
-        if (data?.error) {
-          const errMsg = data.error.message || JSON.stringify(data.error);
-          console.warn(`[NEAR] broadcastToAll ${provider.name || provider.url} error:`, errMsg);
-          throw new Error(`${provider.name || provider.url}: ${errMsg}`);
-        }
-        console.log(`[NEAR] broadcastToAll ${provider.name || provider.url} accepted tx`);
-        return data?.result;
-      })
-    );
+    const promises = this.tradeProviders.map(async (provider) => {
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'racerbot-fanout',
+          method: 'broadcast_tx_async',
+          params: [signedB64],
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const data: any = await res.json();
+      if (data?.error) {
+        const errMsg = data.error.message || JSON.stringify(data.error);
+        console.warn(`[NEAR] broadcastToAll ${provider.name || provider.url} error:`, errMsg);
+        throw new Error(`${provider.name || provider.url}: ${errMsg}`);
+      }
+      console.log(`[NEAR] broadcastToAll ${provider.name || provider.url} accepted tx`);
+      return data?.result;
+    });
 
-    const hasSuccess = results.some(r => r.status === 'fulfilled');
-    if (!hasSuccess) {
+    try {
+      // First provider to accept returns immediately so confirmation polling begins without delay
+      await Promise.any(promises);
+    } catch {
+      // All rejected
+      const results = await Promise.allSettled(promises);
       const errors = results
         .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
         .map(r => r.reason?.message ?? String(r.reason));
@@ -3269,28 +3300,27 @@ export class MultiRpcNear {
       };
 
       try {
-        // First attempt: EXPERIMENTAL_tx_status with object params and wait_until: 'NONE'
-        // Non-blocking query returns immediately instead of holding connection open
-        let data: any = await callRpc('EXPERIMENTAL_tx_status', {
-          tx_hash: txHash,
-          sender_account_id: accountId,
-          wait_until: 'NONE',
-        });
+        // Standard NEAR RPC expects [txHash, accountId] — responds immediately without parse errors
+        let data: any = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
 
-        // Fallback 1: If provider rejects object params with parse error, try 2-element array [txHash, accountId]
+        // Fallback 1: If provider rejects array params, try object params
         if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
-          data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
-        }
-
-        // Fallback 2: If provider doesn't support EXPERIMENTAL_tx_status (-32601), fall back to `tx`
-        if (data?.error?.code === -32601) {
-          data = await callRpc('tx', {
+          data = await callRpc('EXPERIMENTAL_tx_status', {
             tx_hash: txHash,
             sender_account_id: accountId,
             wait_until: 'NONE',
           });
+        }
+
+        // Fallback 2: If provider doesn't support EXPERIMENTAL_tx_status (-32601), fall back to `tx`
+        if (data?.error?.code === -32601) {
+          data = await callRpc('tx', [txHash, accountId]);
           if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
-            data = await callRpc('tx', [txHash, accountId]);
+            data = await callRpc('tx', {
+              tx_hash: txHash,
+              sender_account_id: accountId,
+              wait_until: 'NONE',
+            });
           }
         }
 
@@ -3384,8 +3414,8 @@ export class MultiRpcNear {
       }
 
       polls++;
-      // Fast polling: 150ms for first 8 polls, then 300ms, max 600ms
-      const pollDelay = polls < 8 ? 150 : (polls < 15 ? 300 : 600);
+      // Fast polling: 100ms for first 10 polls (~1s), then 200ms for next 10 polls, then 400ms
+      const pollDelay = polls < 10 ? 100 : (polls < 20 ? 200 : 400);
       await sleep(pollDelay);
     }
 
