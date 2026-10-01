@@ -942,16 +942,16 @@
     const buyLbl = document.querySelector('.buy-label');
     if (buyLbl) buyLbl.textContent = `⚡ Buy $${SYMBOL}:`;
 
-    // ── Hard Neon Cluster Colors ──────────────────────────────────
+    // ── Hard Neon Cluster Colors (Glassmorphic Translucent Definitions) ──
     const CLUSTER_COLORS = [
-      { fill: '#00f2fe', glow: 'rgba(0, 242, 254, 0.45)', border: '#bae6fd' },  // Neon Cyan
-      { fill: '#8b5cf6', glow: 'rgba(139, 92, 246, 0.45)', border: '#ddd6fe' }, // Cyber Purple
-      { fill: '#d946ef', glow: 'rgba(217, 70, 239, 0.45)', border: '#f5d0fe' }, // Electric Magenta
-      { fill: '#00f59b', glow: 'rgba(0, 245, 155, 0.45)', border: '#a7f3d0' }, // Hyper Emerald
-      { fill: '#f59e0b', glow: 'rgba(245, 158, 11, 0.40)', border: '#fde68a' }, // Solar Amber
-      { fill: '#3b82f6', glow: 'rgba(59, 130, 246, 0.45)', border: '#bfdbfe' }, // Cobalt Blue
-      { fill: '#ec4899', glow: 'rgba(236, 72, 153, 0.45)', border: '#fbcfe8' }, // Hot Pink
-      { fill: '#14b8a6', glow: 'rgba(20, 184, 166, 0.45)', border: '#99f6e4' }  // Mint Teal
+      { fill: '#00f2fe', glassInner: 'rgba(0, 242, 254, 0.30)', glassMid: 'rgba(0, 242, 254, 0.09)', glassOuter: 'rgba(0, 242, 254, 0.02)', glow: 'rgba(0, 242, 254, 0.40)', border: '#38bdf8' },  // Neon Cyan
+      { fill: '#8b5cf6', glassInner: 'rgba(139, 92, 246, 0.30)', glassMid: 'rgba(139, 92, 246, 0.09)', glassOuter: 'rgba(139, 92, 246, 0.02)', glow: 'rgba(139, 92, 246, 0.40)', border: '#a78bfa' }, // Cyber Purple
+      { fill: '#d946ef', glassInner: 'rgba(217, 70, 239, 0.30)', glassMid: 'rgba(217, 70, 239, 0.09)', glassOuter: 'rgba(217, 70, 239, 0.02)', glow: 'rgba(217, 70, 239, 0.40)', border: '#e879f9' }, // Electric Magenta
+      { fill: '#00f59b', glassInner: 'rgba(0, 245, 155, 0.28)', glassMid: 'rgba(0, 245, 155, 0.08)', glassOuter: 'rgba(0, 245, 155, 0.02)', glow: 'rgba(0, 245, 155, 0.35)', border: '#4ade80' }, // Hyper Emerald
+      { fill: '#f59e0b', glassInner: 'rgba(245, 158, 11, 0.25)', glassMid: 'rgba(245, 158, 11, 0.07)', glassOuter: 'rgba(245, 158, 11, 0.02)', glow: 'rgba(245, 158, 11, 0.30)', border: '#fbbf24' }, // Solar Amber
+      { fill: '#3b82f6', glassInner: 'rgba(59, 130, 246, 0.30)', glassMid: 'rgba(59, 130, 246, 0.09)', glassOuter: 'rgba(59, 130, 246, 0.02)', glow: 'rgba(59, 130, 246, 0.40)', border: '#60a5fa' }, // Cobalt Blue
+      { fill: '#ec4899', glassInner: 'rgba(236, 72, 153, 0.30)', glassMid: 'rgba(236, 72, 153, 0.09)', glassOuter: 'rgba(236, 72, 153, 0.02)', glow: 'rgba(236, 72, 153, 0.40)', border: '#f472b6' }, // Hot Pink
+      { fill: '#14b8a6', glassInner: 'rgba(20, 184, 166, 0.28)', glassMid: 'rgba(20, 184, 166, 0.08)', glassOuter: 'rgba(20, 184, 166, 0.02)', glow: 'rgba(20, 184, 166, 0.35)', border: '#2dd4bf' }  // Mint Teal
     ];
 
     // ── Global State ──────────────────────────────────────────────
@@ -999,13 +999,13 @@
       toastTimeout = setTimeout(() => { toastEl.classList.remove('show'); }, 2500);
     }
 
-    // ── Color Tier Definitions ────────────────────────────────────
+    // ── Color Tier Definitions (Glassmorphic Translucent) ────────
     function getTier(pct) {
-      if (pct >= 5)    return { fill: '#a855f7', glow: 'rgba(168, 85, 247, 0.50)', tag: 'WHALE',  border: '#f3e8ff' };
-      if (pct >= 1)    return { fill: '#00f2fe', glow: 'rgba(0, 242, 254, 0.45)',  tag: 'LARGE',  border: '#bae6fd' };
-      if (pct >= 0.1)  return { fill: '#00f59b', glow: 'rgba(0, 245, 155, 0.40)',  tag: 'MEDIUM', border: '#a7f3d0' };
-      if (pct >= 0.01) return { fill: '#f59e0b', glow: 'rgba(245, 158, 11, 0.35)',  tag: 'SMALL',  border: '#fde68a' };
-      return              { fill: '#64748b', glow: 'rgba(100, 116, 139, 0.25)', tag: 'DUST',   border: '#94a3b8' };
+      if (pct >= 5)    return { fill: '#a855f7', glassInner: 'rgba(168, 85, 247, 0.32)', glassMid: 'rgba(168, 85, 247, 0.10)', glassOuter: 'rgba(168, 85, 247, 0.02)', glow: 'rgba(168, 85, 247, 0.45)', tag: 'WHALE',  border: '#c084fc' };
+      if (pct >= 1)    return { fill: '#00f2fe', glassInner: 'rgba(0, 242, 254, 0.30)', glassMid: 'rgba(0, 242, 254, 0.09)', glassOuter: 'rgba(0, 242, 254, 0.02)', glow: 'rgba(0, 242, 254, 0.40)',  tag: 'LARGE',  border: '#38bdf8' };
+      if (pct >= 0.1)  return { fill: '#00f59b', glassInner: 'rgba(0, 245, 155, 0.28)', glassMid: 'rgba(0, 245, 155, 0.08)', glassOuter: 'rgba(0, 245, 155, 0.02)', glow: 'rgba(0, 245, 155, 0.35)',  tag: 'MEDIUM', border: '#4ade80' };
+      if (pct >= 0.01) return { fill: '#f59e0b', glassInner: 'rgba(245, 158, 11, 0.25)', glassMid: 'rgba(245, 158, 11, 0.07)', glassOuter: 'rgba(245, 158, 11, 0.02)', glow: 'rgba(245, 158, 11, 0.30)',  tag: 'SMALL',  border: '#fbbf24' };
+      return              { fill: '#64748b', glassInner: 'rgba(100, 116, 139, 0.18)', glassMid: 'rgba(100, 116, 139, 0.05)', glassOuter: 'rgba(100, 116, 139, 0.01)', glow: 'rgba(100, 116, 139, 0.20)', tag: 'DUST',   border: '#94a3b8' };
     }
 
     function formatBalance(rawStr, decimals = 18) {
@@ -1048,6 +1048,7 @@
         document.getElementById('loader-screen').style.opacity = '0';
         setTimeout(() => { document.getElementById('loader-screen').style.display = 'none'; }, 300);
         startRenderLoop();
+        setTimeout(fitToScreen, 100);
       } catch (err) {
         showError(`Failed to load bubble map: ${err.message}`);
       }
@@ -1200,22 +1201,46 @@
     function initPhysics() {
       const W = window.innerWidth;
       const H = window.innerHeight;
-      const baseArea = Math.min(W, H) * 0.38;
+      const isMobile = W < 768;
+      const baseArea = Math.min(W, H) * (isMobile ? 0.32 : 0.36);
 
       bubbles.forEach((b, i) => {
-        const minR = 14;
-        const maxR = Math.min(W, H) * 0.16;
-        b.radius = Math.max(minR, Math.min(maxR, Math.sqrt(b.pct / 100) * baseArea * 1.6));
-        b.vx = (Math.random() - 0.5) * 0.5;
-        b.vy = (Math.random() - 0.5) * 0.5;
+        const minR = isMobile ? 12 : 14;
+        const maxR = Math.min(W, H) * (isMobile ? 0.14 : 0.15);
+        b.radius = Math.max(minR, Math.min(maxR, Math.sqrt(b.pct / 100) * baseArea * 1.5));
+        b.vx = (Math.random() - 0.5) * 0.4;
+        b.vy = (Math.random() - 0.5) * 0.4;
         b.phase = Math.random() * Math.PI * 2;
         b.floatSpeed = 0.0008 + Math.random() * 0.0008;
 
         const angle = i * 0.78;
-        const dist = 30 + Math.sqrt(i) * (baseArea * 0.55);
+        const dist = 24 + Math.sqrt(i) * (baseArea * 0.5);
         b.x = W / 2 + Math.cos(angle) * dist;
         b.y = H / 2 + Math.sin(angle) * dist;
       });
+    }
+
+    function fitToScreen() {
+      if (bubbles.length === 0) return;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+      for (const b of bubbles) {
+        minX = Math.min(minX, b.x - b.radius);
+        maxX = Math.max(maxX, b.x + b.radius);
+        minY = Math.min(minY, b.y - b.radius);
+        maxY = Math.max(maxY, b.y + b.radius);
+      }
+
+      const bboxW = (maxX - minX) || 1;
+      const bboxH = (maxY - minY) || 1;
+      const pad = W < 768 ? 40 : 80;
+      const scaleX = (W - pad) / bboxW;
+      const scaleY = (H - pad - 60) / bboxH;
+      zoom = Math.max(0.4, Math.min(1.15, Math.min(scaleX, scaleY)));
+      panX = 0;
+      panY = W < 768 ? -10 : 0;
     }
 
     function updatePhysics(dt) {
@@ -1423,21 +1448,23 @@
 
         const theme = (colorByCluster && b.clusterColor) ? b.clusterColor : b.tier;
 
-        // Subtle breathing radius expansion
-        const breath = Math.sin(simulationTime * b.floatSpeed * 2 + b.phase) * 1.2;
+        // Subtle breathing motion
+        const breath = Math.sin(simulationTime * b.floatSpeed * 2 + b.phase) * 1.0;
         const curR = b.radius + (b === selectedBubble ? 3 : (b === hoveredBubble ? 2 : breath));
 
+        // Glass Translucent Fill (Light, luminous, translucent glass)
         const grad = ctx.createRadialGradient(
           b.x - curR * 0.35,
           b.y - curR * 0.35,
-          curR * 0.1,
+          curR * 0.05,
           b.x,
           b.y,
           curR
         );
-        grad.addColorStop(0, '#ffffff');
-        grad.addColorStop(0.25, theme.fill);
-        grad.addColorStop(1, '#06080e');
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
+        grad.addColorStop(0.35, theme.glassInner || 'rgba(0, 242, 254, 0.25)');
+        grad.addColorStop(0.85, theme.glassMid || 'rgba(0, 242, 254, 0.08)');
+        grad.addColorStop(1, theme.glassOuter || 'rgba(0, 242, 254, 0.02)');
 
         ctx.beginPath();
         ctx.arc(b.x, b.y, curR, 0, Math.PI * 2);
@@ -1445,35 +1472,47 @@
 
         if (isHighlighted || b === hoveredBubble || b === draggedBubble) {
           ctx.shadowColor = theme.glow;
-          ctx.shadowBlur = 28;
+          ctx.shadowBlur = 20;
         }
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        ctx.lineWidth = (b === selectedBubble || b === hoveredBubble || b === draggedBubble) ? 3 : 1.5;
+        // Thin Crisp Glass Rim (1.1px, not thick)
+        ctx.lineWidth = (b === selectedBubble) ? 2.0 : (b === hoveredBubble ? 1.5 : 1.1);
         ctx.strokeStyle = (b === selectedBubble) ? '#ffffff' : theme.border;
         ctx.stroke();
 
-        // Label Rendering (Percentage on Top + Wallet Monospace)
+        // 3D Glass Crescent Highlight Arc (Top-Left Sheen)
+        if (curR >= 16) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, curR * 0.82, -0.75 * Math.PI, -0.25 * Math.PI);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.40)';
+          ctx.lineWidth = 1.3;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Label Rendering (High Contrast Crisp White Typography)
         const shortAddr = b.address.length > 13 ? b.address.slice(0, 6) + '…' + b.address.slice(-3) : b.address;
         const pctStr = `${b.pct.toFixed(1)}%`;
 
         ctx.shadowColor = 'rgba(0,0,0,0.95)';
-        ctx.shadowBlur = 5;
+        ctx.shadowBlur = 6;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
         if (curR >= 22) {
           ctx.fillStyle = '#ffffff';
-          ctx.font = `800 ${Math.max(10, Math.min(curR * 0.36, 14.5))}px Inter, sans-serif`;
+          ctx.font = `800 ${Math.max(10, Math.min(curR * 0.36, 14))}px Inter, sans-serif`;
           ctx.fillText(pctStr, b.x, b.y - (curR * 0.22));
 
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.font = `600 ${Math.max(8.5, Math.min(curR * 0.22, 10.5))}px 'JetBrains Mono', monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.font = `600 ${Math.max(8, Math.min(curR * 0.22, 10))}px 'JetBrains Mono', monospace`;
           ctx.fillText(shortAddr, b.x, b.y + (curR * 0.26));
-        } else if (curR >= 14) {
+        } else if (curR >= 12) {
           ctx.fillStyle = '#ffffff';
-          ctx.font = `800 ${Math.max(8.5, curR * 0.45)}px Inter, sans-serif`;
+          ctx.font = `800 ${Math.max(8, curR * 0.45)}px Inter, sans-serif`;
           ctx.fillText(pctStr, b.x, b.y);
         }
 
@@ -1486,7 +1525,10 @@
 
     function startRenderLoop() {
       resizeCanvas();
-      window.addEventListener('resize', resizeCanvas);
+      window.addEventListener('resize', () => {
+        resizeCanvas();
+        fitToScreen();
+      });
       if (animFrameId) cancelAnimationFrame(animFrameId);
       animFrameId = requestAnimationFrame(render);
     }
@@ -1546,17 +1588,17 @@
       copyBtn.href = copyUrl;
       copyBtn.onclick = (e) => openTgLink(copyUrl, e);
 
-      // Transfers
+      // Transfers List (Multi-hop wallet-to-wallet streams)
       const txScrollEl = document.getElementById('panel-tx-scroll');
       const allTxs = [...b.sentTxns.map(t => ({ ...t, dir: 'out' })), ...b.recvTxns.map(t => ({ ...t, dir: 'in' }))];
       document.getElementById('panel-tx-count').textContent = `${allTxs.length} links`;
 
       if (allTxs.length === 0) {
-        txScrollEl.innerHTML = '<div style="font-size:11px; color:var(--text-dim); text-align:center; padding:12px;">No direct wallet transfers</div>';
+        txScrollEl.innerHTML = '<div style="font-size:10.5px; color:var(--text-dim); text-align:center; padding:10px;">No direct wallet transfers</div>';
       } else {
         txScrollEl.innerHTML = allTxs.map(t => `
           <div class="tx-card">
-            <span class="tx-peer-name">${t.dir === 'out' ? '➔ ' + t.to : '⬅ ' + t.from}</span>
+            <span class="tx-peer-name">${t.dir === 'out' ? '➔ Sent to ' + t.to : '⬅ Received from ' + t.from}</span>
             <span class="tx-val-text ${t.dir === 'out' ? 'tx-cyan' : 'tx-green'}">${t.dir === 'out' ? '−' : '+'}${formatBalance(t.amount)}</span>
           </div>
         `).join('');
@@ -1590,6 +1632,7 @@
     window.toggleTraces = function() {
       showAllTraces = !showAllTraces;
       document.getElementById('traces-btn').classList.toggle('active', showAllTraces);
+      showToast(showAllTraces ? 'Money Flow Traces: ON' : 'Money Flow Traces: OFF');
     };
 
     window.toggleClusterColorMode = function() {
@@ -1605,9 +1648,7 @@
     };
 
     window.resetView = function() {
-      zoom = 1.0;
-      panX = 0;
-      panY = 0;
+      fitToScreen();
       deselectAll();
     };
 
