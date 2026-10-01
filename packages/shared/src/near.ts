@@ -217,25 +217,18 @@ export class MultiRpcNear {
 
     const sanitizedUrls = fastnearAndQnUrls.length > 0
       ? Array.from(new Set(fastnearAndQnUrls))
-      : ['https://rpc.mainnet.fastnear.com'];
+      : [qnUrl || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/', 'https://rpc.mainnet.fastnear.com'];
 
     // Prioritize QuickNode first, then FastNEAR
     const prioritizedUrls = [
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
     ];
-    // Duty split:
-    //   READS  → FastNEAR first (purpose-built for fast read-heavy workloads;
-    //            protects the free tier by keeping QuickNode out of the fan-out).
-    //            QuickNode is the automatic failover when every FastNEAR
-    //            provider is unhealthy or circuit-open.
-    //   WRITES → all trade providers hedge the sign reads (nonce: max wins;
-    //            block hash: first success), broadcast fans out identical
-    //            signed bytes, confirmation polls across providers. Order is
-    //            QuickNode-first when configured.
+    // Main RPC: QuickNode is primary for both reads and writes.
+    // FastNEAR is the automatic failover / hedge when QuickNode is slow, unhealthy, or circuit-open.
     const readUrls = [
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
@@ -600,11 +593,11 @@ export class MultiRpcNear {
           return;
         }
 
-        // Network error on FastNEAR before HEDGE_MS → launch QN early.
-        if (!settled && qnTargets.length > 0 && hedgeTimer !== null) {
+        // Network error on QuickNode before HEDGE_MS → launch FastNEAR early.
+        if (!settled && fnTargets.length > 0 && hedgeTimer !== null) {
           clearTimeout(hedgeTimer);
           hedgeTimer = null;
-          launchQuickNode();
+          launchFastNear();
         }
 
         // If all started attempts have failed, reject.
@@ -636,18 +629,18 @@ export class MultiRpcNear {
         fail(new Error('NEAR RPC view hard cap exceeded (3000 ms)'));
       }, VIEW_TIMEOUT_MS);
 
-      if (fnTargets.length > 0) {
-        launchFastNear();
-        // Hedge: after HEDGE_MS with no response, also send to QN.
-        if (qnTargets.length > 0) {
+      if (qnTargets.length > 0) {
+        launchQuickNode();
+        // Hedge: after HEDGE_MS with no response from QuickNode, also send to FastNEAR fallback.
+        if (fnTargets.length > 0) {
           hedgeTimer = setTimeout(() => {
             hedgeTimer = null;
-            if (!settled) launchQuickNode();
+            if (!settled) launchFastNear();
           }, HEDGE_MS);
         }
       } else {
-        // FastNEAR not configured — go straight to QuickNode.
-        launchQuickNode();
+        // QuickNode not configured — go straight to FastNEAR.
+        launchFastNear();
       }
     });
   }
@@ -3502,8 +3495,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR only). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (QuickNode primary, FastNEAR fallback). */
 export const DEFAULT_RPC_URLS = [
+  process.env.QUICKNODE_ENDPOINT_URL || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
   'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
 ];

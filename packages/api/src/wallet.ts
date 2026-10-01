@@ -21,10 +21,15 @@ import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID }
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
 const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
-if (qnUrl && !configuredRpcList.includes(qnUrl)) {
-  configuredRpcList.push(qnUrl);
-}
-const RPC_URLS = configuredRpcList.length > 0 ? configuredRpcList : ['https://rpc.mainnet.fastnear.com'];
+const qnFirstList = [
+  ...(qnUrl ? [qnUrl] : []),
+  ...configuredRpcList.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+  ...configuredRpcList.filter(u => !u.includes('quiknode.pro') && !u.includes('quicknode')),
+];
+const RPC_URLS = qnFirstList.length > 0 ? Array.from(new Set(qnFirstList)) : [
+  'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
+  'https://rpc.mainnet.fastnear.com'
+];
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
