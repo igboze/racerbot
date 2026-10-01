@@ -908,11 +908,37 @@
     document.getElementById('hdr-address').textContent = TOKEN || 'unknown';
     if (NAME) document.title = `${NAME} (${SYMBOL}) — RacerBot Bubble Map`;
 
+    // Helper to open Telegram deep links seamlessly inside or outside Mini App
+    window.openTgLink = function(url, e) {
+      if (e) e.preventDefault();
+      if (window.Telegram?.WebApp?.openTelegramLink) {
+        try {
+          window.Telegram.WebApp.openTelegramLink(url);
+          return;
+        } catch {}
+      }
+      window.open(url, '_blank');
+    };
+
     // Configure Quick Buy Pill
-    const buyBase = `https://t.me/racertradingbot?start=buy_${encodeURIComponent(TOKEN.replace(/\./g, '_'))}`;
-    document.getElementById('buy-1n').href = `${buyBase}_1`;
-    document.getElementById('buy-5n').href = `${buyBase}_5`;
-    document.getElementById('buy-10n').href = `${buyBase}_10`;
+    const buyTokenParam = TOKEN ? encodeURIComponent(TOKEN.replace(/\./g, '_')) : '';
+    const buyBase = `https://t.me/racertradingbot?start=buy_${buyTokenParam}`;
+    const btn1n = document.getElementById('buy-1n');
+    const btn5n = document.getElementById('buy-5n');
+    const btn10n = document.getElementById('buy-10n');
+
+    if (btn1n) {
+      btn1n.href = `${buyBase}_1`;
+      btn1n.onclick = (e) => openTgLink(`${buyBase}_1`, e);
+    }
+    if (btn5n) {
+      btn5n.href = `${buyBase}_5`;
+      btn5n.onclick = (e) => openTgLink(`${buyBase}_5`, e);
+    }
+    if (btn10n) {
+      btn10n.href = `${buyBase}_10`;
+      btn10n.onclick = (e) => openTgLink(`${buyBase}_10`, e);
+    }
     const buyLbl = document.querySelector('.buy-label');
     if (buyLbl) buyLbl.textContent = `⚡ Buy $${SYMBOL}:`;
 
@@ -1418,7 +1444,10 @@
 
       // Setup 1-Click Copy Trade Link
       const copyBtn = document.getElementById('panel-copy-trade-btn');
-      copyBtn.href = `https://t.me/racertradingbot?start=copy_${encodeURIComponent(b.address)}`;
+      const copyWalletEncoded = encodeURIComponent(b.address.replace(/\./g, '_'));
+      const copyUrl = `https://t.me/racertradingbot?start=copy_${copyWalletEncoded}`;
+      copyBtn.href = copyUrl;
+      copyBtn.onclick = (e) => openTgLink(copyUrl, e);
 
       // Transfers
       const txScrollEl = document.getElementById('panel-tx-scroll');
