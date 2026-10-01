@@ -11,7 +11,7 @@ import {
   type PriceUpdateEvent,
   type AutoBuySignal,
 } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds, getActiveTokenSnipes, getActiveDeployerSnipes, recordSnipeTrigger } from '@racerbot/db';
+import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds, getActiveTokenSnipes, getActiveDeployerSnipes, getDistinctActiveSnipeTokens, recordSnipeTrigger } from '@racerbot/db';
 import { initCopyTradeDetector, checkCopyTradeReceipt } from './copyTrade.js';
 
 const logger = createLogger('detector');
@@ -40,9 +40,9 @@ const TRIGGER_PRICE_REFRESH_MS = 15_000; // keep stop-loss prices fresh
 const LAST_BLOCK_KEY = 'detector:last_block';
 const MAX_CATCHUP_BLOCKS = 50; // bounded replay after downtime
 
-// Rhea Finance = Ref Finance rebrand; pools live on v2.ref-finance.near
+// Rhea Finance = Ref Finance rebrand; pools live on v2.ref-finance.near & dclv2.ref-labs.near
 // (rhea.finance is only the website — watching it alone missed every launch).
-const RHEA_RECEIVERS = new Set(['rhea.finance', 'v2.ref-finance.near']);
+const RHEA_RECEIVERS = new Set(['rhea.finance', 'v2.ref-finance.near', 'dclv2.ref-labs.near', 'dcl.ref-finance.near']);
 
 const near = getNear(RPC_URLS);
 const redis = createRedis(REDIS_URL);
@@ -63,6 +63,11 @@ async function main() {
   setInterval(() => {
     void refreshTriggerTokenPrices();
   }, TRIGGER_PRICE_REFRESH_MS);
+
+  // Active targeted snipe watchdog (checks armed tokens like pearpe.tkn.near every 5s)
+  setInterval(() => {
+    void pollActiveTokenSnipes();
+  }, 5_000);
 
   // Initialize copy-trade wallet tracker (refreshes every 60s from DB)
   await initCopyTradeDetector().catch(err =>
@@ -333,11 +338,36 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 }
               } else if (
                 RHEA_RECEIVERS.has(receiverId) &&
-                (fn.method_name === 'add_simple_pool' || fn.method_name === 'create_pool' || fn.method_name === 'swap')
+                (
+                  fn.method_name === 'add_simple_pool' ||
+                  fn.method_name === 'add_stable_swap_pool' ||
+                  fn.method_name === 'create_pool' ||
+                  fn.method_name === 'create_dcl_pool' ||
+                  fn.method_name === 'add_liquidity' ||
+                  fn.method_name === 'deposit_and_add_liquidity' ||
+                  fn.method_name === 'mft_transfer_call' ||
+                  fn.method_name === 'swap'
+                )
               ) {
-                const tokenAddress = decoded?.tokens?.[0] ?? decoded?.tokens?.[1] ?? '';
-                if (tokenAddress) {
-                  await handlePoolCreated(tokenAddress, 'rhea', decoded).catch(() => {});
+                const candidateTokens: string[] = [];
+                if (Array.isArray(decoded?.tokens)) candidateTokens.push(...decoded.tokens);
+                if (decoded?.token_id) candidateTokens.push(decoded.token_id);
+                if (decoded?.token_a) candidateTokens.push(decoded.token_a);
+                if (decoded?.token_b) candidateTokens.push(decoded.token_b);
+                if (typeof decoded?.pool_id === 'string' && decoded.pool_id.includes('|')) {
+                  candidateTokens.push(...decoded.pool_id.split('|').slice(0, 2));
+                }
+                if (Array.isArray(decoded?.actions)) {
+                  for (const act of decoded.actions) {
+                    if (act?.token_in) candidateTokens.push(act.token_in);
+                    if (act?.token_out) candidateTokens.push(act.token_out);
+                  }
+                }
+                const uniqueNonNear = [...new Set(candidateTokens)].filter(
+                  t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t))
+                );
+                for (const t of uniqueNonNear) {
+                  await handlePoolCreated(t, 'rhea', decoded).catch(() => {});
                 }
               } else if (receiverId === 'launch.intear.near') {
                 // Intear launchpad — best-effort field extraction
@@ -418,12 +448,22 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
     await handlePoolCreated(tokenAddress, 'shardsmarket', data);
   }
 
-  // ── Rhea pool / token launch (v2.ref-finance.near is the real contract) ──
-  if (RHEA_RECEIVERS.has(receiverId) && (eventName === 'pool_created' || eventName === 'token_launch')) {
-    const tokenAddress: string = data?.token_id ?? data?.token_out ?? '';
-    if (!tokenAddress) return;
-
-    await handlePoolCreated(tokenAddress, 'rhea', data);
+  // ── Rhea pool / token launch (v2.ref-finance.near & dclv2.ref-labs.near) ──
+  if (RHEA_RECEIVERS.has(receiverId) && (eventName === 'pool_created' || eventName === 'token_launch' || eventName === 'swap')) {
+    const candidates: string[] = [];
+    if (data?.token_id) candidates.push(data.token_id);
+    if (data?.token_out) candidates.push(data.token_out);
+    if (data?.token_in) candidates.push(data.token_in);
+    if (Array.isArray(data?.tokens)) candidates.push(...data.tokens);
+    if (typeof data?.pool_id === 'string' && data.pool_id.includes('|')) {
+      candidates.push(...data.pool_id.split('|').slice(0, 2));
+    }
+    const uniqueTokens = [...new Set(candidates)].filter(
+      t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t))
+    );
+    for (const t of uniqueTokens) {
+      await handlePoolCreated(t, 'rhea', data).catch(() => {});
+    }
   }
 
   // ── Intear launchpad ────────────────────────────────────────────────────
@@ -978,6 +1018,72 @@ async function refreshTriggerTokenPrices(): Promise<void> {
     );
   } catch (err) {
     console.error('[DETECTOR] Trigger price refresh error:', (err as Error).message);
+  }
+}
+
+/**
+ * Active watchdog for armed token snipes (e.g. pearpe.tkn.near).
+ * Runs every 5s. Probes on-chain pool status directly so any token that gains
+ * liquidity or creates a pool triggers IMMEDIATELY, even if the block chunk
+ * receipt was skipped or arrived before detector startup.
+ */
+async function pollActiveTokenSnipes(): Promise<void> {
+  try {
+    const activeTokens = await getDistinctActiveSnipeTokens().catch(() => []);
+    if (activeTokens.length === 0) return;
+
+    for (const tokenAddress of activeTokens) {
+      try {
+        // 1. Rhea / Ref Finance pool probe (simple, DCL, multihop)
+        const rheaPool = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
+        if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
+          console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
+          const liqYocto = (rheaPool.liquidityNear * 1e24).toString();
+          await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
+          continue;
+        }
+
+        // 2. Direct DCL pool probe on dclv2.ref-labs.near
+        const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
+        if (dclPoolId) {
+          const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
+          if (st && st.price > 0 && st.liquidityNear > 0) {
+            console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on DCL (${dclPoolId})! Liq: ${st.liquidityNear} NEAR`);
+            const liqYocto = (st.liquidityNear * 1e24).toString();
+            await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
+            continue;
+          }
+        }
+
+        // 3. Direct simple pool on v2.ref-finance.near
+        const rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
+        if (rheaPoolId !== null && rheaPoolId !== undefined) {
+          const res = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress).catch(() => null);
+          if (res) {
+            const nearRes = parseFloat(res.reserveIn) / 1e24;
+            if (nearRes > 0) {
+              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Ref Simple Pool (${rheaPoolId})! Reserve: ${nearRes} NEAR`);
+              await checkAutoBuySignals(tokenAddress, 'rhea', res.reserveIn, 0);
+              continue;
+            }
+          }
+        }
+
+        // 4. Launchpads
+        if (tokenAddress.endsWith('.nearlytrade.near')) {
+          const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
+          if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
+            console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
+            const liqYocto = (nt.liquidityNear * 1e24).toString();
+            await checkAutoBuySignals(tokenAddress, 'nearlytrade', liqYocto, 0);
+          }
+        }
+      } catch (err: any) {
+        // Keep looping across targets
+      }
+    }
+  } catch (err: any) {
+    // Keep watchdog timer alive
   }
 }
 
