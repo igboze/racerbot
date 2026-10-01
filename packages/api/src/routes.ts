@@ -29,6 +29,14 @@ import {
   markSnipeTriggerFailed,
   markSnipeOrderResult,
   MAX_ACTIVE_SNIPE_ORDERS_PER_USER,
+  // Copy Trading
+  createCopyTradeTarget,
+  getCopyTradeTargetsByUser,
+  updateCopyTradeTargetStatus,
+  // DCA Orders
+  createDcaOrder,
+  getDcaOrdersByUser,
+  updateDcaOrderStatus,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -77,9 +85,22 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
   action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token'
-    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount';
+    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount'
+    // Copy Trading wizard
+    | 'copy_wallet' | 'copy_amount' | 'copy_daily_budget'
+    // DCA wizard
+    | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard';
   tokenAddress?: string;
   deployerAddress?: string;
+  // Copy trading wizard state
+  copyWallet?: string;
+  copyBuyAmount?: number;
+  copyReferrerId?: string;
+  // DCA wizard state
+  dcaTokenAddress?: string;
+  dcaSide?: 'buy' | 'sell';
+  dcaAmount?: number;
+  dcaInterval?: number;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -171,6 +192,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     [
       cb('🎯 Snipe Rules', 'menu_snipe', 'primary'),
       cb('⚙️ Settings', 'menu_settings', 'primary'),
+    ],
+    [
+      cb('👥 Copy Trading', 'menu_copy', 'success'),
+      cb('🔁 DCA Orders', 'menu_dca', 'primary'),
     ],
     [
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
@@ -555,8 +580,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         ...shareButtonRow,
         [
+          cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary'),
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
-          cb('⚙️ Settings', 'menu_settings', 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
@@ -583,8 +608,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         ...shareButtonRow,
         [
+          cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary'),
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
-          cb('⚙️ Settings', 'menu_settings', 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
@@ -873,6 +898,116 @@ export function buildSnipeDashboard(user: UserRecord) {
   ]);
 
   return { text, keyboard };
+}
+
+// ── Helper: Format DCA Interval ──────────────────────────────────────────────
+export function formatDcaInterval(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} hr${seconds >= 7200 ? 's' : ''}`;
+  return `${Math.round(seconds / 86400)} day${seconds >= 172800 ? 's' : ''}`;
+}
+
+// ── Helper: Build Copy Trading Dashboard ─────────────────────────────────────
+export async function buildCopyTradingDashboard(user: UserRecord) {
+  const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
+  const activeTargets = targets.filter(t => t.status === 'active');
+  const pausedTargets = targets.filter(t => t.status === 'paused');
+
+  let text =
+    `👥 *Copy Trading Dashboard*\n\n` +
+    `Automatically copy trades from any public NEAR wallet in real-time.\n\n` +
+    `• *Active Targets*: ${activeTargets.length}\n` +
+    `• *Paused Targets*: ${pausedTargets.length}\n\n`;
+
+  if (targets.length === 0) {
+    text +=
+      `_You are not copying any wallets yet._\n\n` +
+      `Tap *➕ Add Target Wallet* below to mirror any profitable trader or influencer on NEAR. ` +
+      `Whenever they swap on Rhea, Ref, or Shards, RacerBot executes the same trade for you instantly!\n\n` +
+      `🏆 *Season 1 Points*: +25 pts per copy fill + 1.5 pts per NEAR copied!`;
+  } else {
+    text += `*Your Target Wallets:*\n`;
+    for (const t of targets.slice(0, 10)) {
+      const statusIcon = t.status === 'active' ? '🟢' : t.status === 'paused' ? '⏸️' : '⏹️';
+      const budgetText = t.max_daily_budget_near ? ` | Cap: ${t.max_daily_budget_near}N/day` : '';
+      text += `\n${statusIcon} \`${t.target_wallet}\`\n`;
+      text += `   💰 ${t.buy_amount_near} NEAR per buy | Sells: ${t.copy_sells ? '✅' : '❌'}${budgetText}\n`;
+    }
+    if (targets.length > 10) {
+      text += `\n_...and ${targets.length - 10} more targets_\n`;
+    }
+    text += `\n🏆 *Season 1 Points*: +25 pts per fill + 1.5 pts per NEAR copied!`;
+  }
+
+  const buttons: any[] = [];
+  buttons.push([cb('➕ Add Target Wallet', 'copy_add', 'success')]);
+
+  for (const t of targets.slice(0, 5)) {
+    const isPaused = t.status === 'paused';
+    const shortWallet = t.target_wallet.length > 16 ? t.target_wallet.slice(0, 14) + '…' : t.target_wallet;
+    buttons.push([
+      cb(
+        `${isPaused ? '▶️ Resume' : '⏸ Pause'} ${shortWallet}`,
+        `copy_toggle:${t.id}`,
+        isPaused ? 'success' : 'primary'
+      ),
+      cb('🗑 Stop', `copy_stop:${t.id}`, 'danger'),
+      cb('📤 Share', `copy_share:${t.id}`, 'primary'),
+    ]);
+  }
+
+  buttons.push([cb('🔄 Refresh', 'menu_copy', 'primary'), cb('🔙 Back to Main Menu', 'menu_home', 'primary')]);
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
+}
+
+// ── Helper: Build DCA Dashboard ──────────────────────────────────────────────
+export async function buildDcaDashboard(user: UserRecord) {
+  const orders = await getDcaOrdersByUser(user.id).catch(() => []);
+  const activeOrders = orders.filter(o => o.status === 'active');
+
+  let text =
+    `🔁 *Dollar-Cost Averaging (DCA)*\n\n` +
+    `Automate recurring buys (accumulate) or recurring sells (take-profit / de-risk) without manual timing.\n\n` +
+    `• *Active Orders*: ${activeOrders.length}\n` +
+    `• *Total Orders*: ${orders.length}\n\n`;
+
+  if (orders.length === 0) {
+    text +=
+      `_No DCA orders configured._\n\n` +
+      `Create a schedule to buy a set amount of NEAR worth of a token every 15m, 1h, 4h, or 24h — ` +
+      `reducing volatility risk and building your positions smoothly.`;
+  } else {
+    text += `*Your Schedules:*\n`;
+    for (const o of orders.slice(0, 8)) {
+      const statusIcon = o.status === 'active' ? '🟢' : o.status === 'paused' ? '⏸️' : o.status === 'completed' ? '✅' : '❌';
+      const sideText = o.side === 'buy' ? '🟢 Buy' : '🔴 Sell';
+      const tokenDisplay = o.token_address.length > 20 ? o.token_address.slice(0, 10) + '…' + o.token_address.slice(-6) : o.token_address;
+      const progressText = o.total_orders === 0 ? `${o.executed_orders} fills (∞)` : `${o.executed_orders}/${o.total_orders}`;
+      text += `\n${statusIcon} ${sideText} \`${tokenDisplay}\`\n`;
+      text += `   💵 ${o.amount_per_order} ${o.side === 'buy' ? 'NEAR' : 'tokens'} every ${formatDcaInterval(o.interval_seconds)} (${progressText})\n`;
+      if (o.last_error) {
+        text += `   ⚠️ _Last tick note_: \`${o.last_error.slice(0, 40)}\`\n`;
+      }
+    }
+  }
+
+  const buttons: any[] = [];
+  buttons.push([cb('➕ New DCA Order', 'dca_start', 'success')]);
+
+  for (const o of orders.slice(0, 4)) {
+    if (o.status === 'active' || o.status === 'paused') {
+      const isPaused = o.status === 'paused';
+      const tokenShort = o.token_address.length > 12 ? o.token_address.slice(0, 10) + '…' : o.token_address;
+      buttons.push([
+        cb(`${isPaused ? '▶️ Resume' : '⏸ Pause'} ${tokenShort}`, `dca_toggle:${o.id}`, isPaused ? 'success' : 'primary'),
+        cb('🗑 Cancel', `dca_del:${o.id}`, 'danger'),
+      ]);
+    }
+  }
+
+  buttons.push([cb('🔄 Refresh', 'menu_dca', 'primary'), cb('🔙 Back to Main Menu', 'menu_home', 'primary')]);
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
 // ── User-Friendly Error Messages ────────────────────────────────────────
@@ -1226,18 +1361,42 @@ export function setupRoutes(bot: Telegraf): void {
     const username = ctx.from!.username || undefined;
 
     try {
-      // ── Token share deep link: /start t_XXXXXXXX ─────────────────────────────
-      // When a user taps a token share link, the payload starts with "t_".
-      // We onboard them normally (registering any account referral in the payload
-      // only if it is NOT a token-share code), then record the token referral and
-      // immediately surface the token card.
+      // ── Deep links: Token share (/start t_XXXX) or Copy Trade invite (/start copy_wallet_ref) ──
       const isTokenShare = payload?.startsWith('t_') ?? false;
+      const isCopyShare = payload?.startsWith('copy_') ?? false;
 
-      // For standard referral codes we pass the code to onboardUser; for token-share
+      // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined so no account-level referral is (mis)attributed.
-      const accountReferralCode = isTokenShare ? undefined : payload;
+      const accountReferralCode = (isTokenShare || isCopyShare) ? undefined : payload;
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
+
+      if (isCopyShare && payload) {
+        // Format: copy_<targetWallet>_<referrerId> or copy_<targetWallet>
+        const parts = payload.slice(5).split('_');
+        const targetWallet = parts[0];
+        const referrerId = parts[1] || undefined;
+
+        if (targetWallet && isValidNearAccountId(targetWallet)) {
+          userPendingActions.set(telegramId, {
+            action: 'copy_amount',
+            copyWallet: targetWallet,
+            copyReferrerId: referrerId,
+            expiresAt: Date.now() + 5 * 60_000,
+          });
+          await ctx.reply(
+            `👥 *Copy Trading Invitation*\n\n` +
+            `You opened an invitation to mirror trades from:\n🎯 \`${targetWallet}\`\n\n` +
+            `💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
+            `Reply with a number (e.g. \`1\` or \`2.5\` NEAR per swap):`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_copy', 'primary')]]),
+            }
+          );
+          return;
+        }
+      }
 
       if (isTokenShare && payload) {
         // Look up the token share record
@@ -1382,6 +1541,247 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  // ── Copy Trading Actions ──────────────────────────────────────────────────
+
+  bot.action('menu_copy', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+      const dash = await buildCopyTradingDashboard(user);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(async () => {
+        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('copy_add', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      action: 'copy_wallet',
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `👥 *Add Copy Trading Target*\n\n` +
+      `Enter the NEAR wallet address you want to copy (e.g. \`trader.near\` or 64-char hex):\n\n` +
+      `_RacerBot will detect all buys and sells made by this wallet on Rhea, Ref, and Shards, executing the same swaps automatically for you._`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_copy', 'primary')]]),
+      }
+    );
+  });
+
+  bot.action(/^copy_toggle:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const targetId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      const targets = await getCopyTradeTargetsByUser(user.id);
+      const target = targets.find(t => t.id === targetId);
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      const nextStatus = target.status === 'paused' ? 'active' : 'paused';
+      await updateCopyTradeTargetStatus(targetId, nextStatus);
+      await ctx.answerCbQuery(`Target ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => {});
+      const dash = await buildCopyTradingDashboard(user);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^copy_stop:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const targetId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      await updateCopyTradeTargetStatus(targetId, 'stopped');
+      await ctx.answerCbQuery('Target stopped').catch(() => {});
+      const dash = await buildCopyTradingDashboard(user);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^copy_share:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const targetId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      const targets = await getCopyTradeTargetsByUser(user.id);
+      const target = targets.find(t => t.id === targetId);
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      const shareDeepLink = `https://t.me/racertradingbot?start=copy_${target.target_wallet}_${user.id}`;
+      const shareText = `Copy trades from ${target.target_wallet} on RacerBot 🏎\n⚡ Automated instant execution on NEAR DEXs`;
+      const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        `📤 *Share Copy Trading Link*\n\n` +
+        `Share this link in Telegram groups or channels. When other users copy trade via your link, *you earn 5% of their trading bot fees* as referral rewards!\n\n` +
+        `🎯 *Target*: \`${target.target_wallet}\`\n` +
+        `🔗 *Link*: \`${shareDeepLink}\``,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('📤 Share to Group (Earn 5% Fees)', tgShareUrl)],
+            [cb('🔙 Back to Copy Trading', 'menu_copy', 'primary')],
+          ]),
+        }
+      );
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  // ── DCA Orders Actions ────────────────────────────────────────────────────
+
+  bot.action('menu_dca', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
+      }
+      const dash = await buildDcaDashboard(user);
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(async () => {
+        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('dca_start', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      action: 'dca_token',
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `🔁 *DCA Order Setup (Step 1/3)*\n\n` +
+      `Enter the Contract Address (CA) of the token you want to DCA into/out of (e.g. \`wrap.near\` or \`token.near\`):`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_dca', 'primary')]]),
+      }
+    );
+  });
+
+  bot.action(/^dca_token:(.+)$/, async (ctx) => {
+    const tokenCA = (ctx as any).match[1];
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
+      `Choose whether to accumulate (buy with NEAR) or take-profit / de-risk (sell to NEAR):`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${tokenCA}`, 'success')],
+          [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${tokenCA}`, 'danger')],
+          [cb('🔙 Cancel', 'menu_dca', 'primary')],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^dca_choose_side:(buy|sell):(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const side = (ctx as any).match[1] as 'buy' | 'sell';
+    const tokenCA = (ctx as any).match[2];
+    userPendingActions.set(telegramId, {
+      action: 'dca_amount',
+      dcaSide: side,
+      dcaTokenAddress: tokenCA,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    const promptMsg = side === 'buy'
+      ? `💰 *How much NEAR should be spent on each order?*\n\nReply with a number (e.g. \`1\` or \`5\`):`
+      : `💰 *How many tokens should be sold on each order?*\n\nReply with raw token quantity (e.g. \`1000\`):`;
+    await ctx.reply(promptMsg, { parse_mode: 'Markdown' });
+  });
+
+  bot.action(/^dca_int_(\d+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const intervalSecs = parseInt((ctx as any).match[1], 10);
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'dca_interval') {
+      await ctx.answerCbQuery('Session expired. Please restart DCA setup.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      ...pending,
+      action: 'dca_orders',
+      dcaInterval: intervalSecs,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery(`Interval: ${formatDcaInterval(intervalSecs)}`).catch(() => {});
+    await ctx.reply(
+      `⏱️ *Interval set to ${formatDcaInterval(intervalSecs)}*\n\n` +
+      `🔢 *How many orders should be executed?*\n\n` +
+      `Reply with the number of orders (e.g. \`10\`), or \`0\` for continuous/unlimited:`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action(/^dca_toggle:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const orderId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      const orders = await getDcaOrdersByUser(user.id);
+      const order = orders.find(o => o.id === orderId);
+      if (!order) { await ctx.answerCbQuery('Order not found.').catch(() => {}); return; }
+      const nextStatus = order.status === 'paused' ? 'active' : 'paused';
+      await updateDcaOrderStatus(orderId, nextStatus);
+      await ctx.answerCbQuery(`DCA order ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => {});
+      const dash = await buildDcaDashboard(user);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^dca_del:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const orderId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      await updateDcaOrderStatus(orderId, 'cancelled');
+      await ctx.answerCbQuery('DCA order cancelled').catch(() => {});
+      const dash = await buildDcaDashboard(user);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
@@ -3739,6 +4139,167 @@ export function setupRoutes(bot: Telegraf): void {
               [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
               [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
             ]),
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'dca_token') {
+        const tokenCA = rawText.trim().toLowerCase();
+        if (!isValidNearAccountId(tokenCA)) {
+          await ctx.reply('❌ Invalid contract address. Please enter a valid NEAR token address (e.g. `wrap.near` or `token.near`).');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        await ctx.reply(
+          `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
+          `Choose whether to accumulate (buy with NEAR) or take-profit / de-risk (sell to NEAR):`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${tokenCA}`, 'success')],
+              [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${tokenCA}`, 'danger')],
+              [cb('🔙 Cancel', 'menu_dca', 'primary')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'copy_wallet') {
+        const wallet = rawText.trim().toLowerCase();
+        if (!isValidNearAccountId(wallet)) {
+          await ctx.reply('❌ Invalid NEAR account ID. Please enter a valid wallet like `trader.near` or a 64-char hex address.', { parse_mode: 'Markdown' });
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          action: 'copy_amount',
+          copyWallet: wallet,
+          copyReferrerId: pending.copyReferrerId,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        await ctx.reply(
+          `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
+          `Reply with a number (e.g. \`2\`):`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (pending.action === 'copy_amount') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt < 0.1 || amt > 10000) {
+          await ctx.reply('❌ Invalid amount. Must be between 0.1 and 10,000 NEAR.');
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          action: 'copy_daily_budget',
+          copyWallet: pending.copyWallet,
+          copyBuyAmount: amt,
+          copyReferrerId: pending.copyReferrerId,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        await ctx.reply(
+          `✅ Buy amount: \`${amt} NEAR\` per trade\n\n🛡️ *Set a daily spending cap* (optional safety limit).\n\n` +
+          `Reply with max NEAR per day (e.g. \`20\`), or \`skip\` for unlimited:`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (pending.action === 'copy_daily_budget') {
+        const isSkip = rawText.trim().toLowerCase() === 'skip';
+        const budget = isSkip ? null : parseFloat(rawText);
+        if (!isSkip && (isNaN(budget!) || budget! < 0.1)) {
+          await ctx.reply('❌ Invalid budget. Must be a positive number or "skip".');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const target = await createCopyTradeTarget({
+          user_id: user.id,
+          target_wallet: pending.copyWallet!,
+          referrer_id: pending.copyReferrerId ?? null,
+          buy_amount_near: pending.copyBuyAmount!,
+          copy_sells: true,
+          max_slippage_pct: 5.0,
+          max_daily_budget_near: budget,
+        });
+        userPendingActions.delete(telegramId);
+        await ctx.reply(
+          `🏎️ *Copy Trade Setup Complete!*\n\n` +
+          `🎯 *Target*: \`${target.target_wallet}\`\n` +
+          `💰 *Buy Amount*: \`${target.buy_amount_near} NEAR\` per trade\n` +
+          `🛡️ *Daily Cap*: ${budget !== null ? `\`${budget} NEAR\`` : 'Unlimited'}\n` +
+          `📊 *Sell Mirroring*: ✅ On\n\n` +
+          `RacerBot will now automatically copy every swap this wallet makes on NEAR DEXes. You'll get a DM for every fill.\n\n` +
+          `🏆 *Season 1*: You earn +25 pts per copy fill + 1.5 pts per NEAR copied!`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[cb('👥 View Copy Targets', 'menu_copy', 'primary'), cb('🔙 Menu', 'menu_home', 'primary')]]),
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'dca_amount') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt < 0.01) {
+          await ctx.reply('❌ Invalid amount. Must be > 0.01.');
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          action: 'dca_interval',
+          dcaTokenAddress: pending.dcaTokenAddress,
+          dcaSide: pending.dcaSide,
+          dcaAmount: amt,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        await ctx.reply(
+          `✅ Amount per order: \`${amt} ${pending.dcaSide === 'buy' ? 'NEAR' : 'tokens'}\`\n\n` +
+          `⏱️ *Choose interval between orders:*`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('15 min', 'dca_int_900'), cb('30 min', 'dca_int_1800'), cb('1 hour', 'dca_int_3600')],
+              [cb('4 hours', 'dca_int_14400'), cb('12 hours', 'dca_int_43200'), cb('24 hours', 'dca_int_86400')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'dca_orders') {
+        const n = parseInt(rawText);
+        if (isNaN(n) || n < 0) {
+          await ctx.reply('❌ Invalid number. Enter a positive integer or 0 for unlimited.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const order = await createDcaOrder({
+          user_id: user.id,
+          token_address: pending.dcaTokenAddress!,
+          side: pending.dcaSide!,
+          amount_per_order: pending.dcaAmount!,
+          interval_seconds: pending.dcaInterval!,
+          total_orders: n,
+        });
+        userPendingActions.delete(telegramId);
+        const intervalHuman = formatDcaInterval(order.interval_seconds);
+        const totalDisplay = order.total_orders === 0 ? '∞ (unlimited)' : `${order.total_orders} orders`;
+        await ctx.reply(
+          `🔁 *DCA Order Created!*\n\n` +
+          `🪙 *Token*: \`${order.token_address}\`\n` +
+          `📊 *Mode*: ${order.side === 'buy' ? '🟢 Accumulate (Buy with NEAR)' : '🔴 De-Risk (Sell to NEAR)'}\n` +
+          `💵 *Amount per tick*: \`${order.amount_per_order} ${order.side === 'buy' ? 'NEAR' : 'tokens'}\`\n` +
+          `⏱️ *Interval*: ${intervalHuman}\n` +
+          `🔢 *Total orders*: ${totalDisplay}\n` +
+          `🕐 *First execution*: in ${intervalHuman}\n\n` +
+          `You'll get a DM on every fill with progress. Manage orders in 🔁 DCA Orders.`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([[cb('🔁 View DCA Orders', 'menu_dca', 'primary'), cb('🔙 Menu', 'menu_home', 'primary')]]),
           }
         );
         return;
