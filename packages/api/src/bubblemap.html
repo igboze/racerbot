@@ -1188,11 +1188,16 @@
         riskBadge.textContent = `HIGH CONCENTRATION (${score}/100)`;
       }
 
-      layoutPhysics();
+      initPhysics();
     }
 
-    // ── Layout Physics ────────────────────────────────────────────
-    function layoutPhysics() {
+    // ── Live Continuous Dynamic Physics Engine ────────────────────
+    let draggedBubble = null;
+    let dragOffsetWorldX = 0;
+    let dragOffsetWorldY = 0;
+    let simulationTime = 0;
+
+    function initPhysics() {
       const W = window.innerWidth;
       const H = window.innerHeight;
       const baseArea = Math.min(W, H) * 0.38;
@@ -1201,38 +1206,91 @@
         const minR = 14;
         const maxR = Math.min(W, H) * 0.16;
         b.radius = Math.max(minR, Math.min(maxR, Math.sqrt(b.pct / 100) * baseArea * 1.6));
+        b.vx = (Math.random() - 0.5) * 0.5;
+        b.vy = (Math.random() - 0.5) * 0.5;
+        b.phase = Math.random() * Math.PI * 2;
+        b.floatSpeed = 0.0008 + Math.random() * 0.0008;
 
         const angle = i * 0.78;
         const dist = 30 + Math.sqrt(i) * (baseArea * 0.55);
         b.x = W / 2 + Math.cos(angle) * dist;
         b.y = H / 2 + Math.sin(angle) * dist;
       });
+    }
 
-      for (let step = 0; step < 70; step++) {
-        for (let i = 0; i < bubbles.length; i++) {
-          for (let j = i + 1; j < bubbles.length; j++) {
-            const b1 = bubbles[i];
-            const b2 = bubbles[j];
-            const dx = b2.x - b1.x;
-            const dy = b2.y - b1.y;
-            const dist = Math.hypot(dx, dy) || 1;
-            const minDist = b1.radius + b2.radius + 8;
+    function updatePhysics(dt) {
+      simulationTime += dt;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      const centerX = W / 2;
+      const centerY = H / 2;
 
-            if (dist < minDist) {
-              const overlap = (minDist - dist) / 2;
-              const nx = dx / dist;
-              const ny = dy / dist;
-              b1.x -= nx * overlap * 0.6;
-              b1.y -= ny * overlap * 0.6;
-              b2.x += nx * overlap * 0.6;
-              b2.y += ny * overlap * 0.6;
-            }
+      // 1. Ambient Harmonic Wave Floating (Live Organic Breathing Motion)
+      for (const b of bubbles) {
+        if (b === draggedBubble) continue;
+        b.vx += Math.cos(simulationTime * b.floatSpeed + b.phase) * 0.035;
+        b.vy += Math.sin(simulationTime * b.floatSpeed + b.phase) * 0.035;
+
+        // Gentle central gravity
+        const cdx = centerX - b.x;
+        const cdy = centerY - b.y;
+        const cdist = Math.hypot(cdx, cdy) || 1;
+        b.vx += (cdx / cdist) * 0.012;
+        b.vy += (cdy / cdist) * 0.012;
+      }
+
+      // 2. Spring Forces between Connected Cluster Nodes (Elastic Links)
+      for (const link of transferLinks) {
+        const b1 = link.sourceBubble;
+        const b2 = link.targetBubble;
+        if (!b1 || !b2) continue;
+
+        const dx = b2.x - b1.x;
+        const dy = b2.y - b1.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const targetDist = b1.radius + b2.radius + 32;
+        const springForce = (dist - targetDist) * 0.0018;
+
+        const fx = (dx / dist) * springForce;
+        const fy = (dy / dist) * springForce;
+
+        if (b1 !== draggedBubble) { b1.vx += fx; b1.vy += fy; }
+        if (b2 !== draggedBubble) { b2.vx -= fx; b2.vy -= fy; }
+      }
+
+      // 3. Collision Resolution & Soft Repulsion
+      for (let i = 0; i < bubbles.length; i++) {
+        for (let j = i + 1; j < bubbles.length; j++) {
+          const b1 = bubbles[i];
+          const b2 = bubbles[j];
+          const dx = b2.x - b1.x;
+          const dy = b2.y - b1.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const minDist = b1.radius + b2.radius + 10;
+
+          if (dist < minDist) {
+            const overlap = (minDist - dist) / 2;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const repForce = overlap * 0.08;
+
+            if (b1 !== draggedBubble) { b1.vx -= nx * repForce; b1.vy -= ny * repForce; }
+            if (b2 !== draggedBubble) { b2.vx += nx * repForce; b2.vy += ny * repForce; }
           }
         }
       }
+
+      // 4. Damping & Position Update
+      for (const b of bubbles) {
+        if (b === draggedBubble) continue;
+        b.vx *= 0.92;
+        b.vy *= 0.92;
+        b.x += b.vx;
+        b.y += b.vy;
+      }
     }
 
-    // ── Canvas Render Loop ────────────────────────────────────────
+    // ── Canvas Render Loop with Glowing Particle Streams ─────────
     function resizeCanvas() {
       const wrap = document.getElementById('canvas-wrap');
       const dpr = window.devicePixelRatio || 1;
@@ -1242,7 +1300,14 @@
       canvas.height = h * dpr;
     }
 
-    function render() {
+    let lastFrameTime = performance.now();
+
+    function render(currentTime) {
+      const dt = Math.min((currentTime - lastFrameTime) || 16, 50);
+      lastFrameTime = currentTime;
+
+      updatePhysics(dt);
+
       const dpr = window.devicePixelRatio || 1;
       const W = canvas.width / dpr;
       const H = canvas.height / dpr;
@@ -1269,17 +1334,22 @@
         activeLinks.push(...transferLinks);
       }
 
-      // 1. Draw Curved Transfer Traces
+      const now = performance.now();
+
+      // 1. Draw Curved Transfer Traces & Flowing Energy Particles
       for (const link of activeLinks) {
         const b1 = link.sourceBubble;
         const b2 = link.targetBubble;
         if (!b1 || !b2) continue;
         if (hideDust && (b1.pct < 0.05 || b2.pct < 0.05)) continue;
 
-        const isHighlighted = selectedBubble && (link.from === selectedBubble.id || link.to === selectedBubble.id);
+        const isOutgoing = selectedBubble && link.from === selectedBubble.id;
+        const isIncoming = selectedBubble && link.to === selectedBubble.id;
+        const isHighlighted = isOutgoing || isIncoming;
+
         const strokeColor = isHighlighted
-          ? (link.from === selectedBubble.id ? '#00f2fe' : '#a855f7')
-          : (colorByCluster && b1.clusterColor ? b1.clusterColor.fill : 'rgba(139, 92, 246, 0.40)');
+          ? (isOutgoing ? '#00f2fe' : '#00f59b')
+          : (colorByCluster && b1.clusterColor ? b1.clusterColor.fill : 'rgba(139, 92, 246, 0.45)');
 
         ctx.beginPath();
         ctx.moveTo(b1.x, b1.y);
@@ -1298,13 +1368,36 @@
         ctx.lineWidth = isHighlighted ? 2.8 : 1.6;
         if (isHighlighted) {
           ctx.shadowColor = strokeColor;
-          ctx.shadowBlur = 10;
+          ctx.shadowBlur = 12;
         }
         ctx.stroke();
         ctx.shadowBlur = 0;
+
+        // ── Animated Energy Pulse Particles (Money Flow from Sender -> Receiver) ──
+        const particleCount = isHighlighted ? 3 : 2;
+        const particleSpeed = isHighlighted ? 0.00065 : 0.00035;
+
+        for (let p = 0; p < particleCount; p++) {
+          const pOffset = (p / particleCount);
+          const t = ((now * particleSpeed) + pOffset + (link.from.charCodeAt(0) * 0.05)) % 1.0;
+
+          // Bezier interpolation
+          const it = 1 - t;
+          const px = it * it * b1.x + 2 * it * t * cpX + t * t * b2.x;
+          const py = it * it * b1.y + 2 * it * t * cpY + t * t * b2.y;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(px, py, isHighlighted ? 3.5 : 2.2, 0, Math.PI * 2);
+          ctx.fillStyle = isHighlighted ? (isOutgoing ? '#00f2fe' : '#00f59b') : '#ffffff';
+          ctx.shadowColor = isHighlighted ? (isOutgoing ? 'rgba(0, 242, 254, 0.9)' : 'rgba(0, 245, 155, 0.9)') : 'rgba(255, 255, 255, 0.8)';
+          ctx.shadowBlur = 10;
+          ctx.fill();
+          ctx.restore();
+        }
       }
 
-      // 2. Draw Bubbles
+      // 2. Draw Bubbles with Organic Breathing & Glow
       for (const b of bubbles) {
         if (hideDust && b.pct < 0.05 && b !== selectedBubble) continue;
 
@@ -1330,30 +1423,34 @@
 
         const theme = (colorByCluster && b.clusterColor) ? b.clusterColor : b.tier;
 
+        // Subtle breathing radius expansion
+        const breath = Math.sin(simulationTime * b.floatSpeed * 2 + b.phase) * 1.2;
+        const curR = b.radius + (b === selectedBubble ? 3 : (b === hoveredBubble ? 2 : breath));
+
         const grad = ctx.createRadialGradient(
-          b.x - b.radius * 0.35,
-          b.y - b.radius * 0.35,
-          b.radius * 0.1,
+          b.x - curR * 0.35,
+          b.y - curR * 0.35,
+          curR * 0.1,
           b.x,
           b.y,
-          b.radius
+          curR
         );
         grad.addColorStop(0, '#ffffff');
         grad.addColorStop(0.25, theme.fill);
         grad.addColorStop(1, '#06080e');
 
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, curR, 0, Math.PI * 2);
         ctx.fillStyle = grad;
 
-        if (isHighlighted || b === hoveredBubble) {
+        if (isHighlighted || b === hoveredBubble || b === draggedBubble) {
           ctx.shadowColor = theme.glow;
-          ctx.shadowBlur = 24;
+          ctx.shadowBlur = 28;
         }
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        ctx.lineWidth = (b === selectedBubble || b === hoveredBubble) ? 3 : 1.5;
+        ctx.lineWidth = (b === selectedBubble || b === hoveredBubble || b === draggedBubble) ? 3 : 1.5;
         ctx.strokeStyle = (b === selectedBubble) ? '#ffffff' : theme.border;
         ctx.stroke();
 
@@ -1366,17 +1463,17 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        if (b.radius >= 22) {
+        if (curR >= 22) {
           ctx.fillStyle = '#ffffff';
-          ctx.font = `800 ${Math.max(10, Math.min(b.radius * 0.36, 14.5))}px Inter, sans-serif`;
-          ctx.fillText(pctStr, b.x, b.y - (b.radius * 0.22));
+          ctx.font = `800 ${Math.max(10, Math.min(curR * 0.36, 14.5))}px Inter, sans-serif`;
+          ctx.fillText(pctStr, b.x, b.y - (curR * 0.22));
 
           ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.font = `600 ${Math.max(8.5, Math.min(b.radius * 0.22, 10.5))}px 'JetBrains Mono', monospace`;
-          ctx.fillText(shortAddr, b.x, b.y + (b.radius * 0.26));
-        } else if (b.radius >= 14) {
+          ctx.font = `600 ${Math.max(8.5, Math.min(curR * 0.22, 10.5))}px 'JetBrains Mono', monospace`;
+          ctx.fillText(shortAddr, b.x, b.y + (curR * 0.26));
+        } else if (curR >= 14) {
           ctx.fillStyle = '#ffffff';
-          ctx.font = `800 ${Math.max(8.5, b.radius * 0.45)}px Inter, sans-serif`;
+          ctx.font = `800 ${Math.max(8.5, curR * 0.45)}px Inter, sans-serif`;
           ctx.fillText(pctStr, b.x, b.y);
         }
 
@@ -1526,39 +1623,86 @@
       showToast('📸 Social share snapshot generated');
     };
 
-    // ── Mouse & Touch Gesture Handlers ────────────────────────────
+    // ── Mouse & Touch Gesture Handlers (with Interactive Dragging) ──
+    function screenToWorld(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const W = canvas.width / dpr;
+      const H = canvas.height / dpr;
+      const clickX = clientX - rect.left;
+      const clickY = clientY - rect.top;
+      return {
+        x: (clickX - (panX + W / 2)) / zoom + W / 2,
+        y: (clickY - (panY + H / 2)) / zoom + H / 2
+      };
+    }
+
+    function findBubbleAt(worldX, worldY) {
+      for (let i = bubbles.length - 1; i >= 0; i--) {
+        const b = bubbles[i];
+        if (Math.hypot(b.x - worldX, b.y - worldY) <= b.radius) return b;
+      }
+      return null;
+    }
+
     canvas.addEventListener('mousedown', (e) => {
-      isDragging = true;
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
-      initialPanX = panX;
-      initialPanY = panY;
+      const world = screenToWorld(e.clientX, e.clientY);
+      const hit = findBubbleAt(world.x, world.y);
+
+      if (hit) {
+        draggedBubble = hit;
+        dragOffsetWorldX = hit.x - world.x;
+        dragOffsetWorldY = hit.y - world.y;
+      } else {
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        initialPanX = panX;
+        initialPanY = panY;
+      }
     });
 
     window.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      panX = initialPanX + (e.clientX - dragStartX);
-      panY = initialPanY + (e.clientY - dragStartY);
+      const world = screenToWorld(e.clientX, e.clientY);
+      hoveredBubble = findBubbleAt(world.x, world.y);
+      canvas.style.cursor = hoveredBubble ? 'pointer' : (isDragging ? 'grabbing' : 'grab');
+
+      if (draggedBubble) {
+        draggedBubble.x = world.x + dragOffsetWorldX;
+        draggedBubble.y = world.y + dragOffsetWorldY;
+        draggedBubble.vx = 0;
+        draggedBubble.vy = 0;
+      } else if (isDragging) {
+        panX = initialPanX + (e.clientX - dragStartX);
+        panY = initialPanY + (e.clientY - dragStartY);
+      }
     });
 
-    window.addEventListener('mouseup', () => { isDragging = false; });
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+      draggedBubble = null;
+    });
 
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-      zoom = Math.max(0.35, Math.min(4.0, zoom * zoomFactor));
-    }, { passive: false });
-
-    // Touch Gestures
     canvas.addEventListener('touchstart', (e) => {
       if (e.touches.length === 1) {
-        isDragging = true;
-        dragStartX = e.touches[0].clientX;
-        dragStartY = e.touches[0].clientY;
-        initialPanX = panX;
-        initialPanY = panY;
+        const t = e.touches[0];
+        const world = screenToWorld(t.clientX, t.clientY);
+        const hit = findBubbleAt(world.x, world.y);
+
+        if (hit) {
+          draggedBubble = hit;
+          dragOffsetWorldX = hit.x - world.x;
+          dragOffsetWorldY = hit.y - world.y;
+        } else {
+          isDragging = true;
+          dragStartX = t.clientX;
+          dragStartY = t.clientY;
+          initialPanX = panX;
+          initialPanY = panY;
+        }
       } else if (e.touches.length === 2) {
         isDragging = false;
+        draggedBubble = null;
         initialPinchDist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
@@ -1568,9 +1712,19 @@
     }, { passive: true });
 
     canvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 1 && isDragging) {
-        panX = initialPanX + (e.touches[0].clientX - dragStartX);
-        panY = initialPanY + (e.touches[0].clientY - dragStartY);
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        const world = screenToWorld(t.clientX, t.clientY);
+
+        if (draggedBubble) {
+          draggedBubble.x = world.x + dragOffsetWorldX;
+          draggedBubble.y = world.y + dragOffsetWorldY;
+          draggedBubble.vx = 0;
+          draggedBubble.vy = 0;
+        } else if (isDragging) {
+          panX = initialPanX + (t.clientX - dragStartX);
+          panY = initialPanY + (t.clientY - dragStartY);
+        }
       } else if (e.touches.length === 2) {
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
@@ -1582,7 +1736,10 @@
       }
     }, { passive: true });
 
-    canvas.addEventListener('touchend', () => { isDragging = false; });
+    canvas.addEventListener('touchend', () => {
+      isDragging = false;
+      draggedBubble = null;
+    });
 
     // ── Search & Autocomplete ─────────────────────────────────────
     searchInput.addEventListener('input', () => {
