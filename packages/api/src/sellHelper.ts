@@ -21,8 +21,8 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
-  // Always use fresh data from getTokenInfo to avoid stale cache issues
-  const info = await getTokenInfo(position.token_address, true).catch(() => null);
+  // Use cached token info for instant (<1ms) metadata & pool resolution
+  const info = await getTokenInfo(position.token_address, false).catch(() => null);
   if (!info) return { success: false, reason: 'token_not_found' };
   if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     return { success: false, reason: 'venue_unknown' };
@@ -32,16 +32,6 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   let effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   const near = getNear();
-
-  // If rhea_pool_id wasn't in info, try discovering it if token is on a launchpad
-  if (!effectiveRheaPoolId && venue !== 'rhea' && venue !== 'ref') {
-    try {
-      const rheaFound = await near.findRheaPoolForToken(position.token_address);
-      if (rheaFound && rheaFound.poolId !== null && rheaFound.poolId !== undefined && rheaFound.price > 0 && rheaFound.liquidityNear >= 5) {
-        effectiveRheaPoolId = !rheaFound.isDcl && typeof rheaFound.poolId === 'number' ? rheaFound.poolId : undefined;
-      }
-    } catch { /* ignore */ }
-  }
 
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
