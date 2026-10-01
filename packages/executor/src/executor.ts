@@ -508,6 +508,10 @@ export class SwapExecutor {
           );
         }
       }
+
+      // User already holds the token and wNEAR is baseline: pre-mark storage to eliminate view calls
+      this.nearClient.markStorageRegistered?.(subaccountId, token_in);
+      this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near');
     }
 
     // Helper to sign and send with distributed per-account lock.
@@ -690,7 +694,7 @@ export class SwapExecutor {
     const quotedAt = (event as any).quoted_at as number | undefined;
     const quoteFresh = venue !== 'nearlytrade'
       && typeof quotedAt === 'number'
-      && Date.now() - quotedAt < 2_000;
+      && Date.now() - quotedAt < 12_000;
     const freshQuote = quoteFresh
       ? null
       : await near.computeMinAmountOut(
@@ -710,9 +714,9 @@ export class SwapExecutor {
     }
 
     // Pre-broadcast budget: all view calls (quote + storage checks + pool lookup)
-    // must complete within 6 000 ms of the trade start. If they stack beyond this,
+    // must complete within 12 000 ms of the trade start. If they stack beyond this,
     // throw now — no transaction has been sent, so the user can safely retry.
-    const PRE_BROADCAST_BUDGET_MS = 6_000;
+    const PRE_BROADCAST_BUDGET_MS = 12_000;
     const preBroadcastElapsed = Date.now() - t0;
     if (preBroadcastElapsed > PRE_BROADCAST_BUDGET_MS) {
       throw new Error(
