@@ -200,10 +200,12 @@ export class MultiRpcNear {
   private viewResultCache = new Map<string, { at: number; value: any }>();
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
-    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const rawApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const apiKey = rawApiKey.startsWith('${') ? '' : rawApiKey;
     const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
-    const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
-    const initialUrls = [...rpcUrls];
+    const rawQn = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
+    const qnUrl = rawQn.startsWith('${') ? '' : rawQn;
+    const initialUrls = [...rpcUrls].filter(u => u && !u.startsWith('${'));
     if (qnUrl && !initialUrls.includes(qnUrl)) {
       initialUrls.push(qnUrl);
     }
@@ -215,9 +217,10 @@ export class MultiRpcNear {
       return isQn || isFn;
     });
 
+    const defaultQn = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/';
     const sanitizedUrls = fastnearAndQnUrls.length > 0
       ? Array.from(new Set(fastnearAndQnUrls))
-      : [qnUrl || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/', 'https://rpc.mainnet.fastnear.com'];
+      : [qnUrl || defaultQn, 'https://rpc.mainnet.fastnear.com'];
 
     // Prioritize QuickNode first, then FastNEAR
     const prioritizedUrls = [
@@ -3028,24 +3031,32 @@ export class MultiRpcNear {
    * sign path.
    */
   private async fetchBlockHashHedged(): Promise<string> {
-    const results = await Promise.allSettled(
-      this.tradeProviders.map(async (provider) => {
-        const start = Date.now();
-        const res = await fetch(provider.url, {
-          method: 'POST',
-          headers: provider.headers ?? { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 'racerbot-block', method: 'block', params: { finality: 'final' } }),
-          signal: AbortSignal.timeout(5000),
-        });
-        const data: any = await res.json();
-        const hash = data?.result?.header?.hash;
-        if (!hash) throw new Error(data?.error?.message || 'no block hash in response');
-        markProviderSuccess(provider, Date.now() - start);
-        return hash as string;
-      })
-    );
+    const fetchFrom = async (provider: RPCProvider): Promise<string> => {
+      const start = Date.now();
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'racerbot-block', method: 'block', params: { finality: 'final' } }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const data: any = await res.json();
+      const hash = data?.result?.header?.hash;
+      if (!hash) throw new Error(data?.error?.message || 'no block hash in response');
+      markProviderSuccess(provider, Date.now() - start);
+      return hash as string;
+    };
+
+    const results = await Promise.allSettled(this.tradeProviders.map(fetchFrom));
     const first = results.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
     if (first) return first.value;
+
+    // Fallback across read providers if all trade providers failed
+    if (this.readProviders.length > 0) {
+      const fallbackResults = await Promise.allSettled(this.readProviders.map(fetchFrom));
+      const firstFallback = fallbackResults.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
+      if (firstFallback) return firstFallback.value;
+    }
+
     throw new Error('Block fetch failed on all trade RPC providers');
   }
 
