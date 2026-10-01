@@ -273,6 +273,9 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   buttons.push([
     cb('💼 Holdings', 'menu_holdings', 'primary'),
     cb('⚙️ Settings', 'menu_settings', 'primary'),
+    cb('🔑 Export Key', 'export_prompt', 'primary'),
+  ]);
+  buttons.push([
     cb('🔙 Menu', 'menu_home', 'primary'),
   ]);
 
@@ -796,6 +799,10 @@ export function buildSettingsDashboard(user: UserRecord) {
       cb('✏️ Custom Slippage', 'prompt:custom_slippage', 'primary'),
     ],
     [
+      cb('🔑 Export Private Key', 'export_prompt', 'primary'),
+      cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
+    ],
+    [
       cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
     ],
     [
@@ -1285,35 +1292,27 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
-      // Freshly created account: show full private key security notice + in-chat buttons
-      const keyMessage = await ctx.reply(
+      // Freshly created account: show dedicated NEAR trading wallet address + onboarding guide (no raw private key)
+      await ctx.reply(
         `🚀 *Welcome to RacerBot!*\n\n` +
-        `Your dedicated NEAR trading wallet is ready:\n` +
-        `🔑 Account: \`${result.subaccountId}\`\n\n` +
-        `⚠️ *YOUR PRIVATE KEY (EXPORT)*:\n` +
-        `\`${result.privateKey}\`\n\n` +
-        `*Important Security Notice*:\n` +
-        `• This string is your real full-access private key. Anyone with this key controls your account.\n` +
-        `• Save this private key in a safe place. You can import it into MyNearWallet, Meteor Wallet, or NEAR CLI.\n` +
-        `• If you ever suspect your key was compromised, use /rotatekey immediately to generate a new key on-chain.\n` +
-        `• You can retrieve this key later with /export.\n\n` +
+        `Your dedicated NEAR high-speed trading wallet is ready:\n\n` +
+        `🔑 *Wallet Address* (tap to copy):\n` +
+        `\`${result.subaccountId}\`\n\n` +
+        `📥 *Deposit NEAR to Start*:\n` +
+        `Send native NEAR directly to your address above to start trading instantly.\n\n` +
+        `🛡️ *Private Key & Security*:\n` +
+        `• Your wallet is non-custodial and protected on-chain.\n` +
+        `• For your privacy, private keys are hidden in public chat.\n` +
+        `• You can export your private key anytime under *⚙️ Settings* or by tapping *🔑 Export Key* below.\n\n` +
         `💡 *How to Trade*:\n` +
-        `Paste any token contract address (e.g. \`token.near\`) directly into this chat to view stats and execute 1-click buys!\n\n` +
+        `Paste any Token Contract Address (e.g. \`token.near\`) directly into this chat to view stats, charts, and execute instant 1-click buys!\n\n` +
+        `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.\n\n` +
         `🔗 *Join Our Community*:\n` +
-        `💬 [Community Group](https://t.me/racerbot_community) - Get help and connect with traders\n` +
-        `📢 [Updates Channel](https://t.me/racertrading) - Announcements and news\n` +
-        `𝕏 [X/Twitter](https://x.com/racertradingbot) - Follow for updates`,
+        `💬 [Community Group](https://t.me/racerbot_community) - Connect with traders\n` +
+        `📢 [Updates Channel](https://t.me/racertrading) - Announcements\n` +
+        `𝕏 [X / Twitter](https://x.com/racertradingbot) - Follow updates`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
-
-      // Delete private key message after 2 minutes for security
-      setTimeout(async () => {
-        try {
-          await ctx.deleteMessage(keyMessage.message_id);
-        } catch {
-          // Message may already be deleted by user
-        }
-      }, 120000); // 2 minutes
 
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
@@ -3038,11 +3037,13 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Key decrypted.').catch(() => {});
 
       const keyMessage = await ctx.reply(
-        `🔑 *Private Key for Account* \`${user.subaccount_id}\`:\n\n` +
-        `\`${rawPrivateKey}\`\n\n` +
-        `*Import Instructions*:\n` +
-        `Paste this string into MyNearWallet, Meteor Wallet, or near-cli via "Import Private Key" to control your account outside RacerBot.`,
-        { parse_mode: 'Markdown' }
+        `🔑 <b>Private Key for Account</b> <code>${user.subaccount_id}</code>:\n\n` +
+        `<tg-spoiler><code>${rawPrivateKey}</code></tg-spoiler>\n\n` +
+        `👆 <i>Tap the covered box above to uncover and copy your private key.</i>\n\n` +
+        `<b>Import Instructions</b>:\n` +
+        `Paste this string into MyNearWallet, Meteor Wallet, or near-cli via "Import Private Key" to control your account outside RacerBot.\n\n` +
+        `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`,
+        { parse_mode: 'HTML' }
       );
 
       await ctx.reply(
@@ -3098,14 +3099,16 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const res = await rotateUserKey(telegramId);
       const keyMessage = await ctx.reply(
-        `✅ *Trading Key Rotated Successfully!*\n\n` +
-        `Account: \`${res.subaccountId}\`\n\n` +
-        `⚠️ *NEW PRIVATE KEY*:\n` +
-        `\`${res.newPrivateKey}\`\n\n` +
-        `*Notice*:\n` +
+        `✅ <b>Trading Key Rotated Successfully!</b>\n\n` +
+        `Account: <code>${res.subaccountId}</code>\n\n` +
+        `⚠️ <b>NEW PRIVATE KEY</b>:\n` +
+        `<tg-spoiler><code>${res.newPrivateKey}</code></tg-spoiler>\n\n` +
+        `👆 <i>Tap the covered box above to uncover and copy your new private key.</i>\n\n` +
+        `<b>Notice</b>:\n` +
         `• The old key has been removed from your account on-chain.\n` +
-        `• Save this new key securely.`,
-        { parse_mode: 'Markdown' }
+        `• Save this new key securely.\n\n` +
+        `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`,
+        { parse_mode: 'HTML' }
       );
 
       // Delete private key message after 2 minutes for security
