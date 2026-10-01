@@ -1,4 +1,4 @@
-import { getFillsByPosition, getPositionById, getUserById } from '@racerbot/db';
+import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
 import { getTokenInfo } from './wallet.js';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
@@ -32,6 +32,10 @@ export interface PNLCardData {
   nearUsd: number;
   /** Whether to show the user's personal net worth (investment / value) on the card */
   showNetWorth: boolean;
+  /** User referral code for QR/bar code link */
+  referralCode?: string | null;
+  /** Full Telegram deep-link for referral */
+  referralLink?: string | null;
 }
 
 /**
@@ -47,12 +51,28 @@ export async function generatePNLCardData(
     if (!position) return null;
 
     let showNetWorth = true;
-    if (showNetWorthOverride !== undefined) {
-      showNetWorth = showNetWorthOverride;
-    } else if (position.user_id) {
+    let referralCode: string | null = null;
+    let referralLink: string | null = null;
+
+    if (position.user_id) {
       const user = await getUserById(position.user_id).catch(() => null);
-      if (user && user.show_net_worth_on_card === false) {
-        showNetWorth = false;
+      if (user) {
+        if (showNetWorthOverride !== undefined) {
+          showNetWorth = showNetWorthOverride;
+        } else if (user.show_net_worth_on_card === false) {
+          showNetWorth = false;
+        }
+
+        referralCode = user.referral_code || null;
+        if (!referralCode && (user.username || user.telegram_id)) {
+          referralCode = await generateReferralCode(
+            user.id,
+            user.username || `racer${user.telegram_id}`
+          ).catch(() => null);
+        }
+        if (referralCode) {
+          referralLink = `https://t.me/racertradingbot?start=${referralCode}`;
+        }
       }
     }
 
@@ -207,6 +227,8 @@ export async function generatePNLCardData(
       totalFeesPaid,
       nearUsd,
       showNetWorth,
+      referralCode,
+      referralLink,
     };
   } catch (err: any) {
     console.error('[PNL_CARD] Error generating PNL card data:', err);
