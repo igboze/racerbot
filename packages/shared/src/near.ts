@@ -1104,7 +1104,7 @@ export class MultiRpcNear {
    * Find any active Rhea Finance pool for a token (Rule 1: check Rhea first).
    * Checks direct wrap.near pool, DCL pool, or 2-hop pool (e.g. jambo-1679.meme-cooking.near).
    */
-  async findRheaPoolForToken(tokenAddress: string): Promise<{
+  async findRheaPoolForToken(tokenAddress: string, forceCheck = false): Promise<{
     poolId: number | string;
     pairedToken: string;
     intermediateToken?: string;
@@ -1116,9 +1116,13 @@ export class MultiRpcNear {
     reserveToken?: string;
     fee?: number;
   } | null> {
-    const lastNotFound = noRheaPoolCache.get(tokenAddress);
-    if (lastNotFound && Date.now() - lastNotFound < 60_000) {
-      return null;
+    if (!forceCheck) {
+      const lastNotFound = noRheaPoolCache.get(tokenAddress);
+      if (lastNotFound && Date.now() - lastNotFound < 60_000) {
+        return null;
+      }
+    } else {
+      noRheaPoolCache.delete(tokenAddress);
     }
 
     const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 }));

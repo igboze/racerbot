@@ -1034,16 +1034,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
 
     for (const tokenAddress of activeTokens) {
       try {
-        // 1. Rhea / Ref Finance pool probe (simple, DCL, multihop)
-        const rheaPool = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
-        if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
-          console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
-          const liqYocto = (rheaPool.liquidityNear * 1e24).toString();
-          await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
-          continue;
-        }
-
-        // 2. Direct DCL pool probe on dclv2.ref-labs.near
+        // 1. Direct DCL pool probe on dclv2.ref-labs.near (fastest, primary DEX route)
         const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
         if (dclPoolId) {
           const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
@@ -1055,7 +1046,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
           }
         }
 
-        // 3. Direct simple pool on v2.ref-finance.near
+        // 2. Direct simple pool on v2.ref-finance.near
         const rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
         if (rheaPoolId !== null && rheaPoolId !== undefined) {
           const res = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress).catch(() => null);
@@ -1067,6 +1058,15 @@ async function pollActiveTokenSnipes(): Promise<void> {
               continue;
             }
           }
+        }
+
+        // 3. Rhea / Ref Finance pool probe (simple, DCL, multihop) with forceCheck=true to bypass negative cache
+        const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+        if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
+          console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
+          const liqYocto = (rheaPool.liquidityNear * 1e24).toString();
+          await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
+          continue;
         }
 
         // 4. Launchpads

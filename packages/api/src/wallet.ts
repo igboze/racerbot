@@ -14,6 +14,7 @@ import {
   getUserByReferralCode,
   createReferral,
   getUserById,
+  type UserRecord,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
@@ -1522,4 +1523,24 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     console.warn(`[DEPOSIT] syncUserTokenDeposits error: ${err.message}`);
   }
   return newDepositsCount;
+}
+
+/**
+ * Pre-warm storage deposit on NEAR for a user and token so future snipes/buys
+ * don't need a separate storage_deposit transaction at execution time.
+ */
+export async function prewarmStorageDeposit(user: UserRecord, tokenAddress: string): Promise<void> {
+  if (!user.subaccount_id || !tokenAddress || tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
+  try {
+    const isReg = await near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false);
+    if (isReg) return;
+
+    const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+    const keyPair = KeyPair.fromString(privateKey as any);
+    await near.addKey(user.subaccount_id, keyPair);
+    await near.ensureStorageDeposit(user.subaccount_id, tokenAddress);
+    console.log(`[SNIPE] Storage pre-warmed for ${tokenAddress} on ${user.subaccount_id}`);
+  } catch (err: any) {
+    console.warn(`[SNIPE] Storage pre-warm for ${tokenAddress} (${user.subaccount_id}):`, err?.message);
+  }
 }
