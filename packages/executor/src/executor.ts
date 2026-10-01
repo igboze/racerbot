@@ -583,7 +583,7 @@ export class SwapExecutor {
 
         if (isNotConfirmed && timedOutHash) {
           onProgress?.('confirming_slow');
-          const graceMs = 60_000;
+          const graceMs = 15_000;
           console.warn(`[EXECUTOR:SIGN] Confirmation timed out for tx=${timedOutHash}; re-checking on-chain for up to ${graceMs}ms`);
           const recovered = await this.nearClient.waitForOutcome(timedOutHash, subaccountId, graceMs).catch(() => null);
           if (recovered) {
@@ -691,12 +691,7 @@ export class SwapExecutor {
     //
     // The NearlyTrade Rhea-pool lookup runs CONCURRENTLY with the pre-flight
     // quote — they are independent RPC reads and previously ran in sequence,
-    // adding a full round-trip chain to every NearlyTrade buy.
     onProgress?.('quote');
-    const nearlytradeRheaLookup =
-      venue === 'nearlytrade'
-        ? near.findRheaPoolId('wrap.near', token_in === 'wrap.near' ? token_out : token_in).catch(() => null)
-        : null;
 
     const quotedAt = (event as any).quoted_at as number | undefined;
     const isMultihop = (event as any).is_multihop === true;
@@ -761,15 +756,39 @@ export class SwapExecutor {
         }
 
         if (ntState.quoteIsNear) {
-          // ── Direct path: wNEAR → launch token via Rhea or DCL ─────────
-          // Await the Rhea pool lookup fired in parallel with the pre-flight quote
-          let rheaPoolId: number | null = null;
-          try {
-            rheaPoolId = nearlytradeRheaLookup ? await nearlytradeRheaLookup : null;
-          } catch { /* ignore */ }
+          // ── Direct path: wNEAR → launch token via NearlyTrade DCL (or Rhea if explicitly specified) ──
+          const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
+          const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
 
-          if (rheaPoolId) {
-            console.log(`[EXECUTOR] NearlyTrade route=direct-rhea pool=${rheaPoolId}`);
+          if (effectiveDclPoolId && !explicitRheaPoolId) {
+            // Verify the pool is actually wNEAR-paired
+            const poolTokens = effectiveDclPoolId.split('|').slice(0, 2);
+            const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
+            if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
+              throw new Error(
+                `Token ${token_out} is in a DCL pool paired with ${nonTokenSide}, not NEAR/wNEAR.`
+              );
+            }
+            console.log(`[EXECUTOR] NearlyTrade route=direct-dcl pool=${effectiveDclPoolId}`);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [effectiveDclPoolId],
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
+              }),
+              undefined,
+              knownWNearBal
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else if (explicitRheaPoolId) {
+            console.log(`[EXECUTOR] NearlyTrade route=direct-rhea pool=${explicitRheaPoolId}`);
             const actions = await this.buildWrapNearBuyActions(
               subaccountId,
               amountInBigInt,
@@ -779,7 +798,7 @@ export class SwapExecutor {
               JSON.stringify({
                 actions: [
                   {
-                    pool_id: rheaPoolId,
+                    pool_id: explicitRheaPoolId,
                     token_in: 'wrap.near',
                     token_out,
                     amount_in: swapAmount.toString(),
@@ -787,33 +806,6 @@ export class SwapExecutor {
                     min_output_amount: minOutAdj,
                   },
                 ],
-              }),
-              undefined,
-              knownWNearBal
-            );
-            result = await signAndSend('wrap.near', actions);
-          } else if (dclPoolId) {
-            // Verify the pool is actually wNEAR-paired
-            const poolTokens = dclPoolId.split('|').slice(0, 2);
-            const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
-            if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
-              throw new Error(
-                `Token ${token_out} is in a DCL pool paired with ${nonTokenSide}, not NEAR/wNEAR.`
-              );
-            }
-            console.log(`[EXECUTOR] NearlyTrade route=direct-dcl pool=${dclPoolId}`);
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'dclv2.ref-labs.near',
-              JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                },
               }),
               undefined,
               knownWNearBal
@@ -935,13 +927,31 @@ export class SwapExecutor {
         }
 
         if (ntState.quoteIsNear) {
-          // Direct sell via Rhea or launch DCL pool
-          let rheaPoolId: number | null = null;
-          try {
-            rheaPoolId = nearlytradeRheaLookup ? await nearlytradeRheaLookup : null;
-          } catch { /* ignore */ }
+          // Direct sell via NearlyTrade DCL (or Rhea if explicitly specified)
+          const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
+          const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
 
-          if (rheaPoolId) {
+          if (effectiveDclPoolId && !explicitRheaPoolId) {
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [effectiveDclPoolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          } else if (explicitRheaPoolId) {
             const actions = [
               transactions.functionCall(
                 'ft_transfer_call',
@@ -951,33 +961,13 @@ export class SwapExecutor {
                   msg: JSON.stringify({
                     actions: [
                       {
-                        pool_id: rheaPoolId,
+                        pool_id: explicitRheaPoolId,
                         token_in,
                         token_out: 'wrap.near',
                         amount_in: amountInBigInt.toString(),
                         min_amount_out: min_amount_out,
                       },
                     ],
-                  }),
-                },
-                BigInt('180000000000000'),
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend(token_in, actions);
-          } else if (dclPoolId) {
-            const actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [dclPoolId],
-                      output_token: 'wrap.near',
-                      min_output_amount: min_amount_out,
-                    },
                   }),
                 },
                 BigInt('180000000000000'),
