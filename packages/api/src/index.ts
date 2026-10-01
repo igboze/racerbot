@@ -99,6 +99,14 @@ async function main(): Promise<void> {
 
   app.use('/api', apiRouter);
 
+  // Serve Bubble Map at root `/` and `/bubblemap` as well for custom domain (e.g. racerbotbubblemap.up.railway.app)
+  app.get(['/', '/bubblemap'], (req, res, next) => {
+    // If request is looking for API or health, proceed to next
+    if (req.path === '/health' || req.path.startsWith('/api')) return next();
+    const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(`/api/bubblemap${query}`);
+  });
+
   // Add monitoring routes
   monitoringRoutes(app);
 

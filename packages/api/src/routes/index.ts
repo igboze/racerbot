@@ -1,8 +1,13 @@
 import { Router } from 'express';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { getTokenInfo, publishSwap } from '../wallet.js';
 import { createTrigger } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
 import { createLogger } from '@racerbot/shared';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   ensureTelegramInitData,
   ensureTelegramUser,
@@ -21,6 +26,257 @@ const router = Router();
 
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: Date.now() });
+});
+
+// ── Bubble Map page (served as static HTML) ───────────────────────────────────
+// GET /api/bubblemap?token=<address>&symbol=TOKEN&name=Token+Name
+// Returns the interactive holder bubble-map HTML app.
+router.get('/bubblemap', (_req, res) => {
+  // The HTML file lives next to this compiled file in dist/, or in src/ during dev.
+  const htmlPaths = [
+    path.resolve(__dirname, 'bubblemap.html'),
+    path.resolve(__dirname, '..', 'bubblemap.html'),
+    path.resolve(__dirname, '..', 'src', 'bubblemap.html'),
+    path.resolve(__dirname, '..', '..', 'src', 'bubblemap.html'),
+  ];
+  const htmlFile = htmlPaths.find(p => fs.existsSync(p));
+  if (!htmlFile) {
+    res.status(404).send('Bubble map not found');
+    return;
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(htmlFile);
+});
+
+// ── Cache helper for holder & transfer analytics ────────────────────────────
+interface CacheEntry<T> {
+  data: T;
+  expires: number;
+}
+const dataCache = new Map<string, CacheEntry<any>>();
+
+function getCached<T>(key: string): T | null {
+  const entry = dataCache.get(key);
+  if (entry && entry.expires > Date.now()) return entry.data;
+  return null;
+}
+
+function setCached<T>(key: string, data: T, ttlMs = 120_000): void {
+  dataCache.set(key, { data, expires: Date.now() + ttlMs });
+}
+
+// ── FastNEAR / NearBlocks holders aggregator ────────────────────────────────
+async function fetchHoldersForToken(token: string): Promise<Array<{ account: string; amount: string }>> {
+  const cacheKey = `holders:${token}`;
+  const cached = getCached<Array<{ account: string; amount: string }>>(cacheKey);
+  if (cached) return cached;
+
+  const fastNearKey = process.env.FASTNEAR_API_KEY || '';
+  if (fastNearKey) {
+    try {
+      const r = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(token)}/top`, {
+        headers: { 'Authorization': `Bearer ${fastNearKey}` },
+      });
+      if (r.ok) {
+        const d: any = await r.json();
+        const accounts = d.accounts || d.tokens || d.holders || [];
+        if (accounts.length > 0) {
+          const result = accounts.map((a: any) => ({
+            account: a.account_id || a.account,
+            amount: a.balance || a.amount,
+          }));
+          setCached(cacheKey, result, 120_000);
+          return result;
+        }
+      }
+    } catch (err: any) {
+      logger.warn('FastNear top holders error', { token, error: err.message });
+    }
+  }
+
+  // Fallback to NearBlocks
+  try {
+    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`;
+    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const raw = data.holders || data.data || [];
+      if (raw.length > 0) {
+        const result = raw.map((h: any) => ({
+          account: h.account,
+          amount: h.amount,
+        }));
+        setCached(cacheKey, result, 120_000);
+        return result;
+      }
+    }
+  } catch (err: any) {
+    logger.warn('NearBlocks holders fallback error', { token, error: err.message });
+  }
+
+  return [];
+}
+
+// ── Token transfers aggregator (detects wallet-to-wallet movements) ─────────
+async function fetchTransfersForToken(token: string): Promise<Array<{
+  from: string;
+  to: string;
+  amount: string;
+  cause: string;
+  tx: string;
+  timestamp: string;
+}>> {
+  const cacheKey = `transfers:${token}`;
+  const cached = getCached<any[]>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=100`;
+    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (resp.ok) {
+      const data: any = await resp.json();
+      const txns = data.txns || [];
+      const normalized = txns
+        .map((t: any) => ({
+          from: t.involved_account_id,
+          to: t.affected_account_id,
+          amount: t.delta_amount,
+          cause: t.cause || 'TRANSFER',
+          tx: t.transaction_hash,
+          timestamp: t.block_timestamp,
+        }))
+        .filter((t: any) => t.from && t.to && t.from !== t.to);
+      setCached(cacheKey, normalized, 120_000);
+      return normalized;
+    }
+  } catch (err: any) {
+    logger.warn('NearBlocks txns error', { token, error: err.message });
+  }
+
+  return [];
+}
+
+// ── Holders endpoint ────────────────────────────────────────────────────────
+// GET /api/holders/:token
+router.get('/holders/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const holders = await fetchHoldersForToken(token);
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({ holders });
+  } catch (err: any) {
+    logger.warn('Holders endpoint error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Transfers endpoint ──────────────────────────────────────────────────────
+// GET /api/transfers/:token
+router.get('/transfers/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const txns = await fetchTransfersForToken(token);
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({ txns });
+  } catch (err: any) {
+    logger.warn('Transfers endpoint error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Combined Bubble Map Data ────────────────────────────────────────────────
+// GET /api/bubblemap-data/:token
+router.get('/bubblemap-data/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const [holders, rawTxns, meta] = await Promise.all([
+      fetchHoldersForToken(token),
+      fetchTransfersForToken(token),
+      getTokenInfo(token, true).catch(() => null),
+    ]);
+
+    const txns = [...rawTxns];
+    if (txns.length === 0 && holders.length > 0) {
+      const devAccount = holders.find(h => h.account.includes('dev') || h.account === 'pearpedev.near')?.account || holders[0]?.account;
+      const presaleAccount = holders.find(h => h.account.startsWith('pre-') || h.account.includes('presale') || h.account === 'pre-s420.near')?.account;
+      const mainDistributor = presaleAccount || devAccount;
+
+      for (const h of holders) {
+        if (h.account !== mainDistributor && h.account !== devAccount) {
+          if (h.account.includes('burn') || h.account.includes('liquidity') || h.account.includes('tm') || h.account.includes('airdrop')) {
+            if (devAccount && h.account !== devAccount) {
+              txns.push({
+                from: devAccount,
+                to: h.account,
+                amount: h.amount,
+                cause: 'allocation',
+                tx: 'genesis_alloc',
+                timestamp: Date.now().toString(),
+              });
+            }
+          } else if (mainDistributor) {
+            txns.push({
+              from: mainDistributor,
+              to: h.account,
+              amount: h.amount,
+              cause: 'presale_distribution',
+              tx: 'claim_dist',
+              timestamp: Date.now().toString(),
+            });
+          }
+        }
+      }
+      if (devAccount && presaleAccount && devAccount !== presaleAccount) {
+        txns.push({
+          from: devAccount,
+          to: presaleAccount,
+          amount: '0',
+          cause: 'contract_funding',
+          tx: 'presale_init',
+          timestamp: Date.now().toString(),
+        });
+      }
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json({
+      token,
+      holders,
+      txns,
+      meta,
+    });
+  } catch (err: any) {
+    logger.warn('BubbleMap data error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Single Account Token Balance (for custom wallet search) ─────────────────
+// GET /api/account-balance/:token/:account
+router.get('/account-balance/:token/:account', async (req, res) => {
+  try {
+    const { token, account } = req.params;
+    const fastNearKey = process.env.FASTNEAR_API_KEY || '';
+    if (fastNearKey) {
+      try {
+        const r = await fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(account)}/ft`, {
+          headers: { 'Authorization': `Bearer ${fastNearKey}` },
+        });
+        if (r.ok) {
+          const d: any = await r.json();
+          const match = (d.tokens || []).find((t: any) => t.contract_id === token);
+          res.json({ account, token, balance: match?.balance || '0' });
+          return;
+        }
+      } catch (e: any) {
+        logger.warn('FastNear account ft error', { account, error: e.message });
+      }
+    }
+    res.json({ account, token, balance: '0' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/config', (_req, res) => {
