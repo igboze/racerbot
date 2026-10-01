@@ -10,8 +10,8 @@ const __dirname = path.dirname(__filename);
 
 // ── Theme & Palettes ────────────────────────────────────────────────────────
 // State rule: pnl >= 0 -> "win" (fox wins). pnl < 0 -> "loss" (turtle wins, fox loses).
-// Win:  --a: #2ee9ff (cyan),     --b: #8b5cf6 (purple), --glow: rgba(46,233,255,0.35)
-// Loss: --a: #ff4d7d (pink-red), --b: #8b5cf6 (purple), --glow: rgba(255,77,125,0.30)
+// Profit (Win):  --a: #00f076 (vibrant green), --b: #8b5cf6 (purple), --glow: rgba(0,240,118,0.35)
+// Loss:          --a: #ff334b (vibrant red),   --b: #8b5cf6 (purple), --glow: rgba(255,51,75,0.32)
 // Base canvas: 1200 x 675, bg: #070914
 
 const FONT_FILES: Array<{ file: string; family: string; weight?: string; style?: string }> = [
@@ -213,10 +213,10 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const p = Number(data.pnlPercent) || 0;
     const win = p >= 0;
 
-    // Theme colors
-    const colorA = win ? '#2ee9ff' : '#ff4d7d';
+    // Theme colors: Green for profit, Red for loss
+    const colorA = win ? '#00f076' : '#ff334b';
     const colorB = '#8b5cf6';
-    const glowColor = win ? 'rgba(46, 233, 255, 0.35)' : 'rgba(255, 77, 125, 0.30)';
+    const glowColor = win ? 'rgba(0, 240, 118, 0.35)' : 'rgba(255, 51, 75, 0.32)';
     const bgColor = '#070914';
 
     // 1. Clip base rounded rectangle (border-radius: 28px)
