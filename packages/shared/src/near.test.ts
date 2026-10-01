@@ -106,12 +106,12 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
   const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
 
-  it('orders read providers FastNEAR-first and trade providers QuickNode-first', () => {
+  it('orders read providers QuickNode-first and trade providers QuickNode-first', () => {
     const near = new MultiRpcNear([QN, FN]) as any;
-    expect(near.readProviders[0].url).toBe(FN);
-    expect(near.readProviders[0].isQuickNode).toBe(false);
-    expect(near.readProviders[1].url).toBe(QN);
-    expect(near.readProviders[1].isQuickNode).toBe(true);
+    expect(near.readProviders[0].url).toBe(QN);
+    expect(near.readProviders[0].isQuickNode).toBe(true);
+    expect(near.readProviders[1].url).toBe(FN);
+    expect(near.readProviders[1].isQuickNode).toBe(false);
     expect(near.tradeProviders[0].url).toBe(QN);
     expect(near.tradeProviders[1].url).toBe(FN);
   });
@@ -131,7 +131,7 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
     } as unknown as Response;
   }
 
-  it('view() uses FastNEAR and never touches QuickNode when FastNEAR responds', async () => {
+  it('view() uses QuickNode and never touches FastNEAR when QuickNode responds', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
     const attempted: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -141,26 +141,26 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
 
     const result = await near.view('token.near', 'ft_metadata', {});
     expect(result).toEqual({ ok: true });
-    expect(attempted).toEqual([FN]); // single read provider, QuickNode untouched
+    expect(attempted).toEqual([QN]); // single read provider, FastNEAR untouched
 
     vi.unstubAllGlobals();
   });
 
-  it('view() hedges to QuickNode when FastNEAR errors during the call', async () => {
+  it('view() hedges to FastNEAR when QuickNode errors during the call', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
     const attempted: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       attempted.push(url);
-      if (url === FN) {
-        // FastNEAR network-level failure → hedge fires immediately
+      if (url === QN) {
+        // QuickNode network-level failure -> hedge fires immediately
         throw new Error('fetch failed: ETIMEDOUT');
       }
-      return rpcResponse({ ok: true, source: 'quicknode' });
+      return rpcResponse({ ok: true, source: 'fastnear' });
     }));
 
     const result = await near.view('token.near', 'ft_metadata', {});
-    expect(result).toEqual({ ok: true, source: 'quicknode' });
-    expect(attempted).toEqual([FN, QN]);
+    expect(result).toEqual({ ok: true, source: 'fastnear' });
+    expect(attempted).toEqual([QN, FN]);
 
     vi.unstubAllGlobals();
   });
