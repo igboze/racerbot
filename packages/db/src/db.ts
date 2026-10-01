@@ -1191,12 +1191,13 @@ export async function markSnipeTriggerFilled(triggerId: string, txHash: string |
   );
 }
 
-export async function markSnipeTriggerFailed(triggerId: string, error: string): Promise<void> {
+export async function markSnipeTriggerFailed(triggerId: string, error: string): Promise<{ attempts: number }> {
   const db = await getDb();
-  await db.query(
-    `UPDATE snipe_triggers SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1`,
+  const res = await db.query(
+    `UPDATE snipe_triggers SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1 RETURNING attempts`,
     [triggerId, error.slice(0, 500)]
   );
+  return { attempts: res.rows[0]?.attempts ?? 1 };
 }
 
 /**

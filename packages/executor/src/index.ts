@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { pathToFileURL } from 'url';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, getNear, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
-import { SwapExecutor, warmAllKeys, ensureRefStorage } from './executor.js';
+import { SwapExecutor, warmAllKeys, ensureRefStorage, preWarmActiveSnipeStorage } from './executor.js';
 import { PARENT_ACCOUNT, MASTER_KEY } from './config.js';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -58,6 +58,10 @@ async function main(): Promise<void> {
 
   // Confirm router contract storage registration on Ref Finance
   await logger.time('Checked Ref Finance storage', () => ensureRefStorage());
+
+  // Pre-warm storage deposit on NEAR for all active snipe targets
+  await logger.time('Pre-warmed active snipe storage', () => preWarmActiveSnipeStorage());
+  setInterval(preWarmActiveSnipeStorage, 60_000);
 
   // Subscribe to swap execution events from API and triggers
   await redis.subscribe(CHANNELS.EXECUTE_SWAP, async (message: string) => {
