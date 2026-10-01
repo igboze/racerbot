@@ -1063,19 +1063,16 @@ async function executeBuyHelper(
     throw new Error('Minimum buy amount is 0.001 NEAR.');
   }
 
-  // SPEED: lightweight trade balance — spendable native NEAR only, no USD
-  // price feed, no wNEAR read (5s TTL cache).
-  let balanceNear = 0;
-  try {
-    balanceNear = await getTradeSpendableNear(telegramId);
-  } catch (err: any) {
-    throw new Error(`Failed to fetch wallet balance: ${err.message}`);
-  }
+  // SPEED: run spendable balance check, ref storage deposit check, and token info lookup in parallel!
+  const [balanceNearRes, refDepositNeeded, info] = await Promise.all([
+    getTradeSpendableNear(telegramId).catch((err: any) => {
+      throw new Error(`Failed to fetch wallet balance: ${err.message}`);
+    }),
+    getRefStorageDepositNeeded(user.subaccount_id),
+    getTokenInfo(tokenAddress, false).catch(() => null),
+  ]);
 
-  // Note: balanceNear is ALREADY net of the 0.05 NEAR gas/storage reserve
-  // computed in getTradeSpendableNear — do not deduct the 0.025 reserve twice!
-  // Only add refDepositNear if a one-time Ref storage deposit is required.
-  const refDepositNeeded = await getRefStorageDepositNeeded(user.subaccount_id);
+  const balanceNear = balanceNearRes;
   const refDepositNear = Number(refDepositNeeded) / 1e24;
 
   // Check balance including the one-time Ref storage deposit
@@ -1085,9 +1082,6 @@ async function executeBuyHelper(
       : '';
     throw new Error(`Insufficient balance. You have ${balanceNear.toFixed(4)} NEAR available. Need at least ${(amountNear + refDepositNear).toFixed(4)} NEAR.${refLine} Fees are deducted from your swap amount.`);
   }
-
-  // Use cached token info to execute immediately without redundant RPC round-trips
-  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
   if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
