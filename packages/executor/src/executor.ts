@@ -263,10 +263,12 @@ export class SwapExecutor {
     swapAmount: bigint,
     dexReceiverId: string,
     dexMsg: string,
-    swapGas: bigint = BigInt('180000000000000')
+    swapGas: bigint = BigInt('180000000000000'),
+    cachedWNearBal?: bigint
   ): Promise<any[]> {
-    const wNearBalStr = await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0');
-    const wNearBal = BigInt(wNearBalStr || '0');
+    const wNearBal = cachedWNearBal !== undefined
+      ? cachedWNearBal
+      : BigInt((await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0')) || '0');
     const totalSpend = amountInBigInt; // === feeAmount + swapAmount by construction
     const DEPOSIT_BUFFER = BigInt('10000000000000000000000'); // 0.01 NEAR stale-read headroom
     const shortfallWithBuffer = totalSpend + DEPOSIT_BUFFER - wNearBal;
@@ -455,15 +457,17 @@ export class SwapExecutor {
 
     // Pre-flight balance check: verify the account has sufficient native balance before burning gas or broadcasting
     const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
+    let knownWNearBal: bigint = 0n;
     if (isBuyPath) {
       // Both reads are independent — fetch in parallel like the sell path below.
       const [nativeBalStr, wNearBalStr] = await Promise.all([
         this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
         this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
       ]);
+      knownWNearBal = BigInt(wNearBalStr || '0');
       if (nativeBalStr !== null && nativeBalStr !== undefined) {
         const nativeBal = BigInt(nativeBalStr);
-        const wNearBal = BigInt(wNearBalStr || '0');
+        const wNearBal = knownWNearBal;
         const amountInBigInt = BigInt(amount_in);
         // Required native NEAR if existing wNEAR balance does not cover amount_in
         const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
@@ -692,7 +696,8 @@ export class SwapExecutor {
         : null;
 
     const quotedAt = (event as any).quoted_at as number | undefined;
-    const quoteFresh = venue !== 'nearlytrade'
+    const isMultihop = (event as any).is_multihop === true;
+    const quoteFresh = !isMultihop
       && typeof quotedAt === 'number'
       && Date.now() - quotedAt < 12_000;
     const freshQuote = quoteFresh
@@ -779,7 +784,9 @@ export class SwapExecutor {
                     min_output_amount: minOutAdj,
                   },
                 ],
-              })
+              }),
+              undefined,
+              knownWNearBal
             );
             result = await signAndSend('wrap.near', actions);
           } else if (dclPoolId) {
@@ -804,7 +811,9 @@ export class SwapExecutor {
                   output_token: token_out,
                   min_output_amount: minOutAdj,
                 },
-              })
+              }),
+              undefined,
+              knownWNearBal
             );
             result = await signAndSend('wrap.near', actions);
           } else {
@@ -1130,7 +1139,9 @@ export class SwapExecutor {
                     output_token: token_out,
                     min_output_amount: minOutAdj,
                   },
-                })
+                }),
+                undefined,
+                knownWNearBal
               ),
             ]);
 
@@ -1252,7 +1263,8 @@ export class SwapExecutor {
                 swapAmount,
                 'v2.ref-finance.near',
                 JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
-                BigInt('250000000000000')
+                BigInt('250000000000000'),
+                knownWNearBal
               ),
             ]);
 
