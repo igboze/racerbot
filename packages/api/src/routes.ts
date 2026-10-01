@@ -1370,27 +1370,114 @@ export function setupRoutes(bot: Telegraf): void {
     const username = ctx.from!.username || undefined;
 
     try {
-      // ── Deep links: Token share (/start t_XXXX) or Copy Trade invite (/start copy_wallet_ref) ──
+      // ── Helper to decode Telegram start parameters back to NEAR account IDs ──
+      const decodeTelegramAccountId = (param: string): string => {
+        if (!param) return '';
+        if (param.includes('.')) return param;
+        if (param.endsWith('_near') || param.endsWith('_tg') || param.endsWith('_testnet')) {
+          return param.replace(/_/g, '.');
+        }
+        return param.replace(/_/g, '.');
+      };
+
+      // ── Deep links: Token share (/start t_XXXX), Copy Trade (/start copy_wallet), or Quick Buy (/start buy_token_amount) ──
       const isTokenShare = payload?.startsWith('t_') ?? false;
       const isCopyShare = payload?.startsWith('copy_') ?? false;
+      const isBuyParam = payload?.startsWith('buy_') ?? false;
+      const isTokenParam = (payload?.startsWith('token_') || payload?.startsWith('tkn_')) ?? false;
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined so no account-level referral is (mis)attributed.
-      const accountReferralCode = (isTokenShare || isCopyShare) ? undefined : payload;
+      const accountReferralCode = (isTokenShare || isCopyShare || isBuyParam || isTokenParam) ? undefined : payload;
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
 
+      // 1. Quick Buy Deep Link (/start buy_token_near_1 or buy_token_near)
+      if (isBuyParam && payload) {
+        const raw = payload.slice(4); // strip 'buy_'
+        let tokenRaw = raw;
+        let quickBuyAmount: number | null = null;
+
+        const lastIdx = raw.lastIndexOf('_');
+        if (lastIdx !== -1) {
+          const possibleAmt = parseFloat(raw.slice(lastIdx + 1));
+          if (!isNaN(possibleAmt) && possibleAmt > 0) {
+            quickBuyAmount = possibleAmt;
+            tokenRaw = raw.slice(0, lastIdx);
+          }
+        }
+
+        const tokenAddress = decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && isValidNearAccountId(tokenAddress)) {
+          try {
+            const card = await buildTokenCard(tokenAddress, telegramId);
+            prewarmTradePath(telegramId, tokenAddress).catch(() => {});
+            await sendTokenCard(ctx, card);
+
+            if (quickBuyAmount) {
+              const user = await getUserByTelegramId(telegramId);
+              const balances = await getUserBalances(telegramId).catch(() => null);
+              const spendable = balances ? parseFloat(balances.totalNearFormatted) : 0;
+
+              if (user && spendable >= quickBuyAmount) {
+                await ctx.reply(
+                  `⚡ *Quick Buy Selected: ${quickBuyAmount} NEAR*\n\n` +
+                  `Token: \`${tokenAddress}\`\n` +
+                  `Amount: \`${quickBuyAmount} NEAR\`\n` +
+                  `Spendable: \`${spendable.toFixed(2)} NEAR\`\n\n` +
+                  `Tap *Confirm Buy* below to execute swap immediately on DEX:`,
+                  {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                      [
+                        cb(`✅ Confirm Buy ${quickBuyAmount} NEAR`, `buy_fixed:${tokenAddress}:${quickBuyAmount}`, 'success'),
+                        cb('❌ Cancel', 'menu_home', 'danger'),
+                      ]
+                    ]),
+                  }
+                );
+              } else if (user) {
+                await ctx.reply(
+                  `⚠️ *Insufficient Balance for ${quickBuyAmount} NEAR Buy*\n\n` +
+                  `Your Balance: \`${spendable.toFixed(2)} NEAR\`\n\n` +
+                  `Deposit native NEAR to your trading wallet:\n\`${user.subaccount_id}\``,
+                  { parse_mode: 'Markdown' }
+                );
+              }
+            }
+            return;
+          } catch (cardErr: any) {
+            console.warn('[/start] Quick buy card failed:', cardErr?.message);
+          }
+        }
+      }
+
+      // 2. Direct Token Details Deep Link (/start token_pearpe_tkn_near)
+      if (isTokenParam && payload) {
+        const tokenRaw = payload.startsWith('token_') ? payload.slice(6) : payload.slice(4);
+        const tokenAddress = decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && isValidNearAccountId(tokenAddress)) {
+          try {
+            const card = await buildTokenCard(tokenAddress, telegramId);
+            prewarmTradePath(telegramId, tokenAddress).catch(() => {});
+            await sendTokenCard(ctx, card);
+            return;
+          } catch (cardErr: any) {
+            console.warn('[/start] Token lookup failed:', cardErr?.message);
+          }
+        }
+      }
+
+      // 3. Copy Trading Deep Link (/start copy_wallet_near)
       if (isCopyShare && payload) {
-        // Format: copy_<targetWallet>_<referrerId> or copy_<targetWallet>
-        const parts = payload.slice(5).split('_');
-        const targetWallet = parts[0];
-        const referrerId = parts[1] || undefined;
+        const rawTarget = payload.slice(5);
+        // Extract optional referrer at the end if separated by double underscore or parsed cleanly
+        const targetWallet = decodeTelegramAccountId(rawTarget);
 
         if (targetWallet && isValidNearAccountId(targetWallet)) {
           userPendingActions.set(telegramId, {
             action: 'copy_amount',
             copyWallet: targetWallet,
-            copyReferrerId: referrerId,
             expiresAt: Date.now() + 5 * 60_000,
           });
           await ctx.reply(
@@ -1407,6 +1494,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
+      // 4. Token Share Referral Code (/start t_XXXX)
       if (isTokenShare && payload) {
         // Look up the token share record
         const shareRecord = await getTokenShareByCode(payload).catch(() => null);
