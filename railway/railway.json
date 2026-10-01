@@ -68,6 +68,10 @@
         {
           "variable": "QUICKNODE_CHAIN_ID",
           "value": "near-mainnet"
+        },
+        {
+          "variable": "BUBBLE_PUBLIC_URL",
+          "value": "https://racerbotbubblemap.buzz"
         }
       ]
     },
