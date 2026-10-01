@@ -28,11 +28,7 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: Date.now() });
 });
 
-// ── Bubble Map page (served as static HTML) ───────────────────────────────────
-// GET /api/bubblemap?token=<address>&symbol=TOKEN&name=Token+Name
-// Returns the interactive holder bubble-map HTML app.
-router.get('/bubblemap', (_req, res) => {
-  // The HTML file lives next to this compiled file in dist/, or in src/ during dev.
+export function serveBubbleMapHtml(res: import('express').Response): void {
   const htmlPaths = [
     path.resolve(__dirname, 'bubblemap.html'),
     path.resolve(__dirname, '..', 'bubblemap.html'),
@@ -45,8 +41,17 @@ router.get('/bubblemap', (_req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(htmlFile);
+}
+
+// ── Bubble Map page (served as static HTML) ───────────────────────────────────
+// GET /api/bubblemap?token=<address>&symbol=TOKEN&name=Token+Name
+// Returns the interactive holder bubble-map HTML app.
+router.get('/bubblemap', (_req, res) => {
+  serveBubbleMapHtml(res);
 });
 
 // ── Cache helper for holder & transfer analytics ────────────────────────────
