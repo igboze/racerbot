@@ -1,5 +1,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Install build tools required for native modules (canvas compilation in root dependencies)
+RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
+
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json ./packages/api/
 COPY packages/contract/package.json ./packages/contract/
@@ -8,6 +12,7 @@ COPY packages/detector/package.json ./packages/detector/
 COPY packages/executor/package.json ./packages/executor/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/triggers/package.json ./packages/triggers/
+
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -15,7 +20,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-# turbo emits to packages/<svc>/dist — copy the whole workspace, not /app/dist
+
+# Install runtime shared libraries
+RUN apk add --no-cache cairo pango pixman giflib libjpeg-turbo librsvg
+
 COPY --from=builder /app /app
-# Executor is a headless signing service — no HTTP port to healthcheck
+
 CMD ["node", "packages/executor/dist/index.js"]

@@ -12,6 +12,7 @@ import {
   type AutoBuySignal,
 } from '@racerbot/shared';
 import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds, getActiveTokenSnipes, getActiveDeployerSnipes, recordSnipeTrigger } from '@racerbot/db';
+import { initCopyTradeDetector, checkCopyTradeReceipt } from './copyTrade.js';
 
 const logger = createLogger('detector');
 
@@ -62,6 +63,11 @@ async function main() {
   setInterval(() => {
     void refreshTriggerTokenPrices();
   }, TRIGGER_PRICE_REFRESH_MS);
+
+  // Initialize copy-trade wallet tracker (refreshes every 60s from DB)
+  await initCopyTradeDetector().catch(err =>
+    logger.error('Copy-trade detector init failed (non-fatal)', err as Error)
+  );
 
   logger.info('Starting NEAR block watcher...', { rpcProviders: RPC_URLS.length });
 
@@ -150,8 +156,27 @@ async function main() {
             for (const item of outcomes) {
               const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
               const receiverId: string = item?.receipt?.receiver_id ?? '';
+              const signerId: string = item?.receipt?.predecessor_id ?? '';
+              const txHash: string = item?.execution_outcome?.id ?? '';
               for (const log of logs) {
                 eventPairs.push({ log, receiverId });
+              }
+              // Copy-trade detection: check if signer is a tracked wallet
+              if (signerId && txHash) {
+                const receiptActions = (item?.receipt?.receipt?.Action?.actions ?? []) as any[];
+                const parsedActions = receiptActions.map((a: any) => {
+                  const fn = a?.FunctionCall;
+                  if (!fn) return null;
+                  try {
+                    return {
+                      methodName: fn.method_name as string,
+                      args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
+                    };
+                  } catch { return null; }
+                }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+                if (parsedActions.length > 0) {
+                  checkCopyTradeReceipt(signerId, receiverId, txHash, parsedActions).catch(() => {});
+                }
               }
             }
           }

@@ -105,6 +105,74 @@ export interface TokenReferralRecord {
   last_trade_at: Date | null;
 }
 
+export interface CopyTradeTargetRecord {
+  id: string;
+  user_id: string;
+  target_wallet: string;
+  referrer_id?: string | null;
+  buy_amount_near: number;
+  copy_sells: boolean;
+  max_slippage_pct: number;
+  max_daily_budget_near: number | null;
+  status: 'active' | 'paused' | 'stopped';
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CopyTradeFillRecord {
+  id: string;
+  copy_target_id: string;
+  user_id: string;
+  source_tx_hash: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+  amount_token: number | null;
+  amount_near: number | null;
+  our_tx_hash: string | null;
+  status: 'pending' | 'filled' | 'failed' | 'skipped';
+  skip_reason: string | null;
+  created_at: Date;
+}
+
+export interface DcaOrderRecord {
+  id: string;
+  user_id: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+  amount_per_order: number;
+  interval_seconds: number;
+  total_orders: number;
+  executed_orders: number;
+  next_run_at: Date;
+  min_price: number | null;
+  max_price: number | null;
+  status: 'active' | 'paused' | 'completed' | 'cancelled';
+  last_error: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreateCopyTradeTargetParams {
+  user_id: string;
+  target_wallet: string;
+  referrer_id?: string | null;
+  buy_amount_near: number;
+  copy_sells?: boolean;
+  max_slippage_pct?: number;
+  max_daily_budget_near?: number | null;
+}
+
+export interface CreateDcaOrderParams {
+  user_id: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+  amount_per_order: number;
+  interval_seconds: number;
+  total_orders?: number;
+  min_price?: number | null;
+  max_price?: number | null;
+}
+
 export interface CreateUserParams {
   telegram_id: number;
   subaccount_id: string;
@@ -1148,3 +1216,302 @@ export async function markSnipeOrderResult(orderId: string, success: boolean, er
     );
   }
 }
+
+// ── Copy Trading ─────────────────────────────────────────────────────────────
+
+function rowToCopyTarget(row: any): CopyTradeTargetRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    target_wallet: row.target_wallet,
+    referrer_id: row.referrer_id ?? null,
+    buy_amount_near: parseFloat(row.buy_amount_near),
+    copy_sells: row.copy_sells,
+    max_slippage_pct: parseFloat(row.max_slippage_pct),
+    max_daily_budget_near: row.max_daily_budget_near != null ? parseFloat(row.max_daily_budget_near) : null,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams): Promise<CopyTradeTargetRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO copy_trade_targets
+       (id, user_id, target_wallet, referrer_id, buy_amount_near, copy_sells, max_slippage_pct, max_daily_budget_near)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (user_id, target_wallet)
+       DO UPDATE SET
+         referrer_id           = COALESCE(EXCLUDED.referrer_id, copy_trade_targets.referrer_id),
+         buy_amount_near       = EXCLUDED.buy_amount_near,
+         copy_sells            = EXCLUDED.copy_sells,
+         max_slippage_pct      = EXCLUDED.max_slippage_pct,
+         max_daily_budget_near = EXCLUDED.max_daily_budget_near,
+         status                = 'active',
+         updated_at            = NOW()
+     RETURNING *`,
+    [
+      generateId(),
+      params.user_id,
+      params.target_wallet,
+      params.referrer_id ?? null,
+      params.buy_amount_near,
+      params.copy_sells ?? true,
+      params.max_slippage_pct ?? 5.0,
+      params.max_daily_budget_near ?? null,
+    ]
+  );
+  return rowToCopyTarget(res.rows[0]);
+}
+
+export async function getCopyTradeTargetsByUser(userId: string): Promise<CopyTradeTargetRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM copy_trade_targets WHERE user_id = $1 ORDER BY created_at DESC`,
+    [userId]
+  );
+  return res.rows.map(rowToCopyTarget);
+}
+
+/** Returns all ACTIVE copy-targets for a specific watched wallet (detector hot-path). */
+export async function getCopyTargetFollowersByWallet(
+  targetWallet: string
+): Promise<CopyTradeTargetRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM copy_trade_targets WHERE target_wallet = $1 AND status = 'active'`,
+    [targetWallet]
+  );
+  return res.rows.map(rowToCopyTarget);
+}
+
+/** Returns all distinct wallets that have at least one active follower (for detector subscription). */
+export async function getAllActiveCopyTargetWallets(): Promise<string[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT DISTINCT target_wallet FROM copy_trade_targets WHERE status = 'active'`
+  );
+  return res.rows.map((r: any) => r.target_wallet as string);
+}
+
+export async function updateCopyTradeTargetStatus(
+  id: string,
+  status: 'active' | 'paused' | 'stopped'
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE copy_trade_targets SET status = $1, updated_at = NOW() WHERE id = $2`,
+    [status, id]
+  );
+}
+
+export async function updateCopyTradeTarget(
+  id: string,
+  params: Partial<Pick<CopyTradeTargetRecord, 'buy_amount_near' | 'copy_sells' | 'max_slippage_pct' | 'max_daily_budget_near'>>
+): Promise<void> {
+  const db = await getDb();
+  const sets: string[] = ['updated_at = NOW()'];
+  const vals: unknown[] = [id];
+  if (params.buy_amount_near !== undefined) { vals.push(params.buy_amount_near); sets.push(`buy_amount_near = $${vals.length}`); }
+  if (params.copy_sells !== undefined) { vals.push(params.copy_sells); sets.push(`copy_sells = $${vals.length}`); }
+  if (params.max_slippage_pct !== undefined) { vals.push(params.max_slippage_pct); sets.push(`max_slippage_pct = $${vals.length}`); }
+  if (params.max_daily_budget_near !== undefined) { vals.push(params.max_daily_budget_near); sets.push(`max_daily_budget_near = $${vals.length}`); }
+  await db.query(`UPDATE copy_trade_targets SET ${sets.join(', ')} WHERE id = $1`, vals);
+}
+
+/** Idempotent fill record for a detected copy trade. Returns null if already exists (duplicate). */
+export async function recordCopyTradeFill(params: {
+  copy_target_id: string;
+  user_id: string;
+  source_tx_hash: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+}): Promise<CopyTradeFillRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO copy_trade_fills (id, copy_target_id, user_id, source_tx_hash, token_address, side)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (copy_target_id, source_tx_hash, side) DO NOTHING
+     RETURNING *`,
+    [generateId(), params.copy_target_id, params.user_id, params.source_tx_hash, params.token_address, params.side]
+  );
+  if (!res.rows[0]) return null;
+  const r = res.rows[0];
+  return {
+    id: r.id,
+    copy_target_id: r.copy_target_id,
+    user_id: r.user_id,
+    source_tx_hash: r.source_tx_hash,
+    token_address: r.token_address,
+    side: r.side,
+    amount_token: r.amount_token != null ? parseFloat(r.amount_token) : null,
+    amount_near: r.amount_near != null ? parseFloat(r.amount_near) : null,
+    our_tx_hash: r.our_tx_hash,
+    status: r.status,
+    skip_reason: r.skip_reason,
+    created_at: r.created_at,
+  };
+}
+
+export async function updateCopyTradeFillResult(
+  id: string,
+  status: 'filled' | 'failed' | 'skipped',
+  opts: { our_tx_hash?: string; amount_token?: number; amount_near?: number; skip_reason?: string } = {}
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE copy_trade_fills
+     SET status = $2, our_tx_hash = COALESCE($3, our_tx_hash),
+         amount_token = COALESCE($4, amount_token),
+         amount_near  = COALESCE($5, amount_near),
+         skip_reason  = COALESCE($6, skip_reason)
+     WHERE id = $1`,
+    [id, status, opts.our_tx_hash ?? null, opts.amount_token ?? null, opts.amount_near ?? null, opts.skip_reason ?? null]
+  );
+}
+
+export async function getRecentCopyFillsByUser(userId: string, limit = 10): Promise<CopyTradeFillRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM copy_trade_fills WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return res.rows.map((r: any): CopyTradeFillRecord => ({
+    id: r.id, copy_target_id: r.copy_target_id, user_id: r.user_id,
+    source_tx_hash: r.source_tx_hash, token_address: r.token_address, side: r.side,
+    amount_token: r.amount_token != null ? parseFloat(r.amount_token) : null,
+    amount_near: r.amount_near != null ? parseFloat(r.amount_near) : null,
+    our_tx_hash: r.our_tx_hash, status: r.status, skip_reason: r.skip_reason,
+    created_at: r.created_at,
+  }));
+}
+
+/** Sum of NEAR spent via copy-trade on a given UTC calendar date (budget cap check). */
+export async function getCopyTradeDailySpend(copyTargetId: string, utcDateStr: string): Promise<number> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT COALESCE(SUM(amount_near), 0) AS total
+     FROM copy_trade_fills
+     WHERE copy_target_id = $1 AND side = 'buy' AND status = 'filled'
+       AND (created_at AT TIME ZONE 'UTC')::date::text = $2`,
+    [copyTargetId, utcDateStr]
+  );
+  return parseFloat(res.rows[0]?.total ?? '0');
+}
+
+// ── DCA Orders ────────────────────────────────────────────────────────────────
+
+function rowToDca(row: any): DcaOrderRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    token_address: row.token_address,
+    side: row.side,
+    amount_per_order: parseFloat(row.amount_per_order),
+    interval_seconds: parseInt(row.interval_seconds, 10),
+    total_orders: parseInt(row.total_orders, 10),
+    executed_orders: parseInt(row.executed_orders, 10),
+    next_run_at: row.next_run_at,
+    min_price: row.min_price != null ? parseFloat(row.min_price) : null,
+    max_price: row.max_price != null ? parseFloat(row.max_price) : null,
+    status: row.status,
+    last_error: row.last_error ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function createDcaOrder(params: CreateDcaOrderParams): Promise<DcaOrderRecord> {
+  const db = await getDb();
+  const firstRunAt = new Date(Date.now() + params.interval_seconds * 1000);
+  const res = await db.query(
+    `INSERT INTO dca_orders
+       (id, user_id, token_address, side, amount_per_order, interval_seconds,
+        total_orders, next_run_at, min_price, max_price)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING *`,
+    [
+      generateId(), params.user_id, params.token_address, params.side,
+      params.amount_per_order, params.interval_seconds,
+      params.total_orders ?? 0, firstRunAt,
+      params.min_price ?? null, params.max_price ?? null,
+    ]
+  );
+  return rowToDca(res.rows[0]);
+}
+
+export async function getDcaOrdersByUser(userId: string): Promise<DcaOrderRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM dca_orders WHERE user_id = $1 ORDER BY created_at DESC`,
+    [userId]
+  );
+  return res.rows.map(rowToDca);
+}
+
+/** Hot-path: all ACTIVE DCA orders whose next_run_at is now or in the past. */
+export async function getDueDcaOrders(): Promise<DcaOrderRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM dca_orders WHERE status = 'active' AND next_run_at <= NOW()`
+  );
+  return res.rows.map(rowToDca);
+}
+
+/**
+ * Mark one DCA tick as executed.
+ * - Increments executed_orders.
+ * - Advances next_run_at by interval_seconds.
+ * - Marks completed when total_orders reached (0 = unlimited).
+ * - Clears last_error on success.
+ */
+export async function advanceDcaOrder(id: string): Promise<DcaOrderRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE dca_orders
+     SET executed_orders = executed_orders + 1,
+         next_run_at = NOW() + (interval_seconds || ' seconds')::INTERVAL,
+         status = CASE
+           WHEN total_orders > 0 AND executed_orders + 1 >= total_orders THEN 'completed'
+           ELSE status
+         END,
+         last_error = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id]
+  );
+  return rowToDca(res.rows[0]);
+}
+
+export async function failDcaOrderTick(id: string, errorMsg: string): Promise<void> {
+  const db = await getDb();
+  // Non-fatal: keep the order active, just advance next_run_at and log error
+  await db.query(
+    `UPDATE dca_orders
+     SET last_error = $2,
+         next_run_at = NOW() + (interval_seconds || ' seconds')::INTERVAL,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [id, errorMsg.slice(0, 500)]
+  );
+}
+
+export async function updateDcaOrderStatus(
+  id: string,
+  status: 'active' | 'paused' | 'completed' | 'cancelled'
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE dca_orders SET status = $1, updated_at = NOW() WHERE id = $2`,
+    [status, id]
+  );
+}
+
+export async function getDcaOrderById(id: string): Promise<DcaOrderRecord | null> {
+  const db = await getDb();
+  const res = await db.query(`SELECT * FROM dca_orders WHERE id = $1`, [id]);
+  if (!res.rows[0]) return null;
+  return rowToDca(res.rows[0]);
+}

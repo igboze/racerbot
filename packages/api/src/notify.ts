@@ -207,6 +207,24 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       );
       break;
     }
+
+    case 'copy_trade_filled' as any: {
+      // Pre-formatted message is composed by the copy-trade detector
+      const msg = (data as any).message as string | undefined;
+      if (msg) {
+        await _bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'Markdown' });
+      }
+      break;
+    }
+
+    case 'dca_fill' as any: {
+      // Pre-formatted message is composed by the DCA engine
+      const msg = (data as any).message as string | undefined;
+      if (msg) {
+        await _bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'Markdown' });
+      }
+      break;
+    }
   }
 }
 
