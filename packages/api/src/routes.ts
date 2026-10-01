@@ -410,12 +410,16 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
   const safeName = sanitizeMd(tokenInfo.name || 'Token');
 
-  // ── Deep links: DexScreener chart, NearBlocks explorer, venue launchpad ──
+  // ── Deep links: Bubble Map, DexScreener, NearBlocks, venue launchpad ──────
   const linkRows = (() => {
-    const links = tokenLinks(tokenInfo.venue, tokenInfo.address);
+    const links = tokenLinks(tokenInfo.venue, tokenInfo.address, tokenInfo.symbol || undefined, tokenInfo.name || undefined);
     const rows: any[] = [];
-    if (links.length > 0) rows.push(links.slice(0, 2).map(l => Markup.button.url(l.label, l.url)));
-    if (links.length > 2) rows.push(links.slice(2).map(l => Markup.button.url(l.label, l.url)));
+    // Row 0: Bubble Map (full-width — most distinctive feature)
+    if (links.length > 0) rows.push([Markup.button.url(links[0].label, links[0].url)]);
+    // Row 1: DexScreener + NearBlocks
+    if (links.length > 1) rows.push(links.slice(1, 3).map(l => Markup.button.url(l.label, l.url)));
+    // Row 2: Venue launchpad page (if present)
+    if (links.length > 3) rows.push(links.slice(3).map(l => Markup.button.url(l.label, l.url)));
     return rows;
   })();
 
@@ -1336,6 +1340,10 @@ async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct
 async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string, tokenSymbol?: string) {
   const rows: any[] = [];
   try {
+    const { bubbleMapUrl } = await import('@racerbot/shared');
+    rows.push([
+      Markup.button.url('🫧 View Bubble Map', bubbleMapUrl(tokenAddress, tokenSymbol)),
+    ]);
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (user) {
       const shareCode = await getOrCreateTokenShare(user.id, tokenAddress);
