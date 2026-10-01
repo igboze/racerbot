@@ -369,7 +369,7 @@ export class MultiRpcNear {
   // ── Hedged-request constants ─────────────────────────────────────────────────
   // Send to FastNEAR immediately. If no reply within HEDGE_MS, also send to
   // QuickNode. First success wins; the loser is aborted. Hard cap = VIEW_TIMEOUT_MS.
-  private static readonly HEDGE_MS = 400;
+  private static readonly HEDGE_MS = 250;
   private static readonly VIEW_TIMEOUT_MS = 3000;
 
   /**
@@ -3041,7 +3041,7 @@ export class MultiRpcNear {
           const otherResults = await Promise.allSettled(
             otherAttempts.map(p => Promise.race([
               p,
-              new Promise<null>(r => setTimeout(() => r(null), 100))
+              new Promise<null>(r => setTimeout(() => r(null), 30))
             ]))
           );
           const okOthers = otherResults
@@ -3112,6 +3112,21 @@ export class MultiRpcNear {
       markProviderSuccess(provider, Date.now() - start);
       return hash as string;
     };
+
+    // Fast-path: query FastNEAR primary. If it succeeds within 250ms, return immediately
+    // without hitting QuickNode at all. QuickNode is only queried if FastNEAR fails or is slow.
+    const primary = this.tradeProviders.find(p => !p.isQuickNode && p.healthy && !p.circuitBreakerOpen) || this.tradeProviders[0];
+    if (primary) {
+      try {
+        const hash = await Promise.race([
+          fetchFrom(primary),
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('primary-timeout')), 250)),
+        ]);
+        if (hash) return hash;
+      } catch {
+        // FastNEAR failed or exceeded 250ms — fall back to all trade providers
+      }
+    }
 
     try {
       return await Promise.any(this.tradeProviders.map(fetchFrom));
