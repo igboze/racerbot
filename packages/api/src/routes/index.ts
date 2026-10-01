@@ -131,30 +131,84 @@ async function fetchTransfersForToken(token: string): Promise<Array<{
   const cached = getCached<any[]>(cacheKey);
   if (cached) return cached;
 
+  const transfers: Array<{ from: string; to: string; amount: string; cause: string; tx: string; timestamp: string }> = [];
+  const seen = new Set<string>();
+
+  // 1. Fetch action logs directly from the token contract (up to 3 pages)
   try {
-    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=100`;
+    for (let page = 1; page <= 3; page++) {
+      const url = `https://api.nearblocks.io/v1/account/${encodeURIComponent(token)}/txns?page=${page}&per_page=50`;
+      const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!resp.ok) break;
+      const data: any = await resp.json();
+      const txns = data.txns || [];
+      if (txns.length === 0) break;
+
+      for (const t of txns) {
+        for (const act of (t.actions || [])) {
+          const method = act.method;
+          if (method === 'ft_transfer' || method === 'ft_transfer_call' || method === 'ft_resolve_transfer') {
+            try {
+              const args = typeof act.args === 'string' ? JSON.parse(act.args || '{}') : (act.args || {});
+              const from = args.sender_id || t.predecessor_account_id || t.signer_account_id;
+              const to = args.receiver_id;
+              const amount = args.amount || '0';
+              if (from && to && from !== to) {
+                const sig = `${from}->${to}:${t.transaction_hash}`;
+                if (!seen.has(sig)) {
+                  seen.add(sig);
+                  transfers.push({
+                    from,
+                    to,
+                    amount: amount.toString(),
+                    cause: method,
+                    tx: t.transaction_hash || '',
+                    timestamp: t.block_timestamp || Date.now().toString(),
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.warn('NearBlocks account txns error', { token, error: err.message });
+  }
+
+  // 2. Fallback / supplement with ft txns endpoint if available
+  try {
+    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=50`;
     const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (resp.ok) {
       const data: any = await resp.json();
       const txns = data.txns || [];
-      const normalized = txns
-        .map((t: any) => ({
-          from: t.involved_account_id,
-          to: t.affected_account_id,
-          amount: t.delta_amount,
-          cause: t.cause || 'TRANSFER',
-          tx: t.transaction_hash,
-          timestamp: t.block_timestamp,
-        }))
-        .filter((t: any) => t.from && t.to && t.from !== t.to);
-      setCached(cacheKey, normalized, 120_000);
-      return normalized;
+      for (const t of txns) {
+        const from = t.involved_account_id;
+        const to = t.affected_account_id;
+        const amount = t.delta_amount || '0';
+        if (from && to && from !== to) {
+          const sig = `${from}->${to}:${t.transaction_hash}`;
+          if (!seen.has(sig)) {
+            seen.add(sig);
+            transfers.push({
+              from,
+              to,
+              amount: amount.toString(),
+              cause: t.cause || 'TRANSFER',
+              tx: t.transaction_hash || '',
+              timestamp: t.block_timestamp || Date.now().toString(),
+            });
+          }
+        }
+      }
     }
   } catch (err: any) {
-    logger.warn('NearBlocks txns error', { token, error: err.message });
+    logger.warn('NearBlocks fts txns error', { token, error: err.message });
   }
 
-  return [];
+  setCached(cacheKey, transfers, 120_000);
+  return transfers;
 }
 
 // ── Holders endpoint ────────────────────────────────────────────────────────
