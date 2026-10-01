@@ -220,18 +220,18 @@ export class MultiRpcNear {
     const defaultQn = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/';
     const sanitizedUrls = fastnearAndQnUrls.length > 0
       ? Array.from(new Set(fastnearAndQnUrls))
-      : [qnUrl || defaultQn, 'https://rpc.mainnet.fastnear.com'];
+      : ['https://rpc.mainnet.fastnear.com', qnUrl || defaultQn];
 
-    // Prioritize QuickNode first, then FastNEAR
+    // Prioritize FastNEAR first, then QuickNode as fallback
     const prioritizedUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
-    // Main RPC: QuickNode is primary for both reads and writes.
-    // FastNEAR is the automatic failover / hedge when QuickNode is slow, unhealthy, or circuit-open.
+    // Main RPC: FastNEAR is primary for both reads and writes.
+    // QuickNode is the automatic failover / hedge when FastNEAR is slow, unhealthy, or circuit-open.
     const readUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
@@ -262,7 +262,7 @@ export class MultiRpcNear {
   }
 
   /**
-   * The primary trade RPC (QuickNode when configured, else FastNEAR).
+   * The primary trade RPC (FastNEAR when configured, else QuickNode).
    * Broadcast order starts here and confirmation polls it first; nonce and
    * block-hash reads hedge across ALL trade providers (see
    * queryAccessKeyHedged / fetchBlockHashHedged) so a stalled endpoint can no
@@ -596,11 +596,11 @@ export class MultiRpcNear {
           return;
         }
 
-        // Network error on QuickNode before HEDGE_MS → launch FastNEAR early.
-        if (!settled && fnTargets.length > 0 && hedgeTimer !== null) {
+        // Network error on FastNEAR before HEDGE_MS → launch QuickNode early.
+        if (!settled && qnTargets.length > 0 && hedgeTimer !== null) {
           clearTimeout(hedgeTimer);
           hedgeTimer = null;
-          launchFastNear();
+          launchQuickNode();
         }
 
         // If all started attempts have failed, reject.
@@ -632,18 +632,18 @@ export class MultiRpcNear {
         fail(new Error('NEAR RPC view hard cap exceeded (3000 ms)'));
       }, VIEW_TIMEOUT_MS);
 
-      if (qnTargets.length > 0) {
-        launchQuickNode();
-        // Hedge: after HEDGE_MS with no response from QuickNode, also send to FastNEAR fallback.
-        if (fnTargets.length > 0) {
+      if (fnTargets.length > 0) {
+        launchFastNear();
+        // Hedge: after HEDGE_MS with no response from FastNEAR, also send to QuickNode fallback.
+        if (qnTargets.length > 0) {
           hedgeTimer = setTimeout(() => {
             hedgeTimer = null;
-            if (!settled) launchFastNear();
+            if (!settled) launchQuickNode();
           }, HEDGE_MS);
         }
       } else {
-        // QuickNode not configured — go straight to FastNEAR.
-        launchFastNear();
+        // FastNEAR not configured — go straight to QuickNode.
+        launchQuickNode();
       }
     });
   }
@@ -3563,11 +3563,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (QuickNode primary, FastNEAR fallback). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR primary, QuickNode fallback). */
 export const DEFAULT_RPC_URLS = [
+  'https://rpc.mainnet.fastnear.com',
   process.env.QUICKNODE_ENDPOINT_URL || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
   'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.fastnear.com',
 ];
 
 /** Singleton factory — call once per process, reuse the connection pool */

@@ -4,8 +4,8 @@
 dockerfile = Dockerfile.api
 ports = [{ port = 3000 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/,https://rpc.mainnet.fastnear.com" },
-  { variable = "FASTNEAR_API_KEY", value = "a2e95d141fbaf9957f79eca6e3ac34e07a31ad5b7d00e70c33c944196308b9d0" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
+  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
   { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
   { variable = "ROUTER_CONTRACT_ID", value = "router.racerbot.near" },
   { variable = "TREASURY_ACCOUNT_ID", value = "treasury.racerbot.near" },
@@ -23,8 +23,8 @@ environments = [
 dockerfile = "Dockerfile.detector"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/,https://rpc.mainnet.fastnear.com" },
-  { variable = "FASTNEAR_API_KEY", value = "a2e95d141fbaf9957f79eca6e3ac34e07a31ad5b7d00e70c33c944196308b9d0" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
+  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
@@ -35,8 +35,8 @@ environments = [
 dockerfile = "Dockerfile.executor"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/,https://rpc.mainnet.fastnear.com" },
-  { variable = "FASTNEAR_API_KEY", value = "a2e95d141fbaf9957f79eca6e3ac34e07a31ad5b7d00e70c33c944196308b9d0" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
+  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
@@ -47,8 +47,8 @@ environments = [
 dockerfile = "Dockerfile.triggers"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/,https://rpc.mainnet.fastnear.com" },
-  { variable = "FASTNEAR_API_KEY", value = "a2e95d141fbaf9957f79eca6e3ac34e07a31ad5b7d00e70c33c944196308b9d0" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
+  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
