@@ -820,14 +820,45 @@ export class MultiRpcNear {
   }
 
   /**
-   * Get account NEAR balance from the single pinned trade RPC.
+   * Get account NEAR balance from trade RPC providers (hedged optimistic/final view_account).
    */
   async getNearBalance(accountId: string): Promise<string> {
-    const provider = this.tradeProvider;
-    const near = await this.getConnection(provider.url);
-    const account = await near.account(accountId);
-    const state = await withTimeout<any>(account.state(), 4500, `RPC timeout on ${provider.url}`);
-    return state.amount as string;
+    for (const provider of this.tradeProviders) {
+      try {
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: provider.headers ?? { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'racerbot-bal',
+            method: 'query',
+            params: { request_type: 'view_account', account_id: accountId, finality: 'optimistic' },
+          }),
+          signal: AbortSignal.timeout(2500),
+        });
+        const data: any = await res.json();
+        if (data?.result?.amount) return data.result.amount as string;
+      } catch {}
+    }
+    // Fallback: final finality across providers
+    for (const provider of this.tradeProviders) {
+      try {
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: provider.headers ?? { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'racerbot-bal-final',
+            method: 'query',
+            params: { request_type: 'view_account', account_id: accountId, finality: 'final' },
+          }),
+          signal: AbortSignal.timeout(2500),
+        });
+        const data: any = await res.json();
+        if (data?.result?.amount) return data.result.amount as string;
+      } catch {}
+    }
+    throw new Error('Failed to fetch NEAR balance from all RPC nodes');
   }
 
   /**
@@ -2928,7 +2959,7 @@ export class MultiRpcNear {
       const broadcastMs = Date.now() - tStart;
       const seen = { everSeen: false };
       // Phase 1: Fan-out poll across all trade providers (QuickNode + FastNEAR)
-      const firstWindow = Math.min(15_000, Math.max(5_000, waitForMs - 15_000));
+      const firstWindow = Math.min(8_000, Math.max(4_000, waitForMs - 15_000));
       let outcome: any;
       try {
         outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
@@ -3215,6 +3246,8 @@ export class MultiRpcNear {
     try {
       // First provider to accept returns immediately so confirmation polling begins without delay
       await Promise.any(promises);
+      // Ensure other trade providers also complete their broadcast so all nodes relay the tx
+      Promise.allSettled(promises).catch(() => {});
     } catch {
       // All rejected
       const results = await Promise.allSettled(promises);
