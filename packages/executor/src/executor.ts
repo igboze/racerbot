@@ -86,6 +86,28 @@ export async function warmAllKeys(): Promise<void> {
   console.log(`[EXECUTOR] Pre-warmed ${loaded} user keys`);
 }
 
+/** Pre-warm storage deposit on NEAR for all tokens with active snipe orders. */
+export async function preWarmActiveSnipeStorage(): Promise<void> {
+  try {
+    const db = await getDb();
+    const rows = await db.query(
+      `SELECT DISTINCT s.token_address, u.subaccount_id 
+       FROM snipe_orders s 
+       JOIN users u ON s.user_id = u.id 
+       WHERE s.snipe_type = 'token' AND s.status = 'active' AND s.token_address IS NOT NULL`
+    );
+    for (const row of rows.rows) {
+      if (row.token_address && row.subaccount_id) {
+        near.ensureStorageDeposit(row.subaccount_id, row.token_address).catch((err: any) => {
+          console.warn(`[EXECUTOR] Pre-warm storage for ${row.token_address} (${row.subaccount_id}):`, err?.message);
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[EXECUTOR] preWarmActiveSnipeStorage warning:', (err as Error).message);
+  }
+}
+
 /** Add a newly onboarded user's key to the warm store without restart. */
 export async function addUserKey(userId: string, subaccountId: string, encryptedKey: string): Promise<void> {
   let keyStr: string;
@@ -2022,16 +2044,24 @@ export class SwapExecutor {
     ): Promise<void> => {
       if (!snipeOrderId) return;
       try {
+        let triggerAttempts = 1;
         if (snipeTriggerId) {
-          if (success) await markSnipeTriggerFilled(snipeTriggerId, opts.txHash ?? null);
-          else await markSnipeTriggerFailed(snipeTriggerId, opts.error ?? 'unknown');
+          if (success) {
+            await markSnipeTriggerFilled(snipeTriggerId, opts.txHash ?? null);
+          } else {
+            const failRes = await markSnipeTriggerFailed(snipeTriggerId, opts.error ?? 'unknown');
+            triggerAttempts = failRes.attempts;
+          }
         }
         // Token orders are one-shot: resolve them on success or on a PERMANENT
-        // failure (rug, bad amount, execution error). Transient blocks (pool
-        // not live yet) keep the order armed so a later detection retries.
+        // failure (rug, bad amount, account error, or max retry attempts reached).
+        // Transient failures keep the order armed so a later detection retries.
         // Deployer orders always stay armed for the dev's next launch.
-        if (success) await markSnipeOrderResult(snipeOrderId, true);
-        else if (opts.permanent) await markSnipeOrderResult(snipeOrderId, false, opts.error);
+        if (success) {
+          await markSnipeOrderResult(snipeOrderId, true);
+        } else if (opts.permanent || triggerAttempts >= 5) {
+          await markSnipeOrderResult(snipeOrderId, false, opts.error);
+        }
       } catch (err) {
         console.warn('[EXECUTOR] Snipe finalize failed:', (err as Error).message);
       }
@@ -2084,48 +2114,49 @@ export class SwapExecutor {
     const feeYocto = (BigInt(inYocto) * 150n) / 10000n;
     const swapYocto = (BigInt(inYocto) - feeYocto).toString();
 
-    const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
-      'wrap.near',
-      token_address,
-      swapYocto,       // ← post-fee amount that actually reaches the DEX
-      slippagePct,
-      rheaPoolId,
-      dclPoolId
-    );
+    try {
+      const { minAmountOut } = await near.computeMinAmountOut(
+        venue,
+        'wrap.near',
+        token_address,
+        swapYocto,       // ← post-fee amount that actually reaches the DEX
+        slippagePct,
+        rheaPoolId,
+        dclPoolId
+      );
 
-    const swapEvent: SwapEvent = {
-      type: 'execute_swap',
-      user_id,
-      token_in: 'wrap.near',
-      token_out: token_address,
-      amount_in: inYocto,
-      min_amount_out: minAmountOut,
-      venue,
-      slippage_pct: slippagePct,
-      timestamp: Date.now(),
-    };
-    if (rheaPoolId !== null) {
-      (swapEvent as any).pool_id = rheaPoolId;
-    }
-    if (dclPoolId !== null) {
-      (swapEvent as any).dcl_pool_id = dclPoolId;
-    }
-    // PRIORITY: the quote we just computed is fresh — stamp it so execute()
-    // skips its redundant pre-flight re-quote (saves a full RPC round-trip).
-    (swapEvent as any).quoted_at = Date.now();
+      const swapEvent: SwapEvent = {
+        type: 'execute_swap',
+        user_id,
+        token_in: 'wrap.near',
+        token_out: token_address,
+        amount_in: inYocto,
+        min_amount_out: minAmountOut,
+        venue,
+        slippage_pct: slippagePct,
+        timestamp: Date.now(),
+      };
+      if (rheaPoolId !== null) {
+        (swapEvent as any).pool_id = rheaPoolId;
+      }
+      if (dclPoolId !== null) {
+        (swapEvent as any).dcl_pool_id = dclPoolId;
+      }
+      // PRIORITY: the quote we just computed is fresh — stamp it so execute()
+      // skips its redundant pre-flight re-quote (saves a full RPC round-trip).
+      (swapEvent as any).quoted_at = Date.now();
 
-    return this.execute(swapEvent)
-      .then(async r => {
-        await finalizeSnipe(r.success, r.success
-          ? { txHash: (r as any).txHash ?? null }
-          : { error: 'execute_returned_failure', permanent: true });
-        return { success: r.success };
-      })
-      .catch(async err => {
-        await finalizeSnipe(false, { error: err.message ?? 'execute_error', permanent: true });
-        return { success: false, reason: err.message };
-      });
+      const r = await this.execute(swapEvent);
+      const isFatal = !r.success && /insufficient balance|invalid amount|invalid account/i.test(r.reason ?? '');
+      await finalizeSnipe(r.success, r.success
+        ? { txHash: (r as any).txHash ?? null }
+        : { error: r.reason ?? 'execute_returned_failure', permanent: isFatal });
+      return { success: r.success, reason: r.reason };
+    } catch (err: any) {
+      const isFatal = /insufficient balance|invalid amount|invalid account/i.test(err?.message ?? '');
+      await finalizeSnipe(false, { error: err.message ?? 'execute_error', permanent: isFatal });
+      return { success: false, reason: err.message };
+    }
   }
 
   /**
@@ -2159,7 +2190,7 @@ export class SwapExecutor {
         rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null));
       }
       if (!dclPoolId && (rheaPoolId === null || rheaPoolId === undefined)) {
-        const rheaState = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
+        const rheaState = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
         if (rheaState) {
           if (rheaState.isDcl) dclPoolId = String(rheaState.poolId);
           else if (typeof rheaState.poolId === 'number') rheaPoolId = rheaState.poolId;

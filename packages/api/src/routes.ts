@@ -52,6 +52,7 @@ import {
   syncUserTokenDeposits,
   getNearUsdPrice,
   payReferralReward,
+  prewarmStorageDeposit,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -3934,6 +3935,9 @@ export function setupRoutes(bot: Telegraf): void {
             await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`);
           }
         } else {
+          if (user) {
+            prewarmStorageDeposit(user, tokenAddress).catch(() => {});
+          }
           await ctx.reply(
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${tokenAddress}\`\n` +
