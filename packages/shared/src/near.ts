@@ -838,6 +838,10 @@ export class MultiRpcNear {
     if (!tokenAddress || tokenAddress === 'near') return true;
     const cacheKey = `${accountId}:${tokenAddress}`;
     if (registeredCache.has(cacheKey)) return true;
+    if (tokenAddress === 'wrap.near') {
+      registeredCache.add(cacheKey);
+      return true;
+    }
     try {
       const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
       if (balance && balance.total) {
@@ -848,6 +852,11 @@ export class MultiRpcNear {
       // Token doesn't implement storage_balance_of
     }
     return false;
+  }
+
+  markStorageRegistered(accountId: string, tokenAddress: string): void {
+    if (!tokenAddress || tokenAddress === 'near') return;
+    registeredCache.add(`${accountId}:${tokenAddress}`);
   }
 
   /**
@@ -3002,6 +3011,12 @@ export class MultiRpcNear {
         }),
         signal: AbortSignal.timeout(4000),
       });
+
+      if (res.status === 402 && provider.headers?.['Authorization']) {
+        delete provider.headers['Authorization'];
+        console.warn(`[NEAR] Cleared exhausted Authorization header from ${provider.url}`);
+      }
+
       const data: any = await res.json();
       if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
       markProviderSuccess(provider, Date.now() - start);
@@ -3021,6 +3036,27 @@ export class MultiRpcNear {
     const fin = await Promise.allSettled(this.tradeProviders.map(p => attempt(p, 'final')));
     const bestFinal = maxNonce(fin);
     if (bestFinal) return bestFinal;
+
+    // Fallback to read providers
+    if (this.readProviders.length > 0) {
+      const readFin = await Promise.allSettled(this.readProviders.map(p => attempt(p, 'final')));
+      const bestRead = maxNonce(readFin);
+      if (bestRead) return bestRead;
+    }
+
+    // Direct emergency fallbacks to free FastNEAR and QuickNode default
+    try {
+      const freeP = createProvider('https://free.rpc.fastnear.com', 'free-fastnear-ak', false);
+      const res = await attempt(freeP, 'final');
+      if (res) return res;
+    } catch {}
+
+    try {
+      const qnP = createProvider('https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/', 'emergency-qn-ak', true);
+      const res = await attempt(qnP, 'final');
+      if (res) return res;
+    } catch {}
+
     throw new Error('view_access_key failed on all trade RPC providers');
   }
 
@@ -3039,6 +3075,12 @@ export class MultiRpcNear {
         body: JSON.stringify({ jsonrpc: '2.0', id: 'racerbot-block', method: 'block', params: { finality: 'final' } }),
         signal: AbortSignal.timeout(5000),
       });
+
+      if (res.status === 402 && provider.headers?.['Authorization']) {
+        delete provider.headers['Authorization'];
+        console.warn(`[NEAR] Cleared exhausted Authorization header from ${provider.url}`);
+      }
+
       const data: any = await res.json();
       const hash = data?.result?.header?.hash;
       if (!hash) throw new Error(data?.error?.message || 'no block hash in response');
@@ -3056,6 +3098,19 @@ export class MultiRpcNear {
       const firstFallback = fallbackResults.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
       if (firstFallback) return firstFallback.value;
     }
+
+    // Direct emergency fallbacks to free FastNEAR and QuickNode default
+    try {
+      const freeP = createProvider('https://free.rpc.fastnear.com', 'free-fastnear-block', false);
+      const hash = await fetchFrom(freeP);
+      if (hash) return hash;
+    } catch {}
+
+    try {
+      const qnP = createProvider('https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/', 'emergency-qn-block', true);
+      const hash = await fetchFrom(qnP);
+      if (hash) return hash;
+    } catch {}
 
     throw new Error('Block fetch failed on all trade RPC providers');
   }
@@ -3298,38 +3353,40 @@ export class MultiRpcNear {
 
     let polls = 0;
     while (Date.now() < deadline) {
-      // Poll all URLs in round-robin. For the first window this is just pinnedUrl.
-      // After a neverSeen rescue, extraUrls fan out to all trade providers so if
-      // any node sees the tx, we set everSeen=true and continue waiting for EXECUTED.
-      for (const url of allPollUrls) {
-        if (Date.now() >= deadline) break;
-        const outcome = await tryRpc(url).catch((err) => {
-          lastErr = err as Error;
-          return null;
-        });
+      // Primary check: pinnedUrl (QuickNode)
+      const outcome = await tryRpc(pinnedUrl).catch((err) => {
+        lastErr = err as Error;
+        return null;
+      });
 
-        if (outcome) {
-          // wait_until 'NONE' returns as soon as the tx is included — the
-          // receipt tree is usually still EXECUTING (partial receipts_outcome).
-          // Success determination parses transfer/withdraw logs across the
-          // WHOLE tree, so a partial tree makes successful swaps look like
-          // refunds (production: BGMBn3YV… confirmed in 2.4s with only the
-          // first receipts, DCL payout logs not yet present → false failure).
-          // Wait until the node reports full execution.
-          const fes = outcome.final_execution_status;
-          const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
-          if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
-            return outcome;
+      if (outcome) {
+        const fes = outcome.final_execution_status;
+        const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
+        if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+          return outcome;
+        }
+      }
+
+      // If QuickNode hasn't confirmed after 5 polls (~1s), also query secondary endpoints
+      if (polls >= 5 && allPollUrls.length > 1) {
+        for (const url of allPollUrls) {
+          if (url === pinnedUrl) continue;
+          if (Date.now() >= deadline) break;
+          const altOutcome = await tryRpc(url).catch(() => null);
+          if (altOutcome) {
+            const fes = altOutcome.final_execution_status;
+            const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
+            if (fullyExecuted && Array.isArray(altOutcome.receipts_outcome) && altOutcome.receipts_outcome.length > 0) {
+              return altOutcome;
+            }
           }
         }
       }
 
-      // Fast polling for the first ~1s (normal confirms land here), then back
-      // off exponentially. Dozens of concurrent trades each hammering the one
-      // pinned endpoint at 4 req/s triggers 429 rate limits that slow
-      // confirmation for EVERY user — a self-inflicted congestion loop.
       polls++;
-      await sleep(Math.min(250 * 2 ** Math.max(0, polls - 5), 1000));
+      // Fast polling: 150ms for first 8 polls, then 300ms, max 600ms
+      const pollDelay = polls < 8 ? 150 : (polls < 15 ? 300 : 600);
+      await sleep(pollDelay);
     }
 
     const neverSeen = !(state?.everSeen);
@@ -3509,8 +3566,8 @@ function sleep(ms: number): Promise<void> {
 /** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (QuickNode primary, FastNEAR fallback). */
 export const DEFAULT_RPC_URLS = [
   process.env.QUICKNODE_ENDPOINT_URL || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
-  'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.fastnear.com',
 ];
 
 /** Singleton factory — call once per process, reuse the connection pool */
