@@ -1147,6 +1147,16 @@ export async function getActiveDeployerSnipes(deployerAddress: string): Promise<
   return r.rows.map(rowToSnipeOrder);
 }
 
+/** Distinct token addresses with currently active token snipe orders. */
+export async function getDistinctActiveSnipeTokens(): Promise<string[]> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT DISTINCT lower(token_address) AS token_address FROM snipe_orders
+     WHERE snipe_type = 'token' AND status = 'active' AND token_address IS NOT NULL`
+  );
+  return r.rows.map(row => row.token_address as string);
+}
+
 /**
  * Dedup gate: inserts a pending trigger for (order, token) and returns its id.
  * Returns null when a pending/filled trigger already exists — the snipe has

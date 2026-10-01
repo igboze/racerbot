@@ -2048,10 +2048,16 @@ export class SwapExecutor {
     ]);
 
     if (!rugResult.safe) {
-      console.log(`[EXECUTOR] Auto-buy skipped for ${token_address}: ${rugResult.reason}`);
-      await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason: rugResult.reason });
-      await finalizeSnipe(false, { error: `rug_check: ${rugResult.reason}`, permanent: true });
-      return { success: false, reason: rugResult.reason };
+      if (snipeOrderId) {
+        // Targeted snipe: user explicitly chose this target. Do not permanently cancel the order
+        // if rugCheck was triggered by an RPC read failure — log and proceed with the snipe.
+        console.warn(`[EXECUTOR] Rug check flag for targeted snipe ${token_address}: ${rugResult.reason} — proceeding as user explicitly targeted this token`);
+      } else {
+        console.log(`[EXECUTOR] Auto-buy skipped for ${token_address}: ${rugResult.reason}`);
+        await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason: rugResult.reason });
+        await finalizeSnipe(false, { error: `rug_check: ${rugResult.reason}`, permanent: true });
+        return { success: false, reason: rugResult.reason };
+      }
     }
     if (poolIds.blocked) {
       // Transient for targeted snipes — the pool may not be live yet; the
@@ -2061,8 +2067,10 @@ export class SwapExecutor {
     }
     const { rheaPoolId, dclPoolId } = poolIds;
 
-    // Dynamic slippage calculation (default 2% or user's preference)
-    const slippagePct = user?.slippage_pct ?? 2;
+    // Dynamic slippage calculation: for targeted snipes on new pools, default to at least 15% slippage
+    // so initial launch volatility doesn't fail the buy, unless user configured higher.
+    const userSlippage = user?.slippage_pct ?? 2;
+    const slippagePct = snipeOrderId ? Math.max(userSlippage, 15) : userSlippage;
 
     const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
     if (BigInt(inYocto) <= 0n) {
@@ -2149,6 +2157,13 @@ export class SwapExecutor {
       }
       if (!dclPoolId) {
         rheaPoolId = dbCache?.rhea_pool_id ?? (await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null));
+      }
+      if (!dclPoolId && (rheaPoolId === null || rheaPoolId === undefined)) {
+        const rheaState = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
+        if (rheaState) {
+          if (rheaState.isDcl) dclPoolId = String(rheaState.poolId);
+          else if (typeof rheaState.poolId === 'number') rheaPoolId = rheaState.poolId;
+        }
       }
     } else if (venue === 'onetokenhub') {
       const hubState = await near.getOneTokenHubState(tokenAddress).catch(() => null);
