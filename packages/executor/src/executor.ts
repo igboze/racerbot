@@ -543,7 +543,13 @@ export class SwapExecutor {
         const outcome = await withAccountLock(
           this.redisClient,
           subaccountId,
-          () => this.nearClient.signAndSendTransactionAll(subaccountId, receiverId, actions, waitForMs),
+          () => this.nearClient.signAndSendTransactionAll(
+            subaccountId,
+            receiverId,
+            actions,
+            waitForMs,
+            () => onProgress?.('submitted')
+          ),
           {
             // Must outlive the whole sign+broadcast+confirm window (40s
             // default + rebroadcast rescue + overhead). The old 30s TTL

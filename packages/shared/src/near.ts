@@ -2885,7 +2885,8 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 40_000
+    waitForMs = 40_000,
+    onBroadcast?: (txHash: string) => void
   ): Promise<any> {
     const tStart = Date.now();
     const account = await this.getAccount(accountId);
@@ -2955,6 +2956,10 @@ export class MultiRpcNear {
       } catch (err: any) {
         await this.broadcastSigned(signed.signedB64);
       }
+      // The network has accepted the signed transaction. Confirmation and
+      // receipt execution can take longer, but callers can now immediately
+      // show a truthful "submitted" state instead of appearing frozen.
+      onBroadcast?.(signed.hash);
 
       const broadcastMs = Date.now() - tStart;
       const seen = { everSeen: false };
@@ -2996,6 +3001,7 @@ export class MultiRpcNear {
         } catch {
           await this.broadcastSigned(freshSigned.signedB64);
         }
+        onBroadcast?.(freshSigned.hash);
 
         const seen2 = { everSeen: false };
         const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
@@ -3690,4 +3696,3 @@ export async function getFastnearPublicKeyAccounts(
   if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
   return res.json() as Promise<{ public_key: string; account_ids: string[] }>;
 }
-
