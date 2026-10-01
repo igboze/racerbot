@@ -1,6 +1,10 @@
 import './config.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
@@ -96,6 +100,9 @@ async function main(): Promise<void> {
       secretToken: TELEGRAM_WEBHOOK_SECRET || undefined,
     }));
   }
+
+  app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
+  app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
 
   app.use('/api', apiRouter);
 
