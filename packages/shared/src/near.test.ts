@@ -102,18 +102,18 @@ describe('near: nearlytrade bonding-curve quotes', () => {
 });
 
 
-describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
+describe('near: RPC duty split (FastNEAR main / QuickNode fallback)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
   const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
 
-  it('orders read providers QuickNode-first and trade providers QuickNode-first', () => {
+  it('orders read providers FastNEAR-first and trade providers FastNEAR-first', () => {
     const near = new MultiRpcNear([QN, FN]) as any;
-    expect(near.readProviders[0].url).toBe(QN);
-    expect(near.readProviders[0].isQuickNode).toBe(true);
-    expect(near.readProviders[1].url).toBe(FN);
-    expect(near.readProviders[1].isQuickNode).toBe(false);
-    expect(near.tradeProviders[0].url).toBe(QN);
-    expect(near.tradeProviders[1].url).toBe(FN);
+    expect(near.readProviders[0].url).toBe(FN);
+    expect(near.readProviders[0].isQuickNode).toBe(false);
+    expect(near.readProviders[1].url).toBe(QN);
+    expect(near.readProviders[1].isQuickNode).toBe(true);
+    expect(near.tradeProviders[0].url).toBe(FN);
+    expect(near.tradeProviders[1].url).toBe(QN);
   });
 
   // The view layer issues raw fetch() JSON-RPC calls (so the AbortSignal can
@@ -131,7 +131,7 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
     } as unknown as Response;
   }
 
-  it('view() uses QuickNode and never touches FastNEAR when QuickNode responds', async () => {
+  it('view() uses FastNEAR and never touches QuickNode when FastNEAR responds', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
     const attempted: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -141,26 +141,26 @@ describe('near: RPC duty split (FastNEAR reads / QuickNode writes)', () => {
 
     const result = await near.view('token.near', 'ft_metadata', {});
     expect(result).toEqual({ ok: true });
-    expect(attempted).toEqual([QN]); // single read provider, FastNEAR untouched
+    expect(attempted).toEqual([FN]); // single read provider, QuickNode untouched
 
     vi.unstubAllGlobals();
   });
 
-  it('view() hedges to FastNEAR when QuickNode errors during the call', async () => {
+  it('view() hedges to QuickNode when FastNEAR errors during the call', async () => {
     const near = new MultiRpcNear([FN, QN]) as any;
     const attempted: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       attempted.push(url);
-      if (url === QN) {
-        // QuickNode network-level failure -> hedge fires immediately
+      if (url === FN) {
+        // FastNEAR network-level failure -> hedge fires immediately
         throw new Error('fetch failed: ETIMEDOUT');
       }
-      return rpcResponse({ ok: true, source: 'fastnear' });
+      return rpcResponse({ ok: true, source: 'quicknode' });
     }));
 
     const result = await near.view('token.near', 'ft_metadata', {});
-    expect(result).toEqual({ ok: true, source: 'fastnear' });
-    expect(attempted).toEqual([QN, FN]);
+    expect(result).toEqual({ ok: true, source: 'quicknode' });
+    expect(attempted).toEqual([FN, QN]);
 
     vi.unstubAllGlobals();
   });
@@ -263,12 +263,12 @@ describe('near: single pinned trade RPC (no fallback)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
   const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
 
-  it('pins the write path to tradeProviders[0] (QuickNode when configured)', () => {
+  it('pins the write path to tradeProviders[0] (FastNEAR when configured)', () => {
     const near = new MultiRpcNear([FN, QN]) as any;
-    expect(near.tradeProvider.url).toBe(QN);
+    expect(near.tradeProvider.url).toBe(FN);
 
-    const fnOnly = new MultiRpcNear([FN]) as any;
-    expect(fnOnly.tradeProvider.url).toBe(FN);
+    const qnOnly = new MultiRpcNear([QN]) as any;
+    expect(qnOnly.tradeProvider.url).toBe(QN);
   });
 
   it('never blocks trades while a provider is configured — regardless of health flags', () => {
@@ -508,10 +508,10 @@ describe('near: waitForOutcome recovery fan-out', () => {
     // when that endpoint lagged or rate-limited, landed transactions were
     // reported as "confirmation is taking longer than usual".
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url === QN) return unknownTxResponse();
+      if (url === FN) return unknownTxResponse();
       return finalOutcomeResponse();
     }));
-    const near = new MultiRpcNear([QN, FN]) as any;
+    const near = new MultiRpcNear([FN, QN]) as any;
     const outcome = await near.waitForOutcome('abc', 'alice.near', 8_000);
     expect(outcome).toBeTruthy();
     expect(outcome.final_execution_status).toBe('FINAL');
@@ -520,7 +520,7 @@ describe('near: waitForOutcome recovery fan-out', () => {
 
   it('returns null when no provider can confirm within the window', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => unknownTxResponse()));
-    const near = new MultiRpcNear([QN, FN]) as any;
+    const near = new MultiRpcNear([FN, QN]) as any;
     const outcome = await near.waitForOutcome('abc', 'alice.near', 3_000);
     expect(outcome).toBeNull();
     vi.unstubAllGlobals();

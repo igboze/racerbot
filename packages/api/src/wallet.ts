@@ -21,14 +21,14 @@ import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID }
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
 const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
-const qnFirstList = [
+const fnFirstList = [
+  ...configuredRpcList.filter(u => u.includes('fastnear.com')),
   ...(qnUrl ? [qnUrl] : []),
-  ...configuredRpcList.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-  ...configuredRpcList.filter(u => !u.includes('quiknode.pro') && !u.includes('quicknode')),
+  ...configuredRpcList.filter(u => !u.includes('fastnear.com')),
 ];
-const RPC_URLS = qnFirstList.length > 0 ? Array.from(new Set(qnFirstList)) : [
-  'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
-  'https://rpc.mainnet.fastnear.com'
+const RPC_URLS = fnFirstList.length > 0 ? Array.from(new Set(fnFirstList)) : [
+  'https://rpc.mainnet.fastnear.com',
+  'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/'
 ];
 const near = getNear(RPC_URLS);
 
