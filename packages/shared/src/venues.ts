@@ -127,6 +127,30 @@ export function nearblocksTxUrl(txHash: string): string {
   return `https://nearblocks.io/txns/${txHash}`;
 }
 
+/**
+ * RacerBot bubble map page for a token’s holder distribution.
+ * Served by the API itself so it works in any browser / Telegram WebView.
+ */
+export function bubbleMapUrl(tokenAddress: string, symbol?: string, name?: string): string {
+  let base = (
+    process.env.BUBBLE_PUBLIC_URL ||
+    process.env.BUBBLEMAP_URL ||
+    process.env.PUBLIC_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+    'http://localhost:3000'
+  ).trim().replace(/\/+$/, '');
+
+  if (base && !base.startsWith('http://') && !base.startsWith('https://')) {
+    base = `https://${base}`;
+  }
+
+  const endpoint = base.includes('localhost') ? '' : '/api';
+  let url = `${base}${endpoint}/bubblemap?token=${encodeURIComponent(tokenAddress)}`;
+  if (symbol) url += `&symbol=${encodeURIComponent(symbol)}`;
+  if (name) url += `&name=${encodeURIComponent(name)}`;
+  return url;
+}
+
 export interface VenueLink {
   label: string;
   url: string;
@@ -135,9 +159,16 @@ export interface VenueLink {
 /**
  * Deep links for a token card: DexScreener chart, NearBlocks explorer,
  * and the token's page on its own launchpad/DEX (when it has one).
+ * Also includes a RacerBot bubble map link for holder distribution.
  */
-export function tokenLinks(venue: string | null | undefined, tokenAddress: string): VenueLink[] {
+export function tokenLinks(
+  venue: string | null | undefined,
+  tokenAddress: string,
+  symbol?: string,
+  name?: string,
+): VenueLink[] {
   const links: VenueLink[] = [
+    { label: '🫧 Bubble Map', url: bubbleMapUrl(tokenAddress, symbol, name) },
     { label: '📊 DexScreener', url: dexscreenerUrl(tokenAddress) },
     { label: '🔎 NearBlocks', url: nearblocksTokenUrl(tokenAddress) },
   ];
