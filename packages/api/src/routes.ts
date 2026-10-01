@@ -87,6 +87,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 interface PendingAction {
   action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token'
     | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount'
+    | 'sell_custom_tokens'
     // Copy Trading wizard
     | 'copy_wallet' | 'copy_amount' | 'copy_daily_budget'
     // DCA wizard
@@ -581,7 +582,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
           cb('50%', `sell:${userPosition.id}:50`, 'danger'),
           cb('100%', `sell:${userPosition.id}:100`, 'danger'),
         ],
-        [cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger')],
+        [
+          cb('🔴 Sell X Tokens', `sell_custom_prompt:${userPosition.id}`, 'danger'),
+          cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger'),
+        ],
         ...linkRows,
         ...shareButtonRow,
         [
@@ -725,7 +729,10 @@ export async function sendPnlCardMessage(
         cb('100%', `sell:${positionId}:100`, 'danger'),
       ]);
       buttons.push([
+        cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger'),
         cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'),
+      ]);
+      buttons.push([
         cb('🟢 Buy More', `buy_custom_prompt:${position.token_address}`, 'success'),
       ]);
     }
@@ -2411,10 +2418,12 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
       buttons.push([cb('🟢 Buy X NEAR', `buy_custom_prompt:${position.token_address}`, 'success')]);
 
-      // Sell Initial button
+      // Sell Custom & Initial buttons
+      const sellSpecialRow: any[] = [cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger')];
       if (initialInvestment > 0) {
-        buttons.push([cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger')]);
+        sellSpecialRow.push(cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'));
       }
+      buttons.push(sellSpecialRow);
 
       // External explorer & chart links
       const linkRows = (() => {
@@ -2489,6 +2498,47 @@ export function setupRoutes(bot: Telegraf): void {
     } catch (err: any) {
       await ctx.reply('Error loading token details. Please try again.').catch(() => {});
     }
+  });
+
+  // ── sell_custom_prompt — Prompt user for exact token amount to sell ─────────
+  bot.action(/^sell_custom_prompt:(.+)$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const telegramId = ctx.from!.id;
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const position = await getPositionById(positionId).catch(() => null);
+    if (!position || position.user_id !== user.id) {
+      await ctx.answerCbQuery('Position not found.').catch(() => {});
+      return;
+    }
+
+    const tokenInfo = await getTokenInfo(position.token_address, false).catch(() => null);
+    const decimals = tokenInfo?.decimals ?? 18;
+    const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
+    const sym = tokenInfo?.symbol || 'Tokens';
+
+    userPendingActions.set(telegramId, {
+      action: 'sell_custom_tokens',
+      tokenAddress: position.token_address,
+      deployerAddress: positionId,
+      expiresAt: Date.now() + 120_000,
+    });
+
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `💸 *Sell Custom Amount of $${sym}*\n\n` +
+      `💼 *Your Current Balance*: \`${formattedQty} ${sym}\`\n\n` +
+      `Reply with the exact number of tokens you want to sell (e.g. \`50000\` or \`100\`):\n\n` +
+      `_Type /cancel to abort._`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${position.token_address}`, 'primary')]])
+      }
+    );
   });
 
   // ── sell_initial — Sell exact initial investment amount ───────────────────
@@ -3907,6 +3957,77 @@ export function setupRoutes(bot: Telegraf): void {
           console.error('[BUY] Unhandled detached custom-buy error:', err?.message || err);
         });
         return; // Always return after handling custom buy
+      }
+
+      if (pending.action === 'sell_custom_tokens' && pending.deployerAddress) {
+        const positionId = pending.deployerAddress;
+        const tokensToSell = parseFloat(rawText);
+        if (isNaN(tokensToSell) || tokensToSell <= 0) {
+          await ctx.reply('❌ Invalid token amount. Sell cancelled.');
+          return;
+        }
+
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) {
+          await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+
+        const livePosition = await getPositionById(positionId).catch(() => null);
+        if (!livePosition || livePosition.status !== 'open') {
+          await ctx.reply('❌ Position is closed or not found.');
+          return;
+        }
+
+        const tokenInfo = await getTokenInfo(livePosition.token_address, false).catch(() => null);
+        const decimals = tokenInfo?.decimals ?? 18;
+        const rawHeld = BigInt((livePosition.quantity_held || '0').split('.')[0]);
+        const totalHumanHeld = Number(rawHeld) / Math.pow(10, decimals);
+
+        if (totalHumanHeld <= 0) {
+          await ctx.reply('❌ No tokens held in this position.');
+          return;
+        }
+
+        const percentage = Math.min(100, Math.max(0.1, (tokensToSell / totalHumanHeld) * 100));
+
+        const guardKey = inFlightKey(telegramId, livePosition.token_address, 'sell');
+        if (!tryAcquireInFlight(guardKey)) {
+          await ctx.reply('⏳ A trade for this token is already in progress.');
+          return;
+        }
+
+        (async () => {
+          const sym = tokenInfo?.symbol || 'tokens';
+          const procMsg = await ctx.reply(
+            `⏳ *Processing Sell Order...*\n\nSelling \`${tokensToSell.toLocaleString()} ${sym}\` (\`${percentage.toFixed(1)}%\` of holdings)...\n_Executing swap on DEX..._`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => null);
+          const onStage = makeStageEditor(ctx, procMsg, 'Processing Sell Order');
+          try {
+            const result = await sellAtTarget(user.id, positionId, percentage, onStage);
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (result.success) {
+              await sendPnlCardMessage(
+                ctx,
+                positionId,
+                `✅ *Successfully sold \`${tokensToSell.toLocaleString()} ${sym}\` (\`${percentage.toFixed(1)}%\`)!*`
+              ).catch(() => {});
+            } else {
+              await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+            }
+          } catch (err: any) {
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            console.error('[SELL_CUSTOM] Error:', err);
+            await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+          } finally {
+            releaseInFlight(guardKey);
+          }
+        })().catch((err: any) => {
+          releaseInFlight(guardKey);
+          console.error('[SELL_CUSTOM] Unhandled detached error:', err?.message || err);
+        });
+        return;
       }
 
       if (pending.action === 'custom_slippage') {
