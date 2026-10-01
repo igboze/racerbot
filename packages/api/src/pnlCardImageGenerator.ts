@@ -8,29 +8,17 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── Palette ─────────────────────────────────────────────────────────────────
-// Flat, solid colors only. No gradients, no alpha, no glow.
-// Green and red are reserved for profit and loss. Cyan is the brand accent.
-const C = {
-  ink: '#0B0B0B',
-  paper: '#FFFFFF',
-  dim: '#A3A3A3',
-  win: '#1FFF7A',
-  loss: '#FF3B3B',
-  cyan: '#00F0FF',
-};
+// ── Theme & Palettes ────────────────────────────────────────────────────────
+// State rule: pnl >= 0 -> "win" (fox wins). pnl < 0 -> "loss" (turtle wins, fox loses).
+// Win:  --a: #2ee9ff (cyan),     --b: #8b5cf6 (purple), --glow: rgba(46,233,255,0.35)
+// Loss: --a: #ff4d7d (pink-red), --b: #8b5cf6 (purple), --glow: rgba(255,77,125,0.30)
+// Base canvas: 1200 x 675, bg: #070914
 
-// ── Fonts ───────────────────────────────────────────────────────────────────
-// node-canvas → pango/fontconfig font matching is unreliable across platforms
-// (Windows vs Linux, aliases vs real family names, multi-face families where
-// only the last-registered face is reachable). Instead of guessing one font
-// string, we register the faces, then EMPIRICALLY PROBE which CSS font string
-// renders without a native "couldn't load font" warning (captured by
-// intercepting stderr during a tiny probe render). The first working spec per
-// role wins; sans-serif is the last-resort fallback. Files: packages/api/fonts.
 const FONT_FILES: Array<{ file: string; family: string; weight?: string; style?: string }> = [
   { file: 'BarlowCondensed-BlackItalic.ttf', family: 'Barlow Condensed', weight: '900', style: 'italic' },
   { file: 'BarlowCondensed-ExtraBold.ttf', family: 'Barlow Condensed', weight: '800' },
+  { file: 'Inter-Regular.ttf', family: 'Inter', weight: '400' },
+  { file: 'Inter-SemiBold.ttf', family: 'Inter', weight: '600' },
   { file: 'IBMPlexMono-Medium.ttf', family: 'IBM Plex Mono', weight: '500' },
   { file: 'IBMPlexMono-Bold.ttf', family: 'IBM Plex Mono', weight: '700' },
 ];
@@ -54,12 +42,13 @@ try {
 
     for (const def of FONT_FILES) {
       const fontPath = resolveFont(def.file);
-      if (!fontPath) {
-        console.warn(`[PNL_CARD_IMAGE] Font file missing: ${def.file}. Card will render with a fallback font.`);
-        continue;
-      }
+      if (!fontPath) continue;
       try {
-        canvasModule.registerFont(fontPath, { family: def.family, ...(def.weight ? { weight: def.weight } : {}), ...(def.style ? { style: def.style } : {}) });
+        canvasModule.registerFont(fontPath, {
+          family: def.family,
+          ...(def.weight ? { weight: def.weight } : {}),
+          ...(def.style ? { style: def.style } : {}),
+        });
       } catch (err: any) {
         console.warn(`[PNL_CARD_IMAGE] Could not register ${def.file}: ${err?.message ?? err}`);
       }
@@ -69,37 +58,52 @@ try {
   console.warn('[PNL_CARD_IMAGE] Canvas not available. PNL cards will be text-only.');
 }
 
-type FontRole = 'display' | 'head' | 'mono' | 'monoBold';
+type FontRole = 'display' | 'brand' | 'token' | 'body' | 'bodyBold' | 'statsNum' | 'statsLabel';
 
-/** Candidate font-string templates per role, most-desired first. */
 const FONT_CANDIDATES: Record<FontRole, Array<(px: number) => string>> = {
   display: [
+    (px) => `italic 800 ${px}px "Barlow Condensed"`,
     (px) => `italic 900 ${px}px "Barlow Condensed"`,
-    (px) => `900 ${px}px "Barlow Condensed"`,
-    (px) => `${px}px "Barlow Condensed"`, // BlackItalic glyphs are inherently slanted
-    (px) => `italic 900 ${px}px Barlow Condensed`,
-    (px) => `bold italic ${px}px "Arial Narrow", sans-serif`,
-  ],
-  head: [
     (px) => `800 ${px}px "Barlow Condensed"`,
-    (px) => `700 ${px}px "Barlow Condensed"`,
-    (px) => `bold ${px}px "Barlow Condensed"`,
-    (px) => `${px}px "Barlow Condensed"`,
-    (px) => `bold ${px}px "Arial Narrow", sans-serif`,
+    (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+    (px) => `bold italic ${px}px sans-serif`,
   ],
-  mono: [
-    (px) => `500 ${px}px "IBM Plex Mono"`,
-    (px) => `${px}px "IBM Plex Mono"`,
-    (px) => `${px}px "DejaVu Sans Mono", monospace`,
+  brand: [
+    (px) => `italic 800 ${px}px "Barlow Condensed"`,
+    (px) => `800 ${px}px "Barlow Condensed"`,
+    (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+    (px) => `bold italic ${px}px sans-serif`,
   ],
-  monoBold: [
-    (px) => `700 ${px}px "IBM Plex Mono"`,
-    (px) => `bold ${px}px "IBM Plex Mono"`,
-    (px) => `bold ${px}px "DejaVu Sans Mono", monospace`,
+  token: [
+    (px) => `italic 800 ${px}px "Barlow Condensed"`,
+    (px) => `800 ${px}px "Barlow Condensed"`,
+    (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+    (px) => `bold italic ${px}px sans-serif`,
+  ],
+  body: [
+    (px) => `400 ${px}px "Inter", "Sora", sans-serif`,
+    (px) => `${px}px "Inter", "Sora", sans-serif`,
+    (px) => `${px}px sans-serif`,
+  ],
+  bodyBold: [
+    (px) => `600 ${px}px "Inter", "Sora", sans-serif`,
+    (px) => `bold ${px}px "Inter", "Sora", sans-serif`,
+    (px) => `bold ${px}px sans-serif`,
+  ],
+  statsNum: [
+    (px) => `italic 700 ${px}px "Barlow Condensed"`,
+    (px) => `italic 800 ${px}px "Barlow Condensed"`,
+    (px) => `800 ${px}px "Barlow Condensed"`,
+    (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+    (px) => `bold ${px}px sans-serif`,
+  ],
+  statsLabel: [
+    (px) => `400 ${px}px "Inter", "Sora", sans-serif`,
+    (px) => `${px}px "Inter", "Sora", sans-serif`,
+    (px) => `${px}px sans-serif`,
   ],
 };
 
-/** Probe one candidate: returns true if node-canvas resolved it without a native font warning. */
 function probeFont(template: (px: number) => string): boolean {
   if (!canvasModule) return false;
   try {
@@ -124,12 +128,14 @@ function probeFont(template: (px: number) => string): boolean {
   }
 }
 
-/** Lazily resolved font stack — probed once, reused for every card. */
 const fontStack: Record<FontRole, (px: number) => string> = {
-  display: (px) => `bold italic ${px}px sans-serif`,
-  head: (px) => `bold ${px}px sans-serif`,
-  mono: (px) => `${px}px monospace`,
-  monoBold: (px) => `bold ${px}px monospace`,
+  display: (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+  brand: (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+  token: (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+  body: (px) => `${px}px sans-serif`,
+  bodyBold: (px) => `bold ${px}px sans-serif`,
+  statsNum: (px) => `bold italic ${px}px "Arial Narrow", Impact, sans-serif`,
+  statsLabel: (px) => `${px}px sans-serif`,
 };
 
 let fontsProbed = false;
@@ -146,37 +152,25 @@ function ensureFontsProbed(): void {
   }
 }
 
-const resolveLogo = (): string | null => {
+// ── Asset Resolvers ─────────────────────────────────────────────────────────
+
+function resolveAsset(name: string): string | null {
   const candidates = [
-    path.join(__dirname, '..', 'assets', 'logo.png'),
-    path.join(process.cwd(), 'packages', 'api', 'assets', 'logo.png'),
-    path.join(process.cwd(), 'assets', 'logo.png'),
-    path.join(__dirname, 'assets', 'logo.png'),
+    path.join(__dirname, '..', 'assets', name),
+    path.join(process.cwd(), 'packages', 'api', 'assets', name),
+    path.join(process.cwd(), 'assets', name),
+    path.join(__dirname, 'assets', name),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
   return null;
-};
+}
 
 // ── Formatters ──────────────────────────────────────────────────────────────
 
-/** Compact USD formatter. The minus sign goes before the dollar sign: -$5.00 */
-function fmtUsd(nearValue: number, nr: number): string {
-  const v = nearValue * nr;
-  const sign = v < 0 ? '-' : '';
-  const a = Math.abs(v);
-  if (a === 0) return '$0.00';
-  if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(2)}M`;
-  if (a >= 1_000) return `${sign}$${(a / 1_000).toFixed(2)}K`;
-  if (a >= 1) return `${sign}$${a.toFixed(2)}`;
-  if (a >= 0.0001) return `${sign}$${a.toFixed(4)}`;
-  return `${sign}$${a.toFixed(6)}`;
-}
-
-/** Compact market-cap formatter */
 function fmtMcap(nearValue: number, nr: number): string {
-  if (!nearValue || nearValue <= 0) return 'N/A';
+  if (!nearValue || nearValue <= 0) return '$0.00K';
   const v = nearValue * nr;
   if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(2)}B`;
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
@@ -184,44 +178,24 @@ function fmtMcap(nearValue: number, nr: number): string {
   return `$${v.toFixed(2)}`;
 }
 
-// ── Canvas helpers ──────────────────────────────────────────────────────────
+// ── Canvas Helpers ──────────────────────────────────────────────────────────
 
-/** Largest font size (stepping down from maxPx) at which the text fits maxW. */
-function fitSize(ctx: any, text: string, fontFn: (px: number) => string, maxPx: number, minPx: number, maxW: number): number {
-  let size = maxPx;
-  ctx.font = fontFn(size);
-  while (size > minPx && ctx.measureText(text).width > maxW) {
-    size -= 4;
-    ctx.font = fontFn(size);
-  }
-  return size;
-}
-
-/** Cut text with an ellipsis so it fits maxW in the current font. */
-function ellipsize(ctx: any, text: string, maxW: number): string {
-  if (ctx.measureText(text).width <= maxW) return text;
-  let t = text;
-  while (t.length > 1 && ctx.measureText(`${t}…`).width > maxW) t = t.slice(0, -1);
-  return `${t}…`;
-}
-
-/** Left-aligned text with manual letter spacing. Returns the drawn width. */
-function drawSpaced(ctx: any, text: string, x: number, y: number, spacing: number): number {
-  let cx = x;
-  for (const ch of text) {
-    ctx.fillText(ch, cx, y);
-    cx += ctx.measureText(ch).width + spacing;
-  }
-  return cx - x - spacing;
+function roundRect(ctx: any, x: number, y: number, w: number, h: number, r: number) {
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 /**
- * Generate the PNL card image.
- *
- * Layout (1200 wide):
- *   checkered strip, brand header + status tag, token line,
- *   one flat color slab holding the giant PNL %, a ruled stats grid,
- *   and a footer. The net worth row only renders when data.showNetWorth is on.
+ * Generate the RacerBot PnL Card Image.
+ * Dimensions: 1200 x 675.
+ * High-performance, modern, cyber-racing theme with Fox & Turtle race track mechanics.
  */
 export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | null> {
   if (!canvasModule) return null;
@@ -232,147 +206,396 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const nr = data.nearUsd || 1;
 
     const W = 1200;
-    const PAD = 48;
-    const INNER = W - PAD * 2;
-    const STRIP = 24;
-    const RULE = 4;
-
-    const SLAB_Y = 212;
-    const SLAB_H = 280;
-    const SHADOW = 12;
-    const STATS_Y = SLAB_Y + SLAB_H + SHADOW + 30;
-    const ROW_H = 130;
-    const rows = data.showNetWorth ? 2 : 1;
-    const statsBottom = STATS_Y + ROW_H * rows;
-    const H = statsBottom + 76;
-
+    const H = 675;
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
-    ctx.textBaseline = 'alphabetic';
 
-    const accent = data.isProfit ? C.win : C.loss;
+    const p = Number(data.pnlPercent) || 0;
+    const win = p >= 0;
 
-    // 1. Background: one solid color.
-    ctx.fillStyle = C.ink;
+    // Theme colors
+    const colorA = win ? '#2ee9ff' : '#ff4d7d';
+    const colorB = '#8b5cf6';
+    const glowColor = win ? 'rgba(46, 233, 255, 0.35)' : 'rgba(255, 77, 125, 0.30)';
+    const bgColor = '#070914';
+
+    // 1. Clip base rounded rectangle (border-radius: 28px)
+    ctx.save();
+    roundRect(ctx, 0, 0, W, H, 28);
+    ctx.clip();
+
+    // 2. Base Dark Background
+    ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, W, H);
 
-    // 2. Checkered strip across the top.
-    const CELL = STRIP / 2;
-    ctx.fillStyle = C.paper;
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < Math.ceil(W / CELL); c++) {
-        if ((r + c) % 2 === 0) ctx.fillRect(c * CELL, r * CELL, CELL, CELL);
+    // 3. Radial Glow Gradients:
+    // radial-gradient(900px 500px at 85% 20%, rgba(139,92,246,.35), transparent 60%)
+    const g1 = ctx.createRadialGradient(W * 0.85, H * 0.20, 0, W * 0.85, H * 0.20, 600);
+    g1.addColorStop(0, 'rgba(139, 92, 246, 0.35)');
+    g1.addColorStop(0.6, 'rgba(139, 92, 246, 0)');
+    g1.addColorStop(1, 'transparent');
+    ctx.fillStyle = g1;
+    ctx.fillRect(0, 0, W, H);
+
+    // radial-gradient(700px 400px at 10% 100%, var(--glow), transparent 65%)
+    const g2 = ctx.createRadialGradient(W * 0.10, H, 0, W * 0.10, H, 500);
+    g2.addColorStop(0, glowColor);
+    g2.addColorStop(0.65, 'rgba(0, 0, 0, 0)');
+    g2.addColorStop(1, 'transparent');
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, W, H);
+
+    // 4. Diagonal Lines Background:
+    // repeating-linear-gradient(115deg, transparent 0 46px, rgba(255,255,255,.035) 46px 48px)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+    ctx.lineWidth = 2;
+    const rad = (115 * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const diagDist = Math.sqrt(W * W + H * H) * 1.5;
+    for (let offset = -diagDist; offset <= diagDist; offset += 48) {
+      const cx = W / 2 + offset * cos;
+      const cy = H / 2 + offset * sin;
+      ctx.beginPath();
+      ctx.moveTo(cx - 1500 * -sin, cy - 1500 * cos);
+      ctx.lineTo(cx + 1500 * -sin, cy + 1500 * cos);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 5. Skewed Right Panel:
+    // right: -60px; top: -40px; width: 520px; height: 780px; transform: skewX(-12deg);
+    // background: linear-gradient(180deg, rgba(139,92,246,.28), rgba(139,92,246,.05));
+    // border-left: 3px solid var(--b);
+    ctx.save();
+    ctx.transform(1, 0, Math.tan((-12 * Math.PI) / 180), 1, 0, 0);
+    const panelX = W - 460;
+    const panelY = -40;
+    const panelW = 560;
+    const panelH = 780;
+    const panelGrad = ctx.createLinearGradient(0, panelY, 0, panelY + panelH);
+    panelGrad.addColorStop(0, 'rgba(139, 92, 246, 0.28)');
+    panelGrad.addColorStop(1, 'rgba(139, 92, 246, 0.05)');
+    ctx.fillStyle = panelGrad;
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+
+    ctx.strokeStyle = colorB;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(panelX, panelY);
+    ctx.lineTo(panelX, panelY + panelH);
+    ctx.stroke();
+    ctx.restore();
+
+    // 6. Glowing Ring:
+    // right: 70px; top: 90px; width: 360px; height: 360px; border-radius: 50%;
+    // background: radial-gradient(circle, var(--glow), transparent 68%)
+    const ringCx = W - 70 - 180;
+    const ringCy = 90 + 180;
+    const ringGrad = ctx.createRadialGradient(ringCx, ringCy, 0, ringCx, ringCy, 180);
+    ringGrad.addColorStop(0, glowColor);
+    ringGrad.addColorStop(0.68, 'rgba(0, 0, 0, 0)');
+    ringGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = ringGrad;
+    ctx.beginPath();
+    ctx.arc(ringCx, ringCy, 180, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 7. Right Mascot Illustration (Fox for win, Turtle for loss)
+    // .rb-card[data-state="win"] .rb-fox { display:block; right:44px; top:34px; height:596px }
+    // .rb-card[data-state="loss"] .rb-turtle { display:block; right:110px; top:50px; height:400px }
+    const mascotName = win ? 'fox-win.png' : 'turtle.png';
+    const mascotPath = resolveAsset(mascotName);
+    if (mascotPath && typeof loadImage === 'function') {
+      try {
+        const mascotImg = await loadImage(mascotPath);
+        if (win) {
+          // Fox at right: 30px; top: 60px; height: 520px
+          const mH = 520;
+          const mW = (mascotImg.width / mascotImg.height) * mH;
+          const mX = W - 30 - mW;
+          const mY = 60;
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.55)';
+          ctx.shadowBlur = 28;
+          ctx.shadowOffsetY = 18;
+          ctx.drawImage(mascotImg, mX, mY, mW, mH);
+          ctx.restore();
+        } else {
+          // Turtle at right: 70px; top: 60px; height: 420px
+          const mH = 420;
+          const mW = (mascotImg.width / mascotImg.height) * mH;
+          const mX = W - 70 - mW;
+          const mY = 60;
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.55)';
+          ctx.shadowBlur = 28;
+          ctx.shadowOffsetY = 18;
+          ctx.drawImage(mascotImg, mX, mY, mW, mH);
+          ctx.restore();
+        }
+      } catch (e) {
+        console.warn('[PNL_CARD_IMAGE] Could not draw mascot image:', e);
       }
     }
 
-    // 3. Brand header.
-    let logoImg: any = null;
-    const logoPath = resolveLogo();
+    // 8. Brand Header:
+    // left: 52px; top: 36px; display: flex; align-items: center; gap: 14px;
+    // font: italic 800 36px 'Barlow Condensed'; letter-spacing: 1px
+    const logoPath = resolveAsset('logo.png');
+    let brandX = 52;
     if (logoPath && typeof loadImage === 'function') {
-      try { logoImg = await loadImage(logoPath); } catch { /* draw wordmark only */ }
-    }
-    let wordX = PAD;
-    if (logoImg) {
-      ctx.drawImage(logoImg, PAD, 46, 64, 64);
-      // Flat white ring so the dark badge stays visible on the black card.
-      ctx.strokeStyle = C.paper;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(PAD + 32, 78, 31, 0, Math.PI * 2);
-      ctx.stroke();
-      wordX = PAD + 82;
-    }
-    ctx.fillStyle = C.paper;
-    ctx.textAlign = 'left';
-    ctx.font = fontStack.display(50);
-    drawSpaced(ctx, 'RACERBOT', wordX, 94, 3);
-
-    // Status tag: solid block, hard corners.
-    const isOpen = data.positionStatus === 'open';
-    const tagText = isOpen ? 'OPEN POSITION' : 'CLOSED';
-    ctx.font = fontStack.monoBold(20);
-    const tagW = ctx.measureText(tagText).width + 40;
-    const tagX = W - PAD - tagW;
-    ctx.fillStyle = isOpen ? C.cyan : C.paper;
-    ctx.fillRect(tagX, 56, tagW, 44);
-    ctx.fillStyle = C.ink;
-    ctx.fillText(tagText, tagX + 20, 86);
-
-    // 4. Token line.
-    const symbol = String(data.tokenSymbol || '').toUpperCase();
-    ctx.font = fontStack.head(68);
-    ctx.fillStyle = C.paper;
-    ctx.fillText(symbol, PAD, 178);
-    const symW = ctx.measureText(symbol).width;
-    ctx.font = fontStack.mono(24);
-    ctx.fillStyle = C.dim;
-    const nameMaxW = INNER - symW - 24;
-    ctx.fillText(ellipsize(ctx, String(data.tokenName || ''), nameMaxW), PAD + symW + 24, 178);
-
-    // 5. The slab: one flat color, hard offset block behind it.
-    ctx.fillStyle = C.paper;
-    ctx.fillRect(PAD + SHADOW, SLAB_Y + SHADOW, INNER, SLAB_H);
-    ctx.fillStyle = accent;
-    ctx.fillRect(PAD, SLAB_Y, INNER, SLAB_H);
-
-    ctx.fillStyle = C.ink;
-    ctx.font = fontStack.monoBold(20);
-    ctx.fillText(isOpen ? 'UNREALIZED PNL' : 'REALIZED PNL', PAD + 28, SLAB_Y + 46);
-
-    const sign = data.isProfit ? '+' : '';
-    const pnlText = `${sign}${data.pnlPercent.toFixed(2)}%`;
-    const heroSize = fitSize(ctx, pnlText, fontStack.display, 265, 110, INNER - 56);
-    ctx.font = fontStack.display(heroSize);
-    ctx.fillStyle = C.ink;
-    ctx.fillText(pnlText, PAD + 24, SLAB_Y + SLAB_H - 26);
-
-    // 6. Stats grid: hard rules, no boxes, no fills.
-    const COL_W = INNER / 3;
-    const cell = (i: number, rowTop: number, label: string, value: string, valueColor: string = C.paper) => {
-      const colX = PAD + i * COL_W;
-      ctx.fillStyle = C.paper;
-      ctx.fillRect(colX, rowTop, COL_W, RULE);
-      if (i > 0) ctx.fillRect(colX, rowTop, RULE, ROW_H);
-      const tx = colX + (i === 0 ? 0 : 28);
-      ctx.fillStyle = C.dim;
-      ctx.font = fontStack.mono(17);
-      ctx.fillText(label, tx, rowTop + 44);
-      ctx.fillStyle = valueColor;
-      const vSize = fitSize(ctx, value, fontStack.head, 60, 34, COL_W - (i === 0 ? 28 : 56));
-      ctx.font = fontStack.head(vSize);
-      ctx.fillText(value, tx, rowTop + 106);
-    };
-
-    cell(0, STATS_Y, 'ENTRY MARKET CAP', fmtMcap(data.entryMarketCap, nr));
-    cell(1, STATS_Y, 'CURRENT MARKET CAP', fmtMcap(data.currentMarketCap, nr));
-    cell(2, STATS_Y, 'HOLD TIME', String(data.holdDuration || '-'));
-
-    if (data.showNetWorth) {
-      const row2 = STATS_Y + ROW_H;
-      const usePnlUnrealized = isOpen && data.realizedPnl === 0;
-      const pnlNum = usePnlUnrealized ? data.unrealizedPnl : data.realizedPnl;
-      cell(0, row2, 'INVESTED', fmtUsd(data.initialInvestment, nr));
-      cell(1, row2, 'WORTH NOW', fmtUsd(data.unrealizedValue, nr));
-      cell(
-        2,
-        row2,
-        usePnlUnrealized ? 'UNREALIZED PNL' : 'REALIZED PNL',
-        `${pnlNum >= 0 ? '+' : ''}${fmtUsd(pnlNum, nr)}`,
-        pnlNum >= 0 ? C.win : C.loss,
-      );
+      try {
+        const logoImg = await loadImage(logoPath);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(52 + 28, 36 + 28, 28, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(logoImg, 52, 36, 56, 56);
+        ctx.restore();
+        brandX = 52 + 56 + 14;
+      } catch {
+        brandX = 52;
+      }
     }
 
-    // 7. Footer.
-    ctx.fillStyle = C.paper;
-    ctx.fillRect(PAD, statsBottom, INNER, RULE);
-    ctx.font = fontStack.mono(16);
-    ctx.fillStyle = C.dim;
-    ctx.textAlign = 'left';
-    ctx.fillText('GENERATED BY RACERBOT', PAD, statsBottom + 48);
-    ctx.font = fontStack.monoBold(20);
-    ctx.fillStyle = C.cyan;
-    ctx.textAlign = 'right';
-    ctx.fillText('@racertradingbot', W - PAD, statsBottom + 48);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = fontStack.brand(36);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RACERBOT', brandX, 36 + 28);
+
+    // 9. Position Chip:
+    // left: 52px; top: 112px; display: inline-flex; gap: 10px; align-items: center;
+    // padding: 8px 16px; border-radius: 999px; background: rgba(255,255,255,.07);
+    // border: 1px solid var(--a); font-size: 15px; font-weight: 600
+    const chipText = data.positionStatus === 'closed'
+      ? (win ? 'Closed position, race won' : 'Closed position, race lost')
+      : (win ? 'Open position, winning the race' : 'Open position, losing the race');
+
+    ctx.font = fontStack.bodyBold(15);
+    const chipTextW = ctx.measureText(chipText).width;
+    const chipW = 16 + 9 + 10 + chipTextW + 16;
+    const chipH = 34;
+    const chipX = 52;
+    const chipY = 112;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+    roundRect(ctx, chipX, chipY, chipW, chipH, 17);
+    ctx.fill();
+
+    ctx.strokeStyle = colorA;
+    ctx.lineWidth = 1;
+    roundRect(ctx, chipX, chipY, chipW, chipH, 17);
+    ctx.stroke();
+
+    // Chip glowing dot
+    ctx.fillStyle = colorA;
+    ctx.shadowColor = colorA;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(chipX + 16 + 4.5, chipY + chipH / 2, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Chip text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = fontStack.bodyBold(15);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(chipText, chipX + 16 + 9 + 10, chipY + chipH / 2);
+
+    // 10. Token & Handle:
+    // left: 52px; top: 164px; font: italic 800 76px/1 'Barlow Condensed'
+    // small: font: 400 20px Sora; opacity: .6; margin-left: 14px
+    const sym = String(data.tokenSymbol || '').toUpperCase();
+    const handle = String(data.tokenName || data.tokenSymbol || '');
+    ctx.textBaseline = 'top';
+    ctx.font = fontStack.token(76);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(sym, 52, 164);
+    const symW = ctx.measureText(sym).width;
+
+    ctx.font = fontStack.body(20);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.fillText(handle, 52 + symW + 14, 164 + 44);
+
+    // 11. Hero PnL Percentage:
+    // left: 46px; top: 228px; font: italic 800 190px/1 'Barlow Condensed'
+    // color: var(--a); text-shadow: 0 0 60px var(--glow); letter-spacing: -2px
+    const pnlSign = win ? '+' : '';
+    const pnlString = `${pnlSign}${p.toFixed(2)}%`;
+    ctx.save();
+    let pnlFontSize = 170;
+    const maxPnlW = 660; // leaves space for skewed panel and mascot on right
+    ctx.font = fontStack.display(pnlFontSize);
+    while (pnlFontSize > 70 && ctx.measureText(pnlString).width > maxPnlW) {
+      pnlFontSize -= 4;
+      ctx.font = fontStack.display(pnlFontSize);
+    }
+    ctx.fillStyle = colorA;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 60;
+    ctx.textBaseline = 'top';
+    ctx.fillText(pnlString, 46, 228 + (170 - pnlFontSize) * 0.5);
+    ctx.restore();
+
+    // 12. Verdict Caption:
+    // left: 54px; top: 420px; font-size: 20px; opacity: .85
+    const verdictText = win
+      ? 'Fox crossed the line first.'
+      : 'Turtle took this one. Regroup and run again.';
+    ctx.font = fontStack.body(20);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.textBaseline = 'top';
+    ctx.fillText(verdictText, 54, 420);
+
+    // 13. Race Track:
+    // left: 52px; right: 52px; top: 458px; height: 64px
+    const trackLeft = 52;
+    const trackRight = W - 52;
+    const trackWidth = trackRight - trackLeft;
+    const trackTop = 458;
+    const laneY = trackTop + 28;
+    const laneH = 8;
+
+    // Track Lane base (opacity 0.1)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    roundRect(ctx, trackLeft, laneY, trackWidth, laneH, 4);
+    ctx.fill();
+
+    // Race progress calculation: pos = Math.max(5, Math.min(94, 55 + p * 0.4))
+    const posPercent = Math.max(5, Math.min(94, 55 + p * 0.4));
+    const fillWidth = (trackWidth * posPercent) / 100;
+
+    // Track Fill gradient
+    ctx.save();
+    const fillGrad = ctx.createLinearGradient(trackLeft, laneY, trackLeft + fillWidth, laneY);
+    fillGrad.addColorStop(0, colorB);
+    fillGrad.addColorStop(1, colorA);
+    ctx.fillStyle = fillGrad;
+    ctx.shadowColor = colorA;
+    ctx.shadowBlur = 18;
+    roundRect(ctx, trackLeft, laneY, fillWidth, laneH, 4);
+    ctx.fill();
+    ctx.restore();
+
+    // Checkered Flag at the end of the track:
+    // right: 0; top: 12px; width: 30px; height: 40px; border-radius: 4px; border: 1px solid #fff3
+    const flagW = 30;
+    const flagH = 40;
+    const flagX = trackRight - flagW;
+    const flagY = trackTop + 12;
+
+    ctx.save();
+    roundRect(ctx, flagX, flagY, flagW, flagH, 4);
+    ctx.clip();
+    const checkSize = 10;
+    for (let r = 0; r < Math.ceil(flagH / checkSize); r++) {
+      for (let c = 0; c < Math.ceil(flagW / checkSize); c++) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#ffffff' : '#111111';
+        ctx.fillRect(flagX + c * checkSize, flagY + r * checkSize, checkSize, checkSize);
+      }
+    }
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, flagX, flagY, flagW, flagH, 4);
+    ctx.stroke();
+    ctx.restore();
+
+    // Turtle Runner sitting at 55%:
+    // style="left:55%; height:56px"
+    const turtleRunnerPath = resolveAsset('turtle.png');
+    const turtleLeft = trackLeft + trackWidth * 0.55;
+    if (turtleRunnerPath && typeof loadImage === 'function') {
+      try {
+        const turtleImg = await loadImage(turtleRunnerPath);
+        const trH = 56;
+        const trW = (turtleImg.width / turtleImg.height) * trH;
+        ctx.drawImage(turtleImg, turtleLeft - trW / 2, trackTop + 4, trW, trH);
+      } catch { /* skip */ }
+    }
+
+    // Fox Runner sitting at pos%:
+    // style="left:pos%; height:54px; border-radius:50%; border:2px solid var(--a); background:#10142a; padding:2px"
+    const foxRunnerPath = resolveAsset('fox-head.png');
+    const foxLeft = trackLeft + trackWidth * (posPercent / 100);
+    const foxSize = 54;
+    const foxX = foxLeft - foxSize / 2;
+    const foxY = trackTop + 4;
+
+    ctx.save();
+    // Circular background
+    ctx.fillStyle = '#10142a';
+    ctx.beginPath();
+    ctx.arc(foxLeft, foxY + foxSize / 2, foxSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Circular border
+    ctx.strokeStyle = colorA;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Clip and draw fox head
+    if (foxRunnerPath && typeof loadImage === 'function') {
+      try {
+        const foxImg = await loadImage(foxRunnerPath);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(foxLeft, foxY + foxSize / 2, foxSize / 2 - 2, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(foxImg, foxX + 2, foxY + 2, foxSize - 4, foxSize - 4);
+        ctx.restore();
+      } catch { /* skip */ }
+    }
+    ctx.restore();
+
+    // 14. Stats Bar:
+    // left: 52px; right: 470px; bottom: 40px; display: flex;
+    // border-top: 1px solid rgba(255,255,255,.15); padding-top: 20px
+    const statsLeft = 52;
+    const statsRight = W - 470;
+    const statsWidth = statsRight - statsLeft;
+    const statsTop = H - 140;
+
+    // Top border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(statsLeft, statsTop);
+    ctx.lineTo(statsRight, statsTop);
+    ctx.stroke();
+
+    // 3 columns: Entry market cap, Current market cap, Hold time
+    const colW = statsWidth / 3;
+    const statsData = [
+      { label: 'Entry market cap', value: fmtMcap(data.entryMarketCap, nr) },
+      { label: 'Current market cap', value: fmtMcap(data.currentMarketCap, nr) },
+      { label: 'Hold time', value: String(data.holdDuration || '-') },
+    ];
+
+    statsData.forEach((st, i) => {
+      const colX = statsLeft + i * colW;
+      // Label: font-size: 15px; opacity: .55; margin-bottom: 6px
+      ctx.font = fontStack.statsLabel(15);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(st.label, colX, statsTop + 20);
+
+      // Value: font: italic 700 46px 'Barlow Condensed'
+      ctx.font = fontStack.statsNum(46);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(st.value, colX, statsTop + 45);
+    });
+
+    // 15. Footer tag:
+    // left: 52px; bottom: 14px; font-size: 14px; opacity: .6
+    ctx.font = fontStack.body(14);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('@racertradingbot', 52, H - 14);
+
+    ctx.restore(); // restore rounded card clipping
 
     return canvas.toBuffer('image/png') as Buffer;
   } catch (err: any) {
