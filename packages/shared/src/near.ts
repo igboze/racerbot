@@ -2060,16 +2060,33 @@ export class MultiRpcNear {
     }
 
     const quote = st.quote;
-    // Prefer DCL pool for hop1
-    const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);
-    if (dclHop) {
-      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: dclHop } };
+
+    // Pick the best active liquid pool for hop 1 (wNEAR ↔ quote asset) by checking real liquidity first
+    const rheaPool = await this.findRheaPoolForToken(quote, true).catch(() => null);
+    if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.liquidityNear > 0) {
+      return {
+        kind: 'multihop',
+        quote,
+        launchPoolId,
+        hop1: {
+          type: rheaPool.isDcl ? 'dcl' : 'v2',
+          poolId: String(rheaPool.poolId),
+        },
+      };
     }
+
     // Fallback: Ref v2 AMM pool
     const refHop = await this.findRheaPoolId('wrap.near', quote).catch(() => null);
     if (refHop !== null && refHop !== undefined) {
       return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'v2', poolId: String(refHop) } };
     }
+
+    // Fallback: DCL pool
+    const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    if (dclHop) {
+      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: dclHop } };
+    }
+
     throw new Error(
       `Token ${tokenAddress} is paired with ${quote}. No NEAR route to ${quote} was found, so it cannot be traded from NEAR.`
     );
