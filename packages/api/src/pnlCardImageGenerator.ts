@@ -1,4 +1,5 @@
 import { PNLCardData } from './pnlCardGenerator.js';
+import QRCode from 'qrcode';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -588,7 +589,113 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       ctx.fillText(st.value, colX, statsTop + 45);
     });
 
-    // 15. Footer tag:
+    // 15. Referral Barcode & QR Code Widget (Bottom Right):
+    // Draws a high-tech Cyber-Racing telemetry badge containing:
+    // - Scannable 2D Barcode (QR code) encoding the user's referral link
+    // - Stylized 1D Barcode lines (racing telemetry aesthetic)
+    // - User's referral code and scan callout
+    const refCode = data.referralCode || 'RACERBOT';
+    const refLink = data.referralLink || `https://t.me/racertradingbot?start=${refCode}`;
+
+    const badgeW = 320;
+    const badgeH = 88;
+    const badgeX = W - 52 - badgeW;
+    const badgeY = statsTop + 5;
+
+    ctx.save();
+    // Glassmorphic / dark panel background
+    ctx.fillStyle = 'rgba(10, 14, 28, 0.88)';
+    roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 12);
+    ctx.fill();
+
+    // Subtle border with accent corner glow
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 12);
+    ctx.stroke();
+
+    // Corner accents in theme color (green for win, red for loss)
+    ctx.strokeStyle = colorA;
+    ctx.lineWidth = 2;
+    // Top-left corner bracket
+    ctx.beginPath();
+    ctx.moveTo(badgeX, badgeY + 14);
+    ctx.lineTo(badgeX, badgeY + 6);
+    ctx.arcTo(badgeX, badgeY, badgeX + 6, badgeY, 6);
+    ctx.lineTo(badgeX + 14, badgeY);
+    ctx.stroke();
+
+    // Bottom-right corner bracket
+    ctx.beginPath();
+    ctx.moveTo(badgeX + badgeW - 14, badgeY + badgeH);
+    ctx.lineTo(badgeX + badgeW - 6, badgeY + badgeH);
+    ctx.arcTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW, badgeY + badgeH - 6, 6);
+    ctx.lineTo(badgeX + badgeW, badgeY + badgeH - 14);
+    ctx.stroke();
+
+    // Generate & draw scannable QR Code
+    try {
+      const qrSize = 68;
+      const qrBuf = await QRCode.toBuffer(refLink, {
+        type: 'png',
+        margin: 0,
+        width: qrSize,
+        color: {
+          dark: '#0a0e1c',
+          light: '#ffffff',
+        },
+      });
+      if (qrBuf && typeof loadImage === 'function') {
+        const qrImg = await loadImage(qrBuf);
+        // White rounded protective backdrop for crisp contrast
+        ctx.fillStyle = '#ffffff';
+        roundRect(ctx, badgeX + 10, badgeY + 10, qrSize, qrSize, 6);
+        ctx.fill();
+
+        ctx.drawImage(qrImg, badgeX + 10, badgeY + 10, qrSize, qrSize);
+      }
+    } catch (e) {
+      console.warn('[PNL_CARD_IMAGE] Could not generate QR code:', e);
+    }
+
+    // Right column inside badge: Barcode + Referral Info
+    const infoX = badgeX + 88;
+    const infoW = badgeW - 98;
+
+    // Stylized 1D Barcode lines
+    const barcodeY = badgeY + 12;
+    const barcodeH = 14;
+    const barPattern = [2, 1, 3, 1, 1, 2, 4, 1, 2, 1, 3, 2, 1, 1, 4, 2, 1, 3, 1, 2, 1, 3, 2, 1, 4, 1, 2, 3, 1, 2];
+    let curBarX = infoX;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    for (let b = 0; b < barPattern.length; b++) {
+      const bw = barPattern[b];
+      if (b % 2 === 0) {
+        ctx.fillRect(curBarX, barcodeY, bw, barcodeH);
+      }
+      curBarX += bw + 1.5;
+      if (curBarX > infoX + infoW - 4) break;
+    }
+
+    // Label: "SCAN TO TRADE"
+    ctx.font = fontStack.bodyBold(11);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.textBaseline = 'top';
+    ctx.fillText('SCAN TO TRADE', infoX, badgeY + 34);
+
+    // Referral code display with theme color
+    ctx.font = fontStack.statsNum(22);
+    ctx.fillStyle = colorA;
+    ctx.fillText(`REF: ${refCode}`, infoX, badgeY + 48);
+
+    // Subtle bot link
+    ctx.font = fontStack.body(11);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fillText('t.me/racertradingbot', infoX, badgeY + 70);
+
+    ctx.restore();
+
+    // 16. Footer tag:
     // left: 52px; bottom: 14px; font-size: 14px; opacity: .6
     ctx.font = fontStack.body(14);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
