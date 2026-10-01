@@ -838,10 +838,6 @@ export class MultiRpcNear {
     if (!tokenAddress || tokenAddress === 'near') return true;
     const cacheKey = `${accountId}:${tokenAddress}`;
     if (registeredCache.has(cacheKey)) return true;
-    if (tokenAddress === 'wrap.near') {
-      registeredCache.add(cacheKey);
-      return true;
-    }
     try {
       const balance = await this.view<any>(tokenAddress, 'storage_balance_of', { account_id: accountId });
       if (balance && balance.total) {
@@ -3265,7 +3261,7 @@ export class MultiRpcNear {
             method: 'POST',
             headers,
             body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
-            signal: AbortSignal.timeout(6000),
+            signal: AbortSignal.timeout(2500),
           });
 
           if (res.status === 429) {
@@ -3300,27 +3296,28 @@ export class MultiRpcNear {
       };
 
       try {
-        // Standard NEAR RPC expects [txHash, accountId] — responds immediately without parse errors
-        let data: any = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
+        // Non-blocking status query: wait_until: 'NONE' returns immediately
+        // (prevents FastNEAR/QuickNode 30-second server-side long-poll lockup)
+        let data: any = await callRpc('EXPERIMENTAL_tx_status', {
+          tx_hash: txHash,
+          sender_account_id: accountId,
+          wait_until: 'NONE',
+        });
 
-        // Fallback 1: If provider rejects array params, try object params
+        // Fallback 1: If provider rejects object params with parse error, try array params
         if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
-          data = await callRpc('EXPERIMENTAL_tx_status', {
-            tx_hash: txHash,
-            sender_account_id: accountId,
-            wait_until: 'NONE',
-          });
+          data = await callRpc('EXPERIMENTAL_tx_status', [txHash, accountId]);
         }
 
         // Fallback 2: If provider doesn't support EXPERIMENTAL_tx_status (-32601), fall back to `tx`
         if (data?.error?.code === -32601) {
-          data = await callRpc('tx', [txHash, accountId]);
+          data = await callRpc('tx', {
+            tx_hash: txHash,
+            sender_account_id: accountId,
+            wait_until: 'NONE',
+          });
           if (data?.error?.code === -32700 || data?.error?.message?.includes('Parse error')) {
-            data = await callRpc('tx', {
-              tx_hash: txHash,
-              sender_account_id: accountId,
-              wait_until: 'NONE',
-            });
+            data = await callRpc('tx', [txHash, accountId]);
           }
         }
 
@@ -3397,8 +3394,8 @@ export class MultiRpcNear {
         }
       }
 
-      // If QuickNode hasn't confirmed after 5 polls (~1s), also query secondary endpoints
-      if (polls >= 5 && allPollUrls.length > 1) {
+      // If primary RPC hasn't confirmed after 2 polls (~200ms), also query secondary endpoints in parallel
+      if (polls >= 2 && allPollUrls.length > 1) {
         for (const url of allPollUrls) {
           if (url === pinnedUrl) continue;
           if (Date.now() >= deadline) break;
@@ -3473,7 +3470,7 @@ export class MultiRpcNear {
           method: 'POST',
           headers,
           body: JSON.stringify({ jsonrpc: '2.0', id: 'await-outcome', method, params }),
-          signal: AbortSignal.timeout(6000),
+          signal: AbortSignal.timeout(2500),
         });
 
         if (res.status === 429) {

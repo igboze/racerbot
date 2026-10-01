@@ -281,9 +281,12 @@ export class SwapExecutor {
     // from the near_deposit attached deposit. To avoid a 0.00125 wNEAR shortfall on ft_transfer_call,
     // add this fee to depositNeeded when depositNeeded > 0.
     const WRAP_NEAR_STORAGE_FEE = BigInt('1250000000000000000000'); // 0.00125 NEAR
-    const isWrapRegistered = await this.nearClient.checkStorageRegistered?.(subaccountId, 'wrap.near').catch(() => false) ?? true;
+    const isWrapRegistered = this.nearClient.checkStorageRegistered
+      ? await this.nearClient.checkStorageRegistered(subaccountId, 'wrap.near').catch(() => false)
+      : true;
     if (!isWrapRegistered && depositNeeded > 0n) {
       depositNeeded += WRAP_NEAR_STORAGE_FEE;
+      this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near');
     }
 
     const actions: any[] = [];
