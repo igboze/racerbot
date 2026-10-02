@@ -139,71 +139,111 @@ router.get(['/competition', '/competition/kookdog', '/leaderboard/kookdog'], (_r
   serveCompetitionHtml(res);
 });
 
-// ── Trading Competition data API ──────────────────────────────────────────────
+// ── Helper to fetch competition snapshot ──────────────────────────────────────
+async function fetchCompetitionSnapshot(rawId = 'kookdog') {
+  const compId = rawId.toLowerCase().trim();
+  const tokenAddress = (compId === 'kookdog' || compId === 'kookdog-42db38')
+    ? 'kookdog-42db38.launchpad.justhoot.near'
+    : compId;
+
+  const [tokenInfo, compFromDb] = await Promise.all([
+    getTokenInfo(tokenAddress, true).catch(() => null),
+    getCompetition('kookdog').catch(() => null),
+  ]);
+
+  const nearUsd = tokenInfo?.near_usd || 4.82;
+  const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
+  const currentMcapNear = tokenInfo?.market_cap || 0;
+  const currentPriceNear = parseFloat(tokenInfo?.price || '0');
+  const currentPriceUsd = parseFloat(tokenInfo?.price_usd || '0');
+
+  let comp = compFromDb;
+  if (!comp) {
+    comp = await upsertCompetition({
+      id: compId,
+      token_address: tokenAddress,
+      token_symbol: tokenInfo?.symbol || 'KOOKDOG',
+      token_name: tokenInfo?.name || 'Kook Dog',
+      target_market_cap_usd: 29000,
+      status: currentMcapUsd >= 29000 ? 'active' : 'pending',
+      started_at: currentMcapUsd >= 29000 ? new Date() : null,
+    }).catch(() => null);
+  } else if (comp.status === 'pending' && currentMcapUsd >= comp.target_market_cap_usd) {
+    comp = await upsertCompetition({
+      id: comp.id,
+      token_address: comp.token_address,
+      token_symbol: comp.token_symbol,
+      token_name: comp.token_name,
+      target_market_cap_usd: comp.target_market_cap_usd,
+      status: 'active',
+      started_at: comp.started_at || new Date(),
+    }).catch(() => comp);
+  }
+
+  const startedAt = comp?.status === 'active' ? comp.started_at : null;
+  const leaderboard = await getCompetitionLeaderboard(
+    tokenAddress,
+    startedAt,
+    nearUsd,
+    tokenInfo?.decimals ?? 18,
+    10
+  );
+
+  return {
+    id: comp?.id || compId,
+    token_address: tokenAddress,
+    token_name: tokenInfo?.name || comp?.token_name || 'Kook Dog',
+    token_symbol: tokenInfo?.symbol || comp?.token_symbol || 'KOOKDOG',
+    status: comp?.status || (currentMcapUsd >= 29000 ? 'active' : 'pending'),
+    target_market_cap_usd: comp?.target_market_cap_usd || 29000,
+    current_market_cap_usd: currentMcapUsd,
+    current_market_cap_near: currentMcapNear,
+    current_price_near: currentPriceNear,
+    current_price_usd: currentPriceUsd,
+    near_usd: nearUsd,
+    started_at: comp?.started_at ?? null,
+    leaderboard,
+  };
+}
+
+// ── Real-Time SSE Stream for Competition Leaderboard ──────────────────────────
+router.get(['/competition-stream', '/competition/:id/stream', '/competition/stream'], async (req, res) => {
+  const compId = req.params.id || (req.query.token as string) || (req.query.id as string) || 'kookdog';
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  // Send initial data immediately
+  try {
+    const initial = await fetchCompetitionSnapshot(compId);
+    res.write(`data: ${JSON.stringify(initial)}\n\n`);
+  } catch {}
+
+  // Stream updates every 1.5s
+  const interval = setInterval(async () => {
+    try {
+      const data = await fetchCompetitionSnapshot(compId);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      res.write(`: keep-alive\n\n`);
+    }
+  }, 1500);
+
+  req.on('close', () => {
+    clearInterval(interval);
+    res.end();
+  });
+});
+
+// ── Trading Competition data REST API ─────────────────────────────────────────
 router.get(['/competition', '/competition/:id'], async (req, res) => {
   try {
     const rawId = req.params.id || (req.query.token as string) || (req.query.id as string) || 'kookdog';
-    const compId = rawId.toLowerCase().trim();
-    const tokenAddress = (compId === 'kookdog' || compId === 'kookdog-42db38')
-      ? 'kookdog-42db38.launchpad.justhoot.near'
-      : compId;
-
-    // Fetch live token on-chain RPC state
-    const tokenInfo = await getTokenInfo(tokenAddress, true).catch(() => null);
-    const nearUsd = tokenInfo?.near_usd || 4.8;
-    const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
-    const currentMcapNear = tokenInfo?.market_cap || 0;
-    const currentPriceNear = parseFloat(tokenInfo?.price || '0');
-    const currentPriceUsd = parseFloat(tokenInfo?.price_usd || '0');
-
-    let comp = await getCompetition(compId).catch(() => null);
-    if (!comp) {
-      comp = await upsertCompetition({
-        id: compId,
-        token_address: tokenAddress,
-        token_symbol: tokenInfo?.symbol || 'KOOKDOG',
-        token_name: tokenInfo?.name || 'Kook Dog',
-        target_market_cap_usd: 29000,
-        status: currentMcapUsd >= 29000 ? 'active' : 'pending',
-        started_at: currentMcapUsd >= 29000 ? new Date() : null,
-      }).catch(() => null);
-    } else if (comp.status === 'pending' && currentMcapUsd >= comp.target_market_cap_usd) {
-      // Auto-activate competition when target market cap is reached
-      comp = await upsertCompetition({
-        id: comp.id,
-        token_address: comp.token_address,
-        token_symbol: comp.token_symbol,
-        token_name: comp.token_name,
-        target_market_cap_usd: comp.target_market_cap_usd,
-        status: 'active',
-        started_at: comp.started_at || new Date(),
-      }).catch(() => comp);
-    }
-
-    const startedAt = comp?.status === 'active' ? comp.started_at : null;
-    const leaderboard = await getCompetitionLeaderboard(
-      tokenAddress,
-      startedAt,
-      nearUsd,
-      tokenInfo?.decimals ?? 18,
-      10
-    );
-
-    res.json({
-      id: comp?.id || compId,
-      token_address: tokenAddress,
-      token_name: tokenInfo?.name || comp?.token_name || 'Kook Dog',
-      token_symbol: tokenInfo?.symbol || comp?.token_symbol || 'KOOKDOG',
-      status: comp?.status || (currentMcapUsd >= 29000 ? 'active' : 'pending'),
-      target_market_cap_usd: comp?.target_market_cap_usd || 29000,
-      current_market_cap_usd: currentMcapUsd,
-      current_market_cap_near: currentMcapNear,
-      current_price_near: currentPriceNear,
-      current_price_usd: currentPriceUsd,
-      near_usd: nearUsd,
-      started_at: comp?.started_at ?? null,
-      leaderboard,
-    });
+    const data = await fetchCompetitionSnapshot(rawId);
+    res.json(data);
   } catch (err: any) {
     logger.error('Competition API error', err);
     res.status(500).json({ error: err.message });

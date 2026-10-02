@@ -1152,13 +1152,35 @@
       }
     }
 
-    // ── Instant Initial Render & Interval Polling ────────────────────────────
+    // ── Instant Initial Render, SSE Real-Time Stream & Fallback Polling ─────
     if (window.__INITIAL_COMPETITION_DATA__) {
       render(window.__INITIAL_COMPETITION_DATA__);
     }
 
+    // Connect to Server-Sent Events (SSE) live stream for instant on-chain updates
+    function connectLiveStream() {
+      try {
+        const streamUrl = `/api/competition/${encodeURIComponent(COMP_ID)}/stream`;
+        const es = new EventSource(streamUrl);
+        es.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            render(data);
+          } catch (e) {}
+        };
+        es.onerror = () => {
+          // If SSE connection drops, fallback to REST polling
+          es.close();
+          setTimeout(connectLiveStream, 5000);
+        };
+      } catch (e) {
+        console.warn('SSE stream init error:', e);
+      }
+    }
+
+    connectLiveStream();
     updateCompetition();
-    setInterval(updateCompetition, 4000);
+    setInterval(updateCompetition, 2500);
   </script>
 </body>
 </html>
