@@ -119,6 +119,31 @@ export interface CopyTradeTargetRecord {
   updated_at: Date;
 }
 
+export interface TradingCompetitionRecord {
+  id: string;
+  token_address: string;
+  token_symbol: string;
+  token_name: string;
+  target_market_cap_usd: number;
+  status: 'pending' | 'active' | 'completed';
+  started_at: Date | null;
+  ended_at: Date | null;
+  created_at: Date;
+}
+
+export interface CompetitionLeaderboardEntry {
+  rank: number;
+  user_id: string;
+  username: string | null;
+  subaccount_id: string;
+  total_volume_near: number;
+  total_volume_usd: number;
+  total_trades: number;
+  buy_trades: number;
+  sell_trades: number;
+  last_trade_at: Date | null;
+}
+
 export interface CopyTradeFillRecord {
   id: string;
   copy_target_id: string;
@@ -1525,4 +1550,173 @@ export async function getDcaOrderById(id: string): Promise<DcaOrderRecord | null
   const res = await db.query(`SELECT * FROM dca_orders WHERE id = $1`, [id]);
   if (!res.rows[0]) return null;
   return rowToDca(res.rows[0]);
+}
+
+// ── Trading Competitions ───────────────────────────────────────────────────
+
+function rowToCompetition(row: any): TradingCompetitionRecord {
+  return {
+    id: row.id,
+    token_address: row.token_address,
+    token_symbol: row.token_symbol,
+    token_name: row.token_name,
+    target_market_cap_usd: parseFloat(row.target_market_cap_usd || '30000'),
+    status: row.status as any,
+    started_at: row.started_at ? new Date(row.started_at) : null,
+    ended_at: row.ended_at ? new Date(row.ended_at) : null,
+    created_at: new Date(row.created_at),
+  };
+}
+
+export async function getCompetition(id: string): Promise<TradingCompetitionRecord | null> {
+  const db = await getDb();
+  try {
+    const res = await db.query('SELECT * FROM trading_competitions WHERE id = $1', [id]);
+    if (!res.rows[0]) return null;
+    return rowToCompetition(res.rows[0]);
+  } catch {
+    return null;
+  }
+}
+
+export async function getCompetitionByToken(tokenAddress: string): Promise<TradingCompetitionRecord | null> {
+  const db = await getDb();
+  try {
+    const res = await db.query('SELECT * FROM trading_competitions WHERE token_address = $1', [tokenAddress]);
+    if (!res.rows[0]) return null;
+    return rowToCompetition(res.rows[0]);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertCompetition(params: {
+  id: string;
+  token_address: string;
+  token_symbol: string;
+  token_name: string;
+  target_market_cap_usd?: number;
+  status?: string;
+  started_at?: Date | null;
+  ended_at?: Date | null;
+}): Promise<TradingCompetitionRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO trading_competitions (id, token_address, token_symbol, token_name, target_market_cap_usd, status, started_at, ended_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       token_address = EXCLUDED.token_address,
+       token_symbol = EXCLUDED.token_symbol,
+       token_name = EXCLUDED.token_name,
+       target_market_cap_usd = COALESCE(EXCLUDED.target_market_cap_usd, trading_competitions.target_market_cap_usd),
+       status = COALESCE(EXCLUDED.status, trading_competitions.status),
+       started_at = COALESCE(EXCLUDED.started_at, trading_competitions.started_at),
+       ended_at = COALESCE(EXCLUDED.ended_at, trading_competitions.ended_at)
+     RETURNING *`,
+    [
+      params.id,
+      params.token_address,
+      params.token_symbol,
+      params.token_name,
+      params.target_market_cap_usd ?? 30000,
+      params.status ?? 'pending',
+      params.started_at ?? null,
+      params.ended_at ?? null,
+    ]
+  );
+  return rowToCompetition(res.rows[0]);
+}
+
+export async function getCompetitionLeaderboard(
+  tokenAddress: string,
+  startedAt: Date | null,
+  nearUsdRate: number = 4.8,
+  decimals: number = 18,
+  limit: number = 10
+): Promise<CompetitionLeaderboardEntry[]> {
+  const db = await getDb();
+
+  const query = `
+    SELECT 
+      u.id as user_id,
+      u.username,
+      u.subaccount_id,
+      f.side,
+      f.amount,
+      f.price,
+      f.fee_paid,
+      f.created_at
+    FROM fills f
+    JOIN users u ON f.user_id = u.id
+    WHERE f.token_address = $1
+      AND ($2::timestamptz IS NULL OR f.created_at >= $2)
+    ORDER BY f.created_at ASC
+  `;
+
+  try {
+    const res = await db.query(query, [tokenAddress, startedAt]);
+
+    const userMap = new Map<string, {
+      user_id: string;
+      username: string | null;
+      subaccount_id: string;
+      total_volume_near: number;
+      total_trades: number;
+      buy_trades: number;
+      sell_trades: number;
+      last_trade_at: Date | null;
+    }>();
+
+    for (const row of res.rows) {
+      const uid = row.user_id;
+      if (!userMap.has(uid)) {
+        userMap.set(uid, {
+          user_id: uid,
+          username: row.username,
+          subaccount_id: row.subaccount_id,
+          total_volume_near: 0,
+          total_trades: 0,
+          buy_trades: 0,
+          sell_trades: 0,
+          last_trade_at: null,
+        });
+      }
+
+      const u = userMap.get(uid)!;
+      u.total_trades += 1;
+      if (row.side === 'buy') u.buy_trades += 1;
+      if (row.side === 'sell') u.sell_trades += 1;
+
+      const rawAmt = parseFloat(row.amount || '0');
+      const amtHuman = rawAmt > 1e12 && decimals > 0 ? rawAmt / Math.pow(10, decimals) : rawAmt;
+      const priceNear = parseFloat(row.price || '0');
+      const volNear = amtHuman * priceNear;
+      u.total_volume_near += volNear;
+
+      const fillTime = row.created_at ? new Date(row.created_at) : null;
+      if (fillTime && (!u.last_trade_at || fillTime > u.last_trade_at)) {
+        u.last_trade_at = fillTime;
+      }
+    }
+
+    const sorted = Array.from(userMap.values())
+      .sort((a, b) => b.total_volume_near - a.total_volume_near)
+      .slice(0, limit);
+
+    return sorted.map((item, idx) => ({
+      rank: idx + 1,
+      user_id: item.user_id,
+      username: item.username,
+      subaccount_id: item.subaccount_id,
+      total_volume_near: item.total_volume_near,
+      total_volume_usd: item.total_volume_near * nearUsdRate,
+      total_trades: item.total_trades,
+      buy_trades: item.buy_trades,
+      sell_trades: item.sell_trades,
+      last_trade_at: item.last_trade_at,
+    }));
+  } catch (err: any) {
+    console.error('[COMPETITION] Leaderboard query error:', err.message);
+    return [];
+  }
 }

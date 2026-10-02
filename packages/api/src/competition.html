@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RacerBot — $KOOKDOG Trading Competition</title>
+  <link rel="icon" type="image/png" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,700;1,800;1,900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #070914;
+      --card-bg: rgba(16, 20, 42, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #8b5cf6;
+      --accent: #00f076;
+      --accent-glow: rgba(0, 240, 118, 0.3);
+      --danger: #ff334b;
+      --gold: #fbbf24;
+      --silver: #cbd5e1;
+      --bronze: #d97706;
+      --text: #ffffff;
+      --text-dim: #94a3b8;
+      --text-muted: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 80% 10%, rgba(139, 92, 246, 0.18), transparent 50%),
+        radial-gradient(circle at 20% 90%, rgba(0, 240, 118, 0.12), transparent 50%),
+        linear-gradient(115deg, rgba(255,255,255,0.015) 0 46px, transparent 46px 48px);
+      background-size: 100% 100%, 100% 100%, 48px 48px;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+
+    /* Header */
+    .nav-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 36px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+    }
+
+    .brand img {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 2px solid var(--primary);
+    }
+
+    .brand-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 900;
+      font-style: italic;
+      font-size: 28px;
+      letter-spacing: 1px;
+      background: linear-gradient(135deg, #fff 40%, var(--primary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .btn-trade-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--accent);
+      color: #050811;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 10px 20px;
+      border-radius: 999px;
+      text-decoration: none;
+      box-shadow: 0 0 20px var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn-trade-nav:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    /* Hero Banner */
+    .hero-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 36px 32px;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(16px);
+      margin-bottom: 32px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .hero-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .token-badge {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .token-avatar {
+      width: 64px;
+      height: 64px;
+      border-radius: 18px;
+      border: 2px solid var(--primary);
+      background: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      overflow: hidden;
+    }
+
+    .token-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .token-info h1 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 38px;
+      font-style: italic;
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: 0.5px;
+    }
+
+    .token-ca-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .copy-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-pill.live {
+      background: rgba(0, 240, 118, 0.12);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+    }
+
+    .status-pill.pending {
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 10px currentColor;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* Market Cap Target Tracker */
+    .mcap-tracker {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .mcap-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+
+    .mcap-val {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .mcap-target {
+      color: var(--text-dim);
+    }
+
+    .progress-bar-bg {
+      height: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      box-shadow: 0 0 12px var(--accent-glow);
+      border-radius: 999px;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .tracker-footer {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Quick Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .stat-box {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 28px;
+      font-weight: 800;
+      font-style: italic;
+      color: #fff;
+    }
+
+    /* Podium (Top 3) */
+    .podium-container {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-bottom: 32px;
+      align-items: flex-end;
+    }
+
+    .podium-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 24px 18px;
+      text-align: center;
+      position: relative;
+      backdrop-filter: blur(12px);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .podium-card:hover {
+      transform: translateY(-4px);
+    }
+
+    .podium-card.rank-1 {
+      order: 2;
+      border-color: rgba(251, 191, 36, 0.4);
+      background: linear-gradient(180deg, rgba(251, 191, 36, 0.12) 0%, rgba(16, 20, 42, 0.85) 100%);
+      box-shadow: 0 10px 30px rgba(251, 191, 36, 0.15);
+      padding-top: 32px;
+      padding-bottom: 32px;
+    }
+
+    .podium-card.rank-2 {
+      order: 1;
+      border-color: rgba(203, 213, 225, 0.3);
+      background: linear-gradient(180deg, rgba(203, 213, 225, 0.08) 0%, rgba(16, 20, 42, 0.85) 100%);
+    }
+
+    .podium-card.rank-3 {
+      order: 3;
+      border-color: rgba(217, 119, 6, 0.3);
+      background: linear-gradient(180deg, rgba(217, 119, 6, 0.08) 0%, rgba(16, 20, 42, 0.85) 100%);
+    }
+
+    .podium-badge {
+      font-size: 34px;
+      margin-bottom: 8px;
+    }
+
+    .podium-rank-tag {
+      display: inline-block;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 14px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    .rank-1 .podium-rank-tag { background: var(--gold); color: #000; }
+    .rank-2 .podium-rank-tag { background: var(--silver); color: #000; }
+    .rank-3 .podium-rank-tag { background: var(--bronze); color: #fff; }
+
+    .podium-name {
+      font-weight: 700;
+      font-size: 17px;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .podium-sub {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+    }
+
+    .podium-vol-box {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 12px;
+      padding: 10px;
+    }
+
+    .podium-vol-usd {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .podium-vol-near {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Leaderboard Table (Ranks 4-10) */
+    .table-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      overflow: hidden;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .table-header-bar {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .table-header-bar h3 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 22px;
+      font-weight: 800;
+      font-style: italic;
+      letter-spacing: 0.5px;
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th {
+      padding: 14px 24px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    td {
+      padding: 16px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: #fff;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .rank-cell {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text-dim);
+      width: 60px;
+    }
+
+    .trader-cell {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .trader-name {
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .trader-sub {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .vol-cell {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .trades-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .trades-buy { color: var(--accent); }
+    .trades-sell { color: var(--danger); }
+
+    /* Rules & Info Card */
+    .rules-card {
+      margin-top: 32px;
+      background: rgba(139, 92, 246, 0.06);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 16px;
+      padding: 24px;
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .rules-card h4 {
+      color: #fff;
+      font-size: 15px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .empty-state {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon {
+      font-size: 42px;
+      margin-bottom: 12px;
+      opacity: 0.6;
+    }
+
+    @media (max-width: 768px) {
+      .podium-container {
+        grid-template-columns: 1fr;
+      }
+      .podium-card.rank-1 { order: 1; }
+      .podium-card.rank-2 { order: 2; }
+      .podium-card.rank-3 { order: 3; }
+      .hero-card { padding: 24px 18px; }
+      .token-info h1 { font-size: 30px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Navbar -->
+    <header class="nav-bar">
+      <a href="https://t.me/racertradingbot" class="brand" target="_blank" rel="noopener">
+        <img src="/favicon.ico" alt="RacerBot Logo" onerror="this.style.display='none'">
+        <span class="brand-title">RACERBOT</span>
+      </a>
+      <a id="navTradeBtn" href="https://t.me/racertradingbot?start=kookdog-42db38_launchpad_justhoot_near" target="_blank" rel="noopener" class="btn-trade-nav">
+        ⚡ Trade $KOOKDOG
+      </a>
+    </header>
+
+    <!-- Hero Card -->
+    <div class="hero-card">
+      <div class="hero-top">
+        <div class="token-badge">
+          <div class="token-avatar">
+            <img id="tokenImg" src="/favicon.ico" alt="KOOKDOG" onerror="this.src='/favicon.ico'">
+          </div>
+          <div class="token-info">
+            <h1 id="tokenTitle">KOOK DOG ($KOOKDOG)</h1>
+            <div class="token-ca-wrap">
+              <span id="tokenAddress">kookdog-42db38.launchpad.justhoot.near</span>
+              <button class="copy-btn" onclick="copyTokenAddress()">Copy CA</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="statusPill" class="status-pill pending">
+          <span class="pulse-dot"></span>
+          <span id="statusText">Starting at $30K MC</span>
+        </div>
+      </div>
+
+      <!-- Market Cap Target Tracker -->
+      <div class="mcap-tracker">
+        <div class="mcap-header">
+          <div>
+            <span style="color: var(--text-dim); font-size: 12px; text-transform: uppercase;">Current Market Cap:</span>
+            <div id="curMcapUsd" class="mcap-val">$0.00</div>
+          </div>
+          <div style="text-align: right;">
+            <span style="color: var(--text-dim); font-size: 12px; text-transform: uppercase;">Target to Start:</span>
+            <div class="mcap-val mcap-target">$30,000</div>
+          </div>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="mcapProgress" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <div class="tracker-footer">
+          <span id="progressPctLabel">0% of target reached</span>
+          <span id="tokenSpotPrice">Spot: 0.0000 NEAR ($0.00)</span>
+        </div>
+      </div>
+
+      <!-- Live Stats Grid -->
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Total Competition Volume</div>
+          <div id="totalCompVolume" class="stat-num">$0.00</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total RacerBot Trades</div>
+          <div id="totalCompTrades" class="stat-num">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Active Competitors</div>
+          <div id="totalTradersCount" class="stat-num">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">NEAR / USD Rate</div>
+          <div id="nearUsdRate" class="stat-num">$0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Podium for Top 3 Traders -->
+    <div id="podiumArea" class="podium-container" style="display: none;">
+      <!-- Rank 2 -->
+      <div class="podium-card rank-2" id="podium2">
+        <div class="podium-badge">🥈</div>
+        <div class="podium-rank-tag">2nd Place</div>
+        <div class="podium-name" id="p2Name">—</div>
+        <div class="podium-sub" id="p2Sub">—</div>
+        <div class="podium-vol-box">
+          <div class="podium-vol-usd" id="p2VolUsd">$0.00</div>
+          <div class="podium-vol-near" id="p2VolNear">0.00 NEAR</div>
+        </div>
+      </div>
+
+      <!-- Rank 1 -->
+      <div class="podium-card rank-1" id="podium1">
+        <div class="podium-badge">🥇</div>
+        <div class="podium-rank-tag">1st Place • Champion</div>
+        <div class="podium-name" id="p1Name">—</div>
+        <div class="podium-sub" id="p1Sub">—</div>
+        <div class="podium-vol-box">
+          <div class="podium-vol-usd" id="p1VolUsd">$0.00</div>
+          <div class="podium-vol-near" id="p1VolNear">0.00 NEAR</div>
+        </div>
+      </div>
+
+      <!-- Rank 3 -->
+      <div class="podium-card rank-3" id="podium3">
+        <div class="podium-badge">🥉</div>
+        <div class="podium-rank-tag">3rd Place</div>
+        <div class="podium-name" id="p3Name">—</div>
+        <div class="podium-sub" id="p3Sub">—</div>
+        <div class="podium-vol-box">
+          <div class="podium-vol-usd" id="p3VolUsd">$0.00</div>
+          <div class="podium-vol-near" id="p3VolNear">0.00 NEAR</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leaderboard Table (Ranks 1 to 10) -->
+    <div class="table-card">
+      <div class="table-header-bar">
+        <h3>Top 10 Leaderboard</h3>
+        <div class="live-indicator">
+          <span class="pulse-dot"></span>
+          <span>LIVE AUTO-UPDATING</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 70px;">Rank</th>
+              <th>Trader</th>
+              <th>Trading Volume (USD)</th>
+              <th>Volume (NEAR)</th>
+              <th>Trades (B/S)</th>
+              <th>Last Trade</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboardBody">
+            <tr>
+              <td colspan="6">
+                <div class="empty-state">
+                  <div class="icon">🏎️</div>
+                  <p id="emptyMsg">Waiting for trading activity from @racertradingbot users...</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Rules & Information Card -->
+    <div class="rules-card">
+      <h4>📌 Competition Rules & Eligibility</h4>
+      <p>• <strong>Activation:</strong> The competition activates automatically the exact moment $KOOKDOG hits <strong>$30,000 Market Cap</strong> on-chain.</p>
+      <p>• <strong>Eligibility:</strong> Exclusively for <strong>@racertradingbot</strong> traders. Only buy & sell orders executed through the bot count toward the leaderboard.</p>
+      <p>• <strong>Scoring:</strong> Ranked strictly by total trading volume (Buys + Sells in USD value) generated during the competition.</p>
+      <p>• <strong>Leaderboard:</strong> Live updates every 5 seconds directly from the blockchain & execution engine.</p>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN_CA = 'kookdog-42db38.launchpad.justhoot.near';
+    const TARGET_MCAP = 30000;
+
+    function copyTokenAddress() {
+      navigator.clipboard.writeText(TOKEN_CA).then(() => {
+        alert('CA copied: ' + TOKEN_CA);
+      }).catch(() => {});
+    }
+
+    function formatUsd(v) {
+      if (!v || isNaN(v)) return '$0.00';
+      if (v >= 1000000) return '$' + (v / 1000000).toFixed(2) + 'M';
+      if (v >= 1000) return '$' + (v / 1000).toFixed(2) + 'K';
+      return '$' + Number(v).toFixed(2);
+    }
+
+    function formatNear(v) {
+      if (!v || isNaN(v)) return '0.00 NEAR';
+      return Number(v).toFixed(2) + ' NEAR';
+    }
+
+    function timeAgo(dateStr) {
+      if (!dateStr) return '—';
+      const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    async function fetchCompetitionData() {
+      try {
+        const res = await fetch('/api/competition/kookdog');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderData(data);
+      } catch (err) {
+        console.warn('Failed to fetch competition data:', err);
+      }
+    }
+
+    function renderData(d) {
+      // 1. Status & Header
+      const isLive = d.status === 'active' || d.current_market_cap_usd >= TARGET_MCAP;
+      const pill = document.getElementById('statusPill');
+      const statusText = document.getElementById('statusText');
+
+      if (isLive) {
+        pill.className = 'status-pill live';
+        statusText.innerText = 'Competition Live';
+      } else {
+        pill.className = 'status-pill pending';
+        statusText.innerText = 'Starts at $30K MC';
+      }
+
+      // 2. Market Cap Tracker
+      const mcapUsd = d.current_market_cap_usd || 0;
+      document.getElementById('curMcapUsd').innerText = formatUsd(mcapUsd);
+      
+      const pct = Math.min(100, Math.max(0, (mcapUsd / TARGET_MCAP) * 100));
+      document.getElementById('mcapProgress').style.width = pct.toFixed(1) + '%';
+      document.getElementById('progressPctLabel').innerText = `${pct.toFixed(1)}% of $30K target reached`;
+
+      const priceNear = d.current_price_near || 0;
+      const priceUsd = d.current_price_usd || 0;
+      document.getElementById('tokenSpotPrice').innerText = `Spot: ${Number(priceNear).toFixed(8)} NEAR (${formatUsd(priceUsd)})`;
+      document.getElementById('nearUsdRate').innerText = formatUsd(d.near_usd || 4.8);
+
+      // 3. Stats
+      const list = d.leaderboard || [];
+      let totalVolUsd = 0;
+      let totalTrades = 0;
+      list.forEach(i => {
+        totalVolUsd += (i.total_volume_usd || 0);
+        totalTrades += (i.total_trades || 0);
+      });
+
+      document.getElementById('totalCompVolume').innerText = formatUsd(totalVolUsd);
+      document.getElementById('totalCompTrades').innerText = totalTrades.toString();
+      document.getElementById('totalTradersCount').innerText = list.length.toString();
+
+      // 4. Podium (Top 3)
+      const podium = document.getElementById('podiumArea');
+      if (list.length >= 1) {
+        podium.style.display = 'grid';
+
+        // 1st
+        const p1 = list[0];
+        document.getElementById('p1Name').innerText = p1.username ? `@${p1.username}` : (p1.subaccount_id ? p1.subaccount_id.split('.')[0] : 'Trader #1');
+        document.getElementById('p1Sub').innerText = p1.subaccount_id || 'racerbot.near';
+        document.getElementById('p1VolUsd').innerText = formatUsd(p1.total_volume_usd);
+        document.getElementById('p1VolNear').innerText = formatNear(p1.total_volume_near);
+
+        // 2nd
+        if (list.length >= 2) {
+          const p2 = list[1];
+          document.getElementById('p2Name').innerText = p2.username ? `@${p2.username}` : (p2.subaccount_id ? p2.subaccount_id.split('.')[0] : 'Trader #2');
+          document.getElementById('p2Sub').innerText = p2.subaccount_id || 'racerbot.near';
+          document.getElementById('p2VolUsd').innerText = formatUsd(p2.total_volume_usd);
+          document.getElementById('p2VolNear').innerText = formatNear(p2.total_volume_near);
+          document.getElementById('podium2').style.opacity = '1';
+        } else {
+          document.getElementById('podium2').style.opacity = '0.35';
+        }
+
+        // 3rd
+        if (list.length >= 3) {
+          const p3 = list[2];
+          document.getElementById('p3Name').innerText = p3.username ? `@${p3.username}` : (p3.subaccount_id ? p3.subaccount_id.split('.')[0] : 'Trader #3');
+          document.getElementById('p3Sub').innerText = p3.subaccount_id || 'racerbot.near';
+          document.getElementById('p3VolUsd').innerText = formatUsd(p3.total_volume_usd);
+          document.getElementById('p3VolNear').innerText = formatNear(p3.total_volume_near);
+          document.getElementById('podium3').style.opacity = '1';
+        } else {
+          document.getElementById('podium3').style.opacity = '0.35';
+        }
+      } else {
+        podium.style.display = 'none';
+      }
+
+      // 5. Leaderboard Table
+      const tbody = document.getElementById('leaderboardBody');
+      if (list.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6">
+              <div class="empty-state">
+                <div class="icon">🏎️</div>
+                <p>${isLive ? 'Competition is live! Be the first to trade and take #1 on the leaderboard!' : 'Trading Competition starts at $30K Market Cap. Trades from @racertradingbot will be ranked here.'}</p>
+              </div>
+            </td>
+          </tr>
+        `;
+      } else {
+        tbody.innerHTML = list.slice(0, 10).map((item, idx) => {
+          const rankEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+          const traderName = item.username ? `@${item.username}` : (item.subaccount_id ? item.subaccount_id.split('.')[0] : `Trader #${idx + 1}`);
+          const subAcc = item.subaccount_id || 'racerbot.near';
+
+          return `
+            <tr>
+              <td class="rank-cell">${rankEmoji}</td>
+              <td>
+                <div class="trader-cell">
+                  <span class="trader-name">${traderName}</span>
+                  <span class="trader-sub">${subAcc}</span>
+                </div>
+              </td>
+              <td class="vol-cell">${formatUsd(item.total_volume_usd)}</td>
+              <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">${formatNear(item.total_volume_near)}</td>
+              <td>
+                <div class="trades-badge">
+                  <span class="trades-buy">${item.buy_trades || 0}B</span> / 
+                  <span class="trades-sell">${item.sell_trades || 0}S</span>
+                </div>
+              </td>
+              <td style="color: var(--text-dim); font-size: 12px;">${timeAgo(item.last_trade_at)}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    // Initial fetch & interval polling every 4 seconds
+    fetchCompetitionData();
+    setInterval(fetchCompetitionData, 4000);
+  </script>
+</body>
+</html>

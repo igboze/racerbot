@@ -582,6 +582,17 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
         }
       }
     } catch { /* no-op */ }
+  } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
+    try {
+      const dclId = `${tokenAddress}|wrap.near|10000`;
+      const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
+      if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
+        venue = 'rhea';
+        price = dclState.price;
+        liquidity = dclState.liquidityNear;
+        dclPoolId = dclId;
+      }
+    } catch { /* no-op */ }
   }
 
   // Step 2: If price was not found or if token is potentially on Ref/Rhea (bonded or general token)
