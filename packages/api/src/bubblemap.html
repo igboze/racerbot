@@ -1561,6 +1561,9 @@
         <button class="btn-chip header-search-chip" onclick="openHeroSearch()" title="Search any token contract address">
           <span>Search</span>
         </button>
+        <button class="btn-chip active" id="sybil-btn" onclick="toggleSybilTraceMode()" title="Trace Same-Owner Wallets & Gas Dispenser Links">
+          <span>🕵️ Sybil</span>
+        </button>
         <button class="btn-chip active" id="traces-btn" onclick="toggleTraces()" title="Toggle Transfer Traces">
           <span>Traces</span>
         </button>
@@ -1581,6 +1584,10 @@
       <div class="stat-pill" onclick="fitToScreen()">
         <span class="stat-pill-label">Holders</span>
         <span class="stat-pill-val" id="stat-holders">—</span>
+      </div>
+      <div class="stat-pill" onclick="toggleSybilTraceMode()" title="Wallets owned by same person/entity (gas dispenser or historical transfers)">
+        <span class="stat-pill-label">Sybil Entities</span>
+        <span class="stat-pill-val" id="stat-sybil-clusters" style="color:var(--color-link)">—</span>
       </div>
       <div class="stat-pill" onclick="toggleClusterColorMode()">
         <span class="stat-pill-label">Clusters</span>
@@ -1628,6 +1635,7 @@
 
       <!-- View Filters (Bottom Right) -->
       <div id="view-controls">
+        <button class="view-chip-btn active" id="sybil-hud-btn" onclick="toggleSybilTraceMode()">🕵️ Sybil Trace: ON</button>
         <button class="view-chip-btn" id="dust-toggle-btn" onclick="toggleDustFilter()">Hide Dust (&lt;0.05%)</button>
       </div>
     </div>
@@ -1672,6 +1680,29 @@
               <span class="matrix-lbl">Total Sells</span>
               <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">💎 0 Sells</span>
             </div>
+          </div>
+
+          
+          <!-- 🕵️ Same-Owner & Sybil Entity Forensics -->
+          <div class="sybil-intel-box" id="panel-sybil-box" style="display:none; background:rgba(0, 112, 224, 0.08); border:1px solid rgba(0, 112, 224, 0.28); border-radius:10px; padding:10px 12px; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12px; font-weight:700; color:var(--color-link); display:flex; align-items:center; gap:5px;">
+                <span>🕵️ Same-Owner Cluster</span>
+              </span>
+              <span class="badge-chip" id="panel-sybil-badge" style="background:rgba(0, 112, 224, 0.22); color:var(--color-link); font-size:10px; font-weight:700;">4 WALLETS</span>
+            </div>
+            
+            <div style="font-size:11px; color:var(--color-ink-strong); margin-bottom:5px; line-height:1.35;" id="panel-sybil-reason">
+              Common gas funder dispensed NEAR before launch.
+            </div>
+            
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--color-ink-subtle); margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.06); padding-bottom:6px;">
+              <span>Total Entity Holdings:</span>
+              <b style="color:var(--color-ink-strong);" id="panel-sybil-total-pct">28.4% of Supply</b>
+            </div>
+
+            <div style="font-size:10.5px; font-weight:600; color:var(--color-ink-subtle); margin-bottom:6px;">Connected Sister Wallets:</div>
+            <div id="panel-sybil-wallets-list" style="display:flex; flex-direction:column; gap:4px; max-height:140px; overflow-y:auto;"></div>
           </div>
 
           <!-- Bag Exit Progress Bar -->
@@ -1870,6 +1901,13 @@
 
           <div class="risk-item">
             <div class="risk-item-left">
+              <span>Sybil / Same-Owner Cabals</span>
+            </div>
+            <span class="risk-item-val" id="diag-sybil-clusters" style="color:var(--color-link)">0 detected</span>
+          </div>
+
+          <div class="risk-item">
+            <div class="risk-item-left">
               <span>Detected Transfer Clusters</span>
             </div>
             <span class="risk-item-val" id="diag-clusters" style="color:var(--color-on-success)">0 groups</span>
@@ -1913,6 +1951,16 @@
           <div class="legend-item">
             <div class="legend-dot" style="background:#FBBF24;"></div>
             <div><b style="color:var(--color-ink-strong);">Bundler / Insider</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">Coordinated Launch Group</span></div>
+          </div>
+
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#FBBF24; border:1.5px dashed #FBBF24;"></div>
+            <div><b style="color:var(--color-ink-strong);">Common Gas Funder</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">Same Origin Dispenser</span></div>
+          </div>
+
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#C084FC;"></div>
+            <div><b style="color:var(--color-ink-strong);">Historical Transfer</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">Past Direct NEAR/FT Trans</span></div>
           </div>
 
           <div class="legend-item">
@@ -2134,6 +2182,9 @@
     let selectedBubble = null;
     let hoveredBubble = null;
     let showAllTraces = true;
+    let showSybilTraces = true;
+    let identityLinks = [];
+    let identityClusters = [];
     let colorByCluster = false;
     let hideDust = false;
     let totalSupplyAmount = 1n;
@@ -2321,7 +2372,7 @@
           return;
         }
 
-        processGraph(holdersRaw, txnsRaw);
+        processGraph(holdersRaw, txnsRaw, data?.identityLinks || [], data?.identityClusters || []);
         document.getElementById('loader-screen').style.opacity = '0';
         setTimeout(() => { document.getElementById('loader-screen').style.display = 'none'; }, 200);
         startRenderLoop();
@@ -2370,7 +2421,7 @@
     let globalBundlerDumpPct = 0;
 
     // ── Process Graph & Cluster Analysis ──────────────────────────
-    function processGraph(holdersRaw, txnsRaw) {
+    function processGraph(holdersRaw, txnsRaw, identityLinksRaw = [], identityClustersRaw = []) {
       totalSupplyAmount = 0n;
       for (const h of holdersRaw) {
         try { totalSupplyAmount += BigInt(h.amount || '0'); } catch {}
@@ -2422,6 +2473,43 @@
         bubbles.push(b);
         bubbleMap.set(h.account, b);
       });
+
+      // ── Process Sybil & Identity Links ──
+      identityLinks = [];
+      identityClusters = identityClustersRaw || [];
+
+      for (const idl of identityLinksRaw) {
+        const bFrom = bubbleMap.get(idl.from);
+        const bTo = bubbleMap.get(idl.to);
+        if (bFrom && bTo && bFrom !== bTo) {
+          identityLinks.push({
+            from: idl.from,
+            to: idl.to,
+            type: idl.type || 'common_funder',
+            funder: idl.funder,
+            amount: idl.amount,
+            token: idl.token,
+            detail: idl.detail,
+            tx: idl.tx,
+            timestamp: idl.timestamp,
+            sourceBubble: bFrom,
+            targetBubble: bTo,
+          });
+        }
+      }
+
+      // Map identity clusters to member bubbles
+      for (const ic of identityClusters) {
+        let totalClusterPct = 0;
+        for (const w of ic.wallets) {
+          const b = bubbleMap.get(w);
+          if (b) {
+            b.identityCluster = ic;
+            totalClusterPct += b.pct;
+          }
+        }
+        if (!ic.totalPct) ic.totalPct = totalClusterPct;
+      }
 
       // Links Processing & Sell/Trade Detection
       transferLinks = [];
@@ -2601,6 +2689,20 @@
       const top10Sum = bubbles.slice(0, 10).reduce((acc, b) => acc + b.pct, 0);
       document.getElementById('stat-holders').textContent = holdersRaw.length.toLocaleString();
       document.getElementById('stat-clusters').textContent = clusters.length.toString();
+      
+      const sybilPill = document.getElementById('stat-sybil-clusters');
+      if (sybilPill) {
+        const sybilWalletsCount = identityClusters.reduce((acc, c) => acc + (c.wallets ? c.wallets.length : 0), 0);
+        const sybilPct = identityClusters.reduce((acc, c) => acc + (c.totalPct || 0), 0);
+        sybilPill.textContent = identityClusters.length > 0 ? `${identityClusters.length} (${sybilPct.toFixed(1)}%)` : '0 clean';
+        sybilPill.style.color = identityClusters.length > 0 ? 'var(--color-on-warning)' : 'var(--color-on-success)';
+      }
+
+      const diagSybil = document.getElementById('diag-sybil-clusters');
+      if (diagSybil) {
+        diagSybil.textContent = identityClusters.length > 0 ? `${identityClusters.length} cabals detected` : '0 detected (Clean)';
+        diagSybil.style.color = identityClusters.length > 0 ? 'var(--color-on-warning)' : 'var(--color-on-success)';
+      }
       document.getElementById('stat-top10').textContent = `${top10Sum.toFixed(1)}%`;
 
       const bundlerSellsPill = document.getElementById('stat-bundler-sells');
@@ -2892,6 +2994,88 @@
         }
       }
 
+      // 1b. Draw Sybil & Common Funder / Historical Cross-Wallet Traces
+      if (showSybilTraces) {
+        const activeIdentityLinks = [];
+        if (selectedBubble) {
+          for (const l of identityLinks) {
+            if (l.from === selectedBubble.id || l.to === selectedBubble.id || (selectedBubble.identityCluster && selectedBubble.identityCluster.wallets.includes(l.from) && selectedBubble.identityCluster.wallets.includes(l.to))) {
+              activeIdentityLinks.push(l);
+            }
+          }
+        } else if (activeCluster) {
+          for (const l of identityLinks) {
+            if (activeCluster.nodes.has(l.from) || activeCluster.nodes.has(l.to)) activeIdentityLinks.push(l);
+          }
+        } else {
+          activeIdentityLinks.push(...identityLinks);
+        }
+
+        for (const link of activeIdentityLinks) {
+          const b1 = link.sourceBubble;
+          const b2 = link.targetBubble;
+          if (!b1 || !b2) continue;
+          if (hideDust && (b1.pct < 0.05 || b2.pct < 0.05)) continue;
+
+          const isSelectedLink = selectedBubble && (link.from === selectedBubble.id || link.to === selectedBubble.id);
+          
+          let strokeColor = isSelectedLink ? '#FBBF24' : 'rgba(245, 158, 11, 0.45)';
+          let particleColor = '#FBBF24';
+          let dashPattern = [5, 4];
+          let lineWidth = isSelectedLink ? 2.5 : 1.4;
+
+          if (link.type === 'historical_transfer') {
+            strokeColor = isSelectedLink ? '#C084FC' : 'rgba(192, 132, 252, 0.50)';
+            particleColor = '#C084FC';
+            dashPattern = [];
+          } else if (link.type === 'shared_exit') {
+            strokeColor = isSelectedLink ? '#F472B6' : 'rgba(244, 114, 182, 0.50)';
+            particleColor = '#F472B6';
+            dashPattern = [4, 4];
+          }
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(b1.x, b1.y);
+
+          const midX = (b1.x + b2.x) / 2;
+          const midY = (b1.y + b2.y) / 2;
+          const dist = Math.hypot(b2.x - b1.x, b2.y - b1.y);
+          const curveOffset = Math.min(dist * 0.22, 36);
+          const normalX = (b2.y - b1.y) / (dist || 1);
+          const normalY = -(b2.x - b1.x) / (dist || 1);
+          const cpX = midX + normalX * curveOffset;
+          const cpY = midY + normalY * curveOffset;
+
+          ctx.quadraticCurveTo(cpX, cpY, b2.x, b2.y);
+          ctx.setLineDash(dashPattern);
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = lineWidth;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Flowing Identity Particles
+          const pCount = isSelectedLink ? 3 : 2;
+          const pSpeed = isSelectedLink ? 0.0005 : 0.00028;
+          for (let p = 0; p < pCount; p++) {
+            const pOffset = (p / pCount);
+            const t = ((now * pSpeed) + pOffset + (link.from.charCodeAt(0) * 0.07)) % 1.0;
+            const it = 1 - t;
+            const px = it * it * b1.x + 2 * it * t * cpX + t * t * b2.x;
+            const py = it * it * b1.y + 2 * it * t * cpY + t * t * b2.y;
+
+            ctx.beginPath();
+            ctx.arc(px, py, isSelectedLink ? 3.2 : 2.0, 0, Math.PI * 2);
+            ctx.fillStyle = particleColor;
+            ctx.shadowColor = particleColor;
+            ctx.shadowBlur = 8;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+          ctx.restore();
+        }
+      }
+
       // 2. Draw Bubbles with Organic Breathing & Crisp Glass
       for (const b of bubbles) {
         if (hideDust && b.pct < 0.05 && b !== selectedBubble) continue;
@@ -2904,7 +3088,8 @@
             isHighlighted = true;
           } else {
             const isConnected = selectedBubble.sentTxns.some(t => t.to === b.id) ||
-                                selectedBubble.recvTxns.some(t => t.from === b.id);
+                                selectedBubble.recvTxns.some(t => t.from === b.id) ||
+                                (showSybilTraces && selectedBubble.identityCluster && selectedBubble.identityCluster.wallets.includes(b.id));
             opacity = isConnected ? 1.0 : 0.18;
             if (isConnected) isHighlighted = true;
           }
@@ -3133,6 +3318,46 @@
         exitBar.style.background = b.exitPct >= 75 ? 'var(--color-on-danger)' : (b.exitPct >= 25 ? 'var(--color-on-warning)' : 'var(--color-on-success)');
       }
 
+      // ── Sybil & Same-Owner Forensics Panel ──
+      const sybilBox = document.getElementById('panel-sybil-box');
+      if (sybilBox) {
+        if (b.identityCluster) {
+          sybilBox.style.display = 'block';
+          const badgeEl = document.getElementById('panel-sybil-badge');
+          const reasonEl = document.getElementById('panel-sybil-reason');
+          const totalPctEl = document.getElementById('panel-sybil-total-pct');
+          const listEl = document.getElementById('panel-sybil-wallets-list');
+
+          if (badgeEl) badgeEl.textContent = `${b.identityCluster.wallets.length} CONNECTED WALLETS`;
+          if (reasonEl) reasonEl.textContent = b.identityCluster.reason || 'Common gas funder dispensed NEAR before launch.';
+          if (totalPctEl) {
+            const totalSupplyVal = b.identityCluster.totalPct || 0;
+            totalPctEl.textContent = `${totalSupplyVal.toFixed(2)}% of Supply`;
+          }
+
+          if (listEl) {
+            listEl.innerHTML = b.identityCluster.wallets.map(w => {
+              const sisterB = bubbleMap.get(w);
+              const isCurrent = w === b.address;
+              const shortW = w.length > 14 ? w.slice(0, 7) + '…' + w.slice(-4) : w;
+              const sisterPct = sisterB ? `${sisterB.pct.toFixed(2)}%` : '—';
+              const sisterSells = sisterB && sisterB.sellCount > 0 ? `🔥 ${sisterB.sellCount}s` : '💎 0s';
+              
+              return `
+              <div onclick="focusSisterWallet('${w}')" style="display:flex; align-items:center; justify-content:space-between; background:${isCurrent ? 'rgba(0,112,224,0.20)' : 'rgba(255,255,255,0.04)'}; border:1px solid ${isCurrent ? 'var(--color-link)' : 'rgba(255,255,255,0.06)'}; border-radius:6px; padding:4px 8px; cursor:pointer; font-size:11px;">
+                <span style="font-family:'JetBrains Mono', monospace; color:${isCurrent ? 'var(--color-link)' : 'var(--color-ink-strong)'};">${shortW} ${isCurrent ? '(Active)' : ''}</span>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span style="font-weight:600; color:var(--color-ink-strong);">${sisterPct}</span>
+                  <span style="font-size:9.5px; color:var(--color-ink-subtle);">${sisterSells}</span>
+                </div>
+              </div>`;
+            }).join('');
+          }
+        } else {
+          sybilBox.style.display = 'none';
+        }
+      }
+
       const copyBtn = document.getElementById('panel-copy-trade-btn');
       const copyWalletEncoded = encodeURIComponent(b.address.replace(/\./g, '_'));
       const refSuffix = currentReferrer ? `_ref_${encodeURIComponent(currentReferrer)}` : '';
@@ -3195,6 +3420,26 @@
       e.stopPropagation();
       navigator.clipboard.writeText(currentToken);
       showToast('Token contract address copied');
+    };
+
+    window.toggleSybilTraceMode = function() {
+      showSybilTraces = !showSybilTraces;
+      const sybilBtn = document.getElementById('sybil-btn');
+      const sybilHudBtn = document.getElementById('sybil-hud-btn');
+      if (sybilBtn) sybilBtn.classList.toggle('active', showSybilTraces);
+      if (sybilHudBtn) {
+        sybilHudBtn.classList.toggle('active', showSybilTraces);
+        sybilHudBtn.textContent = showSybilTraces ? '🕵️ Sybil Trace: ON' : '🕵️ Sybil Trace: OFF';
+      }
+      showToast(showSybilTraces ? 'Sybil & Gas Funder Traces: ON' : 'Sybil Traces: OFF');
+    };
+
+    window.focusSisterWallet = function(addr) {
+      const b = bubbleMap.get(addr);
+      if (b) {
+        selectBubble(b);
+        showToast(`Focused sister wallet: ${addr}`);
+      }
     };
 
     window.toggleTraces = function() {
