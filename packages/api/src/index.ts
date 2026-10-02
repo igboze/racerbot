@@ -120,6 +120,38 @@ async function main(): Promise<void> {
 
   app.use('/api', apiRouter);
 
+  // ── Subdomain & path routing ──────────────────────────────────────────────
+  // Detects token subdomains such as:
+  // kookdog.bubblemap.racerbot.trade, kookdog.bubblemap.xyz, kookdog.localhost, etc.
+  app.use((req, res, next) => {
+    // Ignore internal API, assets, webhooks and health checks
+    if (req.path.startsWith('/api') || req.path.startsWith('/assets') || req.path === '/health' || req.path === '/favicon.ico' || req.path === webhookPath) {
+      return next();
+    }
+
+    const host = (req.headers.host || req.hostname || '').toLowerCase().split(':')[0];
+    const parts = host.split('.');
+
+    // Check if host has a token subdomain prefix before bubblemap or root
+    // e.g., ["kookdog", "bubblemap", "xyz"], ["kookdog", "localhost"], ["kookdog-42db38", "launchpad", ...]
+    const ignoredSubdomains = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'localhost', '127', 'railway', 'app', 'racerbot']);
+    
+    let tokenSubdomain: string | null = null;
+    if (parts.length >= 2) {
+      const first = parts[0];
+      if (!ignoredSubdomains.has(first)) {
+        tokenSubdomain = first;
+      }
+    }
+
+    // If accessing via token subdomain on root path or competition path, serve competition UI
+    if (tokenSubdomain && (req.path === '/' || req.path === '/competition' || req.path === '/leaderboard')) {
+      return serveCompetitionHtml(res);
+    }
+
+    next();
+  });
+
   // Serve Bubble Map at root `/` and `/bubblemap` directly with zero client cache
   app.get(['/', '/bubblemap'], (req, res, next) => {
     // If request is looking for API or health, proceed to next
@@ -128,7 +160,7 @@ async function main(): Promise<void> {
   });
 
   // Serve Trading Competition page directly at `/competition` and `/leaderboard`
-  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id'], (_req, res) => {
+  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id', '/:token/competition', '/:token/leaderboard'], (_req, res) => {
     serveCompetitionHtml(res);
   });
 

@@ -1,910 +1,1141 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RacerBot — $KOOKDOG Trading Competition</title>
+  <title>RacerBot — Trading Competition</title>
   <link rel="icon" type="image/png" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,700;1,800;1,900&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
+    /* ── 71UI Tokens ──────────────────────────────────────────────────────── */
     :root {
-      --bg: #070914;
-      --card-bg: rgba(16, 20, 42, 0.75);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --primary: #8b5cf6;
-      --accent: #00f076;
-      --accent-glow: rgba(0, 240, 118, 0.3);
-      --danger: #ff334b;
-      --gold: #fbbf24;
-      --silver: #cbd5e1;
-      --bronze: #d97706;
-      --text: #ffffff;
-      --text-dim: #94a3b8;
-      --text-muted: #64748b;
+      color-scheme: light;
+      --color-canvas: #FFFFFF;
+      --color-surface: #FAFAFA;
+      --color-surface-2: #F4F4F5;
+      --color-hairline: #EBEBEB;
+      --color-hairline-strong: #D4D4D8;
+      --color-control-border: #8A8A8A;
+      --color-ink-strong: #111111;
+      --color-ink: #333333;
+      --color-ink-subtle: #6B6B6B;
+      --color-primary: #0070E0;
+      --color-primary-hover: #005FC2;
+      --color-on-primary: #FFFFFF;
+      --color-link: #0070E0;
+      --color-inverse: #111111;
+      --color-inverse-hover: #2B2B2B;
+      --color-on-inverse: #FFFFFF;
+      
+      --color-success: #15B042;
+      --color-success-fill: #CAFACE;
+      --color-on-success: #0E7A2F;
+      
+      --color-warning: #D97706;
+      --color-warning-fill: #FFF1D6;
+      --color-on-warning: #8A4B00;
+      
+      --color-danger: #D92D20;
+      --color-danger-fill: #FFE8E6;
+      --color-on-danger: #B42318;
+      
+      --color-info-fill: #E6F0FF;
+      --color-on-info: #0058B0;
+
+      --shadow-ring: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 2px 4px 0 rgb(0 0 0 / 0.04);
+      --shadow-sm: 0 2px 3px -1px rgb(0 0 0 / 0.08), 0 1px 0 0 rgb(25 28 33 / 0.02), 0 0 0 1px rgb(25 28 33 / 0.06);
+      --shadow-md: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 1px -0.5px rgb(0 0 0 / 0.06), 0 3px 3px -1.5px rgb(0 0 0 / 0.06), 0 6px 6px -3px rgb(0 0 0 / 0.06);
+      
+      --radius-xs: 4px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-control: 10px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-2xl: 24px;
+      --radius-full: 9999px;
+
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "Geist Mono", "SF Mono", Menlo, Consolas, monospace;
+
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --color-canvas: #0A0A0B;
+      --color-surface: #111113;
+      --color-surface-2: #1A1A1D;
+      --color-hairline: rgb(255 255 255 / 0.08);
+      --color-hairline-strong: rgb(255 255 255 / 0.14);
+      --color-control-border: rgb(255 255 255 / 0.40);
+      --color-ink-strong: #F4F4F2;
+      --color-ink: #D6D6D3;
+      --color-ink-subtle: #8F8F8A;
+      --color-primary: #0070E0;
+      --color-primary-hover: #005FC2;
+      --color-on-primary: #FFFFFF;
+      --color-link: #4193F5;
+      --color-inverse: #F4F4F2;
+      --color-inverse-hover: #DADAD6;
+      --color-on-inverse: #0A0A0B;
+      
+      --color-success: #15B042;
+      --color-success-fill: #0F2A19;
+      --color-on-success: #5FD68A;
+      
+      --color-warning: #F5B94A;
+      --color-warning-fill: #2E2210;
+      --color-on-warning: #F5B94A;
+      
+      --color-danger: #F97066;
+      --color-danger-fill: #3A1512;
+      --color-on-danger: #F97066;
+      
+      --color-info-fill: #0E2440;
+      --color-on-info: #6AAEFF;
+
+      --shadow-ring: 0 0 0 1px rgb(255 255 255 / 0.08);
+      --shadow-sm: 0 2px 3px -1px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.08);
+      --shadow-md: 0 0 0 1px rgb(255 255 255 / 0.08), 0 4px 12px -2px rgb(0 0 0 / 0.5);
+    }
+
+    /* ── Base Reset ───────────────────────────────────────────────────────── */
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', sans-serif;
+      background-color: var(--color-canvas);
+      color: var(--color-ink);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 20px;
       min-height: 100vh;
-      overflow-x: hidden;
-      background-image: 
-        radial-gradient(circle at 80% 10%, rgba(139, 92, 246, 0.18), transparent 50%),
-        radial-gradient(circle at 20% 90%, rgba(0, 240, 118, 0.12), transparent 50%),
-        linear-gradient(115deg, rgba(255,255,255,0.015) 0 46px, transparent 46px 48px);
-      background-size: 100% 100%, 100% 100%, 48px 48px;
+      display: flex;
+      flex-direction: column;
     }
 
+    .tabular {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1;
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0em;
+    }
+
+    /* ── Layout & Container ───────────────────────────────────────────────── */
     .container {
-      max-width: 1080px;
+      width: 100%;
+      max-width: 1040px;
       margin: 0 auto;
-      padding: 32px 20px 80px;
+      padding: 0 24px;
     }
 
-    /* Header */
-    .nav-bar {
+    /* ── Header Bar ───────────────────────────────────────────────────────── */
+    header.nav-header {
+      background-color: var(--color-canvas);
+      border-bottom: 1px solid var(--color-hairline);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .nav-inner {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 36px;
+      height: 56px;
     }
 
-    .brand {
+    .brand-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--color-ink-strong);
+      font-weight: 500;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      object-fit: cover;
+      border: 1px solid var(--color-hairline);
+    }
+
+    .nav-actions {
       display: flex;
       align-items: center;
       gap: 12px;
-      text-decoration: none;
-      color: #fff;
     }
 
-    .brand img {
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      border: 2px solid var(--primary);
-    }
-
-    .brand-title {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-weight: 900;
-      font-style: italic;
-      font-size: 28px;
-      letter-spacing: 1px;
-      background: linear-gradient(135deg, #fff 40%, var(--primary));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .btn-trade-nav {
+    /* ── Buttons (71UI standard: 32px height, 10px radius) ────────────────── */
+    .btn {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      background: var(--accent);
-      color: #050811;
-      font-weight: 700;
-      font-size: 14px;
-      padding: 10px 20px;
-      border-radius: 999px;
+      justify-content: center;
+      gap: 6px;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 16px;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: var(--radius-control);
       text-decoration: none;
-      box-shadow: 0 0 20px var(--accent-glow);
-      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 150ms var(--ease-standard), border-color 150ms var(--ease-standard), transform 160ms var(--ease-out);
     }
 
-    .btn-trade-nav:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 0 30px var(--accent-glow);
+    .btn:active {
+      transform: scale(0.97);
     }
 
-    /* Hero Banner */
-    .hero-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 24px;
-      padding: 36px 32px;
-      position: relative;
-      overflow: hidden;
-      backdrop-filter: blur(16px);
-      margin-bottom: 32px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    .btn:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
     }
 
-    .hero-card::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background: linear-gradient(90deg, var(--primary), var(--accent));
+    .btn-primary {
+      background-color: var(--color-primary);
+      color: var(--color-on-primary);
     }
 
-    .hero-top {
+    .btn-primary:hover {
+      background-color: var(--color-primary-hover);
+    }
+
+    .btn-secondary {
+      background-color: var(--color-canvas);
+      color: var(--color-ink-strong);
+      border-color: var(--color-hairline-strong);
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--color-surface-2);
+    }
+
+    .btn-ghost {
+      background-color: transparent;
+      color: var(--color-ink-subtle);
+    }
+
+    .btn-ghost:hover {
+      background-color: var(--color-surface-2);
+      color: var(--color-ink-strong);
+    }
+
+    .btn-icon {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+    }
+
+    /* ── Badges (71UI standard: 20px height, 6px radius, 8px padding) ─────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 20px;
+      padding: 0 8px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 16px;
+      letter-spacing: 0;
+    }
+
+    .badge-success {
+      background-color: var(--color-success-fill);
+      color: var(--color-on-success);
+    }
+
+    .badge-warning {
+      background-color: var(--color-warning-fill);
+      color: var(--color-on-warning);
+    }
+
+    .badge-neutral {
+      background-color: var(--color-surface-2);
+      color: var(--color-ink);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: var(--radius-full);
+      background-color: currentColor;
+    }
+
+    .pulse {
+      animation: statusPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes statusPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.85); }
+    }
+
+    /* ── Cards & Structure ────────────────────────────────────────────────── */
+    .card {
+      background-color: var(--color-canvas);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+    }
+
+    /* ── Page Header Section ──────────────────────────────────────────────── */
+    .hero-section {
+      padding: 32px 0 24px;
+      border-bottom: 1px solid var(--color-hairline);
+      margin-bottom: 24px;
+    }
+
+    .hero-top-row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       flex-wrap: wrap;
-      gap: 20px;
-      margin-bottom: 24px;
+      gap: 16px;
+      margin-bottom: 20px;
     }
 
-    .token-badge {
+    .token-identity {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
     }
 
-    .token-avatar {
-      width: 64px;
-      height: 64px;
-      border-radius: 18px;
-      border: 2px solid var(--primary);
-      background: #0f172a;
+    .token-avatar-frame {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-control);
+      border: 1px solid var(--color-hairline);
+      background-color: var(--color-surface);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 32px;
       overflow: hidden;
+      flex-shrink: 0;
     }
 
-    .token-avatar img {
+    .token-avatar-frame img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
 
-    .token-info h1 {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 38px;
-      font-style: italic;
-      font-weight: 800;
-      line-height: 1.1;
-      letter-spacing: 0.5px;
+    .token-title-group h1 {
+      font-size: 24px;
+      font-weight: 500;
+      line-height: 28px;
+      letter-spacing: -0.02em;
+      color: var(--color-ink-strong);
     }
 
-    .token-ca-wrap {
+    .token-ca-row {
       display: flex;
       align-items: center;
       gap: 8px;
       margin-top: 4px;
-      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .token-ca-code {
+      font-family: var(--font-mono);
       font-size: 12px;
-      color: var(--text-dim);
+      color: var(--color-ink-subtle);
     }
 
-    .copy-btn {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      color: #fff;
+    .btn-copy {
       font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 6px;
+      height: 22px;
+      padding: 0 6px;
+      border-radius: var(--radius-xs);
+      background-color: var(--color-surface-2);
+      border: 1px solid var(--color-hairline);
+      color: var(--color-ink);
       cursor: pointer;
-      transition: background 0.15s ease;
+      font-family: var(--font-sans);
     }
 
-    .copy-btn:hover {
-      background: rgba(255, 255, 255, 0.2);
+    .btn-copy:hover {
+      background-color: var(--color-hairline-strong);
     }
 
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 700;
+    /* ── Market Cap Progress Card (Clean 71UI Well) ───────────────────────── */
+    .mcap-card {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-control);
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+
+    .mcap-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+    }
+
+    .mcap-heading {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-ink-subtle);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.04em;
     }
 
-    .status-pill.live {
-      background: rgba(0, 240, 118, 0.12);
-      border: 1px solid var(--accent);
-      color: var(--accent);
+    .mcap-numbers {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
     }
 
-    .status-pill.pending {
-      background: rgba(251, 191, 36, 0.12);
-      border: 1px solid var(--gold);
-      color: var(--gold);
+    .mcap-cur-val {
+      font-size: 24px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      color: var(--color-ink-strong);
     }
 
-    .pulse-dot {
-      width: 8px;
+    .mcap-target-val {
+      font-size: 14px;
+      color: var(--color-ink-subtle);
+    }
+
+    .progress-track {
       height: 8px;
-      border-radius: 50%;
-      background: currentColor;
-      box-shadow: 0 0 10px currentColor;
-      animation: pulse 1.5s infinite;
+      background-color: var(--color-surface-2);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+      border: 1px solid var(--color-hairline);
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.85); }
+    .progress-fill {
+      height: 100%;
+      background-color: var(--color-primary);
+      border-radius: var(--radius-full);
+      transition: width 0.4s var(--ease-out);
+      width: 0%;
     }
 
-    /* Market Cap Target Tracker */
-    .mcap-tracker {
-      background: rgba(0, 0, 0, 0.35);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 16px;
-      padding: 20px;
+    .mcap-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-ink-subtle);
+    }
+
+    /* ── Metrics Grid (71UI Stat Values) ──────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .metric-cell {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-ink-subtle);
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      color: var(--color-ink-strong);
+    }
+
+    /* ── Podium (Top 3 Grid) ──────────────────────────────────────────────── */
+    .section-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 28px 0 16px;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--color-ink-strong);
+    }
+
+    .podium-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
       margin-bottom: 24px;
     }
 
-    .mcap-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
-      font-size: 14px;
-    }
-
-    .mcap-val {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 26px;
-      font-weight: 800;
-      color: #fff;
-    }
-
-    .mcap-target {
-      color: var(--text-dim);
-    }
-
-    .progress-bar-bg {
-      height: 12px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 999px;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .progress-bar-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--primary), var(--accent));
-      box-shadow: 0 0 12px var(--accent-glow);
-      border-radius: 999px;
-      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .tracker-footer {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 10px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    /* Quick Stats Grid */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-    }
-
-    .stat-box {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 14px;
-      padding: 16px;
-    }
-
-    .stat-label {
-      font-size: 12px;
-      color: var(--text-dim);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .stat-num {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 28px;
-      font-weight: 800;
-      font-style: italic;
-      color: #fff;
-    }
-
-    /* Podium (Top 3) */
-    .podium-container {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 18px;
-      margin-bottom: 32px;
-      align-items: flex-end;
-    }
-
     .podium-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 20px;
-      padding: 24px 18px;
-      text-align: center;
+      background-color: var(--color-canvas);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-lg);
+      padding: 18px 16px;
       position: relative;
-      backdrop-filter: blur(12px);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .podium-card:hover {
-      transform: translateY(-4px);
-    }
-
-    .podium-card.rank-1 {
-      order: 2;
-      border-color: rgba(251, 191, 36, 0.4);
-      background: linear-gradient(180deg, rgba(251, 191, 36, 0.12) 0%, rgba(16, 20, 42, 0.85) 100%);
-      box-shadow: 0 10px 30px rgba(251, 191, 36, 0.15);
-      padding-top: 32px;
-      padding-bottom: 32px;
-    }
-
-    .podium-card.rank-2 {
-      order: 1;
-      border-color: rgba(203, 213, 225, 0.3);
-      background: linear-gradient(180deg, rgba(203, 213, 225, 0.08) 0%, rgba(16, 20, 42, 0.85) 100%);
-    }
-
-    .podium-card.rank-3 {
-      order: 3;
-      border-color: rgba(217, 119, 6, 0.3);
-      background: linear-gradient(180deg, rgba(217, 119, 6, 0.08) 0%, rgba(16, 20, 42, 0.85) 100%);
-    }
-
-    .podium-badge {
-      font-size: 34px;
-      margin-bottom: 8px;
-    }
-
-    .podium-rank-tag {
-      display: inline-block;
-      font-family: 'Barlow Condensed', sans-serif;
-      font-weight: 800;
-      font-size: 14px;
-      padding: 2px 10px;
-      border-radius: 999px;
-      margin-bottom: 12px;
-      text-transform: uppercase;
-    }
-
-    .rank-1 .podium-rank-tag { background: var(--gold); color: #000; }
-    .rank-2 .podium-rank-tag { background: var(--silver); color: #000; }
-    .rank-3 .podium-rank-tag { background: var(--bronze); color: #fff; }
-
-    .podium-name {
-      font-weight: 700;
-      font-size: 17px;
-      margin-bottom: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .podium-sub {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 11px;
-      color: var(--text-dim);
-      margin-bottom: 16px;
-    }
-
-    .podium-vol-box {
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: 12px;
-      padding: 10px;
-    }
-
-    .podium-vol-usd {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 26px;
-      font-weight: 800;
-      color: var(--accent);
-    }
-
-    .podium-vol-near {
-      font-size: 12px;
-      color: var(--text-dim);
-    }
-
-    /* Leaderboard Table (Ranks 4-10) */
-    .table-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 20px;
-      overflow: hidden;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-    }
-
-    .table-header-bar {
-      padding: 20px 24px;
-      border-bottom: 1px solid var(--card-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .table-header-bar h3 {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 22px;
-      font-weight: 800;
-      font-style: italic;
-      letter-spacing: 0.5px;
-    }
-
-    .live-indicator {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      color: var(--accent);
-      font-weight: 600;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      text-align: left;
-      font-size: 14px;
-    }
-
-    th {
-      padding: 14px 24px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--card-border);
-    }
-
-    td {
-      padding: 16px 24px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      color: #fff;
-    }
-
-    tr:last-child td {
-      border-bottom: none;
-    }
-
-    tr:hover td {
-      background: rgba(255, 255, 255, 0.02);
-    }
-
-    .rank-cell {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 20px;
-      font-weight: 800;
-      color: var(--text-dim);
-      width: 60px;
-    }
-
-    .trader-cell {
       display: flex;
       flex-direction: column;
     }
 
-    .trader-name {
-      font-weight: 600;
-      color: #fff;
+    .podium-card.rank-1 {
+      border-color: #F59E0B;
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04) 0%, var(--color-canvas) 100%);
     }
 
-    .trader-sub {
-      font-family: 'IBM Plex Mono', monospace;
+    .podium-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .podium-rank-tag {
       font-size: 11px;
-      color: var(--text-muted);
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: var(--radius-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
 
-    .vol-cell {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 20px;
-      font-weight: 800;
-      color: var(--accent);
+    .rank-1 .podium-rank-tag { background: #FEF3C7; color: #92400E; }
+    .rank-2 .podium-rank-tag { background: var(--color-surface-2); color: var(--color-ink); }
+    .rank-3 .podium-rank-tag { background: var(--color-surface-2); color: var(--color-ink); }
+
+    .podium-medal {
+      font-size: 18px;
     }
 
-    .trades-badge {
+    .podium-trader-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--color-ink-strong);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .podium-trader-sub {
+      font-size: 11px;
+      color: var(--color-ink-subtle);
+      font-family: var(--font-mono);
+      margin-bottom: 14px;
+    }
+
+    .podium-volume-box {
+      margin-top: auto;
+      padding-top: 10px;
+      border-top: 1px solid var(--color-hairline);
+    }
+
+    .podium-vol-usd {
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      color: var(--color-ink-strong);
+    }
+
+    .podium-vol-near {
+      font-size: 11px;
+      color: var(--color-ink-subtle);
+      margin-top: 2px;
+    }
+
+    /* ── Leaderboard Table (71UI: 40px rows, #EBEBEB hairlines) ───────────── */
+    .table-container {
+      background-color: var(--color-canvas);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .table-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--color-hairline);
+      background-color: var(--color-surface);
+    }
+
+    .table-toolbar h2 {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--color-ink-strong);
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    table.data-table th {
+      height: 36px;
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-ink-subtle);
+      border-bottom: 1px solid var(--color-hairline);
+      background-color: var(--color-surface);
+    }
+
+    table.data-table td {
+      height: 40px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--color-hairline);
+      color: var(--color-ink);
+      font-size: 13px;
+    }
+
+    table.data-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    table.data-table tr:hover td {
+      background-color: var(--color-surface);
+    }
+
+    .th-right, .td-right {
+      text-align: right;
+    }
+
+    .rank-num {
+      font-weight: 500;
+      color: var(--color-ink-subtle);
+      width: 44px;
+    }
+
+    .trader-title {
+      font-weight: 500;
+      color: var(--color-ink-strong);
+    }
+
+    .trader-sub-label {
+      font-size: 11px;
+      color: var(--color-ink-subtle);
+      font-family: var(--font-mono);
+      margin-left: 6px;
+    }
+
+    .trades-tag {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      background: rgba(255, 255, 255, 0.06);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-family: 'IBM Plex Mono', monospace;
+      gap: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--color-ink-subtle);
     }
 
-    .trades-buy { color: var(--accent); }
-    .trades-sell { color: var(--danger); }
-
-    /* Rules & Info Card */
-    .rules-card {
-      margin-top: 32px;
-      background: rgba(139, 92, 246, 0.06);
-      border: 1px solid rgba(139, 92, 246, 0.2);
-      border-radius: 16px;
-      padding: 24px;
-      font-size: 13px;
-      color: var(--text-dim);
-      line-height: 1.6;
-    }
-
-    .rules-card h4 {
-      color: #fff;
-      font-size: 15px;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .empty-state {
-      padding: 48px 24px;
+    .empty-row td {
+      height: 120px;
       text-align: center;
-      color: var(--text-muted);
+      color: var(--color-ink-subtle);
+      font-size: 13px;
     }
 
-    .empty-state .icon {
-      font-size: 42px;
-      margin-bottom: 12px;
-      opacity: 0.6;
+    /* ── Info Box ─────────────────────────────────────────────────────────── */
+    .info-card {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      font-size: 13px;
+      line-height: 20px;
+      color: var(--color-ink-subtle);
+      margin-bottom: 40px;
     }
 
+    .info-card strong {
+      color: var(--color-ink-strong);
+      font-weight: 500;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────────────────── */
+    footer.app-footer {
+      margin-top: auto;
+      border-top: 1px solid var(--color-hairline);
+      padding: 24px 0;
+      font-size: 12px;
+      color: var(--color-ink-subtle);
+    }
+
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+    }
+
+    .footer-links a {
+      color: var(--color-ink-subtle);
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      color: var(--color-ink-strong);
+    }
+
+    /* ── Responsive ───────────────────────────────────────────────────────── */
     @media (max-width: 768px) {
-      .podium-container {
+      .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .podium-grid {
         grid-template-columns: 1fr;
       }
-      .podium-card.rank-1 { order: 1; }
-      .podium-card.rank-2 { order: 2; }
-      .podium-card.rank-3 { order: 3; }
-      .hero-card { padding: 24px 18px; }
-      .token-info h1 { font-size: 30px; }
-      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .hero-top-row {
+        flex-direction: column;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <!-- Navbar -->
-    <header class="nav-bar">
-      <a href="https://t.me/racertradingbot" class="brand" target="_blank" rel="noopener">
-        <img src="/favicon.ico" alt="RacerBot Logo" onerror="this.style.display='none'">
-        <span class="brand-title">RACERBOT</span>
-      </a>
-      <a id="navTradeBtn" href="https://t.me/racertradingbot?start=kookdog-42db38_launchpad_justhoot_near" target="_blank" rel="noopener" class="btn-trade-nav">
-        ⚡ Trade $KOOKDOG
-      </a>
-    </header>
 
-    <!-- Hero Card -->
-    <div class="hero-card">
-      <div class="hero-top">
-        <div class="token-badge">
-          <div class="token-avatar">
-            <img id="tokenImg" src="/favicon.ico" alt="KOOKDOG" onerror="this.src='/favicon.ico'">
+  <!-- Top Navigation Header -->
+  <header class="nav-header">
+    <div class="container nav-inner">
+      <a href="https://t.me/racertradingbot" class="brand-link" target="_blank" rel="noopener">
+        <img src="/favicon.ico" alt="RacerBot" class="brand-logo" onerror="this.style.display='none'">
+        <span>RacerBot Trading Competition</span>
+      </a>
+
+      <div class="nav-actions">
+        <!-- Theme Toggle -->
+        <button id="themeToggle" class="btn btn-secondary btn-icon" title="Toggle color theme" aria-label="Toggle theme">
+          <svg id="themeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+
+        <!-- Main Action: Open in Bot -->
+        <a id="btnTradeAction" href="https://t.me/racertradingbot?start=kookdog-42db38_launchpad_justhoot_near" target="_blank" rel="noopener" class="btn btn-primary">
+          Trade on RacerBot
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Body -->
+  <main class="container">
+
+    <!-- Hero Header -->
+    <section class="hero-section">
+      <div class="hero-top-row">
+        <div class="token-identity">
+          <div class="token-avatar-frame">
+            <img id="tokenImg" src="/favicon.ico" alt="Token" onerror="this.src='/favicon.ico'">
           </div>
-          <div class="token-info">
-            <h1 id="tokenTitle">KOOK DOG ($KOOKDOG)</h1>
-            <div class="token-ca-wrap">
-              <span id="tokenAddress">kookdog-42db38.launchpad.justhoot.near</span>
-              <button class="copy-btn" onclick="copyTokenAddress()">Copy CA</button>
+          <div class="token-title-group">
+            <h1 id="tokenNameDisplay">Kook Dog ($KOOKDOG)</h1>
+            <div class="token-ca-row">
+              <span id="tokenAddressDisplay" class="token-ca-code">kookdog-42db38.launchpad.justhoot.near</span>
+              <button class="btn-copy" onclick="copyAddress()">Copy CA</button>
             </div>
           </div>
         </div>
 
-        <div id="statusPill" class="status-pill pending">
-          <span class="pulse-dot"></span>
-          <span id="statusText">Starting at $30K MC</span>
+        <div id="statusBadge" class="badge badge-warning">
+          <span class="status-dot pulse"></span>
+          <span id="statusLabel">Starts at $30K Market Cap</span>
         </div>
       </div>
 
-      <!-- Market Cap Target Tracker -->
-      <div class="mcap-tracker">
-        <div class="mcap-header">
-          <div>
-            <span style="color: var(--text-dim); font-size: 12px; text-transform: uppercase;">Current Market Cap:</span>
-            <div id="curMcapUsd" class="mcap-val">$0.00</div>
-          </div>
-          <div style="text-align: right;">
-            <span style="color: var(--text-dim); font-size: 12px; text-transform: uppercase;">Target to Start:</span>
-            <div class="mcap-val mcap-target">$30,000</div>
+      <!-- Market Cap Progression Card -->
+      <div class="mcap-card">
+        <div class="mcap-card-header">
+          <span class="mcap-heading">Market Cap Goal Tracker</span>
+          <div class="mcap-numbers">
+            <span id="curMcapDisplay" class="mcap-cur-val tabular">$0.00</span>
+            <span class="mcap-target-val tabular">/ $30,000</span>
           </div>
         </div>
-        <div class="progress-bar-bg">
-          <div id="mcapProgress" class="progress-bar-fill" style="width: 0%;"></div>
+        <div class="progress-track">
+          <div id="mcapProgressBar" class="progress-fill"></div>
         </div>
-        <div class="tracker-footer">
-          <span id="progressPctLabel">0% of target reached</span>
-          <span id="tokenSpotPrice">Spot: 0.0000 NEAR ($0.00)</span>
+        <div class="mcap-card-footer">
+          <span id="progressText" class="tabular">0.0% reached</span>
+          <span id="spotPriceText" class="mono">Spot Price: 0.0000 NEAR ($0.00)</span>
         </div>
       </div>
 
-      <!-- Live Stats Grid -->
-      <div class="stats-grid">
-        <div class="stat-box">
-          <div class="stat-label">Total Competition Volume</div>
-          <div id="totalCompVolume" class="stat-num">$0.00</div>
+      <!-- Key Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-cell">
+          <div class="metric-label">Total Competition Volume</div>
+          <div id="metricTotalVol" class="metric-value tabular">$0.00</div>
         </div>
-        <div class="stat-box">
-          <div class="stat-label">Total RacerBot Trades</div>
-          <div id="totalCompTrades" class="stat-num">0</div>
+        <div class="metric-cell">
+          <div class="metric-label">Executed Trades</div>
+          <div id="metricTotalTrades" class="metric-value tabular">0</div>
         </div>
-        <div class="stat-box">
-          <div class="stat-label">Active Competitors</div>
-          <div id="totalTradersCount" class="stat-num">0</div>
+        <div class="metric-cell">
+          <div class="metric-label">Active Competitors</div>
+          <div id="metricTraders" class="metric-value tabular">0</div>
         </div>
-        <div class="stat-box">
-          <div class="stat-label">NEAR / USD Rate</div>
-          <div id="nearUsdRate" class="stat-num">$0.00</div>
+        <div class="metric-cell">
+          <div class="metric-label">NEAR / USD</div>
+          <div id="metricNearUsd" class="metric-value tabular">$0.00</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Top 3 Podium -->
+    <div id="podiumSection" style="display: none;">
+      <div class="section-title-row">
+        <h2 class="section-title">Top 3 Standings</h2>
+      </div>
+      <div class="podium-grid">
+        <!-- 2nd Place -->
+        <div class="podium-card rank-2" id="podiumCard2">
+          <div class="podium-header">
+            <span class="podium-rank-tag">2nd Place</span>
+            <span class="podium-medal">🥈</span>
+          </div>
+          <div class="podium-trader-name" id="p2Name">—</div>
+          <div class="podium-trader-sub" id="p2Sub">—</div>
+          <div class="podium-volume-box">
+            <div class="podium-vol-usd tabular" id="p2VolUsd">$0.00</div>
+            <div class="podium-vol-near tabular" id="p2VolNear">0.00 NEAR</div>
+          </div>
+        </div>
+
+        <!-- 1st Place -->
+        <div class="podium-card rank-1" id="podiumCard1">
+          <div class="podium-header">
+            <span class="podium-rank-tag">1st Place • Lead</span>
+            <span class="podium-medal">🥇</span>
+          </div>
+          <div class="podium-trader-name" id="p1Name">—</div>
+          <div class="podium-trader-sub" id="p1Sub">—</div>
+          <div class="podium-volume-box">
+            <div class="podium-vol-usd tabular" id="p1VolUsd">$0.00</div>
+            <div class="podium-vol-near tabular" id="p1VolNear">0.00 NEAR</div>
+          </div>
+        </div>
+
+        <!-- 3rd Place -->
+        <div class="podium-card rank-3" id="podiumCard3">
+          <div class="podium-header">
+            <span class="podium-rank-tag">3rd Place</span>
+            <span class="podium-medal">🥉</span>
+          </div>
+          <div class="podium-trader-name" id="p3Name">—</div>
+          <div class="podium-trader-sub" id="p3Sub">—</div>
+          <div class="podium-volume-box">
+            <div class="podium-vol-usd tabular" id="p3VolUsd">$0.00</div>
+            <div class="podium-vol-near tabular" id="p3VolNear">0.00 NEAR</div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Podium for Top 3 Traders -->
-    <div id="podiumArea" class="podium-container" style="display: none;">
-      <!-- Rank 2 -->
-      <div class="podium-card rank-2" id="podium2">
-        <div class="podium-badge">🥈</div>
-        <div class="podium-rank-tag">2nd Place</div>
-        <div class="podium-name" id="p2Name">—</div>
-        <div class="podium-sub" id="p2Sub">—</div>
-        <div class="podium-vol-box">
-          <div class="podium-vol-usd" id="p2VolUsd">$0.00</div>
-          <div class="podium-vol-near" id="p2VolNear">0.00 NEAR</div>
-        </div>
+    <!-- Leaderboard Table -->
+    <div class="table-container">
+      <div class="table-toolbar">
+        <h2>Leaderboard (Positions 1 – 10)</h2>
+        <span class="badge badge-neutral">
+          <span class="status-dot" style="background-color: var(--color-primary);"></span>
+          Live sync
+        </span>
       </div>
-
-      <!-- Rank 1 -->
-      <div class="podium-card rank-1" id="podium1">
-        <div class="podium-badge">🥇</div>
-        <div class="podium-rank-tag">1st Place • Champion</div>
-        <div class="podium-name" id="p1Name">—</div>
-        <div class="podium-sub" id="p1Sub">—</div>
-        <div class="podium-vol-box">
-          <div class="podium-vol-usd" id="p1VolUsd">$0.00</div>
-          <div class="podium-vol-near" id="p1VolNear">0.00 NEAR</div>
-        </div>
-      </div>
-
-      <!-- Rank 3 -->
-      <div class="podium-card rank-3" id="podium3">
-        <div class="podium-badge">🥉</div>
-        <div class="podium-rank-tag">3rd Place</div>
-        <div class="podium-name" id="p3Name">—</div>
-        <div class="podium-sub" id="p3Sub">—</div>
-        <div class="podium-vol-box">
-          <div class="podium-vol-usd" id="p3VolUsd">$0.00</div>
-          <div class="podium-vol-near" id="p3VolNear">0.00 NEAR</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Leaderboard Table (Ranks 1 to 10) -->
-    <div class="table-card">
-      <div class="table-header-bar">
-        <h3>Top 10 Leaderboard</h3>
-        <div class="live-indicator">
-          <span class="pulse-dot"></span>
-          <span>LIVE AUTO-UPDATING</span>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 70px;">Rank</th>
-              <th>Trader</th>
-              <th>Trading Volume (USD)</th>
-              <th>Volume (NEAR)</th>
-              <th>Trades (B/S)</th>
-              <th>Last Trade</th>
-            </tr>
-          </thead>
-          <tbody id="leaderboardBody">
-            <tr>
-              <td colspan="6">
-                <div class="empty-state">
-                  <div class="icon">🏎️</div>
-                  <p id="emptyMsg">Waiting for trading activity from @racertradingbot users...</p>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width: 50px;">#</th>
+            <th>Trader</th>
+            <th class="th-right">Volume (USD)</th>
+            <th class="th-right">Volume (NEAR)</th>
+            <th class="th-right">Trades</th>
+            <th class="th-right">Last Trade</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboardTbody">
+          <tr class="empty-row">
+            <td colspan="6">Loading trading activity...</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <!-- Rules & Information Card -->
-    <div class="rules-card">
-      <h4>📌 Competition Rules & Eligibility</h4>
-      <p>• <strong>Activation:</strong> The competition activates automatically the exact moment $KOOKDOG hits <strong>$30,000 Market Cap</strong> on-chain.</p>
-      <p>• <strong>Eligibility:</strong> Exclusively for <strong>@racertradingbot</strong> traders. Only buy & sell orders executed through the bot count toward the leaderboard.</p>
-      <p>• <strong>Scoring:</strong> Ranked strictly by total trading volume (Buys + Sells in USD value) generated during the competition.</p>
-      <p>• <strong>Leaderboard:</strong> Live updates every 5 seconds directly from the blockchain & execution engine.</p>
+    <div class="info-card">
+      <p><strong>Competition Information:</strong> This leaderboard tracks verified buy and sell volume executed exclusively through <strong>@racertradingbot</strong>. The competition starts counting volume from the moment the token hits <strong>$30,000 Market Cap</strong> on-chain. Rankings refresh automatically in real time.</p>
     </div>
-  </div>
 
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="container footer-inner">
+      <span>&copy; RacerBot Trading Engine &bull; Built on NEAR Protocol</span>
+      <div class="footer-links">
+        <a href="/bubblemap">Bubble Map</a>
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener">Telegram Bot</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- App Script -->
   <script>
-    const TOKEN_CA = 'kookdog-42db38.launchpad.justhoot.near';
+    // ── Determine active token / competition ID from Subdomain or URL ─────────
+    function getActiveTokenId() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('token')) return urlParams.get('token');
+      if (urlParams.get('id')) return urlParams.get('id');
+
+      const pathParts = window.location.pathname.split('/').filter(Boolean);
+      if (pathParts[0] === 'competition' && pathParts[1]) return pathParts[1];
+      if (pathParts[0] === 'leaderboard' && pathParts[1]) return pathParts[1];
+      if (pathParts[1] === 'competition' && pathParts[0]) return pathParts[0];
+
+      // Extract from hostname subdomain (e.g. kookdog.bubblemap.* or kookdog.localhost)
+      const host = window.location.hostname.toLowerCase();
+      const parts = host.split('.');
+      const ignored = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'localhost', '127', 'railway', 'app', 'racerbot']);
+      if (parts.length >= 2 && !ignored.has(parts[0])) {
+        return parts[0];
+      }
+
+      return 'kookdog';
+    }
+
+    const COMP_ID = getActiveTokenId();
+    let currentTokenAddress = 'kookdog-42db38.launchpad.justhoot.near';
     const TARGET_MCAP = 30000;
 
-    function copyTokenAddress() {
-      navigator.clipboard.writeText(TOKEN_CA).then(() => {
-        alert('CA copied: ' + TOKEN_CA);
-      }).catch(() => {});
+    // ── Formatting Utilities ──────────────────────────────────────────────────
+    function formatUsd(val) {
+      if (!val || isNaN(val)) return '$0.00';
+      const num = Number(val);
+      if (num >= 1000000) return '$' + (num / 1000000).toFixed(2) + 'M';
+      if (num >= 1000) return '$' + (num / 1000).toFixed(2) + 'K';
+      return '$' + num.toFixed(2);
     }
 
-    function formatUsd(v) {
-      if (!v || isNaN(v)) return '$0.00';
-      if (v >= 1000000) return '$' + (v / 1000000).toFixed(2) + 'M';
-      if (v >= 1000) return '$' + (v / 1000).toFixed(2) + 'K';
-      return '$' + Number(v).toFixed(2);
-    }
-
-    function formatNear(v) {
-      if (!v || isNaN(v)) return '0.00 NEAR';
-      return Number(v).toFixed(2) + ' NEAR';
+    function formatNear(val) {
+      if (!val || isNaN(val)) return '0.00 NEAR';
+      return Number(val).toFixed(2) + ' NEAR';
     }
 
     function timeAgo(dateStr) {
       if (!dateStr) return '—';
-      const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-      if (diff < 60) return `${diff}s ago`;
-      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-      return `${Math.floor(diff / 86400)}d ago`;
+      const sec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+      if (sec < 60) return `${sec}s ago`;
+      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+      if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+      return `${Math.floor(sec / 86400)}d ago`;
     }
 
-    async function fetchCompetitionData() {
+    function copyAddress() {
+      navigator.clipboard.writeText(currentTokenAddress).then(() => {
+        const btn = document.querySelector('.btn-copy');
+        if (btn) {
+          btn.innerText = 'Copied!';
+          setTimeout(() => btn.innerText = 'Copy CA', 1500);
+        }
+      }).catch(() => {});
+    }
+
+    // ── Theme Switcher ────────────────────────────────────────────────────────
+    const themeToggle = document.getElementById('themeToggle');
+    function initTheme() {
+      const saved = localStorage.getItem('racer_theme') || 'light';
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+    themeToggle.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('racer_theme', next);
+    });
+    initTheme();
+
+    // ── Data Fetching & UI Rendering ──────────────────────────────────────────
+    async function updateCompetition() {
       try {
-        const res = await fetch('/api/competition/kookdog');
+        const res = await fetch(`/api/competition/${encodeURIComponent(COMP_ID)}`);
         if (!res.ok) return;
         const data = await res.json();
-        renderData(data);
+        render(data);
       } catch (err) {
-        console.warn('Failed to fetch competition data:', err);
+        console.warn('Competition polling failed:', err);
       }
     }
 
-    function renderData(d) {
-      // 1. Status & Header
-      const isLive = d.status === 'active' || d.current_market_cap_usd >= TARGET_MCAP;
-      const pill = document.getElementById('statusPill');
-      const statusText = document.getElementById('statusText');
+    function render(d) {
+      currentTokenAddress = d.token_address || currentTokenAddress;
+
+      // 1. Header Identity
+      document.getElementById('tokenNameDisplay').innerText = `${d.token_name} ($${d.token_symbol})`;
+      document.getElementById('tokenAddressDisplay').innerText = d.token_address;
+      
+      const cleanTokenStart = d.token_address.replace(/\./g, '_');
+      document.getElementById('btnTradeAction').href = `https://t.me/racertradingbot?start=${cleanTokenStart}`;
+
+      // 2. Status & Market Cap Goal
+      const mcapUsd = Number(d.current_market_cap_usd || 0);
+      const isLive = d.status === 'active' || mcapUsd >= TARGET_MCAP;
+      const statusBadge = document.getElementById('statusBadge');
+      const statusLabel = document.getElementById('statusLabel');
 
       if (isLive) {
-        pill.className = 'status-pill live';
-        statusText.innerText = 'Competition Live';
+        statusBadge.className = 'badge badge-success';
+        statusLabel.innerText = 'Competition Live';
       } else {
-        pill.className = 'status-pill pending';
-        statusText.innerText = 'Starts at $30K MC';
+        statusBadge.className = 'badge badge-warning';
+        statusLabel.innerText = 'Starts at $30K Market Cap';
       }
 
-      // 2. Market Cap Tracker
-      const mcapUsd = d.current_market_cap_usd || 0;
-      document.getElementById('curMcapUsd').innerText = formatUsd(mcapUsd);
-      
-      const pct = Math.min(100, Math.max(0, (mcapUsd / TARGET_MCAP) * 100));
-      document.getElementById('mcapProgress').style.width = pct.toFixed(1) + '%';
-      document.getElementById('progressPctLabel').innerText = `${pct.toFixed(1)}% of $30K target reached`;
+      document.getElementById('curMcapDisplay').innerText = formatUsd(mcapUsd);
+      const progressPct = Math.min(100, Math.max(0, (mcapUsd / TARGET_MCAP) * 100));
+      document.getElementById('mcapProgressBar').style.width = progressPct.toFixed(1) + '%';
+      document.getElementById('progressText').innerText = `${progressPct.toFixed(1)}% reached`;
 
-      const priceNear = d.current_price_near || 0;
-      const priceUsd = d.current_price_usd || 0;
-      document.getElementById('tokenSpotPrice').innerText = `Spot: ${Number(priceNear).toFixed(8)} NEAR (${formatUsd(priceUsd)})`;
-      document.getElementById('nearUsdRate').innerText = formatUsd(d.near_usd || 4.8);
+      const priceNear = Number(d.current_price_near || 0);
+      const priceUsd = Number(d.current_price_usd || 0);
+      document.getElementById('spotPriceText').innerText = `Spot: ${priceNear.toFixed(6)} NEAR (${formatUsd(priceUsd)})`;
 
       // 3. Stats
       const list = d.leaderboard || [];
       let totalVolUsd = 0;
       let totalTrades = 0;
-      list.forEach(i => {
-        totalVolUsd += (i.total_volume_usd || 0);
-        totalTrades += (i.total_trades || 0);
+      list.forEach(item => {
+        totalVolUsd += (item.total_volume_usd || 0);
+        totalTrades += (item.total_trades || 0);
       });
 
-      document.getElementById('totalCompVolume').innerText = formatUsd(totalVolUsd);
-      document.getElementById('totalCompTrades').innerText = totalTrades.toString();
-      document.getElementById('totalTradersCount').innerText = list.length.toString();
+      document.getElementById('metricTotalVol').innerText = formatUsd(totalVolUsd);
+      document.getElementById('metricTotalTrades').innerText = totalTrades.toString();
+      document.getElementById('metricTraders').innerText = list.length.toString();
+      document.getElementById('metricNearUsd').innerText = formatUsd(d.near_usd || 4.8);
 
-      // 4. Podium (Top 3)
-      const podium = document.getElementById('podiumArea');
-      if (list.length >= 1) {
-        podium.style.display = 'grid';
+      // 4. Podium Area
+      const podiumSection = document.getElementById('podiumSection');
+      if (list.length > 0) {
+        podiumSection.style.display = 'block';
 
         // 1st
         const p1 = list[0];
-        document.getElementById('p1Name').innerText = p1.username ? `@${p1.username}` : (p1.subaccount_id ? p1.subaccount_id.split('.')[0] : 'Trader #1');
-        document.getElementById('p1Sub').innerText = p1.subaccount_id || 'racerbot.near';
+        document.getElementById('p1Name').innerText = p1.username ? `@${p1.username}` : (p1.subaccount_id?.split('.')[0] || 'Trader #1');
+        document.getElementById('p1Sub').innerText = p1.subaccount_id || '';
         document.getElementById('p1VolUsd').innerText = formatUsd(p1.total_volume_usd);
         document.getElementById('p1VolNear').innerText = formatNear(p1.total_volume_near);
 
         // 2nd
         if (list.length >= 2) {
           const p2 = list[1];
-          document.getElementById('p2Name').innerText = p2.username ? `@${p2.username}` : (p2.subaccount_id ? p2.subaccount_id.split('.')[0] : 'Trader #2');
-          document.getElementById('p2Sub').innerText = p2.subaccount_id || 'racerbot.near';
+          document.getElementById('p2Name').innerText = p2.username ? `@${p2.username}` : (p2.subaccount_id?.split('.')[0] || 'Trader #2');
+          document.getElementById('p2Sub').innerText = p2.subaccount_id || '';
           document.getElementById('p2VolUsd').innerText = formatUsd(p2.total_volume_usd);
           document.getElementById('p2VolNear').innerText = formatNear(p2.total_volume_near);
-          document.getElementById('podium2').style.opacity = '1';
+          document.getElementById('podiumCard2').style.opacity = '1';
         } else {
-          document.getElementById('podium2').style.opacity = '0.35';
+          document.getElementById('p2Name').innerText = '—';
+          document.getElementById('p2Sub').innerText = '—';
+          document.getElementById('p2VolUsd').innerText = '$0.00';
+          document.getElementById('p2VolNear').innerText = '0.00 NEAR';
+          document.getElementById('podiumCard2').style.opacity = '0.4';
         }
 
         // 3rd
         if (list.length >= 3) {
           const p3 = list[2];
-          document.getElementById('p3Name').innerText = p3.username ? `@${p3.username}` : (p3.subaccount_id ? p3.subaccount_id.split('.')[0] : 'Trader #3');
-          document.getElementById('p3Sub').innerText = p3.subaccount_id || 'racerbot.near';
+          document.getElementById('p3Name').innerText = p3.username ? `@${p3.username}` : (p3.subaccount_id?.split('.')[0] || 'Trader #3');
+          document.getElementById('p3Sub').innerText = p3.subaccount_id || '';
           document.getElementById('p3VolUsd').innerText = formatUsd(p3.total_volume_usd);
           document.getElementById('p3VolNear').innerText = formatNear(p3.total_volume_near);
-          document.getElementById('podium3').style.opacity = '1';
+          document.getElementById('podiumCard3').style.opacity = '1';
         } else {
-          document.getElementById('podium3').style.opacity = '0.35';
+          document.getElementById('p3Name').innerText = '—';
+          document.getElementById('p3Sub').innerText = '—';
+          document.getElementById('p3VolUsd').innerText = '$0.00';
+          document.getElementById('p3VolNear').innerText = '0.00 NEAR';
+          document.getElementById('podiumCard3').style.opacity = '0.4';
         }
       } else {
-        podium.style.display = 'none';
+        podiumSection.style.display = 'none';
       }
 
-      // 5. Leaderboard Table
-      const tbody = document.getElementById('leaderboardBody');
+      // 5. Leaderboard Table Rows
+      const tbody = document.getElementById('leaderboardTbody');
       if (list.length === 0) {
         tbody.innerHTML = `
-          <tr>
+          <tr class="empty-row">
             <td colspan="6">
-              <div class="empty-state">
-                <div class="icon">🏎️</div>
-                <p>${isLive ? 'Competition is live! Be the first to trade and take #1 on the leaderboard!' : 'Trading Competition starts at $30K Market Cap. Trades from @racertradingbot will be ranked here.'}</p>
-              </div>
+              ${isLive ? 'No qualifying trades recorded yet. Start trading to take the #1 spot!' : 'Trading competition begins once $KOOKDOG reaches $30,000 Market Cap.'}
             </td>
           </tr>
         `;
       } else {
-        tbody.innerHTML = list.slice(0, 10).map((item, idx) => {
-          const rankEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-          const traderName = item.username ? `@${item.username}` : (item.subaccount_id ? item.subaccount_id.split('.')[0] : `Trader #${idx + 1}`);
-          const subAcc = item.subaccount_id || 'racerbot.near';
+        tbody.innerHTML = list.slice(0, 10).map((row, idx) => {
+          const name = row.username ? `@${row.username}` : (row.subaccount_id?.split('.')[0] || `Trader #${idx + 1}`);
+          const sub = row.subaccount_id || '';
+          const buys = row.buy_trades || 0;
+          const sells = row.sell_trades || 0;
 
           return `
             <tr>
-              <td class="rank-cell">${rankEmoji}</td>
+              <td class="rank-num">${idx + 1}</td>
               <td>
-                <div class="trader-cell">
-                  <span class="trader-name">${traderName}</span>
-                  <span class="trader-sub">${subAcc}</span>
-                </div>
+                <span class="trader-title">${name}</span>
+                <span class="trader-sub-label">${sub}</span>
               </td>
-              <td class="vol-cell">${formatUsd(item.total_volume_usd)}</td>
-              <td style="font-family: 'IBM Plex Mono', monospace; font-size: 13px;">${formatNear(item.total_volume_near)}</td>
-              <td>
-                <div class="trades-badge">
-                  <span class="trades-buy">${item.buy_trades || 0}B</span> / 
-                  <span class="trades-sell">${item.sell_trades || 0}S</span>
-                </div>
-              </td>
-              <td style="color: var(--text-dim); font-size: 12px;">${timeAgo(item.last_trade_at)}</td>
+              <td class="td-right tabular" style="font-weight: 500;">${formatUsd(row.total_volume_usd)}</td>
+              <td class="td-right tabular mono">${formatNear(row.total_volume_near)}</td>
+              <td class="td-right trades-tag">${buys}B / ${sells}S</td>
+              <td class="td-right mono" style="color: var(--color-ink-subtle);">${timeAgo(row.last_trade_at)}</td>
             </tr>
           `;
         }).join('');
       }
     }
 
-    // Initial fetch & interval polling every 4 seconds
-    fetchCompetitionData();
-    setInterval(fetchCompetitionData, 4000);
+    // Initial load & 4s interval polling
+    updateCompetition();
+    setInterval(updateCompetition, 4000);
   </script>
 </body>
 </html>
