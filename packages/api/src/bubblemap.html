@@ -1151,37 +1151,183 @@
       padding: 0 20px;
     }
 
-    /* ── Responsive Mobile Rules ──────────────────────────────────── */
+    /* ── Responsive Mobile Rules (World-Class iOS & Android Architecture) ─── */
     @media (max-width: 768px) {
-      .market-strip { display: none; }
-      .search-wrap { max-width: 140px; }
-      #stat-deck { top: 58px; left: 10px; gap: 6px; }
-      .stat-pill { padding: 0 8px; height: 26px; font-size: 11px; }
-      #canvas-hud { bottom: 14px; left: 10px; }
-      #view-controls { bottom: 14px; right: 10px; }
-      #quick-buy-bar { bottom: 14px; padding: 4px 6px 4px 10px; }
+      #header {
+        height: 48px;
+        padding: 0 10px;
+        gap: 6px;
+      }
+      .market-strip { display: none !important; }
+      
+      .brand-group {
+        gap: 6px;
+        max-width: 120px;
+      }
+      .brand-logo-frame {
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+      }
+      .brand-title { font-size: 12px; }
+      .symbol-pill { font-size: 10px; height: 16px; line-height: 16px; padding: 0 4px; }
+      .ca-link { font-size: 10px; max-width: 80px; }
 
-      /* Mobile Bottom Sheet Transform */
+      .search-wrap {
+        flex: 1;
+        max-width: 120px;
+        min-width: 70px;
+      }
+      .search-input {
+        height: 28px;
+        font-size: 11px;
+        padding: 0 24px 0 24px;
+        border-radius: 6px;
+      }
+      .search-icon-svg {
+        left: 7px;
+        width: 12px;
+        height: 12px;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .header-search-chip { display: none !important; }
+      .btn-chip {
+        height: 28px;
+        padding: 0 7px;
+        font-size: 11px;
+        border-radius: 7px;
+        gap: 3px;
+      }
+
+      /* Horizontal Kinetic Stat Deck */
+      #stat-deck {
+        top: 54px;
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: calc(100vw - 16px);
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 6px;
+        padding-bottom: 2px;
+      }
+      #stat-deck::-webkit-scrollbar { display: none; }
+      .stat-pill {
+        flex-shrink: 0;
+        padding: 0 8px;
+        height: 26px;
+        font-size: 11px;
+        border-radius: 7px;
+        white-space: nowrap;
+      }
+
+      /* Non-Colliding Safe-Area Floating Controls */
+      #quick-buy-bar {
+        bottom: max(14px, calc(10px + env(safe-area-inset-bottom, 0px)));
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 3px 6px 3px 10px;
+        gap: 6px;
+        z-index: 26;
+        max-width: calc(100vw - 20px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--color-hairline-strong);
+      }
+      .buy-label { font-size: 11px; }
+      .buy-btn-chip {
+        height: 26px;
+        line-height: 26px;
+        padding: 0 10px;
+        font-size: 11px;
+      }
+
+      #canvas-hud {
+        bottom: max(58px, calc(52px + env(safe-area-inset-bottom, 0px)));
+        left: 10px;
+        gap: 6px;
+        z-index: 25;
+      }
+      .hud-action-btn {
+        width: 30px;
+        height: 30px;
+        font-size: 13px;
+      }
+      .legend-trigger-btn {
+        height: 26px;
+        padding: 0 8px;
+        font-size: 11px;
+        border-radius: 7px;
+      }
+
+      #view-controls {
+        bottom: max(58px, calc(52px + env(safe-area-inset-bottom, 0px)));
+        right: 10px;
+        z-index: 25;
+      }
+      .view-chip-btn {
+        height: 28px;
+        padding: 0 8px;
+        font-size: 11px;
+        border-radius: 7px;
+      }
+
+      /* Mobile Bottom Sheet Drawer with Full Safe Area Inset */
       #inspector-drawer {
         top: auto;
         left: 0;
         right: 0;
         bottom: 0;
         width: 100%;
-        max-height: 72vh;
+        max-height: 76vh;
         border-radius: 20px 20px 0 0;
         transform: translateY(105%);
-        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.85);
+        transition: transform 0.32s var(--ease-out-expo), max-height 0.3s ease;
+        box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.9);
+        z-index: 50;
       }
       #inspector-drawer.open { transform: translateY(0); }
+      #inspector-drawer.expanded { max-height: 92vh; }
+      
       .drawer-drag-pill {
         display: block;
-        width: 36px;
-        height: 4px;
-        border-radius: 2px;
+        width: 40px;
+        height: 5px;
+        border-radius: 3px;
         background: var(--color-hairline-strong);
-        margin: 10px auto 2px auto;
+        margin: 8px auto 4px auto;
+        cursor: pointer;
       }
+
+      .inspector-footer {
+        padding: 10px 16px calc(10px + max(10px, env(safe-area-inset-bottom, 0px))) 16px;
+      }
+
+      /* Modals Responsive */
+      .modal-overlay { padding: 12px; }
+      .modal-card {
+        padding: 20px 16px;
+        border-radius: 16px;
+        max-height: 88vh;
+      }
+      .hero-title { font-size: 20px; }
+      .hero-subtitle { font-size: 12px; margin-bottom: 14px; }
+      .hero-input { height: 36px; font-size: 12px; }
+      .hero-scan-btn { height: 36px; font-size: 12px; }
+    }
+
+    @media (max-width: 420px) {
+      .search-wrap { max-width: 90px; }
+      #quick-buy-bar .buy-btn-chip { padding: 0 7px; font-size: 10px; }
+      .header-actions { gap: 2px; }
+      .btn-chip { padding: 0 5px; font-size: 10.5px; }
     }
   </style>
 </head>
@@ -1234,7 +1380,7 @@
 
       <!-- Header Action Controls -->
       <div class="header-actions">
-        <button class="btn-chip" onclick="openHeroSearch()" title="Search any token contract address">
+        <button class="btn-chip header-search-chip" onclick="openHeroSearch()" title="Search any token contract address">
           <span>Search</span>
         </button>
         <button class="btn-chip active" id="traces-btn" onclick="toggleTraces()" title="Toggle Transfer Traces">
@@ -2769,6 +2915,13 @@
       searchInput.value = '';
       searchClearBtn.style.display = 'none';
       searchDropdown.style.display = 'none';
+    };
+
+    window.toggleDrawerExpand = function() {
+      const drawer = document.getElementById('inspector-drawer');
+      if (drawer) {
+        drawer.classList.toggle('expanded');
+      }
     };
 
     document.addEventListener('click', (e) => {
