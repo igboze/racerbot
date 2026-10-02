@@ -179,6 +179,15 @@ function fmtMcap(nearValue: number, nr: number): string {
   return `$${v.toFixed(2)}`;
 }
 
+function fmtUsd(v: number): string {
+  if (!v || v === 0) return '$0.00';
+  if (Math.abs(v) >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(v) >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(v) >= 1_000) return `$${(v / 1_000).toFixed(2)}K`;
+  if (Math.abs(v) >= 1) return `$${v.toFixed(2)}`;
+  return `$${v.toFixed(4)}`;
+}
+
 // ── Canvas Helpers ──────────────────────────────────────────────────────────
 
 function roundRect(ctx: any, x: number, y: number, w: number, h: number, r: number) {
@@ -552,10 +561,13 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     ctx.restore();
 
     // 14. Stats Bar:
-    // left: 52px; right: 470px; bottom: 40px; display: flex;
+    // left: 52px; right: badgeX - 20px; bottom: 40px; display: flex;
     // border-top: 1px solid rgba(255,255,255,.15); padding-top: 20px
     const statsLeft = 52;
-    const statsRight = W - 470;
+    const badgeW = 320;
+    const badgeMargin = 16;
+    const badgeX = W - 52 - badgeW;
+    const statsRight = badgeX - badgeMargin;
     const statsWidth = statsRight - statsLeft;
     const statsTop = H - 140;
 
@@ -567,26 +579,79 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     ctx.lineTo(statsRight, statsTop);
     ctx.stroke();
 
-    // 3 columns: Entry market cap, Current market cap, Hold time
-    const colW = statsWidth / 3;
-    const statsData = [
-      { label: 'Entry market cap', value: fmtMcap(data.entryMarketCap, nr) },
-      { label: 'Current market cap', value: fmtMcap(data.currentMarketCap, nr) },
-      { label: 'Hold time', value: String(data.holdDuration || '-') },
-    ];
+    const statsData: Array<{ label: string; value: string; color?: string }> = [];
+
+    if (data.showNetWorth) {
+      // 1. Initial Investment
+      statsData.push({
+        label: 'Invested',
+        value: fmtUsd(data.initialInvestment * nr),
+      });
+
+      // 2. Realized PnL (or Current Value / Net Value)
+      if (data.realizedPnl !== 0) {
+        const isRealizedProf = data.realizedPnl >= 0;
+        statsData.push({
+          label: 'Realized PnL',
+          value: `${isRealizedProf ? '+' : '-'}${fmtUsd(Math.abs(data.realizedPnl * nr))}`,
+          color: isRealizedProf ? '#00f076' : '#ff334b',
+        });
+      } else {
+        statsData.push({
+          label: 'Current Value',
+          value: fmtUsd(data.unrealizedValue * nr),
+        });
+      }
+
+      // 3. Entry Market Cap
+      statsData.push({
+        label: 'Entry MC',
+        value: fmtMcap(data.entryMarketCap, nr),
+      });
+
+      // 4. Current Market Cap
+      statsData.push({
+        label: 'Current MC',
+        value: fmtMcap(data.currentMarketCap, nr),
+      });
+
+      // 5. Hold Time
+      statsData.push({
+        label: 'Hold Time',
+        value: String(data.holdDuration || '-'),
+      });
+    } else {
+      statsData.push({
+        label: 'Entry market cap',
+        value: fmtMcap(data.entryMarketCap, nr),
+      });
+      statsData.push({
+        label: 'Current market cap',
+        value: fmtMcap(data.currentMarketCap, nr),
+      });
+      statsData.push({
+        label: 'Hold time',
+        value: String(data.holdDuration || '-'),
+      });
+    }
+
+    const numCols = statsData.length;
+    const colW = statsWidth / numCols;
+    const valFontSize = numCols > 3 ? 34 : 46;
+    const labelFontSize = numCols > 3 ? 13 : 15;
 
     statsData.forEach((st, i) => {
       const colX = statsLeft + i * colW;
-      // Label: font-size: 15px; opacity: .55; margin-bottom: 6px
-      ctx.font = fontStack.statsLabel(15);
+      // Label
+      ctx.font = fontStack.statsLabel(labelFontSize);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
       ctx.textBaseline = 'top';
       ctx.fillText(st.label, colX, statsTop + 20);
 
-      // Value: font: italic 700 46px 'Barlow Condensed'
-      ctx.font = fontStack.statsNum(46);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(st.value, colX, statsTop + 45);
+      // Value
+      ctx.font = fontStack.statsNum(valFontSize);
+      ctx.fillStyle = st.color || '#ffffff';
+      ctx.fillText(st.value, colX, statsTop + (numCols > 3 ? 42 : 45));
     });
 
     // 15. Referral Barcode & QR Code Widget (Bottom Right):
@@ -597,9 +662,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const refCode = data.referralCode || 'RACERBOT';
     const refLink = data.referralLink || `https://t.me/racertradingbot?start=${refCode}`;
 
-    const badgeW = 320;
     const badgeH = 88;
-    const badgeX = W - 52 - badgeW;
     const badgeY = statsTop + 5;
 
     ctx.save();

@@ -3,7 +3,13 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getTokenInfo, publishSwap } from '../wallet.js';
-import { createTrigger } from '@racerbot/db';
+import {
+  createTrigger,
+  getCompetition,
+  getCompetitionByToken,
+  upsertCompetition,
+  getCompetitionLeaderboard,
+} from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
 import { createLogger } from '@racerbot/shared';
 
@@ -47,11 +53,104 @@ export function serveBubbleMapHtml(res: import('express').Response): void {
   res.sendFile(htmlFile);
 }
 
+export function serveCompetitionHtml(res: import('express').Response): void {
+  const htmlPaths = [
+    path.resolve(__dirname, 'competition.html'),
+    path.resolve(__dirname, '..', 'competition.html'),
+    path.resolve(__dirname, '..', 'src', 'competition.html'),
+    path.resolve(__dirname, '..', '..', 'src', 'competition.html'),
+  ];
+  const htmlFile = htmlPaths.find(p => fs.existsSync(p));
+  if (!htmlFile) {
+    res.status(404).send('Competition page not found');
+    return;
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(htmlFile);
+}
+
 // ── Bubble Map page (served as static HTML) ───────────────────────────────────
 // GET /api/bubblemap?token=<address>&symbol=TOKEN&name=Token+Name
 // Returns the interactive holder bubble-map HTML app.
 router.get('/bubblemap', (_req, res) => {
   serveBubbleMapHtml(res);
+});
+
+// ── Trading Competition page (served as static HTML) ──────────────────────────
+// GET /api/competition or /api/competition/kookdog
+router.get(['/competition', '/competition/kookdog', '/leaderboard/kookdog'], (_req, res) => {
+  serveCompetitionHtml(res);
+});
+
+// ── Trading Competition data API ──────────────────────────────────────────────
+router.get('/competition/:id', async (req, res) => {
+  try {
+    const compId = req.params.id || 'kookdog';
+    const tokenAddress = compId === 'kookdog' ? 'kookdog-42db38.launchpad.justhoot.near' : compId;
+
+    // Fetch live token on-chain RPC state
+    const tokenInfo = await getTokenInfo(tokenAddress, true).catch(() => null);
+    const nearUsd = tokenInfo?.near_usd || 4.8;
+    const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
+    const currentMcapNear = tokenInfo?.market_cap || 0;
+    const currentPriceNear = parseFloat(tokenInfo?.price || '0');
+    const currentPriceUsd = parseFloat(tokenInfo?.price_usd || '0');
+
+    let comp = await getCompetition(compId).catch(() => null);
+    if (!comp) {
+      comp = await upsertCompetition({
+        id: compId,
+        token_address: tokenAddress,
+        token_symbol: tokenInfo?.symbol || 'KOOKDOG',
+        token_name: tokenInfo?.name || 'Kook Dog',
+        target_market_cap_usd: 30000,
+        status: currentMcapUsd >= 30000 ? 'active' : 'pending',
+        started_at: currentMcapUsd >= 30000 ? new Date() : null,
+      }).catch(() => null);
+    } else if (comp.status === 'pending' && currentMcapUsd >= comp.target_market_cap_usd) {
+      // Auto-activate competition when target market cap is reached
+      comp = await upsertCompetition({
+        id: comp.id,
+        token_address: comp.token_address,
+        token_symbol: comp.token_symbol,
+        token_name: comp.token_name,
+        target_market_cap_usd: comp.target_market_cap_usd,
+        status: 'active',
+        started_at: comp.started_at || new Date(),
+      }).catch(() => comp);
+    }
+
+    const startedAt = comp?.status === 'active' ? comp.started_at : null;
+    const leaderboard = await getCompetitionLeaderboard(
+      tokenAddress,
+      startedAt,
+      nearUsd,
+      tokenInfo?.decimals ?? 18,
+      10
+    );
+
+    res.json({
+      id: comp?.id || compId,
+      token_address: tokenAddress,
+      token_name: tokenInfo?.name || comp?.token_name || 'Kook Dog',
+      token_symbol: tokenInfo?.symbol || comp?.token_symbol || 'KOOKDOG',
+      status: comp?.status || (currentMcapUsd >= 30000 ? 'active' : 'pending'),
+      target_market_cap_usd: comp?.target_market_cap_usd || 30000,
+      current_market_cap_usd: currentMcapUsd,
+      current_market_cap_near: currentMcapNear,
+      current_price_near: currentPriceNear,
+      current_price_usd: currentPriceUsd,
+      near_usd: nearUsd,
+      started_at: comp?.started_at ?? null,
+      leaderboard,
+    });
+  } catch (err: any) {
+    logger.error('Competition API error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Cache helper for holder & transfer analytics ────────────────────────────

@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
-import apiRouter, { serveBubbleMapHtml } from './routes/index.js';
+import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
@@ -125,6 +125,11 @@ async function main(): Promise<void> {
     // If request is looking for API or health, proceed to next
     if (req.path === '/health' || req.path.startsWith('/api')) return next();
     serveBubbleMapHtml(res);
+  });
+
+  // Serve Trading Competition page directly at `/competition` and `/leaderboard`
+  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id'], (_req, res) => {
+    serveCompetitionHtml(res);
   });
 
   // Add monitoring routes

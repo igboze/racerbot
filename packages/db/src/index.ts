@@ -76,6 +76,11 @@ export {
   failDcaOrderTick,
   updateDcaOrderStatus,
   getDcaOrderById,
+  // Trading Competitions
+  getCompetition,
+  getCompetitionByToken,
+  upsertCompetition,
+  getCompetitionLeaderboard,
 } from './db.js';
 
 export {
@@ -102,6 +107,8 @@ export type {
   CopyTradeTargetRecord,
   CopyTradeFillRecord,
   DcaOrderRecord,
+  TradingCompetitionRecord,
+  CompetitionLeaderboardEntry,
   CreateCopyTradeTargetParams,
   CreateDcaOrderParams,
   CreateUserParams,
