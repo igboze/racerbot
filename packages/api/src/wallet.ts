@@ -532,12 +532,39 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
       }
     } catch { /* no-op */ }
   } else if (isIntearToken(tokenAddress)) {
-    venue = 'intear';
     try {
       const intearState = await near.getIntearTokenState(tokenAddress);
-      price = intearState.price;
-      liquidity = intearState.liquidityNear;
-    } catch { /* no-op */ }
+      // An Intear launch can remain address-identifiable after its real
+      // liquidity has moved to Rhea.  Do not keep routing trades through the
+      // launchpad merely because of the token suffix: prefer a meaningful
+      // Rhea pool whenever it is at least as deep as the launchpad pool.
+      if (
+        rheaCandidate &&
+        rheaCandidate.liquidity >= 5 &&
+        (intearState.price <= 0 || rheaCandidate.liquidity >= intearState.liquidityNear)
+      ) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      } else {
+        venue = 'intear';
+        price = intearState.price;
+        liquidity = intearState.liquidityNear;
+      }
+    } catch {
+      // A launchpad RPC failure must not hide a confirmed Rhea route.
+      if (rheaCandidate) {
+        venue = 'rhea';
+        price = rheaCandidate.price;
+        liquidity = rheaCandidate.liquidity;
+        rheaPoolId = rheaCandidate.rheaPoolId;
+        dclPoolId = rheaCandidate.dclPoolId;
+      } else {
+        venue = 'intear';
+      }
+    }
   } else if (tokenAddress.endsWith('.nearlytrade.near')) {
     try {
       const ntState = await near.getNearlytradeTokenState(tokenAddress);
@@ -1603,7 +1630,6 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
   }
   return newDepositsCount;
 }
-
 /**
  * Pre-warm storage deposit on NEAR for a user and token so future snipes/buys
  * don't need a separate storage_deposit transaction at execution time.
