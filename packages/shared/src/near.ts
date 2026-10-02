@@ -34,26 +34,6 @@ const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
 const noRheaPoolCache = new Map<string, number>();
-/**
- * A pool route is stable enough to reuse while a user reads a token card, but
- * not long enough to treat as a price quote.  This removes duplicate pool
- * discovery from the Buy/Sell hot path; the swap still takes a live quote and
- * enforces the user's min-output protection immediately before broadcast.
- */
-type RheaPoolRoute = {
-  poolId: number | string;
-  pairedToken: string;
-  intermediateToken?: string;
-  intermediatePoolId?: number;
-  isDcl: boolean;
-  price: number;
-  liquidityNear: number;
-  reserveNear?: string;
-  reserveToken?: string;
-  fee?: number;
-};
-const rheaRouteCache = new Map<string, { at: number; route: RheaPoolRoute }>();
-const RHEA_ROUTE_CACHE_TTL_MS = 8_000;
 // Permanent cache for quote-asset decimals (decimals never change after launch).
 const quoteDecimalsCache = new Map<string, number>();
 // 10-second cache for the NEAR-denominated price of a quote asset.
@@ -1124,13 +1104,18 @@ export class MultiRpcNear {
    * Find any active Rhea Finance pool for a token (Rule 1: check Rhea first).
    * Checks direct wrap.near pool, DCL pool, or 2-hop pool (e.g. jambo-1679.meme-cooking.near).
    */
-  async findRheaPoolForToken(tokenAddress: string, forceCheck = false): Promise<RheaPoolRoute | null> {
-    if (!forceCheck) {
-      const cached = rheaRouteCache.get(tokenAddress);
-      if (cached && Date.now() - cached.at < RHEA_ROUTE_CACHE_TTL_MS) {
-        return cached.route;
-      }
-    }
+  async findRheaPoolForToken(tokenAddress: string, forceCheck = false): Promise<{
+    poolId: number | string;
+    pairedToken: string;
+    intermediateToken?: string;
+    intermediatePoolId?: number;
+    isDcl: boolean;
+    price: number;
+    liquidityNear: number;
+    reserveNear?: string;
+    reserveToken?: string;
+    fee?: number;
+  } | null> {
     if (!forceCheck) {
       const lastNotFound = noRheaPoolCache.get(tokenAddress);
       if (lastNotFound && Date.now() - lastNotFound < 60_000) {
@@ -1201,7 +1186,18 @@ export class MultiRpcNear {
       return { rateInNear: 1, decimals: 18 };
     };
 
-    const candidates: RheaPoolRoute[] = [];
+    const candidates: Array<{
+      poolId: number | string;
+      pairedToken: string;
+      intermediateToken?: string;
+      intermediatePoolId?: number;
+      isDcl: boolean;
+      price: number;
+      liquidityNear: number;
+      reserveNear?: string;
+      reserveToken?: string;
+      fee?: number;
+    }> = [];
 
     // 1. Direct pool with wrap.near on v2.ref-finance.near AND DCL pool on dclv2.ref-labs.near in parallel
     const [simpleRes, dclRes] = await Promise.allSettled([
@@ -1263,7 +1259,6 @@ export class MultiRpcNear {
     // pick the higher liquidity pool immediately without waiting on slow multi-hop/indexer scans!
     const bestDirect = candidates.reduce((best, c) => (!best || c.liquidityNear > best.liquidityNear ? c : best), null as (typeof candidates)[0] | null);
     if (bestDirect && bestDirect.liquidityNear >= 5) {
-      rheaRouteCache.set(tokenAddress, { at: Date.now(), route: bestDirect });
       return bestDirect;
     }
 
@@ -1402,9 +1397,7 @@ export class MultiRpcNear {
     // Sort candidates strictly by HIGHEST liquidity (liquidityNear) to ensure best execution route & protect user funds
     uniqueCandidates.sort((a, b) => b.liquidityNear - a.liquidityNear);
 
-    const bestRoute = uniqueCandidates[0];
-    rheaRouteCache.set(tokenAddress, { at: Date.now(), route: bestRoute });
-    return bestRoute;
+    return uniqueCandidates[0];
   }
 
   /**

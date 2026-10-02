@@ -2096,10 +2096,6 @@ export class SwapExecutor {
       return { success: false, reason: poolIds.blocked };
     }
     const { rheaPoolId, dclPoolId } = poolIds;
-    // Pool discovery may have found a live Rhea route for a token originally
-    // detected on a launchpad.  Quote and execute against the venue that owns
-    // the liquidity, rather than retrying a stale bonding/launchpad pool.
-    const executionVenue = poolIds.executionVenue ?? venue;
 
     // Dynamic slippage calculation: for targeted snipes on new pools, default to at least 15% slippage
     // so initial launch volatility doesn't fail the buy, unless user configured higher.
@@ -2120,7 +2116,7 @@ export class SwapExecutor {
 
     try {
       const { minAmountOut } = await near.computeMinAmountOut(
-        executionVenue,
+        venue,
         'wrap.near',
         token_address,
         swapYocto,       // ← post-fee amount that actually reaches the DEX
@@ -2136,7 +2132,7 @@ export class SwapExecutor {
         token_out: token_address,
         amount_in: inYocto,
         min_amount_out: minAmountOut,
-        venue: executionVenue,
+        venue,
         slippage_pct: slippagePct,
         timestamp: Date.now(),
       };
@@ -2149,6 +2145,7 @@ export class SwapExecutor {
       // PRIORITY: the quote we just computed is fresh — stamp it so execute()
       // skips its redundant pre-flight re-quote (saves a full RPC round-trip).
       (swapEvent as any).quoted_at = Date.now();
+
       const r = await this.execute(swapEvent);
       const isFatal = !r.success && /insufficient balance|invalid amount|invalid account/i.test(r.reason ?? '');
       await finalizeSnipe(r.success, r.success
@@ -2170,34 +2167,9 @@ export class SwapExecutor {
   private async resolveAutoBuyPoolIds(
     tokenAddress: string,
     venue: AutoBuySignal['venue']
-  ): Promise<{
-    rheaPoolId: number | null;
-    dclPoolId: string | null;
-    executionVenue?: AutoBuySignal['venue'];
-    blocked?: string;
-  }> {
+  ): Promise<{ rheaPoolId: number | null; dclPoolId: string | null; blocked?: string }> {
     let rheaPoolId: number | null = null;
     let dclPoolId: string | null = null;
-
-    // Once liquidity is on Rhea, a token's original launchpad is only
-    // discovery metadata. Resolve the Rhea route first so snipes do not lose
-    // time (or fail) against a completed/unstable launchpad pool. This call
-    // also supports Ref DCL and routed pools; execute() already knows how to
-    // submit either representation under the Rhea venue.
-    const rheaRoute = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
-    // Auto-buy is a single transaction. Only promote a direct wNEAR route
-    // here; multi-hop Rhea routes need their intermediate-pool details carried
-    // through the event and are intentionally left to the normal venue flow.
-    if (rheaRoute && rheaRoute.pairedToken === 'wrap.near' && rheaRoute.liquidityNear >= 5) {
-      if (rheaRoute.isDcl) {
-        dclPoolId = String(rheaRoute.poolId);
-      } else if (typeof rheaRoute.poolId === 'number') {
-        rheaPoolId = rheaRoute.poolId;
-      }
-      if (rheaPoolId !== null || dclPoolId !== null) {
-        return { rheaPoolId, dclPoolId, executionVenue: 'rhea' };
-      }
-    }
 
     if (venue === 'nearlytrade') {
       const ntState = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
