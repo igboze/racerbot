@@ -729,9 +729,73 @@
       text-transform: uppercase;
     }
     .badge-whale { background: rgba(168, 85, 247, 0.15); color: #C084FC; border: 1px solid rgba(168, 85, 247, 0.35); }
+    .badge-bundler { background: rgba(245, 158, 11, 0.15); color: #FBBF24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .badge-retail { background: rgba(95, 214, 138, 0.15); color: #5FD68A; border: 1px solid rgba(95, 214, 138, 0.30); }
     .badge-sniper { background: var(--color-danger-fill); color: var(--color-on-danger); border: 1px solid rgb(249 112 102 / 0.25); }
     .badge-diamond { background: var(--color-success-fill); color: var(--color-on-success); border: 1px solid rgb(95 214 138 / 0.25); }
     .badge-pool { background: var(--color-warning-fill); color: var(--color-on-warning); border: 1px solid rgb(245 185 74 / 0.25); }
+
+    .tx-danger, .tx-red { color: #F97066; }
+
+    /* Sell Progress Meter in Drawer */
+    .sell-progress-box {
+      background: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .sell-progress-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sell-progress-track {
+      width: 100%;
+      height: 5px;
+      background: var(--color-surface-2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .sell-progress-bar {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--color-primary);
+      transition: width var(--dur-normal) var(--ease-standard), background var(--dur-normal) var(--ease-standard);
+    }
+
+    /* Bundler Risk Diagnostics Panel */
+    .bundler-pressure-card {
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-hairline);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .bundler-hdr-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .bundler-metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .bundler-sub-box {
+      background: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: 6px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
 
     .stat-matrix {
       display: grid;
@@ -1519,6 +1583,14 @@
         <span class="stat-pill-label">Clusters</span>
         <span class="stat-pill-val" id="stat-clusters">—</span>
       </div>
+      <div class="stat-pill" onclick="openRiskModal()" title="Bundler Selling & Dump Activity">
+        <span class="stat-pill-label">Bundler Sells</span>
+        <span class="stat-pill-val" id="stat-bundler-sells" style="color:var(--color-on-warning)">0 (0% dump)</span>
+      </div>
+      <div class="stat-pill" onclick="openRiskModal()" title="Organic Retail Small Holder Sells">
+        <span class="stat-pill-label">Retail Sells</span>
+        <span class="stat-pill-val" id="stat-retail-sells">0 sells</span>
+      </div>
       <div class="stat-pill" onclick="openRiskModal()">
         <span class="stat-pill-label">Top 10 Whale %</span>
         <span class="stat-pill-val" id="stat-top10">—</span>
@@ -1586,6 +1658,29 @@
             <span class="matrix-lbl">Token Balance</span>
             <span class="matrix-val" id="panel-balance">0</span>
           </div>
+
+          <!-- Bundler / Wallet Classification Matrix -->
+          <div class="stat-matrix">
+            <div class="matrix-box">
+              <span class="matrix-lbl">Wallet Category</span>
+              <span class="matrix-val" id="panel-wallet-type" style="font-size:11.5px;">👤 RETAIL</span>
+            </div>
+            <div class="matrix-box">
+              <span class="matrix-lbl">Total Sells</span>
+              <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">💎 0 Sells</span>
+            </div>
+          </div>
+
+          <!-- Bag Exit Progress Bar -->
+          <div class="sell-progress-box">
+            <div class="sell-progress-hdr">
+              <span class="matrix-lbl" id="panel-exit-status-lbl">Exit Status</span>
+              <span class="matrix-val" id="panel-exit-pct-lbl" style="font-size:11px; color:var(--color-ink-subtle);">0% Sold</span>
+            </div>
+            <div class="sell-progress-track">
+              <div class="sell-progress-bar" id="panel-exit-bar" style="width:0%;"></div>
+            </div>
+          </div>
         </div>
 
         <!-- Action Deck (1-Click Copy Trading) -->
@@ -1596,7 +1691,7 @@
         </div>
 
         <div class="tx-section-hdr">
-          <span>Transfer Connections</span>
+          <span>Transfer &amp; Trade Flows</span>
           <span id="panel-tx-count" style="color:var(--color-link)">0 links</span>
         </div>
         <div class="tx-scroll" id="panel-tx-scroll">
@@ -1736,6 +1831,32 @@
           </div>
         </div>
 
+        <!-- Bundler Exit & Sell Pressure Diagnostics Section -->
+        <div class="bundler-pressure-card">
+          <div class="bundler-hdr-row">
+            <span style="font-size:12px; font-weight:600; color:var(--color-ink-strong);">🤖 Bundler vs Small Holder Sells</span>
+            <span class="badge-chip" id="diag-bundler-badge" style="background:var(--color-warning-fill); color:var(--color-on-warning);">0% DUMPED</span>
+          </div>
+          
+          <div class="bundler-metrics-grid">
+            <div class="bundler-sub-box">
+              <span class="matrix-lbl">Bundler Sells</span>
+              <span class="matrix-val" id="diag-bundler-sells-val" style="color:var(--color-on-warning)">0 sells</span>
+            </div>
+            <div class="bundler-sub-box">
+              <span class="matrix-lbl">Retail Sells</span>
+              <span class="matrix-val" id="diag-retail-sells-val" style="color:var(--color-on-success)">0 sells</span>
+            </div>
+          </div>
+
+          <div class="sell-progress-track" style="margin-top:4px;">
+            <div class="sell-progress-bar" id="diag-bundler-bar" style="width:0%; background:linear-gradient(90deg, #F59E0B, #F97066);"></div>
+          </div>
+          <div style="font-size:11px; color:var(--color-ink-subtle); margin-top:2px; line-height:1.35;" id="diag-bundler-desc">
+            No coordinated bundler exits detected. Insiders are diamond-handing initial bags.
+          </div>
+        </div>
+
         <div class="risk-checklist">
           <div class="risk-item">
             <div class="risk-item-left">
@@ -1781,6 +1902,16 @@
         <p style="font-size:12px; color:var(--color-ink-subtle); margin-bottom:12px;">Understand color tiers, directional transfer comets, and cluster groupings.</p>
 
         <div class="legend-grid">
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#F97066; border:1.5px dashed #F97066;"></div>
+            <div><b style="color:var(--color-ink-strong);">Active Seller Ring</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">DEX Outflows / Sells</span></div>
+          </div>
+
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#FBBF24;"></div>
+            <div><b style="color:var(--color-ink-strong);">Bundler / Insider</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">Coordinated Launch Group</span></div>
+          </div>
+
           <div class="legend-item">
             <div class="legend-dot" style="background:var(--color-link);"></div>
             <div><b style="color:var(--color-ink-strong);">Outflow Comet</b><br><span style="color:var(--color-ink-subtle); font-size:11px;">Tokens Sent</span></div>
@@ -2230,6 +2361,11 @@
       if (el) el.innerHTML = `<span style="color:var(--color-on-danger)">${msg}</span>`;
     }
 
+    let globalTotalSells = 0;
+    let globalBundlerSells = 0;
+    let globalRetailSells = 0;
+    let globalBundlerDumpPct = 0;
+
     // ── Process Graph & Cluster Analysis ──────────────────────────
     function processGraph(holdersRaw, txnsRaw) {
       totalSupplyAmount = 0n;
@@ -2265,6 +2401,17 @@
           radius: 14,
           sentTxns: [],
           recvTxns: [],
+          sellCount: 0,
+          buyCount: 0,
+          soldAmount: 0n,
+          boughtAmount: 0n,
+          peerSentCount: 0,
+          peerRecvCount: 0,
+          isBundler: false,
+          walletType: 'RETAIL',
+          exitPct: 0,
+          exitStatus: 'DIAMOND',
+          exitStatusLabel: '💎 Diamond Hand',
           clusterId: null,
           clusterColor: null,
           isDiamond: true,
@@ -2273,11 +2420,40 @@
         bubbleMap.set(h.account, b);
       });
 
-      // Links Processing
+      // Links Processing & Sell/Trade Detection
       transferLinks = [];
       for (const tx of txnsRaw) {
         const bFrom = bubbleMap.get(tx.from);
         const bTo = bubbleMap.get(tx.to);
+
+        const isToDex = isDexPoolOrContract(tx.to) || tx.cause === 'ft_transfer_call';
+        const isFromDex = isDexPoolOrContract(tx.from) && !isToDex;
+        const isSell = isToDex;
+        const isBuy = isFromDex;
+        const isPeer = !isToDex && !isFromDex;
+
+        let txAmt = 0n;
+        try { txAmt = BigInt(tx.amount || '0'); } catch {}
+
+        if (bFrom) {
+          if (isSell) {
+            bFrom.sellCount += 1;
+            bFrom.soldAmount += txAmt;
+          } else {
+            bFrom.peerSentCount += 1;
+          }
+          bFrom.isDiamond = false;
+        }
+
+        if (bTo) {
+          if (isBuy) {
+            bTo.buyCount += 1;
+            bTo.boughtAmount += txAmt;
+          } else {
+            bTo.peerRecvCount += 1;
+          }
+        }
+
         if (bFrom && bTo && bFrom !== bTo) {
           const linkObj = {
             from: tx.from,
@@ -2285,17 +2461,33 @@
             amount: tx.amount,
             cause: tx.cause,
             tx: tx.tx,
+            isSell,
+            isBuy,
+            isPeer,
             sourceBubble: bFrom,
             targetBubble: bTo
           };
           transferLinks.push(linkObj);
           bFrom.sentTxns.push(linkObj);
           bTo.recvTxns.push(linkObj);
-          bFrom.isDiamond = false;
+        } else if (bFrom && isSell) {
+          const sellLinkObj = {
+            from: tx.from,
+            to: tx.to || 'DEX Pool',
+            amount: tx.amount,
+            cause: tx.cause,
+            tx: tx.tx,
+            isSell: true,
+            isBuy: false,
+            isPeer: false,
+            sourceBubble: bFrom,
+            targetBubble: null
+          };
+          bFrom.sentTxns.push(sellLinkObj);
         }
       }
 
-      // Union-Find Cluster Identification
+      // Union-Find Cluster Identification (Group peer-to-peer launch/funding trees)
       const parent = new Map();
       function find(i) {
         if (!parent.has(i)) parent.set(i, i);
@@ -2308,7 +2500,9 @@
         if (rootI !== rootJ) parent.set(rootI, rootJ);
       }
 
-      for (const l of transferLinks) union(l.from, l.to);
+      for (const l of transferLinks) {
+        if (l.isPeer) union(l.from, l.to);
+      }
 
       const clusterMap = new Map();
       for (const b of bubbles) {
@@ -2334,23 +2528,97 @@
           for (const m of members) {
             m.clusterId = cObj.id;
             m.clusterColor = colorTheme;
+            m.isBundler = true;
           }
           cIdx++;
         }
       }
 
-      // Stats Calculation
+      // Wallet Categorization & Exit Calculations
+      globalTotalSells = 0;
+      globalBundlerSells = 0;
+      globalRetailSells = 0;
+      let globalBundlerSoldAmt = 0n;
+      let globalBundlerTotalAmt = 0n;
+
+      for (const b of bubbles) {
+        const curAmt = BigInt(b.amount || '0');
+        const initialOrMaxBag = curAmt + b.soldAmount;
+
+        let exitPct = 0;
+        if (initialOrMaxBag > 0n) {
+          exitPct = Number((b.soldAmount * 10000n) / initialOrMaxBag) / 100;
+        }
+        b.exitPct = Math.min(100, Math.max(0, exitPct));
+
+        if (b.tier.isPool) {
+          b.walletType = 'POOL';
+          b.exitStatus = 'POOL';
+          b.exitStatusLabel = 'Liquidity Pool';
+        } else if (b.isBundler) {
+          b.walletType = 'BUNDLER';
+          if (b.sellCount === 0) {
+            b.exitStatus = 'DIAMOND';
+            b.exitStatusLabel = '💎 Bundler Holding (0 Sells)';
+          } else if (b.exitPct >= 90 || curAmt === 0n) {
+            b.exitStatus = 'DUMPED';
+            b.exitStatusLabel = `🚨 Bundler Exited (${b.exitPct.toFixed(0)}% Dumped)`;
+          } else {
+            b.exitStatus = 'SELLING';
+            b.exitStatusLabel = `🔥 Bundler Selling (${b.exitPct.toFixed(0)}% Sold)`;
+          }
+        } else if (b.pct >= 5.0) {
+          b.walletType = 'WHALE';
+          b.exitStatus = b.sellCount === 0 ? 'DIAMOND' : (b.exitPct >= 90 ? 'DUMPED' : 'SELLING');
+          b.exitStatusLabel = b.sellCount === 0 ? '💎 Whale Holding' : `🔥 Whale Sold ${b.exitPct.toFixed(0)}%`;
+        } else {
+          b.walletType = 'RETAIL';
+          b.exitStatus = b.sellCount === 0 ? 'DIAMOND' : (b.exitPct >= 90 ? 'DUMPED' : 'SELLING');
+          b.exitStatusLabel = b.sellCount === 0 ? '💎 Retail Holding' : `👤 Retail Sold ${b.exitPct.toFixed(0)}%`;
+        }
+
+        if (b.walletType !== 'POOL') {
+          globalTotalSells += b.sellCount;
+          if (b.isBundler) {
+            globalBundlerSells += b.sellCount;
+            globalBundlerSoldAmt += b.soldAmount;
+            globalBundlerTotalAmt += initialOrMaxBag;
+          } else {
+            globalRetailSells += b.sellCount;
+          }
+        }
+      }
+
+      globalBundlerDumpPct = 0;
+      if (globalBundlerTotalAmt > 0n) {
+        globalBundlerDumpPct = Number((globalBundlerSoldAmt * 10000n) / globalBundlerTotalAmt) / 100;
+      }
+
+      // Stats Deck Calculation
       const top10Sum = bubbles.slice(0, 10).reduce((acc, b) => acc + b.pct, 0);
       document.getElementById('stat-holders').textContent = holdersRaw.length.toLocaleString();
       document.getElementById('stat-clusters').textContent = clusters.length.toString();
       document.getElementById('stat-top10').textContent = `${top10Sum.toFixed(1)}%`;
 
+      const bundlerSellsPill = document.getElementById('stat-bundler-sells');
+      if (bundlerSellsPill) {
+        bundlerSellsPill.textContent = `${globalBundlerSells} (${globalBundlerDumpPct.toFixed(0)}% dump)`;
+        bundlerSellsPill.style.color = globalBundlerDumpPct >= 50 ? 'var(--color-on-danger)' : (globalBundlerSells > 0 ? 'var(--color-on-warning)' : 'var(--color-on-success)');
+      }
+
+      const retailSellsPill = document.getElementById('stat-retail-sells');
+      if (retailSellsPill) {
+        retailSellsPill.textContent = `${globalRetailSells} sells`;
+      }
+
       // Risk Score Evaluation
       const riskBadge = document.getElementById('stat-risk-badge');
       let score = 100;
-      if (top10Sum > 80) score -= 35;
-      else if (top10Sum > 60) score -= 20;
+      if (top10Sum > 80) score -= 30;
+      else if (top10Sum > 60) score -= 15;
       if (clusters.some(c => c.totalPct > 40)) score -= 25;
+      if (globalBundlerDumpPct > 50) score -= 25;
+      else if (globalBundlerDumpPct > 20) score -= 15;
       score = Math.max(10, Math.min(score, 98));
       riskScoreVal = score;
 
@@ -2372,6 +2640,33 @@
       document.getElementById('diag-links').textContent = `${transferLinks.length} traces`;
       document.getElementById('diag-pool').textContent = poolAccountDetected ? `${poolAccountDetected.slice(0,12)}…` : 'Decentralized';
       document.getElementById('diag-bot-cta').href = `https://t.me/racertradingbot?start=buy_${encodeURIComponent(currentToken.replace(/\./g, '_'))}_1`;
+
+      // Bundler Diagnostic Card
+      const diagBundlerBadge = document.getElementById('diag-bundler-badge');
+      const diagBundlerSellsVal = document.getElementById('diag-bundler-sells-val');
+      const diagRetailSellsVal = document.getElementById('diag-retail-sells-val');
+      const diagBundlerBar = document.getElementById('diag-bundler-bar');
+      const diagBundlerDesc = document.getElementById('diag-bundler-desc');
+
+      if (diagBundlerBadge) {
+        diagBundlerBadge.textContent = `${globalBundlerDumpPct.toFixed(1)}% DUMPED`;
+        diagBundlerBadge.style.background = globalBundlerDumpPct >= 50 ? 'var(--color-danger-fill)' : (globalBundlerDumpPct > 0 ? 'var(--color-warning-fill)' : 'var(--color-success-fill)');
+        diagBundlerBadge.style.color = globalBundlerDumpPct >= 50 ? 'var(--color-on-danger)' : (globalBundlerDumpPct > 0 ? 'var(--color-on-warning)' : 'var(--color-on-success)');
+      }
+      if (diagBundlerSellsVal) diagBundlerSellsVal.textContent = `${globalBundlerSells} sells`;
+      if (diagRetailSellsVal) diagRetailSellsVal.textContent = `${globalRetailSells} sells`;
+      if (diagBundlerBar) diagBundlerBar.style.width = `${Math.min(100, Math.max(0, globalBundlerDumpPct))}%`;
+      if (diagBundlerDesc) {
+        if (globalBundlerSells === 0 && clusters.length === 0) {
+          diagBundlerDesc.textContent = 'No coordinated launch bundlers detected. Token distribution is organic and retail-driven.';
+        } else if (globalBundlerDumpPct >= 60) {
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-danger)">🚨 Heavy Insider Exit:</b> Bundlers have executed ${globalBundlerSells} sells and dumped ${globalBundlerDumpPct.toFixed(1)}% of their bag onto the market.`;
+        } else if (globalBundlerSells > 0) {
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-warning)">⚠️ Partial Bundler Selling:</b> Insiders have executed ${globalBundlerSells} sells (${globalBundlerDumpPct.toFixed(1)}% dumped), but still hold remaining bags.`;
+        } else {
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-success)">💎 Bundlers Diamond Handing:</b> Bundler clusters hold initial tokens with 0 sells executed.`;
+        }
+      }
 
       initPhysics();
     }
@@ -2661,6 +2956,20 @@
         ctx.stroke();
         ctx.setLineDash([]);
 
+        // Active Seller / Bundler Dump Indicator Ring
+        if (b.sellCount > 0 && !b.tier.isPool) {
+          ctx.save();
+          ctx.beginPath();
+          const pulseRing = curR + 3.5 + Math.sin(simulationTime * 0.005 + b.phase) * 1.5;
+          ctx.arc(b.x, b.y, pulseRing, 0, Math.PI * 2);
+          ctx.strokeStyle = b.isBundler ? 'rgba(249, 112, 102, 0.85)' : 'rgba(245, 185, 74, 0.65)';
+          ctx.lineWidth = b.isBundler ? 1.6 : 1.2;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+
         // 3D Glass Crescent Highlight Arc
         if (curR >= 16) {
           ctx.save();
@@ -2693,6 +3002,25 @@
           ctx.fillStyle = '#F4F4F2';
           ctx.font = `600 ${Math.max(8, curR * 0.42)}px Inter, sans-serif`;
           ctx.fillText(pctStr, b.x, b.y);
+        }
+
+        // Sell Count Badge on Bubble
+        if (curR >= 22 && b.sellCount > 0 && !b.tier.isPool) {
+          ctx.save();
+          const badgeX = b.x + curR * 0.68;
+          const badgeY = b.y - curR * 0.68;
+          ctx.beginPath();
+          ctx.arc(badgeX, badgeY, 7.5, 0, Math.PI * 2);
+          ctx.fillStyle = b.isBundler ? '#F97066' : '#F5B94A';
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 4;
+          ctx.fill();
+          ctx.fillStyle = '#111113';
+          ctx.font = '700 8.5px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(b.sellCount > 9 ? '9+' : `${b.sellCount}s`, badgeX, badgeY);
+          ctx.restore();
         }
 
         ctx.restore();
@@ -2768,6 +3096,40 @@
       tagEl.textContent = b.tier.tag;
       tagEl.className = 'badge-chip ' + (b.tier.isPool ? 'badge-pool' : (b.tier.tag === 'WHALE' ? 'badge-whale' : 'badge-diamond'));
 
+      // Wallet Category & Sells Count Matrix
+      const typeEl = document.getElementById('panel-wallet-type');
+      if (typeEl) {
+        if (b.tier.isPool) {
+          typeEl.innerHTML = '<span style="color:#FBBF24">🔄 DEX POOL</span>';
+        } else if (b.isBundler) {
+          typeEl.innerHTML = '<span style="color:#F59E0B">🤖 BUNDLER / INSIDER</span>';
+        } else if (b.tier.tag === 'WHALE') {
+          typeEl.innerHTML = '<span style="color:#C084FC">🐋 WHALE</span>';
+        } else {
+          typeEl.innerHTML = '<span style="color:#5FD68A">👤 RETAIL HOLDER</span>';
+        }
+      }
+
+      const sellsEl = document.getElementById('panel-sells-count');
+      if (sellsEl) {
+        if (b.sellCount === 0) {
+          sellsEl.innerHTML = '<span style="color:#5FD68A">💎 0 Sells</span>';
+        } else {
+          sellsEl.innerHTML = `<span style="color:#F97066">🔥 ${b.sellCount} Sell${b.sellCount > 1 ? 's' : ''}</span>`;
+        }
+      }
+
+      const exitStatusLbl = document.getElementById('panel-exit-status-lbl');
+      const exitPctLbl = document.getElementById('panel-exit-pct-lbl');
+      const exitBar = document.getElementById('panel-exit-bar');
+
+      if (exitStatusLbl) exitStatusLbl.textContent = b.exitStatusLabel || 'Diamond Hand';
+      if (exitPctLbl) exitPctLbl.textContent = `${b.exitPct.toFixed(1)}% Sold`;
+      if (exitBar) {
+        exitBar.style.width = `${Math.min(100, Math.max(0, b.exitPct))}%`;
+        exitBar.style.background = b.exitPct >= 75 ? 'var(--color-on-danger)' : (b.exitPct >= 25 ? 'var(--color-on-warning)' : 'var(--color-on-success)');
+      }
+
       const copyBtn = document.getElementById('panel-copy-trade-btn');
       const copyWalletEncoded = encodeURIComponent(b.address.replace(/\./g, '_'));
       const refSuffix = currentReferrer ? `_ref_${encodeURIComponent(currentReferrer)}` : '';
@@ -2782,12 +3144,29 @@
       if (allTxs.length === 0) {
         txScrollEl.innerHTML = '<div style="font-size:11px; color:var(--color-ink-subtle); text-align:center; padding:10px;">No direct wallet transfers</div>';
       } else {
-        txScrollEl.innerHTML = allTxs.map(t => `
+        txScrollEl.innerHTML = allTxs.map(t => {
+          let badgeText = '➔ PEER';
+          let badgeColor = 'tx-cyan';
+          if (t.isSell) {
+            badgeText = '🔥 DEX SELL';
+            badgeColor = 'tx-danger';
+          } else if (t.isBuy) {
+            badgeText = '🛒 DEX BUY';
+            badgeColor = 'tx-green';
+          }
+          const peerName = t.dir === 'out' ? t.to : t.from;
+          const shortPeer = isDexPoolOrContract(peerName) ? 'DEX Pool' : (peerName.length > 14 ? peerName.slice(0, 7) + '…' + peerName.slice(-4) : peerName);
+
+          return `
           <div class="tx-card">
-            <span class="tx-peer-name">${t.dir === 'out' ? '➔ Sent to ' + t.to : '⬅ Received from ' + t.from}</span>
-            <span class="tx-val-text ${t.dir === 'out' ? 'tx-cyan' : 'tx-green'}">${t.dir === 'out' ? '−' : '+'}${formatBalance(t.amount)}</span>
+            <div style="display:flex; flex-direction:column; gap:2px; max-width:160px; overflow:hidden;">
+              <span class="tx-peer-name">${t.dir === 'out' ? '➔ Sent to ' + shortPeer : '⬅ From ' + shortPeer}</span>
+              <span style="font-size:9.5px; font-weight:600;" class="${badgeColor}">${badgeText}</span>
+            </div>
+            <span class="tx-val-text ${t.dir === 'out' ? (t.isSell ? 'tx-red' : 'tx-cyan') : 'tx-green'}">${t.dir === 'out' ? '−' : '+'}${formatBalance(t.amount)}</span>
           </div>
-        `).join('');
+          `;
+        }).join('');
       }
 
       document.getElementById('panel-explorer-btn').href = `https://nearblocks.io/address/${encodeURIComponent(b.address)}`;
@@ -2965,26 +3344,26 @@
       let mcapStr = tokenMcapUsd > 0 ? (tokenMcapUsd >= 1e6 ? `$${(tokenMcapUsd / 1e6).toFixed(2)}M` : `$${(tokenMcapUsd / 1e3).toFixed(1)}K`) : '—';
       octx.font = '500 13px Inter, sans-serif';
       octx.fillStyle = '#8F8F8A';
-      octx.fillText('MCap: ', 310, pillY + 24);
+      octx.fillText('MCap: ', 290, pillY + 24);
       octx.fillStyle = '#F4F4F2';
       octx.font = '600 13px "JetBrains Mono", monospace';
-      octx.fillText(mcapStr, 360, pillY + 24);
+      octx.fillText(mcapStr, 335, pillY + 24);
 
-      // Metric 3: Top 10 Whale %
+      // Metric 3: Bundler Sells & Dump %
       octx.font = '500 13px Inter, sans-serif';
       octx.fillStyle = '#8F8F8A';
-      octx.fillText('Top 10 Whales: ', 500, pillY + 24);
+      octx.fillText('Bundlers: ', 455, pillY + 24);
+      octx.fillStyle = globalBundlerDumpPct >= 50 ? '#F97066' : (globalBundlerSells > 0 ? '#F5B94A' : '#5FD68A');
+      octx.font = '600 13px "JetBrains Mono", monospace';
+      octx.fillText(`${globalBundlerSells} sells (${globalBundlerDumpPct.toFixed(0)}% dump)`, 520, pillY + 24);
+
+      // Metric 4: Top 10 Whale %
+      octx.font = '500 13px Inter, sans-serif';
+      octx.fillStyle = '#8F8F8A';
+      octx.fillText('Top 10: ', 740, pillY + 24);
       octx.fillStyle = '#4193F5';
       octx.font = '600 13px "JetBrains Mono", monospace';
-      octx.fillText(`${top10Val.toFixed(1)}%`, 610, pillY + 24);
-
-      // Metric 4: Clusters
-      octx.font = '500 13px Inter, sans-serif';
-      octx.fillStyle = '#8F8F8A';
-      octx.fillText('Clusters: ', 710, pillY + 24);
-      octx.fillStyle = '#F4F4F2';
-      octx.font = '600 13px "JetBrains Mono", monospace';
-      octx.fillText(`${clusters.length} groups`, 780, pillY + 24);
+      octx.fillText(`${top10Val.toFixed(1)}%`, 790, pillY + 24);
 
       // Metric 5: Risk Score
       octx.font = '500 13px Inter, sans-serif';
