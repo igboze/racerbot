@@ -134,10 +134,12 @@ export async function generatePNLCardData(
       totalInitialInvestment = quantityHeld * avgEntryPrice;
     }
 
-    // ── Realized PNL ─────────────────────────────────────────────────────────
+    // ── Exit Price & Realized Metrics for Closed Positions ──────────────────
     let totalRealizedPnl   = 0;
     let totalRealizedValue = 0;
     let totalRealizedCost  = 0;
+    let totalSoldAmount    = 0;
+    let totalSoldGross     = 0;
     for (const sell of sells) {
       const amount   = toHuman(sell.amount);
       const price    = parseFloat(sell.price);
@@ -147,8 +149,18 @@ export async function generatePNLCardData(
       totalRealizedValue += sellValue;
       totalRealizedCost  += costBasis;
       totalFeesPaid      += fee;
+      totalSoldAmount    += amount;
+      totalSoldGross     += amount * price;
     }
     totalRealizedPnl = totalRealizedValue - totalRealizedCost;
+
+    const isClosed = position.status === 'closed' || quantityHeld <= 0;
+    const avgExitPrice = totalSoldAmount > 0
+      ? totalSoldGross / totalSoldAmount
+      : (sells.length > 0 ? parseFloat(sells[sells.length - 1].price) : currentPrice);
+
+    // For closed positions, the display price is the actual weighted execution exit price
+    const displayPrice = isClosed && avgExitPrice > 0 ? avgExitPrice : currentPrice;
 
     const unrealizedValue = quantityHeld * currentPrice;
     const totalValue      = unrealizedValue + totalRealizedValue;
@@ -156,17 +168,10 @@ export async function generatePNLCardData(
     const totalPnl        = totalValue - totalInitialInvestment;
 
     // ── PnL % for the hero display ────────────────────────────────────────────
-    // We derive pnlPercent from avgEntryPrice vs currentPrice so it is always
-    // consistent with the entryMarketCap shown on the card (both use avgEntryPrice
-    // as the cost basis). Using totalInitialInvestment (which bundles fees across
-    // multiple buys at different prices) produced a different number than what
-    // the market-cap columns implied, confusing users who added to their position.
-    const costBasisHeld = quantityHeld * avgEntryPrice; // excludes fees — same as entryMcap basis
-    const pnlPercent = costBasisHeld > 0
-      ? (unrealizedPnl / costBasisHeld) * 100
-      : totalInitialInvestment > 0
-        ? (totalPnl / totalInitialInvestment) * 100
-        : 0;
+    const costBasisHeld = quantityHeld * avgEntryPrice;
+    const pnlPercent = isClosed
+      ? (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : (avgEntryPrice > 0 ? ((avgExitPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0))
+      : (costBasisHeld > 0 ? (unrealizedPnl / costBasisHeld) * 100 : (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0));
     const isProfit = totalPnl >= 0;
 
     // ── Hold duration ────────────────────────────────────────────────────────
@@ -176,15 +181,17 @@ export async function generatePNLCardData(
 
     // ── Market caps (NEAR units) ─────────────────────────────────────────────
     let currentMarketCap = tokenInfo?.market_cap || 0;
-    if (currentMarketCap <= 0 && totalSupplyHuman > 0 && currentPrice > 0) {
-      currentMarketCap = currentPrice * totalSupplyHuman;
+    if (isClosed && avgExitPrice > 0 && totalSupplyHuman > 0) {
+      currentMarketCap = avgExitPrice * totalSupplyHuman;
+    } else if (currentMarketCap <= 0 && totalSupplyHuman > 0 && displayPrice > 0) {
+      currentMarketCap = displayPrice * totalSupplyHuman;
     }
 
     let entryMarketCap = 0;
     if (totalSupplyHuman > 0 && avgEntryPrice > 0) {
       entryMarketCap = avgEntryPrice * totalSupplyHuman;
-    } else if (currentPrice > 0 && currentMarketCap > 0 && avgEntryPrice > 0) {
-      entryMarketCap = (avgEntryPrice / currentPrice) * currentMarketCap;
+    } else if (displayPrice > 0 && currentMarketCap > 0 && avgEntryPrice > 0) {
+      entryMarketCap = (avgEntryPrice / displayPrice) * currentMarketCap;
     }
 
     // ── Venue name ───────────────────────────────────────────────────────────
@@ -205,7 +212,7 @@ export async function generatePNLCardData(
       tokenName:      tokenInfo?.name    || position.token_address,
       tokenSymbol:    tokenInfo?.symbol  || position.token_address.slice(0, 8),
       entryPrice:     avgEntryPrice,
-      currentPrice,
+      currentPrice:   displayPrice,
       quantityHeld,
       initialInvestment: totalInitialInvestment,
       unrealizedValue,
@@ -257,7 +264,8 @@ function formatHoldDuration(ms: number): string {
 export function generatePNLCardMessage(data: PNLCardData): string {
   const emoji       = data.isProfit ? '🟢' : '🔴';
   const pnlSign     = data.isProfit ? '+' : '';
-  const statusEmoji = data.positionStatus === 'open' ? '🟢' : '🔴';
+  const isClosed    = data.positionStatus === 'closed';
+  const statusEmoji = isClosed ? '🔴' : '🟢';
 
   const safe = (s: string) => (s || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\/]/g, ' ');
   const safeSymbol  = safe(data.tokenSymbol);
@@ -279,6 +287,9 @@ export function generatePNLCardMessage(data: PNLCardData): string {
     return v > 0 ? `$${v.toFixed(2)}` : 'N/A';
   };
 
+  const currentOrExitMcapLabel = isClosed ? 'Exit Market Cap' : 'Current Market Cap';
+  const currentOrExitPriceLabel = isClosed ? 'Exit Price' : 'Current Price';
+
   let card = `
 ${emoji} *${safeSymbol} PNL Card* ${statusEmoji}
 
@@ -287,10 +298,10 @@ ${emoji} *${safeSymbol} PNL Card* ${statusEmoji}
 💧 *Venue*: \`${safe(data.venue || 'Unknown')}\`
 
 📊 *Entry Market Cap*: \`${formatMcap(data.entryMarketCap)}\`
-📊 *Current Market Cap*: \`${formatMcap(data.currentMarketCap)}\`
+📊 *${currentOrExitMcapLabel}*: \`${formatMcap(data.currentMarketCap)}\`
 
 💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} NEAR\` (${formatUSD(data.entryPrice)})
-💰 *Current Price*: \`${data.currentPrice.toFixed(8)} NEAR\` (${formatUSD(data.currentPrice)})`;
+💰 *${currentOrExitPriceLabel}*: \`${data.currentPrice.toFixed(8)} NEAR\` (${formatUSD(data.currentPrice)})`;
 
   if (data.showNetWorth) {
     card += `
