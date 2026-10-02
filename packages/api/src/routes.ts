@@ -1388,20 +1388,31 @@ export function setupRoutes(bot: Telegraf): void {
       };
 
       // ── Deep links: Token share (/start t_XXXX), Copy Trade (/start copy_wallet), or Quick Buy (/start buy_token_amount) ──
-      const isTokenShare = payload?.startsWith('t_') ?? false;
-      const isCopyShare = payload?.startsWith('copy_') ?? false;
-      const isBuyParam = payload?.startsWith('buy_') ?? false;
-      const isTokenParam = (payload?.startsWith('token_') || payload?.startsWith('tkn_')) ?? false;
+      let rawPayload = payload || '';
+      let refCode: string | undefined = undefined;
+
+      if (rawPayload.includes('_ref_')) {
+        const parts = rawPayload.split('_ref_');
+        rawPayload = parts[0];
+        refCode = parts[1];
+      } else if (rawPayload.startsWith('ref_')) {
+        refCode = rawPayload.slice(4);
+      }
+
+      const isTokenShare = rawPayload.startsWith('t_');
+      const isCopyShare = rawPayload.startsWith('copy_');
+      const isBuyParam = rawPayload.startsWith('buy_');
+      const isTokenParam = rawPayload.startsWith('token_') || rawPayload.startsWith('tkn_');
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
-      // codes we pass undefined so no account-level referral is (mis)attributed.
-      const accountReferralCode = (isTokenShare || isCopyShare || isBuyParam || isTokenParam) ? undefined : payload;
+      // codes we pass undefined unless refCode was explicitly passed.
+      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam) ? undefined : (rawPayload || undefined));
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
 
       // 1. Quick Buy Deep Link (/start buy_token_near_1 or buy_token_near)
-      if (isBuyParam && payload) {
-        const raw = payload.slice(4); // strip 'buy_'
+      if (isBuyParam && rawPayload) {
+        const raw = rawPayload.slice(4); // strip 'buy_'
         let tokenRaw = raw;
         let quickBuyAmount: number | null = null;
 
@@ -1460,8 +1471,8 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // 2. Direct Token Details Deep Link (/start token_pearpe_tkn_near)
-      if (isTokenParam && payload) {
-        const tokenRaw = payload.startsWith('token_') ? payload.slice(6) : payload.slice(4);
+      if (isTokenParam && rawPayload) {
+        const tokenRaw = rawPayload.startsWith('token_') ? rawPayload.slice(6) : rawPayload.slice(4);
         const tokenAddress = decodeTelegramAccountId(tokenRaw);
         if (tokenAddress && isValidNearAccountId(tokenAddress)) {
           try {
@@ -1476,9 +1487,8 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // 3. Copy Trading Deep Link (/start copy_wallet_near)
-      if (isCopyShare && payload) {
-        const rawTarget = payload.slice(5);
-        // Extract optional referrer at the end if separated by double underscore or parsed cleanly
+      if (isCopyShare && rawPayload) {
+        const rawTarget = rawPayload.slice(5);
         const targetWallet = decodeTelegramAccountId(rawTarget);
 
         if (targetWallet && isValidNearAccountId(targetWallet)) {
@@ -1502,9 +1512,9 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // 4. Token Share Referral Code (/start t_XXXX)
-      if (isTokenShare && payload) {
+      if (isTokenShare && rawPayload) {
         // Look up the token share record
-        const shareRecord = await getTokenShareByCode(payload).catch(() => null);
+        const shareRecord = await getTokenShareByCode(rawPayload).catch(() => null);
 
         if (shareRecord) {
           // Record token referral (no-op on self-referral or duplicate)
