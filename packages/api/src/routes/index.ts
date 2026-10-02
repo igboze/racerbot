@@ -53,7 +53,7 @@ export function serveBubbleMapHtml(res: import('express').Response): void {
   res.sendFile(htmlFile);
 }
 
-export function serveCompetitionHtml(res: import('express').Response): void {
+export async function serveCompetitionHtml(res: import('express').Response, compIdParam = 'kookdog'): Promise<void> {
   const htmlPaths = [
     path.resolve(__dirname, 'competition.html'),
     path.resolve(__dirname, '..', 'competition.html'),
@@ -65,11 +65,65 @@ export function serveCompetitionHtml(res: import('express').Response): void {
     res.status(404).send('Competition page not found');
     return;
   }
+
+  let html = fs.readFileSync(htmlFile, 'utf8');
+
+  // Pre-fetch live competition data so the page renders immediately with active stats on first load
+  try {
+    const compId = compIdParam || 'kookdog';
+    const tokenAddress = (compId === 'kookdog' || compId === 'kookdog-42db38')
+      ? 'kookdog-42db38.launchpad.justhoot.near'
+      : compId;
+
+    const [tokenInfo, comp] = await Promise.all([
+      getTokenInfo(tokenAddress, true).catch(() => null),
+      getCompetition('kookdog').catch(() => null),
+    ]);
+
+    const nearUsd = tokenInfo?.near_usd || 4.82;
+    const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
+    const currentMcapNear = tokenInfo?.market_cap || 0;
+    const currentPriceNear = parseFloat(tokenInfo?.price || '0');
+    const currentPriceUsd = parseFloat(tokenInfo?.price_usd || '0');
+    const startedAt = comp?.status === 'active' ? comp.started_at : null;
+
+    const leaderboard = await getCompetitionLeaderboard(
+      tokenAddress,
+      startedAt,
+      nearUsd,
+      tokenInfo?.decimals ?? 18,
+      10
+    );
+
+    const initialData = {
+      id: comp?.id || compId,
+      token_address: tokenAddress,
+      token_name: tokenInfo?.name || comp?.token_name || 'Kook Dog',
+      token_symbol: tokenInfo?.symbol || comp?.token_symbol || 'KOOKDOG',
+      status: comp?.status || (currentMcapUsd >= 29000 ? 'active' : 'pending'),
+      target_market_cap_usd: comp?.target_market_cap_usd || 29000,
+      current_market_cap_usd: currentMcapUsd,
+      current_market_cap_near: currentMcapNear,
+      current_price_near: currentPriceNear,
+      current_price_usd: currentPriceUsd,
+      near_usd: nearUsd,
+      started_at: comp?.started_at ?? null,
+      leaderboard,
+    };
+
+    html = html.replace(
+      '</head>',
+      `<script>window.__INITIAL_COMPETITION_DATA__ = ${JSON.stringify(initialData).replace(/</g, '\\u003c')};</script></head>`
+    );
+  } catch (err: any) {
+    logger.warn('Failed to pre-inject competition data', { error: err?.message });
+  }
+
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  res.sendFile(htmlFile);
+  res.send(html);
 }
 
 // ── Bubble Map page (served as static HTML) ───────────────────────────────────
