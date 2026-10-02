@@ -1006,8 +1006,14 @@
     // ── Data Fetching & UI Rendering ──────────────────────────────────────────
     async function updateCompetition() {
       try {
-        const res = await fetch(`/api/competition/${encodeURIComponent(COMP_ID)}`);
-        if (!res.ok) return;
+        let res = await fetch(`/api/competition/${encodeURIComponent(COMP_ID)}`).catch(() => null);
+        if (!res || !res.ok) {
+          res = await fetch(`/api/competition?token=${encodeURIComponent(COMP_ID)}`).catch(() => null);
+        }
+        if (!res || !res.ok) {
+          res = await fetch(`/api/competition/kookdog`).catch(() => null);
+        }
+        if (!res || !res.ok) return;
         const data = await res.json();
         render(data);
       } catch (err) {
@@ -1016,6 +1022,7 @@
     }
 
     function render(d) {
+      if (!d) return;
       currentTokenAddress = d.token_address || currentTokenAddress;
 
       // 1. Header Identity
@@ -1064,9 +1071,9 @@
       document.getElementById('metricTotalVol').innerText = formatUsd(totalVolUsd);
       document.getElementById('metricTotalTrades').innerText = totalTrades.toString();
       document.getElementById('metricTraders').innerText = list.length.toString();
-      document.getElementById('metricNearUsd').innerText = formatUsd(d.near_usd || 4.8);
+      document.getElementById('metricNearUsd').innerText = formatUsd(d.near_usd || 4.82);
 
-      // 4. Podium Area (Wallet addresses only, no Telegram usernames)
+      // 4. Podium Area (Wallet addresses & clear volumes)
       const podiumSection = document.getElementById('podiumSection');
       if (list.length > 0) {
         podiumSection.style.display = 'block';
@@ -1074,7 +1081,7 @@
         // 1st
         const p1 = list[0];
         document.getElementById('p1Name').innerText = p1.subaccount_id || 'racerbot.near';
-        document.getElementById('p1Sub').innerText = 'Verified Wallet';
+        document.getElementById('p1Sub').innerText = `${p1.total_trades || 0} Trades (${p1.buy_trades || 0}B / ${p1.sell_trades || 0}S)`;
         document.getElementById('p1VolUsd').innerText = formatUsd(p1.total_volume_usd);
         document.getElementById('p1VolNear').innerText = formatNear(p1.total_volume_near);
 
@@ -1082,7 +1089,7 @@
         if (list.length >= 2) {
           const p2 = list[1];
           document.getElementById('p2Name').innerText = p2.subaccount_id || 'racerbot.near';
-          document.getElementById('p2Sub').innerText = 'Verified Wallet';
+          document.getElementById('p2Sub').innerText = `${p2.total_trades || 0} Trades (${p2.buy_trades || 0}B / ${p2.sell_trades || 0}S)`;
           document.getElementById('p2VolUsd').innerText = formatUsd(p2.total_volume_usd);
           document.getElementById('p2VolNear').innerText = formatNear(p2.total_volume_near);
           document.getElementById('podiumCard2').style.opacity = '1';
@@ -1098,7 +1105,7 @@
         if (list.length >= 3) {
           const p3 = list[2];
           document.getElementById('p3Name').innerText = p3.subaccount_id || 'racerbot.near';
-          document.getElementById('p3Sub').innerText = 'Verified Wallet';
+          document.getElementById('p3Sub').innerText = `${p3.total_trades || 0} Trades (${p3.buy_trades || 0}B / ${p3.sell_trades || 0}S)`;
           document.getElementById('p3VolUsd').innerText = formatUsd(p3.total_volume_usd);
           document.getElementById('p3VolNear').innerText = formatNear(p3.total_volume_near);
           document.getElementById('podiumCard3').style.opacity = '1';
@@ -1113,7 +1120,7 @@
         podiumSection.style.display = 'none';
       }
 
-      // 5. Leaderboard Table Rows (Wallet addresses only)
+      // 5. Leaderboard Table Rows (Wallet addresses + volumes)
       const tbody = document.getElementById('leaderboardTbody');
       if (list.length === 0) {
         tbody.innerHTML = `
@@ -1135,8 +1142,8 @@
               <td>
                 <span class="trader-title mono">${walletAddr}</span>
               </td>
-              <td class="td-right tabular" style="font-weight: 500;">${formatUsd(row.total_volume_usd)}</td>
-              <td class="td-right tabular mono">${formatNear(row.total_volume_near)}</td>
+              <td class="td-right tabular" style="font-weight: 600; color: var(--color-ink-strong);">${formatUsd(row.total_volume_usd)}</td>
+              <td class="td-right tabular mono" style="color: var(--color-ink);">${formatNear(row.total_volume_near)}</td>
               <td class="td-right trades-tag">${buys}B / ${sells}S</td>
               <td class="td-right mono" style="color: var(--color-ink-subtle);">${timeAgo(row.last_trade_at)}</td>
             </tr>
@@ -1145,7 +1152,11 @@
       }
     }
 
-    // Initial load & 4s interval polling
+    // ── Instant Initial Render & Interval Polling ────────────────────────────
+    if (window.__INITIAL_COMPETITION_DATA__) {
+      render(window.__INITIAL_COMPETITION_DATA__);
+    }
+
     updateCompetition();
     setInterval(updateCompetition, 4000);
   </script>
