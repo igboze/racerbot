@@ -931,12 +931,23 @@
       if (pathParts[0] === 'leaderboard' && pathParts[1]) return pathParts[1];
       if (pathParts[1] === 'competition' && pathParts[0]) return pathParts[0];
 
-      // Extract from hostname subdomain (e.g. kookdog.bubblemap.* or kookdog.localhost)
+      // Extract from hostname subdomain (e.g. kookdog.racerbotbubblemap.buzz or kookdog.localhost)
       const host = window.location.hostname.toLowerCase();
       const parts = host.split('.');
-      const ignored = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'localhost', '127', 'railway', 'app', 'racerbot']);
-      if (parts.length >= 2 && !ignored.has(parts[0])) {
-        return parts[0];
+      const baseDomains = ['racerbotbubblemap.buzz', 'racerbot.trade', 'railway.app', 'up.railway.app'];
+      for (const base of baseDomains) {
+        if (host.endsWith(base) && host !== base) {
+          const sub = host.slice(0, host.length - base.length - 1);
+          if (sub && !sub.includes('.')) return sub;
+        }
+      }
+
+      if (parts.length >= 2) {
+        const first = parts[0];
+        const ignored = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'racerbotbubblemap', 'localhost', '127', 'railway', 'racerbot-production', 'app', 'racerbot']);
+        if (!ignored.has(first)) {
+          return first;
+        }
       }
 
       return 'kookdog';
@@ -944,7 +955,6 @@
 
     const COMP_ID = getActiveTokenId();
     let currentTokenAddress = 'kookdog-42db38.launchpad.justhoot.near';
-    const TARGET_MCAP = 30000;
 
     // ── Formatting Utilities ──────────────────────────────────────────────────
     function formatUsd(val) {
@@ -1056,23 +1066,23 @@
       document.getElementById('metricTraders').innerText = list.length.toString();
       document.getElementById('metricNearUsd').innerText = formatUsd(d.near_usd || 4.8);
 
-      // 4. Podium Area
+      // 4. Podium Area (Wallet addresses only, no Telegram usernames)
       const podiumSection = document.getElementById('podiumSection');
       if (list.length > 0) {
         podiumSection.style.display = 'block';
 
         // 1st
         const p1 = list[0];
-        document.getElementById('p1Name').innerText = p1.username ? `@${p1.username}` : (p1.subaccount_id?.split('.')[0] || 'Trader #1');
-        document.getElementById('p1Sub').innerText = p1.subaccount_id || '';
+        document.getElementById('p1Name').innerText = p1.subaccount_id || 'racerbot.near';
+        document.getElementById('p1Sub').innerText = 'Verified Wallet';
         document.getElementById('p1VolUsd').innerText = formatUsd(p1.total_volume_usd);
         document.getElementById('p1VolNear').innerText = formatNear(p1.total_volume_near);
 
         // 2nd
         if (list.length >= 2) {
           const p2 = list[1];
-          document.getElementById('p2Name').innerText = p2.username ? `@${p2.username}` : (p2.subaccount_id?.split('.')[0] || 'Trader #2');
-          document.getElementById('p2Sub').innerText = p2.subaccount_id || '';
+          document.getElementById('p2Name').innerText = p2.subaccount_id || 'racerbot.near';
+          document.getElementById('p2Sub').innerText = 'Verified Wallet';
           document.getElementById('p2VolUsd').innerText = formatUsd(p2.total_volume_usd);
           document.getElementById('p2VolNear').innerText = formatNear(p2.total_volume_near);
           document.getElementById('podiumCard2').style.opacity = '1';
@@ -1087,8 +1097,8 @@
         // 3rd
         if (list.length >= 3) {
           const p3 = list[2];
-          document.getElementById('p3Name').innerText = p3.username ? `@${p3.username}` : (p3.subaccount_id?.split('.')[0] || 'Trader #3');
-          document.getElementById('p3Sub').innerText = p3.subaccount_id || '';
+          document.getElementById('p3Name').innerText = p3.subaccount_id || 'racerbot.near';
+          document.getElementById('p3Sub').innerText = 'Verified Wallet';
           document.getElementById('p3VolUsd').innerText = formatUsd(p3.total_volume_usd);
           document.getElementById('p3VolNear').innerText = formatNear(p3.total_volume_near);
           document.getElementById('podiumCard3').style.opacity = '1';
@@ -1103,20 +1113,19 @@
         podiumSection.style.display = 'none';
       }
 
-      // 5. Leaderboard Table Rows
+      // 5. Leaderboard Table Rows (Wallet addresses only)
       const tbody = document.getElementById('leaderboardTbody');
       if (list.length === 0) {
         tbody.innerHTML = `
           <tr class="empty-row">
             <td colspan="6">
-              ${isLive ? 'No qualifying trades recorded yet. Start trading to take the #1 spot!' : 'Trading competition begins once $KOOKDOG reaches $30,000 Market Cap.'}
+              ${isLive ? 'No qualifying trades recorded yet. Start trading to take the #1 spot!' : `Trading competition begins once $KOOKDOG reaches ${formatUsd(targetMcap)} Market Cap.`}
             </td>
           </tr>
         `;
       } else {
         tbody.innerHTML = list.slice(0, 10).map((row, idx) => {
-          const name = row.username ? `@${row.username}` : (row.subaccount_id?.split('.')[0] || `Trader #${idx + 1}`);
-          const sub = row.subaccount_id || '';
+          const walletAddr = row.subaccount_id || `Trader #${idx + 1}`;
           const buys = row.buy_trades || 0;
           const sells = row.sell_trades || 0;
 
@@ -1124,8 +1133,7 @@
             <tr>
               <td class="rank-num">${idx + 1}</td>
               <td>
-                <span class="trader-title">${name}</span>
-                <span class="trader-sub-label">${sub}</span>
+                <span class="trader-title mono">${walletAddr}</span>
               </td>
               <td class="td-right tabular" style="font-weight: 500;">${formatUsd(row.total_volume_usd)}</td>
               <td class="td-right tabular mono">${formatNear(row.total_volume_near)}</td>
