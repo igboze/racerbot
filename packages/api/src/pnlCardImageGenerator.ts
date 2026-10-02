@@ -609,9 +609,9 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         value: fmtMcap(data.entryMarketCap, nr),
       });
 
-      // 4. Current Market Cap
+      // 4. Current / Exit Market Cap
       statsData.push({
-        label: 'Current MC',
+        label: data.positionStatus === 'closed' ? 'Exit MC' : 'Current MC',
         value: fmtMcap(data.currentMarketCap, nr),
       });
 
@@ -626,7 +626,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         value: fmtMcap(data.entryMarketCap, nr),
       });
       statsData.push({
-        label: 'Current market cap',
+        label: data.positionStatus === 'closed' ? 'Exit market cap' : 'Current market cap',
         value: fmtMcap(data.currentMarketCap, nr),
       });
       statsData.push({
