@@ -128,7 +128,7 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     if (!info || !info.tradeable) return;
 
     const venue = info.venue;
-    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
+    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
 
     const jobs: Promise<unknown>[] = [
       near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
