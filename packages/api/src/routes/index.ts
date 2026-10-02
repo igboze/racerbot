@@ -86,10 +86,13 @@ router.get(['/competition', '/competition/kookdog', '/leaderboard/kookdog'], (_r
 });
 
 // ── Trading Competition data API ──────────────────────────────────────────────
-router.get('/competition/:id', async (req, res) => {
+router.get(['/competition', '/competition/:id'], async (req, res) => {
   try {
-    const compId = req.params.id || 'kookdog';
-    const tokenAddress = compId === 'kookdog' ? 'kookdog-42db38.launchpad.justhoot.near' : compId;
+    const rawId = req.params.id || (req.query.token as string) || (req.query.id as string) || 'kookdog';
+    const compId = rawId.toLowerCase().trim();
+    const tokenAddress = (compId === 'kookdog' || compId === 'kookdog-42db38')
+      ? 'kookdog-42db38.launchpad.justhoot.near'
+      : compId;
 
     // Fetch live token on-chain RPC state
     const tokenInfo = await getTokenInfo(tokenAddress, true).catch(() => null);
