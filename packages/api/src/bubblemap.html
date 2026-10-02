@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RacerBot — On-Chain Bubble Map & Institutional Cluster Intelligence</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
+  <link rel="apple-touch-icon" href="/assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -3221,6 +3224,10 @@
     window.zoomOut = function() { zoom = Math.max(zoom / 1.25, 0.35); };
 
     // ── 71UI High-Impact Social Infographic Card & Viral Sharing ──
+    const racerLogoImg = new Image();
+    racerLogoImg.crossOrigin = 'anonymous';
+    racerLogoImg.src = '/assets/logo.png';
+
     window.openCardModal = function() {
       const modal = document.getElementById('card-modal');
       const refInput = document.getElementById('custom-ref-input');
@@ -3228,6 +3235,9 @@
         refInput.value = myReferralCode;
       }
       if (modal) modal.classList.remove('hidden');
+      if (!racerLogoImg.complete) {
+        racerLogoImg.onload = () => renderCardCanvas();
+      }
       renderCardCanvas();
     };
 
@@ -3290,25 +3300,71 @@
       octx.beginPath(); octx.moveTo(32, 94); octx.lineTo(1168, 94); octx.stroke();
 
       // Brand Logo & Title
-      octx.fillStyle = '#0070E0';
-      octx.beginPath();
-      octx.arc(62, 63, 14, 0, Math.PI * 2);
-      octx.fill();
+      let logoDrawn = false;
+      if (racerLogoImg.complete && racerLogoImg.naturalWidth > 0) {
+        try {
+          octx.save();
+          octx.beginPath();
+          octx.arc(62, 63, 16, 0, Math.PI * 2);
+          octx.clip();
+          octx.drawImage(racerLogoImg, 46, 47, 32, 32);
+          octx.restore();
 
-      octx.fillStyle = '#FFFFFF';
-      octx.font = '700 13px Inter, sans-serif';
-      octx.textAlign = 'center';
-      octx.textBaseline = 'middle';
-      octx.fillText('R', 62, 63);
+          octx.save();
+          octx.beginPath();
+          octx.arc(62, 63, 16, 0, Math.PI * 2);
+          octx.strokeStyle = 'rgba(0, 112, 224, 0.40)';
+          octx.lineWidth = 1.2;
+          octx.stroke();
+          octx.restore();
+          logoDrawn = true;
+        } catch {}
+      }
+
+      if (!logoDrawn) {
+        const headerLogoEl = document.querySelector('.brand-logo-img');
+        if (headerLogoEl && headerLogoEl.complete && headerLogoEl.naturalWidth > 0) {
+          try {
+            octx.save();
+            octx.beginPath();
+            octx.arc(62, 63, 16, 0, Math.PI * 2);
+            octx.clip();
+            octx.drawImage(headerLogoEl, 46, 47, 32, 32);
+            octx.restore();
+
+            octx.save();
+            octx.beginPath();
+            octx.arc(62, 63, 16, 0, Math.PI * 2);
+            octx.strokeStyle = 'rgba(0, 112, 224, 0.40)';
+            octx.lineWidth = 1.2;
+            octx.stroke();
+            octx.restore();
+            logoDrawn = true;
+          } catch {}
+        }
+      }
+
+      if (!logoDrawn) {
+        octx.fillStyle = '#0070E0';
+        octx.beginPath();
+        octx.arc(62, 63, 14, 0, Math.PI * 2);
+        octx.fill();
+
+        octx.fillStyle = '#FFFFFF';
+        octx.font = '700 13px Inter, sans-serif';
+        octx.textAlign = 'center';
+        octx.textBaseline = 'middle';
+        octx.fillText('R', 62, 63);
+      }
 
       octx.textAlign = 'left';
       octx.fillStyle = '#F4F4F2';
       octx.font = '700 17px Inter, sans-serif';
-      octx.fillText('RacerBot', 86, 63);
+      octx.fillText('RacerBot', 88, 63);
 
       octx.fillStyle = '#8F8F8A';
       octx.font = '500 13px Inter, sans-serif';
-      octx.fillText('• On-Chain Cluster Intelligence', 168, 63);
+      octx.fillText('• On-Chain Cluster Intelligence', 170, 63);
 
       // Token Symbol & CA on Right
       octx.textAlign = 'right';
