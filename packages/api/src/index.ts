@@ -1,4 +1,5 @@
 import './config.js';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
@@ -103,6 +104,19 @@ async function main(): Promise<void> {
 
   app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
   app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
+
+  app.get('/favicon.ico', (_req, res) => {
+    const logoFile = path.resolve(__dirname, '..', 'assets', 'logo.png');
+    const fallbackLogo = path.resolve(__dirname, 'assets', 'logo.png');
+    const target = fs.existsSync(logoFile) ? logoFile : (fs.existsSync(fallbackLogo) ? fallbackLogo : null);
+    if (target) {
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.sendFile(target);
+    } else {
+      res.status(204).end();
+    }
+  });
 
   app.use('/api', apiRouter);
 
