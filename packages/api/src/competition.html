@@ -1016,8 +1016,9 @@
       document.getElementById('btnTradeAction').href = `https://t.me/racertradingbot?start=${cleanTokenStart}`;
 
       // 2. Status & Market Cap Goal
+      const targetMcap = Number(d.target_market_cap_usd || 29000);
       const mcapUsd = Number(d.current_market_cap_usd || 0);
-      const isLive = d.status === 'active' || mcapUsd >= TARGET_MCAP;
+      const isLive = d.status === 'active' || mcapUsd >= targetMcap;
       const statusBadge = document.getElementById('statusBadge');
       const statusLabel = document.getElementById('statusLabel');
 
@@ -1026,13 +1027,16 @@
         statusLabel.innerText = 'Competition Live';
       } else {
         statusBadge.className = 'badge badge-warning';
-        statusLabel.innerText = 'Starts at $30K Market Cap';
+        statusLabel.innerText = `Starts at ${formatUsd(targetMcap)} Market Cap`;
       }
 
       document.getElementById('curMcapDisplay').innerText = formatUsd(mcapUsd);
-      const progressPct = Math.min(100, Math.max(0, (mcapUsd / TARGET_MCAP) * 100));
+      const targetDisplayElem = document.querySelector('.mcap-target-val');
+      if (targetDisplayElem) targetDisplayElem.innerText = `/ ${formatUsd(targetMcap)}`;
+
+      const progressPct = Math.min(100, Math.max(0, (mcapUsd / targetMcap) * 100));
       document.getElementById('mcapProgressBar').style.width = progressPct.toFixed(1) + '%';
-      document.getElementById('progressText').innerText = `${progressPct.toFixed(1)}% reached`;
+      document.getElementById('progressText').innerText = isLive ? `Goal Achieved (${formatUsd(targetMcap)})` : `${progressPct.toFixed(1)}% reached`;
 
       const priceNear = Number(d.current_price_near || 0);
       const priceUsd = Number(d.current_price_usd || 0);
