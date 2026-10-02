@@ -188,6 +188,47 @@ export async function getNearUsdPrice(): Promise<number> {
   return nearUsdPrice || 4.9;
 }
 
+export interface DexScreenerData {
+  priceUsd: number;
+  priceNative: number;
+  marketCapUsd: number;
+  fdvUsd: number;
+  volume24hUsd: number;
+  priceChange24h: number;
+  dexId?: string;
+  pairAddress?: string;
+}
+
+export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as any;
+    if (!data.pairs || data.pairs.length === 0) return null;
+    const nearPairs = data.pairs.filter(
+      (p: any) => p.chainId === 'near' || p.dexId?.includes('rhea') || p.dexId?.includes('ref')
+    );
+    const pool = (nearPairs.length > 0 ? nearPairs : data.pairs).sort(
+      (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
+    )[0];
+    if (!pool) return null;
+    return {
+      priceUsd: pool.priceUsd ? parseFloat(pool.priceUsd) : 0,
+      priceNative: pool.priceNative ? parseFloat(pool.priceNative) : 0,
+      marketCapUsd: pool.marketCap || pool.fdv || 0,
+      fdvUsd: pool.fdv || pool.marketCap || 0,
+      volume24hUsd: pool.volume?.h24 || 0,
+      priceChange24h: pool.priceChange?.h24 || 0,
+      dexId: pool.dexId,
+      pairAddress: pool.pairAddress,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface TokenInfoResult {
   address: string;
   name: string;
@@ -196,6 +237,8 @@ export interface TokenInfoResult {
   total_supply: string;
   price: string;           // price in NEAR
   price_usd: string;       // price in USD
+  price_24h_change?: number; // 24h % change from DexScreener/Rhea
+  volume_24h_usd?: number;   // 24h volume in USD
   liquidity: string;       // liquidity in NEAR
   liquidity_usd: string;   // liquidity in USD
   market_cap: number;      // market cap in NEAR
@@ -279,9 +322,9 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     }
   }
 
-  // Fetch NEAR/USD price in parallel (non-blocking, uses cache if fresh).
-  // Guarded: a rate-feed failure must never throw the whole token-info call.
+  // Fetch NEAR/USD price and DexScreener live market stats in parallel
   const nearUsdPromise = getNearUsdPrice().catch(() => 0);
+  const dexDataPromise = fetchDexScreenerTokenData(tokenAddress).catch(() => null);
 
   // Always read the DB row (metadata + pool IDs are stable topology, reused
   // below), but only ACCEPT its cached price when it's <15s old — and never
@@ -756,10 +799,44 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     }
   }
 
-  const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
-  const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
   const nearUsd = await nearUsdPromise;
+  const dexData = await dexDataPromise;
+
+  const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
+
+  // If on-chain price was not discovered but DexScreener has valid price
+  if (price <= 0 && dexData) {
+    if (dexData.priceNative > 0) {
+      price = dexData.priceNative;
+    } else if (dexData.priceUsd > 0 && nearUsd > 0) {
+      price = dexData.priceUsd / nearUsd;
+    }
+    if (venue === 'unknown') {
+      venue = 'rhea';
+    }
+  }
+
+  // Calculate Market Cap (in NEAR and USD)
+  let marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
+  let marketCapUsd = 0;
+
+  if (dexData && (dexData.marketCapUsd > 0 || dexData.fdvUsd > 0)) {
+    marketCapUsd = dexData.marketCapUsd || dexData.fdvUsd;
+    if (marketCap <= 0 && nearUsd > 0) {
+      marketCap = marketCapUsd / nearUsd;
+    }
+  } else if (marketCap > 0 && nearUsd > 0) {
+    marketCapUsd = marketCap * nearUsd;
+  }
+
+  let finalPriceUsd = '0';
+  if (dexData && dexData.priceUsd > 0) {
+    finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
+  } else if (price > 0 && nearUsd > 0) {
+    finalPriceUsd = (price * nearUsd).toFixed(8);
+  }
+
+  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
 
   const result: TokenInfoResult = {
     address: tokenAddress,
@@ -768,11 +845,13 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     decimals: meta.decimals,
     total_supply: totalSupply,
     price: price > 0 ? price.toFixed(12) : '0',
-    price_usd: price > 0 && nearUsd > 0 ? (price * nearUsd).toFixed(8) : '0',
+    price_usd: finalPriceUsd,
+    price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
+    volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
     liquidity: liquidity.toFixed(4),
     liquidity_usd: liquidity > 0 && nearUsd > 0 ? (liquidity * nearUsd).toFixed(2) : '0',
     market_cap: marketCap,
-    market_cap_usd: marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0,
+    market_cap_usd: marketCapUsd,
     near_usd: nearUsd,
     venue,
     rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId ?? null,

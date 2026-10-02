@@ -231,9 +231,51 @@
       font-weight: 500;
       color: var(--color-ink-strong);
       font-variant-numeric: tabular-nums;
+      transition: color 0.3s ease, background-color 0.3s ease;
+      padding: 1px 4px;
+      border-radius: 4px;
     }
     .market-change-up { color: var(--color-on-success); }
     .market-change-down { color: var(--color-on-danger); }
+
+    .live-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #10B981;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 0 6px;
+      height: 18px;
+      border-radius: 9999px;
+      flex-shrink: 0;
+    }
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10B981;
+      box-shadow: 0 0 8px #10B981;
+      animation: livePulse 1.5s infinite alternate;
+    }
+    @keyframes livePulse {
+      0% { opacity: 0.4; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 10px #10B981; }
+    }
+    @keyframes priceFlashUp {
+      0% { color: #10B981; background: rgba(16, 185, 129, 0.25); }
+      100% { color: var(--color-ink-strong); background: transparent; }
+    }
+    @keyframes priceFlashDown {
+      0% { color: #EF4444; background: rgba(239, 68, 68, 0.25); }
+      100% { color: var(--color-ink-strong); background: transparent; }
+    }
+    .price-flash-up { animation: priceFlashUp 1.2s ease-out; }
+    .price-flash-down { animation: priceFlashDown 1.2s ease-out; }
 
     /* ── Search Bar with Autocomplete ─────────────────────────────── */
     .search-wrap {
@@ -1165,6 +1207,7 @@
 
       <!-- Financial Market Data Strip (DexScreener / Ref LP style) -->
       <div class="market-strip" id="market-strip">
+        <div class="live-status-pill" title="Live real-time on-chain & market synchronizer active"><span class="live-dot"></span>LIVE</div>
         <div class="market-item">
           <span class="market-lbl">Price:</span>
           <span class="market-val" id="hdr-price">$—</span>
@@ -1495,11 +1538,16 @@
     let currentToken = (initialParams.get('token') || tgStartParam || '').trim();
     let currentName  = (initialParams.get('name') || '').trim();
     let currentSymbol = (initialParams.get('symbol') || (currentToken ? currentToken.split('.')[0].toUpperCase() : 'TOKEN')).trim();
-    let tokenPriceUsd = null;
-    let token24hChange = null;
-    let tokenMcapUsd = null;
+    let tokenPriceUsd = 0;
+    let tokenPriceNear = 0;
+    let token24hChange = 0;
+    let tokenMcapUsd = 0;
+    let tokenNearUsd = 4.9;
+    let tokenDecimals = 18;
+    let lastPriceUsd = null;
+    let livePollingTimer = null;
 
-    function updateTokenMeta(token, symbol, name, meta) {
+    function updateTokenMeta(token, symbol, name, meta, isLive = false) {
       currentToken = (token || '').trim();
       currentSymbol = (symbol || (currentToken ? currentToken.split('.')[0].toUpperCase() : 'TOKEN')).trim();
       currentName = (name || '').trim();
@@ -1522,21 +1570,62 @@
 
       // Update Financial Market Strip
       if (meta) {
-        if (meta.price_usd || meta.price) {
-          const p = Number(meta.price_usd || meta.price);
-          document.getElementById('hdr-price').textContent = p < 0.0001 ? `$${p.toExponential(2)}` : `$${p.toFixed(4)}`;
+        if (meta.decimals) tokenDecimals = Number(meta.decimals);
+        if (meta.near_usd) tokenNearUsd = Number(meta.near_usd);
+        if (meta.price) tokenPriceNear = Number(meta.price);
+
+        // Price USD
+        if (meta.price_usd && Number(meta.price_usd) > 0) {
+          tokenPriceUsd = Number(meta.price_usd);
+        } else if (tokenPriceNear > 0 && tokenNearUsd > 0) {
+          tokenPriceUsd = tokenPriceNear * tokenNearUsd;
         }
-        if (meta.price_24h_change !== undefined) {
-          const chg = Number(meta.price_24h_change);
+
+        const priceEl = document.getElementById('hdr-price');
+        if (priceEl && tokenPriceUsd > 0) {
+          let priceStr = '';
+          if (tokenPriceUsd < 0.000001) priceStr = `$${tokenPriceUsd.toExponential(2)}`;
+          else if (tokenPriceUsd < 0.01) priceStr = `$${tokenPriceUsd.toFixed(6)}`;
+          else if (tokenPriceUsd < 1) priceStr = `$${tokenPriceUsd.toFixed(4)}`;
+          else priceStr = `$${tokenPriceUsd.toFixed(2)}`;
+
+          priceEl.textContent = priceStr;
+          priceEl.title = `${tokenPriceNear > 0 ? tokenPriceNear.toFixed(8) + ' NEAR' : ''} ($${tokenPriceUsd})`;
+
+          if (isLive && lastPriceUsd !== null && Math.abs(lastPriceUsd - tokenPriceUsd) > 1e-12) {
+            const flashClass = tokenPriceUsd >= lastPriceUsd ? 'price-flash-up' : 'price-flash-down';
+            priceEl.classList.remove('price-flash-up', 'price-flash-down');
+            void priceEl.offsetWidth;
+            priceEl.classList.add(flashClass);
+          }
+          lastPriceUsd = tokenPriceUsd;
+        }
+
+        // 24h Change
+        if (meta.price_24h_change !== undefined && meta.price_24h_change !== null) {
+          token24hChange = Number(meta.price_24h_change);
           const chgEl = document.getElementById('hdr-24h');
-          chgEl.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`;
-          chgEl.className = 'market-val ' + (chg >= 0 ? 'market-change-up' : 'market-change-down');
+          if (chgEl) {
+            chgEl.textContent = `${token24hChange >= 0 ? '+' : ''}${token24hChange.toFixed(2)}%`;
+            chgEl.className = 'market-val ' + (token24hChange >= 0 ? 'market-change-up' : 'market-change-down');
+          }
         }
-        if (meta.market_cap || meta.marketCapUsd) {
-          const m = Number(meta.market_cap || meta.marketCapUsd);
-          if (m >= 1e6) document.getElementById('hdr-mcap').textContent = `$${(m / 1e6).toFixed(2)}M`;
-          else if (m >= 1e3) document.getElementById('hdr-mcap').textContent = `$${(m / 1e3).toFixed(1)}K`;
-          else document.getElementById('hdr-mcap').textContent = `$${m.toFixed(0)}`;
+
+        // Market Cap (Always in USD)
+        if (meta.market_cap_usd && Number(meta.market_cap_usd) > 0) {
+          tokenMcapUsd = Number(meta.market_cap_usd);
+        } else if (meta.market_cap && tokenNearUsd > 0) {
+          tokenMcapUsd = Number(meta.market_cap) * tokenNearUsd;
+        }
+
+        const mcapEl = document.getElementById('hdr-mcap');
+        if (mcapEl && tokenMcapUsd > 0) {
+          if (tokenMcapUsd >= 1e9) mcapEl.textContent = `$${(tokenMcapUsd / 1e9).toFixed(2)}B`;
+          else if (tokenMcapUsd >= 1e6) mcapEl.textContent = `$${(tokenMcapUsd / 1e6).toFixed(2)}M`;
+          else if (tokenMcapUsd >= 1e3) mcapEl.textContent = `$${(tokenMcapUsd / 1e3).toFixed(1)}K`;
+          else mcapEl.textContent = `$${tokenMcapUsd.toFixed(0)}`;
+          
+          mcapEl.title = `FDV / MCap: $${tokenMcapUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
         }
       }
 
@@ -1788,9 +1877,37 @@
         setTimeout(() => { document.getElementById('loader-screen').style.display = 'none'; }, 200);
         startRenderLoop();
         setTimeout(fitToScreen, 100);
+        startLivePolling();
       } catch (err) {
         showError(`Failed to load bubble map: ${err.message}<br><button onclick="openHeroSearch()" style="margin-top:10px; padding:0 14px; height:32px; background:var(--color-surface-2); border:1px solid var(--color-hairline-strong); border-radius:8px; color:var(--color-ink-strong); cursor:pointer;">Search Another Token</button>`);
       }
+    }
+
+    function startLivePolling() {
+      if (livePollingTimer) clearInterval(livePollingTimer);
+      livePollingTimer = setInterval(async () => {
+        if (!currentToken || document.hidden) return;
+        try {
+          const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`);
+          if (!r.ok) return;
+          const liveData = await r.json();
+          if (liveData?.meta) {
+            updateTokenMeta(currentToken, liveData.meta.symbol || currentSymbol, liveData.meta.name || currentName, liveData.meta, true);
+          }
+          if (selectedBubble) {
+            const rawAmt = Number(selectedBubble.amount || '0') / Math.pow(10, tokenDecimals || 18);
+            const usdVal = tokenPriceUsd > 0 ? rawAmt * tokenPriceUsd : 0;
+            let balText = formatBalance(selectedBubble.amount);
+            if (usdVal > 0) {
+              if (usdVal >= 1e6) balText += ` ($${(usdVal / 1e6).toFixed(2)}M)`;
+              else if (usdVal >= 1e3) balText += ` ($${(usdVal / 1e3).toFixed(1)}K)`;
+              else balText += ` ($${usdVal.toFixed(2)})`;
+            }
+            const balEl = document.getElementById('panel-balance');
+            if (balEl) balEl.textContent = balText;
+          }
+        } catch {}
+      }, 10000);
     }
 
     function showError(msg) {
@@ -2321,7 +2438,16 @@
       document.getElementById('panel-addr').textContent = b.address;
       document.getElementById('panel-pct').textContent = `${b.pct.toFixed(2)}%`;
       document.getElementById('panel-rank').textContent = `#${b.rank}`;
-      document.getElementById('panel-balance').textContent = formatBalance(b.amount);
+
+      const rawAmt = Number(b.amount || '0') / Math.pow(10, tokenDecimals || 18);
+      const usdVal = tokenPriceUsd > 0 ? rawAmt * tokenPriceUsd : 0;
+      let balText = formatBalance(b.amount);
+      if (usdVal > 0) {
+        if (usdVal >= 1e6) balText += ` ($${(usdVal / 1e6).toFixed(2)}M)`;
+        else if (usdVal >= 1e3) balText += ` ($${(usdVal / 1e3).toFixed(1)}K)`;
+        else balText += ` ($${usdVal.toFixed(2)})`;
+      }
+      document.getElementById('panel-balance').textContent = balText;
 
       const tagEl = document.getElementById('panel-tier-badge');
       tagEl.textContent = b.tier.tag;
