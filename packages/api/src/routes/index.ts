@@ -109,9 +109,9 @@ router.get(['/competition', '/competition/:id'], async (req, res) => {
         token_address: tokenAddress,
         token_symbol: tokenInfo?.symbol || 'KOOKDOG',
         token_name: tokenInfo?.name || 'Kook Dog',
-        target_market_cap_usd: 30000,
-        status: currentMcapUsd >= 30000 ? 'active' : 'pending',
-        started_at: currentMcapUsd >= 30000 ? new Date() : null,
+        target_market_cap_usd: 29000,
+        status: currentMcapUsd >= 29000 ? 'active' : 'pending',
+        started_at: currentMcapUsd >= 29000 ? new Date() : null,
       }).catch(() => null);
     } else if (comp.status === 'pending' && currentMcapUsd >= comp.target_market_cap_usd) {
       // Auto-activate competition when target market cap is reached
@@ -140,8 +140,8 @@ router.get(['/competition', '/competition/:id'], async (req, res) => {
       token_address: tokenAddress,
       token_name: tokenInfo?.name || comp?.token_name || 'Kook Dog',
       token_symbol: tokenInfo?.symbol || comp?.token_symbol || 'KOOKDOG',
-      status: comp?.status || (currentMcapUsd >= 30000 ? 'active' : 'pending'),
-      target_market_cap_usd: comp?.target_market_cap_usd || 30000,
+      status: comp?.status || (currentMcapUsd >= 29000 ? 'active' : 'pending'),
+      target_market_cap_usd: comp?.target_market_cap_usd || 29000,
       current_market_cap_usd: currentMcapUsd,
       current_market_cap_near: currentMcapNear,
       current_price_near: currentPriceNear,
