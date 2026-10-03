@@ -81,13 +81,45 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
   }
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
-  let swapEvent: SwapEvent;
+  let swapEvent: any;
 
-  if (order.side === 'buy') {
+  if (tokenCache.chain === 'sui' || venue === 'suipump' || order.token_address.includes('::')) {
+    if (order.side === 'buy') {
+      const amountInMist = BigInt(Math.floor(order.amount_per_order * 1e9)).toString();
+      swapEvent = {
+        type: 'execute_swap',
+        chain: 'sui',
+        user_id: order.user_id,
+        token_in: 'sui',
+        token_out: order.token_address,
+        amount_in: amountInMist,
+        min_amount_out: '1',
+        venue: 'suipump',
+        slippage_pct: slippagePct,
+        timestamp: Date.now(),
+        notify_user: false,
+      };
+    } else {
+      const amountInRaw = BigInt(Math.floor(order.amount_per_order)).toString();
+      swapEvent = {
+        type: 'execute_swap',
+        chain: 'sui',
+        user_id: order.user_id,
+        token_in: order.token_address,
+        token_out: 'sui',
+        amount_in: amountInRaw,
+        min_amount_out: '1',
+        venue: 'suipump',
+        slippage_pct: slippagePct,
+        timestamp: Date.now(),
+        notify_user: false,
+      };
+    }
+  } else if (order.side === 'buy') {
     // NEAR (wrap.near) → token
     const amountInYocto = BigInt(Math.floor(order.amount_per_order * 1e24)).toString();
     const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
+      venue as any,
       'wrap.near',
       order.token_address,
       amountInYocto,
@@ -114,7 +146,7 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
     // For sell-DCA: amount_per_order is the raw token amount in smallest unit
     const amountInRaw = BigInt(Math.floor(order.amount_per_order)).toString();
     const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
+      venue as any,
       order.token_address,
       'wrap.near',
       amountInRaw,

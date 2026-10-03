@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, type SwapEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, type SwapEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -22,9 +22,23 @@ const PRICE_STALENESS_MS = 60_000;
  */
 async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
-    const near = getNear();
     const cache = await getTokenCache(tokenAddress);
-    const venue = cache?.venue;
+    if (cache?.chain === 'sui' || cache?.venue === 'suipump' || tokenAddress.includes('::')) {
+      const curve = await getSuiPumpCurveState(tokenAddress);
+      if (!curve || !(curve.lastPriceSui > 0)) return false;
+      const decimals = cache?.decimals ?? 6;
+      const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
+      const marketCap = supply > 0 ? curve.lastPriceSui * supply : curve.marketCapSui;
+      localPriceCache.set(tokenAddress, {
+        price: curve.lastPriceSui,
+        marketCap,
+        ts: Date.now(),
+      });
+      return true;
+    }
+
+    const near = getNear();
+    const venue = cache?.venue as any;
     if (!venue) return false;
     const decimals = cache?.decimals ?? 18;
     const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
@@ -161,9 +175,43 @@ export class TriggerEngine {
     // Determine sell side — determine venue from token cache
     const db = await getDb();
     const tokenRow = await db.query(
-      'SELECT venue, rhea_pool_id, dcl_pool_id FROM token_cache WHERE token_address = $1',
+      'SELECT venue, rhea_pool_id, dcl_pool_id, chain FROM token_cache WHERE token_address = $1',
       [position.token_address]
     ).then(r => r.rows[0]).catch(() => null);
+
+    // Sui Chain Trigger Route
+    if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {
+      const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
+      const swapEvent = {
+        type: 'execute_swap',
+        chain: 'sui',
+        user_id: position.user_id,
+        token_in: position.token_address,
+        token_out: 'sui',
+        amount_in: position.quantity_held,
+        min_amount_out: '1',
+        venue: 'suipump',
+        slippage_pct: slippagePct,
+        timestamp: Date.now(),
+      };
+
+      await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+      await markTriggerFired(trigger.id);
+
+      await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+        type: 'notify_user',
+        telegram_id: 0,
+        event: 'trigger_fired',
+        data: {
+          user_id: position.user_id,
+          trigger_type: trigger.type,
+          token_address: position.token_address,
+          current_price: currentPrice,
+          target_value: trigger.target_value,
+        },
+      }));
+      return;
+    }
 
     const venueRaw = tokenRow?.venue as string | undefined;
     if (!isTradableVenue(venueRaw)) {
@@ -179,7 +227,7 @@ export class TriggerEngine {
     const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
     const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
+      venue as any,
       position.token_address,
       'wrap.near',
       position.quantity_held,
@@ -240,21 +288,38 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   const db = await getDb();
   const tokenRow = await db.query(
-    'SELECT venue, rhea_pool_id, dcl_pool_id FROM token_cache WHERE token_address = $1',
+    'SELECT venue, rhea_pool_id, dcl_pool_id, chain FROM token_cache WHERE token_address = $1',
     [position.token_address]
   ).then(r => r.rows[0]).catch(() => null);
-
-  const venueRaw = tokenRow?.venue as string | undefined;
-  if (!isTradableVenue(venueRaw)) return { success: false };
-  const venue = venueRaw;
 
   const userRow = await db.query('SELECT slippage_pct FROM users WHERE id = $1', [userId])
     .then(r => r.rows[0]).catch(() => null);
   const slippagePct = userRow?.slippage_pct ? Number(userRow.slippage_pct) : 2.0;
 
+  if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {
+    const swapEvent = {
+      type: 'execute_swap',
+      chain: 'sui',
+      user_id: userId,
+      token_in: position.token_address,
+      token_out: 'sui',
+      amount_in: sellQty,
+      min_amount_out: '1',
+      venue: 'suipump',
+      slippage_pct: slippagePct,
+      timestamp: Date.now(),
+    };
+    await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+    return { success: true };
+  }
+
+  const venueRaw = tokenRow?.venue as string | undefined;
+  if (!isTradableVenue(venueRaw)) return { success: false };
+  const venue = venueRaw;
+
   const near = getNear();
   const { minAmountOut } = await near.computeMinAmountOut(
-    venue,
+    venue as any,
     position.token_address,
     'wrap.near',
     sellQty,

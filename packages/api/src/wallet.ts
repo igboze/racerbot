@@ -1,10 +1,25 @@
 import 'dotenv/config';
-import { getNear, encrypt, decrypt, generateScopedAccessKey, generateRandomAccountPrefix, parseMemeCookingId, type VenueName } from '@racerbot/shared';
+import {
+  getNear,
+  encrypt,
+  decrypt,
+  generateScopedAccessKey,
+  generateRandomAccountPrefix,
+  parseMemeCookingId,
+  generateSuiWallet,
+  getSuiBalance,
+  getSuiTokenBalance,
+  getSuiPumpCurveState,
+  getSuiUsdPrice,
+  isValidSuiAddress,
+  type VenueName,
+} from '@racerbot/shared';
 import {
   getDb,
   createUser,
   getUserByTelegramId,
   updateUserScopedKey,
+  updateUserSuiWallet,
   getTokenCache,
   upsertTokenCache,
   getOpenPositions,
@@ -75,6 +90,7 @@ export async function warmTokenInfoCache(): Promise<void> {
       const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
       const tokenData: TokenInfoResult = {
         address: row.token_address,
+        chain: (row.chain as any) || 'near',
         name: row.name ?? '',
         symbol: row.symbol ?? '',
         decimals: row.decimals ?? 18,
@@ -91,7 +107,7 @@ export async function warmTokenInfoCache(): Promise<void> {
         bonding_phase: (row.bonding_phase as any) ?? null,
         bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
         dcl_pool_id: row.dcl_pool_id ?? null,
-        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad'].includes(row.venue ?? 'unknown'),
+        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'suipump', 'cetus', 'turbos', 'deepbook', 'sui_dex'].includes(row.venue ?? 'unknown'),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
       tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
@@ -103,11 +119,19 @@ export async function warmTokenInfoCache(): Promise<void> {
   }
 }
 
+// ── Helper to detect Sui token addresses & SuiPump curve IDs ─────────────────
+export function isSuiToken(tokenAddress: string): boolean {
+  if (!tokenAddress || typeof tokenAddress !== 'string') return false;
+  const clean = tokenAddress.trim();
+  return (
+    clean.startsWith('0x') ||
+    clean.includes('::') ||
+    clean.toLowerCase().includes('suipump') ||
+    (clean.length === 64 && /^[0-9a-fA-F]+$/.test(clean))
+  );
+}
 
 // ── NEAR/USD price with multi-source failover ───────────────────────────────
-// CoinGecko alone proved unreliable (CloudFront 403 blocks → the bot was stuck
-// on the hardcoded 4.3 fallback and every USD figure was ~13% low). Sources are
-// tried in order; first healthy price wins. Stale-while-revalidate on top.
 const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = [
   {
     name: 'binance',
@@ -164,7 +188,6 @@ async function fetchNearUsdPrice(): Promise<number> {
 
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
-  // If we already have a price, return it immediately and refresh in background if expired (stale-while-revalidate)
   if (nearUsdPrice > 0) {
     if (now - nearUsdLastFetch >= 120_000) {
       fetchNearUsdPrice()
@@ -179,7 +202,6 @@ export async function getNearUsdPrice(): Promise<number> {
     return nearUsdPrice;
   }
 
-  // Initial fetch on boot (bounded per-source timeouts inside fetchNearUsdPrice)
   const p = await fetchNearUsdPrice();
   if (p > 0) {
     nearUsdPrice = p;
@@ -208,7 +230,7 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
     const data = (await res.json()) as any;
     if (!data.pairs || data.pairs.length === 0) return null;
     const nearPairs = data.pairs.filter(
-      (p: any) => p.chainId === 'near' || p.dexId?.includes('rhea') || p.dexId?.includes('ref')
+      (p: any) => p.chainId === 'near' || p.chainId === 'sui' || p.dexId?.includes('rhea') || p.dexId?.includes('ref')
     );
     const pool = (nearPairs.length > 0 ? nearPairs : data.pairs).sort(
       (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
@@ -231,25 +253,29 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
 
 export interface TokenInfoResult {
   address: string;
+  chain?: 'near' | 'sui';
   name: string;
   symbol: string;
   decimals: number;
   total_supply: string;
-  price: string;           // price in NEAR
+  price: string;           // price in native token (NEAR or SUI)
   price_usd: string;       // price in USD
   price_24h_change?: number; // 24h % change from DexScreener/Rhea
   volume_24h_usd?: number;   // 24h volume in USD
-  liquidity: string;       // liquidity in NEAR
+  liquidity: string;       // liquidity in native token (NEAR or SUI)
   liquidity_usd: string;   // liquidity in USD
-  market_cap: number;      // market cap in NEAR
+  market_cap: number;      // market cap in native token (NEAR or SUI)
   market_cap_usd: number;  // market cap in USD
-  near_usd: number;        // NEAR/USD exchange rate at time of fetch
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'unknown';
+  near_usd: number;        // NEAR/USD or SUI/USD exchange rate
+  sui_usd?: number;
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'suipump' | 'cetus' | 'turbos' | 'deepbook' | 'sui_dex' | 'unknown';
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
   dcl_pool_id?: string | null;
   tradeable: boolean;   // false for venues we support info but not trading on
+  sui_curve_address?: string;
+  sui_coin_type?: string;
 }
 
 /**
@@ -320,6 +346,73 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     if (cached && Date.now() < cached.expiresAt) {
       return cached.data;
     }
+  }
+
+  // ── SUI / SuiPump Token Resolution ──────────────────────────────────────────
+  if (isSuiToken(tokenAddress)) {
+    const [curve, suiUsd] = await Promise.all([
+      getSuiPumpCurveState(tokenAddress),
+      getSuiUsdPrice().catch(() => 2.0),
+    ]);
+
+    if (!curve) {
+      throw new Error(`Sui token or SuiPump curve not found: ${tokenAddress}`);
+    }
+
+    const priceSui = curve.lastPriceSui;
+    const priceUsd = priceSui * suiUsd;
+    const mcapSui = curve.marketCapSui;
+    const mcapUsd = mcapSui * suiUsd;
+    const liqSui = curve.reserveSui;
+    const liqUsd = liqSui * suiUsd;
+
+    const result: TokenInfoResult = {
+      address: curve.tokenType || curve.curveId,
+      chain: 'sui',
+      name: curve.name,
+      symbol: curve.symbol,
+      decimals: curve.decimals,
+      total_supply: curve.reserveTokensRaw.toString(),
+      price: priceSui.toFixed(9),
+      price_usd: priceUsd.toFixed(8),
+      liquidity: liqSui.toFixed(4),
+      liquidity_usd: liqUsd.toFixed(2),
+      market_cap: mcapSui,
+      market_cap_usd: mcapUsd,
+      near_usd: suiUsd,
+      sui_usd: suiUsd,
+      venue: 'suipump',
+      bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
+      bonding_progress_pct: curve.bondingProgressPct,
+      tradeable: true,
+      sui_curve_address: curve.curveId,
+      sui_coin_type: curve.tokenType,
+    };
+
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    if (curve.curveId) {
+      tokenInfoCache.set(curve.curveId, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    }
+    if (curve.tokenType) {
+      tokenInfoCache.set(curve.tokenType, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    }
+
+    upsertTokenCache({
+      token_address: curve.tokenType,
+      chain: 'sui',
+      name: curve.name,
+      symbol: curve.symbol,
+      decimals: curve.decimals,
+      total_supply: curve.reserveTokensRaw.toString(),
+      pool_address: curve.curveId,
+      venue: 'suipump',
+      bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
+      bonding_progress_pct: curve.bondingProgressPct,
+      last_price: priceSui,
+      last_liquidity: liqSui,
+    }).catch(() => {});
+
+    return result;
   }
 
   // Fetch NEAR/USD price and DexScreener live market stats in parallel
@@ -766,13 +859,30 @@ export interface OnboardResult {
   userId: string;
   subaccountId: string;
   privateKey?: string;
+  suiAddress?: string;
+  suiPrivateKey?: string;
   isExisting: boolean;
 }
 
 /**
+ * Ensures user record has an initialized Sui address & encrypted private key.
+ * If missing, generates a new Sui keypair and saves to DB.
+ */
+export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord> {
+  if (user.sui_address && user.sui_private_key_enc) {
+    return user;
+  }
+  const suiWallet = generateSuiWallet(MASTER_KEY);
+  await updateUserSuiWallet(user.id, suiWallet.address, suiWallet.encryptedPrivateKey);
+  user.sui_address = suiWallet.address;
+  user.sui_private_key_enc = suiWallet.encryptedPrivateKey;
+  return user;
+}
+
+/**
  * Onboards user via Telegram chat.
- * Generates a single ed25519 keypair, creates & funds the subaccount on-chain,
- * and returns the raw exported key string (ed25519:<base58>) to show once.
+ * Generates NEAR subaccount keypair and Sui Ed25519 keypair, creates & funds the NEAR subaccount on-chain,
+ * and returns the user account details.
  * Idempotent: returns existing account info if user is already onboarded.
  * Optionally accepts a referral code to track who referred the user.
  */
@@ -780,9 +890,11 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   // Step 5: Check for existing user row (idempotency)
   const existing = await getUserByTelegramId(telegramId).catch(() => null);
   if (existing) {
+    const updated = await ensureUserSuiWallet(existing);
     return {
-      userId: existing.id,
-      subaccountId: existing.subaccount_id,
+      userId: updated.id,
+      subaccountId: updated.subaccount_id,
+      suiAddress: updated.sui_address ?? undefined,
       isExisting: true,
     };
   }
@@ -796,12 +908,15 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     }
   }
 
-  // Step 1: Generate exactly one ed25519 keypair
+  // Step 1: Generate exactly one NEAR ed25519 keypair
   const keyPair = generateScopedAccessKey();
   const publicKey = keyPair.getPublicKey();
   const privateKey = keyPair.toString();
   const prefix = generateRandomAccountPrefix();
   const subaccountId = `${prefix}.${RACERBOT_PARENT_ACCOUNT}`;
+
+  // Step 2: Generate Sui Ed25519 wallet
+  const suiWallet = generateSuiWallet(MASTER_KEY);
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -838,12 +953,12 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   // Step 3: Encrypt real secret key and store in DB
   const encryptedKey = encrypt(privateKey, MASTER_KEY);
 
-  // Note: this key currently has no on-chain permission restriction,
-  // since there is no user-side signing step to grant one.
   const user = await createUser({
     telegram_id: telegramId,
     subaccount_id: subaccountId,
     scoped_key_encrypted: encryptedKey,
+    sui_address: suiWallet.address,
+    sui_private_key_enc: suiWallet.encryptedPrivateKey,
   });
 
   // Generate referral code based on username
@@ -859,7 +974,9 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   return {
     userId: user.id,
     subaccountId,
-    privateKey, // Raw exported private key string (ed25519:<base58>)
+    privateKey, // Raw exported NEAR private key string (ed25519:<base58>)
+    suiAddress: suiWallet.address,
+    suiPrivateKey: suiWallet.privateKeySecret,
     isExisting: false,
   };
 }
@@ -939,6 +1056,7 @@ let directExecutor: any = null;
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
+  chain?: 'near' | 'sui';
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -1005,10 +1123,15 @@ export interface UserBalances {
   totalNearFormatted: string;
   totalNearUsd: string;
   nearUsd: number;
+  suiAddress?: string;
+  suiBalanceMist?: string;
+  suiBalanceFormatted?: string;
+  suiBalanceUsd?: string;
+  suiUsd?: number;
 }
 
 /**
- * Fetch native NEAR and wrap.near balances for user's subaccount with caching & parallel requests.
+ * Fetch native NEAR, wrap.near, and SUI balances for user's account with caching & parallel requests.
  */
 export async function getUserBalances(telegramId: number, forceRefresh = false): Promise<UserBalances> {
   if (!forceRefresh) {
@@ -1018,18 +1141,25 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     }
   }
 
-  const user = await getUserByTelegramId(telegramId);
-  if (!user) {
+  const rawUser = await getUserByTelegramId(telegramId);
+  if (!rawUser) {
     throw new Error('User not found. Run /start first.');
   }
 
+  const user = await ensureUserSuiWallet(rawUser);
   const subaccountId = user.subaccount_id;
+  const suiAddress = user.sui_address;
+
   let nativeNearYocto = '0';
   let wrapNearYocto = '0';
+  let suiMist = 0n;
 
-  const [nativeRes, wrapRes] = await Promise.allSettled([
+  const [nativeRes, wrapRes, suiRes, nearUsd, suiUsd] = await Promise.allSettled([
     near.getNearBalance(subaccountId),
     near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
+    suiAddress ? getSuiBalance(suiAddress) : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
+    getNearUsdPrice(),
+    getSuiUsdPrice(),
   ]);
 
   if (nativeRes.status === 'fulfilled') {
@@ -1038,6 +1168,12 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
   if (wrapRes.status === 'fulfilled') {
     wrapNearYocto = wrapRes.value || '0';
   }
+  if (suiRes.status === 'fulfilled') {
+    suiMist = suiRes.value.mist;
+  }
+
+  const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
+  const suiPrice = suiUsd.status === 'fulfilled' ? suiUsd.value : 2.0;
 
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
   const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
@@ -1047,12 +1183,11 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
   const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
   const totalNear = spendableNativeNear + wrapNear;
 
-  // Get NEAR/USD price
-  const nearUsd = await getNearUsdPrice();
+  const spendableSui = Number(suiMist) / 1e9;
 
   // Format USD values
-  const formatUSD = (nearValue: number) => {
-    const usdValue = nearValue * nearUsd;
+  const formatUSD = (val: number, rate: number) => {
+    const usdValue = val * rate;
     if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
     if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
     return `$${usdValue.toFixed(4)}`;
@@ -1062,13 +1197,18 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     subaccountId,
     nativeNearYocto,
     nativeNearFormatted: spendableNativeNear.toFixed(4),
-    nativeNearUsd: formatUSD(spendableNativeNear),
+    nativeNearUsd: formatUSD(spendableNativeNear, nearPrice),
     wrapNearYocto,
     wrapNearFormatted: wrapNear.toFixed(4),
-    wrapNearUsd: formatUSD(wrapNear),
+    wrapNearUsd: formatUSD(wrapNear, nearPrice),
     totalNearFormatted: totalNear.toFixed(4),
-    totalNearUsd: formatUSD(totalNear),
-    nearUsd,
+    totalNearUsd: formatUSD(totalNear, nearPrice),
+    nearUsd: nearPrice,
+    suiAddress: suiAddress ?? undefined,
+    suiBalanceMist: suiMist.toString(),
+    suiBalanceFormatted: spendableSui.toFixed(4),
+    suiBalanceUsd: formatUSD(spendableSui, suiPrice),
+    suiUsd: suiPrice,
   };
 
   balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });
@@ -1076,12 +1216,8 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
 }
 
 // ── Lightweight trade-path balance (SPEED) ────────────────────────────────────
-// Trades must not wait on the NEAR/USD price feed. This returns ONLY the
-// spendable native NEAR (same 0.05 reserve math as getUserBalances) with a
-// short TTL cache, skipping the wNEAR read and USD conversion entirely.
-// Display paths keep using getUserBalances.
-
 const tradeBalanceCache = new Map<number, { data: number; expiresAt: number }>();
+const suiTradeBalanceCache = new Map<number, { data: number; expiresAt: number }>();
 const TRADE_BALANCE_TTL_MS = 5_000;
 
 export async function getTradeSpendableNear(telegramId: number): Promise<number> {
@@ -1097,9 +1233,30 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
 
   const nativeNearYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
-  const spendable = Math.max(0, nativeNear - 0.05); // same reserve as getUserBalances
+  const spendable = Math.max(0, nativeNear - 0.05);
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
+  return spendable;
+}
+
+export async function getTradeSpendableSui(telegramId: number): Promise<number> {
+  const cached = suiTradeBalanceCache.get(telegramId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('User not found. Run /start first.');
+  }
+
+  const updated = await ensureUserSuiWallet(user);
+  if (!updated.sui_address) return 0;
+
+  const bal = await getSuiBalance(updated.sui_address).catch(() => ({ mist: 0n, sui: 0, formatted: '0.0000' }));
+  const spendable = Math.max(0, bal.sui - 0.02); // 0.02 SUI gas reserve
+
+  suiTradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;
 }
 

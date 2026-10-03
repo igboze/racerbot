@@ -156,31 +156,49 @@ async function executeCopyBuy(
     const slippagePct = target.max_slippage_pct;
 
     // 5. Build swap
-    const near = getNear();
-    const amountInYocto = BigInt(Math.floor(target.buy_amount_near * 1e24)).toString();
-    const { minAmountOut } = await near.computeMinAmountOut(
-      venue,
-      'wrap.near',
-      tokenAddress,
-      amountInYocto,
-      slippagePct,
-      tokenCache.rhea_pool_id ?? undefined,
-      tokenCache.dcl_pool_id ?? undefined
-    );
+    let swapEvent: any;
+    if (tokenCache.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
+      const amountInMist = BigInt(Math.floor(target.buy_amount_near * 1e9)).toString();
+      swapEvent = {
+        type: 'execute_swap',
+        chain: 'sui',
+        user_id: target.user_id,
+        token_in: 'sui',
+        token_out: tokenAddress,
+        amount_in: amountInMist,
+        min_amount_out: '1',
+        venue: 'suipump',
+        slippage_pct: slippagePct,
+        timestamp: Date.now(),
+        notify_user: false,
+      };
+    } else {
+      const near = getNear();
+      const amountInYocto = BigInt(Math.floor(target.buy_amount_near * 1e24)).toString();
+      const { minAmountOut } = await near.computeMinAmountOut(
+        venue as any,
+        'wrap.near',
+        tokenAddress,
+        amountInYocto,
+        slippagePct,
+        tokenCache.rhea_pool_id ?? undefined,
+        tokenCache.dcl_pool_id ?? undefined
+      );
 
-    const swapEvent: SwapEvent = {
-      type: 'execute_swap',
-      user_id: target.user_id,
-      token_in: 'wrap.near',
-      token_out: tokenAddress,
-      amount_in: amountInYocto,
-      min_amount_out: minAmountOut,
-      venue,
-      timestamp: Date.now(),
-      notify_user: false, // we send our own notification below
-      ...(tokenCache.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
-      ...(tokenCache.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
-    } as SwapEvent;
+      swapEvent = {
+        type: 'execute_swap',
+        user_id: target.user_id,
+        token_in: 'wrap.near',
+        token_out: tokenAddress,
+        amount_in: amountInYocto,
+        min_amount_out: minAmountOut,
+        venue,
+        timestamp: Date.now(),
+        notify_user: false, // we send our own notification below
+        ...(tokenCache.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
+        ...(tokenCache.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
+      } as SwapEvent;
+    }
 
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
