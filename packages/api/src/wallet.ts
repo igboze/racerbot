@@ -9,9 +9,12 @@ import {
   generateSuiWallet,
   getSuiBalance,
   getSuiTokenBalance,
+  getSuiTokenMetadata,
   getSuiPumpCurveState,
   getSuiUsdPrice,
   isValidSuiAddress,
+  resolveTokenAddressFromKey,
+  getShortTokenKey,
   type VenueName,
 } from '@racerbot/shared';
 import {
@@ -122,8 +125,9 @@ export async function warmTokenInfoCache(): Promise<void> {
 }
 
 // ── Helper to detect Sui token addresses & SuiPump curve IDs ─────────────────
-export function isSuiToken(tokenAddress: string): boolean {
-  if (!tokenAddress || typeof tokenAddress !== 'string') return false;
+export function isSuiToken(rawTokenAddress: string): boolean {
+  if (!rawTokenAddress || typeof rawTokenAddress !== 'string') return false;
+  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress.trim());
   const clean = tokenAddress.trim();
   return (
     clean.startsWith('0x') ||
@@ -342,9 +346,10 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
 const TOKEN_INFO_MEM_TTL_MS = 15_000;
 const TOKEN_INFO_DB_MAX_AGE_MS = 15_000;
 
-export async function getTokenInfo(tokenAddress: string, forceRefresh = false): Promise<TokenInfoResult> {
+export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false): Promise<TokenInfoResult> {
+  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   if (!forceRefresh) {
-    const cached = tokenInfoCache.get(tokenAddress);
+    const cached = tokenInfoCache.get(tokenAddress) || tokenInfoCache.get(rawTokenAddress);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.data;
     }
@@ -358,6 +363,39 @@ export async function getTokenInfo(tokenAddress: string, forceRefresh = false): 
     ]);
 
     if (!curve) {
+      // Fallback: fetch on-chain CoinMetadata and DexScreener market data
+      const [meta, dexData] = await Promise.all([
+        getSuiTokenMetadata(tokenAddress).catch(() => null),
+        fetchDexScreenerTokenData(tokenAddress).catch(() => null),
+      ]);
+
+      if (meta || dexData) {
+        const priceSui = dexData?.priceNative || 0;
+        const priceUsd = dexData?.priceUsd || priceSui * suiUsd;
+        const result: TokenInfoResult = {
+          address: tokenAddress,
+          chain: 'sui',
+          name: meta?.name || 'Sui Token',
+          symbol: meta?.symbol || 'SUI',
+          decimals: meta?.decimals ?? 6,
+          total_supply: '1000000000000000',
+          price: priceSui > 0 ? priceSui.toFixed(9) : '0',
+          price_usd: priceUsd > 0 ? priceUsd.toFixed(8) : '0',
+          liquidity: '0',
+          liquidity_usd: (dexData as any)?.liquidity?.usd?.toString() || '0',
+          market_cap: dexData?.marketCapUsd ? dexData.marketCapUsd / suiUsd : 0,
+          market_cap_usd: dexData?.marketCapUsd || 0,
+          near_usd: suiUsd,
+          sui_usd: suiUsd,
+          venue: 'suipump',
+          tradeable: true,
+          sui_coin_type: tokenAddress,
+        };
+        tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+        tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+        return result;
+      }
+
       throw new Error(`Sui token or SuiPump curve not found: ${tokenAddress}`);
     }
 
