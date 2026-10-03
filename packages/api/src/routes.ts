@@ -1327,7 +1327,7 @@ async function executeBuyHelper(
   }
   const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
-  const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
+  const effectiveRheaPoolId = (venue === 'nearlytrade' && effectiveDclPoolId) ? undefined : (info.rhea_pool_id ?? undefined);
 
   if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
     if (venue !== 'nearlytrade') {
