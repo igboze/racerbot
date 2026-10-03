@@ -390,13 +390,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         const name = meta?.name || (dexData as any)?.name || tokenAddress.split('::').pop() || 'Sui Token';
         const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
 
-        let priceSui = dexData?.priceNative || 0;
-        if (priceSui <= 0 && routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
+        let priceSui = 0;
+        if (routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
           priceSui = routerQuote.spotPrice;
-        }
-        if (priceSui <= 0 && routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+        } else if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
           const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
           if (outHuman > 0) priceSui = 1 / outHuman;
+        } else if (dexData?.priceNative && dexData.priceNative > 0) {
+          priceSui = dexData.priceNative;
         }
 
         const priceUsd = dexData?.priceUsd || (priceSui > 0 ? priceSui * suiUsd : 0);
