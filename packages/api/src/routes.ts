@@ -567,8 +567,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     text += `  Entry Price: \`${entryPrice.toFixed(8)} ${nativeUnit}\`\n`;
     text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
 
-    if (!isSui) {
-      try {
+    try {
         const pnlCard = await generatePNLCard(userPosition.id);
         if (pnlCard.image) {
           pnlCardImage = pnlCard.image;
@@ -578,12 +577,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       } catch (err: any) {
         console.error('Failed to generate PNL card:', err);
       }
-    }
   }
 
   // ── Buttons ──
   let shareButtonRow: any[] = [];
-  if (userRecord && !isSui) {
+  if (userRecord) {
     try {
       const shareCode = await getOrCreateTokenShare(userRecord.id, tokenAddress);
       const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
@@ -2603,19 +2601,17 @@ export function setupRoutes(bot: Telegraf): void {
         cb('🏠 Menu', 'menu_home', 'primary'),
       ]);
 
-      // Generate PNL card with image for NEAR
+      // Generate PNL card with image for all chains (NEAR + SUI)
       let pnlCardImage: Buffer | null = null;
-      if (!isSuiPos) {
-        try {
-          const pnlCard = await generatePNLCard(positionId, showNetWorth);
-          if (pnlCard.image) {
-            pnlCardImage = pnlCard.image;
-          } else {
-            msg += `\n${pnlCard.text}`;
-          }
-        } catch (err: any) {
-          console.error('Failed to generate PNL card:', err);
+      try {
+        const pnlCard = await generatePNLCard(positionId, showNetWorth);
+        if (pnlCard.image) {
+          pnlCardImage = pnlCard.image;
+        } else {
+          msg += `\n${pnlCard.text}`;
         }
+      } catch (err: any) {
+        console.error('Failed to generate PNL card:', err);
       }
 
       // If image was generated, send it as a new message with caption and keyboard
