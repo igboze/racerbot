@@ -41,6 +41,7 @@ import {
 } from '@racerbot/db';
 import {
   getTokenInfo,
+  getFastTokenRoute,
   publishSwap,
   onboardUser,
   rotateUserKey,
@@ -1256,8 +1257,24 @@ async function executeBuyHelper(
     throw new Error('Minimum buy amount is 0.001 NEAR.');
   }
 
-  // Hot path: resolve only the token route needed for a quote.
-  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+  const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
+
+  // Parallel pre-flight: resolve fast route, wallet balances, and USD prices all in one parallel round-trip!
+  const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal] = await Promise.all([
+    getFastTokenRoute(tokenAddress).catch(() => null),
+    !isSuiHint && user.subaccount_id
+      ? Promise.all([
+          near.getNearBalance(user.subaccount_id).catch(() => null),
+          near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+        ])
+      : Promise.resolve([null, '0'] as [string | null, string]),
+    isSuiHint || user.sui_address
+      ? getSuiBalance(user.sui_address || '').catch(() => ({ mist: 0n, formatted: '0' }))
+      : Promise.resolve({ mist: 0n, formatted: '0' }),
+    !isSuiHint ? getNearUsdPrice().catch(() => 4.5) : Promise.resolve(4.5),
+    isSuiHint ? getSuiUsdPrice().catch(() => 2.0) : Promise.resolve(2.0),
+  ]);
+
   if (!info) {
     throw new Error('Could not resolve token details. Please verify the address.');
   }
@@ -1269,9 +1286,8 @@ async function executeBuyHelper(
     if (!user.sui_address) {
       throw new Error('Please run /start to set up your Sui wallet first.');
     }
-    const userSuiBal = await getSuiBalance(user.sui_address);
-    const suiUsd = await getSuiUsdPrice().catch(() => 2.0);
-    const effectiveSuiUsd = suiUsd > 0 ? suiUsd : 2.0;
+    const userSuiBal = suiBalRes;
+    const effectiveSuiUsd = suiUsdVal > 0 ? suiUsdVal : 2.0;
     const minReserveSui = Math.max(0.05, 2.0 / effectiveSuiUsd);
     const amountInMistBigInt = BigInt(Math.floor(amountNear * 1e9));
     const minReserveMist = BigInt(Math.ceil(minReserveSui * 1e9));
@@ -1358,23 +1374,18 @@ async function executeBuyHelper(
     }
   }
 
-  const near = getNear();
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
   const amountInBigInt = BigInt(amountInYocto);
 
   // Pre-flight balance check: verify wallet retains at least $2.00 in NEAR after swap
-  const [nativeBalYoctoStr, wNearBalStr] = await Promise.all([
-    near.getNearBalance(user.subaccount_id).catch(() => null),
-    near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
-  ]);
+  const [nativeBalYoctoStr, wNearBalStr] = nearBalRes;
 
   if (nativeBalYoctoStr !== null && nativeBalYoctoStr !== undefined) {
     const nativeBal = BigInt(nativeBalYoctoStr);
     const wNearBal = BigInt(wNearBalStr || '0');
     const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
 
-    const nearUsd = await getNearUsdPrice().catch(() => 4.5);
-    const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
+    const effectiveNearUsd = nearUsdVal > 0 ? nearUsdVal : 4.5;
     const minReserveNear = Math.max(0.05, 2.0 / effectiveNearUsd);
     const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
     const totalNearRequired = nearNeededForSwap + minReserveYocto;

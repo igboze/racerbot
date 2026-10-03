@@ -2245,17 +2245,25 @@ export class MultiRpcNear {
   ): Promise<{ expectedOutput: string; minAmountOut: string }> {
     if (venue === 'memecooking') {
       const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
-      // Check Rhea DEX first for bonded tokens
-      const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
-      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
-        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, typeof rhea.poolId === 'number' ? rhea.poolId : null, rhea.isDcl ? String(rhea.poolId) : null);
+
+      // Fast path: if Rhea pool or DCL pool is already known, quote Rhea immediately
+      if (rheaPoolId !== null && rheaPoolId !== undefined) {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, typeof rheaPoolId === 'number' ? rheaPoolId : null, dclPoolId);
       }
 
-      // Pre-bonded on Meme.Cooking launchpad
+      // Check pre-bonded Meme.Cooking launchpad curve first (instant 1-view call)
       const memeId = parseMemeCookingId(targetToken);
       const meme = memeId !== null ? await this.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null) : null;
 
       if (meme) {
+        // If meme is already bonded/graduated to Rhea DEX, find the Rhea pool
+        if (meme.pool_id || meme.has_bonded || meme.status === 'Bonded') {
+          const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
+          if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+            return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, typeof rhea.poolId === 'number' ? rhea.poolId : null, rhea.isDcl ? String(rhea.poolId) : null);
+          }
+        }
+
         const hardCap = BigInt(meme.hard_cap || '100000000000000000000000000');
         const tokensToDistribute = BigInt(meme.amount_to_be_distributed || meme.total_supply || '0');
         const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
@@ -2272,6 +2280,12 @@ export class MultiRpcNear {
 
         const minOut = calculateMinAmountOut(expected, slippagePct);
         return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      }
+
+      // If meme was not found on launchpad, check Rhea DEX as fallback
+      const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, typeof rhea.poolId === 'number' ? rhea.poolId : null, rhea.isDcl ? String(rhea.poolId) : null);
       }
 
       throw new Error(`Meme.Cooking token ${targetToken} is not active and has no DEX pool.`);
@@ -2316,6 +2330,26 @@ export class MultiRpcNear {
       }
       let poolId = rheaPoolId;
       const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+
+      // FAST PATH: If poolId is already known, test it directly with get_return in 1 RPC call (<100ms)!
+      if (typeof poolId === 'number' && poolId >= 0) {
+        try {
+          const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: poolId,
+            token_in: inToken,
+            amount_in: amountIn,
+            token_out: outToken,
+          });
+          const expected = BigInt(ret || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // get_return failed on this poolId — fall through to multi-hop / discovery
+        }
+      }
+
       // Reused below: when the catch branch already fetched pool state, don't
       // pay for a second findRheaPoolForToken round trip.
       let rheaState: Awaited<ReturnType<typeof this.findRheaPoolForToken>> | undefined;
@@ -2415,6 +2449,28 @@ export class MultiRpcNear {
       throw new Error(`No active liquidity pool found for token ${outToken} on Rhea / Ref Finance.`);
     } else if (venue === 'nearlytrade') {
       const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
+      // FAST PATH: If dclPoolId is known and direct wNEAR-paired, quote dclv2.ref-labs.near directly in 1 RPC call!
+      if (dclPoolId && (dclPoolId.includes('wrap.near') || dclPoolId.includes('|wrap.near|'))) {
+        try {
+          const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [dclPoolId],
+            input_token: inToken,
+            output_token: outToken,
+            input_amount: amountIn,
+          });
+          const expected = BigInt(quoteRes?.amount || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // quote view failed — fall through to full NearlyTrade resolution
+        }
+      }
+
       let state;
       try {
         state = await this.getNearlytradeTokenState(targetToken);
@@ -2423,8 +2479,6 @@ export class MultiRpcNear {
         try {
           const rheaPoolId = await this.findRheaPoolId(tokenIn, tokenOut);
           if (rheaPoolId) {
-            const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
-            const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
             const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
               pool_id: rheaPoolId,
               token_in: inToken,
@@ -2444,8 +2498,6 @@ export class MultiRpcNear {
           `NearlyTrade token ${targetToken} is not yet bonded and has no Rhea pool. Wait for bonding or pool creation.`
         );
       }
-      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
-      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
 
       // ── Multi-hop quoting for non-NEAR quote assets ──────────────────────
       if (!state.quoteIsNear) {
@@ -2673,8 +2725,11 @@ export class MultiRpcNear {
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'gaypad') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
-      // Rule 1: Check Rhea first!
-      const rhea = await this.findRheaPoolForToken(targetToken);
+      // Rule 1: If Rhea pool is already known or available, check Rhea first
+      if (typeof rheaPoolId === 'number' && rheaPoolId >= 0) {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rheaPoolId);
+      }
+      const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
       if (rhea && typeof rhea.poolId === 'number') {
         return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rhea.poolId);
       }
