@@ -13,6 +13,7 @@ import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/in
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
+import { startDepositWatcher, stopDepositWatcher } from './depositWatcher.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
 import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
@@ -269,12 +270,16 @@ async function main(): Promise<void> {
   
   logger.info('Background external deposit sync started', { intervalMs: SYNC_INTERVAL_MS });
 
+  // ── Real-time NEAR & SUI native deposit watcher ───────────────────────────
+  startDepositWatcher(12_000); // Check every 12s for fast real-time deposit alerts
+
 
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
     logger.info('Shutting down', { signal });
     bot.stop(signal);
+    stopDepositWatcher();
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;
