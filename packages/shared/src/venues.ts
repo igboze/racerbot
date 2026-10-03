@@ -112,8 +112,11 @@ export function getVenueInfo(venue: string | null | undefined): VenueInfo | null
   return VENUES[venue as VenueId] ?? null;
 }
 
-/** DexScreener chart/search page for a token on NEAR. */
+/** DexScreener chart/search page for a token on NEAR or SUI. */
 export function dexscreenerUrl(tokenAddress: string): string {
+  if (tokenAddress.includes('::') || tokenAddress.startsWith('0x')) {
+    return `https://dexscreener.com/sui/${tokenAddress}`;
+  }
   return `https://dexscreener.com/near/${tokenAddress}`;
 }
 
@@ -157,7 +160,7 @@ export interface VenueLink {
 }
 
 /**
- * Deep links for a token card: DexScreener chart, NearBlocks explorer,
+ * Deep links for a token card: DexScreener chart, explorer,
  * and the token's page on its own launchpad/DEX (when it has one).
  * Also includes a RacerBot bubble map link for holder distribution.
  */
@@ -167,10 +170,15 @@ export function tokenLinks(
   symbol?: string,
   name?: string,
 ): VenueLink[] {
+  const isSui = tokenAddress.includes('::') || tokenAddress.startsWith('0x');
+  const explorerLink: VenueLink = isSui
+    ? { label: '🔎 Suiscan', url: `https://suiscan.xyz/mainnet/coin/${encodeURIComponent(tokenAddress)}` }
+    : { label: '🔎 NearBlocks', url: nearblocksTokenUrl(tokenAddress) };
+
   const links: VenueLink[] = [
     { label: '🫧 Bubble Map', url: bubbleMapUrl(tokenAddress, symbol, name) },
     { label: '📊 DexScreener', url: dexscreenerUrl(tokenAddress) },
-    { label: '🔎 NearBlocks', url: nearblocksTokenUrl(tokenAddress) },
+    explorerLink,
   ];
   const info = getVenueInfo(venue);
   if (info) {
