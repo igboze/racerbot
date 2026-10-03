@@ -1738,7 +1738,15 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery('🔄 Refreshing balance...').catch(() => {});
     try {
       const menu = await buildMainMenu(telegramId, true);
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit) {
+        await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        });
+      } else {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -2332,7 +2340,29 @@ export function setupRoutes(bot: Telegraf): void {
           (v.keyboard?.reply_markup?.inline_keyboard ?? []).map((row: any[]) => row.map((b: any) => b.text))
         );
 
-      // 1. Instant paint from DB + cached prices
+      if (isRefresh) {
+        if (typeof (ctx as any).answerCbQuery === 'function') {
+          await (ctx as any).answerCbQuery('🔄 Refreshing holdings...').catch(() => {});
+        }
+        // Force live wallet deposit scan and live DEX/bonding-curve token pricing
+        await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
+          console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
+        });
+        const view = await buildHoldingsView(user, true);
+        const canEditMsg = typeof (ctx as any).editMessageText === 'function';
+        if (canEditMsg) {
+          await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
+            .catch(async (err: any) => {
+              if (err?.message?.includes('message is not modified')) return;
+              await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+            });
+        } else {
+          await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+        }
+        return;
+      }
+
+      // 1. Instant paint from DB + cached prices for initial view
       const view = await buildHoldingsView(user, false);
       let paintedChatId: number | undefined;
       let paintedMessageId: number | undefined;
@@ -2343,26 +2373,22 @@ export function setupRoutes(bot: Telegraf): void {
         paintedMessageId = (sent as any)?.message_id;
       };
 
-      if (isRefresh) {
-        await replyPaint();
-      } else {
-        const canEditMsg = typeof (ctx as any).editMessageText === 'function';
-        const cbMsg = (ctx as any).callbackQuery?.message;
-        if (canEditMsg) {
-          let edited = false;
-          await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
-            .then(() => { edited = true; })
-            .catch(async (err: any) => {
-              if (err?.message?.includes('message is not modified')) { edited = true; return; }
-              await replyPaint();
-            });
-          if (edited && cbMsg) {
-            paintedChatId = cbMsg.chat?.id ?? cbMsg.chat_id;
-            paintedMessageId = cbMsg.message_id;
-          }
-        } else {
-          await replyPaint();
+      const canEditMsg = typeof (ctx as any).editMessageText === 'function';
+      const cbMsg = (ctx as any).callbackQuery?.message;
+      if (canEditMsg) {
+        let edited = false;
+        await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
+          .then(() => { edited = true; })
+          .catch(async (err: any) => {
+            if (err?.message?.includes('message is not modified')) { edited = true; return; }
+            await replyPaint();
+          });
+        if (edited && cbMsg) {
+          paintedChatId = cbMsg.chat?.id ?? cbMsg.chat_id ?? ctx.chat?.id;
+          paintedMessageId = cbMsg.message_id;
         }
+      } else {
+        await replyPaint();
       }
 
       // 2. Background reconcile (detached — never blocks the user's paint)
@@ -2398,7 +2424,7 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.command('holdings', async (ctx) => {
-    await handleHoldings(ctx, false);
+    await handleHoldings(ctx, true);
   });
 
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
@@ -3103,7 +3129,15 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => {});
       const wallet = await buildWalletMenu(telegramId, true);
-      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit) {
+        await (ctx as any).editMessageText(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
+        });
+      } else {
+        await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -3358,15 +3392,37 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // Refresh token card — instantly sends a new text message of the updated information
+  // Refresh token card — edits message in-place for real-time updates
   bot.action(/^token_refresh:(.+)$/, async (ctx) => {
     const rawTokenParam = ctx.match![1];
     const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const telegramId = ctx.from!.id;
     try {
-      await ctx.answerCbQuery('🔄 Refreshed!').catch(() => {});
+      await ctx.answerCbQuery('🔄 Refreshing token...').catch(() => {});
       const card = await buildTokenCard(tokenAddress, telegramId);
-      await sendTokenCard(ctx, card);
+
+      const cbMsg = (ctx as any).callbackQuery?.message;
+      const isPhoto = !!cbMsg?.photo;
+
+      if (isPhoto && typeof (ctx as any).editMessageCaption === 'function' && !card.pnlCardImage) {
+        await (ctx as any).editMessageCaption(card.text, {
+          parse_mode: 'Markdown',
+          reply_markup: card.keyboard?.reply_markup,
+        }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await sendTokenCard(ctx, card);
+        });
+      } else if (!isPhoto && typeof (ctx as any).editMessageText === 'function' && !card.pnlCardImage) {
+        await (ctx as any).editMessageText(card.text, {
+          parse_mode: 'Markdown',
+          ...card.keyboard,
+        }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await sendTokenCard(ctx, card);
+        });
+      } else {
+        await sendTokenCard(ctx, card);
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
