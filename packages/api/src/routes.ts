@@ -445,8 +445,23 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       : `💧 *Venue*: NEARpad Launchpad`;
   } else if (tokenInfo.venue === 'gaypad') {
     venueText = `💧 *Venue*: Gaypad Launchpad`;
+  } else if (isSui) {
+    const suiVenueMap: Record<string, string> = {
+      bluefin: 'Bluefin',
+      cetus: 'Cetus',
+      turbos: 'Turbos Finance',
+      flowx: 'FlowX Finance',
+      aftermath: 'Aftermath Finance',
+      deepbook: 'DeepBook',
+      kriya: 'Kriya DEX',
+      momentum: 'Momentum DEX',
+      suipump: 'SuiPump',
+    };
+    const vKey = (tokenInfo.venue || '').toLowerCase();
+    const vDisplayName = suiVenueMap[vKey] || (vKey && vKey !== 'sui_dex' && vKey !== 'unknown' ? vKey.charAt(0).toUpperCase() + vKey.slice(1) : null);
+    venueText = vDisplayName ? `💧 *Venue*: ${vDisplayName} (Sui DEX)` : `💧 *Venue*: Sui DEX Router (Aftermath)`;
   } else if (tokenInfo.tradeable) {
-    venueText = `💧 *Venue*: ${isSui ? 'Sui Network' : 'NEAR Protocol DEX'}`;
+    venueText = `💧 *Venue*: NEAR Protocol DEX`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
@@ -533,10 +548,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   // -- Supply formatting --
   const supplyHuman = parseFloat(tokenInfo.total_supply) / Math.pow(10, tokenInfo.decimals);
-  const supplyStr = supplyHuman > 1e9
+  const supplyStr = supplyHuman >= 1e9
     ? `${(supplyHuman / 1e9).toFixed(2)}B`
-    : supplyHuman > 1e6
+    : supplyHuman >= 1e6
     ? `${(supplyHuman / 1e6).toFixed(2)}M`
+    : supplyHuman >= 1e3
+    ? `${(supplyHuman / 1e3).toFixed(2)}K`
     : supplyHuman.toFixed(2);
 
   // -- Rate footnote --

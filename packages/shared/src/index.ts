@@ -145,6 +145,7 @@ export {
   getSuiBalance,
   getSuiTokenBalance,
   getSuiTokenMetadata,
+  getSuiTokenSupply,
   getSuiPumpCurveState,
   getSuiUsdPrice,
   getSuiRouterQuote,

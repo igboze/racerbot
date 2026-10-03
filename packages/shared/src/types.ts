@@ -35,6 +35,11 @@ export type VenueName =
   | 'cetus'
   | 'turbos'
   | 'deepbook'
+  | 'bluefin'
+  | 'flowx'
+  | 'aftermath'
+  | 'kriya'
+  | 'momentum'
   | 'sui_dex';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
@@ -51,6 +56,11 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'cetus',
   'turbos',
   'deepbook',
+  'bluefin',
+  'flowx',
+  'aftermath',
+  'kriya',
+  'momentum',
   'sui_dex',
 ];
 
