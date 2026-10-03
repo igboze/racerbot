@@ -2211,7 +2211,7 @@ export function setupRoutes(bot: Telegraf): void {
         const displayLabel = sanitizeMd(rawSymbol);
         const currentPrice = info ? parseFloat(info.price) : 0;
         const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+        const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
         const nativeUsdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
 
         let humanQuantity = 0;
@@ -2269,8 +2269,8 @@ export function setupRoutes(bot: Telegraf): void {
       for (const pos of positions.slice(MAX_DISPLAY_HOLDINGS)) {
         const info = infoMap.get(pos.token_address);
         const currentPrice = info ? parseFloat(info.price) : 0;
-        const decimals = info?.decimals ?? 18;
         const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+        const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
         const nativeUsdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
         const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
         try {
@@ -2454,7 +2454,7 @@ export function setupRoutes(bot: Telegraf): void {
       const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
       const usdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
 
-      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+      const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
       let mcNative = info?.market_cap || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
         try {
@@ -2469,6 +2469,10 @@ export function setupRoutes(bot: Telegraf): void {
       // Calculate initial investment across all buy fills, or fallback to position entry * qty
       const toHuman = (rawStr: string): number => {
         const val = parseFloat(rawStr || '0');
+        if (decimals <= 0) return val;
+        if (isSuiPos) {
+          return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
+        }
         if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
         return val;
       };
@@ -2511,8 +2515,8 @@ export function setupRoutes(bot: Telegraf): void {
       // Heal corrupted entryPrice: if fills give us a reliable cost basis, recompute
       if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
         const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
-        // Heal if: stored entry is 0, OR 10× above current price while fills suggest a much lower value
-        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10)) {
+        // Heal if: stored entry is 0, OR 10× above current price while fills suggest a much lower value, OR diverges > 50% from fills
+        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.5) {
           entryPrice = fillAvgEntry;
           position.avg_entry_price = fillAvgEntry.toString();
           updatePosition({
@@ -2791,27 +2795,35 @@ export function setupRoutes(bot: Telegraf): void {
         const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
         const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
         const isSuiPos = livePosition.chain === 'sui' || isSuiToken(livePosition.token_address);
-        const decimals = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
+        const decimals = tokenInfo?.decimals ?? (isSuiPos ? 6 : 18);
         // Fills store raw on-chain token units; prices are native per whole token.
         const toHuman = (rawStr: string): number => {
           const val = parseFloat(rawStr || '0');
+          if (decimals <= 0) return val;
+          if (isSuiPos) {
+            return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
+          }
           if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
           return val;
         };
 
         // Calculate total initial investment across ALL buy fills (not just first)
-        // Include fees paid to get accurate total native invested
+        // Prefer input_amount as on-chain source of truth
         let totalInitialInvestment = 0;
         for (const buy of buys) {
-          const amount = toHuman(buy.amount);
-          const price = parseFloat(buy.price);
-          let fee = parseFloat(buy.fee_paid || '0');
-          if (isSuiPos && fee > 1e6) {
-            fee = fee / 1e9;
-          } else if (!isSuiPos && fee > 1e18) {
-            fee = fee / 1e24;
+          if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
+            totalInitialInvestment += parseFloat(buy.input_amount);
+          } else {
+            const amount = toHuman(buy.amount);
+            const price = parseFloat(buy.price);
+            let fee = parseFloat(buy.fee_paid || '0');
+            if (isSuiPos && fee > 1e6) {
+              fee = fee / 1e9;
+            } else if (!isSuiPos && fee > 1e18) {
+              fee = fee / 1e24;
+            }
+            totalInitialInvestment += (amount * price) + fee;
           }
-          totalInitialInvestment += (amount * price) + fee;
         }
 
         if (currentPrice === 0) {
@@ -2948,8 +2960,10 @@ export function setupRoutes(bot: Telegraf): void {
         const info = tokenInfoMap.get(token);
         const isSuiTokenAddr = isSuiToken(token);
         const rawAmt = parseFloat(s.amount || '0');
-        const decimals = info?.decimals ?? (isSuiTokenAddr ? 9 : (rawAmt > 1e25 ? 24 : 18));
-        const humanQty = rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt;
+        const decimals = info?.decimals ?? (isSuiTokenAddr ? 6 : (rawAmt > 1e25 ? 24 : 18));
+        const humanQty = isSuiTokenAddr
+          ? (String(s.amount || '').includes('.') && rawAmt < 1e6 ? rawAmt : rawAmt / Math.pow(10, decimals))
+          : (rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt);
         const sellPrice = parseFloat(s.price || '0');
         let sellFee = parseFloat(s.fee_paid || '0');
         if (isSuiTokenAddr && sellFee > 1e6) sellFee = sellFee / 1e9;

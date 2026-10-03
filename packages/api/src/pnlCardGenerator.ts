@@ -100,9 +100,13 @@ export async function generatePNLCardData(
     const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
-    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
+    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 6 : 18);
     const toHuman = (rawStr: string): number => {
       const val = parseFloat(rawStr || '0');
+      if (decimals <= 0) return val;
+      if (isSuiPos) {
+        return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
+      }
       if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
       return val;
     };
@@ -155,8 +159,8 @@ export async function generatePNLCardData(
     let avgEntryPrice = parseFloat(position.avg_entry_price || '0');
     if (totalBuyTokensHuman > 0 && totalInitialInvestment > 0) {
       const fillAvgEntry = totalInitialInvestment / totalBuyTokensHuman;
-      // Heal if stored entry is 0, or 10× above current and fill calc gives a sane value
-      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10)) {
+      // Heal if stored entry is 0, or diverges significantly from on-chain fills (e.g. historical inflated price bugs)
+      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(avgEntryPrice - fillAvgEntry) / fillAvgEntry > 0.5) {
         avgEntryPrice = fillAvgEntry;
       }
     } else if (avgEntryPrice <= 0 && currentPrice > 0) {

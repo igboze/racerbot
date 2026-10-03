@@ -463,16 +463,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
 
         let priceSui = 0;
-        if (routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
-          priceSui = routerQuote.spotPrice;
-        } else if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+        if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+          const inHuman = Number(routerQuote.amountIn) / 1e9;
           const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
-          if (outHuman > 0) priceSui = 1 / outHuman;
+          if (outHuman > 0) priceSui = inHuman / outHuman;
         } else if (dexData?.priceNative && dexData.priceNative > 0) {
           priceSui = dexData.priceNative;
         }
 
-        const priceUsd = dexData?.priceUsd || (priceSui > 0 ? priceSui * suiUsd : 0);
+        const priceUsd = priceSui > 0 ? priceSui * suiUsd : (dexData?.priceUsd || 0);
         const venue = (routerQuote?.venue || (dexData as any)?.pairs?.[0]?.dexId || 'sui_dex').toLowerCase();
 
         const result: TokenInfoResult = {

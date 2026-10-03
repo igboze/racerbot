@@ -125,6 +125,10 @@ export async function executeSuiSwap(
       if (curve.reserveSuiMist > 0n && curve.reserveTokensRaw > 0n) {
         expectedTokensOut = (curve.reserveTokensRaw * swapMist) / (curve.reserveSuiMist + swapMist);
       }
+      const tokensHuman = Number(expectedTokensOut) / Math.pow(10, decimals);
+      const suiSpentHuman = Number(swapMist) / 1e9;
+      priceSui = tokensHuman > 0 ? (suiSpentHuman / tokensHuman) : curve.lastPriceSui;
+
       const slippageBps = BigInt(Math.floor(slippage_pct * 100));
       const minTokensOut = expectedTokensOut > 0n
         ? (expectedTokensOut * (10000n - slippageBps)) / 10000n
@@ -165,7 +169,7 @@ export async function executeSuiSwap(
 
       const tokensHuman = Number(expectedTokensOut) / Math.pow(10, decimals);
       const suiSpentHuman = Number(amountInMist) / 1e9;
-      priceSui = routerQuote.spotPrice > 0 ? routerQuote.spotPrice : (tokensHuman > 0 ? suiSpentHuman / tokensHuman : 0);
+      priceSui = tokensHuman > 0 ? (suiSpentHuman / tokensHuman) : 0;
 
       onProgress?.('building_ptb');
       const tx = await buildSuiRouterSwapTransaction({
