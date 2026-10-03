@@ -697,6 +697,36 @@ export class MultiRpcNear {
   }
 
   /**
+   * Fetch compiled WASM bytecode of a contract for anti-honeypot analysis.
+   */
+  async viewCode(contractId: string): Promise<Buffer | null> {
+    const provider = this.readProviders[0] || this.tradeProvider;
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'query',
+      params: {
+        request_type: 'view_code',
+        finality: 'final',
+        account_id: contractId,
+      },
+    });
+
+    const res = await fetch(provider.url, {
+      method: 'POST',
+      headers: provider.headers,
+      body,
+      signal: AbortSignal.timeout(MultiRpcNear.VIEW_TIMEOUT_MS),
+    }).catch(() => null);
+
+    if (!res || !res.ok) return null;
+    const data = (await res.json().catch(() => null)) as any;
+    const codeB64 = data?.result?.code_base64;
+    if (!codeB64) return null;
+    return Buffer.from(codeB64, 'base64');
+  }
+
+  /**
    * Broadcast a signed transaction to the single pinned trade RPC.
    * No fan-out, no fallback — one endpoint owns the write path.
    */

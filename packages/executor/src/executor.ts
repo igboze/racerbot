@@ -11,6 +11,7 @@ import {
   calculateMinOutAdj,
   parseMemeCookingId,
   getNearUsdPrice,
+  checkTokenSafety,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
@@ -519,11 +520,23 @@ export class SwapExecutor {
     const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
     let knownWNearBal: bigint = 0n;
     if (isBuyPath) {
-      // Both reads are independent — fetch in parallel like the sell path below.
-      const [nativeBalStr, wNearBalStr] = await Promise.all([
+      // Balance and honeypot safety audit are fetched concurrently
+      const [nativeBalStr, wNearBalStr, safety] = await Promise.all([
         this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
         this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+        checkTokenSafety(token_out).catch(() => null),
       ]);
+
+      if (safety?.isHoneypot) {
+        const dangerReason = safety.reasons[0] || `Backdoor method: ${safety.dangerousMethods.join(', ')}`;
+        throw new Error(
+          `🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\n` +
+          `This token (\`${token_out}\`) was identified as a MALICIOUS HONEYPOT.\n` +
+          `• ${dangerReason}\n\n` +
+          `🛡️ RacerBot has blocked this transaction to prevent loss of funds.`
+        );
+      }
+
       knownWNearBal = BigInt(wNearBalStr || '0');
       if (nativeBalStr !== null && nativeBalStr !== undefined) {
         const nativeBal = BigInt(nativeBalStr);
@@ -2118,6 +2131,12 @@ export class SwapExecutor {
     ]);
 
     if (!rugResult.safe) {
+      if (rugResult.reason?.startsWith('honeypot_backdoor:')) {
+        console.warn(`[EXECUTOR] 🚨 Hard-blocking honeypot token ${token_address}: ${rugResult.reason}`);
+        await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason: rugResult.reason });
+        await finalizeSnipe(false, { error: `honeypot_blocked: ${rugResult.reason}`, permanent: true });
+        return { success: false, reason: rugResult.reason };
+      }
       if (snipeOrderId) {
         // Targeted snipe: user explicitly chose this target. Do not permanently cancel the order
         // if rugCheck was triggered by an RPC read failure — log and proceed with the snipe.
@@ -2268,11 +2287,17 @@ export class SwapExecutor {
     const HOLDER_CONCENTRATION_THRESHOLD = 0.8; // fail if contract holds > 80% of supply
 
     // Metadata read has no catch — a throw must fail the check (fail-closed).
-    const [meta, totalSupplyStr, contractBalance] = await Promise.all([
+    const [meta, totalSupplyStr, contractBalance, safety] = await Promise.all([
       near.getTokenMetadata(tokenAddress),
       near.getTokenTotalSupply(tokenAddress).catch(() => null),
       near.getTokenBalance(tokenAddress, tokenAddress).catch(() => null),
+      checkTokenSafety(tokenAddress).catch(() => null),
     ]);
+
+    if (safety?.isHoneypot) {
+      const dangerReason = safety.reasons[0] || `backdoor_methods:${safety.dangerousMethods.join(',')}`;
+      return { safe: false, reason: `honeypot_backdoor:${dangerReason}` };
+    }
 
     if (!meta?.name || !meta?.symbol) {
       return { safe: false, reason: 'no_metadata' };
