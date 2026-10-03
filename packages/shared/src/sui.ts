@@ -296,6 +296,9 @@ export interface SuiPumpCurveState {
   bondingProgressPct: number;
   graduated: boolean;
   poolId?: string | null;
+  buys?: number;
+  sells?: number;
+  trades?: number;
 }
 
 /**
@@ -345,6 +348,9 @@ export async function getSuiPumpCurveState(curveIdOrTokenType: string): Promise<
       bondingProgressPct,
       graduated: Boolean(token.graduated),
       poolId: token.poolId || null,
+      buys: stats.buys !== undefined ? Number(stats.buys) : undefined,
+      sells: stats.sells !== undefined ? Number(stats.sells) : undefined,
+      trades: stats.trades !== undefined ? Number(stats.trades) : undefined,
     };
   } catch (err) {
     return null;

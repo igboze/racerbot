@@ -558,6 +558,24 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     safetyBanner = `🛡️ _Audited ${safety.launchpadName || 'Launchpad'} Token_\n\n`;
   }
 
+  // -- Holders display --
+  let holdersLine = '';
+  if (tokenInfo.holders_count !== undefined && tokenInfo.holders_count !== null) {
+    const countFormatted = tokenInfo.holders_count.toLocaleString('en-US');
+    const displayCount = tokenInfo.holders_count_exact === false ? `${countFormatted}+` : countFormatted;
+    holdersLine = `👥 *Holders*: \`${displayCount}\`\n`;
+  }
+
+  // -- Activity (Buys & Sells) display --
+  let activityLine = '';
+  const buys = tokenInfo.buys_count;
+  const sells = tokenInfo.sells_count;
+  if (buys !== undefined && buys !== null && sells !== undefined && sells !== null) {
+    activityLine = `📊 *Activity*: 🟢 \`${buys.toLocaleString('en-US')} Buys\` | 🔴 \`${sells.toLocaleString('en-US')} Sells\`\n`;
+  } else if (buys !== undefined && buys !== null) {
+    activityLine = `📊 *Activity*: 🟢 \`${buys.toLocaleString('en-US')} Buys\`\n`;
+  }
+
   let text =
     safetyBanner +
     `🪙 *${safeName}* (\`${safeSymbol}\`)\n\n` +
@@ -566,7 +584,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     `💰 *Price*: \`${priceStr}\`\n` +
     `💧 *Liquidity*: \`${liqStr}\`\n` +
     `📊 *Market Cap*: \`${mcapStr}\`\n` +
-    `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`` +
+    `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`\n` +
+    holdersLine +
+    activityLine +
     rateFooter +
     balanceText;
 
