@@ -133,7 +133,8 @@ export interface NotifyUserEvent {
     | 'token_not_found'
     | 'auto_buy_skipped'
     | 'trade_failed'
-    | 'trade_confirmed';
+    | 'trade_confirmed'
+    | 'deposit_received';
   data?: Record<string, unknown>;
 }
 
