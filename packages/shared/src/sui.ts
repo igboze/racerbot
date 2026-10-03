@@ -107,6 +107,43 @@ export function normalizeSuiAddress(address: string): string {
   return '0x' + hexPart.padStart(64, '0');
 }
 
+// ── Short Token Key mapping to guarantee callback_data never exceeds Telegram's 64-byte limit ──
+const shortTokenKeyMap = new Map<string, string>();
+const tokenKeyToAddressMap = new Map<string, string>();
+
+/**
+ * Encodes a long token address into a compact token key (e.g. t_2cd41592f0dd) so
+ * that Telegram inline button callback_data is always well below the 64-byte limit.
+ */
+export function getShortTokenKey(tokenAddress: string): string {
+  if (!tokenAddress || typeof tokenAddress !== 'string') return '';
+  const trimmed = tokenAddress.trim();
+  if (trimmed.length <= 32) return trimmed;
+  let short = shortTokenKeyMap.get(trimmed);
+  if (!short) {
+    // Generate simple deterministic 12-char hex hash
+    let hash = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      hash = ((hash << 5) - hash) + trimmed.charCodeAt(i);
+      hash |= 0;
+    }
+    const hex = Math.abs(hash).toString(16).padStart(8, '0') + trimmed.slice(-4);
+    short = `t_${hex}`;
+    shortTokenKeyMap.set(trimmed, short);
+    tokenKeyToAddressMap.set(short, trimmed);
+  }
+  return short;
+}
+
+/**
+ * Resolves a short token key (t_...) or standard token address back into its full address.
+ */
+export function resolveTokenAddressFromKey(keyOrAddress: string): string {
+  if (!keyOrAddress || typeof keyOrAddress !== 'string') return '';
+  const trimmed = keyOrAddress.trim();
+  return tokenKeyToAddressMap.get(trimmed) || trimmed;
+}
+
 // ── Balance & Metadata Queries ──────────────────────────────────────────────
 
 export interface SuiBalanceResult {
