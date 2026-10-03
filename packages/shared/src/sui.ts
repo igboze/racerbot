@@ -293,7 +293,7 @@ export interface SuiPumpCurveState {
  */
 export async function getSuiPumpCurveState(curveIdOrTokenType: string): Promise<SuiPumpCurveState | null> {
   try {
-    const res = await fetch('https://suipump-main-web.onrender.com/tokens');
+    const res = await fetch('https://suipump-main-web.onrender.com/tokens', { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     const tokens = (await res.json()) as any[];
     
