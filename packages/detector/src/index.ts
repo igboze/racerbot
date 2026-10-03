@@ -815,10 +815,10 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
           price = ntState.price;
           liquidity = ntState.liquidityNear;
 
-          // Check if a direct wrap.near pool exists on Rhea
+          // Check if a direct wrap.near pool exists on Rhea with deeper liquidity
           const rhea = await near.findRheaPoolForToken(tokenAddress).catch(() => null);
           if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5) {
-            if (!ntState.quoteIsNear || ntState.phase === 'bonded' || rhea.price > ntState.price || rhea.liquidityNear >= 50) {
+            if (!ntState.quoteIsNear || ntState.phase === 'bonded' || rhea.liquidityNear >= (ntState.liquidityNear + 5)) {
               price = rhea.price;
               liquidity = rhea.liquidityNear;
             }

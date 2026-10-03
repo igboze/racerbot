@@ -2311,11 +2311,13 @@ export class SwapExecutor {
     let tokenQty: string;
     let priceNear: number;
     let feePaidNear: number;
+    let nearSpent = 0;
+    let nearReceived = 0;
 
     if (isBuy) {
       // For buys: netAmountOut is the actual on-chain token units received
       tokenQty = netAmountOut;
-      const nearSpent = parseFloat(utils.format.formatNearAmount(amountIn));
+      nearSpent = parseFloat(utils.format.formatNearAmount(amountIn));
       const tokensReceived = parseFloat(netAmountOut) / Math.pow(10, decimals);
       priceNear = tokensReceived > 0 ? (nearSpent / tokensReceived) : 0;
 
@@ -2330,7 +2332,7 @@ export class SwapExecutor {
     } else {
       // For sells: amountIn is the token units sold, netAmountOut is yoctoNEAR received
       tokenQty = amountIn;
-      const nearReceived = parseFloat(utils.format.formatNearAmount(netAmountOut));
+      nearReceived = parseFloat(utils.format.formatNearAmount(netAmountOut));
       const tokensSold = parseFloat(amountIn) / Math.pow(10, decimals);
       priceNear = tokensSold > 0 ? (nearReceived / tokensSold) : 0;
       feePaidNear = parseFloat(utils.format.formatNearAmount(onChainFeeYocto));
@@ -2358,6 +2360,7 @@ export class SwapExecutor {
         amount: tokenQty,
         price: priceNear.toString(),
         fee_paid: feePaidNear.toString(),
+        input_amount: nearSpent.toString(),
         venue,
         tx_hash: txHash,
       });
@@ -2442,6 +2445,7 @@ export class SwapExecutor {
         amount: tokenQty,
         price: priceNear.toString(),
         fee_paid: feePaidNear.toString(),
+        input_amount: nearReceived.toString(),
         venue,
         tx_hash: txHash,
       });
@@ -2485,17 +2489,16 @@ export class SwapExecutor {
           console.warn('[POINTS] Failed to award points for sell fill:', err.message);
         }
 
-        // Notify user with PNL card summary and link
+        // Notify user with PNL card summary and link (exact on-chain math)
         try {
           const updatedPos = await getPositionById(position.id);
-          const fills = await getFillsByPosition(position.id);
-          const buys = fills.filter(f => f.side === 'buy');
           const avgEntry = parseFloat(position.avg_entry_price);
           const sellPrice = priceNear;
           const qty = parseFloat(tokenQty) / Math.pow(10, decimals);
-          const buyFee = buys.length ? parseFloat(buys[0]?.fee_paid ?? '0') / (parseFloat(buys[0]?.amount ?? '1')) : 0;
-          const sellFee = feePaidNear / (qty || 1);
-          const pnl = computePnL(avgEntry, sellPrice, qty, buyFee, sellFee);
+          const costBasis = qty * avgEntry;
+          const netProceeds = nearReceived - feePaidNear;
+          const netPnlNear = netProceeds - costBasis;
+          const pnlPct = costBasis > 0 ? (netPnlNear / costBasis) * 100 : 0;
           const duration = formatHoldDuration(position.opened_at, Date.now());
 
           await this.notifyUser(userId, 'pnl_card', {
@@ -2507,10 +2510,10 @@ export class SwapExecutor {
             currentPrice: sellPrice,
             quantity: qty,
             positionSize: qty,
-            realizedPnlNear: pnl.netNear,
-            realizedPnlPercent: pnl.pnlPercent,
-            profitAmount: pnl.netNear,
-            pnlPercent: pnl.pnlPercent,
+            realizedPnlNear: netPnlNear,
+            realizedPnlPercent: pnlPct,
+            profitAmount: netPnlNear,
+            pnlPercent: pnlPct,
             holdDuration: duration,
             duration,
             positionId: position.id,
