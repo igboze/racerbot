@@ -154,53 +154,63 @@ function sanitizeMd(str: string): string {
 }
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
-// FIX 4: Use cached balance; only do a live fetch if forceRefresh=true or cache is cold.
-// The `getUserBalances` function already has its own 8s TTL cache, so calling it here
-// never blocks unless the cache is cold (first load after restart).
 export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const user = await getUserByTelegramId(telegramId).catch(() => null);
-  let subaccountText = 'Not initialized';
-  let balanceText = '0.0000 NEAR';
-  let suiText = '';
+  let subaccount = 'Not initialized';
+  let suiAddress = '';
+  let nearBalFormatted = '0';
+  let nearUsdFormatted = '$0';
+  let suiBalFormatted = '0';
+  let suiUsdFormatted = '$0';
+  let totalUsdNum = 0;
 
   if (user) {
-    subaccountText = `\`${user.subaccount_id}\``;
+    subaccount = user.subaccount_id;
     try {
       const b = await getUserBalances(telegramId, forceRefresh);
-      balanceText = `\`${b.nativeNearFormatted} NEAR\` (\`${b.nativeNearUsd}\`) | \`${b.wrapNearFormatted} wNEAR\` (\`${b.wrapNearUsd}\`)`;
-      if (b.suiAddress) {
-        suiText =
-          `🔷 *SUI*: \`${b.suiAddress}\`\n` +
-          `💰 *Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n`;
-      }
+      nearBalFormatted = b.totalNearFormatted;
+      suiAddress = b.suiAddress || '';
+      suiBalFormatted = b.suiBalanceFormatted || '0';
+
+      const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
+      const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum;
+
+      nearUsdFormatted = nearTotalUsdNum >= 1000 ? `$${(nearTotalUsdNum / 1000).toFixed(2)}K` : `$${nearTotalUsdNum.toFixed(2)}`;
+      suiUsdFormatted = suiTotalUsdNum >= 1000 ? `$${(suiTotalUsdNum / 1000).toFixed(2)}K` : `$${suiTotalUsdNum.toFixed(2)}`;
     } catch {
-      balanceText = '`0.0000 NEAR`';
+      nearBalFormatted = '0';
     }
   }
 
+  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
+
   const text =
-    `🚀 *RacerBot | Multi-Chain Fast Trading*\n\n` +
-    `🔑 *NEAR*: ${subaccountText}\n` +
-    `💰 *Balance*: ${balanceText}\n` +
-    (suiText ? `\n${suiText}` : '') +
-    `\n💡 *Paste any Token CA or SuiPump link to trade instantly.*`;
+    `<b>RacerBot #1 🏎 V2.0</b>\n` +
+    `The Ultimate Fast Trading Partner\n\n` +
+    `💼 <b>W1</b> ⭐\n\n` +
+    `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
+    `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n\n` +
+    `Total: <b>${totalUsdStr}</b>\n\n` +
+    `<u>NEAR</u>: <code>${subaccount}</code>\n` +
+    (suiAddress ? `<u>SUI</u>: <code>${suiAddress}</code>` : '');
 
   const keyboard = Markup.inlineKeyboard([
     [
+      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
-      cb('💼 Holdings', 'menu_holdings', 'primary'),
     ],
     [
-      cb('🏆 Points', 'menu_points', 'success'),
+      cb('🎯 Snipe', 'menu_snipe', 'primary'),
+      cb('👥 Copy Trade', 'menu_copy', 'success'),
+    ],
+    [
+      cb('🔁 DCA', 'menu_dca', 'primary'),
       cb('📈 PnL', 'menu_pnl', 'primary'),
     ],
     [
-      cb('🎯 Snipe Rules', 'menu_snipe', 'primary'),
+      cb('🏆 Points', 'menu_points', 'success'),
       cb('⚙️ Settings', 'menu_settings', 'primary'),
-    ],
-    [
-      cb('👥 Copy Trading', 'menu_copy', 'success'),
-      cb('🔁 DCA Orders', 'menu_dca', 'primary'),
     ],
     [
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
@@ -289,6 +299,11 @@ export function formatHoldingQuantity(quantityHeld: string, decimals = 18): stri
 // ── Helper: Build Wallet Menu ────────────────────────────────────────────────
 export async function buildWalletMenu(telegramId: number, forceRefresh = false) {
   const b = await getUserBalances(telegramId, forceRefresh);
+  const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
+  const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum;
+  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
+
   const buttons: any[] = [
     [
       cb('🔄 Refresh', 'wallet_refresh', 'primary'),
@@ -301,7 +316,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
 
   buttons.push([
-    cb('💼 Holdings', 'menu_holdings', 'primary'),
+    cb('🎒 Your Bags', 'menu_holdings', 'primary'),
     cb('⚙️ Settings', 'menu_settings', 'primary'),
     cb('🔑 Export Key', 'export_prompt', 'primary'),
   ]);
@@ -316,14 +331,13 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   ]);
 
   const text =
-    `💳 *Trading Wallet (NEAR + SUI)*\n\n` +
-    `🔑 *NEAR Account*: \`${b.subaccountId}\`\n` +
-    `• *Balance*: \`${b.totalNearFormatted} NEAR\` (\`${b.totalNearUsd}\`)\n` +
-    `• *Breakdown*: \`${b.nativeNearFormatted} native\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` +
-    (b.suiAddress
-      ? `🔷 *SUI Address*: \`${b.suiAddress}\`\n• *Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n`
-      : '') +
-    `📥 *Deposit NEAR or SUI to start trading immediately.*`;
+    `<b>Wallet #1</b> 💼 ⭐\n\n` +
+    `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
+    `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n\n` +
+    `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n\n` +
+    `Total: <b>${totalUsdStr}</b>\n\n` +
+    `<u>NEAR</u>: <code>${b.subaccountId}</code>\n` +
+    (b.suiAddress ? `<u>SUI</u>: <code>${b.suiAddress}</code>` : '');
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -1609,25 +1623,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       const menu = await buildMainMenu(telegramId);
-
-      if (result.isExisting) {
-        await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
-        return;
-      }
-
-      // Freshly created account: show deposit addresses + quick start guide
-      await ctx.reply(
-        `🚀 *Welcome to RacerBot!*\n` +
-        `Fast Multi-Chain Trading on NEAR & SUI.\n\n` +
-        `🔑 *Deposit Addresses*:\n` +
-        `• *NEAR*: \`${result.subaccountId}\`\n` +
-        (result.suiAddress ? `• *SUI*: \`${result.suiAddress}\`\n\n` : '\n') +
-        `⚡ *How to Trade*:\n` +
-        `Deposit NEAR or SUI, then paste any Token CA or SuiPump link to trade with 1-click execution.\n\n` +
-        `🔐 *Security*: Non-custodial & encrypted. Export keys anytime via *🔑 Export Key*.`,
-        { parse_mode: 'Markdown', ...menu.keyboard }
-      );
-
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
       await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nPlease try running /start again.`);
@@ -1639,7 +1635,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const menu = await buildMainMenu(telegramId);
-      await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -1651,8 +1647,8 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const menu = await buildMainMenu(telegramId, false);
       await ctx.answerCbQuery('Main Menu').catch(() => {});
-      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(async () => {
-        await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => {});
+      await ctx.editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
       });
     } catch {
       await ctx.answerCbQuery().catch(() => {});
@@ -1664,7 +1660,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery('🔄 Refreshing balance...').catch(() => {});
     try {
       const menu = await buildMainMenu(telegramId, true);
-      await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -1675,7 +1671,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const wallet = await buildWalletMenu(telegramId);
       await ctx.answerCbQuery().catch(() => {});
-      await ctx.editMessageText(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard }).catch(() => {});
+      await ctx.editMessageText(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -2925,7 +2921,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const wallet = await buildWalletMenu(telegramId);
-      await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -2939,7 +2935,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => {});
       const wallet = await buildWalletMenu(telegramId, true);
-      await ctx.reply(wallet.text, { parse_mode: 'Markdown', ...wallet.keyboard });
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
