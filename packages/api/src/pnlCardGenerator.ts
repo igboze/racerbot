@@ -1,5 +1,5 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
-import { getTokenInfo } from './wallet.js';
+import { getTokenInfo, isSuiToken } from './wallet.js';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -88,16 +88,24 @@ export async function generatePNLCardData(
       tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-    const nearUsd      = tokenInfo?.near_usd || 4.3;
+    const isSuiPos     = position.chain === 'sui' || isSuiToken(position.token_address);
+    const nearUsd      = isSuiPos ? (tokenInfo?.sui_usd || 2.0) : (tokenInfo?.near_usd || 4.3);
 
     const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
-    const decimals    = tokenInfo?.decimals ?? 18;
+    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
     const toHuman = (rawStr: string): number => {
       const val = parseFloat(rawStr || '0');
       if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
       return val;
+    };
+
+    const normalizeFee = (rawFeeStr: string): number => {
+      let fee = parseFloat(rawFeeStr || '0');
+      if (isSuiPos && fee > 1e6) fee = fee / 1e9;
+      else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
+      return fee;
     };
 
     // ── Total supply for market cap ──────────────────────────────────────────
@@ -112,13 +120,15 @@ export async function generatePNLCardData(
     // ── Investment calculation (excluding synthetic deposit fills) ───────────
     let totalInitialInvestment = 0;
     let totalFeesPaid          = 0;
+    let totalBuyTokensHuman    = 0;
     for (const buy of buys) {
       if (buy.tx_hash?.startsWith('deposit_')) continue;
       const amount = toHuman(buy.amount);
       const price  = parseFloat(buy.price);
-      const fee    = parseFloat(buy.fee_paid || '0');
+      const fee    = normalizeFee(buy.fee_paid || '0');
       totalInitialInvestment += amount * price + fee;
       totalFeesPaid          += fee;
+      totalBuyTokensHuman    += amount;
     }
 
     let quantityHeld = 0;
@@ -128,7 +138,16 @@ export async function generatePNLCardData(
     } catch {
       quantityHeld = parseFloat(position.quantity_held || '0');
     }
-    const avgEntryPrice = parseFloat(position.avg_entry_price || '0');
+
+    let avgEntryPrice = parseFloat(position.avg_entry_price || '0');
+    if (totalBuyTokensHuman > 0 && totalInitialInvestment > 0) {
+      const fillAvgEntry = totalInitialInvestment / totalBuyTokensHuman;
+      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry < avgEntryPrice / 5)) {
+        avgEntryPrice = fillAvgEntry;
+      }
+    } else if (avgEntryPrice <= 0 && currentPrice > 0) {
+      avgEntryPrice = currentPrice;
+    }
 
     if (totalInitialInvestment === 0 && (isExternalDeposit || quantityHeld > 0)) {
       totalInitialInvestment = quantityHeld * avgEntryPrice;
@@ -143,7 +162,7 @@ export async function generatePNLCardData(
     for (const sell of sells) {
       const amount   = toHuman(sell.amount);
       const price    = parseFloat(sell.price);
-      const fee      = parseFloat(sell.fee_paid || '0');
+      const fee      = normalizeFee(sell.fee_paid || '0');
       const sellValue = amount * price - fee;
       const costBasis = amount * avgEntryPrice;
       totalRealizedValue += sellValue;
