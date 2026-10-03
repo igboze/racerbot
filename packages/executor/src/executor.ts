@@ -46,6 +46,8 @@ import { isTradableVenue, TradeError } from '@racerbot/shared';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
+import { executeSuiSwap } from './suiExecutor.js';
+
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
 const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
@@ -452,6 +454,38 @@ export class SwapExecutor {
   private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
+
+    // Route SUI chain trades directly to SuiExecutor
+    if (
+      event.chain === 'sui' ||
+      venue === 'suipump' ||
+      venue === 'cetus' ||
+      venue === 'turbos' ||
+      venue === 'deepbook' ||
+      venue === 'sui_dex' ||
+      token_in === 'sui' ||
+      token_in === '0x2::sui::SUI' ||
+      token_in === 'SUI' ||
+      token_in.startsWith('0x') ||
+      token_out.startsWith('0x')
+    ) {
+      const presignStart = Date.now();
+      const res = await executeSuiSwap(event, onProgress);
+      timings.presign_ms = Date.now() - presignStart;
+      timings.sign_ms = 0;
+      timings.post_ms = 0;
+      return {
+        txHash: res.txHash,
+        success: res.success,
+        positionId: res.positionId,
+        reason: res.reason,
+        tokenName: res.tokenName,
+        tokenSymbol: res.tokenSymbol,
+        tokenQty: res.tokenQty,
+        priceNear: res.priceSui,
+        nearSpent: res.suiSpent,
+      };
+    }
 
     // Pre-flight health gate. min(2, configured) providers required; if none
     // are healthy the gate resets circuit breakers and lets the attempt through
@@ -2116,7 +2150,7 @@ export class SwapExecutor {
 
     try {
       const { minAmountOut } = await near.computeMinAmountOut(
-        venue,
+        venue as any,
         'wrap.near',
         token_address,
         swapYocto,       // ← post-fee amount that actually reaches the DEX
