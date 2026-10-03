@@ -2484,6 +2484,8 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Build keyboard buttons first (needed for both text and image paths)
       const buttons: any[] = [];
+      const shortKey = getShortTokenKey(position.token_address);
+      const unitBtn = isSuiPos ? 'SUI' : 'N';
 
       // Sell percentage buttons (Red 🔴)
       buttons.push([
@@ -2494,11 +2496,11 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Buy buttons (Green 🟢)
       buttons.push([
-        cb('1 N', `buy_fixed:${position.token_address}:1`, 'success'),
-        cb('5 N', `buy_fixed:${position.token_address}:5`, 'success'),
-        cb('10 N', `buy_fixed:${position.token_address}:10`, 'success'),
+        cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
+        cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
+        cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
       ]);
-      buttons.push([cb('🟢 Buy X NEAR', `buy_custom_prompt:${position.token_address}`, 'success')]);
+      buttons.push([cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')]);
 
       // Sell Custom & Initial buttons
       const sellSpecialRow: any[] = [cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger')];
@@ -2509,6 +2511,17 @@ export function setupRoutes(bot: Telegraf): void {
 
       // External explorer & chart links
       const linkRows = (() => {
+        if (isSuiPos) {
+          const rows: any[] = [];
+          if (info?.sui_curve_address) {
+            rows.push([Markup.button.url('💧 View on SuiPump', `https://suipump.org/token/${info.sui_curve_address}`)]);
+          }
+          rows.push([
+            Markup.button.url('🔍 Suiscan', `https://suiscan.xyz/mainnet/coin/${info?.sui_coin_type || position.token_address}/txs`),
+            Markup.button.url('📈 DexScreener', `https://dexscreener.com/sui/${position.token_address}`),
+          ]);
+          return rows;
+        }
         const links = tokenLinks(info?.venue || 'nearlytrade', position.token_address);
         const rows: any[] = [];
         if (links.length > 0) rows.push(links.slice(0, 2).map(l => Markup.button.url(l.label, l.url)));
@@ -2518,15 +2531,17 @@ export function setupRoutes(bot: Telegraf): void {
       buttons.push(...linkRows);
 
       // Share Token (Earn 5% Fees)
-      try {
-        const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
-        const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
-        const sym = symbol !== '???' ? symbol : 'TOKEN';
-        const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
-        const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
-        buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
-      } catch (err: any) {
-        console.warn('[token_detail] Failed to generate share link:', err?.message);
+      if (!isSuiPos) {
+        try {
+          const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
+          const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
+          const sym = symbol !== '???' ? symbol : 'TOKEN';
+          const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+          const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+          buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
+        } catch (err: any) {
+          console.warn('[token_detail] Failed to generate share link:', err?.message);
+        }
       }
 
       // Navigation buttons
@@ -2543,19 +2558,19 @@ export function setupRoutes(bot: Telegraf): void {
         cb('🏠 Menu', 'menu_home', 'primary'),
       ]);
 
-      // Generate PNL card with image
+      // Generate PNL card with image for NEAR
       let pnlCardImage: Buffer | null = null;
-      try {
-        const pnlCard = await generatePNLCard(positionId, showNetWorth);
-        if (pnlCard.image) {
-          pnlCardImage = pnlCard.image;
-        } else {
-          // Fallback to text only
-          msg += `\n${pnlCard.text}`;
+      if (!isSuiPos) {
+        try {
+          const pnlCard = await generatePNLCard(positionId, showNetWorth);
+          if (pnlCard.image) {
+            pnlCardImage = pnlCard.image;
+          } else {
+            msg += `\n${pnlCard.text}`;
+          }
+        } catch (err: any) {
+          console.error('Failed to generate PNL card:', err);
         }
-      } catch (err: any) {
-        console.error('Failed to generate PNL card:', err);
-        // Continue without PNL card if generation fails
       }
 
       // If image was generated, send it as a new message with caption and keyboard
@@ -2578,6 +2593,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
     } catch (err: any) {
+      console.error('[token_detail] Error loading token details:', err?.message || err);
       await ctx.reply('Error loading token details. Please try again.').catch(() => {});
     }
   });
@@ -2602,6 +2618,7 @@ export function setupRoutes(bot: Telegraf): void {
     const decimals = tokenInfo?.decimals ?? 18;
     const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
     const sym = tokenInfo?.symbol || 'Tokens';
+    const shortKey = getShortTokenKey(position.token_address);
 
     userPendingActions.set(telegramId, {
       action: 'sell_custom_tokens',
@@ -2618,7 +2635,7 @@ export function setupRoutes(bot: Telegraf): void {
       `_Type /cancel to abort._`,
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${position.token_address}`, 'primary')]])
+        ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${shortKey}`, 'primary')]])
       }
     );
   });
