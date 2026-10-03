@@ -828,7 +828,7 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
         const dclId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
         if (dclId) {
           const dcl = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
-          if (dcl && dcl.price > 0) {
+          if (dcl && dcl.price > 0 && dcl.liquidityNear > 0.1) {
             price = dcl.price;
             liquidity = dcl.liquidityNear;
           }

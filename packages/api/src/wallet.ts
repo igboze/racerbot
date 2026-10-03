@@ -708,7 +708,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         const parts = dbCache.dcl_pool_id.split('|');
         const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
         const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
-        if (st.price > 0 && st.liquidityNear > 0) {
+        if (st.price > 0 && st.liquidityNear >= 0.1) {
           price = st.price;
           liquidity = st.liquidityNear;
           venue = 'rhea';

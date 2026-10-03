@@ -2017,28 +2017,86 @@ export class MultiRpcNear {
 
   /**
    * Returns the price of one human-readable unit of `quoteToken` in NEAR.
-   * Searches for a wrap.near <-> quoteToken pool via DCL first, then Ref AMM.
-   * Throws when no pool is found.
+   * Searches for a wrap.near <-> quoteToken pool via DCL and Ref AMM,
+   * strictly prioritizing active pools with verified on-chain liquidity (> 0.1 NEAR)
+   * to avoid picking dead or unseeded 0-liquidity pools.
    */
   private async getQuoteNearPrice(quoteToken: string, quoteDecimals: number): Promise<number> {
-    // 1. Try DCL pool on dclv2.ref-labs.near
-    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
-    if (dclId) {
+    // 1. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
+    // and selects the pool with the deepest real liquidity (> 0.1 NEAR).
+    try {
+      const bestPool = await this.findRheaPoolForToken(quoteToken, true);
+      if (bestPool && bestPool.price > 0 && bestPool.liquidityNear > 0.1) {
+        return bestPool.price;
+      }
+    } catch { /* fallback to other avenues */ }
+
+    // 2. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad state
+    if (quoteToken.endsWith('.nearlytrade.near')) {
       try {
-        const st = await this.getDclPoolState(dclId, 'wrap.near');
-        if (st.price > 0) return st.price; // st.price = NEAR per token
-      } catch { /* try Ref */ }
+        const ntLaunch = await this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: quoteToken }).catch(() => null);
+        if (ntLaunch && ntLaunch.pool_id) {
+          const ntPool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: ntLaunch.pool_id }).catch(() => null);
+          if (ntPool && ntPool.current_point !== undefined && ntPool.current_point !== null) {
+            const isTokenX = ntLaunch.token_is_x !== false;
+            const quoteIsNear = !ntLaunch.quote || ntLaunch.quote === 'wrap.near' || ntLaunch.quote === 'near';
+            const cp = Number(ntPool.current_point);
+            if (!isNaN(cp)) {
+              const baseP = isTokenX ? Math.pow(1.0001, cp) : (1 / Math.pow(1.0001, cp));
+              if (quoteIsNear) {
+                const p = baseP * Math.pow(10, quoteDecimals - 24);
+                if (p > 0) return p;
+              } else {
+                const subQuoteRate = await this.getQuoteNearPrice(ntLaunch.quote, 18).catch(() => 0);
+                if (subQuoteRate > 0) {
+                  return baseP * subQuoteRate;
+                }
+              }
+            }
+          }
+        }
+      } catch { /* no-op */ }
     }
-    // 2. Try Ref AMM (v2.ref-finance.near)
+
+    // 3. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
     const refId = await this.findRheaPoolId('wrap.near', quoteToken).catch(() => null);
     if (refId !== null && refId !== undefined) {
       const rh = await this.getRheaPoolReserves(refId, 'wrap.near', quoteToken).catch(() => null);
       if (rh) {
         const nearHuman = parseFloat(rh.reserveIn) / 1e24;
         const quoteHuman = parseFloat(rh.reserveOut) / Math.pow(10, quoteDecimals);
-        if (quoteHuman > 0) return nearHuman / quoteHuman;
+        const liqNear = nearHuman * 2;
+        if (quoteHuman > 0 && liqNear > 0.1) return nearHuman / quoteHuman;
       }
     }
+
+    // 4. Fallback: DCL pool on dclv2.ref-labs.near with liquidity validation
+    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
+    if (dclId) {
+      try {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0 && st.liquidityNear > 0.1) return st.price;
+      } catch { /* try Ref */ }
+    }
+
+    // 5. Absolute last resort: if no pool has >0.1 NEAR liquidity, take any pool with price > 0
+    if (refId !== null && refId !== undefined) {
+      try {
+        const rh = await this.getRheaPoolReserves(refId, 'wrap.near', quoteToken).catch(() => null);
+        if (rh) {
+          const nearHuman = parseFloat(rh.reserveIn) / 1e24;
+          const quoteHuman = parseFloat(rh.reserveOut) / Math.pow(10, quoteDecimals);
+          if (quoteHuman > 0 && nearHuman > 0) return nearHuman / quoteHuman;
+        }
+      } catch { /* no-op */ }
+    }
+    if (dclId) {
+      try {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0) return st.price;
+      } catch { /* no-op */ }
+    }
+
     throw new Error(`No wrap.near<->${quoteToken} pool found`);
   }
 
