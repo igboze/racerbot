@@ -3097,10 +3097,16 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('wallet_unwrap', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Unwrapping wrap.near...').catch(() => {});
+    await ctx.answerCbQuery('Unwrapping wNEAR...').catch(() => {});
     try {
       const res = await unwrapUserWrapNear(telegramId);
-      await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
+      if (res.unwrappedAmount === '0') {
+        await ctx.reply('ℹ️ You do not have any wNEAR balance to unwrap.');
+      } else {
+        await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
+      }
+      const wallet = await buildWalletMenu(telegramId, true);
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -3111,9 +3117,11 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const res = await unwrapUserWrapNear(telegramId);
       if (res.unwrappedAmount === '0') {
-        await ctx.reply('You do not have any wrap.near balance to unwrap.');
+        await ctx.reply('ℹ️ You do not have any wNEAR balance to unwrap.');
       } else {
         await ctx.reply(`✅ Successfully unwrapped ${res.unwrappedAmount} wNEAR into native NEAR!`);
+        const wallet = await buildWalletMenu(telegramId, true);
+        await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
       }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);

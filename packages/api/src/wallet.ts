@@ -1486,6 +1486,7 @@ export async function unwrapUserWrapNear(telegramId: number): Promise<{ success:
   });
 
   const formatted = (Number(BigInt(wrapBal) / 1000000000000000000n) / 1e6).toFixed(4);
+  invalidateBalanceCache(telegramId);
   return { success: true, unwrappedAmount: formatted };
 }
 

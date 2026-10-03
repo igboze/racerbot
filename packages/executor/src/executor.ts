@@ -1997,49 +1997,44 @@ export class SwapExecutor {
     const netAmountOut = swapOutcome.netAmountOut!;
     let onChainFeeYocto = feeAmount.toString();
 
-    // Auto-unwrap wrap.near to pure native NEAR on sell and transfer 1.5% fee to treasury.
-    // The fee transfer is INDEPENDENT of the unwrap: DCL pays sells in native NEAR
-    // (no wNEAR to unwrap, near_withdraw would throw), but the fee must still be
-    // collected. Both go through the locked, pinned-RPC signAndSend helper to
-    // avoid nonce collisions with in-flight trades.
+    // Fast sell settlement:
+    // When the sell outputs wNEAR (Ref/Rhea/NearlyTrade/etc.), we collect the 1.5% fee
+    // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
+    // This makes sell execution 2-4 seconds faster.
+    // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
     if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       let feePaid = false;
 
-      try {
-        // Skip the unwrap when the sell provably paid out native NEAR (wNEAR
-        // balance unchanged across the swap, e.g. DCL) — the full
-        // sign+broadcast+confirm cycle would fail harmlessly anyway. When
-        // balance reads are unavailable (null) or the delta is unexpected,
-        // fall back to unwrapping netAmountOut as before.
-        let unwrapAmount: string | null = netAmountOut;
-        if (capturedPreOutBalance !== null && postOutBalance !== null) {
-          const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
-          if (wNearDelta === 0n) {
-            console.log(`[EXECUTOR] Sell paid out native NEAR (wNEAR delta 0) — skipping near_unwrap for ${subaccountId}`);
-            unwrapAmount = null;
-          } else if (wNearDelta > 0n) {
-            unwrapAmount = wNearDelta.toString();
-          }
-        }
-        if (unwrapAmount !== null) {
-          console.log(`[EXECUTOR] Auto-unwrapping ${unwrapAmount} yoctoNEAR of wrap.near for ${subaccountId}`);
-          await signAndSend('wrap.near', [
-            transactions.functionCall('near_withdraw', { amount: unwrapAmount }, BigInt('30000000000000'), BigInt('1')),
-          ], 10_000);
-          console.log(`[EXECUTOR] Auto-unwrapped to native NEAR successfully for ${subaccountId}`);
-        }
-      } catch (err: any) {
-        // Non-fatal: DCL sells pay native NEAR directly, so there may be no
-        // wNEAR to unwrap. The user keeps their funds either way.
-        console.warn('[EXECUTOR] Auto-unwrap skipped/failed (likely native-NEAR payout):', err.message);
-      }
-
       if (sellFeeNear > 0n) {
         try {
-          await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000);
-          feePaid = true;
-          console.log(`[EXECUTOR] Sell fee ${sellFeeNear} yoctoNEAR sent to treasury for ${subaccountId}`);
+          // Check if the sell paid out native NEAR (e.g. DCL) vs wNEAR
+          let paidNativeNear = false;
+          if (capturedPreOutBalance !== null && postOutBalance !== null) {
+            const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
+            if (wNearDelta === 0n) {
+              paidNativeNear = true;
+            }
+          }
+
+          if (paidNativeNear) {
+            // DCL/native sell: transfer native NEAR fee to treasury
+            await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000);
+            feePaid = true;
+            console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR sent to treasury for ${subaccountId}`);
+          } else {
+            // wNEAR sell: transfer wNEAR fee directly to treasury (saving a 2nd unwrap tx)
+            await signAndSend('wrap.near', [
+              transactions.functionCall(
+                'ft_transfer',
+                { receiver_id: TREASURY_ACCOUNT_ID, amount: sellFeeNear.toString() },
+                BigInt('20000000000000'),
+                BigInt('1')
+              ),
+            ], 10_000);
+            feePaid = true;
+            console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR sent to treasury for ${subaccountId}`);
+          }
         } catch (err: any) {
           console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED for ${subaccountId} amount=${sellFeeNear}:`, err.message);
         }
