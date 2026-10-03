@@ -225,7 +225,129 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       }
       break;
     }
+
+    case 'deposit_received': {
+      const chain = (data.chain as string) || 'near';
+      const amount = (data.amount as string) || '0';
+      const symbol = (data.symbol as string) || (chain === 'sui' ? 'SUI' : 'NEAR');
+      const address = (data.address as string) || '';
+      const usdValue = (data.usdValue as string) || '';
+      const icon = chain === 'sui' ? '🔷' : '⬛';
+      const tokenIcon = chain === 'sui' ? '💧' : 'Ⓝ';
+      const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+
+      const msg =
+        `💰 <b>Deposit Confirmed!</b>\n\n` +
+        `${icon} <b>+${amount} ${symbol}</b> ${tokenIcon} ${usdValue ? `(${usdValue})` : ''}\n` +
+        `<u>${chainLabel}</u>: <code>${address}</code>\n\n` +
+        `Your funds are credited and ready to trade.`;
+
+      await _bot.telegram.sendMessage(telegramId, msg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+              { text: '💳 Wallet', callback_data: 'menu_wallet' },
+            ],
+            [
+              { text: '🎯 Snipe', callback_data: 'menu_snipe' },
+              { text: '👥 Copy Trade', callback_data: 'menu_copy' },
+            ],
+          ],
+        },
+      });
+      break;
+    }
   }
+}
+
+/**
+ * Send an immediate deposit notification to a Telegram user.
+ */
+export async function notifyDeposit(
+  telegramId: number,
+  params: {
+    chain: 'near' | 'sui';
+    amount: string;
+    symbol?: string;
+    address: string;
+    usdValue?: string;
+  }
+): Promise<void> {
+  if (!_bot || !telegramId) return;
+
+  const chain = params.chain;
+  const amount = params.amount;
+  const symbol = params.symbol || (chain === 'sui' ? 'SUI' : 'NEAR');
+  const address = params.address;
+  const usdValue = params.usdValue || '';
+  const icon = chain === 'sui' ? '🔷' : '⬛';
+  const tokenIcon = chain === 'sui' ? '💧' : 'Ⓝ';
+  const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+
+  const msg =
+    `💰 <b>Deposit Confirmed!</b>\n\n` +
+    `${icon} <b>+${amount} ${symbol}</b> ${tokenIcon} ${usdValue ? `(${usdValue})` : ''}\n` +
+    `<u>${chainLabel}</u>: <code>${address}</code>\n\n` +
+    `Your funds are credited and ready to trade.`;
+
+  await _bot.telegram.sendMessage(telegramId, msg, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+          { text: '💳 Wallet', callback_data: 'menu_wallet' },
+        ],
+        [
+          { text: '🎯 Snipe', callback_data: 'menu_snipe' },
+          { text: '👥 Copy Trade', callback_data: 'menu_copy' },
+        ],
+      ],
+    },
+  }).catch((err) => {
+    console.error(`[NOTIFY] Error sending deposit notification to ${telegramId}:`, err.message);
+  });
+}
+
+/**
+ * Send a token deposit notification when an external token/meme coin is detected.
+ */
+export async function notifyTokenDeposit(
+  telegramId: number,
+  params: {
+    tokenSymbol: string;
+    tokenName?: string;
+    amountFormatted: string;
+    address: string;
+    chain?: 'near' | 'sui';
+  }
+): Promise<void> {
+  if (!_bot || !telegramId) return;
+
+  const chain = params.chain || 'near';
+  const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+
+  const msg =
+    `💰 <b>Token Deposit Received!</b>\n\n` +
+    `🪙 <b>+${params.amountFormatted} $${params.tokenSymbol}</b>\n` +
+    `<u>${chainLabel}</u>: <code>${params.address}</code>\n\n` +
+    `Tracked and ready in your bags.`;
+
+  await _bot.telegram.sendMessage(telegramId, msg, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+          { text: '💳 Wallet', callback_data: 'menu_wallet' },
+        ],
+      ],
+    },
+  }).catch((err) => {
+    console.error(`[NOTIFY] Error sending token deposit notification to ${telegramId}:`, err.message);
+  });
 }
 
 /**

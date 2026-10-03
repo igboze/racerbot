@@ -33,6 +33,8 @@ import {
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
+import { notifyTokenDeposit } from './notify.js';
+import { recordUserTrade } from './depositWatcher.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
@@ -1081,6 +1083,9 @@ export async function publishSwap(swapEvent: {
   }, onProgress);
 
   if (result.success !== false) {
+    // Record user trade to prevent deposit false positives
+    recordUserTrade(swapEvent.user_id);
+
     // Invalidate cached token info and balance immediately so user sees fresh on-chain data
     tokenInfoCache.delete(swapEvent.token_in);
     tokenInfoCache.delete(swapEvent.token_out);
@@ -1627,6 +1632,19 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
 
         newDepositsCount++;
         console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${entryPrice}`);
+
+        // Send Telegram notification for token deposit
+        getUserById(userId).then(u => {
+          if (u?.telegram_id) {
+            notifyTokenDeposit(u.telegram_id, {
+              tokenSymbol: info?.symbol || 'TOKEN',
+              tokenName: info?.name || undefined,
+              amountFormatted: humanBalance >= 1_000_000 ? `${(humanBalance / 1_000_000).toFixed(2)}M` : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+              address: subaccountId,
+              chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
+            }).catch(() => {});
+          }
+        }).catch(() => {});
       }
     }
   } catch (err: any) {
