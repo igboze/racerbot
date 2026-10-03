@@ -3223,9 +3223,11 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
     const rawTokenParam = ctx.match![1];
     const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
-    const amountNear = parseFloat(ctx.match![2]);
+    const amountVal = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
-    console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountNear} NEAR`);
+    const isSui = isSuiToken(tokenAddress);
+    const unit = isSui ? 'SUI' : 'NEAR';
+    console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
 
     // In-flight guard: reject a duplicate tap while a trade for this token is running.
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -3234,14 +3236,14 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
-    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountNear} NEAR...`).catch(() => {});
+    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountVal} ${unit}...`).catch(() => {});
 
     (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountVal} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
       try {
-        console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountNear}`);
-        const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+        console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
+        const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
         console.log(`[BUY_FIXED] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
@@ -3271,6 +3273,8 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
+    const isSui = isSuiToken(tokenAddress);
+    const unit = isSui ? 'SUI' : 'NEAR';
     console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -3282,7 +3286,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
 
     (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging NEAR for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging ${unit} for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
       try {
         console.log(`[BUY_PCT] Starting executeBuyPctHelper: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
@@ -3312,6 +3316,8 @@ export function setupRoutes(bot: Telegraf): void {
     const rawTokenParam = ctx.match![1];
     const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const telegramId = ctx.from!.id;
+    const isSui = isSuiToken(tokenAddress);
+    const unit = isSui ? 'SUI' : 'NEAR';
     userPendingActions.set(telegramId, {
       action: 'buy_custom_near',
       tokenAddress,
@@ -3321,31 +3327,33 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(
       `✏️ *Custom Buy Amount*\n\n` +
       `Token: \`${tokenAddress}\`\n\n` +
-      `Reply with the amount in NEAR or SUI you want to buy (e.g. \`2.5\`):\n` +
+      `Reply with the amount in ${unit} you want to buy (e.g. \`2.5\`):\n` +
       `_Type /cancel to abort._`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // ── /buy <token_ca> [amount_near] ─────────────────────────────────────────
+  // ── /buy <token_ca> [amount] ─────────────────────────────────────────────
   bot.command('buy', async (ctx) => {
     const telegramId = ctx.from!.id;
     const args = ctx.message!.text!.split(' ').slice(1);
     if (!args[0]) {
-      await ctx.reply('Usage: /buy <token_ca> [amount_near]\nExample: /buy token.near 5\n\nOr paste the token address directly for 1-click buy buttons.');
+      await ctx.reply('Usage: /buy <token_ca> [amount]\nExample: /buy token.near 5\n\nOr paste the token address directly for 1-click buy buttons.');
       return;
     }
 
     const tokenAddress = args[0].trim();
-    const amountNear = parseFloat(args[1] ?? '0');
+    const isSui = isSuiToken(tokenAddress);
+    const unit = isSui ? 'SUI' : 'NEAR';
+    const amountVal = parseFloat(args[1] ?? '0');
 
-    if (amountNear <= 0) {
+    if (amountVal <= 0) {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
         prewarmTradePath(telegramId, tokenAddress).catch(() => {});
         await sendTokenCard(ctx, card);
       } catch {
-        await ctx.reply('Specify amount in NEAR: /buy <token_ca> <amount_near>');
+        await ctx.reply(`Specify amount in ${unit}: /buy <token_ca> <amount>`);
       }
       return;
     }
@@ -3357,10 +3365,10 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountVal} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
       try {
-        const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+        const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
 
         await ctx.reply(res.message, {
@@ -4018,6 +4026,8 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         const tokenAddress = pending.tokenAddress;
+        const isSui = isSuiToken(tokenAddress);
+        const unit = isSui ? 'SUI' : 'NEAR';
         const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
         if (!tryAcquireInFlight(guardKey)) {
           await ctx.reply('⏳ A trade for this token is already in progress.');
@@ -4025,7 +4035,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
 
         (async () => {
-          const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+          const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amt} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
           const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
           try {
             const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);

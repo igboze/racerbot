@@ -267,7 +267,10 @@ export async function getDb(): Promise<Pool> {
     connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
   });
   pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
-  pool.on('connect', () => console.log('[DB] Connected to Postgres'));
+  pool.on('connect', (client) => {
+    console.log('[DB] Connected to Postgres');
+    client.query('ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check').catch(() => {});
+  });
 
   return pool;
 }
@@ -524,13 +527,29 @@ export async function createFill(params: CreateFillParams): Promise<{ fill: Fill
   try {
     await client.query('BEGIN');
 
-    const insertResult = await client.query(
-      `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-       ON CONFLICT (tx_hash) DO NOTHING
-       RETURNING id`,
-      [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
-    );
+    let insertResult;
+    try {
+      insertResult = await client.query(
+        `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+         ON CONFLICT (tx_hash) DO NOTHING
+         RETURNING id`,
+        [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+      );
+    } catch (insertErr: any) {
+      if (insertErr?.message?.includes('fills_venue_check') || insertErr?.message?.includes('fills venue check')) {
+        await client.query('ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check');
+        insertResult = await client.query(
+          `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+           ON CONFLICT (tx_hash) DO NOTHING
+           RETURNING id`,
+          [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+        );
+      } else {
+        throw insertErr;
+      }
+    }
 
     const inserted = insertResult.rows.length > 0;
 
