@@ -165,4 +165,13 @@ export type {
   BuildSuiPumpSellParams,
   ExecuteSuiTxResult,
 } from './sui.js';
+
+// Anti-Honeypot & Token Safety
+export {
+  checkTokenSafety,
+} from './safety.js';
+export type {
+  TokenSafetyReport,
+} from './safety.js';
+
 

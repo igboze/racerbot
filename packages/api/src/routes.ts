@@ -69,6 +69,7 @@ import {
   resolveTokenAddressFromKey,
   getSuiBalance,
   getSuiUsdPrice,
+  checkTokenSafety,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -358,11 +359,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
 export async function buildTokenCard(tokenAddress: string, telegramId?: number): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
-  // Fetch token info, balance, and user settings in parallel
-  const [info, balances, user] = await Promise.allSettled([
+  // Fetch token info, balance, user settings, and honeypot safety audit in parallel
+  const [info, balances, user, safetyRes] = await Promise.allSettled([
     getTokenInfo(tokenAddress, true),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
     telegramId ? getUserByTelegramId(telegramId).catch(() => null) : Promise.resolve(null),
+    checkTokenSafety(tokenAddress).catch(() => null),
   ]);
 
   if (info.status === 'rejected') {
@@ -370,6 +372,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   }
 
   const tokenInfo = info.value;
+  const safety = safetyRes.status === 'fulfilled' ? safetyRes.value : null;
   const b = balances.status === 'fulfilled' ? balances.value : null;
   let userRecord = user.status === 'fulfilled' ? user.value : null;
 
@@ -542,7 +545,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     ? (tokenInfo.sui_usd ? `\n_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)} USD_\n` : '\n')
     : (nearUsdRate && nearUsdRate > 0 ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n` : '\n');
 
+  let safetyBanner = '';
+  if (safety?.isHoneypot) {
+    safetyBanner =
+      `🚨 *CRITICAL HONEYPOT WARNING* 🚨\n` +
+      `⚠️ *Risk*: 🔴 *MALICIOUS CONTRACT DETECTED*\n` +
+      `• _${safety.reasons[0] || 'Unauthorized balance confiscation backdoor found.'}_\n` +
+      `🚫 *Buying is blocked by RacerBot to protect your wallet.*\n\n`;
+  } else if (safety?.risk === 'medium' && safety.warning) {
+    safetyBanner = `⚠️ _${safety.warning}_\n\n`;
+  } else if (safety?.isAuditedLaunchpad) {
+    safetyBanner = `🛡️ _Audited ${safety.launchpadName || 'Launchpad'} Token_\n\n`;
+  }
+
   let text =
+    safetyBanner +
     `🪙 *${safeName}* (\`${safeSymbol}\`)\n\n` +
     `📝 *CA*: \`${tokenInfo.address}\`\n` +
     `${venueText}\n` +
@@ -600,7 +617,50 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   let keyboard;
   const shortKey = getShortTokenKey(tokenInfo.address);
 
-  if (tokenInfo.tradeable) {
+  if (safety?.isHoneypot) {
+    const blockedBtn = [Markup.button.callback('🚨 Buy Blocked (Honeypot Backdoor)', 'noop_honeypot')];
+    if (holdsToken && userPosition) {
+      text += `⚡ *Exit Position* (Sell Only):\n`;
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        [
+          cb('25%', `sell:${userPosition.id}:25`, 'danger'),
+          cb('50%', `sell:${userPosition.id}:50`, 'danger'),
+          cb('100%', `sell:${userPosition.id}:100`, 'danger'),
+        ],
+        [
+          cb('🔴 Sell X Tokens', `sell_custom_prompt:${userPosition.id}`, 'danger'),
+          cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger'),
+        ],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else {
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    }
+  } else if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
@@ -1066,6 +1126,10 @@ function getUserFriendlyError(error: Error | string): string {
   const errorMsg = typeof error === 'string' ? error : (error.message || String(error));
   console.error('[USER_ERROR]', errorMsg);
   const r = errorMsg.toLowerCase();
+  // ── Honeypot / Malicious Backdoor block ──────────────────────────────────
+  if (r.includes('order blocked for your protection') || r.includes('malicious honeypot')) {
+    return errorMsg;
+  }
 
   // ── Wallet not set up ────────────────────────────────────────────────────
   if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
@@ -1259,8 +1323,8 @@ async function executeBuyHelper(
 
   const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
 
-  // Parallel pre-flight: resolve fast route, wallet balances, and USD prices all in one parallel round-trip!
-  const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal] = await Promise.all([
+  // Parallel pre-flight: resolve fast route, wallet balances, USD prices, and honeypot safety audit all in one parallel round-trip!
+  const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal, safetyRes] = await Promise.all([
     getFastTokenRoute(tokenAddress).catch(() => null),
     !isSuiHint && user.subaccount_id
       ? Promise.all([
@@ -1273,7 +1337,18 @@ async function executeBuyHelper(
       : Promise.resolve({ mist: 0n, formatted: '0' }),
     !isSuiHint ? getNearUsdPrice().catch(() => 4.5) : Promise.resolve(4.5),
     isSuiHint ? getSuiUsdPrice().catch(() => 2.0) : Promise.resolve(2.0),
+    checkTokenSafety(tokenAddress).catch(() => null),
   ]);
+
+  if (safetyRes?.isHoneypot) {
+    const reasonText = safetyRes.reasons[0] || `Backdoor method detected: ${safetyRes.dangerousMethods.join(', ')}`;
+    throw new Error(
+      `🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\n` +
+      `This token (\`${tokenAddress}\`) was identified as a MALICIOUS HONEYPOT.\n` +
+      `• ${reasonText}\n\n` +
+      `🛡️ RacerBot has blocked this transaction to prevent loss of funds.`
+    );
+  }
 
   if (!info) {
     throw new Error('Could not resolve token details. Please verify the address.');
@@ -3426,6 +3501,14 @@ export function setupRoutes(bot: Telegraf): void {
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
+  });
+
+  // Honeypot blocked button tap handler: show alert popup
+  bot.action('noop_honeypot', async (ctx) => {
+    await ctx.answerCbQuery(
+      '🚨 BUY BLOCKED: This token contract contains a malicious backdoor function that allows unauthorized balance draining / confiscation. RacerBot has blocked trading to protect your funds.',
+      { show_alert: true }
+    );
   });
 
   // ── 1-Click Buy Inline Handlers ───────────────────────────────────────────
