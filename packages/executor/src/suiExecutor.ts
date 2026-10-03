@@ -206,6 +206,7 @@ export async function executeSuiSwap(
       amount: expectedTokensOut.toString(),
       price: priceSui.toString(),
       fee_paid: devFeeSui.toString(),
+      input_amount: suiSpent.toString(), // actual SUI spent on-chain (source of truth)
       venue: venue as any,
       tx_hash: txResult.digest,
     });
@@ -359,6 +360,7 @@ export async function executeSuiSwap(
         amount: tokenAmountRaw.toString(),
         price: priceSui.toString(),
         fee_paid: devFeeSui.toString(),
+        input_amount: suiReceived.toString(), // actual SUI received on-chain (source of truth)
         venue: venue as any,
         tx_hash: txResult.digest,
       });

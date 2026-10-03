@@ -124,11 +124,18 @@ export async function generatePNLCardData(
     for (const buy of buys) {
       if (buy.tx_hash?.startsWith('deposit_')) continue;
       const amount = toHuman(buy.amount);
-      const price  = parseFloat(buy.price);
       const fee    = normalizeFee(buy.fee_paid || '0');
-      totalInitialInvestment += amount * price + fee;
-      totalFeesPaid          += fee;
-      totalBuyTokensHuman    += amount;
+      totalFeesPaid += fee;
+      totalBuyTokensHuman += amount;
+
+      if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
+        // On-chain source of truth: actual SUI/NEAR spent
+        totalInitialInvestment += parseFloat(buy.input_amount);
+      } else {
+        // Legacy fills: approximate from amount*price + normalized fee
+        const price = parseFloat(buy.price);
+        totalInitialInvestment += amount * price + fee;
+      }
     }
 
     let quantityHeld = 0;
@@ -142,7 +149,8 @@ export async function generatePNLCardData(
     let avgEntryPrice = parseFloat(position.avg_entry_price || '0');
     if (totalBuyTokensHuman > 0 && totalInitialInvestment > 0) {
       const fillAvgEntry = totalInitialInvestment / totalBuyTokensHuman;
-      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry < avgEntryPrice / 5)) {
+      // Heal if stored entry is 0, or 10× above current and fill calc gives a sane value
+      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10)) {
         avgEntryPrice = fillAvgEntry;
       }
     } else if (avgEntryPrice <= 0 && currentPrice > 0) {
