@@ -29,6 +29,12 @@ export interface PNLCardData {
   totalBuys: number;
   totalSells: number;
   totalFeesPaid: number;
+  /** Buy-side fees only (in native units) */
+  buyFeesPaid: number;
+  /** Sell-side fees only (in native units) */
+  sellFeesPaid: number;
+  /** How much the token price itself moved (entry → exit/current), in % */
+  tokenPriceChangePct: number;
   nearUsd: number;
   /** Whether to show the user's personal net worth (investment / value) on the card */
   showNetWorth: boolean;
@@ -167,6 +173,7 @@ export async function generatePNLCardData(
     let totalRealizedCost  = 0;
     let totalSoldAmount    = 0;
     let totalSoldGross     = 0;
+    let sellFeesPaid       = 0;
     for (const sell of sells) {
       const amount   = toHuman(sell.amount);
       const price    = parseFloat(sell.price);
@@ -176,10 +183,12 @@ export async function generatePNLCardData(
       totalRealizedValue += sellValue;
       totalRealizedCost  += costBasis;
       totalFeesPaid      += fee;
+      sellFeesPaid       += fee;
       totalSoldAmount    += amount;
       totalSoldGross     += amount * price;
     }
     totalRealizedPnl = totalRealizedValue - totalRealizedCost;
+    const buyFeesPaid = totalFeesPaid - sellFeesPaid;
 
     const isClosed = position.status === 'closed' || quantityHeld <= 0;
     const avgExitPrice = totalSoldAmount > 0
@@ -234,6 +243,11 @@ export async function generatePNLCardData(
     };
     const venueName = tokenInfo?.venue ? venueMap[tokenInfo.venue] || tokenInfo.venue : 'Unknown';
 
+    // Token price % change (pure market move, no fees)
+    const tokenPriceChangePct = avgEntryPrice > 0
+      ? ((displayPrice - avgEntryPrice) / avgEntryPrice) * 100
+      : 0;
+
     return {
       tokenAddress:   position.token_address,
       tokenName:      tokenInfo?.name    || position.token_address,
@@ -259,6 +273,9 @@ export async function generatePNLCardData(
       totalBuys:      buys.filter(b => !b.tx_hash?.startsWith('deposit_')).length,
       totalSells:     sells.length,
       totalFeesPaid,
+      buyFeesPaid,
+      sellFeesPaid,
+      tokenPriceChangePct,
       nearUsd,
       showNetWorth,
       referralCode,
@@ -292,12 +309,18 @@ export function generatePNLCardMessage(data: PNLCardData): string {
   const emoji       = data.isProfit ? '🟢' : '🔴';
   const pnlSign     = data.isProfit ? '+' : '';
   const isClosed    = data.positionStatus === 'closed';
-  const statusEmoji = isClosed ? '🔴' : '🟢';
+  const statusEmoji = isClosed ? '🔒' : '🟢';
+  const nativeUnit  = data.tokenAddress.includes('::') ? 'SUI' : 'NEAR';
 
   const safe = (s: string) => (s || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\/]/g, ' ');
   const safeSymbol  = safe(data.tokenSymbol);
   const safeName    = safe(data.tokenName);
   const safeAddress = safe(data.tokenAddress);
+
+  const formatNative = (v: number) => {
+    if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)}K ${nativeUnit}`;
+    return `${v.toFixed(4)} ${nativeUnit}`;
+  };
 
   const formatUSD = (nearValue: number) => {
     const v = nearValue * data.nearUsd;
@@ -314,8 +337,9 @@ export function generatePNLCardMessage(data: PNLCardData): string {
     return v > 0 ? `$${v.toFixed(2)}` : 'N/A';
   };
 
-  const currentOrExitMcapLabel = isClosed ? 'Exit Market Cap' : 'Current Market Cap';
-  const currentOrExitPriceLabel = isClosed ? 'Exit Price' : 'Current Price';
+  const tokenMoveSign = data.tokenPriceChangePct >= 0 ? '+' : '';
+  const tokenMoveEmoji = data.tokenPriceChangePct >= 0 ? '📈' : '📉';
+  const currentOrExitLabel = isClosed ? 'Exit' : 'Current';
 
   let card = `
 ${emoji} *${safeSymbol} PNL Card* ${statusEmoji}
@@ -324,26 +348,43 @@ ${emoji} *${safeSymbol} PNL Card* ${statusEmoji}
 🔗 *CA*: \`${safeAddress}\`
 💧 *Venue*: \`${safe(data.venue || 'Unknown')}\`
 
-📊 *Entry Market Cap*: \`${formatMcap(data.entryMarketCap)}\`
-📊 *${currentOrExitMcapLabel}*: \`${formatMcap(data.currentMarketCap)}\`
-
-💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} NEAR\` (${formatUSD(data.entryPrice)})
-💰 *${currentOrExitPriceLabel}*: \`${data.currentPrice.toFixed(8)} NEAR\` (${formatUSD(data.currentPrice)})`;
+💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} ${nativeUnit}\`
+💰 *${currentOrExitLabel} Price*: \`${data.currentPrice.toFixed(8)} ${nativeUnit}\`
+${tokenMoveEmoji} *Token Price Move*: \`${tokenMoveSign}${data.tokenPriceChangePct.toFixed(2)}%\``.trim();
 
   if (data.showNetWorth) {
     card += `
 
-📦 *Quantity Held*: \`${data.quantityHeld.toFixed(4)}\`
-💵 *Initial Investment*: \`${formatUSD(data.initialInvestment)}\`
-💵 *Unrealized Value*: \`${formatUSD(data.unrealizedValue)}\`
+💵 *Invested*: \`${formatNative(data.initialInvestment)}\` (${formatUSD(data.initialInvestment)})`;
 
-📊 *Realized PNL*: \`${pnlSign}${formatUSD(data.realizedPnl)}\`
-📊 *Unrealized PNL*: \`${pnlSign}${formatUSD(data.unrealizedPnl)}\`
-📊 *Total PNL*: \`${pnlSign}${formatUSD(data.totalPnl)}\` (\`${pnlSign}${data.pnlPercent.toFixed(2)}%\`)`;
+    if (isClosed) {
+      const grossProceeds = data.initialInvestment + data.totalPnl + data.sellFeesPaid;
+      card += `
+💸 *Gross Proceeds*: \`${formatNative(grossProceeds)}\` (${formatUSD(grossProceeds)})
+💸 *Fees Paid*: \`${formatNative(data.totalFeesPaid)}\` _(buy + sell)_
+💵 *Net Proceeds*: \`${formatNative(data.initialInvestment + data.totalPnl)}\` (${formatUSD(data.initialInvestment + data.totalPnl)})`;
+    } else {
+      card += `
+📦 *Holding*: \`${data.quantityHeld.toFixed(4)} ${safeSymbol}\`
+💵 *Current Value*: \`${formatNative(data.unrealizedValue)}\` (${formatUSD(data.unrealizedValue)})`;
+    }
+
+    card += `
+
+${emoji} *Your PNL*: \`${pnlSign}${formatNative(data.totalPnl)}\` (\`${pnlSign}${data.pnlPercent.toFixed(2)}%\`) (${formatUSD(data.totalPnl)})
+_Note: Your PNL = Token move (${tokenMoveSign}${data.tokenPriceChangePct.toFixed(1)}%) minus fees (${formatNative(data.totalFeesPaid)})_`;
   } else {
     card += `
 
-📊 *Total PNL*: \`${pnlSign}${data.pnlPercent.toFixed(2)}%\``;
+${emoji} *Your PNL*: \`${pnlSign}${data.pnlPercent.toFixed(2)}%\`
+${tokenMoveEmoji} *Token moved*: \`${tokenMoveSign}${data.tokenPriceChangePct.toFixed(2)}%\``;
+  }
+
+  if (data.entryMarketCap > 0 || data.currentMarketCap > 0) {
+    card += `
+
+📊 *Entry Market Cap*: \`${formatMcap(data.entryMarketCap)}\`
+📊 *${currentOrExitLabel} Market Cap*: \`${formatMcap(data.currentMarketCap)}\``;
   }
 
   card += `
@@ -356,6 +397,7 @@ _Generated by RacerBot_`.trim();
 
   return card;
 }
+
 
 /**
  * Generate PNL card with both image and text.
