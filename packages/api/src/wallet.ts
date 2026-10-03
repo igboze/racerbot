@@ -233,7 +233,7 @@ export interface DexScreenerData {
 export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`, {
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as any;
@@ -348,6 +348,78 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
  */
 const TOKEN_INFO_MEM_TTL_MS = 15_000;
 const TOKEN_INFO_DB_MAX_AGE_MS = 15_000;
+
+/**
+ * Fast-path route resolution for swaps.
+ * Resolves token venue, pool IDs, chain, symbol, and decimals from in-memory cache
+ * or Postgres DB cache in < 2ms, bypassing all DexScreener/RPC discovery.
+ * If the token has never been seen before, falls back to full getTokenInfo.
+ */
+export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenInfoResult> {
+  let tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
+  if (tokenAddress.startsWith('t_')) {
+    const dbResolved = await findTokenAddressByShortKey(tokenAddress).catch(() => null);
+    if (dbResolved) {
+      registerShortTokenKey(tokenAddress, dbResolved);
+      tokenAddress = dbResolved;
+    }
+  }
+
+  // 1. In-memory cache hit (< 0.1ms)
+  const cached = tokenInfoCache.get(tokenAddress) || tokenInfoCache.get(rawTokenAddress);
+  if (cached && Date.now() < cached.expiresAt && cached.data.tradeable) {
+    return cached.data;
+  }
+
+  // 2. DB cache hit (< 2ms)
+  const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+  if (
+    dbCache &&
+    dbCache.venue &&
+    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'suipump'].includes(dbCache.venue)
+  ) {
+    const isSui = dbCache.chain === 'sui' || isSuiToken(tokenAddress);
+    const nativeUsd = isSui ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 4.5);
+    const lastPrice = Number(dbCache.last_price || 0);
+    const decimals = dbCache.decimals !== null && dbCache.decimals !== undefined ? Number(dbCache.decimals) : (isSui ? 6 : 18);
+    const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, decimals);
+    const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+
+    const result: TokenInfoResult = {
+      address: tokenAddress,
+      chain: (dbCache.chain as any) || (isSui ? 'sui' : 'near'),
+      name: dbCache.name || 'Token',
+      symbol: dbCache.symbol || 'TOKEN',
+      decimals,
+      total_supply: dbCache.total_supply || '0',
+      price: dbCache.last_price?.toString() || '0',
+      price_usd: nativeUsd > 0 ? (lastPrice * nativeUsd).toFixed(8) : '0',
+      liquidity: dbCache.last_liquidity?.toString() || '0',
+      liquidity_usd: nativeUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nativeUsd).toFixed(2) : '0',
+      market_cap: mcap,
+      market_cap_usd: nativeUsd > 0 ? mcap * nativeUsd : 0,
+      near_usd: isSui ? 0 : nativeUsd,
+      sui_usd: isSui ? nativeUsd : 0,
+      venue: dbCache.venue as any,
+      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+      bonding_phase: (dbCache.bonding_phase as any) ?? null,
+      bonding_progress_pct:
+        dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined
+          ? Number(dbCache.bonding_progress_pct)
+          : null,
+      dcl_pool_id: dbCache.dcl_pool_id ?? null,
+      tradeable: true,
+      sui_coin_type: isSui ? tokenAddress : undefined,
+    };
+
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    return result;
+  }
+
+  // 3. Fallback: full resolution if never cached
+  return getTokenInfo(rawTokenAddress, false);
+}
 
 export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false): Promise<TokenInfoResult> {
   let tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
