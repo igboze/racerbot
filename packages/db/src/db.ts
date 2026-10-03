@@ -49,6 +49,8 @@ export interface FillRecord {
   amount: string;
   price: string;
   fee_paid: string;
+  /** Actual native amount spent (buy) or received (sell), in human units (SUI / NEAR). Source of truth for investment calculations. */
+  input_amount?: string | null;
   venue: string;
   tx_hash: string;
   created_at: Date;
@@ -231,6 +233,8 @@ export interface CreateFillParams {
   amount: string;
   price: string;
   fee_paid: string;
+  /** Actual native amount spent (buy) or received (sell), in human units (SUI / NEAR). */
+  input_amount?: string | null;
   venue: string;
   tx_hash: string;
 }
@@ -530,15 +534,16 @@ export async function createFill(params: CreateFillParams): Promise<{ fill: Fill
     let insertResult;
     try {
       insertResult = await client.query(
-        `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, input_amount, venue, tx_hash, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
          ON CONFLICT (tx_hash) DO NOTHING
          RETURNING id`,
-        [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+        [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.input_amount ?? null, params.venue, params.tx_hash]
       );
     } catch (insertErr: any) {
-      if (insertErr?.message?.includes('fills_venue_check') || insertErr?.message?.includes('fills venue check')) {
-        await client.query('ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check');
+      if (insertErr?.message?.includes('fills_venue_check') || insertErr?.message?.includes('fills venue check') || insertErr?.message?.includes('input_amount')) {
+        // If input_amount column doesn't exist yet (migration pending), fall back to old schema
+        await client.query('ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check').catch(() => {});
         insertResult = await client.query(
           `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
@@ -1134,6 +1139,7 @@ function rowToFill(row: any): FillRecord {
     amount: row.amount, 
     price: row.price, 
     fee_paid: row.fee_paid, 
+    input_amount: row.input_amount ?? null,
     venue: row.venue, 
     tx_hash: row.tx_hash, 
     created_at: row.created_at 

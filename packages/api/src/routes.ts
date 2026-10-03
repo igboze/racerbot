@@ -2416,14 +2416,20 @@ export function setupRoutes(bot: Telegraf): void {
       for (const buy of buys) {
         if (buy.tx_hash?.startsWith('deposit_')) continue;
         const amount = toHuman(buy.amount);
-        const price = parseFloat(buy.price);
-        let fee = parseFloat(buy.fee_paid || '0');
-        if (isSuiPos && fee > 1e6) {
-          fee = fee / 1e9;
-        } else if (!isSuiPos && fee > 1e18) {
-          fee = fee / 1e24;
+
+        let cost: number;
+        if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
+          // On-chain source of truth: actual SUI/NEAR spent
+          cost = parseFloat(buy.input_amount);
+        } else {
+          // Legacy fills: approximate from amount*price + normalized fee
+          const price = parseFloat(buy.price);
+          let fee = parseFloat(buy.fee_paid || '0');
+          if (isSuiPos && fee > 1e6) fee = fee / 1e9;
+          else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
+          cost = (amount * price) + fee;
         }
-        const cost = (amount * price) + fee;
+
         initialInvestment += cost;
         totalBuyTokensHuman += amount;
         totalBuyCostNative += cost;
@@ -2438,10 +2444,11 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       let entryPrice = parseFloat(position.avg_entry_price) || 0;
-      // Heal corrupted entryPrice if it was stored in raw Mist or out of whack with fills
+      // Heal corrupted entryPrice: if fills give us a reliable cost basis, recompute
       if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
         const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
-        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry < entryPrice / 5)) {
+        // Heal if: stored entry is 0, OR 10× above current price while fills suggest a much lower value
+        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10)) {
           entryPrice = fillAvgEntry;
           position.avg_entry_price = fillAvgEntry.toString();
           updatePosition({
