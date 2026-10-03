@@ -610,6 +610,42 @@ export async function markTriggerFired(triggerId: string): Promise<void> {
   await db.query('UPDATE triggers SET status = $1 WHERE id = $2', ['fired', triggerId]);
 }
 
+function computeShortKey(tokenAddress: string): string {
+  if (!tokenAddress || typeof tokenAddress !== 'string') return '';
+  const trimmed = tokenAddress.trim();
+  if (trimmed.length <= 32) return trimmed;
+  let hash = 0;
+  for (let i = 0; i < trimmed.length; i++) {
+    hash = ((hash << 5) - hash) + trimmed.charCodeAt(i);
+    hash |= 0;
+  }
+  const hex = Math.abs(hash).toString(16).padStart(8, '0') + trimmed.slice(-4);
+  return `t_${hex}`;
+}
+
+export async function findTokenAddressByShortKey(shortKey: string): Promise<string | null> {
+  const db = await getDb();
+  const cacheRes = await db.query('SELECT token_address FROM token_cache').catch(() => ({ rows: [] }));
+  for (const row of cacheRes.rows) {
+    if (row.token_address && computeShortKey(row.token_address) === shortKey) {
+      return row.token_address;
+    }
+  }
+  const posRes = await db.query('SELECT DISTINCT token_address FROM positions').catch(() => ({ rows: [] }));
+  for (const row of posRes.rows) {
+    if (row.token_address && computeShortKey(row.token_address) === shortKey) {
+      return row.token_address;
+    }
+  }
+  const fillRes = await db.query('SELECT DISTINCT token_address FROM fills').catch(() => ({ rows: [] }));
+  for (const row of fillRes.rows) {
+    if (row.token_address && computeShortKey(row.token_address) === shortKey) {
+      return row.token_address;
+    }
+  }
+  return null;
+}
+
 export async function getTokenCache(address: string): Promise<TokenCacheRecord | null> {
   const db = await getDb();
   const result = await db.query('SELECT * FROM token_cache WHERE token_address = $1', [address]);

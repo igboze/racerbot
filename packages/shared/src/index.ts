@@ -139,6 +139,7 @@ export {
   isValidSuiAddress,
   normalizeSuiAddress,
   getShortTokenKey,
+  registerShortTokenKey,
   resolveTokenAddressFromKey,
   getSuiBalance,
   getSuiTokenBalance,
