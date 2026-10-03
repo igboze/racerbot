@@ -61,9 +61,32 @@ import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
+import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
+
+// ── Short Token Key mapping to guarantee callback_data never exceeds Telegram's 64-byte limit ──
+const shortTokenKeyMap = new Map<string, string>();
+const tokenKeyToAddressMap = new Map<string, string>();
+
+export function getShortTokenKey(tokenAddress: string): string {
+  if (!tokenAddress) return '';
+  if (tokenAddress.length <= 32) return tokenAddress;
+  let short = shortTokenKeyMap.get(tokenAddress);
+  if (!short) {
+    const hash = crypto.createHash('sha256').update(tokenAddress).digest('hex').slice(0, 12);
+    short = `t_${hash}`;
+    shortTokenKeyMap.set(tokenAddress, short);
+    tokenKeyToAddressMap.set(short, tokenAddress);
+  }
+  return short;
+}
+
+export function resolveTokenAddressFromKey(keyOrAddress: string): string {
+  if (!keyOrAddress) return '';
+  return tokenKeyToAddressMap.get(keyOrAddress) || keyOrAddress;
+}
 
 // ── Colored inline buttons (Bot API 9.4) ─────────────────────────────────────
 // InlineKeyboardButton.style: 'success' (green), 'danger' (red), 'primary'
@@ -586,6 +609,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   }
 
   let keyboard;
+  const shortKey = getShortTokenKey(tokenInfo.address);
 
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
@@ -594,17 +618,17 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       keyboard = Markup.inlineKeyboard([
         // Quick-buy fixed amounts (green)
         [
-          cb(`1 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:1`, 'success'),
-          cb(`5 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:5`, 'success'),
-          cb(`10 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:10`, 'success'),
+          cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
+          cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
+          cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
         ],
         // Custom amount
-        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${tokenInfo.address}`, 'success')],
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         // Buy % of balance (green)
         [
-          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
-          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${tokenInfo.address}:50`, 'success'),
-          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${tokenInfo.address}:100`, 'success'),
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
         ],
         // Sell % (red)
         [
@@ -619,8 +643,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary')] : []),
-          cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
@@ -634,21 +658,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
         [
-          cb(`1 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:1`, 'success'),
-          cb(`5 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:5`, 'success'),
-          cb(`10 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:10`, 'success'),
+          cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
+          cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
+          cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
         ],
-        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${tokenInfo.address}`, 'success')],
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         [
-          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
-          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${tokenInfo.address}:50`, 'success'),
-          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${tokenInfo.address}:100`, 'success'),
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
         ],
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary')] : []),
-          cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
         [
@@ -665,7 +689,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ...linkRows,
       ...shareButtonRow,
       [
-        Markup.button.callback('🔄 Refresh', `token_refresh:${tokenInfo.address}`),
+        Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
         Markup.button.callback('🔙 Back', 'menu_home'),
       ],
       [
@@ -1441,7 +1465,7 @@ async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string,
   } catch (err: any) {
     console.warn('[buildBuySuccessKeyboard] Failed to generate share button:', err?.message);
   }
-  rows.push([Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${tokenAddress}`)]);
+  rows.push([Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${getShortTokenKey(tokenAddress)}`)]);
   return Markup.inlineKeyboard(rows).reply_markup;
 }
 
@@ -1860,7 +1884,9 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action(/^dca_token:(.+)$/, async (ctx) => {
-    const tokenCA = (ctx as any).match[1];
+    const rawTokenParam = (ctx as any).match[1];
+    const tokenCA = resolveTokenAddressFromKey(rawTokenParam);
+    const shortKey = getShortTokenKey(tokenCA);
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
@@ -1868,8 +1894,8 @@ export function setupRoutes(bot: Telegraf): void {
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${tokenCA}`, 'success')],
-          [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${tokenCA}`, 'danger')],
+          [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${shortKey}`, 'success')],
+          [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${shortKey}`, 'danger')],
           [cb('🔙 Cancel', 'menu_dca', 'primary')],
         ]),
       }
@@ -1879,7 +1905,8 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^dca_choose_side:(buy|sell):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const side = (ctx as any).match[1] as 'buy' | 'sell';
-    const tokenCA = (ctx as any).match[2];
+    const rawTokenParam = (ctx as any).match[2];
+    const tokenCA = resolveTokenAddressFromKey(rawTokenParam);
     userPendingActions.set(telegramId, {
       action: 'dca_amount',
       dcaSide: side,
@@ -3184,7 +3211,8 @@ export function setupRoutes(bot: Telegraf): void {
 
   // Refresh token card — instantly sends a new text message of the updated information
   bot.action(/^token_refresh:(.+)$/, async (ctx) => {
-    const tokenAddress = ctx.match![1];
+    const rawTokenParam = ctx.match![1];
+    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const telegramId = ctx.from!.id;
     try {
       await ctx.answerCbQuery('🔄 Refreshed!').catch(() => {});
@@ -3203,7 +3231,8 @@ export function setupRoutes(bot: Telegraf): void {
   // released immediately (Telegram cannot time out and resend the update) and
   // the detached body always sends a final success or error message.
   bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
-    const tokenAddress = ctx.match![1];
+    const rawTokenParam = ctx.match![1];
+    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
     console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountNear} NEAR`);
@@ -3248,7 +3277,8 @@ export function setupRoutes(bot: Telegraf): void {
   // Percentage buy: buy_pct:<token>:<pct> or legacy buy:<token>:<pct>
   // Same detached + in-flight-guard structure as buy_fixed.
   bot.action(/^(?:buy_pct|buy):(.+):(\d+)$/, async (ctx) => {
-    const tokenAddress = ctx.match![1];
+    const rawTokenParam = ctx.match![1];
+    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const pct = parseInt(ctx.match![2]);
     const telegramId = ctx.from!.id;
     console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
@@ -3289,7 +3319,8 @@ export function setupRoutes(bot: Telegraf): void {
 
   // Custom buy prompt button
   bot.action(/^buy_custom_prompt:(.+)$/, async (ctx) => {
-    const tokenAddress = ctx.match![1];
+    const rawTokenParam = ctx.match![1];
+    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const telegramId = ctx.from!.id;
     userPendingActions.set(telegramId, {
       action: 'buy_custom_near',
@@ -3300,7 +3331,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(
       `✏️ *Custom Buy Amount*\n\n` +
       `Token: \`${tokenAddress}\`\n\n` +
-      `Reply with the amount in NEAR you want to buy (e.g. \`2.5\`):\n` +
+      `Reply with the amount in NEAR or SUI you want to buy (e.g. \`2.5\`):\n` +
       `_Type /cancel to abort._`,
       { parse_mode: 'Markdown' }
     );
