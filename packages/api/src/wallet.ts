@@ -228,6 +228,14 @@ export interface DexScreenerData {
   priceChange24h: number;
   dexId?: string;
   pairAddress?: string;
+  buys24h?: number;
+  sells24h?: number;
+  txns?: {
+    m5?: { buys: number; sells: number };
+    h1?: { buys: number; sells: number };
+    h6?: { buys: number; sells: number };
+    h24?: { buys: number; sells: number };
+  };
 }
 
 export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
@@ -245,6 +253,10 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
       (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
     )[0];
     if (!pool) return null;
+
+    const buys24h = pool.txns?.h24?.buys ?? (pool.txns?.h6?.buys || pool.txns?.h1?.buys || pool.txns?.m5?.buys || 0);
+    const sells24h = pool.txns?.h24?.sells ?? (pool.txns?.h6?.sells || pool.txns?.h1?.sells || pool.txns?.m5?.sells || 0);
+
     return {
       priceUsd: pool.priceUsd ? parseFloat(pool.priceUsd) : 0,
       priceNative: pool.priceNative ? parseFloat(pool.priceNative) : 0,
@@ -254,10 +266,75 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
       priceChange24h: pool.priceChange?.h24 || 0,
       dexId: pool.dexId,
       pairAddress: pool.pairAddress,
+      buys24h,
+      sells24h,
+      txns: pool.txns,
     };
   } catch {
     return null;
   }
+}
+
+// ── In-memory cache for token holders count (60s TTL) ────────────────────────
+const holdersCountCache = new Map<string, { at: number; data: { count: number; isExact: boolean } | null }>();
+const HOLDERS_CACHE_TTL_MS = 60_000;
+
+/**
+ * Fetches token holders count for NEAR tokens via FastNear top FT accounts (with NearBlocks fallback).
+ */
+export async function fetchTokenHoldersCount(
+  tokenAddress: string,
+  isSui: boolean = false
+): Promise<{ count: number; isExact: boolean } | null> {
+  if (isSui) return null;
+  const norm = tokenAddress.toLowerCase().trim();
+  const cached = holdersCountCache.get(norm);
+  if (cached && Date.now() - cached.at < HOLDERS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  // 1. FastNear API (<50ms, indexes all NEAR NEP-141 contracts)
+  try {
+    const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const accounts = data.accounts || [];
+      if (accounts.length > 0) {
+        const active = accounts.filter((a: any) => a.balance && a.balance !== '0' && BigInt(a.balance) > 0n);
+        const isExact = accounts.length < 100;
+        const result = {
+          count: active.length > 0 ? active.length : accounts.length,
+          isExact,
+        };
+        holdersCountCache.set(norm, { at: Date.now(), data: result });
+        return result;
+      }
+    }
+  } catch { /* fallback */ }
+
+  // 2. Fallback to NearBlocks API
+  try {
+    const res = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(norm)}/holders?page=1&per_page=100`, {
+      signal: AbortSignal.timeout(2000),
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const holders = data.holders || data.data || [];
+      if (holders.length > 0) {
+        const result = {
+          count: holders.length,
+          isExact: holders.length < 100,
+        };
+        holdersCountCache.set(norm, { at: Date.now(), data: result });
+        return result;
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  return null;
 }
 
 export interface TokenInfoResult {
@@ -285,6 +362,10 @@ export interface TokenInfoResult {
   tradeable: boolean;   // false for venues we support info but not trading on
   sui_curve_address?: string;
   sui_coin_type?: string;
+  holders_count?: number | null;
+  holders_count_exact?: boolean;
+  buys_count?: number | null;
+  sells_count?: number | null;
 }
 
 /**
@@ -493,6 +574,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           bonding_phase: 'bonded',
           tradeable: true,
           sui_coin_type: tokenAddress,
+          buys_count: dexData?.buys24h ?? null,
+          sells_count: dexData?.sells24h ?? null,
         };
         tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
         tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
@@ -544,6 +627,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       tradeable: true,
       sui_curve_address: curve.curveId,
       sui_coin_type: curve.tokenType,
+      buys_count: curve.buys ?? null,
+      sells_count: curve.sells ?? null,
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
@@ -572,9 +657,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     return result;
   }
 
-  // Fetch NEAR/USD price and DexScreener live market stats in parallel
+  // Fetch NEAR/USD price, DexScreener live market stats, and on-chain holders in parallel
   const nearUsdPromise = getNearUsdPrice().catch(() => 0);
   const dexDataPromise = fetchDexScreenerTokenData(tokenAddress).catch(() => null);
+  const holdersDataPromise = fetchTokenHoldersCount(tokenAddress).catch(() => null);
 
   // Always read the DB row (metadata + pool IDs are stable topology, reused
   // below), but only ACCEPT its cached price when it's <15s old — and never
@@ -590,7 +676,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     const lastPrice = Number(dbCache.last_price || 0);
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
-    const nearUsd = await nearUsdPromise;
+    const [nearUsd, dexData, holdersData] = await Promise.all([
+      nearUsdPromise,
+      dexDataPromise,
+      holdersDataPromise,
+    ]);
     const result: TokenInfoResult = {
       address: tokenAddress,
       name: dbCache.name ?? '',
@@ -599,6 +689,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       total_supply: dbCache.total_supply ?? '0',
       price: dbCache.last_price?.toString() ?? '0',
       price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+      price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
+      volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
       liquidity: dbCache.last_liquidity?.toString() ?? '0',
       liquidity_usd: nearUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nearUsd).toFixed(2) : '0',
       market_cap: mcap,
@@ -613,6 +705,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
       tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(dbCache.venue ?? 'unknown'),
+      holders_count: holdersData?.count ?? null,
+      holders_count_exact: holdersData?.isExact ?? true,
+      buys_count: dexData?.buys24h ?? null,
+      sells_count: dexData?.sells24h ?? null,
     };
     // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
     // 3s, not a fresh window. Stale data must never renew itself.
@@ -923,8 +1019,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     }
   }
 
-  const nearUsd = await nearUsdPromise;
-  const dexData = await dexDataPromise;
+  const [nearUsd, dexData, holdersData] = await Promise.all([
+    nearUsdPromise,
+    dexDataPromise,
+    holdersDataPromise,
+  ]);
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
 
@@ -983,6 +1082,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     bonding_progress_pct: bondingProgressPct,
     dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId ?? null,
     tradeable,
+    holders_count: holdersData?.count ?? null,
+    holders_count_exact: holdersData?.isExact ?? true,
+    buys_count: dexData?.buys24h ?? null,
+    sells_count: dexData?.sells24h ?? null,
   };
 
   tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
