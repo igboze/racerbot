@@ -18,10 +18,25 @@ export const CHANNELS = {
 
 // ── Event interfaces ──────────────────────────────────────────────────────────
 
-export type EventVenue = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad';
+export type EventVenue =
+  | 'rhea'
+  | 'ref'
+  | 'shardsmarket'
+  | 'nearlytrade'
+  | 'intear'
+  | 'memecooking'
+  | 'onetokenhub'
+  | 'gaypad'
+  | 'nearpad'
+  | 'suipump'
+  | 'cetus'
+  | 'turbos'
+  | 'deepbook'
+  | 'sui_dex';
 
 export interface TokenDetectedEvent {
   type: 'token_detected';
+  chain?: 'near' | 'sui';
   token_address: string;
   name: string;
   symbol: string;
@@ -34,6 +49,7 @@ export interface TokenDetectedEvent {
 
 export interface PoolCreatedEvent {
   type: 'pool_created';
+  chain?: 'near' | 'sui';
   token_address: string;
   pool_address: string;
   venue: EventVenue;
@@ -44,6 +60,7 @@ export interface PoolCreatedEvent {
 
 export interface TriggerEvent {
   type: 'trigger_fired';
+  chain?: 'near' | 'sui';
   user_id: string;
   position_id: string;
   trigger_type: 'stop_loss' | 'take_profit' | 'market_cap';
@@ -54,6 +71,7 @@ export interface TriggerEvent {
 
 export interface SwapEvent {
   type: 'execute_swap';
+  chain?: 'near' | 'sui';
   user_id: string;
   token_in: string;
   token_out: string;

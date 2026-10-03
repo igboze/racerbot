@@ -8,6 +8,8 @@ export interface UserRecord {
   telegram_id: number;
   subaccount_id: string;
   scoped_key_encrypted: string;
+  sui_address?: string | null;
+  sui_private_key_enc?: string | null;
   default_buy_pct: number | null;
   default_sell_pct: number | null;
   fee_tier: string;
@@ -26,6 +28,7 @@ export interface UserRecord {
 export interface PositionRecord {
   id: string;
   user_id: string;
+  chain?: 'near' | 'sui';
   token_address: string;
   quantity_held: string;
   avg_entry_price: string;
@@ -40,6 +43,7 @@ export interface FillRecord {
   id: string;
   user_id: string;
   position_id: string;
+  chain?: 'near' | 'sui';
   side: string;
   token_address: string;
   amount: string;
@@ -54,6 +58,7 @@ export interface TriggerRecord {
   id: string;
   user_id: string;
   position_id: string;
+  chain?: 'near' | 'sui';
   type: string;
   target_value: string;
   status: string;
@@ -62,6 +67,7 @@ export interface TriggerRecord {
 
 export interface TokenCacheRecord {
   token_address: string;
+  chain?: 'near' | 'sui';
   name?: string | null;
   symbol?: string | null;
   decimals?: number | null;
@@ -202,12 +208,15 @@ export interface CreateUserParams {
   telegram_id: number;
   subaccount_id: string;
   scoped_key_encrypted: string;
+  sui_address?: string | null;
+  sui_private_key_enc?: string | null;
   default_buy_pct?: number;
   default_sell_pct?: number;
 }
 
 export interface CreatePositionParams {
   user_id: string;
+  chain?: 'near' | 'sui';
   token_address: string;
   quantity_held: string;
   avg_entry_price: string;
@@ -216,6 +225,7 @@ export interface CreatePositionParams {
 export interface CreateFillParams {
   user_id: string;
   position_id: string;
+  chain?: 'near' | 'sui';
   side: string;
   token_address: string;
   amount: string;
@@ -228,6 +238,7 @@ export interface CreateFillParams {
 export interface CreateTriggerParams {
   user_id: string;
   position_id: string;
+  chain?: 'near' | 'sui';
   type: string;
   target_value: string;
 }
@@ -279,11 +290,15 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
   const db = await getDb();
   const id = randomUUID();
   const result = await db.query(
-    `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, default_buy_pct, default_sell_pct, fee_tier)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (telegram_id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id, scoped_key_encrypted = EXCLUDED.scoped_key_encrypted
+    `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, sui_address, sui_private_key_enc, default_buy_pct, default_sell_pct, fee_tier)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (telegram_id) DO UPDATE SET 
+       subaccount_id = EXCLUDED.subaccount_id, 
+       scoped_key_encrypted = EXCLUDED.scoped_key_encrypted,
+       sui_address = COALESCE(EXCLUDED.sui_address, users.sui_address),
+       sui_private_key_enc = COALESCE(EXCLUDED.sui_private_key_enc, users.sui_private_key_enc)
      RETURNING *`,
-    [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
+    [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.sui_address || null, params.sui_private_key_enc || null, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
   );
   invalidateUserCache(undefined, params.telegram_id);
   return rowToUser(result.rows[0]);
@@ -357,9 +372,22 @@ export async function getUserBySubaccount(subaccountId: string): Promise<UserRec
   return rowToUser(result.rows[0]);
 }
 
+export async function getUserBySuiAddress(suiAddress: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE sui_address = $1', [suiAddress]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
 export async function updateUserScopedKey(userId: string, encryptedKey: string): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET scoped_key_encrypted = $1 WHERE id = $2', [encryptedKey, userId]);
+  invalidateUserCache(userId);
+}
+
+export async function updateUserSuiWallet(userId: string, suiAddress: string, suiPrivateKeyEnc: string): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3', [suiAddress, suiPrivateKeyEnc, userId]);
   invalidateUserCache(userId);
 }
 
@@ -432,11 +460,12 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
 export async function createPosition(params: CreatePositionParams): Promise<PositionRecord> {
   const db = await getDb();
   const id = generateId();
+  const chain = params.chain || 'near';
   await db.query(
-    'INSERT INTO positions (id, user_id, token_address, quantity_held, avg_entry_price, status, opened_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-    [id, params.user_id, params.token_address, params.quantity_held, params.avg_entry_price, 'open']
+    'INSERT INTO positions (id, user_id, chain, token_address, quantity_held, avg_entry_price, status, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+    [id, params.user_id, chain, params.token_address, params.quantity_held, params.avg_entry_price, 'open']
   );
-  return { ...params, id, status: 'open', opened_at: new Date(), closed_at: null };
+  return { ...params, id, chain, status: 'open', opened_at: new Date(), closed_at: null };
 }
 
 export async function getOpenPositions(userId: string): Promise<PositionRecord[]> {
@@ -490,16 +519,17 @@ export async function createFill(params: CreateFillParams): Promise<{ fill: Fill
   const db = await getDb();
   const id = generateId();
   const client = await db.connect();
+  const chain = params.chain || 'near';
 
   try {
     await client.query('BEGIN');
 
     const insertResult = await client.query(
-      `INSERT INTO fills (id, user_id, position_id, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      `INSERT INTO fills (id, user_id, position_id, chain, side, token_address, amount, price, fee_paid, venue, tx_hash, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
        ON CONFLICT (tx_hash) DO NOTHING
        RETURNING id`,
-      [id, params.user_id, params.position_id, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
+      [id, params.user_id, params.position_id, chain, params.side, params.token_address, params.amount, params.price, params.fee_paid, params.venue, params.tx_hash]
     );
 
     const inserted = insertResult.rows.length > 0;
@@ -515,7 +545,7 @@ export async function createFill(params: CreateFillParams): Promise<{ fill: Fill
     await client.query('COMMIT');
 
     return {
-      fill: { ...params, id, created_at: new Date() },
+      fill: { ...params, id, chain, created_at: new Date() },
       inserted,
       fillId: id,
     };
@@ -536,11 +566,12 @@ export async function getFillsByPosition(positionId: string): Promise<FillRecord
 export async function createTrigger(params: CreateTriggerParams): Promise<TriggerRecord> {
   const db = await getDb();
   const id = generateId();
+  const chain = params.chain || 'near';
   await db.query(
-    'INSERT INTO triggers (id, user_id, position_id, type, target_value, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-    [id, params.user_id, params.position_id, params.type, params.target_value, 'active']
+    'INSERT INTO triggers (id, user_id, position_id, chain, type, target_value, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+    [id, params.user_id, params.position_id, chain, params.type, params.target_value, 'active']
   );
-  return { ...params, id, status: 'active', created_at: new Date() };
+  return { ...params, id, chain, status: 'active', created_at: new Date() };
 }
 
 export async function getActiveTriggers(): Promise<TriggerRecord[]> {
@@ -569,10 +600,12 @@ export async function getTokenCache(address: string): Promise<TokenCacheRecord |
 
 export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> {
   const db = await getDb();
+  const chain = record.chain || 'near';
   await db.query(
-    `INSERT INTO token_cache (token_address, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+    `INSERT INTO token_cache (token_address, chain, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
      ON CONFLICT (token_address) DO UPDATE SET 
+       chain = COALESCE(EXCLUDED.chain, token_cache.chain),
        name = COALESCE(EXCLUDED.name, token_cache.name), 
        symbol = COALESCE(EXCLUDED.symbol, token_cache.symbol), 
        decimals = COALESCE(EXCLUDED.decimals, token_cache.decimals), 
@@ -588,6 +621,7 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
        updated_at = NOW()`,
     [
       record.token_address,
+      chain,
       record.name ?? null,
       record.symbol ?? null,
       record.decimals ?? null,
@@ -949,6 +983,8 @@ function rowToUser(row: any): UserRecord {
     telegram_id: Number(row.telegram_id),
     subaccount_id: row.subaccount_id,
     scoped_key_encrypted: row.scoped_key_encrypted,
+    sui_address: row.sui_address ?? null,
+    sui_private_key_enc: row.sui_private_key_enc ?? null,
     default_buy_pct: row.default_buy_pct != null ? parseFloat(row.default_buy_pct) : null,
     default_sell_pct: row.default_sell_pct != null ? parseFloat(row.default_sell_pct) : null,
     fee_tier: row.fee_tier,
@@ -1020,6 +1056,7 @@ function rowToPosition(row: any): PositionRecord {
   return {
     id: row.id,
     user_id: row.user_id,
+    chain: row.chain || 'near',
     token_address: row.token_address,
     quantity_held: row.quantity_held,
     avg_entry_price: row.avg_entry_price,
@@ -1032,16 +1069,39 @@ function rowToPosition(row: any): PositionRecord {
 }
 
 function rowToFill(row: any): FillRecord {
-  return { id: row.id, user_id: row.user_id, position_id: row.position_id, side: row.side, token_address: row.token_address, amount: row.amount, price: row.price, fee_paid: row.fee_paid, venue: row.venue, tx_hash: row.tx_hash, created_at: row.created_at };
+  return { 
+    id: row.id, 
+    user_id: row.user_id, 
+    position_id: row.position_id, 
+    chain: row.chain || 'near',
+    side: row.side, 
+    token_address: row.token_address, 
+    amount: row.amount, 
+    price: row.price, 
+    fee_paid: row.fee_paid, 
+    venue: row.venue, 
+    tx_hash: row.tx_hash, 
+    created_at: row.created_at 
+  };
 }
 
 function rowToTrigger(row: any): TriggerRecord {
-  return { id: row.id, user_id: row.user_id, position_id: row.position_id, type: row.type, target_value: row.target_value, status: row.status, created_at: row.created_at };
+  return { 
+    id: row.id, 
+    user_id: row.user_id, 
+    position_id: row.position_id, 
+    chain: row.chain || 'near',
+    type: row.type, 
+    target_value: row.target_value, 
+    status: row.status, 
+    created_at: row.created_at 
+  };
 }
 
 function rowToTokenCache(row: any): TokenCacheRecord {
   return { 
     token_address: row.token_address, 
+    chain: row.chain || 'near',
     name: row.name, 
     symbol: row.symbol, 
     decimals: row.decimals != null ? Number(row.decimals) : null, 

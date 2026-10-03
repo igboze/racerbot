@@ -16,9 +16,38 @@ export interface TokenInfo {
   marketCap: number;
 }
 
-export type VenueName = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad';
+export type VenueName =
+  | 'rhea'
+  | 'ref'
+  | 'shardsmarket'
+  | 'nearlytrade'
+  | 'intear'
+  | 'memecooking'
+  | 'onetokenhub'
+  | 'gaypad'
+  | 'nearpad'
+  | 'suipump'
+  | 'cetus'
+  | 'turbos'
+  | 'deepbook'
+  | 'sui_dex';
 
-export const TRADABLE_VENUES: readonly VenueName[] = ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'memecooking', 'onetokenhub', 'gaypad', 'nearpad'];
+export const TRADABLE_VENUES: readonly VenueName[] = [
+  'rhea',
+  'ref',
+  'shardsmarket',
+  'nearlytrade',
+  'intear',
+  'memecooking',
+  'onetokenhub',
+  'gaypad',
+  'nearpad',
+  'suipump',
+  'cetus',
+  'turbos',
+  'deepbook',
+  'sui_dex',
+];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
@@ -26,6 +55,7 @@ export function isTradableVenue(v: unknown): v is VenueName {
 
 export interface SwapRequest {
   user_id: string;
+  chain?: 'near' | 'sui';
   token_in: string;
   token_out: string;
   amount_in: string;

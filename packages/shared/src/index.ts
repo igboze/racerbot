@@ -120,4 +120,42 @@ export type { LaunchpadPool, LaunchpadConfig } from './launchpad.js';
 
 // Trade errors and log redaction
 export { TradeError, redactSecrets } from './errors.js';
-export type { TradeErrorCode, TradeErrorOptions } from './errors.js';
+export type { TradeErrorCode, TradeErrorOptions } from './errors.js';
+
+// SUI Protocol Integration & SuiPump
+export {
+  SUI_DECIMALS,
+  MIST_PER_SUI,
+  SUI_CLOCK_OBJECT_ID,
+  SUIPUMP_PACKAGE_ID,
+  SUIPUMP_PRICE_CONFIG_OBJECT_ID,
+  SUI_FEE_BPS,
+  SUI_BPS_DENOMINATOR,
+  DEFAULT_SUI_TREASURY_ADDRESS,
+  getSuiClient,
+  rotateSuiRpc,
+  generateSuiWallet,
+  restoreSuiKeypair,
+  isValidSuiAddress,
+  normalizeSuiAddress,
+  getSuiBalance,
+  getSuiTokenBalance,
+  getSuiTokenMetadata,
+  getSuiPumpCurveState,
+  getSuiUsdPrice,
+  buildSuiPumpBuyTransaction,
+  buildSuiPumpSellTransaction,
+  executeSuiTransaction,
+} from './sui.js';
+
+export type {
+  GeneratedSuiWallet,
+  SuiBalanceResult,
+  SuiTokenBalanceResult,
+  SuiTokenMetadata,
+  SuiPumpCurveState,
+  BuildSuiPumpBuyParams,
+  BuildSuiPumpSellParams,
+  ExecuteSuiTxResult,
+} from './sui.js';
+

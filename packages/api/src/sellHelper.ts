@@ -24,6 +24,32 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   // Use cached token info for instant (<1ms) metadata & pool resolution
   const info = await getTokenInfo(position.token_address, false).catch(() => null);
   if (!info) return { success: false, reason: 'token_not_found' };
+
+  const user = await getUserById(userId).catch(() => null);
+  const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // Sui Chain Execution Route
+  if (position.chain === 'sui' || info.chain === 'sui' || info.venue === 'suipump') {
+    const swapEvent = {
+      type: 'execute_swap' as const,
+      chain: 'sui' as const,
+      user_id: userId,
+      token_in: position.token_address,
+      token_out: 'sui',
+      amount_in: sellQty,
+      min_amount_out: '1',
+      venue: 'suipump' as const,
+      timestamp: Date.now(),
+      slippage_pct: slippagePct,
+    };
+
+    const swapResult = await publishSwap(swapEvent, onProgress);
+    if (swapResult.success === false) {
+      return { success: false, reason: swapResult.reason || 'Sui sell failed on-chain.' };
+    }
+    return { success: true };
+  }
+
   if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     return { success: false, reason: 'venue_unknown' };
   }
@@ -32,9 +58,6 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   let effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   const near = getNear();
-
-  const user = await getUserById(userId).catch(() => null);
-  const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   console.log(`[SELL_HELPER] sellAtTarget: user=${userId}, pos=${positionId}, pct=${percentage}%, qty=${sellQty}, token=${position.token_address}`);
 

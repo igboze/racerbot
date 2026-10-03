@@ -46,6 +46,7 @@ import {
   rotateUserKey,
   getUserBalances,
   getTradeSpendableNear,
+  getTradeSpendableSui,
   getRefStorageDepositNeeded,
   unwrapUserWrapNear,
   withdrawFunds,
@@ -160,27 +161,29 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const user = await getUserByTelegramId(telegramId).catch(() => null);
   let subaccountText = 'Not initialized';
   let balanceText = '0.0000 NEAR';
+  let suiText = '';
 
   if (user) {
     subaccountText = `\`${user.subaccount_id}\``;
     try {
-      // getUserBalances uses an 8s in-memory cache — this is fast on repeat calls.
-      // Only hit the RPC when forceRefresh=true (Refresh button) or cache is cold.
       const b = await getUserBalances(telegramId, forceRefresh);
       balanceText = `\`${b.nativeNearFormatted} NEAR\` (\`${b.nativeNearUsd}\`) | \`${b.wrapNearFormatted} wNEAR\` (\`${b.wrapNearUsd}\`)`;
+      if (b.suiAddress) {
+        suiText =
+          `🔷 *SUI*: \`${b.suiAddress}\`\n` +
+          `💰 *Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n`;
+      }
     } catch {
       balanceText = '`0.0000 NEAR`';
     }
   }
 
   const text =
-    `🚀 *RacerBot | High-Speed NEAR Trading*\n\n` +
-    `🔑 *Account*: ${subaccountText}\n` +
-    `💰 *Balance*: ${balanceText}\n\n` +
-    `💡 *Instant Trading Flow*:\n` +
-    `• *Paste any Token Contract Address (CA)* directly into chat to view charts, liquidity, and instant 1-click buy buttons.\n` +
-    `• Or use the interactive in-chat buttons below:\n\n` +
-    `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.`;
+    `🚀 *RacerBot | Multi-Chain Fast Trading*\n\n` +
+    `🔑 *NEAR*: ${subaccountText}\n` +
+    `💰 *Balance*: ${balanceText}\n` +
+    (suiText ? `\n${suiText}` : '') +
+    `\n💡 *Paste any Token CA or SuiPump link to trade instantly.*`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -227,7 +230,7 @@ export async function buildPointsView(telegramId: number) {
   const msLeft = s.seasonEnd.getTime() - Date.now();
   const timeLeft = msLeft > 0
     ? `${Math.floor(msLeft / 86_400_000)}d ${Math.floor((msLeft % 86_400_000) / 3_600_000)}h left`
-    : 'Season ended — snapshot taken';
+    : 'Season ended';
 
   const fmt = (n: number) => n.toLocaleString('en-US');
   const bd = s.breakdown;
@@ -244,16 +247,16 @@ export async function buildPointsView(telegramId: number) {
 
   const text =
     `🏆 *RacerBot Points — Season 1*\n\n` +
-    `⭐ *Your points*: \`${fmt(s.effectivePoints)}\`${s.earlyBird ? ` (base \`${fmt(s.basePoints)}\` × 1.25 🐣 Early Bird)` : ''}\n` +
+    `⭐ *Points*: \`${fmt(s.effectivePoints)}\`${s.earlyBird ? ` (base \`${fmt(s.basePoints)}\` × 1.25 🐣 Early Bird)` : ''}\n` +
     `🎖 *Rank*: \`#${s.rank}\` of ${fmt(Math.max(s.totalUsers, 1))}\n` +
     `⏳ *Snapshot*: Oct 15, 23:59 UTC (${timeLeft})\n\n` +
     (bdLines.length > 0 ? `📊 *Breakdown*\n${bdLines.join('\n')}\n\n` : '') +
     (lbLines.length > 0 ? `🏅 *Top Racers*\n${lbLines.join('\n')}\n\n` : '') +
-    `*How to earn*\n` +
-    `📈 1.5 pts per 1 NEAR traded (buys & sells)\n` +
-    `👥 500 pts per qualified referral + 5% of their trading points\n` +
-    `🔥 25 pts every day you trade — streaks boost up to ×2\n\n` +
-    `_Points convert to $RACER pro-rata at TGE. Points are not tokens and carry no promise of value._`;
+    `*Earn Points*:\n` +
+    `📈 1.5 pts per 1 NEAR / SUI volume\n` +
+    `👥 500 pts per referral + 5% volume share\n` +
+    `🔥 25 pts daily trading streak\n\n` +
+    `_Points convert to $RACER at TGE._`;
 
   const keyboard = Markup.inlineKeyboard([
     [cb('🔄 Refresh', 'menu_points_refresh', 'primary')],
@@ -313,18 +316,14 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   ]);
 
   const text =
-    `💳 *RacerBot Trading Wallet*\n\n` +
-    `🔑 Account: \`${b.subaccountId}\`\n\n` +
-    `💰 *Balances*:\n` +
-    `• *Native NEAR*: \`${b.nativeNearFormatted} NEAR\` (\`${b.nativeNearUsd}\`)\n` +
-    `• *Wrapped NEAR*: \`${b.wrapNearFormatted} wNEAR\` (\`${b.wrapNearUsd}\`)\n` +
-    `• *Total*: \`${b.totalNearFormatted} NEAR\` (\`${b.totalNearUsd}\`)\n\n` +
-    `📥 *Deposit Address*:\n` +
-    `Send native NEAR directly to:\n` +
-    `\`${b.subaccountId}\`\n\n` +
-    `⚡ *Instant Execution*:\n` +
-    `Deposited NEAR is immediately ready for manual and automated sniping.\n\n` +
-    `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.`;
+    `💳 *Trading Wallet (NEAR + SUI)*\n\n` +
+    `🔑 *NEAR Account*: \`${b.subaccountId}\`\n` +
+    `• *Balance*: \`${b.totalNearFormatted} NEAR\` (\`${b.totalNearUsd}\`)\n` +
+    `• *Breakdown*: \`${b.nativeNearFormatted} native\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` +
+    (b.suiAddress
+      ? `🔷 *SUI Address*: \`${b.suiAddress}\`\n• *Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n`
+      : '') +
+    `📥 *Deposit NEAR or SUI to start trading immediately.*`;
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -373,13 +372,24 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   const userPosition = userPositions.find(p => p.token_address === tokenAddress);
   const holdsToken = !!userPosition;
 
-  const balanceText = b
-    ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n`
-    : '';
+  const isSui = tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump';
+  const nativeUnit = isSui ? 'SUI' : 'NEAR';
+  const unitBtn = isSui ? 'SUI' : 'N';
+
+  const balanceText = isSui
+    ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
+    : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` : '');
 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
-  if (tokenInfo.venue === 'nearlytrade') {
+  if (tokenInfo.venue === 'suipump') {
+    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
+    const progressStr =
+      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+        : '';
+    venueText = `💧 *Venue*: SuiPump (${phaseStr}${progressStr})`;
+  } else if (tokenInfo.venue === 'nearlytrade') {
     const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
     const progressStr =
       tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
@@ -405,26 +415,34 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   } else if (tokenInfo.venue === 'gaypad') {
     venueText = `💧 *Venue*: Gaypad Launchpad`;
   } else if (tokenInfo.tradeable) {
-    venueText = `💧 *Venue*: NEAR Protocol DEX`;
+    venueText = `💧 *Venue*: ${isSui ? 'Sui Network' : 'NEAR Protocol DEX'}`;
   }
 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
   const safeName = sanitizeMd(tokenInfo.name || 'Token');
 
-  // ── Deep links: Bubble Map, DexScreener, NearBlocks, venue launchpad ──────
+  // ── Deep links ───────────────────────────────────────────────────────────
   const linkRows = (() => {
+    if (isSui) {
+      const rows: any[] = [];
+      if (tokenInfo.sui_curve_address) {
+        rows.push([Markup.button.url('💧 View on SuiPump', `https://suipump.org/token/${tokenInfo.sui_curve_address}`)]);
+      }
+      rows.push([
+        Markup.button.url('🔍 Suiscan', `https://suiscan.xyz/mainnet/coin/${tokenInfo.sui_coin_type || tokenInfo.address}/txs`),
+        Markup.button.url('📈 DexScreener', `https://dexscreener.com/sui/${tokenInfo.address}`),
+      ]);
+      return rows;
+    }
     const links = tokenLinks(tokenInfo.venue, tokenInfo.address, tokenInfo.symbol || undefined, tokenInfo.name || undefined);
     const rows: any[] = [];
-    // Row 0: Bubble Map (full-width — most distinctive feature)
     if (links.length > 0) rows.push([Markup.button.url(links[0].label, links[0].url)]);
-    // Row 1: DexScreener + NearBlocks
     if (links.length > 1) rows.push(links.slice(1, 3).map(l => Markup.button.url(l.label, l.url)));
-    // Row 2: Venue launchpad page (if present)
     if (links.length > 3) rows.push(links.slice(3).map(l => Markup.button.url(l.label, l.url)));
     return rows;
   })();
 
-  // -- Price formatting (NEAR + USD) --
+  // -- Price formatting --
   const priceNum = parseFloat(tokenInfo.price || '0');
   let priceNearStr = '0.00';
   if (priceNum > 0) {
@@ -442,7 +460,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     else if (priceUsdNum >= 0.00000001) priceUsdStr = '$' + priceUsdNum.toFixed(8);
     else priceUsdStr = '$' + priceUsdNum.toExponential(4);
   }
-  const priceStr = priceUsdStr ? `${priceNearStr} NEAR (~${priceUsdStr})` : `${priceNearStr} NEAR`;
+  const priceStr = priceUsdStr ? `${priceNearStr} ${nativeUnit} (~${priceUsdStr})` : `${priceNearStr} ${nativeUnit}`;
 
   // -- Liquidity formatting --
   const liqNum = parseFloat(tokenInfo.liquidity || '0');
@@ -455,9 +473,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   if (liqUsdRaw >= 1_000_000) liqUsdStr = `~$${(liqUsdRaw / 1_000_000).toFixed(2)}M`;
   else if (liqUsdRaw >= 1_000) liqUsdStr = `~$${(liqUsdRaw / 1_000).toFixed(1)}K`;
   else if (liqUsdRaw > 0) liqUsdStr = `~$${liqUsdRaw.toFixed(0)}`;
-  const liqStr = liqUsdStr ? `${liqNearStr} NEAR (${liqUsdStr})` : `${liqNearStr} NEAR`;
+  const liqStr = liqUsdStr ? `${liqNearStr} ${nativeUnit} (${liqUsdStr})` : `${liqNearStr} ${nativeUnit}`;
 
-  // -- Market cap formatting (prefer USD) --
+  // -- Market cap formatting --
   let mcapStr = 'N/A';
   const mcUsdVal = (tokenInfo as any).market_cap_usd as number | undefined;
   const mcNearVal = tokenInfo.market_cap;
@@ -471,15 +489,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       : `$${mcUsdVal.toFixed(2)}`;
 
     let mcNearFormatted = '';
-    if (mcNearVal >= 1_000_000) mcNearFormatted = `${(mcNearVal / 1_000_000).toFixed(2)}M NEAR`;
-    else if (mcNearVal >= 1_000) mcNearFormatted = `${(mcNearVal / 1_000).toFixed(2)}K NEAR`;
-    else if (mcNearVal > 0) mcNearFormatted = `${mcNearVal.toFixed(0)} NEAR`;
+    if (mcNearVal >= 1_000_000) mcNearFormatted = `${(mcNearVal / 1_000_000).toFixed(2)}M ${nativeUnit}`;
+    else if (mcNearVal >= 1_000) mcNearFormatted = `${(mcNearVal / 1_000).toFixed(2)}K ${nativeUnit}`;
+    else if (mcNearVal > 0) mcNearFormatted = `${mcNearVal.toFixed(0)} ${nativeUnit}`;
 
     mcapStr = mcNearFormatted ? `${mcUsdFormatted} (${mcNearFormatted})` : mcUsdFormatted;
   } else if (mcNearVal > 0) {
-    if (mcNearVal >= 1_000_000) mcapStr = `${(mcNearVal / 1_000_000).toFixed(2)}M NEAR`;
-    else if (mcNearVal >= 1_000) mcapStr = `${(mcNearVal / 1_000).toFixed(2)}K NEAR`;
-    else mcapStr = `${mcNearVal.toFixed(2)} NEAR`;
+    if (mcNearVal >= 1_000_000) mcapStr = `${(mcNearVal / 1_000_000).toFixed(2)}M ${nativeUnit}`;
+    else if (mcNearVal >= 1_000) mcapStr = `${(mcNearVal / 1_000).toFixed(2)}K ${nativeUnit}`;
+    else mcapStr = `${mcNearVal.toFixed(2)} ${nativeUnit}`;
   }
 
   // -- Supply formatting --
@@ -490,11 +508,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     ? `${(supplyHuman / 1e6).toFixed(2)}M`
     : supplyHuman.toFixed(2);
 
-  // -- NEAR/USD rate footnote --
+  // -- Rate footnote --
   const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
-  const nearUsdFooter = nearUsdRate && nearUsdRate > 0
-    ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n`
-    : '\n';
+  const rateFooter = isSui
+    ? (tokenInfo.sui_usd ? `\n_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)} USD_\n` : '\n')
+    : (nearUsdRate && nearUsdRate > 0 ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n` : '\n');
 
   let text =
     `🪙 *${safeName}* (\`${safeSymbol}\`)\n\n` +
@@ -504,12 +522,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     `💧 *Liquidity*: \`${liqStr}\`\n` +
     `📊 *Market Cap*: \`${mcapStr}\`\n` +
     `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`` +
-    nearUsdFooter +
+    rateFooter +
     balanceText;
 
   let pnlCardImage: Buffer | null = null;
 
-  // If user holds the token, add holdings info and PNL card
+  // If user holds the token, add holdings info
   if (holdsToken && userPosition) {
     const entryPrice = parseFloat(userPosition.avg_entry_price) || 0;
     const pnlPct = priceNum > 0 && entryPrice > 0
@@ -521,32 +539,31 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
     text += `\n💼 *Your Holdings*:\n`;
     text += `  Quantity: \`${formattedQty}\`\n`;
-    text += `  Entry Price: \`${entryPrice.toFixed(8)} NEAR\`\n`;
+    text += `  Entry Price: \`${entryPrice.toFixed(8)} ${nativeUnit}\`\n`;
     text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
 
-    // Generate PNL card with image (image will be sent by the calling handler)
-    try {
-      const pnlCard = await generatePNLCard(userPosition.id);
-      if (pnlCard.image) {
-        pnlCardImage = pnlCard.image;
-      } else {
-        // Fallback to text only
-        text += `${pnlCard.text}\n\n`;
+    if (!isSui) {
+      try {
+        const pnlCard = await generatePNLCard(userPosition.id);
+        if (pnlCard.image) {
+          pnlCardImage = pnlCard.image;
+        } else {
+          text += `${pnlCard.text}\n\n`;
+        }
+      } catch (err: any) {
+        console.error('Failed to generate PNL card:', err);
       }
-    } catch (err: any) {
-      console.error('Failed to generate PNL card:', err);
-      // Continue without PNL card if generation fails
     }
   }
 
-  // ── Buttons depend on whether trading is supported and if user holds token ──
+  // ── Buttons ──
   let shareButtonRow: any[] = [];
-  if (userRecord) {
+  if (userRecord && !isSui) {
     try {
       const shareCode = await getOrCreateTokenShare(userRecord.id, tokenAddress);
       const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
       const sym = tokenInfo.symbol || 'TOKEN';
-      const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+      const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Fast 1-click execution on NEAR & SUI`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
       shareButtonRow = [[Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]];
     } catch (err: any) {
@@ -558,18 +575,17 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   if (tokenInfo.tradeable) {
     if (holdsToken && userPosition) {
-      // User holds token - show BOTH BUY and SELL options with Green / Red color coding
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
         // Quick-buy fixed amounts (green)
         [
-          cb('1 N', `buy_fixed:${tokenInfo.address}:1`, 'success'),
-          cb('5 N', `buy_fixed:${tokenInfo.address}:5`, 'success'),
-          cb('10 N', `buy_fixed:${tokenInfo.address}:10`, 'success'),
+          cb(`1 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:1`, 'success'),
+          cb(`5 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:5`, 'success'),
+          cb(`10 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:10`, 'success'),
         ],
-        // Custom amount — full width
-        [cb('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`, 'success')],
+        // Custom amount
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${tokenInfo.address}`, 'success')],
         // Buy % of balance (green)
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
@@ -589,7 +605,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         ...shareButtonRow,
         [
-          cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary'),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary')] : []),
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
@@ -600,15 +616,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ],
       ]);
     } else {
-      // User doesn't hold token - show BUY options (Green 🟢)
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
+      const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
         [
-          cb('1 N', `buy_fixed:${tokenInfo.address}:1`, 'success'),
-          cb('5 N', `buy_fixed:${tokenInfo.address}:5`, 'success'),
-          cb('10 N', `buy_fixed:${tokenInfo.address}:10`, 'success'),
+          cb(`1 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:1`, 'success'),
+          cb(`5 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:5`, 'success'),
+          cb(`10 ${unitBtn}`, `buy_fixed:${tokenInfo.address}:10`, 'success'),
         ],
-        [cb('🟢 Buy X NEAR', `buy_custom_prompt:${tokenInfo.address}`, 'success')],
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${tokenInfo.address}`, 'success')],
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${tokenInfo.address}:10`, 'success'),
           cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${tokenInfo.address}:50`, 'success'),
@@ -617,7 +633,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
         ...linkRows,
         ...shareButtonRow,
         [
-          cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary'),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${tokenInfo.address}`, 'primary')] : []),
           cb('🔄 Refresh', `token_refresh:${tokenInfo.address}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
@@ -742,7 +758,7 @@ export async function sendPnlCardMessage(
         const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
         const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
         const sym = (pnlCard as any).tokenTicker || 'TOKEN';
-        const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
+        const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Fast 1-click execution on NEAR & SUI`;
         const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
         buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
       } catch (err: any) {
@@ -801,11 +817,10 @@ export function buildSettingsDashboard(user: UserRecord) {
 
   const text =
     `⚙️ *Trading Settings*\n\n` +
-    `Configure your manual trading defaults below. Snipe automation lives in 🎯 Snipe Rules.\n\n` +
-    `• *Slippage Tolerance*: \`${slip}%\`\n` +
-    `• *Default Manual Buy*: \`${buyPct}%\`\n` +
-    `• *Default Manual Sell*: \`${sellPct}%\`\n` +
-    `• *Net Worth on PNL Card*: ${showNetWorth ? '🟢 *Shown*' : '🔴 *Hidden*'}`;
+    `• *Slippage*: \`${slip}%\`\n` +
+    `• *Default Buy*: \`${buyPct}%\`\n` +
+    `• *Default Sell*: \`${sellPct}%\`\n` +
+    `• *Net Worth on PnL*: ${showNetWorth ? '🟢 Shown' : '🔴 Hidden'}`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -860,13 +875,12 @@ export function buildSnipeDashboard(user: UserRecord) {
 
   const text =
     `🎯 *Snipe Rules*\n\n` +
-    `Automatically buy new token launches the moment they appear. Configure your rules below:\n\n` +
-    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 *Enabled*' : '🔴 *Disabled*'}\n` +
+    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
     `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
-    `• *Min Pool Liquidity*: \`${minLiq} NEAR\`\n\n` +
-    `*Targeted Snipes* (custom amount each):\n` +
-    `• 🎯 *Token CA* — snipe one specific token, now or the moment it launches\n` +
-    `• 👤 *Deployer* — snipe EVERY token a chosen wallet launches`;
+    `• *Min Liquidity*: \`${minLiq} NEAR\`\n\n` +
+    `*Targeted Snipes*:\n` +
+    `• 🎯 *Token CA* — Snipe a specific token contract\n` +
+    `• 👤 *Deployer* — Snipe all tokens from a creator wallet`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -927,17 +941,16 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
   const pausedTargets = targets.filter(t => t.status === 'paused');
 
   let text =
-    `👥 *Copy Trading Dashboard*\n\n` +
-    `Automatically copy trades from any public NEAR wallet in real-time.\n\n` +
+    `👥 *Copy Trading*\n\n` +
+    `Mirror trades from target wallets in real-time.\n\n` +
     `• *Active Targets*: ${activeTargets.length}\n` +
     `• *Paused Targets*: ${pausedTargets.length}\n\n`;
 
   if (targets.length === 0) {
     text +=
-      `_You are not copying any wallets yet._\n\n` +
-      `Tap *➕ Add Target Wallet* below to mirror any profitable trader or influencer on NEAR. ` +
-      `Whenever they swap on Rhea, Ref, or Shards, RacerBot executes the same trade for you instantly!\n\n` +
-      `🏆 *Season 1 Points*: +25 pts per copy fill + 1.5 pts per NEAR copied!`;
+      `_No active targets._\n\n` +
+      `Tap *➕ Add Target Wallet* to copy any trader automatically.\n\n` +
+      `🏆 *Season 1*: +25 pts per copy fill + 1.5 pts per volume copied!`;
   } else {
     text += `*Your Target Wallets:*\n`;
     for (const t of targets.slice(0, 10)) {
@@ -949,7 +962,7 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
     if (targets.length > 10) {
       text += `\n_...and ${targets.length - 10} more targets_\n`;
     }
-    text += `\n🏆 *Season 1 Points*: +25 pts per fill + 1.5 pts per NEAR copied!`;
+    text += `\n🏆 *Season 1*: +25 pts per fill + 1.5 pts per volume copied!`;
   }
 
   const buttons: any[] = [];
@@ -979,16 +992,15 @@ export async function buildDcaDashboard(user: UserRecord) {
   const activeOrders = orders.filter(o => o.status === 'active');
 
   let text =
-    `🔁 *Dollar-Cost Averaging (DCA)*\n\n` +
-    `Automate recurring buys (accumulate) or recurring sells (take-profit / de-risk) without manual timing.\n\n` +
+    `🔁 *DCA Orders*\n\n` +
+    `Automate recurring buys or sells over time.\n\n` +
     `• *Active Orders*: ${activeOrders.length}\n` +
     `• *Total Orders*: ${orders.length}\n\n`;
 
   if (orders.length === 0) {
     text +=
       `_No DCA orders configured._\n\n` +
-      `Create a schedule to buy a set amount of NEAR worth of a token every 15m, 1h, 4h, or 24h — ` +
-      `reducing volatility risk and building your positions smoothly.`;
+      `Tap *➕ New DCA Order* to schedule automated recurring trades.`;
   } else {
     text += `*Your Schedules:*\n`;
     for (const o of orders.slice(0, 8)) {
@@ -1217,12 +1229,69 @@ async function executeBuyHelper(
     throw new Error('Minimum buy amount is 0.001 NEAR.');
   }
 
-  // Hot path: resolve only the token route needed for a quote. The executor
-  // performs the authoritative native/wNEAR balance check immediately before
-  // signing, so duplicating balance and Ref-storage RPC reads here only delays
-  // broadcast without improving safety.
+  // Hot path: resolve only the token route needed for a quote.
   const info = await getTokenInfo(tokenAddress, false).catch(() => null);
-  if (!info || !['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
+  if (!info) {
+    throw new Error('Could not resolve token details. Please verify the address.');
+  }
+
+  const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // ── SUI / SuiPump Trading Path ──────────────────────────────────────────────
+  if (info.chain === 'sui' || info.venue === 'suipump') {
+    const amountInMist = BigInt(Math.floor(amountNear * 1e9)).toString();
+    const swapResult = await publishSwap({
+      user_id: user.id,
+      chain: 'sui',
+      token_in: 'sui',
+      token_out: tokenAddress,
+      amount_in: amountInMist,
+      min_amount_out: '1',
+      venue: 'suipump',
+      slippage_pct: slippagePct,
+    }, onProgress);
+
+    if (swapResult.success === false) {
+      throw new Error(swapResult.reason || 'Sui swap failed on-chain.');
+    }
+
+    const tokenSym = swapResult.tokenSymbol || info.symbol || 'TOKEN';
+    const tokenName = swapResult.tokenName || info.name || tokenSym;
+    const tokenQtyHuman = Number(swapResult.tokenQty ?? 0);
+    const tokenQtyDisplay = (() => {
+      const qty = tokenQtyHuman;
+      if (qty >= 1_000_000) return `${(qty / 1_000_000).toFixed(3)}M`;
+      if (qty >= 1_000) return qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      if (qty >= 0.0001) return qty.toFixed(4);
+      return qty > 0 ? qty.toExponential(3) : '—';
+    })();
+    const entryPrice = swapResult.priceNear && swapResult.priceNear > 0 ? swapResult.priceNear : (parseFloat(info.price) || 0);
+    const priceDisplay = entryPrice > 0 ? `${entryPrice.toFixed(8)} SUI` : '—';
+    const valueSui = tokenQtyHuman * entryPrice;
+
+    return {
+      success: true,
+      amountNear,
+      tokenAddress,
+      positionId: swapResult.positionId,
+      tokenName: swapResult.tokenName,
+      tokenSymbol: swapResult.tokenSymbol,
+      tokenQty: swapResult.tokenQty,
+      priceNear: swapResult.priceNear,
+      nearSpent: swapResult.nearSpent,
+      message:
+        `✅ *Buy Confirmed on Sui!*\n\n` +
+        `🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n` +
+        `📦 Received: \`${tokenQtyDisplay} ${sanitizeMd(tokenSym)}\`\n` +
+        `💸 Spent: \`${amountNear.toFixed(4)} SUI\`\n` +
+        `💵 Entry: \`${priceDisplay}\`\n\n` +
+        `📊 *Position*\n` +
+        `💰 Value: \`${valueSui.toFixed(4)} SUI\`\n` +
+        `📈 PnL: \`+0.0%\``,
+    };
+  }
+
+  if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
@@ -1234,22 +1303,14 @@ async function executeBuyHelper(
   const effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
 
   if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
-    // NearlyTrade: tokens can be tradable even while still in the bonding range
-    // (step=Done, pool Running), so only block when there's truly no pool yet.
     if (venue !== 'nearlytrade') {
       throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
     }
-    // For nearlytrade, let the executor resolve whether the pool is live.
   }
 
   const near = getNear();
-  const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
 
-  // FIX: computeMinAmountOut must use the SWAP amount (98.5% after 1.5% fee),
-  // not the full input. The executor skims the fee before calling the DEX, so
-  // quoting against the full amount results in a minAmountOut that the DEX can
-  // never satisfy — causing every trade to appear as a slippage breach.
   const amountInBigInt = BigInt(amountInYocto);
   const feeAmountBigInt = (amountInBigInt * 150n) / 10000n;
   const swapAmountYocto = (amountInBigInt - feeAmountBigInt).toString();
@@ -1265,8 +1326,6 @@ async function executeBuyHelper(
     effectiveRheaPoolId,
     effectiveDclPoolId
   );
-  // Start the short executor quote-freshness window only once the live quote
-  // is available, never while waiting for the quote RPC itself.
   const quoteCompletedAt = Date.now();
 
   const swapResult = await publishSwap({
@@ -1279,7 +1338,7 @@ async function executeBuyHelper(
     dcl_pool_id: effectiveDclPoolId,
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
-    quoted_at: quoteCompletedAt, // executor skips its second quote while < 2s old
+    quoted_at: quoteCompletedAt,
   }, onProgress);
 
   if (swapResult.success === false) {
@@ -1299,7 +1358,6 @@ async function executeBuyHelper(
   const entryPrice = swapResult.priceNear && swapResult.priceNear > 0 ? swapResult.priceNear : 0;
   const priceDisplay = entryPrice > 0 ? `${entryPrice.toFixed(8)} NEAR` : '—';
 
-  // Position baseline at entry (t=0): position value is initialized at entry price, PnL starts at +0.0%
   const valueNear = tokenQtyHuman * entryPrice;
   const pnlDisplay = '+0.0%';
   const pnlEmoji = '📈';
@@ -1327,15 +1385,21 @@ async function executeBuyHelper(
 }
 
 // ── Core Helper: Execute Percentage Buy for User ─────────────────────────────
-// FIX 3 (continued): Use the cached getUserBalances rather than a raw RPC balance call.
 async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
-  // Lightweight trade balance: spendable native NEAR only, no USD feed (5s TTL).
-  // balanceNear is ALREADY net of the 0.05 NEAR gas/storage reserve.
-  const balanceNear = await getTradeSpendableNear(telegramId);
+  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+  if (info?.chain === 'sui' || info?.venue === 'suipump') {
+    const balanceSui = await getTradeSpendableSui(telegramId);
+    const amountSui = (balanceSui * pct) / 100;
+    if (amountSui < 0.01) {
+      throw new Error(`Available balance (${balanceSui.toFixed(4)} SUI after gas reserve) is too low to buy.`);
+    }
+    return executeBuyHelper(telegramId, tokenAddress, Number(amountSui.toFixed(4)), onProgress);
+  }
 
+  const balanceNear = await getTradeSpendableNear(telegramId);
   const usableBalance = balanceNear;
   const amountNear = (usableBalance * pct) / 100;
   if (amountNear < 0.005) {
@@ -1551,25 +1615,16 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
-      // Freshly created account: show dedicated NEAR trading wallet address + onboarding guide (no raw private key)
+      // Freshly created account: show deposit addresses + quick start guide
       await ctx.reply(
-        `🚀 *Welcome to RacerBot!*\n\n` +
-        `Your dedicated NEAR high-speed trading wallet is ready:\n\n` +
-        `🔑 *Wallet Address* (tap to copy):\n` +
-        `\`${result.subaccountId}\`\n\n` +
-        `📥 *Deposit NEAR to Start*:\n` +
-        `Send native NEAR directly to your address above to start trading instantly.\n\n` +
-        `🛡️ *Private Key & Security*:\n` +
-        `• Your wallet is non-custodial and protected on-chain.\n` +
-        `• For your privacy, private keys are hidden in public chat.\n` +
-        `• You can export your private key anytime under *⚙️ Settings* or by tapping *🔑 Export Key* below.\n\n` +
-        `💡 *How to Trade*:\n` +
-        `Paste any Token Contract Address (e.g. \`token.near\`) directly into this chat to view stats, charts, and execute instant 1-click buys!\n\n` +
-        `📝 *Note*: 0.05 NEAR is reserved for account storage and is not spendable.\n\n` +
-        `🔗 *Join Our Community*:\n` +
-        `💬 [Community Group](https://t.me/racerbot_community) - Connect with traders\n` +
-        `📢 [Updates Channel](https://t.me/racertrading) - Announcements\n` +
-        `𝕏 [X / Twitter](https://x.com/racertradingbot) - Follow updates`,
+        `🚀 *Welcome to RacerBot!*\n` +
+        `Fast Multi-Chain Trading on NEAR & SUI.\n\n` +
+        `🔑 *Deposit Addresses*:\n` +
+        `• *NEAR*: \`${result.subaccountId}\`\n` +
+        (result.suiAddress ? `• *SUI*: \`${result.suiAddress}\`\n\n` : '\n') +
+        `⚡ *How to Trade*:\n` +
+        `Deposit NEAR or SUI, then paste any Token CA or SuiPump link to trade with 1-click execution.\n\n` +
+        `🔐 *Security*: Non-custodial & encrypted. Export keys anytime via *🔑 Export Key*.`,
         { parse_mode: 'Markdown', ...menu.keyboard }
       );
 
@@ -1745,18 +1800,18 @@ export function setupRoutes(bot: Telegraf): void {
       const target = targets.find(t => t.id === targetId);
       if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
       const shareDeepLink = `https://t.me/racertradingbot?start=copy_${target.target_wallet}_${user.id}`;
-      const shareText = `Copy trades from ${target.target_wallet} on RacerBot 🏎\n⚡ Automated instant execution on NEAR DEXs`;
+      const shareText = `Copy trades from ${target.target_wallet} on RacerBot 🏎\n⚡ Automated instant execution on NEAR & SUI`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
       await ctx.answerCbQuery().catch(() => {});
       await ctx.reply(
         `📤 *Share Copy Trading Link*\n\n` +
-        `Share this link in Telegram groups or channels. When other users copy trade via your link, *you earn 5% of their trading bot fees* as referral rewards!\n\n` +
+        `Earn *5% of trading bot fees* when others copy trade via your link!\n\n` +
         `🎯 *Target*: \`${target.target_wallet}\`\n` +
         `🔗 *Link*: \`${shareDeepLink}\``,
         {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
-            [Markup.button.url('📤 Share to Group (Earn 5% Fees)', tgShareUrl)],
+            [Markup.button.url('📤 Share Link (Earn 5% Fees)', tgShareUrl)],
             [cb('🔙 Back to Copy Trading', 'menu_copy', 'primary')],
           ]),
         }
@@ -3529,15 +3584,15 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       await ctx.reply(
-        `⚠️ *Export Private Key*\n\n` +
-        `You are requesting to view your raw private key for account \`${user.subaccount_id}\`.\n\n` +
-        `Anyone who sees this key will have full control over your funds.\n\n` +
-        `Are you sure you want to display your private key?`,
+        `⚠️ *Export Private Keys*\n\n` +
+        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}.\n\n` +
+        `Anyone with these keys will have full control over your funds.\n\n` +
+        `Are you sure you want to display your private keys?`,
         {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
             [
-              Markup.button.callback('⚠️ Yes, show my private key', 'export_confirm'),
+              Markup.button.callback('⚠️ Yes, show my keys', 'export_confirm'),
               Markup.button.callback('Cancel', 'export_cancel'),
             ],
           ]),
@@ -3573,27 +3628,39 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     lastExportTime.set(telegramId, Date.now());
-    console.log(`[AUDIT] Private key exported for user_id=${user.id}, telegram_id=${telegramId}`);
+    console.log(`[AUDIT] Private keys exported for user_id=${user.id}, telegram_id=${telegramId}`);
 
     try {
-      const rawPrivateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
-      await ctx.answerCbQuery('Key decrypted.').catch(() => {});
+      const rawNearKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+      let rawSuiKey = '';
+      if (user.sui_private_key_enc) {
+        try {
+          rawSuiKey = decrypt(user.sui_private_key_enc, MASTER_KEY);
+        } catch {}
+      }
 
-      const keyMessage = await ctx.reply(
-        `🔑 <b>Private Key for Account</b> <code>${user.subaccount_id}</code>:\n\n` +
-        `<tg-spoiler><code>${rawPrivateKey}</code></tg-spoiler>\n\n` +
-        `👆 <i>Tap the covered box above to uncover and copy your private key.</i>\n\n` +
-        `<b>Import Instructions</b>:\n` +
-        `Paste this string into MyNearWallet, Meteor Wallet, or near-cli via "Import Private Key" to control your account outside RacerBot.\n\n` +
-        `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`,
-        { parse_mode: 'HTML' }
-      );
+      await ctx.answerCbQuery('Keys decrypted.').catch(() => {});
+
+      let keyHtml =
+        `🔑 <b>NEAR Private Key</b> (<code>${user.subaccount_id}</code>):\n` +
+        `<tg-spoiler><code>${rawNearKey}</code></tg-spoiler>\n\n`;
+
+      if (user.sui_address && rawSuiKey) {
+        keyHtml +=
+          `🔷 <b>SUI Private Key</b> (<code>${user.sui_address}</code>):\n` +
+          `<tg-spoiler><code>${rawSuiKey}</code></tg-spoiler>\n\n`;
+      }
+
+      keyHtml +=
+        `👆 <i>Tap the covered boxes above to uncover and copy your keys.</i>\n\n` +
+        `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`;
+
+      const keyMessage = await ctx.reply(keyHtml, { parse_mode: 'HTML' });
 
       await ctx.reply(
         `🛡️ *Security Reminder*:\n` +
-        `• Anyone with this private key has full control of your account.\n` +
-        `• Save this private key in a safe place or import it into your preferred NEAR wallet.\n` +
-        `• If you suspect this key was exposed or you want to move away, withdraw your funds and/or run /rotatekey immediately.`,
+        `• Keep your private keys confidential.\n` +
+        `• Import into MyNearWallet/Meteor (NEAR) or Sui Wallet (SUI) to manage outside RacerBot.`,
         { parse_mode: 'Markdown' }
       );
 
@@ -4537,11 +4604,12 @@ export function setupRoutes(bot: Telegraf): void {
       }
     }
 
-    // 2. Direct Token Contract Address Detection (Upon pasting a token address)
-    // Match any string ending in .near, .tg, or .testnet, or 64-char hex addresses
+    // 2. Direct Token Contract Address / SuiPump Link Detection
+    const suiPumpMatch = /suipump\.org\/token\/(0x[0-9a-fA-F]{64})/i.exec(rawText);
+    const suiTypeMatch = /(?:^|\s)(0x[0-9a-fA-F]{64}(?:::[\w]+::[\w]+)?)(?:\s|$)/.exec(rawText);
     const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
     const hex64Regex = /(?:^|\s)([0-9a-fA-F]{64})(?:\s|$)/;
-    const caMatch = nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
+    const caMatch = suiPumpMatch || suiTypeMatch || nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
     const potentialCA = caMatch ? (caMatch[1] || caMatch[0]).trim() : null;
 
     if (potentialCA) {
@@ -4555,7 +4623,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(
           `❌ Token not found: ${sanitizeMd(potentialCA)}\n\n` +
           `This could mean:\n` +
-          `• The contract address is incorrect\n` +
+          `• The contract address or URL is incorrect\n` +
           `• The token is on an unsupported chain or venue\n` +
           `• The RPC request timed out — please try again\n\n` +
           `Error: ${sanitizeMd(err.message?.slice(0, 100) || 'Unknown error')}`
@@ -4595,7 +4663,7 @@ export function setupRoutes(bot: Telegraf): void {
     ]);
 
     await ctx.reply(
-      `💡 *Paste any NEAR token address* (e.g. \`wrap.near\`) directly into this chat to view price, liquidity, and 1-click buy buttons!\n\n` +
+      `💡 *Paste any Token CA or SuiPump link* directly into this chat to trade instantly.\n\n` +
       `Or use the menu below:`,
       { parse_mode: 'Markdown', ...keyboard }
     );
