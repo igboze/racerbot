@@ -66,6 +66,8 @@ import {
   getNear,
   getShortTokenKey,
   resolveTokenAddressFromKey,
+  getSuiBalance,
+  getSuiUsdPrice,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -1264,7 +1266,30 @@ async function executeBuyHelper(
 
   // ── SUI / SuiPump Trading Path ──────────────────────────────────────────────
   if (info.chain === 'sui' || info.venue === 'suipump' || isSuiToken(tokenAddress)) {
-    const amountInMist = BigInt(Math.floor(amountNear * 1e9)).toString();
+    if (!user.sui_address) {
+      throw new Error('Please run /start to set up your Sui wallet first.');
+    }
+    const userSuiBal = await getSuiBalance(user.sui_address);
+    const suiUsd = await getSuiUsdPrice().catch(() => 2.0);
+    const effectiveSuiUsd = suiUsd > 0 ? suiUsd : 2.0;
+    const minReserveSui = Math.max(0.05, 2.0 / effectiveSuiUsd);
+    const amountInMistBigInt = BigInt(Math.floor(amountNear * 1e9));
+    const minReserveMist = BigInt(Math.ceil(minReserveSui * 1e9));
+
+    if (userSuiBal.mist < amountInMistBigInt + minReserveMist) {
+      const availSui = (Number(userSuiBal.mist) / 1e9).toFixed(4);
+      const availUsd = (Number(userSuiBal.mist) / 1e9 * effectiveSuiUsd).toFixed(2);
+      const remainingMist = userSuiBal.mist > amountInMistBigInt ? userSuiBal.mist - amountInMistBigInt : 0n;
+      const remainingSui = (Number(remainingMist) / 1e9).toFixed(4);
+      const remainingUsd = (Number(remainingMist) / 1e9 * effectiveSuiUsd).toFixed(2);
+      const requiredReserveSuiStr = minReserveSui.toFixed(4);
+
+      throw new Error(
+        `Insufficient balance after swap. Your wallet must keep at least $2.00 in SUI (${requiredReserveSuiStr} SUI) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
+      );
+    }
+
+    const amountInMist = amountInMistBigInt.toString();
     const swapResult = await publishSwap({
       user_id: user.id,
       chain: 'sui',
@@ -1335,8 +1360,38 @@ async function executeBuyHelper(
 
   const near = getNear();
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
-
   const amountInBigInt = BigInt(amountInYocto);
+
+  // Pre-flight balance check: verify wallet retains at least $2.00 in NEAR after swap
+  const [nativeBalYoctoStr, wNearBalStr] = await Promise.all([
+    near.getNearBalance(user.subaccount_id).catch(() => null),
+    near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+  ]);
+
+  if (nativeBalYoctoStr !== null && nativeBalYoctoStr !== undefined) {
+    const nativeBal = BigInt(nativeBalYoctoStr);
+    const wNearBal = BigInt(wNearBalStr || '0');
+    const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
+
+    const nearUsd = await getNearUsdPrice().catch(() => 4.5);
+    const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
+    const minReserveNear = Math.max(0.05, 2.0 / effectiveNearUsd);
+    const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
+    const totalNearRequired = nearNeededForSwap + minReserveYocto;
+
+    if (nativeBal < totalNearRequired) {
+      const availNear = (Number(nativeBal) / 1e24).toFixed(4);
+      const availUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
+      const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
+      const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
+      const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
+      const requiredReserveNearStr = minReserveNear.toFixed(4);
+
+      throw new Error(
+        `Insufficient balance after swap. Your wallet must keep at least $2.00 in NEAR (${requiredReserveNearStr} NEAR) to cover gas and account storage. You have $${availUsd} (${availNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
+      );
+    }
+  }
   const feeAmountBigInt = (amountInBigInt * 150n) / 10000n;
   const swapAmountYocto = (amountInBigInt - feeAmountBigInt).toString();
 

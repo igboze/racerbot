@@ -216,3 +216,85 @@ export function formatHoldDuration(start: Date | string | number, end: Date | st
 
   return remainingDays > 0 ? `${weeks}w ${remainingDays}d` : `${weeks}w`;
 }
+
+// ── NEAR/USD price with multi-source failover ───────────────────────────────
+let nearUsdPrice = 0;
+let nearUsdLastFetch = 0;
+
+const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = [
+  {
+    name: 'binance',
+    fetch: async () => {
+      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) throw new Error(`binance http ${res.status}`);
+      const data: any = await res.json();
+      const p = parseFloat(data?.price);
+      if (!(p > 0)) throw new Error('binance bad price');
+      return p;
+    },
+  },
+  {
+    name: 'coinbase',
+    fetch: async () => {
+      const res = await fetch('https://api.coinbase.com/v2/prices/NEAR-USD/spot', {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) throw new Error(`coinbase http ${res.status}`);
+      const data: any = await res.json();
+      const p = parseFloat(data?.data?.amount);
+      if (!(p > 0)) throw new Error('coinbase bad price');
+      return p;
+    },
+  },
+  {
+    name: 'coingecko',
+    fetch: async () => {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd', {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) throw new Error(`coingecko http ${res.status}`);
+      const data: any = await res.json();
+      const p = data?.near?.usd;
+      if (!(p > 0)) throw new Error('coingecko bad price');
+      return p;
+    },
+  },
+];
+
+async function fetchNearUsdPrice(): Promise<number> {
+  for (const src of NEAR_USD_SOURCES) {
+    try {
+      return await src.fetch();
+    } catch {
+      // try next source
+    }
+  }
+  return 0;
+}
+
+export async function getNearUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (nearUsdPrice > 0) {
+    if (now - nearUsdLastFetch >= 120_000) {
+      fetchNearUsdPrice()
+        .then((p) => {
+          if (p > 0) {
+            nearUsdPrice = p;
+            nearUsdLastFetch = Date.now();
+          }
+        })
+        .catch(() => {});
+    }
+    return nearUsdPrice;
+  }
+
+  const p = await fetchNearUsdPrice();
+  if (p > 0) {
+    nearUsdPrice = p;
+    nearUsdLastFetch = now;
+  }
+  return nearUsdPrice || 4.5;
+}
