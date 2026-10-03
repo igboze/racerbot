@@ -12,6 +12,7 @@ import {
   getSuiTokenMetadata,
   getSuiPumpCurveState,
   getSuiUsdPrice,
+  getSuiRouterQuote,
   isValidSuiAddress,
   resolveTokenAddressFromKey,
   getShortTokenKey,
@@ -363,21 +364,40 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     ]);
 
     if (!curve) {
-      // Fallback: fetch on-chain CoinMetadata and DexScreener market data
-      const [meta, dexData] = await Promise.all([
+      // Fallback: fetch on-chain CoinMetadata, DexScreener market data, and Aftermath SOR route in parallel
+      const [meta, dexData, routerQuote] = await Promise.all([
         getSuiTokenMetadata(tokenAddress).catch(() => null),
         fetchDexScreenerTokenData(tokenAddress).catch(() => null),
+        getSuiRouterQuote({
+          coinInType: '0x2::sui::SUI',
+          coinOutType: tokenAddress,
+          amountIn: 1_000_000_000n, // 1 SUI probe quote
+        }).catch(() => null),
       ]);
 
-      if (meta || dexData) {
-        const priceSui = dexData?.priceNative || 0;
-        const priceUsd = dexData?.priceUsd || priceSui * suiUsd;
+      if (meta || dexData || routerQuote) {
+        const decimals = meta?.decimals ?? (dexData as any)?.decimals ?? 6;
+        const name = meta?.name || (dexData as any)?.name || tokenAddress.split('::').pop() || 'Sui Token';
+        const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
+
+        let priceSui = dexData?.priceNative || 0;
+        if (priceSui <= 0 && routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
+          priceSui = routerQuote.spotPrice;
+        }
+        if (priceSui <= 0 && routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+          const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
+          if (outHuman > 0) priceSui = 1 / outHuman;
+        }
+
+        const priceUsd = dexData?.priceUsd || (priceSui > 0 ? priceSui * suiUsd : 0);
+        const venue = (routerQuote?.venue || (dexData as any)?.pairs?.[0]?.dexId || 'sui_dex').toLowerCase();
+
         const result: TokenInfoResult = {
           address: tokenAddress,
           chain: 'sui',
-          name: meta?.name || 'Sui Token',
-          symbol: meta?.symbol || 'SUI',
-          decimals: meta?.decimals ?? 6,
+          name,
+          symbol,
+          decimals,
           total_supply: '1000000000000000',
           price: priceSui > 0 ? priceSui.toFixed(9) : '0',
           price_usd: priceUsd > 0 ? priceUsd.toFixed(8) : '0',
@@ -387,16 +407,31 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           market_cap_usd: dexData?.marketCapUsd || 0,
           near_usd: suiUsd,
           sui_usd: suiUsd,
-          venue: 'suipump',
+          venue: venue as any,
+          bonding_phase: 'bonded',
           tradeable: true,
           sui_coin_type: tokenAddress,
         };
         tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
         tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+
+        upsertTokenCache({
+          token_address: tokenAddress,
+          chain: 'sui',
+          name,
+          symbol,
+          decimals,
+          total_supply: '1000000000000000',
+          venue: venue as any,
+          bonding_phase: 'bonded',
+          last_price: priceSui,
+          last_liquidity: 0,
+        }).catch(() => {});
+
         return result;
       }
 
-      throw new Error(`Sui token or SuiPump curve not found: ${tokenAddress}`);
+      throw new Error(`Sui token or DEX pool not found: ${tokenAddress}`);
     }
 
     const priceSui = curve.lastPriceSui;
