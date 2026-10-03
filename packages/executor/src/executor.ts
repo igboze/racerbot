@@ -10,6 +10,7 @@ import {
   formatHoldDuration,
   calculateMinOutAdj,
   parseMemeCookingId,
+  getNearUsdPrice,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
@@ -530,14 +531,24 @@ export class SwapExecutor {
         const amountInBigInt = BigInt(amount_in);
         // Required native NEAR if existing wNEAR balance does not cover amount_in
         const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
-        // 0.025 NEAR reserve for gas, storage deposits, and account baseline
-        const MIN_RESERVE = BigInt('25000000000000000000000');
-        const totalNearRequired = nearNeededForSwap + MIN_RESERVE;
+
+        // Minimum $2.00 USD remaining after swap to cover gas, account storage, and future trades
+        const nearUsd = await getNearUsdPrice().catch(() => 4.5);
+        const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
+        const minReserveNear = Math.max(0.05, 2.0 / effectiveNearUsd);
+        const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
+        const totalNearRequired = nearNeededForSwap + minReserveYocto;
+
         if (nativeBal < totalNearRequired) {
           const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
-          const requiredNear = (Number(totalNearRequired) / 1e24).toFixed(4);
+          const availableUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
+          const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
+          const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
+          const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
+          const requiredReserveNearStr = minReserveNear.toFixed(4);
+
           throw new Error(
-            `Insufficient balance. You have ${availableNear} NEAR available. Need at least ${requiredNear} NEAR (including gas & storage reserve). Please deposit NEAR to your wallet before trading.`
+            `Insufficient balance after swap. Your wallet must keep at least $2.00 in NEAR (${requiredReserveNearStr} NEAR) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
           );
         }
       }

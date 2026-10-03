@@ -15,6 +15,7 @@ export {
   fuzzyMatch,
   retryWithBackoff,
   sleep,
+  getNearUsdPrice,
 } from './utils.js';
 
 // Structured logging

@@ -79,13 +79,25 @@ export async function executeSuiSwap(
     // Check on-chain SUI balance
     onProgress?.('checking_balance');
     const userSuiBal = await getSuiBalance(userAddress);
-    const gasReserveMist = 50_000_000n; // 0.05 SUI reserve for gas
-    const totalRequiredMist = amountInMist + gasReserveMist;
+    
+    // Minimum $2.00 USD remaining after swap to cover transaction gas
+    const suiUsd = await getSuiUsdPrice().catch(() => 2.0);
+    const effectiveSuiUsd = suiUsd > 0 ? suiUsd : 2.0;
+    const minReserveSui = Math.max(0.05, 2.0 / effectiveSuiUsd);
+    const minReserveMist = BigInt(Math.ceil(minReserveSui * 1e9));
+    const totalRequiredMist = amountInMist + minReserveMist;
 
     if (userSuiBal.mist < totalRequiredMist) {
-      const avail = (Number(userSuiBal.mist) / 1e9).toFixed(4);
-      const req = (Number(totalRequiredMist) / 1e9).toFixed(4);
-      throw new Error(`Insufficient SUI balance. You have ${avail} SUI available. Need at least ${req} SUI (including gas reserve).`);
+      const availSui = (Number(userSuiBal.mist) / 1e9).toFixed(4);
+      const availUsd = (Number(userSuiBal.mist) / 1e9 * effectiveSuiUsd).toFixed(2);
+      const remainingMist = userSuiBal.mist > amountInMist ? userSuiBal.mist - amountInMist : 0n;
+      const remainingSui = (Number(remainingMist) / 1e9).toFixed(4);
+      const remainingUsd = (Number(remainingMist) / 1e9 * effectiveSuiUsd).toFixed(2);
+      const requiredReserveSuiStr = minReserveSui.toFixed(4);
+
+      throw new Error(
+        `Insufficient balance after swap. Your wallet must keep at least $2.00 in SUI (${requiredReserveSuiStr} SUI) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
+      );
     }
 
     const devFeeMist = (amountInMist * SUI_FEE_BPS) / SUI_BPS_DENOMINATOR;
