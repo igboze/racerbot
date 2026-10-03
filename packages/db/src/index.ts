@@ -24,6 +24,7 @@ export {
   getTriggersByPosition,
   markTriggerFired,
   getTokenCache,
+  findTokenAddressByShortKey,
   upsertTokenCache,
   recordFee,
   generateReferralCode,
