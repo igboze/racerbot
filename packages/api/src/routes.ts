@@ -558,22 +558,27 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     safetyBanner = `🛡️ _Audited ${safety.launchpadName || 'Launchpad'} Token_\n\n`;
   }
 
-  // -- Holders display --
+  // -- Holders display (exact count at CA lookup) --
   let holdersLine = '';
-  if (tokenInfo.holders_count !== undefined && tokenInfo.holders_count !== null) {
-    const countFormatted = tokenInfo.holders_count.toLocaleString('en-US');
-    const displayCount = tokenInfo.holders_count_exact === false ? `${countFormatted}+` : countFormatted;
-    holdersLine = `👥 *Holders*: \`${displayCount}\`\n`;
+  if (tokenInfo.holders_count !== undefined && tokenInfo.holders_count !== null && tokenInfo.holders_count > 0) {
+    holdersLine = `👥 *Holders*: \`${tokenInfo.holders_count.toLocaleString('en-US')}\`\n`;
   }
 
-  // -- Activity (Buys & Sells) display --
+  // -- Activity (Buys & Sells) display with explicit timeframe --
   let activityLine = '';
   const buys = tokenInfo.buys_count;
   const sells = tokenInfo.sells_count;
+  const timeframe = (tokenInfo as any).trades_timeframe === 'Curve' ? 'Curve' : '24h';
   if (buys !== undefined && buys !== null && sells !== undefined && sells !== null) {
-    activityLine = `📊 *Activity*: 🟢 \`${buys.toLocaleString('en-US')} Buys\` | 🔴 \`${sells.toLocaleString('en-US')} Sells\`\n`;
+    activityLine = `📊 *Trades (${timeframe})*: 🟢 \`${buys.toLocaleString('en-US')} Buys\` | 🔴 \`${sells.toLocaleString('en-US')} Sells\`\n`;
   } else if (buys !== undefined && buys !== null) {
-    activityLine = `📊 *Activity*: 🟢 \`${buys.toLocaleString('en-US')} Buys\`\n`;
+    activityLine = `📊 *Trades (${timeframe})*: 🟢 \`${buys.toLocaleString('en-US')} Buys\`\n`;
+  }
+
+  // -- Total On-Chain Transactions display --
+  let txnsLine = '';
+  if ((tokenInfo as any).total_txns !== undefined && (tokenInfo as any).total_txns !== null && (tokenInfo as any).total_txns > 0) {
+    txnsLine = `📦 *Total Txns*: \`${Number((tokenInfo as any).total_txns).toLocaleString('en-US')}\`\n`;
   }
 
   let text =
@@ -587,6 +592,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`\n` +
     holdersLine +
     activityLine +
+    txnsLine +
     rateFooter +
     balanceText;
 
