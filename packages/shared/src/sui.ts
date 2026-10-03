@@ -258,7 +258,7 @@ export async function getSuiTokenMetadata(coinType: string): Promise<SuiTokenMet
     const result: SuiTokenMetadata = {
       name: meta?.name || coinType.split('::').pop() || 'Unknown',
       symbol: meta?.symbol || coinType.split('::').pop() || 'TOKEN',
-      decimals: meta?.decimals ?? 6,
+      decimals: meta?.decimals ?? 9,
       description: meta?.description || '',
       iconUrl: meta?.iconUrl || null,
     };
@@ -268,12 +268,28 @@ export async function getSuiTokenMetadata(coinType: string): Promise<SuiTokenMet
     const fallback: SuiTokenMetadata = {
       name: coinType.split('::').pop() || 'Token',
       symbol: coinType.split('::').pop() || 'TKN',
-      decimals: 6,
+      decimals: 9,
       description: '',
       iconUrl: null,
     };
     return fallback;
   }
+}
+
+/**
+ * Attempts to fetch total on-chain supply for a Sui coin type.
+ */
+export async function getSuiTokenSupply(coinType: string): Promise<string | null> {
+  const client = getSuiClient();
+  try {
+    const supply = await client.getTotalSupply({ coinType });
+    if (supply?.value) {
+      return supply.value;
+    }
+  } catch {
+    // Non-fatal if historical treasury object is pruned or not accessible
+  }
+  return null;
 }
 
 // ── SuiPump Bonding Curve State & Pricing ───────────────────────────────────

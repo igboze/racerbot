@@ -10,6 +10,7 @@ import {
   getSuiBalance,
   getSuiTokenBalance,
   getSuiTokenMetadata,
+  getSuiTokenSupply,
   getSuiPumpCurveState,
   getSuiUsdPrice,
   getSuiRouterQuote,
@@ -236,6 +237,8 @@ export interface DexScreenerData {
     h6?: { buys: number; sells: number };
     h24?: { buys: number; sells: number };
   };
+  liquidityUsd?: number;
+  liquidityNative?: number;
 }
 
 export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
@@ -269,6 +272,8 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
       buys24h,
       sells24h,
       txns: pool.txns,
+      liquidityUsd: pool.liquidity?.usd ? Number(pool.liquidity.usd) : 0,
+      liquidityNative: pool.liquidity?.quote ? Number(pool.liquidity.quote) : 0,
     };
   } catch {
     return null;
@@ -388,7 +393,7 @@ export interface TokenInfoResult {
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD or SUI/USD exchange rate
   sui_usd?: number;
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'memecooking' | 'intear' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'suipump' | 'cetus' | 'turbos' | 'deepbook' | 'sui_dex' | 'unknown';
+  venue: VenueName | 'unknown' | (string & {});
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
   bonding_progress_pct?: number | null;
@@ -495,9 +500,12 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'suipump'].includes(dbCache.venue)
   ) {
     const isSui = dbCache.chain === 'sui' || isSuiToken(tokenAddress);
+    if (isSui && (Number(dbCache.last_liquidity || 0) === 0 || dbCache.total_supply === '1000000000000000')) {
+      return getTokenInfo(rawTokenAddress, true);
+    }
     const nativeUsd = isSui ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 4.5);
     const lastPrice = Number(dbCache.last_price || 0);
-    const decimals = dbCache.decimals !== null && dbCache.decimals !== undefined ? Number(dbCache.decimals) : (isSui ? 6 : 18);
+    const decimals = dbCache.decimals !== null && dbCache.decimals !== undefined ? Number(dbCache.decimals) : (isSui ? 9 : 18);
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, decimals);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
 
@@ -562,8 +570,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     ]);
 
     if (!curve) {
-      // Fallback: fetch on-chain CoinMetadata, DexScreener market data, and Aftermath SOR route in parallel
-      const [meta, dexData, routerQuote] = await Promise.all([
+      // Fallback: fetch on-chain CoinMetadata, DexScreener market data, Aftermath SOR route, and on-chain supply in parallel
+      const [meta, dexData, routerQuote, onChainSupply] = await Promise.all([
         getSuiTokenMetadata(tokenAddress).catch(() => null),
         fetchDexScreenerTokenData(tokenAddress).catch(() => null),
         getSuiRouterQuote({
@@ -571,24 +579,54 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           coinOutType: tokenAddress,
           amountIn: 1_000_000_000n, // 1 SUI probe quote
         }).catch(() => null),
+        getSuiTokenSupply(tokenAddress).catch(() => null),
       ]);
 
       if (meta || dexData || routerQuote) {
-        const decimals = meta?.decimals ?? (dexData as any)?.decimals ?? 6;
+        const decimals = meta?.decimals ?? (dexData as any)?.decimals ?? 9;
         const name = meta?.name || (dexData as any)?.name || tokenAddress.split('::').pop() || 'Sui Token';
         const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
 
         let priceSui = 0;
-        if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+        if (dexData?.priceNative && dexData.priceNative > 0) {
+          priceSui = dexData.priceNative;
+        } else if (routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
+          priceSui = routerQuote.spotPrice;
+        } else if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
           const inHuman = Number(routerQuote.amountIn) / 1e9;
           const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
           if (outHuman > 0) priceSui = inHuman / outHuman;
-        } else if (dexData?.priceNative && dexData.priceNative > 0) {
-          priceSui = dexData.priceNative;
         }
 
         const priceUsd = priceSui > 0 ? priceSui * suiUsd : (dexData?.priceUsd || 0);
-        const venue = (routerQuote?.venue || (dexData as any)?.pairs?.[0]?.dexId || 'sui_dex').toLowerCase();
+        const venue = (dexData?.dexId || routerQuote?.venue || 'sui_dex').toLowerCase();
+
+        // Calculate accurate liquidity in SUI and USD
+        const liqSui = dexData?.liquidityNative && dexData.liquidityNative > 0
+          ? dexData.liquidityNative
+          : (dexData?.liquidityUsd && suiUsd > 0 ? dexData.liquidityUsd / suiUsd : 0);
+        const liqUsd = dexData?.liquidityUsd || (liqSui > 0 ? liqSui * suiUsd : 0);
+
+        // Derive accurate total supply
+        let totalSupply = onChainSupply;
+        if (!totalSupply) {
+          const capUsd = dexData?.fdvUsd || dexData?.marketCapUsd || 0;
+          const pUsd = priceUsd > 0 ? priceUsd : (dexData?.priceUsd || 0);
+          if (capUsd > 0 && pUsd > 0) {
+            const rawTokens = capUsd / pUsd;
+            try {
+              totalSupply = (BigInt(Math.round(rawTokens)) * BigInt(10 ** decimals)).toString();
+            } catch {
+              totalSupply = Math.round(rawTokens * Math.pow(10, decimals)).toString();
+            }
+          } else {
+            totalSupply = (1_000_000_000n * BigInt(10 ** decimals)).toString();
+          }
+        }
+
+        const supplyHuman = parseFloat(totalSupply) / Math.pow(10, decimals);
+        const mcapUsd = dexData?.marketCapUsd || (dexData?.fdvUsd) || (priceUsd > 0 ? priceUsd * supplyHuman : 0);
+        const mcapSui = suiUsd > 0 && mcapUsd > 0 ? mcapUsd / suiUsd : (priceSui > 0 ? priceSui * supplyHuman : 0);
 
         const result: TokenInfoResult = {
           address: tokenAddress,
@@ -596,13 +634,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           name,
           symbol,
           decimals,
-          total_supply: '1000000000000000',
+          total_supply: totalSupply,
           price: priceSui > 0 ? priceSui.toFixed(9) : '0',
           price_usd: priceUsd > 0 ? priceUsd.toFixed(8) : '0',
-          liquidity: '0',
-          liquidity_usd: (dexData as any)?.liquidity?.usd?.toString() || '0',
-          market_cap: dexData?.marketCapUsd ? dexData.marketCapUsd / suiUsd : 0,
-          market_cap_usd: dexData?.marketCapUsd || 0,
+          liquidity: liqSui > 0 ? liqSui.toFixed(2) : '0',
+          liquidity_usd: liqUsd > 0 ? liqUsd.toFixed(2) : '0',
+          market_cap: mcapSui,
+          market_cap_usd: mcapUsd,
           near_usd: suiUsd,
           sui_usd: suiUsd,
           venue: venue as any,
@@ -623,11 +661,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           name,
           symbol,
           decimals,
-          total_supply: '1000000000000000',
+          total_supply: totalSupply,
           venue: venue as any,
           bonding_phase: 'bonded',
           last_price: priceSui,
-          last_liquidity: 0,
+          last_liquidity: liqSui,
         }).catch(() => {});
 
         return result;
@@ -642,6 +680,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     const mcapUsd = mcapSui * suiUsd;
     const liqSui = curve.reserveSui;
     const liqUsd = liqSui * suiUsd;
+    const curveTotalSupply = (1_000_000_000n * BigInt(10 ** curve.decimals)).toString();
 
     const result: TokenInfoResult = {
       address: curve.tokenType || curve.curveId,
@@ -649,7 +688,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       name: curve.name,
       symbol: curve.symbol,
       decimals: curve.decimals,
-      total_supply: curve.reserveTokensRaw.toString(),
+      total_supply: curveTotalSupply,
       price: priceSui.toFixed(9),
       price_usd: priceUsd.toFixed(8),
       liquidity: liqSui.toFixed(4),
