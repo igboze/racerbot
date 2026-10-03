@@ -14,6 +14,10 @@ export interface TokenInfo {
   price: string;
   liquidity: string;
   marketCap: number;
+  holders_count?: number | null;
+  holders_count_exact?: boolean;
+  buys_count?: number | null;
+  sells_count?: number | null;
 }
 
 export type VenueName =
