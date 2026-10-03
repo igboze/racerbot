@@ -2146,8 +2146,8 @@ export function setupRoutes(bot: Telegraf): void {
         const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
         const displayLabel = sanitizeMd(rawSymbol);
         const currentPrice = info ? parseFloat(info.price) : 0;
-        const decimals = info?.decimals ?? 18;
         const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
         const nativeUsdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
 
         let humanQuantity = 0;
@@ -2162,7 +2162,10 @@ export function setupRoutes(bot: Telegraf): void {
         const tokenValueUsd = humanQuantity * tokenPriceUsd;
         totalPortfolioValueUsd += tokenValueUsd;
 
-        const entryPrice = parseFloat(pos.avg_entry_price) || 0;
+        let entryPrice = parseFloat(pos.avg_entry_price) || 0;
+        if (entryPrice <= 0 && currentPrice > 0) {
+          entryPrice = currentPrice;
+        }
         let pnlDisplay = '+0.0%';
         let emoji = '⚪';
         let pnlStyle: BtnStyle | undefined = undefined; // undefined = default grey button
@@ -2382,27 +2385,12 @@ export function setupRoutes(bot: Telegraf): void {
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-      let entryPrice = parseFloat(position.avg_entry_price) || 0;
-      if (entryPrice <= 0 && currentPrice > 0) {
-        entryPrice = currentPrice;
-        position.avg_entry_price = currentPrice.toString();
-        updatePosition({
-          position_id: position.id,
-          avg_entry_price: currentPrice.toString(),
-        }).catch(() => {});
-      }
-
-      const pnlPct = currentPrice > 0 && entryPrice > 0
-        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
       const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
       const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
       const usdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
 
-      const decimals = info?.decimals ?? 18;
+      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
       let mcNative = info?.market_cap || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
         try {
@@ -2422,12 +2410,23 @@ export function setupRoutes(bot: Telegraf): void {
       };
       const buys = fills.filter(f => f.side === 'buy');
       let initialInvestment = 0;
+      let totalBuyTokensHuman = 0;
+      let totalBuyCostNative = 0;
+
       for (const buy of buys) {
         if (buy.tx_hash?.startsWith('deposit_')) continue;
         const amount = toHuman(buy.amount);
         const price = parseFloat(buy.price);
-        const fee = parseFloat(buy.fee_paid || '0');
-        initialInvestment += (amount * price) + fee;
+        let fee = parseFloat(buy.fee_paid || '0');
+        if (isSuiPos && fee > 1e6) {
+          fee = fee / 1e9;
+        } else if (!isSuiPos && fee > 1e18) {
+          fee = fee / 1e24;
+        }
+        const cost = (amount * price) + fee;
+        initialInvestment += cost;
+        totalBuyTokensHuman += amount;
+        totalBuyCostNative += cost;
       }
 
       let humanQuantity = 0;
@@ -2438,9 +2437,36 @@ export function setupRoutes(bot: Telegraf): void {
         humanQuantity = parseFloat(position.quantity_held || '0');
       }
 
+      let entryPrice = parseFloat(position.avg_entry_price) || 0;
+      // Heal corrupted entryPrice if it was stored in raw Mist or out of whack with fills
+      if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
+        const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
+        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry < entryPrice / 5)) {
+          entryPrice = fillAvgEntry;
+          position.avg_entry_price = fillAvgEntry.toString();
+          updatePosition({
+            position_id: position.id,
+            avg_entry_price: fillAvgEntry.toString(),
+          }).catch(() => {});
+        }
+      } else if (entryPrice <= 0 && currentPrice > 0) {
+        entryPrice = currentPrice;
+        position.avg_entry_price = currentPrice.toString();
+        updatePosition({
+          position_id: position.id,
+          avg_entry_price: currentPrice.toString(),
+        }).catch(() => {});
+      }
+
       if (initialInvestment === 0 && humanQuantity > 0) {
         initialInvestment = humanQuantity * entryPrice;
       }
+
+      const pnlPct = currentPrice > 0 && entryPrice > 0
+        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
+        : 'N/A';
+      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
       const holdingValueNative = humanQuantity * currentPrice;
       const holdingValueUsd = holdingValueNative * usdRate;
@@ -2695,8 +2721,9 @@ export function setupRoutes(bot: Telegraf): void {
         // Fetch current market price from token info (not avg_entry_price)
         const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
         const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-        const decimals = tokenInfo?.decimals ?? 18;
-        // Fills store raw on-chain token units; prices are NEAR per whole token.
+        const isSuiPos = livePosition.chain === 'sui' || isSuiToken(livePosition.token_address);
+        const decimals = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
+        // Fills store raw on-chain token units; prices are native per whole token.
         const toHuman = (rawStr: string): number => {
           const val = parseFloat(rawStr || '0');
           if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
@@ -2704,12 +2731,17 @@ export function setupRoutes(bot: Telegraf): void {
         };
 
         // Calculate total initial investment across ALL buy fills (not just first)
-        // Include fees paid to get accurate total NEAR invested
+        // Include fees paid to get accurate total native invested
         let totalInitialInvestment = 0;
         for (const buy of buys) {
           const amount = toHuman(buy.amount);
           const price = parseFloat(buy.price);
-          const fee = parseFloat(buy.fee_paid || '0');
+          let fee = parseFloat(buy.fee_paid || '0');
+          if (isSuiPos && fee > 1e6) {
+            fee = fee / 1e9;
+          } else if (!isSuiPos && fee > 1e18) {
+            fee = fee / 1e24;
+          }
           totalInitialInvestment += (amount * price) + fee;
         }
 
@@ -2845,11 +2877,14 @@ export function setupRoutes(bot: Telegraf): void {
         grp.count++;
 
         const info = tokenInfoMap.get(token);
+        const isSuiTokenAddr = isSuiToken(token);
         const rawAmt = parseFloat(s.amount || '0');
-        const decimals = info?.decimals ?? (rawAmt > 1e25 ? 24 : 18);
+        const decimals = info?.decimals ?? (isSuiTokenAddr ? 9 : (rawAmt > 1e25 ? 24 : 18));
         const humanQty = rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt;
         const sellPrice = parseFloat(s.price || '0');
-        const sellFee = parseFloat(s.fee_paid || '0');
+        let sellFee = parseFloat(s.fee_paid || '0');
+        if (isSuiTokenAddr && sellFee > 1e6) sellFee = sellFee / 1e9;
+        else if (!isSuiTokenAddr && sellFee > 1e18) sellFee = sellFee / 1e24;
         const entryPrice = parseFloat(s.avg_entry_price || s.price || '0');
 
         const tradeRevenue = (humanQty * sellPrice) - sellFee;
