@@ -1063,6 +1063,7 @@ function rowToUser(row: any): UserRecord {
 // ── Volume stats (admin daily update) ───────────────────────────────────────
 
 export interface VolumeStats {
+  // NEAR chain
   volume24hNear: number;
   fees24hNear: number;
   trades24h: number;
@@ -1072,7 +1073,16 @@ export interface VolumeStats {
   volumeTotalNear: number;
   feesTotalNear: number;
   tradesTotal: number;
+  // SUI chain
+  volume24hSui: number;
+  fees24hSui: number;
+  trades24hSui: number;
+  volumeTotalSui: number;
+  feesTotalSui: number;
+  tradesTotalSui: number;
+  // Combined
   usersTotal: number;
+  newUsers24h: number;
 }
 
 /**
@@ -1082,7 +1092,9 @@ export interface VolumeStats {
  */
 export async function getVolumeStats(): Promise<VolumeStats> {
   const db = await getDb();
-  const r = await db.query(
+
+  // NEAR fills
+  const near = await db.query(
     `SELECT
        COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
        COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
@@ -1092,23 +1104,58 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS traders24,
        COUNT(*)::int AS trades_total
      FROM fills
-     WHERE side IN ('buy', 'sell')
+     WHERE chain = 'near'
+       AND side IN ('buy', 'sell')
        AND COALESCE(fee_paid::numeric, 0) > 0
-       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\\_%')`
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
-  const u = await db.query('SELECT COUNT(*)::int AS n FROM users');
-  const row = r.rows[0];
+
+  // SUI fills (fee_paid stored in human SUI units)
+  const sui = await db.query(
+    `SELECT
+       COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
+       COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
+       COUNT(*)::int AS trades_total
+     FROM fills
+     WHERE chain = 'sui'
+       AND side IN ('buy', 'sell')
+       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
+  );
+
+  const u = await db.query(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS new24h
+    FROM users
+  `);
+
+  const nr = near.rows[0];
+  const sr = sui.rows[0];
+  const ur = u.rows[0];
+
   return {
-    volume24hNear: row.fees24 / 0.015,
-    fees24hNear: row.fees24,
-    trades24h: row.trades24,
-    buys24h: row.buys24,
-    sells24h: row.sells24,
-    activeTraders24h: row.traders24,
-    volumeTotalNear: row.fees_total / 0.015,
-    feesTotalNear: row.fees_total,
-    tradesTotal: row.trades_total,
-    usersTotal: u.rows[0].n,
+    // NEAR
+    volume24hNear:    nr.fees24 / 0.015,
+    fees24hNear:      nr.fees24,
+    trades24h:        nr.trades24,
+    buys24h:          nr.buys24,
+    sells24h:         nr.sells24,
+    activeTraders24h: nr.traders24,
+    volumeTotalNear:  nr.fees_total / 0.015,
+    feesTotalNear:    nr.fees_total,
+    tradesTotal:      nr.trades_total,
+    // SUI
+    volume24hSui:     sr.fees24 / 0.015,
+    fees24hSui:       sr.fees24,
+    trades24hSui:     sr.trades24,
+    volumeTotalSui:   sr.fees_total / 0.015,
+    feesTotalSui:     sr.fees_total,
+    tradesTotalSui:   sr.trades_total,
+    // Users
+    usersTotal:       ur.total,
+    newUsers24h:      ur.new24h,
   };
 }
 
