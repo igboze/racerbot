@@ -827,7 +827,7 @@ export class SwapExecutor {
           const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
           const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
 
-          if (effectiveDclPoolId && !explicitRheaPoolId) {
+          if (effectiveDclPoolId) {
             // Verify the pool is actually wNEAR-paired
             const poolTokens = effectiveDclPoolId.split('|').slice(0, 2);
             const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
@@ -998,7 +998,7 @@ export class SwapExecutor {
           const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
           const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
 
-          if (effectiveDclPoolId && !explicitRheaPoolId) {
+          if (effectiveDclPoolId) {
             const actions = [
               transactions.functionCall(
                 'ft_transfer_call',
