@@ -184,25 +184,19 @@ export async function executeSuiSwap(
 
     const tokenQtyFormatted = (Number(expectedTokensOut) / Math.pow(10, decimals)).toFixed(4);
     const suiSpent = Number(amountInMist) / 1e9;
+    const devFeeSui = Number(devFeeMist) / 1e9;
 
     if (!position) {
       position = await createPosition({
         user_id: user.id,
         chain: 'sui',
         token_address: tokenTarget,
-        quantity_held: expectedTokensOut.toString(),
-        avg_entry_price: priceSui.toString(),
-      });
-    } else {
-      const currentQty = BigInt(position.quantity_held || '0');
-      const newQty = currentQty + expectedTokensOut;
-      await updatePosition({
-        position_id: position.id,
-        quantity_held: newQty.toString(),
+        quantity_held: '0',
+        avg_entry_price: '0',
       });
     }
 
-    // Record Fill
+    // Record Fill (update_position_fill trigger in DB will update quantity_held and avg_entry_price)
     const fillRes = await createFill({
       user_id: user.id,
       position_id: position.id,
@@ -211,14 +205,14 @@ export async function executeSuiSwap(
       token_address: tokenTarget,
       amount: expectedTokensOut.toString(),
       price: priceSui.toString(),
-      fee_paid: devFeeMist.toString(),
+      fee_paid: devFeeSui.toString(),
       venue: venue as any,
       tx_hash: txResult.digest,
     });
 
     // Record Dev Fee
     if (fillRes?.fillId) {
-      await recordFee(fillRes.fillId, devFeeMist.toString()).catch(() => {});
+      await recordFee(fillRes.fillId, devFeeSui.toString()).catch(() => {});
     }
 
     return {
@@ -352,25 +346,10 @@ export async function executeSuiSwap(
     const tokenQtyFormatted = (Number(tokenAmountRaw) / Math.pow(10, meta.decimals)).toFixed(4);
     const suiReceived = Number(netSuiOut) / 1e9;
 
+    const devFeeSui = Number(devFeeMist) / 1e9;
     let fillId = '';
     if (position) {
-      const currentQty = BigInt(position.quantity_held || '0');
-      const newQty = currentQty > tokenAmountRaw ? currentQty - tokenAmountRaw : 0n;
-      if (newQty === 0n) {
-        await updatePosition({
-          position_id: position.id,
-          quantity_held: '0',
-          status: 'closed',
-          closed_at: new Date(),
-        });
-      } else {
-        await updatePosition({
-          position_id: position.id,
-          quantity_held: newQty.toString(),
-        });
-      }
-
-      // Record Fill
+      // Record Fill (update_position_fill trigger in DB will update quantity_held and close if 0)
       const fillRes = await createFill({
         user_id: user.id,
         position_id: position.id,
@@ -379,7 +358,7 @@ export async function executeSuiSwap(
         token_address: tokenTarget,
         amount: tokenAmountRaw.toString(),
         price: priceSui.toString(),
-        fee_paid: devFeeMist.toString(),
+        fee_paid: devFeeSui.toString(),
         venue: venue as any,
         tx_hash: txResult.digest,
       });
@@ -388,7 +367,7 @@ export async function executeSuiSwap(
 
     // Record Dev Fee
     if (fillId) {
-      await recordFee(fillId, devFeeMist.toString()).catch(() => {});
+      await recordFee(fillId, devFeeSui.toString()).catch(() => {});
     }
 
     return {
