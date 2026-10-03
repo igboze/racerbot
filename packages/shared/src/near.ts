@@ -2022,16 +2022,7 @@ export class MultiRpcNear {
    * to avoid picking dead or unseeded 0-liquidity pools.
    */
   private async getQuoteNearPrice(quoteToken: string, quoteDecimals: number): Promise<number> {
-    // 1. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
-    // and selects the pool with the deepest real liquidity (> 0.1 NEAR).
-    try {
-      const bestPool = await this.findRheaPoolForToken(quoteToken, true);
-      if (bestPool && bestPool.price > 0 && bestPool.liquidityNear > 0.1) {
-        return bestPool.price;
-      }
-    } catch { /* fallback to other avenues */ }
-
-    // 2. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad state
+    // 1. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad curve state
     if (quoteToken.endsWith('.nearlytrade.near')) {
       try {
         const ntLaunch = await this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: quoteToken }).catch(() => null);
@@ -2047,9 +2038,15 @@ export class MultiRpcNear {
                 const p = baseP * Math.pow(10, quoteDecimals - 24);
                 if (p > 0) return p;
               } else {
-                const subQuoteRate = await this.getQuoteNearPrice(ntLaunch.quote, 18).catch(() => 0);
+                let subQuoteDecimals = 18;
+                try {
+                  const sqMeta = await this.getTokenMetadata(ntLaunch.quote).catch(() => null);
+                  if (sqMeta && typeof sqMeta.decimals === 'number') subQuoteDecimals = sqMeta.decimals;
+                } catch { /* default 18 */ }
+                const priceInSubQuote = baseP * Math.pow(10, quoteDecimals - subQuoteDecimals);
+                const subQuoteRate = await this.getQuoteNearPrice(ntLaunch.quote, subQuoteDecimals).catch(() => 0);
                 if (subQuoteRate > 0) {
-                  return baseP * subQuoteRate;
+                  return priceInSubQuote * subQuoteRate;
                 }
               }
             }
@@ -2057,6 +2054,15 @@ export class MultiRpcNear {
         }
       } catch { /* no-op */ }
     }
+
+    // 2. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
+    // and selects the pool with the deepest real liquidity (> 0.1 NEAR).
+    try {
+      const bestPool = await this.findRheaPoolForToken(quoteToken, true);
+      if (bestPool && bestPool.price > 0 && bestPool.liquidityNear > 0.1) {
+        return bestPool.price;
+      }
+    } catch { /* fallback to other avenues */ }
 
     // 3. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
     const refId = await this.findRheaPoolId('wrap.near', quoteToken).catch(() => null);
