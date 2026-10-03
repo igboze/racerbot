@@ -54,10 +54,20 @@ import {
   getNearUsdPrice,
   payReferralReward,
   prewarmStorageDeposit,
+  isSuiToken,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
-import { computePnL, fuzzyMatch, decrypt, tokenLinks, getNear } from '@racerbot/shared';
+import {
+  computePnL,
+  fuzzyMatch,
+  decrypt,
+  tokenLinks,
+  getNear,
+  getShortTokenKey,
+  resolveTokenAddressFromKey,
+} from '@racerbot/shared';
+export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { utils as nearUtils } from 'near-api-js';
@@ -65,28 +75,6 @@ import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
-
-// ── Short Token Key mapping to guarantee callback_data never exceeds Telegram's 64-byte limit ──
-const shortTokenKeyMap = new Map<string, string>();
-const tokenKeyToAddressMap = new Map<string, string>();
-
-export function getShortTokenKey(tokenAddress: string): string {
-  if (!tokenAddress) return '';
-  if (tokenAddress.length <= 32) return tokenAddress;
-  let short = shortTokenKeyMap.get(tokenAddress);
-  if (!short) {
-    const hash = crypto.createHash('sha256').update(tokenAddress).digest('hex').slice(0, 12);
-    short = `t_${hash}`;
-    shortTokenKeyMap.set(tokenAddress, short);
-    tokenKeyToAddressMap.set(short, tokenAddress);
-  }
-  return short;
-}
-
-export function resolveTokenAddressFromKey(keyOrAddress: string): string {
-  if (!keyOrAddress) return '';
-  return tokenKeyToAddressMap.get(keyOrAddress) || keyOrAddress;
-}
 
 // ── Colored inline buttons (Bot API 9.4) ─────────────────────────────────────
 // InlineKeyboardButton.style: 'success' (green), 'danger' (red), 'primary'
@@ -1254,10 +1242,11 @@ function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, o
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
 async function executeBuyHelper(
   telegramId: number,
-  tokenAddress: string,
+  rawTokenAddress: string,
   amountNear: number,
   onProgress?: (stage: string) => void
 ): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
     throw new Error('Please run /start to set up your trading wallet first.');
@@ -1276,7 +1265,7 @@ async function executeBuyHelper(
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // ── SUI / SuiPump Trading Path ──────────────────────────────────────────────
-  if (info.chain === 'sui' || info.venue === 'suipump') {
+  if (info.chain === 'sui' || info.venue === 'suipump' || isSuiToken(tokenAddress)) {
     const amountInMist = BigInt(Math.floor(amountNear * 1e9)).toString();
     const swapResult = await publishSwap({
       user_id: user.id,
@@ -1423,12 +1412,13 @@ async function executeBuyHelper(
 }
 
 // ── Core Helper: Execute Percentage Buy for User ─────────────────────────────
-async function executeBuyPctHelper(telegramId: number, tokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
+async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
+  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   const info = await getTokenInfo(tokenAddress, false).catch(() => null);
-  if (info?.chain === 'sui' || info?.venue === 'suipump') {
+  if (info?.chain === 'sui' || info?.venue === 'suipump' || isSuiToken(tokenAddress)) {
     const balanceSui = await getTradeSpendableSui(telegramId);
     const amountSui = (balanceSui * pct) / 100;
     if (amountSui < 0.01) {

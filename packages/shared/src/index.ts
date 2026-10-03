@@ -138,6 +138,8 @@ export {
   restoreSuiKeypair,
   isValidSuiAddress,
   normalizeSuiAddress,
+  getShortTokenKey,
+  resolveTokenAddressFromKey,
   getSuiBalance,
   getSuiTokenBalance,
   getSuiTokenMetadata,
