@@ -137,6 +137,16 @@ export function getShortTokenKey(tokenAddress: string): string {
 }
 
 /**
+ * Registers an association between a short token key and full address in memory.
+ */
+export function registerShortTokenKey(shortKey: string, fullAddress: string): void {
+  if (shortKey && fullAddress) {
+    shortTokenKeyMap.set(fullAddress.trim(), shortKey.trim());
+    tokenKeyToAddressMap.set(shortKey.trim(), fullAddress.trim());
+  }
+}
+
+/**
  * Resolves a short token key (t_...) or standard token address back into its full address.
  */
 export function resolveTokenAddressFromKey(keyOrAddress: string): string {

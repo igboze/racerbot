@@ -16,6 +16,7 @@ import {
   isValidSuiAddress,
   resolveTokenAddressFromKey,
   getShortTokenKey,
+  registerShortTokenKey,
   type VenueName,
 } from '@racerbot/shared';
 import {
@@ -25,6 +26,7 @@ import {
   updateUserScopedKey,
   updateUserSuiWallet,
   getTokenCache,
+  findTokenAddressByShortKey,
   upsertTokenCache,
   getOpenPositions,
   createPosition,
@@ -348,7 +350,15 @@ const TOKEN_INFO_MEM_TTL_MS = 15_000;
 const TOKEN_INFO_DB_MAX_AGE_MS = 15_000;
 
 export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false): Promise<TokenInfoResult> {
-  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
+  let tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
+  if (tokenAddress.startsWith('t_')) {
+    const dbResolved = await findTokenAddressByShortKey(tokenAddress).catch(() => null);
+    if (dbResolved) {
+      registerShortTokenKey(tokenAddress, dbResolved);
+      tokenAddress = dbResolved;
+    }
+  }
+
   if (!forceRefresh) {
     const cached = tokenInfoCache.get(tokenAddress) || tokenInfoCache.get(rawTokenAddress);
     if (cached && Date.now() < cached.expiresAt) {
