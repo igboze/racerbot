@@ -2402,22 +2402,7 @@ export function setupRoutes(bot: Telegraf): void {
       const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
       const usdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
 
-      const formatDualPrice = (priceNative: number) => {
-        if (priceNative <= 0) return `\`0.00000000 ${nativeUnit}\` ($0.00)`;
-        const nativeStr = priceNative >= 1 ? priceNative.toFixed(4) : priceNative >= 0.0001 ? priceNative.toFixed(6) : priceNative.toFixed(8);
-        const usdVal = priceNative * usdRate;
-        const usdStr = usdVal >= 1 ? `$${usdVal.toFixed(2)}` : usdVal >= 0.0001 ? `$${usdVal.toFixed(6)}` : `$${usdVal.toFixed(8)}`;
-        return `\`${nativeStr} ${nativeUnit}\` (\`${usdStr}\`)`;
-      };
-
-      const formatDualValue = (nativeVal: number) => {
-        const usdVal = nativeVal * usdRate;
-        const usdStr = usdVal >= 1000 ? `$${(usdVal / 1000).toFixed(2)}K` : `$${usdVal.toFixed(2)}`;
-        return `\`${nativeVal.toFixed(4)} ${nativeUnit}\` (\`${usdStr}\`)`;
-      };
-
       const decimals = info?.decimals ?? 18;
-      let marketCapDisplay = 'N/A';
       let mcNative = info?.market_cap || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
         try {
@@ -2428,15 +2413,8 @@ export function setupRoutes(bot: Telegraf): void {
           }
         } catch { /* no-op */ }
       }
-      if (mcNative > 0) {
-        const mcUsd = info?.market_cap_usd || (mcNative * usdRate);
-        const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
-        const mcNativeStr = mcNative >= 1e6 ? `${(mcNative / 1e6).toFixed(2)}M ${nativeUnit}` : mcNative >= 1e3 ? `${(mcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${mcNative.toFixed(2)} ${nativeUnit}`;
-        marketCapDisplay = `${mcUsdStr} (${mcNativeStr})`;
-      }
 
       // Calculate initial investment across all buy fills, or fallback to position entry * qty
-      // Fills store raw on-chain token units; prices are NEAR per whole token.
       const toHuman = (rawStr: string): number => {
         const val = parseFloat(rawStr || '0');
         if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
@@ -2464,23 +2442,57 @@ export function setupRoutes(bot: Telegraf): void {
         initialInvestment = humanQuantity * entryPrice;
       }
 
-      const holdingValueNear = humanQuantity * currentPrice;
+      const holdingValueNative = humanQuantity * currentPrice;
+      const holdingValueUsd = holdingValueNative * usdRate;
+      const initialInvestedUsd = initialInvestment * usdRate;
+      const pnlUsd = holdingValueUsd - initialInvestedUsd;
+      const pnlUsdStr = Math.abs(pnlUsd) >= 0.01 ? `${pnlUsd >= 0 ? '+$' : '-$'}${Math.abs(pnlUsd).toFixed(2)}` : '';
+
       const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
 
-      let msg = `📊 *${symbol} Details*\n\n`;
-      msg += `💰 *Price Info*:\n`;
-      msg += `  Entry: ${formatDualPrice(entryPrice)}\n`;
-      msg += `  Current: ${formatDualPrice(currentPrice)}\n`;
-      msg += `  Change: ${emoji} \`${pnlDisplay}\`\n\n`;
-      msg += `📈 *Market Cap*: \`${marketCapDisplay}\`\n\n`;
-      msg += `💼 *Position*:\n`;
-      msg += `  Holding: \`${formattedQty}\` (${formatDualValue(holdingValueNear)})\n`;
-      if (showNetWorth) {
-        msg += `  Initial Investment: ${formatDualValue(initialInvestment)}\n`;
+      const fmtPrice = (p: number) => {
+        if (p <= 0) return '`$0.00`';
+        const usd = p * usdRate;
+        const usdStr = usd >= 1 ? `$${usd.toFixed(2)}` : usd >= 0.0001 ? `$${usd.toFixed(6)}` : `$${usd.toFixed(8)}`;
+        const natStr = p >= 1 ? `${p.toFixed(2)} ${nativeUnit}` : p >= 0.0001 ? `${p.toFixed(6)} ${nativeUnit}` : `${p.toFixed(8)} ${nativeUnit}`;
+        return `\`${usdStr}\` (${natStr})`;
+      };
+
+      const fmtVal = (valNative: number) => {
+        const usd = valNative * usdRate;
+        const usdStr = usd >= 1000 ? `$${(usd / 1000).toFixed(2)}K` : `$${usd.toFixed(2)}`;
+        const natStr = valNative >= 1000 ? `${(valNative / 1000).toFixed(2)}K ${nativeUnit}` : `${valNative.toFixed(4)} ${nativeUnit}`;
+        return `\`${usdStr}\` (${natStr})`;
+      };
+
+      const fmtMcap = () => {
+        if (mcNative <= 0) return '`N/A`';
+        const mcUsd = info?.market_cap_usd || (mcNative * usdRate);
+        const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
+        const mcNatStr = mcNative >= 1e6 ? `${(mcNative / 1e6).toFixed(2)}M ${nativeUnit}` : mcNative >= 1e3 ? `${(mcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${mcNative.toFixed(2)} ${nativeUnit}`;
+        return `\`${mcUsdStr}\` (${mcNatStr})`;
+      };
+
+      const pnlLine = pnlDisplay !== 'N/A'
+        ? `${emoji} *PNL*: \`${pnlDisplay}\`${pnlUsdStr ? ` (\`${pnlUsdStr}\`)` : ''}`
+        : `*PNL*: \`N/A\``;
+
+      let venueTag = '';
+      if (info?.venue) {
+        const vName = info.venue.charAt(0).toUpperCase() + info.venue.slice(1);
+        venueTag = ` • 💧 _${vName}_`;
       }
-      msg += `\n`;
-      msg += `🔗 *Contract Address*:\n`;
-      msg += `  \`${position.token_address}\`\n`;
+
+      let msg =
+        `📊 *${symbol} Details*${venueTag}\n\n` +
+        `${pnlLine}\n` +
+        `💰 *Value*: ${fmtVal(holdingValueNative)}\n` +
+        `📦 *Holding*: \`${formattedQty} ${symbol}\`\n\n` +
+        `💵 *Price*: ${fmtPrice(currentPrice)}\n` +
+        `📥 *Entry*: ${fmtPrice(entryPrice)}\n` +
+        (showNetWorth ? `💸 *Invested*: ${fmtVal(initialInvestment)}\n` : '') +
+        `📈 *Market Cap*: ${fmtMcap()}\n\n` +
+        `📝 *CA*: \`${position.token_address}\``;
 
       // Build keyboard buttons first (needed for both text and image paths)
       const buttons: any[] = [];
