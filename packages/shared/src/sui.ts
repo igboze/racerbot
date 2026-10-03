@@ -1,6 +1,7 @@
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
+import { Aftermath } from 'aftermath-ts-sdk';
 import { encrypt, decrypt } from './crypto.js';
 
 // ── Sui Constants ────────────────────────────────────────────────────────────
@@ -539,6 +540,75 @@ export function buildSuiPumpSellTransaction(params: BuildSuiPumpSellParams): { t
   tx.transferObjects([suiProceeds], userAddress);
 
   return { tx, feeMist };
+}
+
+// ── Multi-DEX Router Aggregation (Aftermath SOR / Cetus / Bluefin / Turbos / DeepBook) ──
+
+export interface SuiRouterQuoteResult {
+  coinInType: string;
+  coinOutType: string;
+  amountIn: bigint;
+  expectedAmountOut: bigint;
+  spotPrice: number;
+  venue: string;
+  completeRoute: any;
+}
+
+/**
+ * Gets the best swap quote and trade route across all Sui DEXes.
+ */
+export async function getSuiRouterQuote(params: {
+  coinInType: string;
+  coinOutType: string;
+  amountIn: bigint;
+}): Promise<SuiRouterQuoteResult | null> {
+  try {
+    const af = await Aftermath.create({ network: 'MAINNET' });
+    const router = af.Router();
+    const completeRoute = await router.getCompleteTradeRouteGivenAmountIn({
+      coinInType: params.coinInType,
+      coinOutType: params.coinOutType,
+      coinInAmount: params.amountIn,
+    });
+
+    if (!completeRoute || !completeRoute.coinOut?.amount) {
+      return null;
+    }
+
+    const firstPath = completeRoute.routes?.[0]?.paths?.[0];
+    const venue = firstPath?.protocolName?.toLowerCase() || 'sui_dex';
+
+    return {
+      coinInType: params.coinInType,
+      coinOutType: params.coinOutType,
+      amountIn: params.amountIn,
+      expectedAmountOut: BigInt(completeRoute.coinOut.amount),
+      spotPrice: completeRoute.spotPrice || 0,
+      venue,
+      completeRoute,
+    };
+  } catch (err: any) {
+    return null;
+  }
+}
+
+/**
+ * Builds a multi-DEX swap transaction with slippage protection.
+ */
+export async function buildSuiRouterSwapTransaction(params: {
+  walletAddress: string;
+  completeRoute: any;
+  slippagePct?: number;
+}): Promise<Transaction> {
+  const af = await Aftermath.create({ network: 'MAINNET' });
+  const router = af.Router();
+  const slippage = (params.slippagePct ?? 2) / 100;
+  const tx = await router.getTransactionForCompleteTradeRoute({
+    walletAddress: params.walletAddress,
+    completeRoute: params.completeRoute,
+    slippage,
+  });
+  return tx;
 }
 
 // ── Transaction Execution ───────────────────────────────────────────────────
