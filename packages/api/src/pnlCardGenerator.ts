@@ -337,8 +337,6 @@ export function generatePNLCardMessage(data: PNLCardData): string {
     return v > 0 ? `$${v.toFixed(2)}` : 'N/A';
   };
 
-  const tokenMoveSign  = data.tokenPriceChangePct >= 0 ? '+' : '';
-  const tokenMoveEmoji = data.tokenPriceChangePct >= 0 ? '📈' : '📉';
   const currentOrExitLabel = isClosed ? 'Exit' : 'Current';
 
   // Build card
@@ -349,8 +347,7 @@ export function generatePNLCardMessage(data: PNLCardData): string {
 💧 *Venue*: \`${safe(data.venue || 'Unknown')}\`
 
 💰 *Entry Price*: \`${data.entryPrice.toFixed(8)} ${nativeUnit}\`
-💰 *${currentOrExitLabel} Price*: \`${data.currentPrice.toFixed(8)} ${nativeUnit}\`
-${tokenMoveEmoji} *Token Move*: \`${tokenMoveSign}${data.tokenPriceChangePct.toFixed(2)}%\``;
+💰 *${currentOrExitLabel} Price*: \`${data.currentPrice.toFixed(8)} ${nativeUnit}\``;
 
   if (data.showNetWorth) {
     card += `\n\n💵 *Invested*: \`${formatNative(data.initialInvestment)}\` (${formatUSD(data.initialInvestment)})`;
