@@ -4701,6 +4701,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert) ─────────────────
   bot.command(['track', 'buybot', 'buyalert'], handleBuyBotCommand);
+  bot.hears(/^\/(track|buybot|buyalert)(@\w+)?(\s+.*)?$/i, handleBuyBotCommand);
   bot.action(/^ba_/, handleBuyAlertAction);
 
   // Group welcome when bot is added as administrator
