@@ -36,7 +36,14 @@ import {
   getUserByReferralCode,
   createReferral,
   getUserById,
+  getUserWallets,
+  getActiveWallet,
+  createUserWallet,
+  setActiveWallet,
+  renameUserWallet,
+  deleteUserWallet,
   type UserRecord,
+  type UserWalletRecord,
 } from '@racerbot/db';
 import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
@@ -2014,3 +2021,237 @@ export async function prewarmStorageDeposit(user: UserRecord, tokenAddress: stri
     console.warn(`[SNIPE] Storage pre-warm for ${tokenAddress} (${user.subaccount_id}):`, err?.message);
   }
 }
+
+// ── Multi-Wallet Management & Import (Option A) ───────────────────────────────
+
+export const MAX_NEAR_WALLETS_PER_USER = 5;
+
+/**
+ * Validates and parses a NEAR private key string (ed25519:... or base58).
+ */
+export function validateAndParseNearKey(keyInput: string): KeyPair {
+  const trimmed = keyInput.trim();
+  if (!trimmed) {
+    throw new Error('Private key cannot be empty.');
+  }
+
+  const normalized = trimmed.startsWith('ed25519:') ? trimmed : `ed25519:${trimmed}`;
+
+  try {
+    return KeyPair.fromString(normalized as any);
+  } catch {
+    throw new Error('Invalid NEAR private key format. Must be an ed25519 base58 key (e.g. ed25519:...).');
+  }
+}
+
+/**
+ * Discovers NEAR account IDs linked to a public key via FastNEAR indexer and KitWallet fallback.
+ */
+export async function findAccountsForNearPublicKey(publicKey: string): Promise<string[]> {
+  const accounts = new Set<string>();
+
+  // 1. Try FastNEAR public key API
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const url = `https://api.fastnear.com/v1/public_key/${encodeURIComponent(publicKey)}${apiKey ? `?api_key=${apiKey}` : ''}`;
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (Array.isArray(data.account_ids)) {
+        for (const acc of data.account_ids) {
+          if (typeof acc === 'string' && acc.trim()) {
+            accounts.add(acc.trim().toLowerCase());
+          }
+        }
+      }
+    }
+  } catch {
+    // FastNEAR fallback continues
+  }
+
+  // 2. Try NearBlocks / KitWallet fallback if FastNEAR returned empty
+  if (accounts.size === 0) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`https://api.kitwallet.app/publicKey/${encodeURIComponent(publicKey)}/accounts`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (Array.isArray(data)) {
+          for (const acc of data) {
+            if (typeof acc === 'string' && acc.trim()) {
+              accounts.add(acc.trim().toLowerCase());
+            }
+          }
+        }
+      }
+    } catch {
+      // Fallback continues
+    }
+  }
+
+  // 3. If no named accounts were found, check if it's an implicit account (64 hex characters)
+  if (accounts.size === 0) {
+    try {
+      const rawHex = nearUtils.PublicKey.fromString(publicKey).data;
+      const implicitAccount = Buffer.from(rawHex).toString('hex').toLowerCase();
+      // Check if this implicit account exists on-chain
+      const bal = await near.getNearBalance(implicitAccount).catch(() => '0');
+      if (bal !== '0') {
+        accounts.add(implicitAccount);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return Array.from(accounts);
+}
+
+/**
+ * Validates on-chain that the key has access to the specified NEAR account.
+ */
+export async function verifyNearAccountAccess(accountId: string, publicKey: string): Promise<{ exists: boolean; isFullAccess: boolean }> {
+  try {
+    const keyInfo = await near.viewAccessKey(accountId, publicKey);
+    if (!keyInfo) {
+      return { exists: false, isFullAccess: false };
+    }
+    const isFullAccess = keyInfo.permission === 'FullAccess';
+    return { exists: true, isFullAccess };
+  } catch (err: any) {
+    const msg = err?.message || '';
+    if (msg.includes('does not exist') || msg.includes('access key') || msg.includes('UnknownAccessKey')) {
+      return { exists: false, isFullAccess: false };
+    }
+    const bal = await near.getNearBalance(accountId).catch(() => null);
+    if (bal === null) {
+      return { exists: false, isFullAccess: false };
+    }
+    return { exists: true, isFullAccess: false };
+  }
+}
+
+/**
+ * Imports an external NEAR wallet into RacerBot for a user.
+ */
+export async function importNearWallet(
+  telegramId: number,
+  privateKeyInput: string,
+  walletName: string,
+  targetAccountId?: string
+): Promise<{ wallet: UserWalletRecord; accountId: string; isFullAccess: boolean }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('User not found. Run /start first.');
+  }
+
+  // 1. Parse and validate key
+  const keyPair = validateAndParseNearKey(privateKeyInput);
+  const publicKey = keyPair.getPublicKey().toString();
+  const normalizedPrivateKey = keyPair.toString();
+
+  // 2. Discover or verify account ID
+  let accountId = targetAccountId?.trim().toLowerCase();
+  if (!accountId) {
+    const discovered = await findAccountsForNearPublicKey(publicKey);
+    if (discovered.length === 0) {
+      throw new Error(
+        'Could not find any NEAR account associated with this key. If this is a new implicit account, please fund it with NEAR on-chain first.'
+      );
+    }
+    if (discovered.length === 1) {
+      accountId = discovered[0];
+    } else {
+      throw new Error(`MULTIPLE_ACCOUNTS:${discovered.join(',')}`);
+    }
+  }
+
+  // 3. Verify access on-chain
+  const access = await verifyNearAccountAccess(accountId, publicKey);
+  if (!access.exists) {
+    throw new Error(`Account "${accountId}" does not exist on NEAR mainnet.`);
+  }
+
+  // 4. Enforce wallet limits and uniqueness
+  const existingWallets = await getUserWallets(user.id, 'near');
+  if (existingWallets.length >= MAX_NEAR_WALLETS_PER_USER) {
+    throw new Error(`You have reached the maximum limit of ${MAX_NEAR_WALLETS_PER_USER} NEAR wallets.`);
+  }
+
+  if (existingWallets.some(w => w.address.toLowerCase() === accountId)) {
+    throw new Error(`Wallet "${accountId}" is already added to your account.`);
+  }
+
+  // 5. Clean name
+  let cleanName = walletName.trim();
+  if (!cleanName || cleanName.length > 30) {
+    cleanName = `Wallet ${existingWallets.length + 1}`;
+  }
+
+  // 6. Encrypt key and insert (active by default upon import)
+  const encryptedKey = encrypt(normalizedPrivateKey, MASTER_KEY);
+
+  const wallet = await createUserWallet({
+    userId: user.id,
+    chain: 'near',
+    address: accountId,
+    name: cleanName,
+    encryptedPrivateKey: encryptedKey,
+    isImported: true,
+    isActive: true,
+  });
+
+  // Invalidate balance caches
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+
+  // Pre-warm storage check for Ref Finance
+  getRefStorageDepositNeeded(accountId).catch(() => {});
+
+  return {
+    wallet,
+    accountId,
+    isFullAccess: access.isFullAccess,
+  };
+}
+
+export async function listUserNearWallets(telegramId: number): Promise<UserWalletRecord[]> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  return getUserWallets(user.id, 'near');
+}
+
+export async function switchActiveNearWallet(telegramId: number, walletId: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const wallet = await setActiveWallet(user.id, 'near', walletId);
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+  return wallet;
+}
+
+export async function renameUserNearWallet(telegramId: number, walletId: string, newName: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed.length > 30) {
+    throw new Error('Wallet name must be between 1 and 30 characters.');
+  }
+  return renameUserWallet(user.id, walletId, trimmed);
+}
+
+export async function deleteUserNearWallet(telegramId: number, walletId: string): Promise<{ success: boolean; fallbackWallet?: UserWalletRecord }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const result = await deleteUserWallet(user.id, walletId);
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+  return result;
+}

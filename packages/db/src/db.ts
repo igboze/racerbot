@@ -1,5 +1,18 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+
+let curr = process.cwd();
+for (let i = 0; i < 5; i++) {
+  const p = path.join(curr, '.env');
+  if (fs.existsSync(p)) {
+    dotenv.config({ path: p });
+    break;
+  }
+  curr = path.dirname(curr);
+}
 
 // ── Local type definitions (not imported from shared — avoids circular deps) ──
 
@@ -22,6 +35,18 @@ export interface UserRecord {
   username: string | null;
   /** Whether the user's net worth (investment / unrealized value) is shown on shared PNL cards by default. */
   show_net_worth_on_card: boolean;
+  created_at: Date;
+}
+
+export interface UserWalletRecord {
+  id: string;
+  user_id: string;
+  chain: 'near' | 'sui';
+  address: string;
+  name: string;
+  encrypted_private_key: string;
+  is_imported: boolean;
+  is_active: boolean;
   created_at: Date;
 }
 
@@ -307,8 +332,30 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
      RETURNING *`,
     [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.sui_address || null, params.sui_private_key_enc || null, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
   );
+  const createdUser = rowToUser(result.rows[0]);
+
+  // Ensure initial NEAR wallet is recorded in user_wallets
+  if (params.subaccount_id && params.scoped_key_encrypted) {
+    await db.query(
+      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+       VALUES ($1, 'near', $2, 'Wallet 1', $3, FALSE, TRUE)
+       ON CONFLICT (user_id, chain, address) DO NOTHING`,
+      [createdUser.id, params.subaccount_id, params.scoped_key_encrypted]
+    ).catch((err: any) => console.warn('[DB] user_wallets near insert warning:', err?.message));
+  }
+
+  // Ensure initial SUI wallet is recorded in user_wallets
+  if (params.sui_address && params.sui_private_key_enc) {
+    await db.query(
+      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+       VALUES ($1, 'sui', $2, 'Wallet 1', $3, FALSE, TRUE)
+       ON CONFLICT (user_id, chain, address) DO NOTHING`,
+      [createdUser.id, params.sui_address, params.sui_private_key_enc]
+    ).catch((err: any) => console.warn('[DB] user_wallets sui insert warning:', err?.message));
+  }
+
   invalidateUserCache(undefined, params.telegram_id);
-  return rowToUser(result.rows[0]);
+  return createdUser;
 }
 
 // ── Short-TTL user cache ────────────────────────────────────────────────────
@@ -395,7 +442,238 @@ export async function updateUserScopedKey(userId: string, encryptedKey: string):
 export async function updateUserSuiWallet(userId: string, suiAddress: string, suiPrivateKeyEnc: string): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3', [suiAddress, suiPrivateKeyEnc, userId]);
+  await db.query(
+    `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+     VALUES ($1, 'sui', $2, 'Wallet 1', $3, FALSE, TRUE)
+     ON CONFLICT (user_id, chain, address) DO NOTHING`,
+    [userId, suiAddress, suiPrivateKeyEnc]
+  ).catch((err: any) => console.warn('[DB] user_wallets sui update warning:', err?.message));
   invalidateUserCache(userId);
+}
+
+// ── Multi-Wallet Management (Option A) ──────────────────────────────────────
+
+function rowToUserWallet(row: any): UserWalletRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    chain: row.chain,
+    address: row.address,
+    name: row.name,
+    encrypted_private_key: row.encrypted_private_key,
+    is_imported: Boolean(row.is_imported),
+    is_active: Boolean(row.is_active),
+    created_at: new Date(row.created_at),
+  };
+}
+
+export async function getUserWallets(userId: string, chain: 'near' | 'sui'): Promise<UserWalletRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 ORDER BY created_at ASC',
+    [userId, chain]
+  );
+  return res.rows.map(rowToUserWallet);
+}
+
+export async function getActiveWallet(userId: string, chain: 'near' | 'sui'): Promise<UserWalletRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE LIMIT 1',
+    [userId, chain]
+  );
+  if (res.rows.length === 0) return null;
+  return rowToUserWallet(res.rows[0]);
+}
+
+export async function getUserWalletById(walletId: string): Promise<UserWalletRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM user_wallets WHERE id = $1', [walletId]);
+  if (res.rows.length === 0) return null;
+  return rowToUserWallet(res.rows[0]);
+}
+
+export interface CreateUserWalletParams {
+  userId: string;
+  chain: 'near' | 'sui';
+  address: string;
+  name: string;
+  encryptedPrivateKey: string;
+  isImported?: boolean;
+  isActive?: boolean;
+}
+
+export async function createUserWallet(params: CreateUserWalletParams): Promise<UserWalletRecord> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (params.isActive) {
+      await client.query(
+        'UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = $2',
+        [params.userId, params.chain]
+      );
+    }
+
+    const res = await client.query(
+      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        params.userId,
+        params.chain,
+        params.address,
+        params.name,
+        params.encryptedPrivateKey,
+        params.isImported ?? false,
+        params.isActive ?? false,
+      ]
+    );
+
+    if (params.isActive) {
+      if (params.chain === 'near') {
+        await client.query(
+          'UPDATE users SET subaccount_id = $1, scoped_key_encrypted = $2 WHERE id = $3',
+          [params.address, params.encryptedPrivateKey, params.userId]
+        );
+      } else if (params.chain === 'sui') {
+        await client.query(
+          'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+          [params.address, params.encryptedPrivateKey, params.userId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    invalidateUserCache(params.userId);
+    return rowToUserWallet(res.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function setActiveWallet(userId: string, chain: 'near' | 'sui', walletId: string): Promise<UserWalletRecord> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const checkRes = await client.query(
+      'SELECT * FROM user_wallets WHERE id = $1 AND user_id = $2 AND chain = $3',
+      [walletId, userId, chain]
+    );
+    if (checkRes.rows.length === 0) {
+      throw new Error('Wallet not found');
+    }
+    const targetWallet = rowToUserWallet(checkRes.rows[0]);
+
+    await client.query(
+      'UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = $2',
+      [userId, chain]
+    );
+
+    const updateRes = await client.query(
+      'UPDATE user_wallets SET is_active = TRUE WHERE id = $1 RETURNING *',
+      [walletId]
+    );
+
+    if (chain === 'near') {
+      await client.query(
+        'UPDATE users SET subaccount_id = $1, scoped_key_encrypted = $2 WHERE id = $3',
+        [targetWallet.address, targetWallet.encrypted_private_key, userId]
+      );
+    } else if (chain === 'sui') {
+      await client.query(
+        'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+        [targetWallet.address, targetWallet.encrypted_private_key, userId]
+      );
+    }
+
+    await client.query('COMMIT');
+    invalidateUserCache(userId);
+    return rowToUserWallet(updateRes.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function renameUserWallet(userId: string, walletId: string, newName: string): Promise<UserWalletRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    'UPDATE user_wallets SET name = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+    [newName.trim(), walletId, userId]
+  );
+  if (res.rows.length === 0) {
+    throw new Error('Wallet not found');
+  }
+  return rowToUserWallet(res.rows[0]);
+}
+
+export async function deleteUserWallet(userId: string, walletId: string): Promise<{ success: boolean; fallbackWallet?: UserWalletRecord }> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const checkRes = await client.query(
+      'SELECT * FROM user_wallets WHERE id = $1 AND user_id = $2',
+      [walletId, userId]
+    );
+    if (checkRes.rows.length === 0) {
+      throw new Error('Wallet not found');
+    }
+    const wallet = rowToUserWallet(checkRes.rows[0]);
+
+    if (!wallet.is_imported) {
+      throw new Error('Cannot delete your primary generated wallet.');
+    }
+
+    const allWalletsRes = await client.query(
+      'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 ORDER BY created_at ASC',
+      [userId, wallet.chain]
+    );
+    if (allWalletsRes.rows.length <= 1) {
+      throw new Error('Cannot delete the only wallet on this chain.');
+    }
+
+    await client.query('DELETE FROM user_wallets WHERE id = $1', [walletId]);
+
+    let fallbackWallet: UserWalletRecord | undefined;
+    if (wallet.is_active) {
+      const remaining = allWalletsRes.rows.filter(r => r.id !== walletId);
+      const nextActiveRow = remaining[0];
+      const updateRes = await client.query('UPDATE user_wallets SET is_active = TRUE WHERE id = $1 RETURNING *', [nextActiveRow.id]);
+      fallbackWallet = rowToUserWallet(updateRes.rows[0]);
+
+      if (wallet.chain === 'near') {
+        await client.query(
+          'UPDATE users SET subaccount_id = $1, scoped_key_encrypted = $2 WHERE id = $3',
+          [fallbackWallet.address, fallbackWallet.encrypted_private_key, userId]
+        );
+      } else if (wallet.chain === 'sui') {
+        await client.query(
+          'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+          [fallbackWallet.address, fallbackWallet.encrypted_private_key, userId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    invalidateUserCache(userId);
+    return { success: true, fallbackWallet };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateUserDefaults(userId: string, buyPct?: number, sellPct?: number): Promise<void> {

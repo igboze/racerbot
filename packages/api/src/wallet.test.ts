@@ -41,7 +41,7 @@ vi.mock('near-api-js', async (importOriginal) => {
 });
 
 // Import onboardUser and rotateUserKey after mocks
-const { onboardUser, rotateUserKey } = await import('./wallet.js');
+const { onboardUser, rotateUserKey, validateAndParseNearKey } = await import('./wallet.js');
 
 describe('wallet: onboarding and key rotation', () => {
   const testTelegramIds: number[] = [];
@@ -135,6 +135,31 @@ describe('wallet: onboarding and key rotation', () => {
       releaseAddKey();
       const res = await firstRotation;
       expect(res.success).toBe(true);
+    });
+  });
+
+  describe('NEAR key parsing & validation', () => {
+    const validKeyWithPrefix = 'ed25519:46rV5h6XvKY5wDGty1Jd3LeUePVvccfKGmdPtT7sUbyq1Tw7Z4e3mQZXvGKpq6rHpV8Xxto5GAaus5tWpdFfY4V4';
+    const validRawBase58 = '46rV5h6XvKY5wDGty1Jd3LeUePVvccfKGmdPtT7sUbyq1Tw7Z4e3mQZXvGKpq6rHpV8Xxto5GAaus5tWpdFfY4V4';
+
+    it('parses valid ed25519 key with prefix', () => {
+      const keyPair = validateAndParseNearKey(validKeyWithPrefix);
+      expect(keyPair).toBeDefined();
+      expect(keyPair.getPublicKey().toString().startsWith('ed25519:')).toBe(true);
+    });
+
+    it('parses valid raw base58 key without prefix', () => {
+      const keyPair = validateAndParseNearKey(validRawBase58);
+      expect(keyPair).toBeDefined();
+      expect(keyPair.getPublicKey().toString().startsWith('ed25519:')).toBe(true);
+    });
+
+    it('throws error for empty key', () => {
+      expect(() => validateAndParseNearKey('')).toThrow('Private key cannot be empty.');
+    });
+
+    it('throws error for invalid key string', () => {
+      expect(() => validateAndParseNearKey('not_a_real_key')).toThrow(/Invalid NEAR private key format/i);
     });
   });
 });
