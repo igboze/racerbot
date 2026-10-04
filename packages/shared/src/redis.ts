@@ -14,6 +14,7 @@ export const CHANNELS = {
   AUTO_BUY_SIGNAL: 'auto-buy-signal',
   PRICE_UPDATE: 'price-update',
   NOTIFY_USER: 'notify-user',
+  BUY_ALERT: 'buy-alert',
 } as const;
 
 // ── Event interfaces ──────────────────────────────────────────────────────────
@@ -136,6 +137,22 @@ export interface NotifyUserEvent {
     | 'trade_confirmed'
     | 'deposit_received';
   data?: Record<string, unknown>;
+}
+
+export interface BuyAlertEvent {
+  type: 'buy_alert';
+  chain: 'near' | 'sui';
+  token_address: string;
+  token_name: string;
+  token_symbol: string;
+  buyer_address: string;
+  spent_amount_native: string;
+  spent_usd: number;
+  tokens_received: string;
+  price_usd?: number;
+  market_cap_usd?: number;
+  tx_hash: string;
+  timestamp: number;
 }
 
 // ── Redis client abstraction ──────────────────────────────────────────────────

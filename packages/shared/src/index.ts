@@ -64,6 +64,7 @@ export type {
   AutoBuySignal,
   PriceUpdateEvent,
   NotifyUserEvent,
+  BuyAlertEvent,
 } from './redis.js';
 
 // NEAR multi-RPC connection & FastNEAR helpers

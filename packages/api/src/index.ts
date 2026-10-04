@@ -13,6 +13,7 @@ import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/in
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
+import { startBuyAlertListener } from './buyAlerts.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher } from './depositWatcher.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
@@ -222,6 +223,13 @@ async function main(): Promise<void> {
       await startNotifyListener(REDIS_URL);
     } catch (err: any) {
       console.warn('[API] Redis notification listener inactive:', err?.message || err);
+    }
+
+    // ── Start Telegram group buy alert listener ───────────────────────────────
+    try {
+      await startBuyAlertListener(REDIS_URL, bot);
+    } catch (err: any) {
+      console.warn('[API] Telegram group buy alert listener inactive:', err?.message || err);
     }
   }
 
