@@ -260,96 +260,188 @@ export function buildAlertSettingsCard(alert: GroupBuyAlertRecord): { text: stri
 }
 
 /**
- * Handle /track or /buybot command.
+ * Handle /track or /buybot or /buyalert command.
+ * Works seamlessly in Telegram groups as well as private DMs (for previewing & 1-tap group adding).
  */
 export async function handleBuyBotCommand(ctx: Context): Promise<void> {
-  const chatType = ctx.chat?.type;
-  const isGroup = chatType === 'group' || chatType === 'supergroup';
+  try {
+    const chatType = ctx.chat?.type;
+    const isGroup = chatType === 'group' || chatType === 'supergroup';
+    const botUsername = ctx.botInfo?.username || 'racertradingbot';
 
-  if (!isGroup) {
-    await ctx.reply(
-      `🏎️ <b>RacerBot Group Buy Alert Bot</b>\n\n` +
-      `To activate live BUY alerts in your Telegram group:\n\n` +
-      `1️⃣ Add <b>@${ctx.botInfo?.username || 'racertradingbot'}</b> to your Telegram group.\n` +
-      `2️⃣ Promote the bot to <b>Administrator</b> (with Send Messages permission).\n` +
-      `3️⃣ Send the command in your group:\n` +
-      `<code>/track &lt;token_contract_address&gt;</code>\n\n` +
-      `✨ <b>Features:</b>\n` +
-      `• High-energy buy alerts with custom emojis & GIFs\n` +
-      `• Whale alert detection\n` +
-      `• 1-Tap Buy button redirecting to DM\n` +
-      `• <b>Earn 5% fee share</b> on every buy your community makes!`,
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
+    const text = (ctx.message as any)?.text || '';
+    const args = text.trim().split(/\s+/).slice(1);
+    const rawTokenInput = args[0]?.trim();
 
-  // Verify caller is group administrator
-  const member = await ctx.getChatMember(ctx.from!.id).catch(() => null);
-  const isAdmin = member && (member.status === 'creator' || member.status === 'administrator');
-  if (!isAdmin) {
-    await ctx.reply('⚠️ Only group administrators can configure RacerBot buy alerts.');
-    return;
-  }
+    // ── Handle Private DM Chat ────────────────────────────────────────────────
+    if (!isGroup) {
+      if (rawTokenInput) {
+        // Resolve token
+        let tokenAddress = rawTokenInput;
+        if (tokenAddress.length <= 12 && !tokenAddress.includes('.')) {
+          const resolved = resolveTokenAddressFromKey(tokenAddress);
+          if (resolved) tokenAddress = resolved;
+        }
 
-  const text = (ctx.message as any)?.text || '';
-  const args = text.trim().split(/\s+/).slice(1);
-  const rawTokenInput = args[0]?.trim();
+        const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
+        let tokenInfo: any = null;
+        try {
+          tokenInfo = await getTokenInfo(tokenAddress);
+        } catch {
+          // fallback
+        }
 
-  if (!rawTokenInput) {
-    // Show existing alerts for this chat or help
-    const existing = await getGroupBuyAlertsByChat(ctx.chat!.id).catch(() => []);
-    if (existing.length === 0) {
+        const sym = tokenInfo?.symbol || (isSui ? 'TOKEN' : tokenAddress.split('.')[0].toUpperCase());
+        const name = tokenInfo?.name || sym;
+        const addGroupUrl = `https://t.me/${botUsername}?startgroup=track_${tokenAddress.replace(/\./g, '_')}&admin=post_messages+edit_messages+delete_messages`;
+
+        const sampleEvent: BuyAlertEvent = {
+          type: 'buy_alert',
+          chain: isSui ? 'sui' : 'near',
+          token_address: tokenAddress,
+          token_name: name,
+          token_symbol: sym,
+          buyer_address: isSui ? '0x8b3...4f1' : 'whale.near',
+          spent_amount_native: isSui ? '25.00 SUI' : '10.00 NEAR',
+          spent_usd: 50.00,
+          tokens_received: `1,500,000 ${sym}`,
+          price_usd: tokenInfo?.price_usd ? parseFloat(tokenInfo.price_usd) : 0.000033,
+          market_cap_usd: tokenInfo?.market_cap_usd || 16200,
+          tx_hash: 'sample_preview_tx',
+          timestamp: Date.now(),
+        };
+
+        const previewAlert: GroupBuyAlertRecord = {
+          id: 'preview',
+          chat_id: String(ctx.chat!.id),
+          chat_title: 'Preview',
+          admin_id: String(ctx.from!.id),
+          token_address: tokenAddress,
+          chain: isSui ? 'sui' : 'near',
+          min_buy_usd: 5.0,
+          emoji: '🏎️',
+          emoji_step_usd: 5.0,
+          media_type: 'default',
+          whale_threshold_usd: 200.0,
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+
+        await ctx.reply(
+          `🏎️ <b>RacerBot Buy Alert Preview for $${escapeHtml(sym)}</b>\n\n` +
+          `Here is how live buy alerts will look in your group:`,
+          { parse_mode: 'HTML' }
+        );
+
+        await sendGroupAlertMessage(previewAlert, sampleEvent, botUsername);
+
+        await ctx.reply(
+          `📢 <b>Ready to activate for your community?</b>\n\n` +
+          `1️⃣ Tap the button below to add RacerBot to your Telegram Group:\n` +
+          `2️⃣ Promote RacerBot as Administrator.\n` +
+          `3️⃣ Then type: <code>/track ${escapeHtml(tokenAddress)}</code> in your group!`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url(`➕ Add RacerBot to Group ($${sym})`, addGroupUrl)],
+            ]),
+          }
+        );
+        return;
+      }
+
       await ctx.reply(
-        `🏎️ <b>Track Token Buys in this Group</b>\n\n` +
-        `Usage: <code>/track &lt;token_contract_address&gt;</code>\n\n` +
-        `Examples:\n` +
-        `• NEAR: <code>/track blackdragon.tkn.near</code>\n` +
-        `• SUI: <code>/track 0x2::sui::SUI</code>`,
+        `🏎️ <b>RacerBot Group Buy Alert Bot</b>\n\n` +
+        `To activate live BUY alerts in your Telegram group:\n\n` +
+        `1️⃣ Add <b>@${botUsername}</b> to your Telegram group.\n` +
+        `2️⃣ Promote the bot to <b>Administrator</b> (with Send Messages permission).\n` +
+        `3️⃣ Send the command in your group:\n` +
+        `<code>/track &lt;token_contract_address&gt;</code>\n\n` +
+        `✨ <b>Features:</b>\n` +
+        `• High-energy buy alerts with custom emojis & GIFs\n` +
+        `• Whale alert detection\n` +
+        `• 1-Tap Buy button redirecting to DM\n` +
+        `• <b>Earn 5% fee share</b> on every buy your community makes!\n\n` +
+        `💡 <i>Tip: You can preview a token alert right here in DM by typing:</i>\n` +
+        `<code>/buyalert lili.nearlytrade.near</code>`,
         { parse_mode: 'HTML' }
       );
       return;
     }
 
-    // Display first alert settings card
-    const card = buildAlertSettingsCard(existing[0]);
-    await ctx.reply(card.text, { parse_mode: 'HTML', ...card.keyboard });
-    return;
-  }
+    // ── Handle Group Chat ─────────────────────────────────────────────────────
+    // Verify caller is group administrator (supports standard admins and anonymous admins)
+    const isAnonymousAdmin = Boolean(ctx.senderChat && ctx.chat && (ctx.senderChat.id === ctx.chat.id));
+    let isAdmin = isAnonymousAdmin;
+    if (!isAdmin && ctx.from?.id) {
+      const member = await ctx.getChatMember(ctx.from.id).catch(() => null);
+      isAdmin = Boolean(member && (member.status === 'creator' || member.status === 'administrator'));
+    }
 
-  // Resolve token address
-  let tokenAddress = rawTokenInput;
-  if (tokenAddress.length <= 12 && !tokenAddress.includes('.')) {
-    const resolved = resolveTokenAddressFromKey(tokenAddress);
-    if (resolved) tokenAddress = resolved;
-  }
+    if (!isAdmin) {
+      await ctx.reply('⚠️ Only group administrators can configure RacerBot buy alerts.');
+      return;
+    }
 
-  const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
+    if (!rawTokenInput) {
+      const existing = await getGroupBuyAlertsByChat(ctx.chat!.id).catch(() => []);
+      if (existing.length === 0) {
+        await ctx.reply(
+          `🏎️ <b>Track Token Buys in this Group</b>\n\n` +
+          `Usage: <code>/track &lt;token_contract_address&gt;</code>\n\n` +
+          `Examples:\n` +
+          `• NEAR: <code>/track blackdragon.tkn.near</code>\n` +
+          `• SUI: <code>/track 0x2::sui::SUI</code>`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
 
-  // Verify token exists via getTokenInfo
-  try {
-    await getTokenInfo(tokenAddress);
+      const card = buildAlertSettingsCard(existing[0]);
+      await ctx.reply(card.text, { parse_mode: 'HTML', ...card.keyboard });
+      return;
+    }
+
+    // Resolve token address
+    let tokenAddress = rawTokenInput;
+    if (tokenAddress.length <= 12 && !tokenAddress.includes('.')) {
+      const resolved = resolveTokenAddressFromKey(tokenAddress);
+      if (resolved) tokenAddress = resolved;
+    }
+
+    const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
+
+    // Fetch token info
+    try {
+      await getTokenInfo(tokenAddress);
+    } catch (err: any) {
+      console.warn(`[/track] Token verification notice for ${tokenAddress}: ${err?.message}`);
+    }
+
+    const adminId = ctx.from?.id ? ctx.from.id : ctx.chat!.id;
+
+    const alert = await upsertGroupBuyAlert({
+      chatId: ctx.chat!.id,
+      chatTitle: (ctx.chat as any)?.title || 'Group',
+      adminId,
+      tokenAddress,
+      chain: isSui ? 'sui' : 'near',
+      minBuyUsd: 5.0,
+      emoji: '🏎️',
+      emojiStepUsd: 5.0,
+      whaleThresholdUsd: 200.0,
+    });
+
+    const card = buildAlertSettingsCard(alert);
+    await ctx.reply(
+      `✅ <b>RacerBot is now tracking buys for this group!</b>\n\n` + card.text,
+      { parse_mode: 'HTML', ...card.keyboard }
+    );
   } catch (err: any) {
-    console.warn(`[/track] Token verification notice: ${err?.message}`);
+    console.error('[/track] Error in handleBuyBotCommand:', err);
+    await ctx.reply(`⚠️ Failed to configure buy alert: ${err?.message || 'internal error'}`).catch(() => {});
   }
-
-  const alert = await upsertGroupBuyAlert({
-    chatId: ctx.chat!.id,
-    chatTitle: (ctx.chat as any)?.title || 'Group',
-    adminId: ctx.from!.id,
-    tokenAddress,
-    chain: isSui ? 'sui' : 'near',
-    minBuyUsd: 5.0,
-    emoji: '🏎️',
-    emojiStepUsd: 5.0,
-    whaleThresholdUsd: 200.0,
-  });
-
-  const card = buildAlertSettingsCard(alert);
-  await ctx.reply(
-    `✅ <b>RacerBot is now tracking buys for this group!</b>\n\n` + card.text,
-    { parse_mode: 'HTML', ...card.keyboard }
-  );
 }
 
 /**
