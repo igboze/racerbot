@@ -1,31 +1,65 @@
 /**
- * In-memory in-flight trade guard.
+ * In-flight trade guard — cross-replica safe via Redis SETNX.
  *
- * Keyed by telegramId + tokenAddress + side. If a user taps Buy/Sell twice
- * for the same token while one trade is running, the second tap gets an
- * immediate answer instead of stacking two trades (and two nonce-consuming
- * transactions) behind the account lock.
+ * A local in-memory Set provides a fast first-pass reject within a single
+ * process (avoids a Redis round-trip when the same user double-taps quickly).
+ * A Redis NX key is the authoritative cross-process backstop so that two
+ * Railway replicas cannot both start a trade for the same user+token at once.
  *
- * Pure in-memory + exported for unit testing. In a multi-replica deployment
- * the Redis account lock remains the cross-process backstop; this guard is
- * for fast, user-visible duplicate rejection.
+ * TTL: 220 000 ms — slightly over the TRADE_DEADLINE_MS (210 s) so the key is
+ * guaranteed to be reclaimed even if the process crashes mid-trade and the
+ * finally-block never runs.
  */
 
-const inFlight = new Set<string>();
+import type { RedisClient } from '@racerbot/shared';
 
-export function inFlightKey(telegramId: number, tokenAddress: string, side: 'buy' | 'sell'): string {
-  return `${telegramId}:${tokenAddress.toLowerCase()}:${side}`;
+const GUARD_TTL_MS = 220_000;
+
+// Fast local dedup — avoids a Redis round-trip for rapid double-taps.
+const localInFlight = new Set<string>();
+
+// Module-level Redis client — injected once on first use.
+let _redis: RedisClient | null = null;
+
+export function setInFlightRedis(client: RedisClient): void {
+  _redis = client;
 }
 
-/** Returns true when the key was free and is now claimed; false when busy. */
-export function tryAcquireInFlight(key: string): boolean {
-  if (inFlight.has(key)) return false;
-  inFlight.add(key);
+export function inFlightKey(telegramId: number, tokenAddress: string, side: 'buy' | 'sell'): string {
+  return `inflight:${telegramId}:${tokenAddress.toLowerCase()}:${side}`;
+}
+
+/**
+ * Try to acquire the guard.
+ * Returns true when the key was free and is now claimed; false when busy.
+ * Prefers Redis when available; falls back to the local Set.
+ */
+export async function tryAcquireInFlight(key: string): Promise<boolean> {
+  // Fast path: local check avoids a Redis RTT for in-process double-taps.
+  if (localInFlight.has(key)) return false;
+
+  if (_redis) {
+    try {
+      const acquired = await _redis.setNxPx(key, '1', GUARD_TTL_MS);
+      if (!acquired) return false;
+    } catch {
+      // Redis down — fall through to local-only guard (better than blocking all trades).
+    }
+  }
+
+  localInFlight.add(key);
   return true;
 }
 
-export function releaseInFlight(key: string): void {
-  inFlight.delete(key);
+export async function releaseInFlight(key: string): Promise<void> {
+  localInFlight.delete(key);
+  if (_redis) {
+    try {
+      await _redis.del(key);
+    } catch {
+      // TTL will reclaim the key automatically; ignore transient errors.
+    }
+  }
 }
 
 /** Run fn under the in-flight guard, releasing in a finally block. */
@@ -33,17 +67,17 @@ export async function withInFlightGuard<T>(
   key: string,
   fn: () => Promise<T>
 ): Promise<{ ran: true; result: T } | { ran: false }> {
-  if (!tryAcquireInFlight(key)) {
+  if (!(await tryAcquireInFlight(key))) {
     return { ran: false };
   }
   try {
     return { ran: true, result: await fn() };
   } finally {
-    releaseInFlight(key);
+    await releaseInFlight(key);
   }
 }
 
-/** Test helper — current size of the guard set. */
+/** Test helper — current size of the local guard set. */
 export function inFlightCount(): number {
-  return inFlight.size;
+  return localInFlight.size;
 }

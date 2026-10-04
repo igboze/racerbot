@@ -11,6 +11,7 @@ import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, typ
 import { getDb } from '@racerbot/db';
 import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
+import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher } from './depositWatcher.js';
@@ -82,6 +83,19 @@ async function main(): Promise<void> {
   // Admin monitoring (commands + background alerts) registered BEFORE the
   // generic text handler so /monitor, /failures, /slow take precedence.
   setupMonitor(bot);
+
+  let redis: any = null;
+  if (!REDIS_URL) {
+    console.warn('[API] REDIS_URL environment variable is not set. Operating with in-memory wallet locking.');
+  } else {
+    try {
+      redis = createRedis(REDIS_URL);
+      setInFlightRedis(redis);
+      logger.info('In-flight trade guard wired to Redis for cross-replica protection');
+    } catch (err: any) {
+      console.warn('[API] Failed to initialize Redis for in-flight guard:', err?.message || err);
+    }
+  }
 
   setupRoutes(bot);
 
@@ -187,12 +201,8 @@ async function main(): Promise<void> {
   }
 
   // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
-  let redis: any = null;
-  if (!REDIS_URL) {
-    console.warn('[API] REDIS_URL environment variable is not set. Operating with in-memory wallet locking.');
-  } else {
+  if (redis) {
     try {
-      redis = createRedis(REDIS_URL);
       await redis.subscribe(CHANNELS.NEW_TOKENS, (message: string) => {
         try {
           const event: TokenDetectedEvent = JSON.parse(message);
