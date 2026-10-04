@@ -37,7 +37,10 @@ import {
   createDcaOrder,
   getDcaOrdersByUser,
   updateDcaOrderStatus,
+  getUserWallets,
+  getActiveWallet,
   type UserRecord,
+  type UserWalletRecord,
 } from '@racerbot/db';
 import {
   getTokenInfo,
@@ -56,6 +59,14 @@ import {
   payReferralReward,
   prewarmStorageDeposit,
   isSuiToken,
+  listUserNearWallets,
+  switchActiveNearWallet,
+  renameUserNearWallet,
+  deleteUserNearWallet,
+  importNearWallet,
+  validateAndParseNearKey,
+  findAccountsForNearPublicKey,
+  MAX_NEAR_WALLETS_PER_USER,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -107,9 +118,15 @@ interface PendingAction {
     // Copy Trading wizard
     | 'copy_wallet' | 'copy_amount' | 'copy_daily_budget'
     // DCA wizard
-    | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard';
+    | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
+    // Multi-Wallet Management
+    | 'import_near_key' | 'import_near_name' | 'rename_near_wallet';
   tokenAddress?: string;
   deployerAddress?: string;
+  // Multi-wallet state
+  importNearPrivateKey?: string;
+  importNearAccountId?: string;
+  renameWalletId?: string;
   // Copy trading wizard state
   copyWallet?: string;
   copyBuyAmount?: number;
@@ -319,6 +336,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
+  const user = await getUserByTelegramId(telegramId);
+  const nearWallets = user ? await getUserWallets(user.id, 'near').catch(() => []) : [];
+  const activeNearWallet = nearWallets.find(w => w.is_active) || nearWallets[0];
+  const walletDisplayName = activeNearWallet ? activeNearWallet.name : 'Wallet 1';
+  const walletsCount = nearWallets.length || 1;
+
   const buttons: any[] = [
     [
       cb('🔄 Refresh', 'wallet_refresh', 'primary'),
@@ -331,7 +354,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
 
   buttons.push([
+    cb(`💳 Wallets (${walletsCount})`, 'wallets_menu', 'primary'),
     cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+  ]);
+
+  buttons.push([
     cb('⚙️ Settings', 'menu_settings', 'primary'),
     cb('🔑 Export Key', 'export_prompt', 'primary'),
   ]);
@@ -346,13 +373,64 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   ]);
 
   const text =
-    `<b>Wallet #1</b> 💼 ⭐\n\n` +
+    `<b>${walletDisplayName}</b> 💼 ⭐\n\n` +
     `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
     `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n\n` +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n\n` +
     `Total: <b>${totalUsdStr}</b>\n\n` +
     `<u>NEAR</u>: <code>${b.subaccountId}</code>\n` +
     (b.suiAddress ? `<u>SUI</u>: <code>${b.suiAddress}</code>` : '');
+
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
+}
+
+// ── Helper: Build Wallets Management Menu ────────────────────────────────────
+export async function buildWalletsManagementMenu(telegramId: number) {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+
+  const nearWallets = await getUserWallets(user.id, 'near');
+
+  let text = `💼 <b>NEAR Wallets Management</b>\n\n`;
+  text += `Select an active wallet to trade with on NEAR, or import an existing wallet:\n\n`;
+
+  const buttons: any[] = [];
+
+  for (let i = 0; i < nearWallets.length; i++) {
+    const w = nearWallets[i];
+    const isActive = w.is_active;
+    const statusIcon = isActive ? '🟢' : '⚪';
+    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const importedLabel = w.is_imported ? ' 📥' : '';
+
+    text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
+    text += `   <code>${w.address}</code>\n\n`;
+
+    const row: any[] = [];
+    if (!isActive) {
+      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch:${w.id}`, 'primary'));
+    }
+    row.push(cb(`✏️ Rename`, `wallet_rename_prompt:${w.id}`, 'primary'));
+    if (w.is_imported && !isActive) {
+      row.push(cb(`🗑️ Delete`, `wallet_delete_confirm:${w.id}`, 'primary'));
+    }
+    if (row.length > 0) {
+      buttons.push(row);
+    }
+  }
+
+  // Import button if under limit
+  const actionRow: any[] = [];
+  if (nearWallets.length < MAX_NEAR_WALLETS_PER_USER) {
+    actionRow.push(cb('📥 Import NEAR Wallet', 'wallet_import_prompt', 'primary'));
+  }
+  if (actionRow.length > 0) {
+    buttons.push(actionRow);
+  }
+
+  buttons.push([
+    cb('🔙 Back to Wallet', 'wallet_refresh', 'primary'),
+  ]);
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -3242,6 +3320,129 @@ export function setupRoutes(bot: Telegraf): void {
   bot.command('wallet', handleWallet);
   bot.command('balance', handleWallet);
 
+  // ── /wallets — Multi-Wallet Management (Option A) ─────────────────────────
+  const handleWallets = async (ctx: Context) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const menu = await buildWalletsManagementMenu(telegramId);
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit && ctx.callbackQuery) {
+        await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        });
+      } else {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  };
+
+  bot.command('wallets', handleWallets);
+  bot.action('wallets_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await handleWallets(ctx);
+  });
+
+  bot.action(/^wallet_switch:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    try {
+      const switched = await switchActiveNearWallet(telegramId, walletId);
+      await ctx.answerCbQuery(`⚡ Switched active wallet to ${switched.name}!`).catch(() => {});
+      const menu = await buildWalletsManagementMenu(telegramId);
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit) {
+        await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        });
+      } else {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      }
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('wallet_import_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'import_near_key',
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `📥 <b>Import NEAR Wallet</b>\n\n` +
+      `Please reply with your NEAR account private key (e.g. <code>ed25519:...</code> or base58 string).\n\n` +
+      `<i>Tip: You can also specify an account ID alongside the key:</i>\n` +
+      `<code>myaccount.near ed25519:...</code>\n\n` +
+      `🔒 <i>Your message containing the key will be deleted automatically for security.</i>\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^wallet_rename_prompt:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    userPendingActions.set(telegramId, {
+      action: 'rename_near_wallet',
+      renameWalletId: walletId,
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✏️ <b>Rename Wallet</b>\n\n` +
+      `Please reply with the new name for this wallet (e.g. <i>Sniper</i>, <i>Main</i>, <i>Degen</i>):\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^wallet_delete_confirm:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    try {
+      const res = await deleteUserNearWallet(telegramId, walletId);
+      await ctx.answerCbQuery('Wallet deleted.').catch(() => {});
+      let msg = `🗑️ Wallet deleted successfully.`;
+      if (res.fallbackWallet) {
+        msg += ` Active wallet switched to <b>${res.fallbackWallet.name}</b>.`;
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^wallet_pick_acc:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const chosenAccount = ctx.match![1];
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || !pending.importNearPrivateKey) {
+      await ctx.answerCbQuery('Session expired. Please try importing again.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      action: 'import_near_name',
+      importNearPrivateKey: pending.importNearPrivateKey,
+      importNearAccountId: chosenAccount,
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✅ Selected account: <code>${chosenAccount}</code>\n\n` +
+      `Please reply with a nickname for this wallet (e.g. <i>Sniper</i>, <i>Main</i>, <i>Degen</i>):\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
   bot.action('wallet_refresh', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
@@ -4359,6 +4560,127 @@ export function setupRoutes(bot: Telegraf): void {
     const pending = userPendingActions.get(telegramId);
     if (pending && Date.now() < pending.expiresAt) {
       userPendingActions.delete(telegramId);
+
+      if (pending.action === 'import_near_key') {
+        // Delete message containing private key immediately for security!
+        await ctx.deleteMessage().catch(() => {});
+
+        const parts = rawText.split(/\s+/).filter(Boolean);
+        let explicitAccount: string | undefined;
+        let keyString = rawText;
+
+        if (parts.length >= 2) {
+          explicitAccount = parts[0].toLowerCase();
+          keyString = parts[1];
+        }
+
+        try {
+          const keyPair = validateAndParseNearKey(keyString);
+          const pubKey = keyPair.getPublicKey().toString();
+
+          let targetAccount = explicitAccount;
+          if (!targetAccount) {
+            const discovered = await findAccountsForNearPublicKey(pubKey);
+            if (discovered.length === 0) {
+              await ctx.reply(
+                `❌ No active NEAR account found associated with this private key.\n\n` +
+                `• If this is a named account, try specifying the account ID alongside the key:\n` +
+                `  <code>youraccount.near ed25519:...</code>\n` +
+                `• If this is a new account, ensure it has received its initial deposit on-chain first.`,
+                { parse_mode: 'HTML' }
+              );
+              return;
+            }
+            if (discovered.length === 1) {
+              targetAccount = discovered[0];
+            } else {
+              userPendingActions.set(telegramId, {
+                action: 'import_near_key',
+                importNearPrivateKey: keyPair.toString(),
+                expiresAt: Date.now() + 180000,
+              });
+              const buttons = discovered.map(acc => [cb(acc, `wallet_pick_acc:${acc}`, 'primary')]);
+              buttons.push([cb('❌ Cancel', 'menu_home', 'primary')]);
+              await ctx.reply(
+                `🔍 Found multiple NEAR accounts associated with this key. Please select which account you want to import:`,
+                { reply_markup: { inline_keyboard: buttons } }
+              );
+              return;
+            }
+          }
+
+          userPendingActions.set(telegramId, {
+            action: 'import_near_name',
+            importNearPrivateKey: keyPair.toString(),
+            importNearAccountId: targetAccount,
+            expiresAt: Date.now() + 180000,
+          });
+
+          await ctx.reply(
+            `✅ <b>Account Found:</b> <code>${targetAccount}</code>\n\n` +
+            `Please reply with a nickname for this wallet (e.g. <i>Sniper</i>, <i>Main</i>, <i>Degen</i>):\n\n` +
+            `_Send /cancel to abort._`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'import_near_name') {
+        const walletName = rawText.trim();
+        if (!pending.importNearPrivateKey) {
+          await ctx.reply('❌ Import session expired. Please start over via /wallets.');
+          return;
+        }
+
+        try {
+          const res = await importNearWallet(
+            telegramId,
+            pending.importNearPrivateKey,
+            walletName,
+            pending.importNearAccountId
+          );
+
+          let successMsg =
+            `🎉 <b>Wallet Imported Successfully!</b>\n\n` +
+            `• <b>Name:</b> ${res.wallet.name}\n` +
+            `• <b>Account:</b> <code>${res.accountId}</code>\n` +
+            `• <b>Status:</b> 🟢 Active (now your primary NEAR trading wallet)\n\n`;
+
+          if (!res.isFullAccess) {
+            successMsg += `⚠️ <i>Note: This key does not have FullAccess permissions on-chain. Some DEX swaps may fail if contract calls are restricted.</i>\n\n`;
+          }
+
+          successMsg += `Your balances and all future NEAR trades now use this wallet.`;
+
+          await ctx.reply(successMsg, { parse_mode: 'HTML' });
+          const walletMenu = await buildWalletMenu(telegramId, true);
+          await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'rename_near_wallet') {
+        const newName = rawText.trim();
+        if (!pending.renameWalletId) {
+          await ctx.reply('❌ Rename session expired. Please start over via /wallets.');
+          return;
+        }
+
+        try {
+          const updated = await renameUserNearWallet(telegramId, pending.renameWalletId, newName);
+          await ctx.reply(`✅ Wallet renamed to <b>${updated.name}</b>!`, { parse_mode: 'HTML' });
+          const menu = await buildWalletsManagementMenu(telegramId);
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
 
       if (pending.action === 'buy_custom_near' && pending.tokenAddress) {
         const amt = parseFloat(rawText);
