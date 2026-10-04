@@ -92,6 +92,13 @@ export {
   setActiveWallet,
   renameUserWallet,
   deleteUserWallet,
+  // Telegram Group Buy Alerts
+  upsertGroupBuyAlert,
+  getGroupBuyAlert,
+  getGroupBuyAlertsByChat,
+  getGroupBuyAlertsByToken,
+  updateGroupBuyAlert,
+  deleteGroupBuyAlert,
 } from './db.js';
 
 export {
@@ -133,4 +140,5 @@ export type {
   SnipeOrderRecord,
   UserWalletRecord,
   CreateUserWalletParams,
+  GroupBuyAlertRecord,
 } from './db.js';
