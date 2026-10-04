@@ -1,6 +1,18 @@
 import 'dotenv/config';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getDb, createUser, createPosition, createFill, getPositionById } from './db.js';
+import {
+  getDb,
+  createUser,
+  createPosition,
+  createFill,
+  getPositionById,
+  getUserWallets,
+  getActiveWallet,
+  createUserWallet,
+  setActiveWallet,
+  renameUserWallet,
+  deleteUserWallet,
+} from './db.js';
 
 describe('db: fill idempotency and position math', () => {
   const telegramId = Math.floor(300000000 + Math.random() * 600000000);
@@ -147,6 +159,100 @@ describe('db: fill idempotency and position math', () => {
       // Assert realized PNL matches (sell_price - avg_entry_price) * quantity_sold exactly
       const realizedPnl = (sellPrice - expectedAvgEntryPrice) * quantitySold;
       expect(realizedPnl).toBe((2.5 - 1.5) * 50); // 50.0
+    });
+  });
+
+  describe('6. Multi-Wallet Management (Option A)', () => {
+    it('creates initial default wallet automatically on user creation', async () => {
+      const wallets = await getUserWallets(userId, 'near');
+      expect(wallets.length).toBeGreaterThanOrEqual(1);
+      const active = await getActiveWallet(userId, 'near');
+      expect(active).not.toBeNull();
+      expect(active?.is_active).toBe(true);
+      expect(active?.name).toBe('Wallet 1');
+    });
+
+    it('creates an imported wallet and allows setting it active', async () => {
+      const importedAddress = `imported-${Date.now()}.near`;
+      const importedWallet = await createUserWallet({
+        userId,
+        chain: 'near',
+        address: importedAddress,
+        name: 'Sniper',
+        encryptedPrivateKey: 'encrypted_priv_key_sniper',
+        isImported: true,
+        isActive: true,
+      });
+
+      expect(importedWallet.is_imported).toBe(true);
+      expect(importedWallet.is_active).toBe(true);
+      expect(importedWallet.name).toBe('Sniper');
+
+      // Check that only ONE wallet is active now
+      const wallets = await getUserWallets(userId, 'near');
+      const activeWallets = wallets.filter(w => w.is_active);
+      expect(activeWallets.length).toBe(1);
+      expect(activeWallets[0].id).toBe(importedWallet.id);
+
+      // Check that users table was updated with the active wallet credentials
+      const db = await getDb();
+      const userRes = await db.query('SELECT subaccount_id, scoped_key_encrypted FROM users WHERE id = $1', [userId]);
+      expect(userRes.rows[0].subaccount_id).toBe(importedAddress);
+      expect(userRes.rows[0].scoped_key_encrypted).toBe('encrypted_priv_key_sniper');
+    });
+
+    it('allows switching active wallet back to Wallet 1', async () => {
+      const wallets = await getUserWallets(userId, 'near');
+      const defaultWallet = wallets.find(w => w.name === 'Wallet 1')!;
+      expect(defaultWallet).toBeDefined();
+
+      const switched = await setActiveWallet(userId, 'near', defaultWallet.id);
+      expect(switched.is_active).toBe(true);
+      expect(switched.name).toBe('Wallet 1');
+
+      const active = await getActiveWallet(userId, 'near');
+      expect(active?.id).toBe(defaultWallet.id);
+
+      // Users table is synced back to default wallet
+      const db = await getDb();
+      const userRes = await db.query('SELECT subaccount_id FROM users WHERE id = $1', [userId]);
+      expect(userRes.rows[0].subaccount_id).toBe(defaultWallet.address);
+    });
+
+    it('allows renaming a wallet', async () => {
+      const wallets = await getUserWallets(userId, 'near');
+      const imported = wallets.find(w => w.is_imported)!;
+      expect(imported).toBeDefined();
+
+      const renamed = await renameUserWallet(userId, imported.id, 'Degen Main');
+      expect(renamed.name).toBe('Degen Main');
+
+      const rechecked = await getUserWallets(userId, 'near');
+      const found = rechecked.find(w => w.id === imported.id);
+      expect(found?.name).toBe('Degen Main');
+    });
+
+    it('prevents deleting primary default wallet', async () => {
+      const wallets = await getUserWallets(userId, 'near');
+      const defaultWallet = wallets.find(w => !w.is_imported)!;
+      await expect(deleteUserWallet(userId, defaultWallet.id)).rejects.toThrow('Cannot delete your primary generated wallet.');
+    });
+
+    it('allows deleting an imported wallet and falls back gracefully if active', async () => {
+      const wallets = await getUserWallets(userId, 'near');
+      const imported = wallets.find(w => w.is_imported)!;
+
+      // Set it active first
+      await setActiveWallet(userId, 'near', imported.id);
+
+      // Now delete it
+      const res = await deleteUserWallet(userId, imported.id);
+      expect(res.success).toBe(true);
+      expect(res.fallbackWallet).toBeDefined();
+      expect(res.fallbackWallet?.is_active).toBe(true);
+
+      const remaining = await getUserWallets(userId, 'near');
+      expect(remaining.some(w => w.id === imported.id)).toBe(false);
     });
   });
 });

@@ -84,6 +84,14 @@ export {
   getCompetitionByToken,
   upsertCompetition,
   getCompetitionLeaderboard,
+  // Multi-Wallet Management (Option A)
+  getUserWallets,
+  getActiveWallet,
+  getUserWalletById,
+  createUserWallet,
+  setActiveWallet,
+  renameUserWallet,
+  deleteUserWallet,
 } from './db.js';
 
 export {
@@ -123,4 +131,6 @@ export type {
   TradeAttemptRow,
   VolumeStats,
   SnipeOrderRecord,
+  UserWalletRecord,
+  CreateUserWalletParams,
 } from './db.js';
