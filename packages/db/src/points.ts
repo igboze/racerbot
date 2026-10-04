@@ -269,7 +269,7 @@ export async function backfillAllPoints(
   const db = await getDb();
   const [fills, referrals, tokenRows] = await Promise.all([
     db.query(
-      `SELECT id, user_id, token_address, amount, price, fee_paid, tx_hash, created_at
+      `SELECT id, user_id, chain, token_address, amount, price, fee_paid, tx_hash, created_at
        FROM fills WHERE side IN ('buy', 'sell') ORDER BY created_at ASC`
     ),
     db.query('SELECT id, referrer_id, referred_user_id FROM referrals'),
@@ -310,7 +310,10 @@ export async function backfillAllPoints(
     // guard: amount is raw for most tokens but human in some legacy rows, so
     // when the human interpretation implies an impossible volume (> 1 000
     // NEAR in one fill) the raw interpretation wins.
-    const feePaid = parseFloat(f.fee_paid || '0');
+    let feePaid = parseFloat(f.fee_paid || '0');
+    if (f.chain === 'sui' && feePaid >= 100000) {
+      feePaid = feePaid / 1e9;
+    }
     let volumeNear: number;
     if (feePaid > 0) {
       volumeNear = feePaid / 0.015;

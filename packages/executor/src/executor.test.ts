@@ -10,6 +10,14 @@ process.env.RACERBOT_PARENT_ACCOUNT = 'racerbot.near';
 process.env.ROUTER_CONTRACT_ID = 'router.near';
 process.env.TREASURY_ACCOUNT_ID = 'treasury.near';
 
+vi.mock('@racerbot/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@racerbot/shared')>();
+  return {
+    ...actual,
+    checkTokenSafety: vi.fn().mockResolvedValue({ isHoneypot: false, reasons: [], dangerousMethods: [] }),
+  };
+});
+
 vi.mock('@racerbot/db', () => ({
   getDb: vi.fn(),
   getUserById: vi.fn().mockResolvedValue({
