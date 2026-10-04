@@ -7,6 +7,9 @@ import {
   generateRandomAccountPrefix,
   parseMemeCookingId,
   generateSuiWallet,
+  restoreSuiKeypair,
+  restoreSuiKeypairFromSecret,
+  getSuiClient,
   getSuiBalance,
   getSuiTokenBalance,
   getSuiTokenMetadata,
@@ -15,11 +18,13 @@ import {
   getSuiUsdPrice,
   getSuiRouterQuote,
   isValidSuiAddress,
+  executeSuiTransaction,
   resolveTokenAddressFromKey,
   getShortTokenKey,
   registerShortTokenKey,
   type VenueName,
 } from '@racerbot/shared';
+import { Transaction } from '@mysten/sui/transactions';
 import {
   getDb,
   createUser,
@@ -143,8 +148,7 @@ export function isSuiToken(rawTokenAddress: string): boolean {
   return (
     clean.startsWith('0x') ||
     clean.includes('::') ||
-    clean.toLowerCase().includes('suipump') ||
-    (clean.length === 64 && /^[0-9a-fA-F]+$/.test(clean))
+    clean.toLowerCase().includes('suipump')
   );
 }
 
@@ -1753,6 +1757,75 @@ export async function withdrawFunds(
 }
 
 /**
+ * Withdraws native SUI from user's active SUI wallet to any valid external SUI address.
+ * Keeps ~0.025 SUI to ensure gas coverage for future transactions.
+ */
+export async function withdrawSuiFunds(
+  telegramId: number,
+  destination: string,
+  amountSui?: number | 'all'
+): Promise<{ txHash: string; amountWithdrawn: string; destination: string }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user || !user.sui_address || !user.sui_private_key_enc) {
+    throw new Error('SUI wallet not configured. Please initialize your wallet via /start.');
+  }
+
+  destination = destination.trim();
+  if (!isValidSuiAddress(destination)) {
+    throw new Error('Invalid destination SUI address. Must be a valid 0x... hex address.');
+  }
+  if (destination.toLowerCase() === user.sui_address.toLowerCase()) {
+    throw new Error('Cannot withdraw to your own wallet address.');
+  }
+
+  const keypair = restoreSuiKeypair(user.sui_private_key_enc, MASTER_KEY);
+  const bal = await getSuiBalance(user.sui_address);
+  const gasReserveMist = 25_000_000n; // 0.025 SUI reserved for gas execution
+
+  if (bal.mist <= gasReserveMist) {
+    throw new Error('Insufficient balance to withdraw. A minimum of 0.025 SUI must remain to cover transaction gas.');
+  }
+
+  const maxWithdrawableMist = bal.mist - gasReserveMist;
+  let withdrawMist: bigint;
+  if (!amountSui || amountSui === 'all') {
+    withdrawMist = maxWithdrawableMist;
+  } else {
+    withdrawMist = BigInt(Math.floor(amountSui * 1e9));
+    if (withdrawMist > maxWithdrawableMist) {
+      const maxFormatted = (Number(maxWithdrawableMist) / 1e9).toFixed(4);
+      throw new Error(`Amount exceeds maximum withdrawable balance (${maxFormatted} SUI after gas reserve).`);
+    }
+  }
+
+  if (withdrawMist <= 0n) {
+    throw new Error('Withdrawal amount must be greater than 0.');
+  }
+
+  const tx = new Transaction();
+  tx.setSender(user.sui_address);
+  const [coinToSend] = tx.splitCoins(tx.gas, [tx.pure.u64(withdrawMist.toString())]);
+  tx.transferObjects([coinToSend], destination);
+
+  const res = await executeSuiTransaction(tx, keypair);
+  if (res.status !== 'success') {
+    throw new Error(`SUI withdrawal failed: ${res.errorMessage || 'Transaction execution rejected'}`);
+  }
+
+  // Invalidate balance caches
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+  suiTradeBalanceCache.delete(telegramId);
+
+  const formattedWithdrawn = (Number(withdrawMist) / 1e9).toFixed(4);
+  return {
+    txHash: res.digest,
+    amountWithdrawn: formattedWithdrawn,
+    destination,
+  };
+}
+
+/**
  * Pay accrued referral rewards from the treasury wallet to a referrer's
  * RacerBot subaccount. Signed with the treasury key (TREASURY_PRIVATE_KEY env).
  */
@@ -1858,13 +1931,17 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     })();
 
     // 2. Fetch existing open positions in DB
-    const [existingPositions] = await Promise.all([
+    const [existingPositions, user] = await Promise.all([
       getOpenPositions(userId).catch(() => []),
+      getUserById(userId).catch(() => null),
       Promise.allSettled([fastnearPromise, nearblocksPromise]),
     ]);
 
-    const posMap = new Map(existingPositions.map(p => [p.token_address, p]));
-    for (const p of existingPositions) {
+    const nearPositions = existingPositions.filter(p => p.chain === 'near' || (!p.chain && !isSuiToken(p.token_address)));
+    const suiPositions = existingPositions.filter(p => p.chain === 'sui' || isSuiToken(p.token_address));
+
+    const posMap = new Map(nearPositions.map(p => [p.token_address, p]));
+    for (const p of nearPositions) {
       discoveredTokens.add(p.token_address);
     }
 
@@ -1873,127 +1950,230 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     discoveredTokens.delete('near');
 
     const allTokensToCheck = Array.from(discoveredTokens);
-    if (allTokensToCheck.length === 0) {
-      return 0;
-    }
-
     const near = getNear();
 
-    // 3. Fetch token balances and metadata in parallel
-    const [balanceResults, infoResults] = await Promise.all([
-      Promise.allSettled(
-        allTokensToCheck.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
-          try {
-            const value = await Promise.race([
-              near.getTokenBalanceOnTradeRpc(tokenAddress, subaccountId),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
-            ]);
-            return { value, trusted: true };
-          } catch {
-            const idx = indexerBalances.get(tokenAddress);
-            // Indexer entry counts as a real reading; absence of data does NOT
-            // mean zero balance — never trust a synthetic '0'.
-            return idx !== undefined ? { value: idx, trusted: true } : { value: '0', trusted: false };
+    // 3. Fetch NEAR token balances and metadata in parallel
+    if (allTokensToCheck.length > 0) {
+      const [balanceResults, infoResults] = await Promise.all([
+        Promise.allSettled(
+          allTokensToCheck.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
+            try {
+              const value = await Promise.race([
+                near.getTokenBalanceOnTradeRpc(tokenAddress, subaccountId),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+              ]);
+              return { value, trusted: true };
+            } catch {
+              const idx = indexerBalances.get(tokenAddress);
+              return idx !== undefined ? { value: idx, trusted: true } : { value: '0', trusted: false };
+            }
+          })
+        ),
+        Promise.allSettled(
+          allTokensToCheck.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
+        ),
+      ]);
+
+      for (let i = 0; i < allTokensToCheck.length; i++) {
+        const tokenAddress = allTokensToCheck[i];
+        const balRes = balanceResults[i];
+        const bal = balRes.status === 'fulfilled'
+          ? balRes.value
+          : (indexerBalances.has(tokenAddress)
+              ? { value: indexerBalances.get(tokenAddress)!, trusted: true }
+              : { value: '0', trusted: false });
+        const rawBal = bal.value;
+        const infoRes = infoResults[i];
+        const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
+
+        const decimals = info?.decimals ?? 18;
+        const cleanRaw = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
+        let rawBalBigInt = 0n;
+        try {
+          rawBalBigInt = BigInt(cleanRaw);
+        } catch {
+          rawBalBigInt = 0n;
+        }
+        const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
+        const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
+
+        const existing = posMap.get(tokenAddress);
+        const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
+
+        if (existing) {
+          if (!bal.trusted) {
+            console.warn(`[DEPOSIT] Skipped reconcile for ${tokenAddress} (user ${userId}): balance unverifiable`);
+          } else if (isDustOrZero) {
+            await updatePosition({
+              position_id: existing.id,
+              status: 'closed',
+              closed_at: new Date(),
+            });
+            console.log(`[DEPOSIT] Closed phantom/sold position for ${tokenAddress} (user ${userId})`);
+          } else {
+            const updates: any = { position_id: existing.id };
+            let hasUpdates = false;
+
+            if (existing.quantity_held !== rawBal) {
+              updates.quantity_held = rawBal;
+              hasUpdates = true;
+            }
+
+            if ((!existing.avg_entry_price || parseFloat(existing.avg_entry_price) <= 0) && currentPrice > 0) {
+              updates.avg_entry_price = currentPrice.toString();
+              hasUpdates = true;
+            }
+
+            if (hasUpdates) {
+              await updatePosition(updates);
+            }
           }
-        })
-      ),
-      Promise.allSettled(
-        allTokensToCheck.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
-      ),
-    ]);
-
-    for (let i = 0; i < allTokensToCheck.length; i++) {
-      const tokenAddress = allTokensToCheck[i];
-      const balRes = balanceResults[i];
-      const bal = balRes.status === 'fulfilled'
-        ? balRes.value
-        : (indexerBalances.has(tokenAddress)
-            ? { value: indexerBalances.get(tokenAddress)!, trusted: true }
-            : { value: '0', trusted: false });
-      const rawBal = bal.value;
-      const infoRes = infoResults[i];
-      const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
-
-      const decimals = info?.decimals ?? 18;
-      const cleanRaw = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
-      let rawBalBigInt = 0n;
-      try {
-        rawBalBigInt = BigInt(cleanRaw);
-      } catch {
-        rawBalBigInt = 0n;
-      }
-      const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
-      const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
-
-      const existing = posMap.get(tokenAddress);
-      const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
-
-      if (existing) {
-        if (!bal.trusted) {
-          // Could not verify the real balance (RPC timeout, no indexer data) —
-          // leave the position untouched rather than closing it on a phantom zero.
-          console.warn(`[DEPOSIT] Skipped reconcile for ${tokenAddress} (user ${userId}): balance unverifiable`);
-        } else if (isDustOrZero) {
-          // User sold or no longer holds the token — close the position
-          await updatePosition({
-            position_id: existing.id,
-            status: 'closed',
-            closed_at: new Date(),
+        } else if (!isDustOrZero) {
+          const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
+          const newPos = await createPosition({
+            user_id: userId,
+            token_address: tokenAddress,
+            quantity_held: rawBal,
+            avg_entry_price: entryPrice,
           });
-          console.log(`[DEPOSIT] Closed phantom/sold position for ${tokenAddress} (user ${userId})`);
-        } else {
-          const updates: any = { position_id: existing.id };
-          let hasUpdates = false;
 
-          if (existing.quantity_held !== rawBal) {
-            updates.quantity_held = rawBal;
-            hasUpdates = true;
+          const db = await getDb();
+          await db.query(
+            'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
+            [newPos.id]
+          );
+
+          newDepositsCount++;
+          console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${entryPrice}`);
+
+          getUserById(userId).then(u => {
+            if (u?.telegram_id) {
+              notifyTokenDeposit(u.telegram_id, {
+                tokenSymbol: info?.symbol || 'TOKEN',
+                tokenName: info?.name || undefined,
+                amountFormatted: humanBalance >= 1_000_000 ? `${(humanBalance / 1_000_000).toFixed(2)}M` : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+                address: subaccountId,
+                chain: 'near',
+              }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+
+    // ── 4. Reconcile Sui Token Holdings & Discover External Deposits ──────────
+    if (user?.sui_address) {
+      try {
+        const suiClient = getSuiClient();
+        const allBalances = await suiClient.getAllBalances({ owner: user.sui_address }).catch(() => []);
+        
+        const suiIndexerBalances = new Map<string, string>();
+        const suiDiscoveredTokens = new Set<string>();
+
+        for (const b of allBalances) {
+          const ct = b.coinType;
+          if (
+            ct === '0x2::sui::SUI' ||
+            ct === '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI'
+          ) {
+            continue;
           }
+          suiIndexerBalances.set(ct, b.totalBalance);
+          suiDiscoveredTokens.add(ct);
+        }
 
-          // If entry price wasn't established yet, baseline it now that price is available
-          if ((!existing.avg_entry_price || parseFloat(existing.avg_entry_price) <= 0) && currentPrice > 0) {
-            updates.avg_entry_price = currentPrice.toString();
-            hasUpdates = true;
-          }
+        // Also ensure all existing open Sui positions are checked (even if balance is 0 on-chain now)
+        for (const p of suiPositions) {
+          suiDiscoveredTokens.add(p.token_address);
+        }
 
-          if (hasUpdates) {
-            await updatePosition(updates);
+        const suiPosMap = new Map(suiPositions.map(p => [p.token_address, p]));
+        const allSuiTokens = Array.from(suiDiscoveredTokens);
+
+        if (allSuiTokens.length > 0) {
+          const suiInfoResults = await Promise.allSettled(
+            allSuiTokens.map(t => getTokenInfo(t, false).catch(() => null))
+          );
+
+          for (let i = 0; i < allSuiTokens.length; i++) {
+            const tokenAddress = allSuiTokens[i];
+            const rawBal = suiIndexerBalances.get(tokenAddress) || '0';
+            const infoRes = suiInfoResults[i];
+            const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
+            const decimals = info?.decimals ?? 6;
+
+            let rawBalBigInt = 0n;
+            try {
+              rawBalBigInt = BigInt(rawBal);
+            } catch {
+              rawBalBigInt = 0n;
+            }
+
+            const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
+            const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
+            const existing = suiPosMap.get(tokenAddress);
+            const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
+
+            if (existing) {
+              if (isDustOrZero) {
+                await updatePosition({
+                  position_id: existing.id,
+                  status: 'closed',
+                  closed_at: new Date(),
+                });
+                console.log(`[DEPOSIT] Closed phantom/sold SUI position for ${tokenAddress} (user ${userId})`);
+              } else {
+                const updates: any = { position_id: existing.id };
+                let hasUpdates = false;
+
+                if (existing.quantity_held !== rawBal) {
+                  updates.quantity_held = rawBal;
+                  hasUpdates = true;
+                }
+                if ((!existing.avg_entry_price || parseFloat(existing.avg_entry_price) <= 0) && currentPrice > 0) {
+                  updates.avg_entry_price = currentPrice.toString();
+                  hasUpdates = true;
+                }
+                if (hasUpdates) {
+                  await updatePosition(updates);
+                }
+              }
+            } else if (!isDustOrZero) {
+              // External SUI token deposit detected!
+              const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
+              const newPos = await createPosition({
+                user_id: userId,
+                chain: 'sui',
+                token_address: tokenAddress,
+                quantity_held: rawBal,
+                avg_entry_price: entryPrice,
+              });
+
+              const db = await getDb();
+              await db.query(
+                'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
+                [newPos.id]
+              );
+
+              newDepositsCount++;
+              console.log(`[DEPOSIT] Tracked new external SUI deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${entryPrice}`);
+
+              if (user.telegram_id) {
+                notifyTokenDeposit(user.telegram_id, {
+                  tokenSymbol: info?.symbol || 'TOKEN',
+                  tokenName: info?.name || undefined,
+                  amountFormatted: humanBalance >= 1_000_000
+                    ? `${(humanBalance / 1_000_000).toFixed(2)}M`
+                    : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+                  address: user.sui_address,
+                  chain: 'sui',
+                }).catch(() => {});
+              }
+            }
           }
         }
-      } else if (!isDustOrZero) {
-        // Token detected in wallet!
-        // Start calculating PNL at this discovery point: lock current market price as baseline entry price
-        const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
-
-        const newPos = await createPosition({
-          user_id: userId,
-          token_address: tokenAddress,
-          quantity_held: rawBal,
-          avg_entry_price: entryPrice,
-        });
-
-        // Mark this position as an external deposit
-        const db = await getDb();
-        await db.query(
-          'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
-          [newPos.id]
-        );
-
-        newDepositsCount++;
-        console.log(`[DEPOSIT] Tracked new external deposit for user ${userId}: ${tokenAddress}, balance=${humanBalance.toFixed(4)}, entryPrice=${entryPrice}`);
-
-        // Send Telegram notification for token deposit
-        getUserById(userId).then(u => {
-          if (u?.telegram_id) {
-            notifyTokenDeposit(u.telegram_id, {
-              tokenSymbol: info?.symbol || 'TOKEN',
-              tokenName: info?.name || undefined,
-              amountFormatted: humanBalance >= 1_000_000 ? `${(humanBalance / 1_000_000).toFixed(2)}M` : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
-              address: subaccountId,
-              chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
-            }).catch(() => {});
-          }
-        }).catch(() => {});
+      } catch (suiErr: any) {
+        console.warn(`[DEPOSIT] Sui syncUserTokenDeposits error: ${suiErr?.message}`);
       }
     }
   } catch (err: any) {
@@ -2248,6 +2428,99 @@ export async function renameUserNearWallet(telegramId: number, walletId: string,
 }
 
 export async function deleteUserNearWallet(telegramId: number, walletId: string): Promise<{ success: boolean; fallbackWallet?: UserWalletRecord }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const result = await deleteUserWallet(user.id, walletId);
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+  return result;
+}
+
+// ── SUI Multi-Wallet Management ─────────────────────────────────────────────
+
+export const MAX_SUI_WALLETS_PER_USER = 5;
+
+/**
+ * Imports an external SUI wallet into RacerBot for a user.
+ * Supports Bech32 (suiprivkey1...), hex, base64, or base58 keys.
+ */
+export async function importSuiWallet(
+  telegramId: number,
+  privateKeyInput: string,
+  walletName: string
+): Promise<{ wallet: UserWalletRecord; address: string }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('User not found. Run /start first.');
+  }
+
+  const existingWallets = await getUserWallets(user.id, 'sui');
+  if (existingWallets.length >= MAX_SUI_WALLETS_PER_USER) {
+    throw new Error(`You have reached the maximum of ${MAX_SUI_WALLETS_PER_USER} SUI wallets.`);
+  }
+
+  // 1. Restore keypair from input
+  const keypair = restoreSuiKeypairFromSecret(privateKeyInput);
+  const address = keypair.toSuiAddress();
+  const secretKey = keypair.getSecretKey();
+
+  // 2. Prevent duplicate import of the exact same address
+  const duplicate = existingWallets.find((w) => w.address.toLowerCase() === address.toLowerCase());
+  if (duplicate) {
+    throw new Error(`This SUI wallet address is already added as "${duplicate.name}".`);
+  }
+
+  // 3. Name the wallet
+  const cleanName = walletName.trim() || `Wallet ${existingWallets.length + 1}`;
+  const encryptedKey = encrypt(secretKey, MASTER_KEY);
+
+  // 4. Create in DB and set active
+  const wallet = await createUserWallet({
+    userId: user.id,
+    chain: 'sui',
+    address,
+    name: cleanName,
+    encryptedPrivateKey: encryptedKey,
+    isImported: true,
+    isActive: true,
+  });
+
+  // Invalidate balance caches
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+
+  return {
+    wallet,
+    address,
+  };
+}
+
+export async function listUserSuiWallets(telegramId: number): Promise<UserWalletRecord[]> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  return getUserWallets(user.id, 'sui');
+}
+
+export async function switchActiveSuiWallet(telegramId: number, walletId: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const wallet = await setActiveWallet(user.id, 'sui', walletId);
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+  return wallet;
+}
+
+export async function renameUserSuiWallet(telegramId: number, walletId: string, newName: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed.length > 30) {
+    throw new Error('Wallet name must be between 1 and 30 characters.');
+  }
+  return renameUserWallet(user.id, walletId, trimmed);
+}
+
+export async function deleteUserSuiWallet(telegramId: number, walletId: string): Promise<{ success: boolean; fallbackWallet?: UserWalletRecord }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('User not found. Run /start first.');
   const result = await deleteUserWallet(user.id, walletId);
