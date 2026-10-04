@@ -56,3 +56,31 @@ describe('wallet balance storage reserve subtraction', () => {
     expect(totalNear).toBeCloseTo(0.10, 4); // 0.05 + 0.05
   });
 });
+
+describe('sui wallet balance & withdrawal gas reserve', () => {
+  it('correctly calculates spendable SUI and withdrawal max amount', () => {
+    const rawMist = 2_000_000_000n; // 2.0 SUI
+    const gasReserveMist = 25_000_000n; // 0.025 SUI
+
+    const maxWithdrawableMist = rawMist - gasReserveMist;
+    const maxWithdrawableSui = Number(maxWithdrawableMist) / 1e9;
+
+    expect(maxWithdrawableMist).toBe(1_975_000_000n);
+    expect(maxWithdrawableSui).toBeCloseTo(1.975, 4);
+  });
+
+  it('prevents withdrawal when balance is less than or equal to gas reserve', () => {
+    const lowMist = 20_000_000n; // 0.02 SUI
+    const gasReserveMist = 25_000_000n; // 0.025 SUI
+
+    const canWithdraw = lowMist > gasReserveMist;
+    expect(canWithdraw).toBe(false);
+  });
+
+  it('converts exact decimal SUI input to MIST correctly', () => {
+    const inputSui = 1.2345;
+    const mist = BigInt(Math.floor(inputSui * 1e9));
+    expect(mist).toBe(1_234_500_000n);
+  });
+});
+

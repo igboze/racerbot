@@ -5,6 +5,8 @@ import {
   createLogger,
   getNear,
   isTradableVenue,
+  getSuiPumpCurveState,
+  getSuiRouterQuote,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -43,30 +45,57 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
     return;
   }
 
+  const isSui = tokenCache.chain === 'sui' || tokenCache.venue === 'suipump' || order.token_address.includes('::');
   const venueRaw = tokenCache.venue as string | undefined;
-  if (!isTradableVenue(venueRaw)) {
+  if (!isSui && !isTradableVenue(venueRaw)) {
     await failDcaOrderTick(order.id, `Non-tradeable venue: ${venueRaw ?? 'unknown'}`);
     return;
   }
-  const venue = venueRaw!;
+  const venue = venueRaw || (isSui ? 'suipump' : 'ref');
 
   // -- Price guard (optional) --
   if (order.min_price !== null || order.max_price !== null) {
-    const spot = await near.getVenueSpotPrice(venue, order.token_address, tokenCache.decimals ?? 18).catch(() => null);
-    if (spot) {
-      if (order.max_price !== null && order.side === 'buy' && spot.price > order.max_price) {
+    let spotPrice: number | null = null;
+    if (isSui) {
+      const curve = await getSuiPumpCurveState(order.token_address).catch(() => null);
+      if (curve && curve.lastPriceSui > 0) {
+        spotPrice = curve.lastPriceSui;
+      } else {
+        const routerQuote = await getSuiRouterQuote({
+          coinInType: '0x2::sui::SUI',
+          coinOutType: order.token_address,
+          amountIn: 1_000_000_000n,
+          includeFee: false,
+        }).catch(() => null);
+        if (routerQuote) {
+          const decimals = tokenCache.decimals ?? 9;
+          if (routerQuote.spotPrice > 0) {
+            spotPrice = routerQuote.spotPrice;
+          } else if (routerQuote.expectedAmountOut > 0n) {
+            const inHuman = Number(routerQuote.amountIn) / 1e9;
+            const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
+            if (outHuman > 0) spotPrice = inHuman / outHuman;
+          }
+        }
+      }
+    } else {
+      const spot = await near.getVenueSpotPrice(venue as any, order.token_address, tokenCache.decimals ?? 18).catch(() => null);
+      if (spot) spotPrice = spot.price;
+    }
+
+    if (spotPrice !== null && spotPrice > 0) {
+      if (order.max_price !== null && order.side === 'buy' && spotPrice > order.max_price) {
         logger.info('DCA buy skipped: price above max_price guard', {
-          orderId: order.id, price: spot.price, maxPrice: order.max_price,
+          orderId: order.id, price: spotPrice, maxPrice: order.max_price,
         });
-        // Advance timer without counting as an executed order
-        await failDcaOrderTick(order.id, `Price guard: ${spot.price.toFixed(8)} > max ${order.max_price}`);
+        await failDcaOrderTick(order.id, `Price guard: ${spotPrice.toFixed(8)} > max ${order.max_price}`);
         return;
       }
-      if (order.min_price !== null && order.side === 'sell' && spot.price < order.min_price) {
+      if (order.min_price !== null && order.side === 'sell' && spotPrice < order.min_price) {
         logger.info('DCA sell skipped: price below min_price guard', {
-          orderId: order.id, price: spot.price, minPrice: order.min_price,
+          orderId: order.id, price: spotPrice, minPrice: order.min_price,
         });
-        await failDcaOrderTick(order.id, `Price guard: ${spot.price.toFixed(8)} < min ${order.min_price}`);
+        await failDcaOrderTick(order.id, `Price guard: ${spotPrice.toFixed(8)} < min ${order.min_price}`);
         return;
       }
     }
@@ -181,9 +210,10 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
   const totalOrdersDisplay = order.total_orders === 0 ? '∞' : order.total_orders.toString();
   const progressBar = buildProgressBar(updated.executed_orders, order.total_orders);
   const sideLabel = order.side === 'buy' ? 'Accumulating 🟢' : 'De-Risking 🔴';
+  const nativeSymbol = isSui ? 'SUI' : 'NEAR';
   const amountLabel = order.side === 'buy'
-    ? `${order.amount_per_order.toFixed(2)} NEAR`
-    : `${formatTokenAmount(order.amount_per_order, tokenCache.decimals ?? 18)} ${tokenSymbol}`;
+    ? `${order.amount_per_order.toFixed(isSui ? 3 : 2)} ${nativeSymbol}`
+    : `${formatTokenAmount(order.amount_per_order, tokenCache.decimals ?? (isSui ? 9 : 18))} ${tokenSymbol}`;
 
   let notifyMsg =
     `🔁 *DCA Order Filled (${updated.executed_orders}/${totalOrdersDisplay})*\n\n` +

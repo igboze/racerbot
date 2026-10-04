@@ -1,7 +1,9 @@
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Transaction } from '@mysten/sui/transactions';
 import { Aftermath } from 'aftermath-ts-sdk';
+import bs58 from 'bs58';
 import { encrypt, decrypt } from './crypto.js';
 
 // ── Sui Constants ────────────────────────────────────────────────────────────
@@ -82,11 +84,58 @@ export function generateSuiWallet(masterKey: string): GeneratedSuiWallet {
 }
 
 /**
+ * Restores an Ed25519Keypair from any valid Sui private key string format:
+ * - Bech32 (e.g. suiprivkey1...)
+ * - Hex (64 or 128 characters)
+ * - Base64
+ * - Base58
+ */
+export function restoreSuiKeypairFromSecret(rawSecret: string): Ed25519Keypair {
+  const clean = rawSecret.trim();
+
+  // 1. Sui standard Bech32 format
+  if (clean.startsWith('suiprivkey')) {
+    const { secretKey } = decodeSuiPrivateKey(clean);
+    return Ed25519Keypair.fromSecretKey(secretKey);
+  }
+
+  // 2. Hex format (0x prefixed or raw hex, 32 or 64 bytes)
+  const hexPart = clean.startsWith('0x') ? clean.slice(2) : clean;
+  if (/^[0-9a-fA-F]{64}$/.test(hexPart) || /^[0-9a-fA-F]{128}$/.test(hexPart)) {
+    const raw32 = Buffer.from(hexPart.slice(0, 64), 'hex');
+    return Ed25519Keypair.fromSecretKey(raw32);
+  }
+
+  // 3. Base64 format
+  try {
+    const b64 = Buffer.from(clean, 'base64');
+    if (b64.length === 32 || b64.length === 64) {
+      return Ed25519Keypair.fromSecretKey(b64.subarray(0, 32));
+    }
+  } catch {}
+
+  // 4. Base58 format
+  try {
+    const b58 = bs58.decode(clean);
+    if (b58.length === 32 || b58.length === 64) {
+      return Ed25519Keypair.fromSecretKey(b58.subarray(0, 32));
+    }
+  } catch {}
+
+  // 5. Direct secret key string fallback
+  try {
+    return Ed25519Keypair.fromSecretKey(clean);
+  } catch {}
+
+  throw new Error('Invalid Sui private key format. Please provide a suiprivkey1... string, 32-byte hex, or base58 key.');
+}
+
+/**
  * Restores an Ed25519Keypair from an encrypted private key.
  */
 export function restoreSuiKeypair(encryptedPrivateKey: string, masterKey: string): Ed25519Keypair {
   const decryptedSecret = decrypt(encryptedPrivateKey, masterKey);
-  return Ed25519Keypair.fromSecretKey(decryptedSecret);
+  return restoreSuiKeypairFromSecret(decryptedSecret);
 }
 
 /**
@@ -207,8 +256,7 @@ export async function getSuiTokenBalance(
   address: string,
   coinType: string
 ): Promise<SuiTokenBalanceResult> {
-  const client = getSuiClient();
-  try {
+  const fetchBalance = async (client: SuiJsonRpcClient) => {
     const [coinsRes, meta] = await Promise.all([
       client.getCoins({ owner: address, coinType }),
       getSuiTokenMetadata(coinType),
@@ -228,8 +276,17 @@ export async function getSuiTokenBalance(
       formatted: uiAmount.toLocaleString('en-US', { maximumFractionDigits: 4 }),
       coinObjectIds,
     };
+  };
+
+  try {
+    return await fetchBalance(getSuiClient());
   } catch (err: any) {
-    throw new Error(`Failed to fetch Sui token balance for ${coinType}: ${err.message}`);
+    try {
+      const fallbackClient = rotateSuiRpc();
+      return await fetchBalance(fallbackClient);
+    } catch (e2: any) {
+      throw new Error(`Failed to fetch Sui token balance for ${coinType}: ${err.message}`);
+    }
   }
 }
 
@@ -417,6 +474,7 @@ export interface BuildSuiPumpBuyParams {
   tokenType: string;
   packageId?: string;
   suiAmountMist: bigint;
+  minTokensOut?: bigint;
   slippagePct?: number;
   treasuryAddress?: string;
   referrerAddress?: string | null;
@@ -430,7 +488,17 @@ export interface BuildSuiPumpBuyParams {
  * 4. Transfers output token coins and refund SUI change to the user.
  */
 export function buildSuiPumpBuyTransaction(params: BuildSuiPumpBuyParams): { tx: Transaction; feeMist: bigint; swapMist: bigint } {
-  const { userAddress, curveId, tokenType, packageId, suiAmountMist, slippagePct = 2, treasuryAddress = DEFAULT_SUI_TREASURY_ADDRESS, referrerAddress } = params;
+  const {
+    userAddress,
+    curveId,
+    tokenType,
+    packageId,
+    suiAmountMist,
+    minTokensOut,
+    slippagePct = 2,
+    treasuryAddress = DEFAULT_SUI_TREASURY_ADDRESS,
+    referrerAddress,
+  } = params;
 
   if (suiAmountMist <= 0n) {
     throw new Error('SUI amount must be greater than 0');
@@ -461,7 +529,7 @@ export function buildSuiPumpBuyTransaction(params: BuildSuiPumpBuyParams): { tx:
     : tx.pure.option('address', null);
 
   // Min token out computation with slippage protection
-  const minAmountOut = 1n; // Conservative min out (or calculated via curve math)
+  const minAmountOut = (minTokensOut !== undefined && minTokensOut > 0n) ? minTokensOut : 1n;
 
   // 4. MoveCall: bonding_curve::buy<tokenType>(curve, swapCoin, minAmountOut, referrer, priceConfig, clock)
   const [tokenOut, refundSui] = tx.moveCall({
@@ -588,19 +656,28 @@ export interface SuiRouterQuoteResult {
 
 /**
  * Gets the best swap quote and trade route across all Sui DEXes.
+ * Optionally configures native 1.5% platform fee via Aftermath externalFee.
  */
 export async function getSuiRouterQuote(params: {
   coinInType: string;
   coinOutType: string;
   amountIn: bigint;
+  treasuryAddress?: string;
+  includeFee?: boolean;
 }): Promise<SuiRouterQuoteResult | null> {
   try {
     const af = await Aftermath.create({ network: 'MAINNET' });
     const router = af.Router();
+    const externalFee = params.includeFee !== false ? {
+      recipient: params.treasuryAddress || DEFAULT_SUI_TREASURY_ADDRESS,
+      feePercentage: 0.015, // 1.5% platform fee
+    } : undefined;
+
     const completeRoute = await router.getCompleteTradeRouteGivenAmountIn({
       coinInType: params.coinInType,
       coinOutType: params.coinOutType,
       coinInAmount: params.amountIn,
+      externalFee,
     });
 
     if (!completeRoute || !completeRoute.coinOut?.amount) {
@@ -653,15 +730,13 @@ export interface ExecuteSuiTxResult {
 }
 
 /**
- * Signs and submits a PTB to Sui Mainnet.
+ * Signs and submits a PTB to Sui Mainnet with automatic RPC failover.
  */
 export async function executeSuiTransaction(
   tx: Transaction,
   keypair: Ed25519Keypair
 ): Promise<ExecuteSuiTxResult> {
-  const client = getSuiClient();
-
-  try {
+  const submitTx = async (client: SuiJsonRpcClient) => {
     const result = await client.signAndExecuteTransaction({
       signer: keypair,
       transaction: tx,
@@ -681,7 +756,7 @@ export async function executeSuiTransaction(
     if (status === 'failure') {
       return {
         digest: result.digest,
-        status: 'failure',
+        status: 'failure' as const,
         gasUsedMist: netGas,
         errorMessage: error || 'Transaction failed on-chain',
       };
@@ -689,10 +764,19 @@ export async function executeSuiTransaction(
 
     return {
       digest: result.digest,
-      status: 'success',
+      status: 'success' as const,
       gasUsedMist: netGas,
     };
+  };
+
+  try {
+    return await submitTx(getSuiClient());
   } catch (err: any) {
-    throw new Error(`Sui transaction execution failed: ${err.message}`);
+    try {
+      const fallbackClient = rotateSuiRpc();
+      return await submitTx(fallbackClient);
+    } catch (e2: any) {
+      throw new Error(`Sui transaction execution failed: ${err.message}`);
+    }
   }
 }

@@ -504,21 +504,20 @@ export class SwapExecutor {
       throw new Error(`Cannot execute trade: ${err.message}`);
     }
 
-    const warm = warmKeys.get(user_id);
-    if (!warm) {
-      // Attempt to load from DB (handles edge case where key wasn't pre-warmed)
-      const user = await getUserById(user_id);
-      if (!user) throw new Error(`User ${user_id} not found`);
+    const user = await getUserById(user_id);
+    if (!user) throw new Error(`User ${user_id} not found`);
+
+    let warm = warmKeys.get(user_id);
+    if (!warm || warm.subaccountId !== user.subaccount_id) {
       await addUserKey(user_id, user.subaccount_id, user.scoped_key_encrypted);
-      return this.executeInner(event, timings, onProgress); // retry with warm key
+      warm = warmKeys.get(user_id);
+      if (!warm) throw new Error(`Failed to load trading key for user ${user_id}`);
     }
 
     const { subaccountId } = warm;
 
     // Resolve the user's slippage preference (event field wins, then user record).
-    const userSlippage = event.slippage_pct
-      ?? (await getUserById(user_id).catch(() => null))?.slippage_pct
-      ?? 2;
+    const userSlippage = event.slippage_pct ?? user.slippage_pct ?? 2;
 
     // Pre-flight balance check: verify the account has sufficient native balance before burning gas or broadcasting
     const isBuyPath = token_in === 'wrap.near' || token_in === 'near';

@@ -137,6 +137,7 @@ export {
   rotateSuiRpc,
   generateSuiWallet,
   restoreSuiKeypair,
+  restoreSuiKeypairFromSecret,
   isValidSuiAddress,
   normalizeSuiAddress,
   getShortTokenKey,
