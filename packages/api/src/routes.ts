@@ -2913,7 +2913,7 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = position.token_address;
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
@@ -3006,10 +3006,10 @@ export function setupRoutes(bot: Telegraf): void {
         console.error('[SELL_INITIAL] Error:', err);
         await ctx.reply('Error processing sell. Please try again.').catch(() => {});
       } finally {
-        releaseInFlight(guardKey);
+        await releaseInFlight(guardKey);
       }
-    })().catch((err: any) => {
-      releaseInFlight(guardKey);
+    })().catch(async (err: any) => {
+      await releaseInFlight(guardKey);
       console.error('[SELL_INITIAL] Unhandled detached error:', err?.message || err);
       ctx.reply('Error processing sell. Please try again.').catch(() => {});
     });
@@ -3572,7 +3572,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     // In-flight guard: reject a duplicate tap while a trade for this token is running.
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       console.warn(`[BUY_FIXED] Duplicate tap rejected: guardKey=${guardKey}`);
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
@@ -3597,12 +3597,12 @@ export function setupRoutes(bot: Telegraf): void {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
       } finally {
-        releaseInFlight(guardKey);
+        await releaseInFlight(guardKey);
       }
-    })().catch((err: any) => {
+    })().catch(async (err: any) => {
       // Last-resort net: the body above always sends a final message; if it
       // itself crashed (e.g. Telegram API down), still release the guard.
-      releaseInFlight(guardKey);
+      await releaseInFlight(guardKey);
       console.error('[BUY] Unhandled detached buy error:', err?.message || err);
     });
   });
@@ -3619,7 +3619,7 @@ export function setupRoutes(bot: Telegraf): void {
     console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       console.warn(`[BUY_PCT] Duplicate tap rejected: guardKey=${guardKey}`);
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
@@ -3644,10 +3644,10 @@ export function setupRoutes(bot: Telegraf): void {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
       } finally {
-        releaseInFlight(guardKey);
+        await releaseInFlight(guardKey);
       }
-    })().catch((err: any) => {
-      releaseInFlight(guardKey);
+    })().catch(async (err: any) => {
+      await releaseInFlight(guardKey);
       console.error('[BUY] Unhandled detached pct-buy error:', err?.message || err);
     });
   });
@@ -3700,7 +3700,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
@@ -3720,10 +3720,10 @@ export function setupRoutes(bot: Telegraf): void {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
         await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
       } finally {
-        releaseInFlight(guardKey);
+        await releaseInFlight(guardKey);
       }
-    })().catch((err: any) => {
-      releaseInFlight(guardKey);
+    })().catch(async (err: any) => {
+      await releaseInFlight(guardKey);
       console.error('[BUY] Unhandled detached /buy error:', err?.message || err);
     });
   });
@@ -3802,7 +3802,7 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = position.token_address;
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
       return;
     }
@@ -3822,7 +3822,7 @@ export function setupRoutes(bot: Telegraf): void {
         result = { success: false, reason: err.message || 'Swap execution failed' };
       } finally {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        releaseInFlight(guardKey);
+        await releaseInFlight(guardKey);
       }
 
       if (result.success) {
@@ -3830,8 +3830,8 @@ export function setupRoutes(bot: Telegraf): void {
       } else {
         await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
       }
-    })().catch((err: any) => {
-      releaseInFlight(guardKey);
+    })().catch(async (err: any) => {
+      await releaseInFlight(guardKey);
       console.error('[SELL] Unhandled detached sell error:', err?.message || err);
       ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => {});
     });
@@ -4229,7 +4229,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('referral_claim', async (ctx) => {
     const telegramId = ctx.from!.id;
     const guardKey = `referral_claim:${telegramId}`;
-    if (!tryAcquireInFlight(guardKey)) {
+    if (!(await tryAcquireInFlight(guardKey))) {
       await ctx.answerCbQuery('Claim already in progress — please wait.').catch(() => {});
       return;
     }
@@ -4279,7 +4279,7 @@ export function setupRoutes(bot: Telegraf): void {
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     } finally {
-      releaseInFlight(guardKey);
+      await releaseInFlight(guardKey);
     }
   });
 
@@ -4370,7 +4370,7 @@ export function setupRoutes(bot: Telegraf): void {
         const isSui = isSuiToken(tokenAddress);
         const unit = isSui ? 'SUI' : 'NEAR';
         const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-        if (!tryAcquireInFlight(guardKey)) {
+        if (!(await tryAcquireInFlight(guardKey))) {
           await ctx.reply('⏳ A trade for this token is already in progress.');
           return;
         }
@@ -4395,10 +4395,10 @@ export function setupRoutes(bot: Telegraf): void {
               console.error(`[BUY] Failed to send error message for ${tokenAddress}:`, err?.message || err);
             }
           } finally {
-            releaseInFlight(guardKey);
+            await releaseInFlight(guardKey);
           }
-        })().catch((err: any) => {
-          releaseInFlight(guardKey);
+        })().catch(async (err: any) => {
+          await releaseInFlight(guardKey);
           console.error('[BUY] Unhandled detached custom-buy error:', err?.message || err);
         });
         return; // Always return after handling custom buy
@@ -4437,7 +4437,7 @@ export function setupRoutes(bot: Telegraf): void {
         const percentage = Math.min(100, Math.max(0.1, (tokensToSell / totalHumanHeld) * 100));
 
         const guardKey = inFlightKey(telegramId, livePosition.token_address, 'sell');
-        if (!tryAcquireInFlight(guardKey)) {
+        if (!(await tryAcquireInFlight(guardKey))) {
           await ctx.reply('⏳ A trade for this token is already in progress.');
           return;
         }
@@ -4466,10 +4466,10 @@ export function setupRoutes(bot: Telegraf): void {
             console.error('[SELL_CUSTOM] Error:', err);
             await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
           } finally {
-            releaseInFlight(guardKey);
+            await releaseInFlight(guardKey);
           }
-        })().catch((err: any) => {
-          releaseInFlight(guardKey);
+        })().catch(async (err: any) => {
+          await releaseInFlight(guardKey);
           console.error('[SELL_CUSTOM] Unhandled detached error:', err?.message || err);
         });
         return;

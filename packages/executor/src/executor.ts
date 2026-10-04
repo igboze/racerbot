@@ -87,7 +87,11 @@ export async function warmAllKeys(): Promise<void> {
       console.error(`[EXECUTOR] Failed to warm key for user ${row.id}:`, (err as Error).message);
     }
   }
-  console.log(`[EXECUTOR] Pre-warmed ${loaded} user keys`);
+  if (result.rows.length > 0 && loaded === 0) {
+    console.error(`[EXECUTOR] 🚨 CRITICAL: 0 of ${result.rows.length} user keys could be decrypted! KEY_ENCRYPTION_MASTER_KEY is likely incorrect or mismatched with the database.`);
+  } else {
+    console.log(`[EXECUTOR] Pre-warmed ${loaded} user keys`);
+  }
 }
 
 /** Pre-warm storage deposit on NEAR for all tokens with active snipe orders. */

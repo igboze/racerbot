@@ -468,10 +468,44 @@ export async function createPosition(params: CreatePositionParams): Promise<Posi
   const db = await getDb();
   const id = generateId();
   const chain = params.chain || 'near';
-  await db.query(
-    'INSERT INTO positions (id, user_id, chain, token_address, quantity_held, avg_entry_price, status, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
-    [id, params.user_id, chain, params.token_address, params.quantity_held, params.avg_entry_price, 'open']
-  );
+
+  // Use INSERT ... ON CONFLICT DO NOTHING so that two concurrent buys for the
+  // same (user, token, chain) never create duplicate open positions.
+  // The partial unique index idx_positions_unique_open enforces exactly one open
+  // row per user+token+chain. On conflict we fetch and return the existing row.
+  try {
+    const result = await db.query(
+      `INSERT INTO positions (id, user_id, chain, token_address, quantity_held, avg_entry_price, status, opened_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'open', NOW())
+       ON CONFLICT (user_id, token_address, chain) WHERE status = 'open'
+       DO NOTHING
+       RETURNING *`,
+      [id, params.user_id, chain, params.token_address, params.quantity_held, params.avg_entry_price]
+    );
+
+    if (result.rows.length > 0) {
+      return rowToPosition(result.rows[0]);
+    }
+
+    // Another concurrent insert won the race — fetch and return the canonical row.
+    const existing = await db.query(
+      `SELECT * FROM positions WHERE user_id = $1 AND token_address = $2 AND chain = $3 AND status = 'open' LIMIT 1`,
+      [params.user_id, params.token_address, chain]
+    );
+    if (existing.rows.length > 0) {
+      return rowToPosition(existing.rows[0]);
+    }
+  } catch (err: any) {
+    if (err?.code === '42P10' || err?.message?.includes('no unique or exclusion constraint')) {
+      await db.query(
+        'INSERT INTO positions (id, user_id, chain, token_address, quantity_held, avg_entry_price, status, opened_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+        [id, params.user_id, chain, params.token_address, params.quantity_held, params.avg_entry_price, 'open']
+      );
+      return { ...params, id, chain, status: 'open', opened_at: new Date(), closed_at: null };
+    }
+    throw err;
+  }
+
   return { ...params, id, chain, status: 'open', opened_at: new Date(), closed_at: null };
 }
 
@@ -1110,11 +1144,11 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
-  // SUI fills (fee_paid stored in human SUI units)
+  // SUI fills (fee_paid stored in human SUI units; safeguard against raw MIST >= 100_000)
   const sui = await db.query(
     `SELECT
-       COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
-       COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
+       COALESCE(SUM(CASE WHEN fee_paid::numeric >= 100000 THEN fee_paid::numeric / 1e9 ELSE fee_paid::numeric END) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
+       COALESCE(SUM(CASE WHEN fee_paid::numeric >= 100000 THEN fee_paid::numeric / 1e9 ELSE fee_paid::numeric END), 0)::float AS fees_total,
        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
        COUNT(*)::int AS trades_total
      FROM fills
