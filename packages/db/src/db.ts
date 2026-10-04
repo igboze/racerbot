@@ -2199,4 +2199,178 @@ export async function getCompetitionLeaderboard(
     console.error('[COMPETITION] Leaderboard query error:', err.message);
     return [];
   }
+}
+
+// ── Telegram Group Buy Alerts ────────────────────────────────────────────────
+
+export interface GroupBuyAlertRecord {
+  id: string;
+  chat_id: string;
+  chat_title?: string;
+  admin_id: string;
+  token_address: string;
+  chain: 'near' | 'sui';
+  min_buy_usd: number;
+  emoji: string;
+  emoji_step_usd: number;
+  media_file_id?: string;
+  media_type: 'animation' | 'photo' | 'default' | 'none';
+  whale_threshold_usd: number;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+function rowToGroupBuyAlert(row: any): GroupBuyAlertRecord {
+  return {
+    id: row.id,
+    chat_id: row.chat_id.toString(),
+    chat_title: row.chat_title || undefined,
+    admin_id: row.admin_id.toString(),
+    token_address: row.token_address,
+    chain: (row.chain as any) || 'near',
+    min_buy_usd: parseFloat(row.min_buy_usd || '5.00'),
+    emoji: row.emoji || '🏎️',
+    emoji_step_usd: parseFloat(row.emoji_step_usd || '5.00'),
+    media_file_id: row.media_file_id || undefined,
+    media_type: (row.media_type as any) || 'default',
+    whale_threshold_usd: parseFloat(row.whale_threshold_usd || '200.00'),
+    is_active: Boolean(row.is_active),
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
+export async function upsertGroupBuyAlert(params: {
+  chatId: number | string;
+  chatTitle?: string;
+  adminId: number | string;
+  tokenAddress: string;
+  chain?: 'near' | 'sui';
+  minBuyUsd?: number;
+  emoji?: string;
+  emojiStepUsd?: number;
+  mediaFileId?: string;
+  mediaType?: 'animation' | 'photo' | 'default' | 'none';
+  whaleThresholdUsd?: number;
+}): Promise<GroupBuyAlertRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO group_buy_alerts (
+       chat_id, chat_title, admin_id, token_address, chain,
+       min_buy_usd, emoji, emoji_step_usd, media_file_id, media_type,
+       whale_threshold_usd, is_active, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, NOW())
+     ON CONFLICT (chat_id, token_address) DO UPDATE SET
+       chat_title = COALESCE(EXCLUDED.chat_title, group_buy_alerts.chat_title),
+       admin_id = EXCLUDED.admin_id,
+       chain = EXCLUDED.chain,
+       min_buy_usd = COALESCE(EXCLUDED.min_buy_usd, group_buy_alerts.min_buy_usd),
+       emoji = COALESCE(EXCLUDED.emoji, group_buy_alerts.emoji),
+       emoji_step_usd = COALESCE(EXCLUDED.emoji_step_usd, group_buy_alerts.emoji_step_usd),
+       media_file_id = COALESCE(EXCLUDED.media_file_id, group_buy_alerts.media_file_id),
+       media_type = COALESCE(EXCLUDED.media_type, group_buy_alerts.media_type),
+       whale_threshold_usd = COALESCE(EXCLUDED.whale_threshold_usd, group_buy_alerts.whale_threshold_usd),
+       is_active = TRUE,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      params.chatId.toString(),
+      params.chatTitle || null,
+      params.adminId.toString(),
+      params.tokenAddress,
+      params.chain || 'near',
+      params.minBuyUsd ?? 5.0,
+      params.emoji || '🏎️',
+      params.emojiStepUsd ?? 5.0,
+      params.mediaFileId || null,
+      params.mediaType || 'default',
+      params.whaleThresholdUsd ?? 200.0,
+    ]
+  );
+  return rowToGroupBuyAlert(res.rows[0]);
+}
+
+export async function getGroupBuyAlert(chatId: number | string, tokenAddress: string): Promise<GroupBuyAlertRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM group_buy_alerts WHERE chat_id = $1 AND token_address = $2 LIMIT 1',
+    [chatId.toString(), tokenAddress]
+  );
+  return res.rows.length > 0 ? rowToGroupBuyAlert(res.rows[0]) : null;
+}
+
+export async function getGroupBuyAlertsByChat(chatId: number | string): Promise<GroupBuyAlertRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM group_buy_alerts WHERE chat_id = $1 ORDER BY created_at DESC',
+    [chatId.toString()]
+  );
+  return res.rows.map(rowToGroupBuyAlert);
+}
+
+export async function getGroupBuyAlertsByToken(tokenAddress: string): Promise<GroupBuyAlertRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM group_buy_alerts WHERE token_address = $1 AND is_active = TRUE',
+    [tokenAddress]
+  );
+  return res.rows.map(rowToGroupBuyAlert);
+}
+
+export async function updateGroupBuyAlert(id: string, updates: Partial<GroupBuyAlertRecord>): Promise<GroupBuyAlertRecord> {
+  const db = await getDb();
+  const sets: string[] = [];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (updates.min_buy_usd !== undefined) {
+    sets.push(`min_buy_usd = $${idx++}`);
+    values.push(updates.min_buy_usd);
+  }
+  if (updates.emoji !== undefined) {
+    sets.push(`emoji = $${idx++}`);
+    values.push(updates.emoji);
+  }
+  if (updates.emoji_step_usd !== undefined) {
+    sets.push(`emoji_step_usd = $${idx++}`);
+    values.push(updates.emoji_step_usd);
+  }
+  if (updates.media_file_id !== undefined) {
+    sets.push(`media_file_id = $${idx++}`);
+    values.push(updates.media_file_id);
+  }
+  if (updates.media_type !== undefined) {
+    sets.push(`media_type = $${idx++}`);
+    values.push(updates.media_type);
+  }
+  if (updates.whale_threshold_usd !== undefined) {
+    sets.push(`whale_threshold_usd = $${idx++}`);
+    values.push(updates.whale_threshold_usd);
+  }
+  if (updates.is_active !== undefined) {
+    sets.push(`is_active = $${idx++}`);
+    values.push(updates.is_active);
+  }
+
+  sets.push(`updated_at = NOW()`);
+  values.push(id);
+
+  const res = await db.query(
+    `UPDATE group_buy_alerts SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+    values
+  );
+  if (res.rows.length === 0) {
+    throw new Error('Group buy alert not found');
+  }
+  return rowToGroupBuyAlert(res.rows[0]);
+}
+
+export async function deleteGroupBuyAlert(chatId: number | string, tokenAddress: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.query(
+    'DELETE FROM group_buy_alerts WHERE chat_id = $1 AND token_address = $2',
+    [chatId.toString(), tokenAddress]
+  );
+  return (res.rowCount ?? 0) > 0;
 }

@@ -11,10 +11,12 @@ import {
   calculateMinOutAdj,
   parseMemeCookingId,
   getNearUsdPrice,
+  getSuiUsdPrice,
   checkTokenSafety,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
+  type BuyAlertEvent,
   type RedisClient,
   type MultiRpcNear,
 } from '@racerbot/shared';
@@ -480,6 +482,39 @@ export class SwapExecutor {
       timings.presign_ms = Date.now() - presignStart;
       timings.sign_ms = 0;
       timings.post_ms = 0;
+
+      // Broadcast buy alert if successful SUI buy
+      const isSuiBuy = event.token_in === 'sui' || event.token_in === '0x2::sui::SUI' || event.token_in === 'SUI';
+      if (res.success && isSuiBuy && res.txHash) {
+        try {
+          const suiUsdRate = await getSuiUsdPrice().catch(() => 2.0);
+          const suiSpent = res.suiSpent ?? 0;
+          const spentUsd = suiSpent * suiUsdRate;
+          const userRec = await getUserById(user_id);
+          const buyerAddress = userRec?.sui_address || user_id;
+          const tokenName = res.tokenName ?? event.token_out;
+          const tokenSymbol = res.tokenSymbol ?? 'TOKEN';
+
+          const buyAlert: BuyAlertEvent = {
+            type: 'buy_alert',
+            chain: 'sui',
+            token_address: event.token_out,
+            token_name: tokenName,
+            token_symbol: tokenSymbol,
+            buyer_address: buyerAddress,
+            spent_amount_native: `${suiSpent.toFixed(2)} SUI`,
+            spent_usd: Math.round(spentUsd * 100) / 100,
+            tokens_received: `${res.tokenQty ?? '0'} ${tokenSymbol}`,
+            price_usd: (res.priceSui ?? 0) * suiUsdRate,
+            tx_hash: res.txHash,
+            timestamp: Date.now(),
+          };
+          await (this.redisClient ?? redis).publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert));
+        } catch (alertErr: any) {
+          console.warn('[EXECUTOR] Failed to publish SUI buy alert:', alertErr?.message);
+        }
+      }
+
       return {
         txHash: res.txHash,
         success: res.success,
@@ -2436,6 +2471,35 @@ export class SwapExecutor {
           await awardPointsForTradeFill(userId, fillResult.fillId, txHash, qtyHumanPts * priceNear, new Date());
         } catch (err: any) {
           console.warn('[POINTS] Failed to award points for buy fill:', err.message);
+        }
+
+        // Broadcast buy alert for Telegram groups tracking this token
+        try {
+          const nearUsdRate = await getNearUsdPrice().catch(() => 4.5);
+          const spentUsd = nearSpent * nearUsdRate;
+          const userRec = await getUserById(userId);
+          const buyerAddress = userRec?.subaccount_id || userId;
+          const tokenName = (meta as any)?.name ?? tokenAddress;
+          const tokenSymbol = (meta as any)?.symbol ?? tokenAddress.slice(0, 8);
+          const tokensRecvHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+          const buyAlert: BuyAlertEvent = {
+            type: 'buy_alert',
+            chain: 'near',
+            token_address: tokenAddress,
+            token_name: tokenName,
+            token_symbol: tokenSymbol,
+            buyer_address: buyerAddress,
+            spent_amount_native: `${nearSpent.toFixed(2)} NEAR`,
+            spent_usd: Math.round(spentUsd * 100) / 100,
+            tokens_received: `${tokensRecvHuman} ${tokenSymbol}`,
+            price_usd: priceNear * nearUsdRate,
+            tx_hash: txHash,
+            timestamp: Date.now(),
+          };
+          await (this.redisClient ?? redis).publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert));
+        } catch (alertErr: any) {
+          console.warn('[EXECUTOR] Failed to publish NEAR buy alert:', alertErr?.message);
         }
 
         // Instant buy confirmation — use only data already computed above, no new RPC calls.

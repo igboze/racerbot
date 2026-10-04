@@ -94,6 +94,7 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
+import { handleBuyBotCommand, handleBuyAlertAction, handleBuyAlertMediaUpload } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -4696,6 +4697,39 @@ export function setupRoutes(bot: Telegraf): void {
     });
 
     await ctx.reply(`✅ Take profit set at +${pct}% for \`${tokenCA}\``, { parse_mode: 'Markdown' });
+  });
+
+  // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert) ─────────────────
+  bot.command(['track', 'buybot', 'buyalert'], handleBuyBotCommand);
+  bot.action(/^ba_/, handleBuyAlertAction);
+
+  // Group welcome when bot is added as administrator
+  bot.on('my_chat_member', async (ctx) => {
+    try {
+      const newStatus = ctx.myChatMember.new_chat_member.status;
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      if (isGroup && (newStatus === 'administrator' || newStatus === 'member')) {
+        await ctx.reply(
+          `🏎️ <b>RacerBot Activated!</b>\n\n` +
+          `Welcome to RacerBot — the lightning-fast trading & group buy alert bot.\n\n` +
+          `📢 <b>To start broadcasting live BUY alerts with 1-tap trading:</b>\n` +
+          `<code>/track &lt;token_contract_address&gt;</code>\n\n` +
+          `✨ <b>Group Perks:</b>\n` +
+          `• Live buy alerts with custom GIFs & emojis\n` +
+          `• 1-tap buy button on every alert\n` +
+          `• <b>Group Admins earn 5% fee share</b> on every community trade!`,
+          { parse_mode: 'HTML' }
+        );
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  // Listener for custom media banner uploads (animations, photos, documents)
+  bot.on(['animation', 'photo', 'document'], async (ctx, next) => {
+    const handled = await handleBuyAlertMediaUpload(ctx);
+    if (!handled) return next();
   });
 
   // ── Central Message Listener (Direct CA Pasting & Interactive Prompts) ────
