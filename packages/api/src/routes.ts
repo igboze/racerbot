@@ -94,7 +94,7 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
-import { handleBuyBotCommand, handleBuyAlertAction, handleBuyAlertMediaUpload } from './buyAlerts.js';
+import { handleBuyBotCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -1806,12 +1806,47 @@ export function setupRoutes(bot: Telegraf): void {
       const isCopyShare = rawPayload.startsWith('copy_');
       const isBuyParam = rawPayload.startsWith('buy_');
       const isTokenParam = rawPayload.startsWith('token_') || rawPayload.startsWith('tkn_');
+      const isBuyAlertCfg = rawPayload.startsWith('cfg_');
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined unless refCode was explicitly passed.
-      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam) ? undefined : (rawPayload || undefined));
+      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg) ? undefined : (rawPayload || undefined));
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
+
+      // 0. Buy Alert Group Settings Deep Link (/start cfg_<alert_id>)
+      if (isBuyAlertCfg && rawPayload) {
+        const alertId = rawPayload.slice(4);
+        try {
+          const db = await (await import('@racerbot/db')).getDb();
+          const res = await db.query('SELECT * FROM group_buy_alerts WHERE id = $1', [alertId]);
+          if (res.rows[0]) {
+            const row = res.rows[0];
+            const alertRec = {
+              id: row.id,
+              chat_id: row.chat_id.toString(),
+              chat_title: row.chat_title || undefined,
+              admin_id: row.admin_id.toString(),
+              token_address: row.token_address,
+              chain: row.chain || 'near',
+              min_buy_usd: parseFloat(row.min_buy_usd || '5.00'),
+              emoji: row.emoji || '🏎️',
+              emoji_step_usd: parseFloat(row.emoji_step_usd || '5.00'),
+              media_file_id: row.media_file_id || undefined,
+              media_type: row.media_type || 'default',
+              whale_threshold_usd: parseFloat(row.whale_threshold_usd || '200.00'),
+              is_active: Boolean(row.is_active),
+              created_at: new Date(row.created_at),
+              updated_at: new Date(row.updated_at),
+            };
+            const card = buildAlertSettingsCard(alertRec as any);
+            await ctx.reply(card.text, { parse_mode: 'HTML', ...card.keyboard });
+            return;
+          }
+        } catch (e: any) {
+          console.warn('[/start] Failed to load buy alert config:', e?.message);
+        }
+      }
 
       // 1. Quick Buy Deep Link (/start buy_token_near_1 or buy_token_near)
       if (isBuyParam && rawPayload) {

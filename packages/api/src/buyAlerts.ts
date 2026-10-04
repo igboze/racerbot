@@ -398,8 +398,47 @@ export async function handleBuyBotCommand(ctx: Context): Promise<void> {
         return;
       }
 
-      const card = buildAlertSettingsCard(existing[0]);
-      await ctx.reply(card.text, { parse_mode: 'HTML', ...card.keyboard });
+      const alert = existing[0];
+      const card = buildAlertSettingsCard(alert);
+      const dmConfigUrl = `https://t.me/${botUsername}?start=cfg_${alert.id}`;
+      const adminMention = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Admin');
+
+      let sentToDm = false;
+      if (ctx.from?.id && !isAnonymousAdmin) {
+        try {
+          await ctx.telegram.sendMessage(ctx.from.id, card.text, {
+            parse_mode: 'HTML',
+            ...card.keyboard,
+          });
+          sentToDm = true;
+        } catch {
+          // Admin has not started bot in DM yet
+        }
+      }
+
+      if (sentToDm) {
+        await ctx.reply(
+          `⚙️ <b>RacerBot Group Buy Alert Settings</b>\n\n` +
+          `📬 <i>${escapeHtml(adminMention)}, I've sent the settings & customization menu to your <b>private chat (DM)</b> to avoid cluttering this group!</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('⚙️ Open Settings in DM', dmConfigUrl)],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(
+          `⚙️ <b>RacerBot Group Buy Alert Settings</b>\n\n` +
+          `📬 <i>${escapeHtml(adminMention)}, tap below to open your DM with RacerBot and manage settings without cluttering this group:</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('⚙️ Configure in DM', dmConfigUrl)],
+            ]),
+          }
+        );
+      }
       return;
     }
 
@@ -413,13 +452,15 @@ export async function handleBuyBotCommand(ctx: Context): Promise<void> {
     const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
 
     // Fetch token info
+    let tokenInfo: any = null;
     try {
-      await getTokenInfo(tokenAddress);
+      tokenInfo = await getTokenInfo(tokenAddress);
     } catch (err: any) {
       console.warn(`[/track] Token verification notice for ${tokenAddress}: ${err?.message}`);
     }
 
     const adminId = ctx.from?.id ? ctx.from.id : ctx.chat!.id;
+    const adminMention = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Admin');
 
     const alert = await upsertGroupBuyAlert({
       chatId: ctx.chat!.id,
@@ -433,11 +474,50 @@ export async function handleBuyBotCommand(ctx: Context): Promise<void> {
       whaleThresholdUsd: 200.0,
     });
 
+    const sym = tokenInfo?.symbol || (isSui ? 'TOKEN' : tokenAddress.split('.')[0].toUpperCase());
     const card = buildAlertSettingsCard(alert);
-    await ctx.reply(
-      `✅ <b>RacerBot is now tracking buys for this group!</b>\n\n` + card.text,
-      { parse_mode: 'HTML', ...card.keyboard }
-    );
+    const dmConfigUrl = `https://t.me/${botUsername}?start=cfg_${alert.id}`;
+
+    let sentToDm = false;
+    if (ctx.from?.id && !isAnonymousAdmin) {
+      try {
+        await ctx.telegram.sendMessage(ctx.from.id, card.text, {
+          parse_mode: 'HTML',
+          ...card.keyboard,
+        });
+        sentToDm = true;
+      } catch {
+        // DM couldn't be sent directly (user hasn't initiated /start with bot in DM yet)
+      }
+    }
+
+    if (sentToDm) {
+      await ctx.reply(
+        `✅ <b>RacerBot Buy Alerts Activated!</b>\n\n` +
+        `🪙 Tracking: <b>$${escapeHtml(sym)}</b> (<code>${escapeHtml(tokenAddress)}</code>)\n` +
+        `⚡ Status: 🟢 <b>ACTIVE</b>\n\n` +
+        `📬 <i>${escapeHtml(adminMention)}, I've sent the setup & customization menu to your <b>private chat (DM)</b> so you can adjust minimum buys, emojis, whale alerts, and GIFs without cluttering this group!</i>`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('⚙️ Configure in DM', dmConfigUrl)],
+          ]),
+        }
+      );
+    } else {
+      await ctx.reply(
+        `✅ <b>RacerBot Buy Alerts Activated!</b>\n\n` +
+        `🪙 Tracking: <b>$${escapeHtml(sym)}</b> (<code>${escapeHtml(tokenAddress)}</code>)\n` +
+        `⚡ Status: 🟢 <b>ACTIVE</b>\n\n` +
+        `📬 <i>${escapeHtml(adminMention)}, tap below to open your DM with RacerBot and finish customizing minimum buys, emojis, GIFs, and whale alerts without cluttering this group!</i>`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('⚙️ Finish Setup in DM', dmConfigUrl)],
+          ]),
+        }
+      );
+    }
   } catch (err: any) {
     console.error('[/track] Error in handleBuyBotCommand:', err);
     await ctx.reply(`⚠️ Failed to configure buy alert: ${err?.message || 'internal error'}`).catch(() => {});
