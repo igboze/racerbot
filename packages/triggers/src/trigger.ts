@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, type SwapEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, type SwapEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -24,17 +24,49 @@ async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
     const cache = await getTokenCache(tokenAddress);
     if (cache?.chain === 'sui' || cache?.venue === 'suipump' || tokenAddress.includes('::')) {
-      const curve = await getSuiPumpCurveState(tokenAddress);
-      if (!curve || !(curve.lastPriceSui > 0)) return false;
-      const decimals = cache?.decimals ?? 6;
-      const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
-      const marketCap = supply > 0 ? curve.lastPriceSui * supply : curve.marketCapSui;
-      localPriceCache.set(tokenAddress, {
-        price: curve.lastPriceSui,
-        marketCap,
-        ts: Date.now(),
-      });
-      return true;
+      const curve = await getSuiPumpCurveState(tokenAddress).catch(() => null);
+      if (curve && curve.lastPriceSui > 0) {
+        const decimals = cache?.decimals ?? 6;
+        const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
+        const marketCap = supply > 0 ? curve.lastPriceSui * supply : curve.marketCapSui;
+        localPriceCache.set(tokenAddress, {
+          price: curve.lastPriceSui,
+          marketCap,
+          ts: Date.now(),
+        });
+        return true;
+      }
+
+      // Fallback: If not on SuiPump or graduated, query Aftermath DEX router quote
+      const routerQuote = await getSuiRouterQuote({
+        coinInType: '0x2::sui::SUI',
+        coinOutType: tokenAddress,
+        amountIn: 1_000_000_000n, // 1 SUI
+        includeFee: false,
+      }).catch(() => null);
+
+      if (routerQuote) {
+        const decimals = cache?.decimals ?? 9;
+        let priceSui = routerQuote.spotPrice;
+        if (!priceSui || priceSui <= 0) {
+          const inHuman = Number(routerQuote.amountIn) / 1e9;
+          const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
+          if (outHuman > 0) priceSui = inHuman / outHuman;
+        }
+
+        if (priceSui > 0) {
+          const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
+          const marketCap = supply > 0 ? priceSui * supply : 0;
+          localPriceCache.set(tokenAddress, {
+            price: priceSui,
+            marketCap,
+            ts: Date.now(),
+          });
+          return true;
+        }
+      }
+
+      return false;
     }
 
     const near = getNear();

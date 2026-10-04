@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MultiRpcNear } from './near.js';
 import { calculateMinAmountOut } from './utils.js';
 
@@ -105,6 +105,19 @@ describe('near: nearlytrade bonding-curve quotes', () => {
 describe('near: RPC duty split (FastNEAR main / QuickNode fallback)', () => {
   const FN = 'https://rpc.mainnet.fastnear.com';
   const QN = 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/abc123/';
+  const originalQn = process.env.QUICKNODE_ENDPOINT_URL;
+
+  beforeEach(() => {
+    delete process.env.QUICKNODE_ENDPOINT_URL;
+  });
+
+  afterEach(() => {
+    if (originalQn) {
+      process.env.QUICKNODE_ENDPOINT_URL = originalQn;
+    } else {
+      delete process.env.QUICKNODE_ENDPOINT_URL;
+    }
+  });
 
   it('orders read providers FastNEAR-first and trade providers FastNEAR-first', () => {
     const near = new MultiRpcNear([QN, FN]) as any;

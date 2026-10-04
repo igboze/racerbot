@@ -19,6 +19,7 @@ import {
 } from '@racerbot/shared';
 import {
   getUserById,
+  getActiveWallet,
   createFill,
   getOpenPositions,
   createPosition,
@@ -58,13 +59,17 @@ export async function executeSuiSwap(
     throw new Error(`User not found: ${user_id}`);
   }
 
-  if (!user.sui_address || !user.sui_private_key_enc) {
+  const activeSuiWallet = await getActiveWallet(user.id, 'sui').catch(() => null);
+  const suiAddress = activeSuiWallet?.address || user.sui_address;
+  const suiKeyEnc = activeSuiWallet?.encrypted_private_key || user.sui_private_key_enc;
+
+  if (!suiAddress || !suiKeyEnc) {
     throw new Error('Sui wallet not configured. Please initialize your wallet via /start.');
   }
 
   // Decrypt and restore user's Ed25519 keypair
-  const keypair = restoreSuiKeypair(user.sui_private_key_enc, MASTER_KEY);
-  const userAddress = user.sui_address;
+  const keypair = restoreSuiKeypair(suiKeyEnc, MASTER_KEY);
+  const userAddress = suiAddress;
 
   const isBuy = token_in === 'sui' || token_in === '0x2::sui::SUI' || token_in === 'SUI' || token_in === '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI';
 
@@ -139,7 +144,9 @@ export async function executeSuiSwap(
         userAddress,
         curveId: curve.curveId,
         tokenType: curve.tokenType,
+        packageId: curve.packageId,
         suiAmountMist: amountInMist,
+        minTokensOut,
         slippagePct: slippage_pct,
         treasuryAddress: DEFAULT_SUI_TREASURY_ADDRESS,
       });
@@ -148,12 +155,15 @@ export async function executeSuiSwap(
       txResult = await executeSuiTransaction(tx, keypair);
     } else {
       // Multi-DEX trade routing via Aftermath Smart-Order Router
+      // Pass full buy amount and let Aftermath router collect 1.5% platform fee via externalFee natively in PTB
       const [meta, routerQuote] = await Promise.all([
         getSuiTokenMetadata(tokenTarget),
         getSuiRouterQuote({
           coinInType: '0x2::sui::SUI',
           coinOutType: tokenTarget,
-          amountIn: swapMist,
+          amountIn: amountInMist,
+          treasuryAddress: DEFAULT_SUI_TREASURY_ADDRESS,
+          includeFee: true,
         }),
       ]);
 
@@ -177,12 +187,6 @@ export async function executeSuiSwap(
         completeRoute: routerQuote.completeRoute,
         slippagePct: slippage_pct,
       });
-
-      // Transfer 1.5% dev fee to treasury
-      if (devFeeMist > 0n) {
-        const [feeCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(devFeeMist.toString())]);
-        tx.transferObjects([feeCoin], DEFAULT_SUI_TREASURY_ADDRESS);
-      }
 
       onProgress?.('signing_and_broadcasting');
       txResult = await executeSuiTransaction(tx, keypair);
@@ -302,6 +306,7 @@ export async function executeSuiSwap(
         userAddress,
         curveId: curve.curveId,
         tokenType: curve.tokenType,
+        packageId: curve.packageId,
         tokenAmountRaw,
         tokenCoinObjectIds: tokenBal.coinObjectIds,
         feeMist: devFeeMist,
@@ -314,23 +319,26 @@ export async function executeSuiSwap(
       txResult = await executeSuiTransaction(tx, keypair);
     } else {
       // Multi-DEX sell route via Aftermath Smart-Order Router
+      // Let Aftermath router collect 1.5% platform fee via externalFee natively from swap proceeds
       const routerQuote = await getSuiRouterQuote({
         coinInType: tokenTarget,
         coinOutType: '0x2::sui::SUI',
         amountIn: tokenAmountRaw,
+        treasuryAddress: DEFAULT_SUI_TREASURY_ADDRESS,
+        includeFee: true,
       });
 
       if (!routerQuote) {
         throw new Error(`No sell route found for ${tokenTarget} on Sui DEXes. Please check pool liquidity.`);
       }
 
-      const rawExpectedSui = routerQuote.expectedAmountOut;
-      devFeeMist = (rawExpectedSui * SUI_FEE_BPS) / SUI_BPS_DENOMINATOR;
-      netSuiOut = rawExpectedSui - devFeeMist;
+      // Expected SUI proceeds after 1.5% externalFee has already been routed to treasury
+      netSuiOut = routerQuote.expectedAmountOut;
+      devFeeMist = (netSuiOut * SUI_FEE_BPS) / (SUI_BPS_DENOMINATOR - SUI_FEE_BPS);
       venue = routerQuote.venue;
 
       const tokensHuman = Number(tokenAmountRaw) / Math.pow(10, meta.decimals);
-      const suiHuman = Number(rawExpectedSui) / 1e9;
+      const suiHuman = Number(netSuiOut) / 1e9;
       priceSui = tokensHuman > 0 ? suiHuman / tokensHuman : 0;
 
       onProgress?.('building_ptb');
@@ -339,12 +347,6 @@ export async function executeSuiSwap(
         completeRoute: routerQuote.completeRoute,
         slippagePct: slippage_pct,
       });
-
-      // Transfer dev fee from gas/sui proceeds to treasury
-      if (devFeeMist > 0n) {
-        const [feeCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(devFeeMist.toString())]);
-        tx.transferObjects([feeCoin], DEFAULT_SUI_TREASURY_ADDRESS);
-      }
 
       onProgress?.('signing_and_broadcasting');
       txResult = await executeSuiTransaction(tx, keypair);

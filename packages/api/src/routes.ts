@@ -54,6 +54,7 @@ import {
   getRefStorageDepositNeeded,
   unwrapUserWrapNear,
   withdrawFunds,
+  withdrawSuiFunds,
   syncUserTokenDeposits,
   getNearUsdPrice,
   payReferralReward,
@@ -67,6 +68,12 @@ import {
   validateAndParseNearKey,
   findAccountsForNearPublicKey,
   MAX_NEAR_WALLETS_PER_USER,
+  listUserSuiWallets,
+  switchActiveSuiWallet,
+  renameUserSuiWallet,
+  deleteUserSuiWallet,
+  importSuiWallet,
+  MAX_SUI_WALLETS_PER_USER,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -81,6 +88,8 @@ import {
   getSuiBalance,
   getSuiUsdPrice,
   checkTokenSafety,
+  restoreSuiKeypairFromSecret,
+  isValidSuiAddress,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -120,13 +129,16 @@ interface PendingAction {
     // DCA wizard
     | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
     // Multi-Wallet Management
-    | 'import_near_key' | 'import_near_name' | 'rename_near_wallet';
+    | 'import_near_key' | 'import_near_name' | 'rename_near_wallet'
+    | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet';
   tokenAddress?: string;
   deployerAddress?: string;
   // Multi-wallet state
   importNearPrivateKey?: string;
   importNearAccountId?: string;
   renameWalletId?: string;
+  importSuiPrivateKey?: string;
+  renameSuiWalletId?: string;
   // Copy trading wizard state
   copyWallet?: string;
   copyBuyAmount?: number;
@@ -337,10 +349,15 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const user = await getUserByTelegramId(telegramId);
-  const nearWallets = user ? await getUserWallets(user.id, 'near').catch(() => []) : [];
+  const [nearWallets, suiWallets] = user
+    ? await Promise.all([
+        getUserWallets(user.id, 'near').catch(() => []),
+        getUserWallets(user.id, 'sui').catch(() => []),
+      ])
+    : [[], []];
   const activeNearWallet = nearWallets.find(w => w.is_active) || nearWallets[0];
   const walletDisplayName = activeNearWallet ? activeNearWallet.name : 'Wallet 1';
-  const walletsCount = nearWallets.length || 1;
+  const walletsCount = (nearWallets.length + suiWallets.length) || 1;
 
   const buttons: any[] = [
     [
@@ -389,13 +406,18 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('User not found. Run /start first.');
 
-  const nearWallets = await getUserWallets(user.id, 'near');
+  const [nearWallets, suiWallets] = await Promise.all([
+    getUserWallets(user.id, 'near').catch(() => []),
+    getUserWallets(user.id, 'sui').catch(() => []),
+  ]);
 
-  let text = `💼 <b>NEAR Wallets Management</b>\n\n`;
-  text += `Select an active wallet to trade with on NEAR, or import an existing wallet:\n\n`;
+  let text = `💼 <b>Multi-Chain Wallets Management</b>\n\n`;
+  text += `Select an active wallet to trade with on each network, or import an existing private key:\n\n`;
 
   const buttons: any[] = [];
 
+  // 1. NEAR Wallets Section
+  text += `⬛ <b>NEAR Wallets</b>\n`;
   for (let i = 0; i < nearWallets.length; i++) {
     const w = nearWallets[i];
     const isActive = w.is_active;
@@ -419,10 +441,38 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     }
   }
 
-  // Import button if under limit
+  // 2. SUI Wallets Section
+  text += `🔷 <b>SUI Wallets</b>\n`;
+  for (let i = 0; i < suiWallets.length; i++) {
+    const w = suiWallets[i];
+    const isActive = w.is_active;
+    const statusIcon = isActive ? '🟢' : '⚪';
+    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const importedLabel = w.is_imported ? ' 📥' : '';
+
+    text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
+    text += `   <code>${w.address}</code>\n\n`;
+
+    const row: any[] = [];
+    if (!isActive) {
+      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_sui:${w.id}`, 'primary'));
+    }
+    row.push(cb(`✏️ Rename`, `wallet_rename_sui_prompt:${w.id}`, 'primary'));
+    if (w.is_imported && !isActive) {
+      row.push(cb(`🗑️ Delete`, `wallet_delete_sui_confirm:${w.id}`, 'primary'));
+    }
+    if (row.length > 0) {
+      buttons.push(row);
+    }
+  }
+
+  // Import buttons row
   const actionRow: any[] = [];
   if (nearWallets.length < MAX_NEAR_WALLETS_PER_USER) {
-    actionRow.push(cb('📥 Import NEAR Wallet', 'wallet_import_prompt', 'primary'));
+    actionRow.push(cb('📥 Import NEAR', 'wallet_import_prompt', 'primary'));
+  }
+  if (suiWallets.length < MAX_SUI_WALLETS_PER_USER) {
+    actionRow.push(cb('📥 Import SUI', 'wallet_import_sui_prompt', 'primary'));
   }
   if (actionRow.length > 0) {
     buttons.push(actionRow);
@@ -3420,6 +3470,83 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  bot.action(/^wallet_switch_sui:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    try {
+      const switched = await switchActiveSuiWallet(telegramId, walletId);
+      await ctx.answerCbQuery(`⚡ Switched active SUI wallet to ${switched.name}!`).catch(() => {});
+      const menu = await buildWalletsManagementMenu(telegramId);
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit) {
+        await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        });
+      } else {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      }
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('wallet_import_sui_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'import_sui_key',
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `📥 <b>Import SUI Wallet</b>\n\n` +
+      `Please reply with your SUI private key.\n\n` +
+      `Supported formats:\n` +
+      `• Standard Bech32 (<code>suiprivkey1...</code>)\n` +
+      `• 32-byte or 64-byte Hex (with or without <code>0x</code>)\n` +
+      `• Base64 or Base58\n\n` +
+      `🔒 <i>Your message containing the key will be deleted automatically for security.</i>\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^wallet_rename_sui_prompt:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    userPendingActions.set(telegramId, {
+      action: 'rename_sui_wallet',
+      renameSuiWalletId: walletId,
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✏️ <b>Rename SUI Wallet</b>\n\n` +
+      `Please reply with the new name for this wallet (e.g. <i>Sui Whale</i>, <i>Sniper</i>, <i>Degen</i>):\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^wallet_delete_sui_confirm:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    try {
+      const res = await deleteUserSuiWallet(telegramId, walletId);
+      await ctx.answerCbQuery('Wallet deleted.').catch(() => {});
+      let msg = `🗑️ SUI wallet deleted successfully.`;
+      if (res.fallbackWallet) {
+        msg += ` Active SUI wallet switched to <b>${res.fallbackWallet.name}</b>.`;
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
   bot.action(/^wallet_pick_acc:(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const chosenAccount = ctx.match![1];
@@ -3503,10 +3630,10 @@ export function setupRoutes(bot: Telegraf): void {
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `💸 *Withdraw NEAR*\n\n` +
+      `💸 *Withdraw Funds (NEAR & SUI)*\n\n` +
       `Reply with the recipient address and amount, for example:\n` +
-      `• \`mywallet.near 1.5\`\n` +
-      `• \`mywallet.near all\`\n\n` +
+      `• *NEAR*: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
+      `• *SUI*: \`0x1234...abcd 1.0\` or \`0x1234...abcd all\`\n\n` +
       `_Type /cancel to abort withdrawal._`,
       { parse_mode: 'Markdown' }
     );
@@ -3523,10 +3650,11 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 180000,
       });
       await ctx.reply(
-        `💸 *Withdraw NEAR*\n\n` +
+        `💸 *Withdraw Funds (NEAR & SUI)*\n\n` +
         `Usage: \`/withdraw <destination_address> [amount]\`\n\n` +
         `Or reply directly now with:\n` +
-        `\`mywallet.near 1.5\` or \`mywallet.near all\``,
+        `• NEAR: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
+        `• SUI: \`0x1234...abcd 1.0\` or \`0x1234...abcd all\``,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -3534,9 +3662,9 @@ export function setupRoutes(bot: Telegraf): void {
 
     const destination = args[0].trim();
     const amountArg = args[1]?.toLowerCase();
-    const amountNear: number | 'all' = amountArg === 'all' || !amountArg ? 'all' : parseFloat(amountArg);
+    const amountNum: number | 'all' = amountArg === 'all' || !amountArg ? 'all' : parseFloat(amountArg);
 
-    if (typeof amountNear === 'number' && (isNaN(amountNear) || amountNear <= 0)) {
+    if (typeof amountNum === 'number' && (isNaN(amountNum) || amountNum <= 0)) {
       await ctx.reply('❌ Invalid amount. Please specify a positive number or "all".');
       return;
     }
@@ -3544,14 +3672,26 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(`⏳ Processing withdrawal to \`${destination}\`...`, { parse_mode: 'Markdown' });
 
     try {
-      const result = await withdrawFunds(telegramId, destination, amountNear);
-      await ctx.reply(
-        `✅ *Withdrawal Successful!*\n\n` +
-        `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
-        `📬 Destination: \`${result.destination}\`\n\n` +
-        `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
-        { parse_mode: 'Markdown' }
-      );
+      const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
+      if (isSuiDest) {
+        const result = await withdrawSuiFunds(telegramId, destination, amountNum);
+        await ctx.reply(
+          `✅ *SUI Withdrawal Successful!*\n\n` +
+          `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+          `📬 Destination: \`${result.destination}\`\n\n` +
+          `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        const result = await withdrawFunds(telegramId, destination, amountNum);
+        await ctx.reply(
+          `✅ *Withdrawal Successful!*\n\n` +
+          `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
+          `📬 Destination: \`${result.destination}\`\n\n` +
+          `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -4198,6 +4338,15 @@ export function setupRoutes(bot: Telegraf): void {
     console.log(`[AUDIT] Private keys exported for user_id=${user.id}, telegram_id=${telegramId}`);
 
     try {
+      const [nearWallets, suiWallets] = await Promise.all([
+        getUserWallets(user.id, 'near').catch(() => []),
+        getUserWallets(user.id, 'sui').catch(() => []),
+      ]);
+      const activeNear = nearWallets.find(w => w.is_active);
+      const activeSui = suiWallets.find(w => w.is_active);
+      const nearName = activeNear ? ` [${activeNear.name}]` : '';
+      const suiName = activeSui ? ` [${activeSui.name}]` : '';
+
       const rawNearKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
       let rawSuiKey = '';
       if (user.sui_private_key_enc) {
@@ -4209,12 +4358,12 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Keys decrypted.').catch(() => {});
 
       let keyHtml =
-        `🔑 <b>NEAR Private Key</b> (<code>${user.subaccount_id}</code>):\n` +
+        `🔑 <b>NEAR Private Key</b>${nearName} (<code>${user.subaccount_id}</code>):\n` +
         `<tg-spoiler><code>${rawNearKey}</code></tg-spoiler>\n\n`;
 
       if (user.sui_address && rawSuiKey) {
         keyHtml +=
-          `🔷 <b>SUI Private Key</b> (<code>${user.sui_address}</code>):\n` +
+          `🔷 <b>SUI Private Key</b>${suiName} (<code>${user.sui_address}</code>):\n` +
           `<tg-spoiler><code>${rawSuiKey}</code></tg-spoiler>\n\n`;
       }
 
@@ -4682,6 +4831,81 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      if (pending.action === 'import_sui_key') {
+        // Delete message containing private key immediately for security!
+        await ctx.deleteMessage().catch(() => {});
+
+        try {
+          const kp = restoreSuiKeypairFromSecret(rawText);
+          const suiAddr = kp.toSuiAddress();
+
+          userPendingActions.set(telegramId, {
+            action: 'import_sui_name',
+            importSuiPrivateKey: rawText,
+            expiresAt: Date.now() + 180000,
+          });
+
+          await ctx.reply(
+            `✅ <b>Valid SUI Key!</b>\n\n` +
+            `• Address: <code>${suiAddr}</code>\n\n` +
+            `Please reply with a nickname for this wallet (e.g. <i>Sui Whale</i>, <i>Sniper</i>, <i>Main</i>):\n\n` +
+            `_Send /cancel to abort._`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'import_sui_name') {
+        const walletName = rawText.trim();
+        if (!pending.importSuiPrivateKey) {
+          await ctx.reply('❌ Import session expired. Please start over via /wallets.');
+          return;
+        }
+
+        try {
+          const res = await importSuiWallet(
+            telegramId,
+            pending.importSuiPrivateKey,
+            walletName
+          );
+
+          const successMsg =
+            `🎉 <b>SUI Wallet Imported Successfully!</b>\n\n` +
+            `• <b>Name:</b> ${res.wallet.name}\n` +
+            `• <b>Address:</b> <code>${res.address}</code>\n` +
+            `• <b>Status:</b> 🟢 Active (now your primary SUI trading wallet)\n\n` +
+            `Your balances and all future SUI trades now use this wallet.`;
+
+          await ctx.reply(successMsg, { parse_mode: 'HTML' });
+          const walletMenu = await buildWalletMenu(telegramId, true);
+          await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'rename_sui_wallet') {
+        const newName = rawText.trim();
+        if (!pending.renameSuiWalletId) {
+          await ctx.reply('❌ Rename session expired. Please start over via /wallets.');
+          return;
+        }
+
+        try {
+          const updated = await renameUserSuiWallet(telegramId, pending.renameSuiWalletId, newName);
+          await ctx.reply(`✅ SUI Wallet renamed to <b>${updated.name}</b>!`, { parse_mode: 'HTML' });
+          const menu = await buildWalletsManagementMenu(telegramId);
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
       if (pending.action === 'buy_custom_near' && pending.tokenAddress) {
         const amt = parseFloat(rawText);
         if (isNaN(amt) || amt <= 0) {
@@ -4992,14 +5216,26 @@ export function setupRoutes(bot: Telegraf): void {
         }
         await ctx.reply(`⏳ Processing withdrawal to \`${dest}\`...`, { parse_mode: 'Markdown' });
         try {
-          const result = await withdrawFunds(telegramId, dest, amt);
-          await ctx.reply(
-            `✅ *Withdrawal Successful!*\n\n` +
-            `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
-            `📬 Destination: \`${result.destination}\`\n\n` +
-            `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
-            { parse_mode: 'Markdown' }
-          );
+          const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
+          if (isSuiDest) {
+            const result = await withdrawSuiFunds(telegramId, dest, amt);
+            await ctx.reply(
+              `✅ *SUI Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else {
+            const result = await withdrawFunds(telegramId, dest, amt);
+            await ctx.reply(
+              `✅ *Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          }
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
