@@ -2506,30 +2506,34 @@ export class SwapExecutor {
           const nearUsdRate = await getNearUsdPrice().catch(() => 4.5);
           const spentUsd = nearSpent * nearUsdRate;
           const userRec = await getUserById(userId);
-          const buyerAddress = userRec?.subaccount_id || userId;
+          // subaccount_id is the on-chain NEAR address; fall back to 'unknown' (not UUID) for display
+          const buyerAddress = userRec?.subaccount_id || 'unknown';
           const tokenName = (meta as any)?.name ?? tokenAddress;
           const tokenSymbol = (meta as any)?.symbol ?? tokenAddress.slice(0, 8);
           const tokensRecvHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
-          // Compute market cap: price × total supply (both in human-readable units)
+          // Compute market cap: price × total supply.
+          // ft_metadata() does NOT include total_supply — must call ft_total_supply() separately.
           let marketCapUsd: number | undefined;
           try {
-            const totalSupplyRaw = (meta as any)?.total_supply as string | undefined;
+            const totalSupplyRaw = await this.nearClient.getTokenTotalSupply(tokenAddress).catch(() => null);
             if (totalSupplyRaw && priceNear > 0) {
               const totalSupplyHuman = parseFloat(totalSupplyRaw) / Math.pow(10, decimals);
               marketCapUsd = Math.round(totalSupplyHuman * priceNear * nearUsdRate);
             }
           } catch { /* non-fatal */ }
 
-          // Fetch buyer's NEAR balance so groups can gauge whale size
+          // Fetch buyer's NEAR balance so groups can gauge whale size.
+          // Use already-imported static utils (no dynamic import needed — near-api-js is already imported).
           let buyerNearBalance: number | undefined;
-          try {
-            const rawBal = await this.nearClient.getNearBalance(buyerAddress).catch(() => null);
-            if (rawBal) {
-              const { utils: nearUtils } = await import('near-api-js');
-              buyerNearBalance = parseFloat(nearUtils.format.formatNearAmount(rawBal, 4));
-            }
-          } catch { /* non-fatal */ }
+          if (buyerAddress && buyerAddress !== 'unknown') {
+            try {
+              const rawBal = await this.nearClient.getNearBalance(buyerAddress).catch(() => null);
+              if (rawBal) {
+                buyerNearBalance = parseFloat(utils.format.formatNearAmount(rawBal, 4));
+              }
+            } catch { /* non-fatal */ }
+          }
 
           const buyAlert: BuyAlertEvent = {
             type: 'buy_alert',
