@@ -185,8 +185,8 @@ async function main() {
 
         if (blockData) {
           const shards = blockData?.shards ?? [];
-          // Collect all (log, receiverId) pairs from all shards/outcomes and process concurrently
-          const eventPairs: Array<{ log: string; receiverId: string }> = [];
+          // Collect all (log, receiverId, txHash) tuples from all shards/outcomes and process concurrently
+          const eventPairs: Array<{ log: string; receiverId: string; txHash?: string }> = [];
           for (const shard of shards) {
             const outcomes = shard?.receipt_execution_outcomes ?? [];
             for (const item of outcomes) {
@@ -195,7 +195,7 @@ async function main() {
               const signerId: string = item?.receipt?.predecessor_id ?? '';
               const txHash: string = item?.execution_outcome?.id ?? '';
               for (const log of logs) {
-                eventPairs.push({ log, receiverId });
+                eventPairs.push({ log, receiverId, txHash });
               }
               // Copy-trade detection: check if signer is a tracked wallet
               if (signerId && txHash) {
@@ -217,7 +217,7 @@ async function main() {
             }
           }
           await Promise.all(
-            eventPairs.map(({ log, receiverId }) => parseEventLog(log, receiverId).catch(() => {}))
+            eventPairs.map(({ log, receiverId, txHash }) => parseEventLog(log, receiverId, txHash).catch(() => {}))
           );
         } else {
           await processBlock(nextHeight).catch(err => {
@@ -491,7 +491,8 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
       candidates.push(...data.pool_id.split('|').slice(0, 2));
     }
     const uniqueTokens = [...new Set(candidates)].filter(
-      t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t))
+      t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t)) &&
+        !t.endsWith('.nearlytrade.near') && !t.endsWith('.shardsmarket.near')
     );
     for (const t of uniqueTokens) {
       await handlePoolCreated(t, 'rhea', data).catch(() => {});
