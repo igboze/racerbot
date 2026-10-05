@@ -6,12 +6,25 @@ import {
   createLogger,
   generateCorrelationId,
   DEFAULT_RPC_URLS,
+  getNearUsdPrice,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
   type AutoBuySignal,
+  type BuyAlertEvent,
 } from '@racerbot/shared';
-import { getDb, upsertTokenCache, getTokenCache, getActiveTriggers, getPositionsByIds, getActiveTokenSnipes, getActiveDeployerSnipes, getDistinctActiveSnipeTokens, recordSnipeTrigger } from '@racerbot/db';
+import {
+  getDb,
+  upsertTokenCache,
+  getTokenCache,
+  getActiveTriggers,
+  getPositionsByIds,
+  getActiveTokenSnipes,
+  getActiveDeployerSnipes,
+  getDistinctActiveSnipeTokens,
+  getDistinctActiveBuyAlertTokens,
+  recordSnipeTrigger,
+} from '@racerbot/db';
 import { initCopyTradeDetector, checkCopyTradeReceipt } from './copyTrade.js';
 
 const logger = createLogger('detector');
@@ -23,6 +36,18 @@ const priceCache = new Map<string, { price: number; liquidity: number; marketCap
 
 /** token_address → TokenDetectedEvent (for snipe-by-name matching) */
 const tokenNameCache = new Map<string, TokenDetectedEvent>();
+
+/** Set of lowercase token addresses currently tracked by any Telegram group */
+let activeBuyAlertTokens = new Set<string>();
+
+async function refreshActiveBuyAlertTokens(): Promise<void> {
+  try {
+    const tokens = await getDistinctActiveBuyAlertTokens();
+    activeBuyAlertTokens = new Set(tokens.map(t => t.toLowerCase()));
+  } catch (err: any) {
+    // Non-fatal
+  }
+}
 
 // ── RPC + Redis setup ────────────────────────────────────────────────────────
 
@@ -73,6 +98,12 @@ async function main() {
   await initCopyTradeDetector().catch(err =>
     logger.error('Copy-trade detector init failed (non-fatal)', err as Error)
   );
+
+  // Initialize active group buy alert tracked tokens (refreshes every 10s from DB)
+  await refreshActiveBuyAlertTokens().catch(() => {});
+  setInterval(() => {
+    void refreshActiveBuyAlertTokens();
+  }, 10_000);
 
   logger.info('Starting NEAR block watcher...', { rpcProviders: RPC_URLS.length });
 
@@ -244,20 +275,21 @@ async function processBlock(height: number): Promise<void> {
     if (neardataRes.ok) {
       const blockData = (await neardataRes.json()) as any;
       const shards = blockData?.shards ?? [];
-      // Collect all (log, receiverId) pairs from all shards/outcomes and process concurrently
-      const eventPairs: Array<{ log: string; receiverId: string }> = [];
+      // Collect all (log, receiverId, txHash) tuples from all shards/outcomes and process concurrently
+      const eventPairs: Array<{ log: string; receiverId: string; txHash: string }> = [];
       for (const shard of shards) {
         const outcomes = shard?.receipt_execution_outcomes ?? [];
         for (const item of outcomes) {
           const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
           const receiverId: string = item?.receipt?.receiver_id ?? '';
+          const txHash: string = item?.tx_hash ?? item?.execution_outcome?.id ?? '';
           for (const log of logs) {
-            eventPairs.push({ log, receiverId });
+            eventPairs.push({ log, receiverId, txHash });
           }
         }
       }
       await Promise.all(
-        eventPairs.map(({ log, receiverId }) => parseEventLog(log, receiverId).catch(() => {}))
+        eventPairs.map(({ log, receiverId, txHash }) => parseEventLog(log, receiverId, txHash).catch(() => {}))
       );
       return;
     }
@@ -388,7 +420,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 }
               } else if (
                 receiverId === 'nearlytrade.near' &&
-                (fn.method_name === 'launch' || fn.method_name === 'buy' || fn.method_name === 'sell')
+                fn.method_name === 'launch'
               ) {
                 const tokenAddress = decoded?.token ?? decoded?.token_id ?? decoded?.token_address ?? '';
                 if (tokenAddress) {
@@ -426,7 +458,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
  * Parse NEP-297 standard event logs.
  * Format: EVENT_JSON:{"standard":"...","event":"...","data":[...]}
  */
-async function parseEventLog(log: string, receiverId: string): Promise<void> {
+async function parseEventLog(log: string, receiverId: string, txHash?: string): Promise<void> {
   if (!log.startsWith('EVENT_JSON:')) return;
 
   let event: any;
@@ -540,9 +572,21 @@ async function parseEventLog(log: string, receiverId: string): Promise<void> {
     }
   }
 
-  // ── Price update from any venue (swap events) ───────────────────────────
-  if (eventName === 'swap' && ((data?.token_in && data?.token_out) || data?.pool_id)) {
-    await handleSwapEvent(data, receiverId).catch(() => {});
+  // ── Swaps & Buy Alerts from any venue ─────────────────────────────────────
+  if (eventName === 'swap') {
+    const swapItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
+    for (const item of swapItems) {
+      if (item && ((item.token_in && item.token_out) || item.pool_id)) {
+        await handleSwapEvent(item, receiverId, txHash).catch(() => {});
+      }
+    }
+  } else if (receiverId === 'nearlytrade.near' && (eventName === 'buy' || eventName === 'launch_buy')) {
+    const buyItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
+    for (const item of buyItems) {
+      if (item) {
+        await handleSwapEvent(item, receiverId, txHash).catch(() => {});
+      }
+    }
   }
 }
 
@@ -733,10 +777,33 @@ async function handlePoolCreated(
   setImmediate(() => checkAutoBuySignals(tokenAddress, venue, initialLiquidity, marketCap, creator));
 }
 
-/** When a swap is detected, extract the new price and publish a price update */
-async function handleSwapEvent(data: any, venue: string): Promise<void> {
-  const tokenAddress: string = data.token_out ?? data.token_in ?? '';
-  if (!tokenAddress || tokenAddress === 'near' || tokenAddress === 'wrap.near') return;
+/** When a swap is detected, extract the new price and publish a price update / buy alert */
+async function handleSwapEvent(data: any, venue: string, txHash?: string): Promise<void> {
+  let targetToken = '';
+  let isBuy = false;
+
+  const tokenIn = (data?.token_in || '').toLowerCase();
+  const tokenOut = (data?.token_out || '').toLowerCase();
+
+  const isNearIn = tokenIn === 'wrap.near' || tokenIn === 'near';
+  const isNearOut = tokenOut === 'wrap.near' || tokenOut === 'near';
+
+  if (tokenOut && !isNearOut) {
+    targetToken = data.token_out;
+    isBuy = true;
+  } else if (tokenIn && !isNearIn) {
+    targetToken = data.token_in;
+    isBuy = false;
+  } else if (typeof data?.pool_id === 'string' && data.pool_id.includes('|')) {
+    const parts = data.pool_id.split('|');
+    targetToken = parts.find((p: string) => p !== 'wrap.near' && p !== 'near') || '';
+    if (tokenOut === targetToken.toLowerCase()) {
+      isBuy = true;
+    }
+  }
+
+  if (!targetToken || targetToken === 'near' || targetToken === 'wrap.near') return;
+  const tokenAddress = targetToken;
 
   // 1. Resolve token_cache row for total_supply, decimals, and pool info
   const dbCache = await getTokenCache(tokenAddress).catch(() => null);
@@ -872,6 +939,67 @@ async function handleSwapEvent(data: any, venue: string): Promise<void> {
 
   redis.publish(CHANNELS.PRICE_UPDATE, JSON.stringify(update)).catch(() => {});
   redis.set(`token:price:${tokenAddress}`, JSON.stringify(update), 300).catch(() => {});
+
+  // ── Emit Group Buy Alert if this was a BUY of the token ───────────────────
+  if (isBuy) {
+    try {
+      const nearPriceUsd = await getNearUsdPrice().catch(() => 4.5);
+      let spentNear = 0;
+
+      if (isNearIn && data?.amount_in) {
+        spentNear = parseFloat(data.amount_in) / 1e24;
+      } else if (data?.amount_out) {
+        const tokensReceivedNum = parseFloat(data.amount_out) / Math.pow(10, decimals ?? 18);
+        spentNear = tokensReceivedNum * price;
+      }
+
+      const spentUsd = Math.round(spentNear * nearPriceUsd * 100) / 100;
+
+      if (spentUsd > 0 && !isNaN(spentUsd)) {
+        const isTracked = activeBuyAlertTokens.size === 0 || activeBuyAlertTokens.has(tokenAddress.toLowerCase());
+
+        if (isTracked) {
+          const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
+          const tokensReceivedStr = tokensReceivedNum > 0
+            ? tokensReceivedNum.toLocaleString('en-US', { maximumFractionDigits: 2 })
+            : '0';
+          const buyer = data?.swapper || data?.account_id || data?.trader || data?.signer_id || 'Unknown';
+          const priceUsd = price * nearPriceUsd;
+          const marketCapUsd = marketCap * nearPriceUsd;
+
+          const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
+          const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
+
+          const buyAlert: BuyAlertEvent = {
+            type: 'buy_alert',
+            chain: 'near',
+            token_address: tokenAddress,
+            token_name: tokenName,
+            token_symbol: tokenSymbol,
+            buyer_address: buyer,
+            spent_amount_native: `${spentNear.toFixed(4)} NEAR`,
+            spent_usd: spentUsd,
+            tokens_received: tokensReceivedStr,
+            price_usd: priceUsd > 0 ? priceUsd : undefined,
+            market_cap_usd: marketCapUsd > 0 ? marketCapUsd : undefined,
+            tx_hash: txHash || '',
+            timestamp: Date.now(),
+          };
+
+          logger.info(`[DETECTOR] Emitting on-chain BUY alert for ${tokenAddress}: $${spentUsd} USD by ${buyer}`, {
+            tokenAddress,
+            spentUsd,
+            buyer,
+            txHash,
+          });
+
+          await redis.publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert)).catch(() => {});
+        }
+      }
+    } catch (err: any) {
+      logger.warn('[DETECTOR] Failed to process buy alert for swap', { error: err?.message });
+    }
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   deleteGroupBuyAlert,
   getOrCreateTokenShare,
   getUserByTelegramId,
+  getTokenCache,
   type GroupBuyAlertRecord,
 } from '@racerbot/db';
 import { getTokenInfo, isSuiToken } from './wallet.js';
@@ -73,17 +74,35 @@ export async function startBuyAlertListener(redisUrl: string, bot: Telegraf): Pr
   console.log('[BUY_ALERTS] Listener subscribed to channel:', CHANNELS.BUY_ALERT);
 }
 
+const seenBuyAlerts = new Map<string, number>();
+
 /**
  * Dispatches a buy alert to all Telegram groups tracking the token.
  */
 export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
   if (!_bot) return;
 
+  // Deduplicate alerts across executor and detector streams
+  const dedupKey = event.tx_hash
+    ? `${event.tx_hash}:${event.token_address.toLowerCase()}`
+    : `${event.token_address.toLowerCase()}:${event.buyer_address}:${event.spent_amount_native}:${Math.floor(event.timestamp / 5000)}`;
+
+  const now = Date.now();
+  if (seenBuyAlerts.has(dedupKey) && (now - (seenBuyAlerts.get(dedupKey) || 0)) < 300_000) {
+    return;
+  }
+  seenBuyAlerts.set(dedupKey, now);
+
+  if (seenBuyAlerts.size > 5000) {
+    for (const [k, v] of seenBuyAlerts.entries()) {
+      if (now - v > 300_000) seenBuyAlerts.delete(k);
+    }
+  }
+
   const alerts = await getGroupBuyAlertsByToken(event.token_address).catch(() => []);
   if (!alerts || alerts.length === 0) return;
 
   const botUsername = _bot.botInfo?.username || 'racertradingbot';
-  const now = Date.now();
 
   for (const alert of alerts) {
     if (!alert.is_active) continue;
@@ -156,10 +175,16 @@ async function sendGroupAlertMessage(
 
   const isSui = event.chain === 'sui';
   const explorerUrl = isSui
-    ? `https://suiscan.xyz/mainnet/tx/${event.tx_hash}`
-    : `https://nearblocks.io/txns/${event.tx_hash}`;
+    ? (event.tx_hash ? `https://suiscan.xyz/mainnet/tx/${event.tx_hash}` : `https://suiscan.xyz/mainnet/coin/${event.token_address}`)
+    : (event.tx_hash ? `https://nearblocks.io/txns/${event.tx_hash}` : `https://nearblocks.io/token/${event.token_address}`);
 
   const dexUrl = `https://dexscreener.com/${isSui ? 'sui' : 'near'}/${event.token_address}`;
+
+  // Check if token has bonded on DEX (or is a standard non-curve pool)
+  const tokenCache = await getTokenCache(event.token_address).catch(() => null);
+  const isPrebonded = tokenCache?.bonding_phase === 'prebonded' ||
+    (event.token_address.endsWith('.nearlytrade.near') && tokenCache?.bonding_phase !== 'bonded');
+  const isBonded = !isPrebonded;
 
   const priceLine = event.price_usd != null && event.price_usd > 0
     ? `\n💵 <b>Price:</b> $${event.price_usd < 0.0001 ? event.price_usd.toExponential(3) : event.price_usd.toFixed(4)}`
@@ -174,16 +199,24 @@ async function sendGroupAlertMessage(
     whaleHeader +
     `${emojiBar}\n\n` +
     `🪙 <b>Token:</b> ${escapeHtml(event.token_name)} ($${escapeHtml(event.token_symbol)})\n` +
+    `📄 <b>CA:</b> <code>${event.token_address}</code>\n` +
     `💰 <b>Spent:</b> <b>${event.spent_amount_native}</b> ($${event.spent_usd.toFixed(2)} USD)\n` +
     `📦 <b>Got:</b> ${event.tokens_received}\n` +
     `👤 <b>Buyer:</b> <code>${maskAddress(event.buyer_address)}</code>` +
     priceLine +
-    mcapLine +
-    `\n\n` +
-    `🔗 <a href="${explorerUrl}">TX</a> | <a href="${dexUrl}">DexScreener</a>`;
+    mcapLine;
+
+  const actionButtons: any[] = [
+    Markup.button.url('🔍 Explorer', explorerUrl),
+  ];
+
+  if (isBonded) {
+    actionButtons.push(Markup.button.url('📊 DexScreener', dexUrl));
+  }
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.url('⚡ Buy on RacerBot', buyDeepLink)],
+    actionButtons,
   ]);
 
   if (alert.media_file_id && alert.media_type !== 'none' && alert.media_type !== 'default') {

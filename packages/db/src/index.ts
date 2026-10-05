@@ -97,6 +97,7 @@ export {
   getGroupBuyAlert,
   getGroupBuyAlertsByChat,
   getGroupBuyAlertsByToken,
+  getDistinctActiveBuyAlertTokens,
   updateGroupBuyAlert,
   deleteGroupBuyAlert,
 } from './db.js';
