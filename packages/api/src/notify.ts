@@ -212,12 +212,17 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         return sanitize(rawReason.slice(0, 200));
       })();
 
+      const isSell = Boolean(token && token !== 'wrap.near' && token !== 'near');
+      const refundNote = isSell
+        ? 'No funds were lost on a failed swap — your tokens were returned to your wallet. Use /wallet to check.'
+        : 'No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check.';
+
       await _bot.telegram.sendMessage(telegramId,
         `❌ *Trade Failed*\n\n` +
         tokenLine +
         `📋 Reason: ${friendlyReason}\n` +
         (txHash !== 'none' ? `🧾 TX: \`${sanitize(txHash)}\`\n` : '') +
-        `\n_No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check._`,
+        `\n_${refundNote}_`,
         { parse_mode: 'Markdown' }
       );
       break;
