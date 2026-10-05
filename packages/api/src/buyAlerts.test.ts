@@ -383,8 +383,8 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendMessage).toHaveBeenCalledTimes(1);
       const callArgs = mockSendMessage.mock.calls[0];
       const text = callArgs[1];
-      expect(text).toContain('🏎️ <b>UPTOBER BUY ALERT</b> 🏎️');
-      expect(text).toContain('🏎️'.repeat(10));
+      expect(text).toContain('🆙⬆️ <b>UPTOBER BUY ALERT</b> 🆙⬆️');
+      expect(text).toContain('🆙⬆️'.repeat(10));
       expect(text).toContain('🪙 <b>Token:</b> Uptober ($UPTOBER)');
       expect(text).toContain('📄 <b>CA:</b> <code>uptober.nearlytrade.near</code>');
       expect(text).toContain('💰 <b>Spent:</b> <b>10.0000 NEAR</b> ($48.00 USD)');
