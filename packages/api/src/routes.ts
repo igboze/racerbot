@@ -178,7 +178,7 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     if (!info || !info.tradeable) return;
 
     const venue = info.venue;
-    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
+    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(venue);
 
     const jobs: Promise<unknown>[] = [
       near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
@@ -581,6 +581,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       : `💧 *Venue*: NEARpad Launchpad`;
   } else if (tokenInfo.venue === 'gaypad') {
     venueText = `💧 *Venue*: Gaypad Launchpad`;
+  } else if (tokenInfo.venue === 'shoremarkets') {
+    venueText = tokenInfo.dcl_pool_id
+      ? `💧 *Venue*: ShoreMarkets (Ref DCL)`
+      : `💧 *Venue*: ShoreMarkets Launchpad`;
   } else if (isSui) {
     const suiVenueMap: Record<string, string> = {
       bluefin: 'Bluefin',
