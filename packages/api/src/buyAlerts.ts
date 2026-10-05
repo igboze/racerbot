@@ -63,7 +63,7 @@ export interface BuyAlertPendingAction {
 
 export const buyAlertPendingActions = new Map<number, BuyAlertPendingAction>();
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -79,6 +79,19 @@ function maskAddress(addr: string): string {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   }
   return addr;
+}
+
+export function formatPriceUsd(price: number): string {
+  if (!price || isNaN(price) || price <= 0) return '';
+  if (price >= 1) {
+    return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  }
+  if (price >= 0.01) {
+    return price.toFixed(4);
+  }
+  // For micro-prices (e.g. 0.0000056), format up to 9 decimals without scientific notation
+  const str = price.toFixed(9).replace(/0+$/, '');
+  return str.length > 0 ? str : price.toString();
 }
 
 export function setBotInstance(bot: Telegraf): void {
@@ -183,7 +196,7 @@ async function sendGroupAlertMessage(
 
   const emoji = alert.emoji || '🏎️';
   const step = parseFloat(String(alert.emoji_step_usd ?? '5')) || 5;
-  const count = Math.min(35, Math.max(1, Math.floor(event.spent_usd / step)));
+  const count = Math.min(35, Math.max(1, Math.round(event.spent_usd / step)));
   const emojiBar = emoji.repeat(count);
 
   const whaleThreshold = parseFloat(String(alert.whale_threshold_usd ?? '200')) || 200;
@@ -230,19 +243,13 @@ async function sendGroupAlertMessage(
     } catch { /* non-fatal */ }
   }
 
-  const priceLine = event.price_usd != null && event.price_usd > 0
-    ? `\n💵 <b>Price:</b> $${event.price_usd < 0.0001 ? event.price_usd.toExponential(3) : event.price_usd.toFixed(4)}`
+  const priceFormatted = event.price_usd != null && event.price_usd > 0
+    ? formatPriceUsd(event.price_usd)
     : '';
+  const priceLine = priceFormatted ? `\n💵 <b>Price:</b> $${priceFormatted}` : '';
 
   const mcapLine = resolvedMcapUsd != null && resolvedMcapUsd > 0
     ? `\n📊 <b>MCap:</b> $${resolvedMcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
-    : '';
-
-  // Buyer balance line — shows NEAR or SUI balance to help spot whale buys
-  const nativeToken = isSui ? 'SUI' : 'NEAR';
-  const buyerBalance = isSui ? event.buyer_sui_balance : event.buyer_near_balance;
-  const buyerBalanceLine = buyerBalance != null && buyerBalance > 0
-    ? `\n💼 <b>Buyer Balance:</b> ${buyerBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${nativeToken}`
     : '';
 
   const caption =
@@ -253,7 +260,7 @@ async function sendGroupAlertMessage(
     `📄 <b>CA:</b> <code>${event.token_address}</code>\n` +
     `💰 <b>Spent:</b> <b>${event.spent_amount_native}</b> ($${event.spent_usd.toFixed(2)} USD)\n` +
     `📦 <b>Got:</b> ${event.tokens_received}\n` +
-    `👤 <b>Buyer:</b> <code>${maskAddress(event.buyer_address)}</code>${buyerBalanceLine}` +
+    `👤 <b>Buyer:</b> <code>${maskAddress(event.buyer_address)}</code>` +
     priceLine +
     mcapLine;
 
@@ -505,13 +512,48 @@ export async function handleBuyBotCommand(ctx: Context): Promise<void> {
     if (!rawTokenInput) {
       const existing = await getGroupBuyAlertsByChat(ctx.chat!.id).catch(() => []);
       if (existing.length === 0) {
+        const setupDmUrl = `https://t.me/${botUsername}?start=setup_group_${ctx.chat!.id}`;
+        const adminMention = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Admin');
+
+        let sentToDm = false;
+        if (ctx.from?.id && !isAnonymousAdmin) {
+          try {
+            await ctx.telegram.sendMessage(
+              ctx.from.id,
+              `🏎️ <b>Set Up Buy Alerts for ${escapeHtml((ctx.chat as any)?.title || 'your group')}</b>\n\n` +
+              `Please reply with the <b>token contract address</b> you want to track:\n\n` +
+              `Examples:\n` +
+              `• NEAR: <code>uptober.nearlytrade.near</code>\n` +
+              `• NEAR: <code>blackdragon.tkn.near</code>\n` +
+              `• SUI: <code>0x2::sui::SUI</code>`,
+              {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.url('⚙️ Open Setup in DM', setupDmUrl)],
+                ]),
+              }
+            );
+            sentToDm = true;
+          } catch {
+            // Cannot send direct DM (user hasn't started DM with bot)
+          }
+        }
+
         await ctx.reply(
-          `🏎️ <b>Track Token Buys in this Group</b>\n\n` +
+          `🏎️ <b>Set Up RacerBot Buy Alerts</b>\n\n` +
           `Usage: <code>/track &lt;token_contract_address&gt;</code>\n\n` +
           `Examples:\n` +
-          `• NEAR: <code>/track blackdragon.tkn.near</code>\n` +
-          `• SUI: <code>/track 0x2::sui::SUI</code>`,
-          { parse_mode: 'HTML' }
+          `• NEAR: <code>/track uptober.nearlytrade.near</code>\n` +
+          `• SUI: <code>/track 0x2::sui::SUI</code>\n\n` +
+          (sentToDm
+            ? `📬 <i>${escapeHtml(adminMention)}, I've sent the setup prompt to your <b>private chat (DM)</b>!</i>`
+            : `📬 <i>${escapeHtml(adminMention)}, tap below to finish setup in private DM without cluttering this group:</i>`),
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('⚙️ Set Up in DM', setupDmUrl)],
+            ]),
+          }
         );
         return;
       }
@@ -951,7 +993,7 @@ export async function handleTestAlertCommand(ctx: Context): Promise<void> {
 
     const spentNear = 10;
     const spentUsd = 48.0;
-    const tokensGotNum = priceUsd > 0 ? spentUsd / priceUsd : 100000;
+    const tokensGotNum = priceUsd > 0 ? spentUsd / priceUsd : 8580420;
 
     const sampleEvent: BuyAlertEvent = {
       type: 'buy_alert',
@@ -959,12 +1001,12 @@ export async function handleTestAlertCommand(ctx: Context): Promise<void> {
       token_address: alert.token_address,
       token_name: tokenName,
       token_symbol: tokenSymbol,
-      buyer_address: alert.chain === 'sui' ? '0x7a3...c91' : (ctx.from?.username ? `${ctx.from.username}.near` : 'racer_whale.near'),
-      spent_amount_native: alert.chain === 'sui' ? '25.00 SUI' : `${spentNear.toFixed(2)} NEAR`,
+      buyer_address: alert.chain === 'sui' ? '0x7a3...c91' : 'racer_whale.near',
+      spent_amount_native: alert.chain === 'sui' ? '25.0000 SUI' : `${spentNear.toFixed(4)} NEAR`,
       spent_usd: spentUsd,
       tokens_received: `${tokensGotNum.toLocaleString('en-US', { maximumFractionDigits: 0 })} ${tokenSymbol}`,
-      price_usd: priceUsd,
-      market_cap_usd: marketCapUsd,
+      price_usd: priceUsd > 0 ? priceUsd : 0.0000056,
+      market_cap_usd: marketCapUsd > 0 ? marketCapUsd : 5600,
       tx_hash: '',
       timestamp: Date.now(),
     };

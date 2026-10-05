@@ -3,6 +3,7 @@ import {
   buildAlertSettingsCard,
   dispatchBuyAlert,
   buyAlertPendingActions,
+  formatPriceUsd,
 } from './buyAlerts.js';
 import type { GroupBuyAlertRecord } from '@racerbot/db';
 import type { BuyAlertEvent } from '@racerbot/shared';
@@ -325,6 +326,72 @@ describe('Group Buy Alerts Engine', () => {
       await dispatchBuyAlert(event);
 
       expect(db.updateGroupBuyAlert).toHaveBeenCalledWith('ba-kicked', { is_active: false });
+    });
+
+    it('should format micro-prices without scientific notation and match clean alert layout', async () => {
+      expect(formatPriceUsd(0.0000056)).toBe('0.0000056');
+      expect(formatPriceUsd(0.000123)).toBe('0.000123');
+      expect(formatPriceUsd(1.5)).toBe('1.50');
+
+      const mockSendMessage = vi.fn().mockResolvedValue({});
+      const mockBot: any = {
+        botInfo: { username: 'racertradingbot' },
+        telegram: {
+          sendMessage: mockSendMessage,
+        },
+      };
+      (await import('./buyAlerts.js')).setBotInstance(mockBot);
+
+      const db = await import('@racerbot/db');
+      vi.mocked(db.getGroupBuyAlertsByToken).mockResolvedValueOnce([
+        {
+          id: 'ba-uptober',
+          chat_id: '-1004441806059',
+          chat_title: 'Uptober Community',
+          admin_id: '12345',
+          token_address: 'uptober.nearlytrade.near',
+          chain: 'near',
+          min_buy_usd: 5.0,
+          emoji: '🏎️',
+          emoji_step_usd: 5.0,
+          media_type: 'none',
+          whale_threshold_usd: 200.0,
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+
+      const event: BuyAlertEvent = {
+        type: 'buy_alert',
+        chain: 'near',
+        token_address: 'uptober.nearlytrade.near',
+        token_name: 'Uptober',
+        token_symbol: 'UPTOBER',
+        buyer_address: 'racer_whale.near',
+        spent_amount_native: '10.0000 NEAR',
+        spent_usd: 48.00,
+        tokens_received: '8,580,420 UPTOBER',
+        price_usd: 0.0000056,
+        market_cap_usd: 5600,
+        tx_hash: 'tx-uptober-1',
+        timestamp: Date.now(),
+      };
+
+      await dispatchBuyAlert(event);
+
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const callArgs = mockSendMessage.mock.calls[0];
+      const text = callArgs[1];
+      expect(text).toContain('🏎️ <b>RACERBOT BUY ALERT</b> 🏎️');
+      expect(text).toContain('🏎️'.repeat(10));
+      expect(text).toContain('🪙 <b>Token:</b> Uptober ($UPTOBER)');
+      expect(text).toContain('📄 <b>CA:</b> <code>uptober.nearlytrade.near</code>');
+      expect(text).toContain('💰 <b>Spent:</b> <b>10.0000 NEAR</b> ($48.00 USD)');
+      expect(text).toContain('📦 <b>Got:</b> 8,580,420 UPTOBER');
+      expect(text).toContain('👤 <b>Buyer:</b> <code>racer_whale.near</code>');
+      expect(text).toContain('💵 <b>Price:</b> $0.0000056');
+      expect(text).toContain('📊 <b>MCap:</b> $5,600');
     });
   });
 });
