@@ -1590,7 +1590,7 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
 
   const nativeNearYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
-  const spendable = Math.max(0, nativeNear - 0.05);
+  const spendable = Math.max(0, nativeNear - 0.015);
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;
@@ -1611,7 +1611,7 @@ export async function getTradeSpendableSui(telegramId: number): Promise<number> 
   if (!updated.sui_address) return 0;
 
   const bal = await getSuiBalance(updated.sui_address).catch(() => ({ mist: 0n, sui: 0, formatted: '0.0000' }));
-  const spendable = Math.max(0, bal.sui - 0.02); // 0.02 SUI gas reserve
+  const spendable = Math.max(0, bal.sui - 0.01); // 0.01 SUI gas reserve
 
   suiTradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;

@@ -201,7 +201,13 @@ async function sendGroupAlertMessage(
 ): Promise<void> {
   if (!_bot) return;
 
-  const emoji = alert.emoji || '🏎️';
+  const isUptober =
+    event.token_symbol?.toUpperCase() === 'UPTOBER' ||
+    event.token_address?.toLowerCase().includes('uptober');
+  const defaultEmoji = isUptober ? '🆙⬆️' : '🏎️';
+  const emoji = isUptober
+    ? (alert.emoji === '🏎️' || alert.emoji === '🚀' || !alert.emoji ? '🆙⬆️' : alert.emoji)
+    : (alert.emoji || '🏎️');
   const step = parseFloat(String(alert.emoji_step_usd ?? '5')) || 5;
   const count = Math.min(35, Math.max(1, Math.round(event.spent_usd / step)));
   const emojiBar = emoji.repeat(count);
@@ -649,7 +655,7 @@ export async function handleBuyBotCommand(ctx: Context): Promise<void> {
       tokenAddress,
       chain: isSui ? 'sui' : 'near',
       minBuyUsd: 5.0,
-      emoji: '🏎️',
+      emoji: (tokenAddress.toLowerCase().includes('uptober') || tokenInfo?.symbol?.toUpperCase() === 'UPTOBER') ? '🆙⬆️' : '🏎️',
       emojiStepUsd: 5.0,
       whaleThresholdUsd: 200.0,
     });

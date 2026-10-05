@@ -7,6 +7,7 @@ import {
   generateCorrelationId,
   DEFAULT_RPC_URLS,
   getNearUsdPrice,
+  isCoreToken,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
@@ -376,9 +377,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                   fn.method_name === 'create_pool' ||
                   fn.method_name === 'create_dcl_pool' ||
                   fn.method_name === 'add_liquidity' ||
-                  fn.method_name === 'deposit_and_add_liquidity' ||
-                  fn.method_name === 'mft_transfer_call' ||
-                  fn.method_name === 'swap'
+                  fn.method_name === 'deposit_and_add_liquidity'
                 )
               ) {
                 const candidateTokens: string[] = [];
@@ -389,14 +388,8 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 if (typeof decoded?.pool_id === 'string' && decoded.pool_id.includes('|')) {
                   candidateTokens.push(...decoded.pool_id.split('|').slice(0, 2));
                 }
-                if (Array.isArray(decoded?.actions)) {
-                  for (const act of decoded.actions) {
-                    if (act?.token_in) candidateTokens.push(act.token_in);
-                    if (act?.token_out) candidateTokens.push(act.token_out);
-                  }
-                }
                 const uniqueNonNear = [...new Set(candidateTokens)].filter(
-                  t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t))
+                  t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t)) && !isCoreToken(t)
                 );
                 for (const t of uniqueNonNear) {
                   await handlePoolCreated(t, 'rhea', decoded).catch(() => {});
@@ -481,7 +474,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
   }
 
   // ── Rhea pool / token launch (v2.ref-finance.near & dclv2.ref-labs.near) ──
-  if (RHEA_RECEIVERS.has(receiverId) && (eventName === 'pool_created' || eventName === 'token_launch' || eventName === 'swap')) {
+  if (RHEA_RECEIVERS.has(receiverId) && (eventName === 'pool_created' || eventName === 'token_launch')) {
     const candidates: string[] = [];
     if (data?.token_id) candidates.push(data.token_id);
     if (data?.token_out) candidates.push(data.token_out);
@@ -492,7 +485,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
     }
     const uniqueTokens = [...new Set(candidates)].filter(
       t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t)) &&
-        !t.endsWith('.nearlytrade.near') && !t.endsWith('.shardsmarket.near')
+        !t.endsWith('.nearlytrade.near') && !t.endsWith('.shardsmarket.near') && !isCoreToken(t)
     );
     for (const t of uniqueTokens) {
       await handlePoolCreated(t, 'rhea', data).catch(() => {});
@@ -1030,50 +1023,15 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
 }
 
 /**
- * After a new token is detected, check if any users have auto-buy enabled
- * and the token passes their filters. Publish AUTO_BUY_SIGNAL for each match.
+ * Fire armed targeted snipe orders (token or deployer) for a specific token.
+ * Safe to call from both block scanner and the watchdog poller because
+ * recordSnipeTrigger deduplicates fires and prevents re-triggering.
  */
-async function checkAutoBuySignals(
+async function checkSnipeSignalsOnly(
   tokenAddress: string,
   venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
-  liquidityStr: string,
-  _marketCap: number,
   creator = ''
 ): Promise<void> {
-  // NEARpad can be auto-bought
-  try {
-    const db = await getDb();
-    const result = await db
-      .query(
-        `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near FROM users WHERE auto_buy_enabled = true AND auto_buy_amount_near > 0`
-      )
-      .catch(() => ({ rows: [] as any[] }));
-
-    const liquidity = parseFloat(liquidityStr) / 1e24; // Convert yoctoNEAR to NEAR
-
-    for (const user of result.rows) {
-      const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '10');
-      if (liquidity < minLiquidity) continue;
-
-      const signal: AutoBuySignal = {
-        type: 'auto_buy_signal',
-        user_id: user.id,
-        token_address: tokenAddress,
-        amount_near: user.auto_buy_amount_near.toString(),
-        venue,
-        timestamp: Date.now(),
-      };
-      await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
-    }
-  } catch (err) {
-    console.error('[DETECTOR] Auto-buy signal error:', (err as Error).message);
-  }
-
-  // ── Targeted snipe orders ─────────────────────────────────────────────────
-  // Token-address snipes match this exact contract; deployer snipes match the
-  // creator wallet. Both bypass the min-liquidity gate — the user explicitly
-  // chose this target. The trigger insert is the dedup gate: a token detected
-  // twice (chunk path + event path) never double-fires an order.
   try {
     const [tokenOrders, deployerOrders] = await Promise.all([
       getActiveTokenSnipes(tokenAddress).catch(() => []),
@@ -1100,6 +1058,70 @@ async function checkAutoBuySignals(
     }
   } catch (err) {
     console.error('[DETECTOR] Snipe order match error:', (err as Error).message);
+  }
+}
+
+/** In-memory dedup set: `${userId}:${tokenAddress.toLowerCase()}` → timestamp */
+const autoBuyExecutedCache = new Map<string, number>();
+
+/**
+ * After a new token is detected, check if any users have auto-buy enabled
+ * and the token passes their filters. Publish AUTO_BUY_SIGNAL for each match.
+ */
+async function checkAutoBuySignals(
+  tokenAddress: string,
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  liquidityStr: string,
+  _marketCap: number,
+  creator = ''
+): Promise<void> {
+  // 1. Check targeted snipe orders
+  await checkSnipeSignalsOnly(tokenAddress, venue, creator);
+
+  // 2. Skip core/major tokens (USDC, USDT, wrap.near, SWEAT, etc.) from general auto-buy
+  if (isCoreToken(tokenAddress)) {
+    return;
+  }
+
+  // 3. General auto-buy for new token launches
+  try {
+    const db = await getDb();
+    const result = await db
+      .query(
+        `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near 
+         FROM users 
+         WHERE auto_buy_enabled = true AND auto_buy_amount_near > 0`
+      )
+      .catch(() => ({ rows: [] as any[] }));
+
+    const liquidity = parseFloat(liquidityStr) / 1e24; // Convert yoctoNEAR to NEAR
+    const now = Date.now();
+    const normToken = tokenAddress.toLowerCase().trim();
+
+    for (const user of result.rows) {
+      const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '10');
+      if (liquidity < minLiquidity) continue;
+
+      const dedupKey = `${user.id}:${normToken}`;
+      const lastFired = autoBuyExecutedCache.get(dedupKey);
+      if (lastFired && now - lastFired < 86_400_000) {
+        // Already fired for this user on this token within the last 24h
+        continue;
+      }
+      autoBuyExecutedCache.set(dedupKey, now);
+
+      const signal: AutoBuySignal = {
+        type: 'auto_buy_signal',
+        user_id: user.id,
+        token_address: tokenAddress,
+        amount_near: user.auto_buy_amount_near.toString(),
+        venue,
+        timestamp: now,
+      };
+      await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
+    }
+  } catch (err) {
+    console.error('[DETECTOR] Auto-buy signal error:', (err as Error).message);
   }
 }
 
@@ -1195,8 +1217,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
           const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
           if (st && st.price > 0 && st.liquidityNear > 0) {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on DCL (${dclPoolId})! Liq: ${st.liquidityNear} NEAR`);
-            const liqYocto = (st.liquidityNear * 1e24).toString();
-            await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
+            await checkSnipeSignalsOnly(tokenAddress, 'rhea');
             continue;
           }
         }
@@ -1209,7 +1230,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
             const nearRes = parseFloat(res.reserveIn) / 1e24;
             if (nearRes > 0) {
               console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Ref Simple Pool (${rheaPoolId})! Reserve: ${nearRes} NEAR`);
-              await checkAutoBuySignals(tokenAddress, 'rhea', res.reserveIn, 0);
+              await checkSnipeSignalsOnly(tokenAddress, 'rhea');
               continue;
             }
           }
@@ -1219,8 +1240,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
         const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
         if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
           console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
-          const liqYocto = (rheaPool.liquidityNear * 1e24).toString();
-          await checkAutoBuySignals(tokenAddress, 'rhea', liqYocto, 0);
+          await checkSnipeSignalsOnly(tokenAddress, 'rhea');
           continue;
         }
 
@@ -1229,8 +1249,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
           const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
           if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
-            const liqYocto = (nt.liquidityNear * 1e24).toString();
-            await checkAutoBuySignals(tokenAddress, 'nearlytrade', liqYocto, 0);
+            await checkSnipeSignalsOnly(tokenAddress, 'nearlytrade');
           }
         }
       } catch (err: any) {

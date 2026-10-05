@@ -1656,8 +1656,12 @@ export async function getActiveDeployerSnipes(deployerAddress: string): Promise<
 export async function getDistinctActiveSnipeTokens(): Promise<string[]> {
   const db = await getDb();
   const r = await db.query(
-    `SELECT DISTINCT lower(token_address) AS token_address FROM snipe_orders
-     WHERE snipe_type = 'token' AND status = 'active' AND token_address IS NOT NULL`
+    `SELECT DISTINCT lower(so.token_address) AS token_address FROM snipe_orders so
+     WHERE so.snipe_type = 'token' AND so.status = 'active' AND so.token_address IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM snipe_triggers st
+         WHERE st.order_id = so.id AND (st.status = 'filled' OR (st.status = 'failed' AND st.attempts >= 5))
+       )`
   );
   return r.rows.map(row => row.token_address as string);
 }
@@ -1676,12 +1680,14 @@ export async function recordSnipeTrigger(orderId: string, tokenAddress: string, 
      SELECT $1, $2, $3
      WHERE NOT EXISTS (
        SELECT 1 FROM snipe_triggers
-       WHERE order_id = $1 AND lower(token_address) = lower($2) AND status IN ('pending', 'filled')
+       WHERE order_id = $1 AND lower(token_address) = lower($2) 
+         AND (status = 'filled' OR (status = 'pending' AND updated_at > NOW() - INTERVAL '5 minutes'))
      )
      ON CONFLICT (order_id, token_address) DO UPDATE
        SET status = 'pending', error = NULL, tx_hash = NULL, venue = EXCLUDED.venue,
            attempts = snipe_triggers.attempts + 1, updated_at = NOW()
-       WHERE snipe_triggers.status = 'failed' AND snipe_triggers.attempts < 5
+       WHERE (snipe_triggers.status = 'failed' AND snipe_triggers.attempts < 5)
+          OR (snipe_triggers.status = 'pending' AND snipe_triggers.updated_at <= NOW() - INTERVAL '5 minutes' AND snipe_triggers.attempts < 5)
      RETURNING id`,
     [orderId, tokenAddress, venue]
   );

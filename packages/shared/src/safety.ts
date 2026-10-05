@@ -27,7 +27,7 @@ const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.nearportnear.near',
 ];
 
-const VERIFIED_CORE_TOKENS = new Set([
+export const VERIFIED_CORE_TOKENS = new Set([
   'wrap.near',
   'near',
   'aurora',
@@ -36,6 +36,12 @@ const VERIFIED_CORE_TOKENS = new Set([
   'usdt.tether-token.near',
   '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // USDC
 ]);
+
+export function isCoreToken(tokenAddress: string): boolean {
+  if (!tokenAddress) return false;
+  const lower = tokenAddress.toLowerCase().trim();
+  return VERIFIED_CORE_TOKENS.has(lower) || lower === 'wrap.near' || lower === 'near';
+}
 
 // ── Known dangerous backdoor method signatures ──────────────────────────────
 // These methods allow contract creators to confiscate, burn, freeze or blacklist
