@@ -3047,34 +3047,37 @@ export class MultiRpcNear {
         const isBuyDirection = inToken === 'wrap.near';
         const launchPoolId = state.dclPoolId;
 
-        // For a non-NEAR quote, quote each hop separately and chain outputs.
-        // We cannot rely on multi-pool atomic quoting on dclv2.ref-labs.near
-        // (not verified to accept 2 pool_ids in the quote view).
         try {
           const route = await this.planNearlytradeRoute(targetToken);
           if (route.kind === 'multihop') {
+            if (route.hop1.type === 'dcl') {
+              // Native atomic 2-pool quote on dclv2.ref-labs.near
+              const poolIds = isBuyDirection
+                ? [route.hop1.poolId, launchPoolId]
+                : [launchPoolId, route.hop1.poolId];
+              const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: poolIds,
+                input_token: inToken,
+                output_token: outToken,
+                input_amount: amountIn,
+              });
+              const finalOut = BigInt(q?.amount || '0');
+              if (finalOut <= 0n) throw new Error('Atomic 2-hop DCL quote returned 0');
+              const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+              return { expectedOutput: finalOut.toString(), minAmountOut: minFinal };
+            }
+
             if (isBuyDirection) {
-              // Hop 1: wNEAR → quote
-              let hop1Out: string;
-              if (route.hop1.type === 'dcl') {
-                const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-                  pool_ids: [route.hop1.poolId],
-                  input_token: 'wrap.near',
-                  output_token: route.quote,
-                  input_amount: amountIn,
-                });
-                hop1Out = q1?.amount || '0';
-              } else {
-                const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
-                  pool_id: Number(route.hop1.poolId),
-                  token_in: 'wrap.near',
-                  amount_in: amountIn,
-                  token_out: route.quote,
-                });
-                hop1Out = ret || '0';
-              }
+              // Hop 1: wNEAR → quote (v2 AMM)
+              const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+                pool_id: Number(route.hop1.poolId),
+                token_in: 'wrap.near',
+                amount_in: amountIn,
+                token_out: route.quote,
+              });
+              const hop1Out = ret || '0';
               if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 quote returned 0');
-              // Hop 2: quote → launch token
+              // Hop 2: quote → launch token (DCL)
               const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
                 pool_ids: [launchPoolId],
                 input_token: route.quote,
@@ -3087,7 +3090,7 @@ export class MultiRpcNear {
               const minFinal = calculateMinAmountOut(finalOut, slippagePct);
               return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
             } else {
-              // Sell direction: launch token → quote → wNEAR
+              // Sell direction: launch token → quote (DCL) → wNEAR (v2 AMM)
               const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
                 pool_ids: [launchPoolId],
                 input_token: inToken,
@@ -3096,24 +3099,13 @@ export class MultiRpcNear {
               });
               const hop1Out = q1?.amount || '0';
               if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 sell quote returned 0');
-              let finalOut: string;
-              if (route.hop1.type === 'dcl') {
-                const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-                  pool_ids: [route.hop1.poolId],
-                  input_token: route.quote,
-                  output_token: 'wrap.near',
-                  input_amount: hop1Out,
-                });
-                finalOut = q2?.amount || '0';
-              } else {
-                const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
-                  pool_id: Number(route.hop1.poolId),
-                  token_in: route.quote,
-                  amount_in: hop1Out,
-                  token_out: 'wrap.near',
-                });
-                finalOut = ret || '0';
-              }
+              const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+                pool_id: Number(route.hop1.poolId),
+                token_in: route.quote,
+                amount_in: hop1Out,
+                token_out: 'wrap.near',
+              });
+              const finalOut = ret || '0';
               if (BigInt(finalOut) <= 0n) throw new Error('Hop2 sell quote returned 0');
               const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
               const minFinal = calculateMinAmountOut(BigInt(finalOut), slippagePct);
