@@ -615,7 +615,7 @@ export class SwapExecutor {
         // Keep at least 0.015 NEAR (~$0.07), allowing users to spend almost their entire balance
         const nearUsd = await getNearUsdPrice().catch(() => 4.5);
         const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
-        const minReserveNear = 0.015;
+        const minReserveNear = nearNeededForSwap > 0n ? 0.015 : 0.003;
         const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
         const totalNearRequired = nearNeededForSwap + minReserveYocto;
 
@@ -2228,17 +2228,54 @@ export class SwapExecutor {
     const userSlippage = user?.slippage_pct ?? 2;
     const slippagePct = snipeOrderId ? Math.max(userSlippage, 15) : userSlippage;
 
+    if (!user || !user.subaccount_id) {
+      await finalizeSnipe(false, { error: 'user_wallet_not_found', permanent: true });
+      return { success: false, reason: 'user_wallet_not_found' };
+    }
+
+    // Pre-flight balance check: Ensure user actually has spendable balance before executing
+    const [nativeBalStr, wNearBalStr] = await Promise.all([
+      this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
+      this.nearClient.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+    ]);
+
+    const nativeBal = BigInt(nativeBalStr || '0');
+    const wNearBal = BigInt(wNearBalStr || '0');
+    const MIN_RESERVE_YOCTO = 15000000000000000000000n; // 0.015 NEAR gas reserve
+    const availableNative = nativeBal > MIN_RESERVE_YOCTO ? nativeBal - MIN_RESERVE_YOCTO : 0n;
+    const totalSpendableYocto = availableNative + wNearBal;
+    const MIN_SPEND_YOCTO = 10000000000000000000000n; // 0.01 NEAR minimum trade size
+
+    if (totalSpendableYocto < MIN_SPEND_YOCTO) {
+      const availNear = (Number(nativeBal) / 1e24).toFixed(4);
+      const reason = `Insufficient balance. Wallet has ${availNear} NEAR (must keep at least 0.015 NEAR for gas).`;
+      if (snipeOrderId) {
+        await finalizeSnipe(false, { error: reason, permanent: true });
+        await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
+      } else {
+        console.warn(`[EXECUTOR] Auto-buy skipped for user ${user_id}: ${reason}`);
+      }
+      return { success: false, reason };
+    }
+
     const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
-    if (BigInt(inYocto) <= 0n) {
+    let finalInYocto = BigInt(inYocto);
+    if (finalInYocto <= 0n) {
       await finalizeSnipe(false, { error: 'invalid_amount', permanent: true });
       return { success: false, reason: 'invalid_amount' };
+    }
+
+    // Clamp buy amount to available balance so trade succeeds instead of failing on insufficient funds
+    if (finalInYocto > totalSpendableYocto) {
+      console.log(`[EXECUTOR] Auto-buy user ${user_id} requested ${amount_near} NEAR, but spendable balance is ${(Number(totalSpendableYocto)/1e24).toFixed(4)} NEAR. Clamping buy amount.`);
+      finalInYocto = totalSpendableYocto;
     }
 
     // FIX Bug 2: Compute minAmountOut against the SWAP amount (98.5% after 1.5% fee).
     // The executor skims the fee before calling the DEX, so quoting against the full
     // inYocto produces a minAmountOut the DEX can never hit — silently failing every trade.
-    const feeYocto = (BigInt(inYocto) * 150n) / 10000n;
-    const swapYocto = (BigInt(inYocto) - feeYocto).toString();
+    const feeYocto = (finalInYocto * 150n) / 10000n;
+    const swapYocto = (finalInYocto - feeYocto).toString();
 
     try {
       const { minAmountOut } = await near.computeMinAmountOut(
@@ -2256,7 +2293,7 @@ export class SwapExecutor {
         user_id,
         token_in: 'wrap.near',
         token_out: token_address,
-        amount_in: inYocto,
+        amount_in: finalInYocto.toString(),
         min_amount_out: minAmountOut,
         venue,
         slippage_pct: slippagePct,

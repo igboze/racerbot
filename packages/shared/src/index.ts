@@ -172,6 +172,8 @@ export type {
 // Anti-Honeypot & Token Safety
 export {
   checkTokenSafety,
+  isCoreToken,
+  VERIFIED_CORE_TOKENS,
 } from './safety.js';
 export type {
   TokenSafetyReport,

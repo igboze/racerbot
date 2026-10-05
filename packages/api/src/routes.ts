@@ -5144,7 +5144,7 @@ export function setupRoutes(bot: Telegraf): void {
             tokenAddress,
             chain: isSui ? 'sui' : 'near',
             minBuyUsd: 5.0,
-            emoji: '🏎️',
+            emoji: (tokenAddress.toLowerCase().includes('uptober') || tokenInfo?.symbol?.toUpperCase() === 'UPTOBER') ? '🆙⬆️' : '🏎️',
             emojiStepUsd: 5.0,
             whaleThresholdUsd: 200.0,
           });
