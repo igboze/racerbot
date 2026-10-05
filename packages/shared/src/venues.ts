@@ -10,7 +10,7 @@
  * MultiRpcNear.computeMinAmountOut / SwapExecutor.
  */
 
-export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad';
+export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets';
 
 export interface VenueInfo {
   id: VenueId;
@@ -104,6 +104,15 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     contracts: ['nearpadfamily.near', 'dclv2.ref-labs.near'],
     tradeable: true,
     website: 'https://nearpad.family',
+  },
+  shoremarkets: {
+    id: 'shoremarkets',
+    label: 'ShoreMarkets',
+    kind: 'launchpad+amm',
+    contracts: ['launch.shoremarkets.near', 'dclv2.ref-labs.near'],
+    tradeable: true,
+    website: 'https://shore.markets',
+    tokenPage: (t) => `https://shore.markets/#/token/${t}`,
   },
 };
 

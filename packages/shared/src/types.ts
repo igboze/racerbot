@@ -31,6 +31,7 @@ export type VenueName =
   | 'onetokenhub'
   | 'gaypad'
   | 'nearpad'
+  | 'shoremarkets'
   | 'suipump'
   | 'cetus'
   | 'turbos'
@@ -52,6 +53,7 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'onetokenhub',
   'gaypad',
   'nearpad',
+  'shoremarkets',
   'suipump',
   'cetus',
   'turbos',
