@@ -970,7 +970,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
       const spentUsd = Math.round(spentNear * nearPriceUsd * 100) / 100;
 
       if (spentUsd > 0 && !isNaN(spentUsd)) {
-        const isTracked = activeBuyAlertTokens.size === 0 || activeBuyAlertTokens.has(tokenAddress.toLowerCase());
+        const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
 
         if (isTracked) {
           const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
