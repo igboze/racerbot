@@ -1215,7 +1215,7 @@ export class MultiRpcNear {
           }
         }
       } catch { /* no-op */ }
-      return { rateInNear: 1, decimals: 18 };
+      return { rateInNear: 0, decimals: 18 };
     };
 
     const candidates: Array<{
@@ -1311,7 +1311,7 @@ export class MultiRpcNear {
             const pairedInfo = await getPairedTokenNearRate(otherToken);
             const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
             const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
-            if (rOtherHuman > 0 && rOutHuman > 0) {
+            if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
               const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
               const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
               candidates.push({
@@ -1348,7 +1348,7 @@ export class MultiRpcNear {
               const pairedInfo = await getPairedTokenNearRate(otherToken);
               const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
               const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
-              if (rOtherHuman > 0 && rOutHuman > 0) {
+              if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
                 const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
                 const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
                 candidates.push({
@@ -1387,7 +1387,7 @@ export class MultiRpcNear {
               const pairedInfo = await getPairedTokenNearRate(otherToken);
               const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
               const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
-              if (rOtherHuman > 0 && rOutHuman > 0) {
+              if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
                 const priceInNear = (rOtherHuman / rOutHuman) * pairedInfo.rateInNear;
                 const liquidityNear = rOtherHuman * pairedInfo.rateInNear * 2;
                 candidates.push({
@@ -1484,7 +1484,7 @@ export class MultiRpcNear {
     }
 
     // Get JAMBO/NEAR conversion rate via pool 6518
-    let nearPerJambo = 0.2968;
+    let nearPerJambo = 0.0001156;
     try {
       const p6518 = await this.getRheaPoolReserves(6518, 'wrap.near', 'jambo-1679.meme-cooking.near');
       const nearAmt = parseFloat(p6518.reserveIn) / 1e24;
@@ -1500,8 +1500,8 @@ export class MultiRpcNear {
     const isDeployed = Boolean(state.is_deployed);
     const isTradable = Boolean(state.is_tradable);
     const phase: 'prebonded' | 'bonded' = (!isTradable && isDeployed) ? 'bonded' : 'prebonded';
-    // Gaypad graduates at 7.5 JAMBO
-    const bondingProgressPct = Math.min(100, Math.round((jamboHeld / 7.5) * 100));
+    // Gaypad graduates at 7,500,000 JAMBO (7.5e24 yocto-JAMBO)
+    const bondingProgressPct = Math.min(100, Math.max(0, Math.round((jamboHeld / 7500000) * 100)));
 
     return {
       token: tokenAddress,
@@ -2070,6 +2070,89 @@ export class MultiRpcNear {
   }
 
   /**
+   * Query Kelytra token state and bonding curve details from exchange.kelytradevs.near.
+   */
+  async getKelytraTokenState(tokenAddress: string): Promise<{
+    launchId: string;
+    token: string;
+    quote: string;
+    phase: 'prebonded' | 'bonded';
+    bonding_phase: 'prebonded' | 'bonded';
+    bondingProgressPct: number;
+    bonding_progress_pct: number;
+    price: number;
+    liquidityNear: number;
+    totalSupply: string;
+    creator: string;
+    poolId: string;
+    dclPoolId: string | null;
+  }> {
+    const KELYTRA_FACTORY = 'exchange.kelytradevs.near';
+    const [launch, meta, supply] = await Promise.all([
+      this.view<any>(KELYTRA_FACTORY, 'get_launch_by_token', { token_id: tokenAddress }).catch(() => null),
+      this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 6 })),
+      this.getTokenTotalSupply(tokenAddress).catch(() => '1000000000000000'),
+    ]);
+
+    if (!launch) {
+      throw new Error(`Token ${tokenAddress} not found on Kelytra`);
+    }
+
+    const launchId = String(launch.id);
+    const curve = await this.view<any>(KELYTRA_FACTORY, 'get_curve', { launch_id: launchId }).catch(() => null);
+
+    const tokenDecimals = meta?.decimals ?? launch.decimals ?? 6;
+    const quoteId = launch.quote_id || 'wrap.near';
+    const quoteDecimals = 24;
+
+    let price = 0;
+    let liquidityNear = 0;
+    let bondingProgressPct = 0;
+
+    const isBonded = Boolean(launch.pool_id && launch.pool_id !== '18446744073709551615');
+    const phase: 'prebonded' | 'bonded' = isBonded ? 'bonded' : 'prebonded';
+
+    if (curve) {
+      const vTokens = parseFloat(curve.virtual_tokens || '0') / Math.pow(10, tokenDecimals);
+      const vQuote = parseFloat(curve.virtual_quote || '0') / Math.pow(10, quoteDecimals);
+      const rTokens = parseFloat(curve.real_tokens || '0') / Math.pow(10, tokenDecimals);
+      const rQuote = parseFloat(curve.real_quote || '0') / Math.pow(10, quoteDecimals);
+
+      if (vTokens > 0 && vQuote > 0) {
+        price = vQuote / vTokens;
+      }
+      liquidityNear = rQuote * 2;
+      if (liquidityNear <= 0 && rQuote > 0) {
+        liquidityNear = rQuote;
+      }
+
+      const seedTokens = parseFloat(launch.seed_supply || launch.total_supply || '1000000000000000') / Math.pow(10, tokenDecimals);
+      const initialRealTokens = seedTokens * 0.7931;
+      if (initialRealTokens > 0 && rTokens < initialRealTokens) {
+        bondingProgressPct = Math.min(100, Math.max(0, Math.round(((initialRealTokens - rTokens) / initialRealTokens) * 100)));
+      } else if (isBonded) {
+        bondingProgressPct = 100;
+      }
+    }
+
+    return {
+      launchId,
+      token: tokenAddress,
+      quote: quoteId,
+      phase,
+      bonding_phase: phase,
+      bondingProgressPct,
+      bonding_progress_pct: bondingProgressPct,
+      price,
+      liquidityNear,
+      totalSupply: supply || launch.total_supply || '1000000000000000',
+      creator: launch.creator || '',
+      poolId: launch.pool_id || '18446744073709551615',
+      dclPoolId: isBonded ? String(launch.pool_id) : null,
+    };
+  }
+
+  /**
    * Query NearlyTrade token state and DCL pool details on-chain.
    * Throws real error if token or pool cannot be fetched (no fallback data).
    */
@@ -2562,7 +2645,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -3218,6 +3301,42 @@ export class MultiRpcNear {
       }
       const expected = BigInt(expectedOut);
       return { expectedOutput: expected.toString(), minAmountOut: calculateMinAmountOut(expected, slippagePct) };
+    } else if (venue === 'kelytra') {
+      const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      if (typeof rheaPoolId === 'number' && rheaPoolId >= 0) {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rheaPoolId);
+      }
+      const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && typeof rhea.poolId === 'number') {
+        return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rhea.poolId);
+      }
+      const state = await this.getKelytraTokenState(targetToken);
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      const curve = await this.view<any>('exchange.kelytradevs.near', 'get_curve', { launch_id: state.launchId }).catch(() => null);
+      if (curve) {
+        const vQuote = BigInt(curve.virtual_quote || '1');
+        const vTokens = BigInt(curve.virtual_tokens || '1');
+        const reserveIn = isBuy ? vQuote : vTokens;
+        const reserveOut = isBuy ? vTokens : vQuote;
+        const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 100);
+        const minOut = calculateMinAmountOut(expected, slippagePct);
+        return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      }
+      const price = state.price;
+      const meta = await this.getTokenMetadata(targetToken).catch(() => ({ decimals: 6 }));
+      const tokenDecimals = meta?.decimals ?? 6;
+      let expectedBI = 0n;
+      if (isBuy && price > 0) {
+        const nearIn = parseFloat(amountIn) / 1e24;
+        const tokensOut = nearIn / price;
+        expectedBI = BigInt(Math.floor(tokensOut * Math.pow(10, tokenDecimals)));
+      } else if (!isBuy && price > 0) {
+        const tokensIn = parseFloat(amountIn) / Math.pow(10, tokenDecimals);
+        const nearOut = tokensIn * price;
+        expectedBI = BigInt(Math.floor(nearOut * 1e24));
+      }
+      const minOut = calculateMinAmountOut(expectedBI, slippagePct);
+      return { expectedOutput: expectedBI.toString(), minAmountOut: minOut };
     } else {
       throw new Error(`Unsupported venue: ${venue}`);
     }

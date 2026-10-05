@@ -355,7 +355,10 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         receiverId === 'gaypad.j1-racing.near' ||
         receiverId === 'nearpadfamily.near' ||
         receiverId === 'launch.shoremarkets.near' ||
-        receiverId.endsWith('.launch.shoremarkets.near')
+        receiverId.endsWith('.launch.shoremarkets.near') ||
+        receiverId === 'exchange.kelytradevs.near' ||
+        receiverId.endsWith('.exchange.kelytradevs.near') ||
+        receiverId.endsWith('.kelytra.near')
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -450,6 +453,13 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
               } else if (receiverId.endsWith('.launch.shoremarkets.near') && fn.method_name === 'buy') {
                 // Direct call on the token contract itself (buy on bonding curve)
                 await handlePoolCreated(receiverId, 'shoremarkets', decoded).catch(() => {});
+              } else if (receiverId === 'exchange.kelytradevs.near') {
+                const tokenAddress = decoded?.token_id ?? decoded?.token ?? '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'kelytra', decoded).catch(() => {});
+                }
+              } else if (receiverId.endsWith('.exchange.kelytradevs.near') || receiverId.endsWith('.kelytra.near')) {
+                await handlePoolCreated(receiverId, 'kelytra', decoded).catch(() => {});
               }
             } catch {
               // Ignore binary or non-JSON arguments
@@ -602,6 +612,26 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
     }
   }
 
+  // ── Kelytra launchpad ──────────────────────────────────────────────────
+  if (
+    (receiverId === 'exchange.kelytradevs.near' ||
+      receiverId.endsWith('.exchange.kelytradevs.near') ||
+      receiverId.endsWith('.kelytra.near')) &&
+    (eventName === 'launch' ||
+      eventName === 'create_launch' ||
+      eventName === 'curve_swap' ||
+      eventName === 'terminal_swap')
+  ) {
+    const tokenAddress: string =
+      data?.token_id ??
+      data?.token ??
+      data?.account_id ??
+      (receiverId.endsWith('.exchange.kelytradevs.near') || receiverId.endsWith('.kelytra.near') ? receiverId : '');
+    if (tokenAddress && tokenAddress !== 'exchange.kelytradevs.near') {
+      await handlePoolCreated(tokenAddress, 'kelytra', data);
+    }
+  }
+
   // ── Swaps & Buy Alerts from any venue ─────────────────────────────────────
   if (eventName === 'swap') {
     const swapItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
@@ -623,7 +653,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -726,6 +756,22 @@ async function handlePoolCreated(
       }
     } catch (err) {
       logger.warn('Could not fetch ShoreMarkets state', { correlationId, tokenAddress, error: (err as Error).message });
+    }
+  } else if (venue === 'kelytra') {
+    try {
+      const ktState = await near.getKelytraTokenState(tokenAddress);
+      if (ktState) {
+        bondingPhase = ktState.phase;
+        bondingProgressPct = ktState.bondingProgressPct;
+        dclPoolId = ktState.dclPoolId;
+        initialPrice = ktState.price;
+        initialLiquidity = (ktState.liquidityNear * 1e24).toString();
+        if (!creator && ktState.creator) {
+          creator = ktState.creator;
+        }
+      }
+    } catch (err) {
+      logger.warn('Could not fetch Kelytra state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   }
 
@@ -1081,7 +1127,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
  */
 async function checkSnipeSignalsOnly(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
   creator = ''
 ): Promise<void> {
   try {
@@ -1122,7 +1168,7 @@ const autoBuyExecutedCache = new Map<string, number>();
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
   liquidityStr: string,
   _marketCap: number,
   creator = ''

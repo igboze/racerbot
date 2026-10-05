@@ -184,7 +184,7 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     if (!info || !info.tradeable) return;
 
     const venue = info.venue;
-    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(venue);
+    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra'].includes(venue);
 
     const jobs: Promise<unknown>[] = [
       near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
@@ -586,7 +586,19 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ? `💧 *Venue*: NEARpad (Ref DCL)`
       : `💧 *Venue*: NEARpad Launchpad`;
   } else if (tokenInfo.venue === 'gaypad') {
-    venueText = `💧 *Venue*: Gaypad Launchpad`;
+    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
+    const progressStr =
+      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+        : '';
+    venueText = `💧 *Venue*: Gaypad Launchpad (${phaseStr}${progressStr})`;
+  } else if (tokenInfo.venue === 'kelytra') {
+    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
+    const progressStr =
+      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+        : '';
+    venueText = `💧 *Venue*: Kelytra (${phaseStr}${progressStr})`;
   } else if (tokenInfo.venue === 'shoremarkets') {
     venueText = tokenInfo.dcl_pool_id
       ? `💧 *Venue*: ShoreMarkets (Ref DCL)`
@@ -1708,19 +1720,19 @@ async function executeBuyHelper(
     };
   }
 
-  if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(info.venue)) {
+  if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking' | 'shoremarkets';
+  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking' | 'shoremarkets' | 'kelytra';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
   const effectiveRheaPoolId = ((venue === 'nearlytrade' || venue === 'shoremarkets') && effectiveDclPoolId) ? undefined : (info.rhea_pool_id ?? undefined);
 
   if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
-    if (venue !== 'nearlytrade' && venue !== 'shoremarkets') {
+    if (venue !== 'nearlytrade' && venue !== 'shoremarkets' && venue !== 'gaypad' && venue !== 'kelytra') {
       throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
     }
   }
