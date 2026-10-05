@@ -1697,11 +1697,10 @@ export class SwapExecutor {
 
       if (isBuy) {
         await ensureStorage(token_out);
-        if (!smState.quoteIsNear) {
-          await ensureStorage(smState.quote);
-        }
 
-        if (smState.quoteIsNear) {
+        const route = await near.planShoremarketsRoute(token_out);
+
+        if (smState.quoteIsNear || route.kind === 'direct') {
           const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
           if (!effectiveDclPoolId) {
             throw new Error(`DCL pool not found for ShoreMarkets token ${token_out}`);
@@ -1724,10 +1723,31 @@ export class SwapExecutor {
             knownWNearBal
           );
           result = await signAndSend('wrap.near', actions);
+        } else if (route.hop1.type === 'dcl') {
+          // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
+          const poolIds = [route.hop1.poolId, route.launchPoolId];
+          console.log(
+            `[EXECUTOR] ShoreMarkets route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
+          );
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'dclv2.ref-labs.near',
+            JSON.stringify({
+              Swap: {
+                pool_ids: poolIds,
+                output_token: token_out,
+                min_output_amount: minOutAdj,
+              },
+            }),
+            BigInt('250000000000000'),
+            knownWNearBal
+          );
+          result = await signAndSend('wrap.near', actions);
         } else {
-          const route = await near.planShoremarketsRoute(token_out);
-          if (route.kind !== 'multihop') throw new Error('Expected multihop route for ShoreMarkets token');
-
+          await ensureStorage(smState.quote);
           const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
           console.log(
@@ -1736,44 +1756,25 @@ export class SwapExecutor {
           );
 
           // Tx 1: wNEAR -> quote
-          let tx1Result: any;
-          if (route.hop1.type === 'dcl') {
-            const tx1Actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'dclv2.ref-labs.near',
-              JSON.stringify({
-                Swap: {
-                  pool_ids: [route.hop1.poolId],
-                  output_token: route.quote,
-                  min_output_amount: minHop1,
+          const tx1Actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'v2.ref-finance.near',
+            JSON.stringify({
+              actions: [
+                {
+                  pool_id: Number(route.hop1.poolId),
+                  token_in: 'wrap.near',
+                  token_out: route.quote,
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: minHop1,
                 },
-              })
-            );
-            tx1Result = await signAndSend('wrap.near', tx1Actions);
-          } else {
-            const tx1Actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'v2.ref-finance.near',
-              JSON.stringify({
-                actions: [
-                  {
-                    pool_id: Number(route.hop1.poolId),
-                    token_in: 'wrap.near',
-                    token_out: route.quote,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: minHop1,
-                  },
-                ],
-              })
-            );
-            tx1Result = await signAndSend('wrap.near', tx1Actions);
-          }
+              ],
+            })
+          );
+          const tx1Result = await signAndSend('wrap.near', tx1Actions);
 
           console.log(`[EXECUTOR] ShoreMarkets hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
@@ -1824,16 +1825,15 @@ export class SwapExecutor {
         // Sell ShoreMarkets token
         await ensureStorage(token_in);
         await ensureStorage('wrap.near');
-        if (!smState.quoteIsNear) {
-          await ensureStorage(smState.quote);
-        }
 
-        if (smState.quoteIsNear) {
+        const route = await near.planShoremarketsRoute(token_in);
+
+        if (smState.quoteIsNear || route.kind === 'direct') {
           const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
           if (!effectiveDclPoolId) {
             throw new Error(`DCL pool not found for ShoreMarkets token ${token_in}`);
           }
-
+          console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl-sell pool=${effectiveDclPoolId}`);
           const actions = [
             transactions.functionCall(
               'ft_transfer_call',
@@ -1853,10 +1853,33 @@ export class SwapExecutor {
             ),
           ];
           result = await signAndSend(token_in, actions);
+        } else if (route.hop1.type === 'dcl') {
+          // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
+          const poolIds = [route.launchPoolId, route.hop1.poolId];
+          console.log(
+            `[EXECUTOR] ShoreMarkets route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
+          );
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: poolIds,
+                    output_token: 'wrap.near',
+                    min_output_amount: min_amount_out,
+                  },
+                }),
+              },
+              BigInt('250000000000000'),
+              BigInt('1')
+            ),
+          ];
+          result = await signAndSend(token_in, actions);
         } else {
-          const route = await near.planShoremarketsRoute(token_in);
-          if (route.kind !== 'multihop') throw new Error('Expected multihop route for ShoreMarkets token');
-
+          await ensureStorage(smState.quote);
           const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
           console.log(
@@ -1894,52 +1917,29 @@ export class SwapExecutor {
           }
 
           // Tx 2: quote -> wNEAR
-          let tx2Result: any;
-          if (route.hop1.type === 'dcl') {
-            const tx2Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: quoteBalBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [route.hop1.poolId],
-                      output_token: 'wrap.near',
-                      min_output_amount: min_amount_out,
+          const tx2Actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'v2.ref-finance.near',
+                amount: quoteBalBigInt.toString(),
+                msg: JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: Number(route.hop1.poolId),
+                      token_in: route.quote,
+                      token_out: 'wrap.near',
+                      amount_in: quoteBalBigInt.toString(),
+                      min_amount_out: min_amount_out,
                     },
-                  }),
-                },
-                BigInt('180000000000000'),
-                BigInt('1')
-              ),
-            ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
-          } else {
-            const tx2Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'v2.ref-finance.near',
-                  amount: quoteBalBigInt.toString(),
-                  msg: JSON.stringify({
-                    actions: [
-                      {
-                        pool_id: Number(route.hop1.poolId),
-                        token_in: route.quote,
-                        token_out: 'wrap.near',
-                        amount_in: quoteBalBigInt.toString(),
-                        min_amount_out: min_amount_out,
-                      },
-                    ],
-                  }),
-                },
-                BigInt('180000000000000'),
-                BigInt('1')
-              ),
-            ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
-          }
+                  ],
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+          const tx2Result = await signAndSend(route.quote, tx2Actions);
           result = tx2Result;
         }
       }
