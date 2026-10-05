@@ -778,7 +778,7 @@ export class SwapExecutor {
     await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -802,6 +802,9 @@ export class SwapExecutor {
         } else if (venue === 'nearpad') {
           const padState = await near.getNEARpadState(tokenTarget).catch(() => null);
           dclPoolId = padState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
+        } else if (venue === 'shoremarkets') {
+          const smState = await near.getShoremarketsTokenState(tokenTarget).catch(() => null);
+          dclPoolId = smState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
         }
       }
     }
@@ -1681,6 +1684,265 @@ export class SwapExecutor {
       } else {
         throw new Error('DCL pool not found for NEARpad token');
       }
+    } else if (venue === 'shoremarkets') {
+      const smState = await near.getShoremarketsTokenState(
+        token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
+      );
+      console.log(
+        `[EXECUTOR] ShoreMarkets route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
+        ` pool=${smState.pool_id} quote=${smState.quote} quoteIsNear=${smState.quoteIsNear} live=${smState.live}`
+      );
+
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+
+      if (isBuy) {
+        await ensureStorage(token_out);
+        if (!smState.quoteIsNear) {
+          await ensureStorage(smState.quote);
+        }
+
+        if (smState.quoteIsNear) {
+          const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
+          if (!effectiveDclPoolId) {
+            throw new Error(`DCL pool not found for ShoreMarkets token ${token_out}`);
+          }
+          console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl pool=${effectiveDclPoolId}`);
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            'dclv2.ref-labs.near',
+            JSON.stringify({
+              Swap: {
+                pool_ids: [effectiveDclPoolId],
+                output_token: token_out,
+                min_output_amount: minOutAdj,
+              },
+            }),
+            undefined,
+            knownWNearBal
+          );
+          result = await signAndSend('wrap.near', actions);
+        } else {
+          const route = await near.planShoremarketsRoute(token_out);
+          if (route.kind !== 'multihop') throw new Error('Expected multihop route for ShoreMarkets token');
+
+          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+          console.log(
+            `[EXECUTOR] ShoreMarkets route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
+            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
+          );
+
+          // Tx 1: wNEAR -> quote
+          let tx1Result: any;
+          if (route.hop1.type === 'dcl') {
+            const tx1Actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [route.hop1.poolId],
+                  output_token: route.quote,
+                  min_output_amount: minHop1,
+                },
+              })
+            );
+            tx1Result = await signAndSend('wrap.near', tx1Actions);
+          } else {
+            const tx1Actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: Number(route.hop1.poolId),
+                    token_in: 'wrap.near',
+                    token_out: route.quote,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minHop1,
+                  },
+                ],
+              })
+            );
+            tx1Result = await signAndSend('wrap.near', tx1Actions);
+          }
+
+          console.log(`[EXECUTOR] ShoreMarkets hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
+
+          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          const quoteBalBigInt = BigInt(quoteBal || '0');
+
+          if (quoteBalBigInt <= 0n) {
+            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+            throw new Error(
+              `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
+              `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
+            );
+          }
+
+          // Tx 2: quote -> launch token
+          let tx2Result: any;
+          try {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.launchPoolId],
+                      output_token: token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          } catch (tx2Err: any) {
+            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+            const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, smState.quoteDecimals)).toFixed(6);
+            throw new Error(
+              `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
+              `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+            );
+          }
+          result = tx2Result;
+        }
+      } else {
+        // Sell ShoreMarkets token
+        await ensureStorage(token_in);
+        await ensureStorage('wrap.near');
+        if (!smState.quoteIsNear) {
+          await ensureStorage(smState.quote);
+        }
+
+        if (smState.quoteIsNear) {
+          const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
+          if (!effectiveDclPoolId) {
+            throw new Error(`DCL pool not found for ShoreMarkets token ${token_in}`);
+          }
+
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [effectiveDclPoolId],
+                    output_token: 'wrap.near',
+                    min_output_amount: min_amount_out,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+          result = await signAndSend(token_in, actions);
+        } else {
+          const route = await near.planShoremarketsRoute(token_in);
+          if (route.kind !== 'multihop') throw new Error('Expected multihop route for ShoreMarkets token');
+
+          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+          console.log(
+            `[EXECUTOR] ShoreMarkets route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
+            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
+          );
+
+          // Tx 1: token -> quote
+          const tx1Actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: 'dclv2.ref-labs.near',
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({
+                  Swap: {
+                    pool_ids: [route.launchPoolId],
+                    output_token: route.quote,
+                    min_output_amount: minHop1,
+                  },
+                }),
+              },
+              BigInt('180000000000000'),
+              BigInt('1')
+            ),
+          ];
+          await signAndSend(token_in, tx1Actions);
+
+          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          const quoteBalBigInt = BigInt(quoteBal || '0');
+          if (quoteBalBigInt <= 0n) {
+            throw new Error(
+              `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+            );
+          }
+
+          // Tx 2: quote -> wNEAR
+          let tx2Result: any;
+          if (route.hop1.type === 'dcl') {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.hop1.poolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          } else {
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: Number(route.hop1.poolId),
+                        token_in: route.quote,
+                        token_out: 'wrap.near',
+                        amount_in: quoteBalBigInt.toString(),
+                        min_amount_out: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            tx2Result = await signAndSend(route.quote, tx2Actions);
+          }
+          result = tx2Result;
+        }
+      }
     } else if (venue === 'gaypad') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
@@ -2365,6 +2627,12 @@ export class SwapExecutor {
     } else if (venue === 'nearpad') {
       const padState = await near.getNEARpadState(tokenAddress).catch(() => null);
       dclPoolId = padState?.dclPoolId ?? null;
+    } else if (venue === 'shoremarkets') {
+      const smState = await near.getShoremarketsTokenState(tokenAddress).catch(() => null);
+      if (!smState || smState.priceUnavailable) {
+        return { rheaPoolId, dclPoolId, blocked: 'shoremarkets_no_near_route_to_quote' };
+      }
+      dclPoolId = smState.dclPoolId;
     }
 
     if (!rheaPoolId && !dclPoolId) {

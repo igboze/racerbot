@@ -1698,19 +1698,19 @@ async function executeBuyHelper(
     };
   }
 
-  if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(info.venue)) {
+  if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(info.venue)) {
     if (info && !info.tradeable) {
       const venueName = info.venue === 'memecooking' ? 'Meme.Cooking' : info.venue;
       throw new Error(`Token is on ${venueName} which is not yet supported for direct trading via RacerBot.`);
     }
     throw new Error('Could not determine DEX venue for token. Please verify the contract address.');
   }
-  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking';
+  const venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking' | 'shoremarkets';
   const effectiveDclPoolId = info.dcl_pool_id ?? undefined;
-  const effectiveRheaPoolId = (venue === 'nearlytrade' && effectiveDclPoolId) ? undefined : (info.rhea_pool_id ?? undefined);
+  const effectiveRheaPoolId = ((venue === 'nearlytrade' || venue === 'shoremarkets') && effectiveDclPoolId) ? undefined : (info.rhea_pool_id ?? undefined);
 
   if (info.bonding_phase === 'prebonded' && !effectiveRheaPoolId && !effectiveDclPoolId) {
-    if (venue !== 'nearlytrade') {
+    if (venue !== 'nearlytrade' && venue !== 'shoremarkets') {
       throw new Error('Token is still in its bonding curve phase — wait for it to bond before buying.');
     }
   }

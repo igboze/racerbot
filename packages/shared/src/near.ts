@@ -30,6 +30,8 @@ const rheaPoolIdCache = new Map<string, number>();
 // NearlyTrade launch record + token metadata + total supply cache (60s TTL).
 // Static per token; the DCL pool view inside getNearlytradeTokenState stays fresh.
 const ntStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
+// ShoreMarkets launch record + token metadata + total supply cache (60s TTL).
+const smStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
 const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
@@ -1791,6 +1793,234 @@ export class MultiRpcNear {
   }
 
   /**
+   * Get ShoreMarkets launchpad token state and DCL pool state on dclv2.ref-labs.near.
+   * ShoreMarkets tokens deploy via launch.shoremarkets.near and trade on Ref DCL.
+   */
+  async getShoremarketsTokenState(tokenAddress: string): Promise<{
+    pool_id: string;
+    dclPoolId: string;
+    phase: 'prebonded' | 'bonded';
+    bonding_phase: 'prebonded' | 'bonded';
+    bondingProgressPct: number;
+    bonding_progress_pct: number;
+    price: number;
+    liquidityNear: number;
+    reserveNear: string;
+    reserveToken: string;
+    totalSupply: string;
+    quote: string;
+    quoteDecimals: number;
+    quoteIsNear: boolean;
+    live: boolean;
+    priceUnavailable?: boolean;
+    creator: string;
+  }> {
+    const SM_STATIC_TTL_MS = 60_000;
+    let launch: any = null;
+    let meta: any = null;
+    let supplyOnChain: string = '0';
+
+    const cached = smStaticCache.get(tokenAddress);
+    if (cached && Date.now() - cached.at < SM_STATIC_TTL_MS) {
+      launch = cached.launch;
+      meta = cached.meta;
+      supplyOnChain = cached.supply;
+    } else {
+      const [launchRes, metaRes, supplyRes] = await Promise.allSettled([
+        this.view<any>('launch.shoremarkets.near', 'get_launch', { token: tokenAddress }),
+        this.getTokenMetadata(tokenAddress),
+        this.view<string>(tokenAddress, 'ft_total_supply', {}),
+      ]);
+
+      launch = launchRes.status === 'fulfilled' ? launchRes.value : null;
+      meta = metaRes.status === 'fulfilled' ? metaRes.value : { decimals: 18 };
+      supplyOnChain = supplyRes.status === 'fulfilled' ? supplyRes.value : '0';
+
+      if (launch && launch.pool_id) {
+        smStaticCache.set(tokenAddress, { at: Date.now(), launch, meta, supply: supplyOnChain });
+      }
+    }
+
+    if (!launch || !launch.pool_id) {
+      throw new Error(`ShoreMarkets token ${tokenAddress} not found or has no pool_id`);
+    }
+
+    const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: launch.pool_id });
+    if (!pool) {
+      throw new Error(`DCL pool ${launch.pool_id} not found on dclv2.ref-labs.near`);
+    }
+
+    // Determine quote asset
+    let quote: string = 'wrap.near';
+    if (launch.quote && launch.quote !== 'wrap.near' && launch.quote !== 'near') {
+      quote = launch.quote;
+    } else {
+      const parts = (launch.pool_id as string).split('|');
+      if (parts.length >= 2) {
+        const otherSide = parts[0] === tokenAddress ? parts[1] : parts[0];
+        if (otherSide && otherSide !== tokenAddress) quote = otherSide;
+      }
+    }
+    const quoteIsNear = quote === 'wrap.near' || quote === 'near';
+
+    let quoteDecimals: number;
+    if (quoteIsNear) {
+      quoteDecimals = 24;
+    } else if (quoteDecimalsCache.has(quote)) {
+      quoteDecimals = quoteDecimalsCache.get(quote)!;
+    } else {
+      try {
+        const qMeta = await this.getTokenMetadata(quote).catch(() => null);
+        quoteDecimals = qMeta?.decimals ?? 18;
+      } catch {
+        quoteDecimals = 18;
+      }
+      quoteDecimalsCache.set(quote, quoteDecimals);
+    }
+
+    const isTokenX = pool.token_x === tokenAddress;
+    const tokenDecimals = meta?.decimals ?? 18;
+
+    const live = pool.state === 'Running';
+    const bondingPhase: 'prebonded' | 'bonded' =
+      launch.stage === 'Bonded' || launch.stage === 'Graduated' ? 'bonded' : 'prebonded';
+    const progressPct = bondingPhase === 'bonded' ? 100 : 0;
+
+    const currentPoint = Number(pool.current_point);
+    let priceInQuote = 0;
+    if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
+      if (isTokenX) {
+        priceInQuote = Math.pow(1.0001, currentPoint) * Math.pow(10, tokenDecimals - quoteDecimals);
+      } else {
+        priceInQuote = (1 / Math.pow(1.0001, currentPoint)) * Math.pow(10, tokenDecimals - quoteDecimals);
+      }
+    }
+
+    let quoteNearRate = 1;
+    let priceUnavailable = false;
+    if (!quoteIsNear) {
+      const cachedRate = quoteNearPriceCache.get(quote);
+      if (cachedRate && Date.now() - cachedRate.at < QUOTE_NEAR_PRICE_TTL_MS) {
+        quoteNearRate = cachedRate.rate;
+      } else {
+        try {
+          quoteNearRate = await this.getQuoteNearPrice(quote, quoteDecimals);
+          quoteNearPriceCache.set(quote, { at: Date.now(), rate: quoteNearRate });
+        } catch {
+          priceUnavailable = true;
+          quoteNearRate = 0;
+          quoteNearPriceCache.set(quote, { at: Date.now(), rate: 0 });
+        }
+      }
+      if (quoteNearRate === 0) priceUnavailable = true;
+    }
+
+    const price = priceUnavailable ? 0 : priceInQuote * quoteNearRate;
+    const reserveQuote = isTokenX ? pool.total_y : pool.total_x;
+    const reserveToken = isTokenX ? pool.total_x : pool.total_y;
+
+    let reserveNearConverted = '0';
+    if (!priceUnavailable) {
+      if (quoteIsNear) {
+        reserveNearConverted = reserveQuote || '0';
+      } else {
+        try {
+          const rateBigIntTimes1e6 = BigInt(Math.round(quoteNearRate * 1e6));
+          const rawQuote = BigInt(reserveQuote || '0');
+          const scale = 24 - quoteDecimals;
+          let yocto = (rawQuote * rateBigIntTimes1e6) / 1000000n;
+          if (scale > 0) {
+            yocto = yocto * (10n ** BigInt(scale));
+          } else if (scale < 0) {
+            yocto = yocto / (10n ** BigInt(-scale));
+          }
+          reserveNearConverted = yocto.toString();
+        } catch {
+          reserveNearConverted = '0';
+        }
+      }
+    }
+    const reserveQuoteNum = parseFloat(reserveQuote || '0') / Math.pow(10, quoteDecimals);
+    const liquidityNear = priceUnavailable ? 0 : reserveQuoteNum * quoteNearRate * 2;
+    const totalSupply = supplyOnChain && supplyOnChain !== '0' ? supplyOnChain : (launch.token_funding || '0');
+
+    const creator =
+      launch.creator?.account_id ?? (typeof launch.creator === 'string' ? launch.creator : (launch.payer ?? ''));
+
+    return {
+      pool_id: launch.pool_id,
+      dclPoolId: launch.pool_id,
+      phase: bondingPhase,
+      bonding_phase: bondingPhase,
+      bondingProgressPct: Number(progressPct.toFixed(2)),
+      bonding_progress_pct: Number(progressPct.toFixed(2)),
+      price,
+      liquidityNear,
+      reserveNear: reserveNearConverted,
+      reserveToken: reserveToken || '0',
+      totalSupply,
+      quote,
+      quoteDecimals,
+      quoteIsNear,
+      live,
+      creator,
+      ...(priceUnavailable ? { priceUnavailable: true } : {}),
+    };
+  }
+
+  /**
+   * Plan the routing for a ShoreMarkets token trade from/to wNEAR.
+   */
+  async planShoremarketsRoute(tokenAddress: string): Promise<
+    | { kind: 'direct'; launchPoolId: string; quote: 'wrap.near' }
+    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string } }
+  > {
+    const st = await this.getShoremarketsTokenState(tokenAddress);
+    const launchPoolId = st.pool_id;
+
+    if (st.quoteIsNear) {
+      return { kind: 'direct', launchPoolId, quote: 'wrap.near' };
+    }
+
+    const quote = st.quote;
+
+    const rheaPool = await this.findRheaPoolForToken(quote, true).catch(() => null);
+    if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.liquidityNear > 0) {
+      return {
+        kind: 'multihop',
+        quote,
+        launchPoolId,
+        hop1: {
+          type: rheaPool.isDcl ? 'dcl' : 'v2',
+          poolId: String(rheaPool.poolId),
+        },
+      };
+    }
+
+    const dclId = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    if (dclId) {
+      return {
+        kind: 'multihop',
+        quote,
+        launchPoolId,
+        hop1: { type: 'dcl', poolId: dclId },
+      };
+    }
+
+    const refId = await this.findRheaPoolId('wrap.near', quote).catch(() => null);
+    if (refId !== null && refId !== undefined) {
+      return {
+        kind: 'multihop',
+        quote,
+        launchPoolId,
+        hop1: { type: 'v2', poolId: String(refId) },
+      };
+    }
+
+    throw new Error(`No NEAR route found for ShoreMarkets quote asset ${quote}`);
+  }
+
+  /**
    * View access key on chain to verify permissions.
    */
   async viewAccessKey(accountId: string, publicKey: string): Promise<any> {
@@ -2329,7 +2559,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -2394,6 +2624,128 @@ export class MultiRpcNear {
       const reserveOut = isBuy ? reserveToken : reserveNear;
 
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut);
+      const minOut = calculateMinAmountOut(expected, slippagePct);
+      return { expectedOutput: expected.toString(), minAmountOut: minOut };
+    } else if (venue === 'shoremarkets') {
+      const targetToken = tokenIn === 'wrap.near' || tokenIn === 'near' ? tokenOut : tokenIn;
+      const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
+      const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+
+      let state;
+      try {
+        state = await this.getShoremarketsTokenState(targetToken);
+      } catch (smErr) {
+        // Fallback: try Rhea pool if token has graduated
+        const rhea = await this.findRheaPoolForToken(targetToken).catch(() => null);
+        if (rhea && typeof rhea.poolId === 'number') {
+          return this.computeMinAmountOut('rhea', tokenIn, tokenOut, amountIn, slippagePct, rhea.poolId);
+        }
+        throw smErr;
+      }
+
+      // Non-NEAR quote (e.g. USDC, USDT) -> multi-hop quote
+      if (!state.quoteIsNear) {
+        const route = await this.planShoremarketsRoute(targetToken);
+        if (route.kind !== 'multihop') {
+          throw new Error(`Expected multihop route for non-NEAR quote ShoreMarkets token ${targetToken} but got '${route.kind}'`);
+        }
+        const launchPoolId = state.pool_id;
+        const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+
+        if (isBuy) {
+          // Hop 1: wNEAR -> quote
+          let hop1Out: string;
+          if (route.hop1.type === 'dcl') {
+            const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [route.hop1.poolId],
+              input_token: 'wrap.near',
+              output_token: route.quote,
+              input_amount: amountIn,
+            });
+            hop1Out = q1?.amount || '0';
+          } else {
+            const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+              pool_id: Number(route.hop1.poolId),
+              token_in: 'wrap.near',
+              amount_in: amountIn,
+              token_out: route.quote,
+            });
+            hop1Out = ret || '0';
+          }
+          if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 quote returned 0');
+
+          // Hop 2: quote -> launch token
+          const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [launchPoolId],
+            input_token: route.quote,
+            output_token: outToken,
+            input_amount: hop1Out,
+          });
+          const finalOut = BigInt(q2?.amount || '0');
+          if (finalOut <= 0n) throw new Error('Hop2 quote returned 0');
+          const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+          const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+          return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
+        } else {
+          // Sell direction: launch token -> quote -> wNEAR
+          const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [launchPoolId],
+            input_token: inToken,
+            output_token: route.quote,
+            input_amount: amountIn,
+          });
+          const hop1Out = q1?.amount || '0';
+          if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 sell quote returned 0');
+          let finalOut: string;
+          if (route.hop1.type === 'dcl') {
+            const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [route.hop1.poolId],
+              input_token: route.quote,
+              output_token: 'wrap.near',
+              input_amount: hop1Out,
+            });
+            finalOut = q2?.amount || '0';
+          } else {
+            const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
+              pool_id: Number(route.hop1.poolId),
+              token_in: route.quote,
+              amount_in: hop1Out,
+              token_out: 'wrap.near',
+            });
+            finalOut = ret || '0';
+          }
+          if (BigInt(finalOut) <= 0n) throw new Error('Hop2 sell quote returned 0');
+          const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+          const minFinal = calculateMinAmountOut(BigInt(finalOut), slippagePct);
+          return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
+        }
+      }
+
+      // Single-hop (quote is wNEAR)
+      if (state.dclPoolId) {
+        try {
+          const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+            pool_ids: [state.dclPoolId],
+            input_token: inToken,
+            output_token: outToken,
+            input_amount: amountIn,
+          });
+          const expected = BigInt(quoteRes?.amount || '0');
+          if (expected > 0n) {
+            const minOut = calculateMinAmountOut(expected, slippagePct);
+            return { expectedOutput: expected.toString(), minAmountOut: minOut };
+          }
+        } catch {
+          // quote view failed — fall through
+        }
+      }
+
+      const reserveNear = BigInt(state.reserveNear);
+      const reserveToken = BigInt(state.reserveToken);
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      const reserveIn = isBuy ? reserveNear : reserveToken;
+      const reserveOut = isBuy ? reserveToken : reserveNear;
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 100);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'rhea' || venue === 'ref') {
@@ -3001,6 +3353,28 @@ export class MultiRpcNear {
         };
       }
       if (!st || !(st.price > 0)) {
+        if (rhea && rhea.price > 0) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+        return null;
+      }
+      return { reserveNearYocto: st.reserveNear, price: st.price };
+    }
+    if (venue === 'shoremarkets') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      const st = await this.getShoremarketsTokenState(tokenAddress).catch(() => null);
+      if (rhea && rhea.price > 0 && rhea.liquidityNear >= 5) {
+        if (!st || !st.quoteIsNear || st.phase === 'bonded' || rhea.price > (st.price || 0) || rhea.liquidityNear >= 50) {
+          return {
+            price: rhea.price,
+            reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+          };
+        }
+      }
+      if (!st || st.priceUnavailable || !(st.price > 0)) {
         if (rhea && rhea.price > 0) {
           return {
             price: rhea.price,

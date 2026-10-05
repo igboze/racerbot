@@ -29,6 +29,7 @@ export type EventVenue =
   | 'onetokenhub'
   | 'gaypad'
   | 'nearpad'
+  | 'shoremarkets'
   | 'suipump'
   | 'cetus'
   | 'turbos'
