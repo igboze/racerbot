@@ -1589,7 +1589,10 @@ export class MultiRpcNear {
 
     const isBaseTokenX = pool.token_x === (baseToken || 'wrap.near');
     const isBaseTokenY = pool.token_y === (baseToken || 'wrap.near');
-    const baseIsX = isBaseTokenX || (!isBaseTokenY);
+    if (!isBaseTokenX && !isBaseTokenY) {
+      throw new Error(`DCL pool ${poolId} does not contain base token ${baseToken || 'wrap.near'}`);
+    }
+    const baseIsX = isBaseTokenX;
     const targetToken = baseIsX ? pool.token_y : pool.token_x;
     const baseAccount = baseIsX ? pool.token_x : pool.token_y;
 
@@ -3381,22 +3384,25 @@ export class MultiRpcNear {
     knownRheaPoolId?: number | null,
     knownDclPoolId?: string | null,
   ): Promise<{ price: number; reserveNearYocto: string } | null> {
-    // ── Fast-path: use cached pool IDs to skip pool discovery ────────────────
-    if (knownDclPoolId) {
-      // Seed the in-process cache so findDclPoolId also benefits
-      const keyAB = `wrap.near:${tokenAddress}`;
-      const keyBA = `${tokenAddress}:wrap.near`;
-      if (!dclPoolIdCache.has(keyAB)) dclPoolIdCache.set(keyAB, knownDclPoolId);
-      if (!dclPoolIdCache.has(keyBA)) dclPoolIdCache.set(keyBA, knownDclPoolId);
-      try {
-        const st = await this.getDclPoolState(knownDclPoolId, 'wrap.near');
-        if (st.price > 0 && st.liquidityNear > 0) {
-          return {
-            price: st.price,
-            reserveNearYocto: st.reserveNear,
-          };
-        }
-      } catch { /* pool may have drained — fall through to Rhea */ }
+    if (knownDclPoolId && venue !== 'nearlytrade') {
+      const parts = knownDclPoolId.split('|');
+      const isDirectNearPool = parts[0] === 'wrap.near' || parts[1] === 'wrap.near';
+      if (isDirectNearPool) {
+        // Seed the in-process cache so findDclPoolId also benefits
+        const keyAB = `wrap.near:${tokenAddress}`;
+        const keyBA = `${tokenAddress}:wrap.near`;
+        if (!dclPoolIdCache.has(keyAB)) dclPoolIdCache.set(keyAB, knownDclPoolId);
+        if (!dclPoolIdCache.has(keyBA)) dclPoolIdCache.set(keyBA, knownDclPoolId);
+        try {
+          const st = await this.getDclPoolState(knownDclPoolId, 'wrap.near');
+          if (st.price > 0 && st.liquidityNear > 0) {
+            return {
+              price: st.price,
+              reserveNearYocto: st.reserveNear,
+            };
+          }
+        } catch { /* pool may have drained — fall through to Rhea */ }
+      }
     }
     if (knownRheaPoolId != null && knownRheaPoolId >= 0) {
       // Seed the in-process cache so findRheaPoolId also benefits
