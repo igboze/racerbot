@@ -20,6 +20,8 @@ export {
   createFill,
   getFillsByPosition,
   createTrigger,
+  upsertTrigger,
+  cancelTriggersByPosition,
   getActiveTriggers,
   getTriggersByPosition,
   markTriggerFired,
