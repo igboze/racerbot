@@ -1,5 +1,8 @@
 import type { Telegraf, Context } from 'telegraf';
 import { Markup } from 'telegraf';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   createRedis,
   CHANNELS,
@@ -22,6 +25,30 @@ import {
 import { getTokenInfo, isSuiToken } from './wallet.js';
 
 let _bot: Telegraf | null = null;
+
+// ── Default alert banner (RacerBot logo) ──────────────────────────────────────
+let defaultLogoFileId: string | null = null;
+let defaultLogoPath: string | null | undefined;
+
+function resolveDefaultLogoPath(): string | null {
+  if (defaultLogoPath !== undefined) return defaultLogoPath;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(here, '..', 'assets', 'logo.png'),
+    path.resolve(here, 'assets', 'logo.png'),
+    path.resolve(here, '..', '..', '..', 'assets', 'logo.png'),
+    path.resolve(process.cwd(), 'assets', 'logo.png'),
+  ];
+  defaultLogoPath = candidates.find(p => fs.existsSync(p)) ?? null;
+  if (!defaultLogoPath) console.warn('[BUY_ALERTS] RacerBot logo.png not found — default banner disabled');
+  return defaultLogoPath;
+}
+
+function getDefaultLogoInput(): string | { source: string } | null {
+  if (defaultLogoFileId) return defaultLogoFileId;
+  const p = resolveDefaultLogoPath();
+  return p ? { source: p } : null;
+}
 const lastChatAlertTime = new Map<string, number>();
 const CHAT_ALERT_COOLDOWN_MS = 1500; // 1.5s rate limit per group
 
@@ -190,12 +217,30 @@ async function sendGroupAlertMessage(
     (event.token_address.endsWith('.nearlytrade.near') && tokenCache?.bonding_phase !== 'bonded');
   const isBonded = !isPrebonded;
 
+  // Resolve market cap — use event value if present, otherwise fetch live from token info cache
+  let resolvedMcapUsd = event.market_cap_usd;
+  if (!resolvedMcapUsd || resolvedMcapUsd <= 0) {
+    try {
+      const liveInfo = await getTokenInfo(event.token_address);
+      if (liveInfo?.market_cap_usd && liveInfo.market_cap_usd > 0) {
+        resolvedMcapUsd = liveInfo.market_cap_usd;
+      }
+    } catch { /* non-fatal */ }
+  }
+
   const priceLine = event.price_usd != null && event.price_usd > 0
     ? `\n💵 <b>Price:</b> $${event.price_usd < 0.0001 ? event.price_usd.toExponential(3) : event.price_usd.toFixed(4)}`
     : '';
 
-  const mcapLine = event.market_cap_usd != null && event.market_cap_usd > 0
-    ? `\n📊 <b>MCap:</b> $${event.market_cap_usd.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  const mcapLine = resolvedMcapUsd != null && resolvedMcapUsd > 0
+    ? `\n📊 <b>MCap:</b> $${resolvedMcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+    : '';
+
+  // Buyer balance line — shows NEAR or SUI balance to help spot whale buys
+  const nativeToken = isSui ? 'SUI' : 'NEAR';
+  const buyerBalance = isSui ? event.buyer_sui_balance : event.buyer_near_balance;
+  const buyerBalanceLine = buyerBalance != null && buyerBalance > 0
+    ? `\n💼 <b>Buyer Balance:</b> ${buyerBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${nativeToken}`
     : '';
 
   const caption =
@@ -206,7 +251,7 @@ async function sendGroupAlertMessage(
     `📄 <b>CA:</b> <code>${event.token_address}</code>\n` +
     `💰 <b>Spent:</b> <b>${event.spent_amount_native}</b> ($${event.spent_usd.toFixed(2)} USD)\n` +
     `📦 <b>Got:</b> ${event.tokens_received}\n` +
-    `👤 <b>Buyer:</b> <code>${maskAddress(event.buyer_address)}</code>` +
+    `👤 <b>Buyer:</b> <code>${maskAddress(event.buyer_address)}</code>${buyerBalanceLine}` +
     priceLine +
     mcapLine;
 
@@ -215,11 +260,13 @@ async function sendGroupAlertMessage(
   ];
 
   if (isBonded) {
-    actionButtons.push(Markup.button.url('📊 DexScreener', dexUrl));
+    actionButtons.push(Markup.button.url('📈 DexScreener', dexUrl));
+  } else if (event.token_address.endsWith('.nearlytrade.near')) {
+    actionButtons.push(Markup.button.url('💧 NearlyTrade', `https://nearlytrade.com/token/${event.token_address}`));
   }
 
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.url('⚡ Buy on RacerBot', buyDeepLink)],
+    [Markup.button.url(`⚡ BUY $${event.token_symbol} on RacerBot`, buyDeepLink)],
     actionButtons,
   ]);
 
@@ -241,7 +288,35 @@ async function sendGroupAlertMessage(
         return;
       }
     } catch (mediaErr: any) {
-      console.warn(`[BUY_ALERTS] Media send failed, falling back to text:`, mediaErr?.message);
+      console.warn(`[BUY_ALERTS] Media send failed, falling back to default logo:`, mediaErr?.message);
+    }
+  }
+
+  // Default banner: RacerBot logo (unless the admin explicitly chose text-only)
+  if (alert.media_type !== 'none') {
+    const photo = getDefaultLogoInput();
+    if (photo) {
+      try {
+        const sent: any = await _bot.telegram.sendPhoto(alert.chat_id, photo as any, {
+          caption,
+          parse_mode: 'HTML',
+          ...keyboard,
+        });
+        // Cache Telegram file_id so the logo is uploaded only once
+        const sizes = sent?.photo;
+        if (!defaultLogoFileId && Array.isArray(sizes) && sizes.length > 0) {
+          defaultLogoFileId = sizes[sizes.length - 1].file_id;
+        }
+        return;
+      } catch (logoErr: any) {
+        const msg = logoErr?.message || '';
+        // Kicked / no-rights errors must propagate so the alert gets auto-paused
+        if (/chat not found|bot was kicked|bot was blocked|deactivated|not enough rights/i.test(msg)) {
+          throw logoErr;
+        }
+        defaultLogoFileId = null;
+        console.warn(`[BUY_ALERTS] Default logo send failed, falling back to text:`, msg);
+      }
     }
   }
 
@@ -259,7 +334,11 @@ async function sendGroupAlertMessage(
 export function buildAlertSettingsCard(alert: GroupBuyAlertRecord): { text: string; keyboard: any } {
   const statusIcon = alert.is_active ? '🟢 ACTIVE' : '🔴 PAUSED';
   const chainIcon = alert.chain === 'sui' ? '💧 SUI' : '⬛ NEAR';
-  const mediaLabel = alert.media_file_id ? 'Custom Media 🖼️' : 'Default Text 🏎️';
+  const mediaLabel = alert.media_file_id
+    ? 'Custom Media 🖼️'
+    : alert.media_type === 'none'
+      ? 'Text Only 📝'
+      : 'RacerBot Logo 🏎️ (default)';
 
   const text =
     `🏎️ <b>RacerBot Group Buy Alert Settings</b>\n\n` +
@@ -660,12 +739,22 @@ export async function handleBuyAlertAction(ctx: Context): Promise<void> {
         type: 'upload_media',
         expiresAt: Date.now() + 5 * 60_000,
       });
-      await ctx.reply(
+      const promptText =
         `🖼️ <b>Upload Custom GIF or Photo Banner</b>\n\n` +
-        `Send a GIF (animation) or photo to this chat right now, and it will be displayed on all live BUY alerts for this group!\n\n` +
-        `<i>(Send /cancel anytime to cancel)</i>`,
-        { parse_mode: 'HTML' }
-      );
+        `Send a GIF (animation) or photo to this DM right now, and it will be displayed on all live BUY alerts for <b>${escapeHtml(currentAlert.chat_title || currentAlert.chat_id)}</b>!\n\n` +
+        `<i>(Send /cancel anytime to cancel)</i>`;
+
+      if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
+        try {
+          await ctx.telegram.sendMessage(fromId, promptText, { parse_mode: 'HTML' });
+          await ctx.answerCbQuery('📬 Check your DM to send the GIF or Photo!').catch(() => {});
+        } catch {
+          await ctx.answerCbQuery('⚠️ Please start a chat with RacerBot in DM first!').catch(() => {});
+        }
+        return;
+      }
+
+      await ctx.reply(promptText, { parse_mode: 'HTML' });
       await ctx.answerCbQuery('Send your GIF or Photo now').catch(() => {});
       break;
     }

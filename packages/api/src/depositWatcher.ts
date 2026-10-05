@@ -87,22 +87,42 @@ export async function pollUserDeposits(): Promise<void> {
           const suiAddr = user.sui_address;
 
           try {
-            // 1. Fetch NEAR native + wrap balances
-            const [nativeNearYocto, wrapNearYocto] = await Promise.all([
-              near.getNearBalance(subaccount).catch(() => '0'),
-              near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccount }).catch(() => '0'),
-            ]);
+            // 1. Fetch NEAR native + wrap balances with strict error handling.
+            // If RPC errors out or times out, DO NOT assume 0 (which causes false deposit loops on next poll)!
+            let nativeNearYocto: string | null = null;
+            let wrapNearYocto: string | null = null;
 
-            const nativeNear = Number(BigInt(nativeNearYocto || '0') / 1000000000000000000n) / 1e6;
-            const wrapNear = Number(BigInt(wrapNearYocto || '0') / 1000000000000000000n) / 1e6;
+            if (subaccount) {
+              const [resNative, resWrap] = await Promise.allSettled([
+                near.getNearBalance(subaccount),
+                near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccount }),
+              ]);
+              if (resNative.status === 'fulfilled') nativeNearYocto = resNative.value;
+              if (resWrap.status === 'fulfilled') wrapNearYocto = resWrap.value;
+
+              // If either failed, skip this user this cycle to prevent phantom deposit spikes
+              if (nativeNearYocto === null || wrapNearYocto === null) {
+                return;
+              }
+            }
+
+            const nativeNear = nativeNearYocto
+              ? Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6
+              : 0;
+            const wrapNear = wrapNearYocto
+              ? Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6
+              : 0;
             const currentTotalNear = nativeNear + wrapNear;
 
             // 2. Fetch SUI balance if SUI address exists
-            let currentSui = 0;
+            let currentSui: number | null = null;
             if (suiAddr) {
               const suiBal = await getSuiBalance(suiAddr).catch(() => null);
               if (suiBal) {
                 currentSui = suiBal.sui;
+              } else {
+                // SUI query failed, skip this cycle to prevent phantom deposit alerts
+                return;
               }
             }
 
@@ -113,18 +133,32 @@ export async function pollUserDeposits(): Promise<void> {
               // Initialize baseline balance without firing notification
               userBalanceState.set(stateKey, {
                 totalNear: currentTotalNear,
-                totalSui: currentSui,
+                totalSui: currentSui ?? 0,
                 initialized: true,
               });
               return;
             }
 
-            const inCooldown = isUserInTradeCooldown(userId, telegramId);
+            // Check trade cooldowns across in-memory map AND recent DB fills.
+            // When tokens are sold on DEX, NEAR/SUI proceeds increase wallet balance.
+            // We must NEVER treat trade proceeds as incoming external deposits!
+            let inCooldown = isUserInTradeCooldown(userId, telegramId);
+            if (!inCooldown) {
+              // Check if user has any executed trades in the last 3 minutes
+              const recentTrade = await db.query(
+                `SELECT 1 FROM fills WHERE user_id = $1 AND executed_at > NOW() - INTERVAL '3 minutes' LIMIT 1`,
+                [userId]
+              ).catch(() => null);
+              if (recentTrade && recentTrade.rows && recentTrade.rows.length > 0) {
+                inCooldown = true;
+                recordUserTrade(userId);
+              }
+            }
 
             // ── Check NEAR Deposit ──────────────────────────────────────────
             const nearDelta = currentTotalNear - prev.totalNear;
-            // Threshold: deposit of at least 0.005 NEAR
-            if (nearDelta >= 0.005 && !inCooldown) {
+            // Threshold: deposit of at least 0.01 NEAR (filters gas change dust)
+            if (nearDelta >= 0.01 && !inCooldown) {
               const usdVal = formatUSD(nearDelta * nearUsd);
               logger.info('NEAR deposit detected', {
                 telegramId,
@@ -142,29 +176,31 @@ export async function pollUserDeposits(): Promise<void> {
             }
 
             // ── Check SUI Deposit ───────────────────────────────────────────
-            const suiDelta = currentSui - prev.totalSui;
-            // Threshold: deposit of at least 0.005 SUI
-            if (suiDelta >= 0.005 && suiAddr && !inCooldown) {
-              const usdVal = formatUSD(suiDelta * suiUsd);
-              logger.info('SUI deposit detected', {
-                telegramId,
-                amount: suiDelta.toFixed(4),
-                usdVal,
-              });
+            if (currentSui !== null && suiAddr) {
+              const suiDelta = currentSui - prev.totalSui;
+              // Threshold: deposit of at least 0.01 SUI
+              if (suiDelta >= 0.01 && !inCooldown) {
+                const usdVal = formatUSD(suiDelta * suiUsd);
+                logger.info('SUI deposit detected', {
+                  telegramId,
+                  amount: suiDelta.toFixed(4),
+                  usdVal,
+                });
 
-              await notifyDeposit(telegramId, {
-                chain: 'sui',
-                amount: suiDelta.toFixed(4),
-                symbol: 'SUI',
-                address: suiAddr,
-                usdValue: usdVal,
-              }).catch((err) => logger.warn('Failed to send SUI deposit notify', { error: err.message }));
+                await notifyDeposit(telegramId, {
+                  chain: 'sui',
+                  amount: suiDelta.toFixed(4),
+                  symbol: 'SUI',
+                  address: suiAddr,
+                  usdValue: usdVal,
+                }).catch((err) => logger.warn('Failed to send SUI deposit notify', { error: err.message }));
+              }
             }
 
             // Update stored baseline
             userBalanceState.set(stateKey, {
               totalNear: currentTotalNear,
-              totalSui: currentSui,
+              totalSui: currentSui ?? prev.totalSui,
               initialized: true,
             });
           } catch (err: any) {

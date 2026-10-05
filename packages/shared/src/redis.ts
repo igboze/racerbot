@@ -151,6 +151,10 @@ export interface BuyAlertEvent {
   tokens_received: string;
   price_usd?: number;
   market_cap_usd?: number;
+  /** Buyer's native NEAR balance in NEAR (human-readable), fetched at trade time */
+  buyer_near_balance?: number;
+  /** Buyer's native SUI balance in SUI (human-readable), fetched at trade time */
+  buyer_sui_balance?: number;
   tx_hash: string;
   timestamp: number;
 }

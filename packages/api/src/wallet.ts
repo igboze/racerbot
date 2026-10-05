@@ -1965,7 +1965,8 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
               return { value, trusted: true };
             } catch {
               const idx = indexerBalances.get(tokenAddress);
-              return idx !== undefined ? { value: idx, trusted: true } : { value: '0', trusted: false };
+              // Stale indexer data is UNTRUSTED — it lags after DEX sells! Never use it to create new positions!
+              return idx !== undefined ? { value: idx, trusted: false } : { value: '0', trusted: false };
             }
           })
         ),
@@ -1980,7 +1981,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         const bal = balRes.status === 'fulfilled'
           ? balRes.value
           : (indexerBalances.has(tokenAddress)
-              ? { value: indexerBalances.get(tokenAddress)!, trusted: true }
+              ? { value: indexerBalances.get(tokenAddress)!, trusted: false }
               : { value: '0', trusted: false });
         const rawBal = bal.value;
         const infoRes = infoResults[i];
@@ -2029,6 +2030,33 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
             }
           }
         } else if (!isDustOrZero) {
+          // STRICT GUARD: To create a new external deposit, the balance MUST be confirmed by real RPC
+          if (!bal.trusted) {
+            console.log(`[DEPOSIT] Skipped creating deposit for ${tokenAddress} (user ${userId}): unverified RPC balance`);
+            continue;
+          }
+
+          // Check if this token was sold or closed in the last 15 minutes.
+          // Stale indexers or delayed on-chain balances must NEVER resurrect a sold position!
+          const db = await getDb();
+          const recentClosed = await db.query(
+            `SELECT 1 FROM positions WHERE user_id = $1 AND token_address = $2 AND status = 'closed' AND closed_at > NOW() - INTERVAL '15 minutes' LIMIT 1`,
+            [userId, tokenAddress]
+          ).catch(() => null);
+          if (recentClosed?.rows?.length) {
+            console.log(`[DEPOSIT] Guard triggered: skipped reviving recently closed position for ${tokenAddress} (user ${userId})`);
+            continue;
+          }
+
+          const recentSell = await db.query(
+            `SELECT 1 FROM fills f JOIN positions p ON f.position_id = p.id WHERE p.user_id = $1 AND p.token_address = $2 AND f.side = 'sell' AND f.executed_at > NOW() - INTERVAL '15 minutes' LIMIT 1`,
+            [userId, tokenAddress]
+          ).catch(() => null);
+          if (recentSell?.rows?.length) {
+            console.log(`[DEPOSIT] Guard triggered: skipped creating deposit for recently sold token ${tokenAddress} (user ${userId})`);
+            continue;
+          }
+
           const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
           const newPos = await createPosition({
             user_id: userId,
@@ -2037,7 +2065,6 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
             avg_entry_price: entryPrice,
           });
 
-          const db = await getDb();
           await db.query(
             'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
             [newPos.id]
@@ -2139,6 +2166,26 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                 }
               }
             } else if (!isDustOrZero) {
+              // Check if this Sui token was sold or closed in the last 15 minutes.
+              const db = await getDb();
+              const recentClosed = await db.query(
+                `SELECT 1 FROM positions WHERE user_id = $1 AND token_address = $2 AND status = 'closed' AND closed_at > NOW() - INTERVAL '15 minutes' LIMIT 1`,
+                [userId, tokenAddress]
+              ).catch(() => null);
+              if (recentClosed?.rows?.length) {
+                console.log(`[DEPOSIT] Guard triggered: skipped reviving recently closed SUI position for ${tokenAddress} (user ${userId})`);
+                continue;
+              }
+
+              const recentSell = await db.query(
+                `SELECT 1 FROM fills f JOIN positions p ON f.position_id = p.id WHERE p.user_id = $1 AND p.token_address = $2 AND f.side = 'sell' AND f.executed_at > NOW() - INTERVAL '15 minutes' LIMIT 1`,
+                [userId, tokenAddress]
+              ).catch(() => null);
+              if (recentSell?.rows?.length) {
+                console.log(`[DEPOSIT] Guard triggered: skipped creating deposit for recently sold SUI token ${tokenAddress} (user ${userId})`);
+                continue;
+              }
+
               // External SUI token deposit detected!
               const entryPrice = currentPrice > 0 ? currentPrice.toString() : '0';
               const newPos = await createPosition({
@@ -2149,7 +2196,6 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                 avg_entry_price: entryPrice,
               });
 
-              const db = await getDb();
               await db.query(
                 'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
                 [newPos.id]
