@@ -259,8 +259,12 @@ async function sendGroupAlertMessage(
     ? `\n📊 <b>MCap:</b> $${resolvedMcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
     : '';
 
+  const tokenHeader = (event.token_name && event.token_name.length <= 20 && !event.token_name.includes('.'))
+    ? event.token_name.toUpperCase()
+    : (event.token_symbol || 'TOKEN').toUpperCase();
+
   const caption =
-    `🏎️ <b>RACERBOT BUY ALERT</b> 🏎️\n` +
+    `${emoji} <b>${escapeHtml(tokenHeader)} BUY ALERT</b> ${emoji}\n` +
     whaleHeader +
     `${emojiBar}\n\n` +
     `🪙 <b>Token:</b> ${escapeHtml(event.token_name)} ($${escapeHtml(event.token_symbol)})\n` +
