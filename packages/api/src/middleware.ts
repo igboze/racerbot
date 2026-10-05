@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { getUserByTelegramId } from '@racerbot/db';
+import { isTradableVenue } from '@racerbot/shared';
 
 /** Reject initData older than this (replay window). 24h per Telegram guidance. */
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
@@ -232,9 +233,9 @@ export function validateSwapParams(params: any): { valid: boolean; errors: strin
   
   if (
     params.venue !== undefined &&
-    !['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub'].includes(params.venue)
+    !isTradableVenue(params.venue)
   ) {
-    errors.push('venue must be rhea, shardsmarket, nearlytrade, intear, or onetokenhub');
+    errors.push('venue must be a supported tradable venue');
   }
   
   // Validate token_in != token_out (no self-swaps)

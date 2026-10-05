@@ -23,6 +23,7 @@ import {
   getShortTokenKey,
   registerShortTokenKey,
   type VenueName,
+  isTradableVenue,
 } from '@racerbot/shared';
 import { Transaction } from '@mysten/sui/transactions';
 import {
@@ -128,7 +129,7 @@ export async function warmTokenInfoCache(): Promise<void> {
         bonding_phase: (row.bonding_phase as any) ?? null,
         bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
         dcl_pool_id: row.dcl_pool_id ?? null,
-        tradeable: ['rhea', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'suipump', 'cetus', 'turbos', 'deepbook', 'sui_dex'].includes(row.venue ?? 'unknown'),
+        tradeable: isTradableVenue(row.venue),
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
       tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
@@ -822,7 +823,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: isTradableVenue(dbCache.venue),
       holders_count: holdersData?.count ?? null,
       buys_count: dexData?.buys24h ?? null,
       sells_count: dexData?.sells24h ?? null,
@@ -1206,7 +1207,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
   }
 
-  const tradeable = ['shardsmarket', 'nearlytrade', 'rhea', 'ref', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(venue);
+  const tradeable = isTradableVenue(venue);
 
   const result: TokenInfoResult = {
     address: tokenAddress,
