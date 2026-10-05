@@ -217,7 +217,7 @@ describe('Group Buy Alerts Engine', () => {
 
       // Verify referral deep link button
       const extra = callArgs[2];
-      expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ Buy on RacerBot');
+      expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ BUY $MOON on RacerBot');
       expect(extra.reply_markup.inline_keyboard[0][0].url).toContain('https://t.me/racertradingbot?start=t_share_admin123');
     });
 

@@ -12,6 +12,8 @@ import {
   parseMemeCookingId,
   getNearUsdPrice,
   getSuiUsdPrice,
+  getSuiBalance,
+  getSuiTokenSupply,
   checkTokenSafety,
   type SwapEvent,
   type AutoBuySignal,
@@ -495,6 +497,30 @@ export class SwapExecutor {
           const tokenName = res.tokenName ?? event.token_out;
           const tokenSymbol = res.tokenSymbol ?? 'TOKEN';
 
+          // Compute market cap from total supply × price
+          let marketCapUsd: number | undefined;
+          try {
+            if ((res.priceSui ?? 0) > 0) {
+              const supplyResult = await getSuiTokenSupply(event.token_out).catch(() => null);
+              if (supplyResult != null) {
+                // getSuiTokenSupply returns raw integer supply in smallest units (MIST-equivalent)
+                const totalSupplyHuman = Number(supplyResult) / 1e9;
+                marketCapUsd = Math.round(totalSupplyHuman * (res.priceSui ?? 0) * suiUsdRate);
+              }
+            }
+          } catch { /* non-fatal */ }
+
+          // Fetch buyer's SUI balance so groups can gauge whale size
+          let buyerSuiBalance: number | undefined;
+          try {
+            const suiBal = await getSuiBalance(buyerAddress).catch(() => null);
+            if (suiBal != null) {
+              // getSuiBalance returns SuiBalanceResult; extract total balance in MIST
+              const mistBalance = typeof suiBal === 'object' ? (suiBal as any).totalBalance ?? (suiBal as any).balance : suiBal;
+              buyerSuiBalance = parseFloat(String(mistBalance)) / 1e9; // convert MIST to SUI
+            }
+          } catch { /* non-fatal */ }
+
           const buyAlert: BuyAlertEvent = {
             type: 'buy_alert',
             chain: 'sui',
@@ -506,6 +532,8 @@ export class SwapExecutor {
             spent_usd: Math.round(spentUsd * 100) / 100,
             tokens_received: `${res.tokenQty ?? '0'} ${tokenSymbol}`,
             price_usd: (res.priceSui ?? 0) * suiUsdRate,
+            market_cap_usd: marketCapUsd,
+            buyer_sui_balance: buyerSuiBalance,
             tx_hash: res.txHash,
             timestamp: Date.now(),
           };
@@ -2483,6 +2511,26 @@ export class SwapExecutor {
           const tokenSymbol = (meta as any)?.symbol ?? tokenAddress.slice(0, 8);
           const tokensRecvHuman = (parseFloat(tokenQty) / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
+          // Compute market cap: price × total supply (both in human-readable units)
+          let marketCapUsd: number | undefined;
+          try {
+            const totalSupplyRaw = (meta as any)?.total_supply as string | undefined;
+            if (totalSupplyRaw && priceNear > 0) {
+              const totalSupplyHuman = parseFloat(totalSupplyRaw) / Math.pow(10, decimals);
+              marketCapUsd = Math.round(totalSupplyHuman * priceNear * nearUsdRate);
+            }
+          } catch { /* non-fatal */ }
+
+          // Fetch buyer's NEAR balance so groups can gauge whale size
+          let buyerNearBalance: number | undefined;
+          try {
+            const rawBal = await this.nearClient.getNearBalance(buyerAddress).catch(() => null);
+            if (rawBal) {
+              const { utils: nearUtils } = await import('near-api-js');
+              buyerNearBalance = parseFloat(nearUtils.format.formatNearAmount(rawBal, 4));
+            }
+          } catch { /* non-fatal */ }
+
           const buyAlert: BuyAlertEvent = {
             type: 'buy_alert',
             chain: 'near',
@@ -2494,6 +2542,8 @@ export class SwapExecutor {
             spent_usd: Math.round(spentUsd * 100) / 100,
             tokens_received: `${tokensRecvHuman} ${tokenSymbol}`,
             price_usd: priceNear * nearUsdRate,
+            market_cap_usd: marketCapUsd,
+            buyer_near_balance: buyerNearBalance,
             tx_hash: txHash,
             timestamp: Date.now(),
           };

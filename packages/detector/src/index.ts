@@ -918,6 +918,20 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
     }
   }
 
+  if (price <= 0) {
+    if (data?.amount_in && data?.amount_out) {
+      if (isNearIn) {
+        const spentNear = parseFloat(data.amount_in) / 1e24;
+        const tokensGot = parseFloat(data.amount_out) / Math.pow(10, decimals ?? 18);
+        if (tokensGot > 0 && spentNear > 0) price = spentNear / tokensGot;
+      } else if (isNearOut) {
+        const receivedNear = parseFloat(data.amount_out) / 1e24;
+        const tokensSold = parseFloat(data.amount_in) / Math.pow(10, decimals ?? 18);
+        if (tokensSold > 0 && receivedNear > 0) price = receivedNear / tokensSold;
+      }
+    }
+  }
+
   if (price <= 0) return;
 
   const supplyNum = parseFloat(totalSupply!) / Math.pow(10, decimals!);
@@ -970,6 +984,18 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
           const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
           const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
 
+          // Fetch buyer's NEAR balance for whale detection (non-fatal)
+          let buyerNearBalance: number | undefined;
+          if (buyer && buyer !== 'Unknown') {
+            try {
+              const rawBal = await near.getNearBalance(buyer).catch(() => null);
+              if (rawBal) {
+                const { utils: nearUtils } = await import('near-api-js');
+                buyerNearBalance = parseFloat(nearUtils.format.formatNearAmount(rawBal, 4));
+              }
+            } catch { /* non-fatal */ }
+          }
+
           const buyAlert: BuyAlertEvent = {
             type: 'buy_alert',
             chain: 'near',
@@ -982,6 +1008,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
             tokens_received: tokensReceivedStr,
             price_usd: priceUsd > 0 ? priceUsd : undefined,
             market_cap_usd: marketCapUsd > 0 ? marketCapUsd : undefined,
+            buyer_near_balance: buyerNearBalance,
             tx_hash: txHash || '',
             timestamp: Date.now(),
           };

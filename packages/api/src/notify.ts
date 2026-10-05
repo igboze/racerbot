@@ -262,6 +262,9 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
   }
 }
 
+// Deduplication cache to prevent alert loops for identical deposits (5-min cooldown)
+const recentDepositNotifyCache = new Map<string, number>();
+
 /**
  * Send an immediate deposit notification to a Telegram user.
  */
@@ -276,6 +279,13 @@ export async function notifyDeposit(
   }
 ): Promise<void> {
   if (!_bot || !telegramId) return;
+
+  const dedupKey = `native:${telegramId}:${params.chain}:${params.amount}`;
+  const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
+  if (Date.now() - lastSent < 300_000) {
+    return; // Suppress duplicate alert within 5 minutes
+  }
+  recentDepositNotifyCache.set(dedupKey, Date.now());
 
   const chain = params.chain;
   const amount = params.amount;
@@ -325,6 +335,13 @@ export async function notifyTokenDeposit(
   }
 ): Promise<void> {
   if (!_bot || !telegramId) return;
+
+  const dedupKey = `token:${telegramId}:${params.chain || 'near'}:${params.tokenSymbol}:${params.amountFormatted}`;
+  const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
+  if (Date.now() - lastSent < 300_000) {
+    return; // Suppress duplicate alert within 5 minutes
+  }
+  recentDepositNotifyCache.set(dedupKey, Date.now());
 
   const chain = params.chain || 'near';
   const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
