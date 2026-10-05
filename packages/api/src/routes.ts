@@ -5195,8 +5195,10 @@ export function setupRoutes(bot: Telegraf): void {
       `📉 *Stop Loss for ${symbol}*\n` +
       priceInfoStr +
       currentSlStr + `\n\n` +
-      `Select a drop level below or enter a custom %.\n` +
-      `_If the price drops by this percentage from entry, 100% of your position will be sold automatically to protect capital._`;
+      `*Step 1 — Drop level:*\n` +
+      `Select how far the price must fall from entry to trigger a sell.\n\n` +
+      `*Step 2 — Sell quantity:*\n` +
+      `_After selecting a drop %, tap how much of your position to sell._`;
 
     const buttons: any[] = [
       [
@@ -5264,8 +5266,10 @@ export function setupRoutes(bot: Telegraf): void {
       `📈 *Take Profit for ${symbol}*\n` +
       priceInfoStr +
       currentTpStr + `\n\n` +
-      `Select a profit target below or enter a custom %.\n` +
-      `_When the price rises by this percentage from entry, 100% of your position will be sold automatically to lock in profit._`;
+      `*Step 1 — Profit target:*\n` +
+      `Select how much the price must rise from entry to trigger a sell.\n\n` +
+      `*Step 2 — Sell quantity:*\n` +
+      `_After selecting a target %, tap how much of your position to sell._`;
 
     const buttons: any[] = [
       [
@@ -5275,6 +5279,7 @@ export function setupRoutes(bot: Telegraf): void {
       ],
       [
         cb('+200%', `set_tp:${positionId}:200`, 'success'),
+        cb('+500%', `set_tp:${positionId}:500`, 'success'),
         cb('✏️ Custom %', `tp_custom_prompt:${positionId}`),
       ],
     ];
@@ -5297,10 +5302,12 @@ export function setupRoutes(bot: Telegraf): void {
     });
   });
 
-  // Action: Set Stop Loss percentage
-  bot.action(/^set_sl:([^:]+):(\d+(?:\.\d+)?)$/, async (ctx) => {
+  // Action: Set Stop Loss percentage (+ optional sell quantity %)
+  // Format: set_sl:<positionId>:<dropPct>:<sellPct>
+  bot.action(/^set_sl:([^:]+):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?$/, async (ctx) => {
     const positionId = ctx.match![1];
     const pct = parseFloat(ctx.match![2]);
+    const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
     const telegramId = ctx.from!.id;
     await ctx.answerCbQuery().catch(() => {});
 
@@ -5313,11 +5320,45 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
+    // If a full set_sl:pos:pct:100 was clicked, show the sell-quantity picker next
+    // so the user can choose how much to sell. This two-step UX avoids long button rows.
+    if (ctx.match![3] === undefined) {
+      // Ask sell quantity before confirming
+      const info = await getTokenInfo(position.token_address, false).catch(() => null);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const sellQtyMsg =
+        `📉 *Stop Loss — Sell Quantity for ${symbol}*\n\n` +
+        `Drop level: \`-${pct}%\` from entry\n\n` +
+        `How much of your position should be sold when this triggers?`;
+      const sellQtyButtons = [
+        [
+          cb('25% of position', `set_sl:${positionId}:${pct}:25`, 'danger'),
+          cb('50% of position', `set_sl:${positionId}:${pct}:50`, 'danger'),
+        ],
+        [
+          cb('75% of position', `set_sl:${positionId}:${pct}:75`, 'danger'),
+          cb('100% (all)', `set_sl:${positionId}:${pct}:100`, 'danger'),
+        ],
+        [cb('🔙 Back', `sl_prompt:${positionId}`, 'primary')],
+      ];
+      await ctx.editMessageText(sellQtyMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+      }).catch(async () => {
+        await ctx.reply(sellQtyMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+        }).catch(() => {});
+      });
+      return;
+    }
+
     await upsertTrigger({
       user_id: user.id,
       position_id: positionId,
       type: 'stop_loss',
       target_value: pct.toString(),
+      sell_pct: sellPct,
       chain: position.chain || 'near',
     });
 
@@ -5328,11 +5369,12 @@ export function setupRoutes(bot: Telegraf): void {
     const entryPrice = parseFloat(position.avg_entry_price || '0');
     const slPrice = entryPrice > 0 ? entryPrice * (1 - pct / 100) : 0;
     const slPriceStr = slPrice > 0 ? `\n🛑 Triggers at: \`${slPrice.toFixed(6)} ${nativeUnit}\`` : '';
+    const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
 
     const msg =
       `✅ *Stop Loss Activated!*\n\n` +
       `🪙 Token: *${symbol}*\n` +
-      `📉 Level: \`-${pct}%\` from entry` +
+      `📉 Level: \`-${pct}%\` from entry${sellQtyStr}` +
       slPriceStr + `\n\n` +
       `If the price drops to this target, an automated market sell will execute to protect your capital.`;
 
@@ -5358,10 +5400,12 @@ export function setupRoutes(bot: Telegraf): void {
     });
   });
 
-  // Action: Set Take Profit percentage
-  bot.action(/^set_tp:([^:]+):(\d+(?:\.\d+)?)$/, async (ctx) => {
+  // Action: Set Take Profit percentage (+ optional sell quantity %)
+  // Format: set_tp:<positionId>:<targetPct>:<sellPct>
+  bot.action(/^set_tp:([^:]+):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?$/, async (ctx) => {
     const positionId = ctx.match![1];
     const pct = parseFloat(ctx.match![2]);
+    const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
     const telegramId = ctx.from!.id;
     await ctx.answerCbQuery().catch(() => {});
 
@@ -5374,11 +5418,43 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
+    // If no sell_pct captured yet, show the sell-quantity picker
+    if (ctx.match![3] === undefined) {
+      const info = await getTokenInfo(position.token_address, false).catch(() => null);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const sellQtyMsg =
+        `📈 *Take Profit — Sell Quantity for ${symbol}*\n\n` +
+        `Profit target: \`+${pct}%\` from entry\n\n` +
+        `How much of your position should be sold when this triggers?`;
+      const sellQtyButtons = [
+        [
+          cb('25% of position', `set_tp:${positionId}:${pct}:25`, 'success'),
+          cb('50% of position', `set_tp:${positionId}:${pct}:50`, 'success'),
+        ],
+        [
+          cb('75% of position', `set_tp:${positionId}:${pct}:75`, 'success'),
+          cb('100% (all)', `set_tp:${positionId}:${pct}:100`, 'success'),
+        ],
+        [cb('🔙 Back', `tp_prompt:${positionId}`, 'primary')],
+      ];
+      await ctx.editMessageText(sellQtyMsg, {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+      }).catch(async () => {
+        await ctx.reply(sellQtyMsg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+        }).catch(() => {});
+      });
+      return;
+    }
+
     await upsertTrigger({
       user_id: user.id,
       position_id: positionId,
       type: 'take_profit',
       target_value: pct.toString(),
+      sell_pct: sellPct,
       chain: position.chain || 'near',
     });
 
@@ -5389,11 +5465,12 @@ export function setupRoutes(bot: Telegraf): void {
     const entryPrice = parseFloat(position.avg_entry_price || '0');
     const tpPrice = entryPrice > 0 ? entryPrice * (1 + pct / 100) : 0;
     const tpPriceStr = tpPrice > 0 ? `\n🎯 Triggers at: \`${tpPrice.toFixed(6)} ${nativeUnit}\`` : '';
+    const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
 
     const msg =
       `✅ *Take Profit Activated!*\n\n` +
       `🪙 Token: *${symbol}*\n` +
-      `📈 Level: \`+${pct}%\` from entry` +
+      `📈 Level: \`+${pct}%\` from entry${sellQtyStr}` +
       tpPriceStr + `\n\n` +
       `When the price rises to this target, an automated market sell will execute to lock in your profit.`;
 
@@ -5945,43 +6022,26 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        await upsertTrigger({
-          user_id: user.id,
-          position_id: positionId,
-          type: 'stop_loss',
-          target_value: pct.toString(),
-          chain: position.chain || 'near',
-        });
-
         const info = await getTokenInfo(position.token_address, false).catch(() => null);
         const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-        const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-        const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-        const entryPrice = parseFloat(position.avg_entry_price || '0');
-        const slPrice = entryPrice > 0 ? entryPrice * (1 - pct / 100) : 0;
-        const slPriceStr = slPrice > 0 ? `\n🛑 Triggers at: \`${slPrice.toFixed(6)} ${nativeUnit}\`` : '';
-
-        const msg =
-          `✅ *Stop Loss Activated!*\n\n` +
-          `🪙 Token: *${symbol}*\n` +
-          `📉 Level: \`-${pct}%\` from entry` +
-          slPriceStr + `\n\n` +
-          `If the price drops to this target, an automated market sell will execute to protect your capital.`;
-
-        const buttons = [
+        const sellQtyMsg =
+          `📉 *Stop Loss — Sell Quantity for ${symbol}*\n\n` +
+          `Drop level: \`-${pct}%\` from entry\n\n` +
+          `How much of your position should be sold when this triggers?`;
+        const sellQtyButtons = [
           [
-            cb('📈 Set Take Profit', `tp_prompt:${positionId}`, 'success'),
-            cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
+            cb('25% of position', `set_sl:${positionId}:${pct}:25`, 'danger'),
+            cb('50% of position', `set_sl:${positionId}:${pct}:50`, 'danger'),
           ],
           [
-            cb('❌ Remove SL', `cancel_sl:${positionId}`, 'danger'),
-            cb('🔙 Menu', `sl_tp_menu:${positionId}`),
+            cb('75% of position', `set_sl:${positionId}:${pct}:75`, 'danger'),
+            cb('100% (all)', `set_sl:${positionId}:${pct}:100`, 'danger'),
           ],
+          [cb('🔙 Back', `sl_prompt:${positionId}`, 'primary')],
         ];
-
-        await ctx.reply(msg, {
+        await ctx.reply(sellQtyMsg, {
           parse_mode: 'Markdown',
-          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+          reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
         });
         return;
       }
@@ -6004,43 +6064,26 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        await upsertTrigger({
-          user_id: user.id,
-          position_id: positionId,
-          type: 'take_profit',
-          target_value: pct.toString(),
-          chain: position.chain || 'near',
-        });
-
         const info = await getTokenInfo(position.token_address, false).catch(() => null);
         const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-        const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-        const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-        const entryPrice = parseFloat(position.avg_entry_price || '0');
-        const tpPrice = entryPrice > 0 ? entryPrice * (1 + pct / 100) : 0;
-        const tpPriceStr = tpPrice > 0 ? `\n🎯 Triggers at: \`${tpPrice.toFixed(6)} ${nativeUnit}\`` : '';
-
-        const msg =
-          `✅ *Take Profit Activated!*\n\n` +
-          `🪙 Token: *${symbol}*\n` +
-          `📈 Level: \`+${pct}%\` from entry` +
-          tpPriceStr + `\n\n` +
-          `When the price rises to this target, an automated market sell will execute to lock in your profit.`;
-
-        const buttons = [
+        const sellQtyMsg =
+          `📈 *Take Profit — Sell Quantity for ${symbol}*\n\n` +
+          `Profit target: \`+${pct}%\` from entry\n\n` +
+          `How much of your position should be sold when this triggers?`;
+        const sellQtyButtons = [
           [
-            cb('📉 Set Stop Loss', `sl_prompt:${positionId}`, 'danger'),
-            cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
+            cb('25% of position', `set_tp:${positionId}:${pct}:25`, 'success'),
+            cb('50% of position', `set_tp:${positionId}:${pct}:50`, 'success'),
           ],
           [
-            cb('❌ Remove TP', `cancel_tp:${positionId}`, 'danger'),
-            cb('🔙 Menu', `sl_tp_menu:${positionId}`),
+            cb('75% of position', `set_tp:${positionId}:${pct}:75`, 'success'),
+            cb('100% (all)', `set_tp:${positionId}:${pct}:100`, 'success'),
           ],
+          [cb('🔙 Back', `tp_prompt:${positionId}`, 'primary')],
         ];
-
-        await ctx.reply(msg, {
+        await ctx.reply(sellQtyMsg, {
           parse_mode: 'Markdown',
-          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+          reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
         });
         return;
       }

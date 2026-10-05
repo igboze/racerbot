@@ -176,13 +176,21 @@ export class TriggerEngine {
 
     switch (trigger.type) {
       case 'stop_loss':
-        // Fire if price dropped below entry × (1 - target%)
-        triggered = currentPrice <= entryPrice * (1 - targetValue / 100);
-        break;
-
       case 'take_profit':
-        // Fire if price rose above entry × (1 + target%)
-        triggered = currentPrice >= entryPrice * (1 + targetValue / 100);
+        // Guard: if entry price is not yet settled (zero or NaN), the % calculation
+        // is meaningless — any price would satisfy entryPrice*multiplier=0 and the
+        // trigger would fire immediately after every buy. Hold active and retry.
+        if (!entryPrice || isNaN(entryPrice) || entryPrice <= 0) {
+          console.warn(
+            `[TRIGGERS] Entry price not settled for position ${trigger.position_id} (got '${position.avg_entry_price}') — holding trigger ${trigger.id} active`
+          );
+          return;
+        }
+        if (trigger.type === 'stop_loss') {
+          triggered = currentPrice <= entryPrice * (1 - targetValue / 100);
+        } else {
+          triggered = currentPrice >= entryPrice * (1 + targetValue / 100);
+        }
         break;
 
       case 'market_cap':
@@ -204,6 +212,21 @@ export class TriggerEngine {
     // consumed WITHOUT ever selling (user stuck in a losing position).
     // Any failure before publish now leaves the trigger active for retry.
 
+    // Determine the actual sell quantity respecting the trigger's sell_pct.
+    // sell_pct defaults to 100 (sell everything). For partial TPs/SLs the user
+    // can configure e.g. 50 to only sell half the position.
+    const sellPct = typeof trigger.sell_pct === 'number' ? Math.min(100, Math.max(1, trigger.sell_pct)) : 100;
+    let amountIn = position.quantity_held;
+    if (sellPct < 100) {
+      const rawQty = BigInt(String(position.quantity_held).split('.')[0] || '0');
+      const sellQty = (rawQty * BigInt(Math.floor(sellPct))) / 100n;
+      if (sellQty <= 0n) {
+        console.warn(`[TRIGGER] sell_pct ${sellPct}% of ${position.quantity_held} rounds to 0 — skipping trigger ${trigger.id}`);
+        return;
+      }
+      amountIn = sellQty.toString();
+    }
+
     // Determine sell side — determine venue from token cache
     const db = await getDb();
     const tokenRow = await db.query(
@@ -220,7 +243,7 @@ export class TriggerEngine {
         user_id: position.user_id,
         token_in: position.token_address,
         token_out: 'sui',
-        amount_in: position.quantity_held,
+        amount_in: amountIn,
         min_amount_out: '1',
         venue: 'suipump',
         slippage_pct: slippagePct,
@@ -241,7 +264,8 @@ export class TriggerEngine {
           current_price: currentPrice,
           target_value: trigger.target_value,
           entry_price: parseFloat(position.avg_entry_price || '0'),
-          quantity_held: position.quantity_held,
+          quantity_held: amountIn,
+          sell_pct: sellPct,
           chain: 'sui',
           position_id: position.id,
         },
@@ -266,7 +290,7 @@ export class TriggerEngine {
       venue as any,
       position.token_address,
       'wrap.near',
-      position.quantity_held,
+      amountIn,
       slippagePct,
       tokenRow?.rhea_pool_id,
       tokenRow?.dcl_pool_id ?? undefined
@@ -278,7 +302,7 @@ export class TriggerEngine {
       user_id: position.user_id,
       token_in: position.token_address,
       token_out: 'wrap.near',
-      amount_in: position.quantity_held,
+      amount_in: amountIn,
       min_amount_out: minAmountOut,
       venue,
       timestamp: Date.now(),
@@ -302,7 +326,8 @@ export class TriggerEngine {
         current_price: currentPrice,
         target_value: trigger.target_value,
         entry_price: parseFloat(position.avg_entry_price || '0'),
-        quantity_held: position.quantity_held,
+        quantity_held: amountIn,
+        sell_pct: sellPct,
         chain: position.chain || 'near',
         position_id: position.id,
       },
