@@ -1844,10 +1844,7 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
 async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string, tokenSymbol?: string) {
   const rows: any[] = [];
   try {
-    const { bubbleMapUrl } = await import('@racerbot/shared');
-    rows.push([
-      Markup.button.url('🫧 View Bubble Map', bubbleMapUrl(tokenAddress, tokenSymbol)),
-    ]);
+    // Bubble Map button disabled to conserve API credits
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (user) {
       const shareCode = await getOrCreateTokenShare(user.id, tokenAddress);
@@ -1863,6 +1860,7 @@ async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string,
   rows.push([Markup.button.callback('🔄 Refresh Token Card', `token_refresh:${getShortTokenKey(tokenAddress)}`)]);
   return Markup.inlineKeyboard(rows).reply_markup;
 }
+
 
 export function setupRoutes(bot: Telegraf): void {
 
