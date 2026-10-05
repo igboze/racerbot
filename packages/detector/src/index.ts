@@ -41,6 +41,15 @@ const tokenNameCache = new Map<string, TokenDetectedEvent>();
 /** Set of lowercase token addresses currently tracked by any Telegram group */
 let activeBuyAlertTokens = new Set<string>();
 
+/**
+ * Snipe watchdog negative result cache (15s TTL).
+ * When a poll cycle finds no pool for a snipe target, we skip it on the next
+ * tick to avoid burning 3 RPC calls per 5s per armed token on a non-existent pool.
+ * Cache is cleared immediately when a block event touches the token contract.
+ */
+const snipeNegativeCache = new Map<string, number>(); // tokenAddress → timestamp
+const SNIPE_NEGATIVE_TTL_MS = 15_000;
+
 async function refreshActiveBuyAlertTokens(): Promise<void> {
   try {
     const tokens = await getDistinctActiveBuyAlertTokens();
@@ -62,7 +71,7 @@ if (envRpcUrls.length === 0) {
   console.warn('[DETECTOR] RPC_PROVIDERS not set — using built-in default RPCs');
 }
 const POLL_INTERVAL_MS = 1000; // NEAR block time ~1.2s
-const TRIGGER_PRICE_REFRESH_MS = 15_000; // keep stop-loss prices fresh
+const TRIGGER_PRICE_REFRESH_MS = 30_000; // 30s — well within 60s staleness guard in trigger engine
 const LAST_BLOCK_KEY = 'detector:last_block';
 const MAX_CATCHUP_BLOCKS = 50; // bounded replay after downtime
 
@@ -479,6 +488,12 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
  */
 async function parseEventLog(log: string, receiverId: string, txHash?: string): Promise<void> {
   if (!log.startsWith('EVENT_JSON:')) return;
+
+  // If the event receiver is an armed snipe target, immediately invalidate its
+  // negative cache so the watchdog re-probes on the very next 5s tick.
+  if (snipeNegativeCache.has(receiverId)) {
+    snipeNegativeCache.delete(receiverId);
+  }
 
   let event: any;
   try {
@@ -1262,7 +1277,16 @@ async function refreshTriggerTokenPrices(): Promise<void> {
           const venue = dbCache?.venue;
           if (!venue) return;
           const decimals = dbCache?.decimals ?? 18;
-          const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
+
+          // Pass cached pool IDs — skips expensive findRheaPoolForToken scan.
+          // Falls back to full scan automatically if both are null.
+          const spot = await near.getVenueSpotPrice(
+            venue,
+            tokenAddress,
+            decimals,
+            dbCache?.rhea_pool_id ?? null,
+            dbCache?.dcl_pool_id ?? null,
+          );
           if (!spot || !(spot.price > 0)) return;
 
           const supply = parseFloat(dbCache?.total_supply ?? '0') / Math.pow(10, decimals);
@@ -1307,7 +1331,12 @@ async function pollActiveTokenSnipes(): Promise<void> {
     const activeTokens = await getDistinctActiveSnipeTokens().catch(() => []);
     if (activeTokens.length === 0) return;
 
+    const now = Date.now();
     for (const tokenAddress of activeTokens) {
+      // Skip tokens that recently returned no pool — saves 3 RPC calls per 5s tick.
+      const lastNegative = snipeNegativeCache.get(tokenAddress);
+      if (lastNegative && now - lastNegative < SNIPE_NEGATIVE_TTL_MS) continue;
+
       try {
         // 1. Direct DCL pool probe on dclv2.ref-labs.near (fastest, primary DEX route)
         const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
@@ -1315,6 +1344,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
           const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
           if (st && st.price > 0 && st.liquidityNear > 0) {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on DCL (${dclPoolId})! Liq: ${st.liquidityNear} NEAR`);
+            snipeNegativeCache.delete(tokenAddress);
             await checkSnipeSignalsOnly(tokenAddress, 'rhea');
             continue;
           }
@@ -1328,6 +1358,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
             const nearRes = parseFloat(res.reserveIn) / 1e24;
             if (nearRes > 0) {
               console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Ref Simple Pool (${rheaPoolId})! Reserve: ${nearRes} NEAR`);
+              snipeNegativeCache.delete(tokenAddress);
               await checkSnipeSignalsOnly(tokenAddress, 'rhea');
               continue;
             }
@@ -1338,6 +1369,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
         const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
         if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
           console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
+          snipeNegativeCache.delete(tokenAddress);
           await checkSnipeSignalsOnly(tokenAddress, 'rhea');
           continue;
         }
@@ -1347,9 +1379,14 @@ async function pollActiveTokenSnipes(): Promise<void> {
           const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
           if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
+            snipeNegativeCache.delete(tokenAddress);
             await checkSnipeSignalsOnly(tokenAddress, 'nearlytrade');
+            continue;
           }
         }
+
+        // All probes returned nothing — cache the negative result for 15s
+        snipeNegativeCache.set(tokenAddress, Date.now());
       } catch (err: any) {
         // Keep looping across targets
       }

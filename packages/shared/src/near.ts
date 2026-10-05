@@ -3369,11 +3369,56 @@ export class MultiRpcNear {
    * read from the venue's live pool state. Used for trigger price refreshes
    * and initial token pricing. Returns null when no live pool is found.
    */
+  /**
+   * Get the spot price for a token at a given venue.
+   * Pass knownRheaPoolId / knownDclPoolId to skip the expensive pool-discovery
+   * scan and go directly to a single get_pool RPC call.
+   */
   async getVenueSpotPrice(
     venue: string,
     tokenAddress: string,
-    decimals: number
+    decimals: number,
+    knownRheaPoolId?: number | null,
+    knownDclPoolId?: string | null,
   ): Promise<{ price: number; reserveNearYocto: string } | null> {
+    // ── Fast-path: use cached pool IDs to skip pool discovery ────────────────
+    if (knownDclPoolId) {
+      // Seed the in-process cache so findDclPoolId also benefits
+      const keyAB = `wrap.near:${tokenAddress}`;
+      const keyBA = `${tokenAddress}:wrap.near`;
+      if (!dclPoolIdCache.has(keyAB)) dclPoolIdCache.set(keyAB, knownDclPoolId);
+      if (!dclPoolIdCache.has(keyBA)) dclPoolIdCache.set(keyBA, knownDclPoolId);
+      try {
+        const st = await this.getDclPoolState(knownDclPoolId, 'wrap.near');
+        if (st.price > 0 && st.liquidityNear > 0) {
+          return {
+            price: st.price,
+            reserveNearYocto: st.reserveNear,
+          };
+        }
+      } catch { /* pool may have drained — fall through to Rhea */ }
+    }
+    if (knownRheaPoolId != null && knownRheaPoolId >= 0) {
+      // Seed the in-process cache so findRheaPoolId also benefits
+      const keyAB = `wrap.near:${tokenAddress}`;
+      const keyBA = `${tokenAddress}:wrap.near`;
+      if (!rheaPoolIdCache.has(keyAB)) rheaPoolIdCache.set(keyAB, knownRheaPoolId);
+      if (!rheaPoolIdCache.has(keyBA)) rheaPoolIdCache.set(keyBA, knownRheaPoolId);
+      try {
+        const rh = await this.getRheaPoolReserves(knownRheaPoolId, 'wrap.near', tokenAddress);
+        const reserveIn = parseFloat(rh.reserveIn);
+        const reserveOut = parseFloat(rh.reserveOut);
+        if (reserveIn > 0 && reserveOut > 0) {
+          const reserveNearHuman = reserveIn / 1e24;
+          const reserveTokenHuman = reserveOut / Math.pow(10, decimals);
+          return {
+            price: reserveNearHuman / reserveTokenHuman,
+            reserveNearYocto: rh.reserveIn,
+          };
+        }
+      } catch { /* pool may have been removed — fall through to full scan */ }
+    }
+    // ── Slow-path: discover pool via full scan ────────────────────────────────
     if (venue === 'rhea' || venue === 'ref') {
       const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
       if (rhea) {
