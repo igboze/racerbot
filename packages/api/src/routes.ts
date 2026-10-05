@@ -258,6 +258,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('⚙️ Settings', 'menu_settings', 'primary'),
     ],
     [
+      cb('📢 Buy Alerts', 'menu_buyalerts', 'success'),
+    ],
+    [
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
@@ -2100,6 +2103,42 @@ export function setupRoutes(bot: Telegraf): void {
     } catch {
       await ctx.answerCbQuery().catch(() => {});
     }
+  });
+
+  // ── Buy Alerts Panel ──────────────────────────────────────────────────────
+  bot.action('menu_buyalerts', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const botUsername = ctx.botInfo?.username || 'racertradingbot';
+    // ?startgroup= prompts the user to pick a group/channel from their list
+    const addToGroupUrl = `https://t.me/${botUsername}?startgroup=setup_buyalerts&admin=post_messages+edit_messages+delete_messages`;
+    const addToChannelUrl = `https://t.me/${botUsername}?startchannel=setup_buyalerts&admin=post_messages+edit_messages+delete_messages`;
+
+    const text =
+      `📢 <b>Group Buy Alerts</b>\n\n` +
+      `Broadcast live buy alerts directly into your Telegram group or channel whenever someone buys a token you're tracking.\n\n` +
+      `<b>How to set up:</b>\n` +
+      `1️⃣ Tap <b>Add to Group</b> or <b>Add to Channel</b> below.\n` +
+      `2️⃣ Pick your group/channel from the list.\n` +
+      `3️⃣ Promote RacerBot to <b>Administrator</b> (Send Messages permission).\n` +
+      `4️⃣ In your group, type:\n` +
+      `   <code>/track &lt;token_contract_address&gt;</code>\n\n` +
+      `<b>✨ Group perks:</b>\n` +
+      `• High-energy alerts with custom GIFs & emojis\n` +
+      `• 🐳 Whale detector on every alert\n` +
+      `• 1-tap Buy button on every alert\n` +
+      `• <b>Group admins earn 5% fee share</b> on every trade!\n\n` +
+      `💡 <i>Preview a token's alert in DM first:</i>\n` +
+      `<code>/buyalert &lt;token_address&gt;</code>`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.url('➕ Add to Group', addToGroupUrl)],
+      [Markup.button.url('📣 Add to Channel', addToChannelUrl)],
+      [cb('🔙 Menu', 'menu_home', 'primary')],
+    ]);
+
+    await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => {});
+    });
   });
 
   bot.action(['menu_refresh', 'menu_home_refresh'], async (ctx) => {
