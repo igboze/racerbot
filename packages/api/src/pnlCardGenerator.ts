@@ -244,6 +244,7 @@ export async function generatePNLCardData(
       memecooking:  'Meme.Cooking',
       nearpad:      'NEARpad',
       gaypad:       'Gaypad',
+      shoremarkets: 'ShoreMarkets',
     };
     const venueName = tokenInfo?.venue ? venueMap[tokenInfo.venue] || tokenInfo.venue : 'Unknown';
 
