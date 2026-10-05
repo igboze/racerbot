@@ -353,7 +353,9 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         receiverId === 'meme-cooking.near' ||
         receiverId === 'pad.onetokenhub.near' ||
         receiverId === 'gaypad.j1-racing.near' ||
-        receiverId === 'nearpadfamily.near'
+        receiverId === 'nearpadfamily.near' ||
+        receiverId === 'launch.shoremarkets.near' ||
+        receiverId.endsWith('.launch.shoremarkets.near')
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -434,6 +436,20 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'nearpad', decoded).catch(() => {});
                 }
+              } else if (receiverId === 'launch.shoremarkets.near') {
+                // ShoreMarkets factory: create_token / buy / launch
+                const tokenAddress =
+                  decoded?.token_id ??
+                  decoded?.token ??
+                  decoded?.token_address ??
+                  decoded?.account_id ??
+                  '';
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'shoremarkets', decoded).catch(() => {});
+                }
+              } else if (receiverId.endsWith('.launch.shoremarkets.near') && fn.method_name === 'buy') {
+                // Direct call on the token contract itself (buy on bonding curve)
+                await handlePoolCreated(receiverId, 'shoremarkets', decoded).catch(() => {});
               }
             } catch {
               // Ignore binary or non-JSON arguments
@@ -485,7 +501,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
     }
     const uniqueTokens = [...new Set(candidates)].filter(
       t => t && typeof t === 'string' && t !== 'wrap.near' && t !== 'near' && !t.includes(':') && isNaN(Number(t)) &&
-        !t.endsWith('.nearlytrade.near') && !t.endsWith('.shardsmarket.near') && !isCoreToken(t)
+        !t.endsWith('.nearlytrade.near') && !t.endsWith('.shardsmarket.near') && !t.endsWith('.launch.shoremarkets.near') && !isCoreToken(t)
     );
     for (const t of uniqueTokens) {
       await handlePoolCreated(t, 'rhea', data).catch(() => {});
@@ -566,6 +582,26 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
     }
   }
 
+  // ── ShoreMarkets launchpad ───────────────────────────────────────────────
+  if (
+    (receiverId === 'launch.shoremarkets.near' ||
+      receiverId.endsWith('.launch.shoremarkets.near')) &&
+    (eventName === 'launch' ||
+      eventName === 'token_launch' ||
+      eventName === 'pool_created' ||
+      eventName === 'token_created' ||
+      eventName === 'create')
+  ) {
+    const tokenAddress: string =
+      data?.token_id ??
+      data?.token ??
+      data?.account_id ??
+      (receiverId.endsWith('.launch.shoremarkets.near') ? receiverId : '');
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'shoremarkets', data);
+    }
+  }
+
   // ── Swaps & Buy Alerts from any venue ─────────────────────────────────────
   if (eventName === 'swap') {
     const swapItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
@@ -587,7 +623,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -674,6 +710,22 @@ async function handlePoolCreated(
       }
     } catch (err) {
       logger.warn('Could not fetch NEARpad state', { correlationId, tokenAddress, error: (err as Error).message });
+    }
+  } else if (venue === 'shoremarkets') {
+    try {
+      const smState = await near.getShoremarketsTokenState(tokenAddress);
+      if (smState) {
+        bondingPhase = smState.phase;
+        bondingProgressPct = smState.bondingProgressPct;
+        dclPoolId = smState.dclPoolId;
+        initialPrice = smState.price;
+        initialLiquidity = (smState.liquidityNear * 1e24).toString();
+        if (!creator && smState.creator) {
+          creator = smState.creator;
+        }
+      }
+    } catch (err) {
+      logger.warn('Could not fetch ShoreMarkets state', { correlationId, tokenAddress, error: (err as Error).message });
     }
   }
 
@@ -1029,7 +1081,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
  */
 async function checkSnipeSignalsOnly(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
   creator = ''
 ): Promise<void> {
   try {
@@ -1070,7 +1122,7 @@ const autoBuyExecutedCache = new Map<string, number>();
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets',
   liquidityStr: string,
   _marketCap: number,
   creator = ''

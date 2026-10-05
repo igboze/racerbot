@@ -314,7 +314,7 @@ export async function fetchTokenHoldersCount(
   // 1. Primary: NearBlocks exact holders count endpoint (returns total network-wide holders integer)
   try {
     const res = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(norm)}/holders/count`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(3000),
       headers: { Accept: 'application/json' },
     });
     if (res.ok) {
@@ -329,28 +329,55 @@ export async function fetchTokenHoldersCount(
         }
       }
     }
-  } catch { /* fallback to FastNear */ }
+  } catch { /* fallback */ }
 
-  // 2. Fallback: FastNear API (<50ms, indexes all NEAR NEP-141 contracts)
+  // 2. Secondary: NearBlocks holders list (can also carry total in count field or pagination)
   try {
-    const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top`, {
-      signal: AbortSignal.timeout(2000),
+    const res = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(norm)}/holders?page=1&per_page=1`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { Accept: 'application/json' },
     });
     if (res.ok) {
       const data = (await res.json()) as any;
-      const accounts = data.accounts || [];
-      if (accounts.length > 0) {
-        const active = accounts.filter((a: any) => a.balance && a.balance !== '0' && BigInt(a.balance) > 0n);
-        const count = active.length > 0 ? active.length : accounts.length;
-        const result = { count };
-        holdersCountCache.set(norm, { at: Date.now(), data: result });
-        return result;
+      // NearBlocks returns total count in count, total, or holders array header
+      const totalCount = data?.count ?? data?.total ?? data?.holders_count;
+      if (totalCount !== undefined && totalCount !== null) {
+        const count = parseInt(String(totalCount), 10);
+        if (!isNaN(count) && count > 0) {
+          const result = { count };
+          holdersCountCache.set(norm, { at: Date.now(), data: result });
+          return result;
+        }
       }
     }
   } catch { /* fallback */ }
 
+  // 3. FastNear API fallback — this endpoint returns at most the top 100 accounts;
+  //    do NOT use accounts.length as a total because it will always be capped at 100.
+  //    Only use it to confirm there is at least 1 holder with a non-zero balance.
+  try {
+    const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const accounts: any[] = data.accounts || [];
+      const active = accounts.filter((a: any) => {
+        try { return a.balance && BigInt(a.balance) > 0n; } catch { return false; }
+      });
+      // Only return a count if fewer than 100 active — otherwise the value is capped/unreliable.
+      // If exactly 100, we cannot distinguish "exactly 100 holders" from "100+ holders" (cap hit).
+      if (active.length > 0 && active.length < 100) {
+        const result = { count: active.length };
+        holdersCountCache.set(norm, { at: Date.now(), data: result });
+        return result;
+      }
+    }
+  } catch { /* non-fatal */ }
+
   return null;
 }
+
 
 /**
  * Fetches total on-chain transactions count for NEAR token contracts.
@@ -508,7 +535,7 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
   if (
     dbCache &&
     dbCache.venue &&
-    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'suipump'].includes(dbCache.venue)
+    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'suipump'].includes(dbCache.venue)
   ) {
     const isSui = dbCache.chain === 'sui' || isSuiToken(tokenAddress);
     if (isSui && (Number(dbCache.last_liquidity || 0) === 0 || dbCache.total_supply === '1000000000000000')) {
@@ -795,7 +822,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           ? Number(dbCache.bonding_progress_pct)
           : null,
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
-      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking'].includes(dbCache.venue ?? 'unknown'),
+      tradeable: ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets'].includes(dbCache.venue ?? 'unknown'),
       holders_count: holdersData?.count ?? null,
       buys_count: dexData?.buys24h ?? null,
       sells_count: dexData?.sells24h ?? null,
@@ -1031,6 +1058,21 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         dclPoolId = dclId;
       }
     } catch { /* no-op */ }
+  } else if (tokenAddress.endsWith('.launch.shoremarkets.near')) {
+    try {
+      const smState = await near.getShoremarketsTokenState(tokenAddress);
+      if (smState && smState.price > 0) {
+        venue = 'shoremarkets';
+        price = smState.price;
+        liquidity = smState.liquidityNear;
+        bondingPhase = smState.phase;
+        bondingProgressPct = smState.bondingProgressPct;
+        dclPoolId = smState.dclPoolId;
+        if (smState.totalSupply && smState.totalSupply !== '0') {
+          totalSupply = smState.totalSupply;
+        }
+      }
+    } catch { /* no-op */ }
   }
 
   // Step 2: If price was not found or if token is potentially on Ref/Rhea (bonded or general token)
@@ -1060,10 +1102,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)
   if (venue === 'unknown' && price <= 0) {
-    const [ntRes, hubRes, padRes] = await Promise.allSettled([
+    const [ntRes, hubRes, padRes, smRes] = await Promise.allSettled([
       near.getNearlytradeTokenState(tokenAddress),
       near.getOneTokenHubState(tokenAddress),
       near.getNEARpadState(tokenAddress),
+      near.getShoremarketsTokenState(tokenAddress),
     ]);
 
     if (ntRes.status === 'fulfilled' && ntRes.value && ntRes.value.price > 0) {
@@ -1094,6 +1137,17 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       dclPoolId = padState.dclPoolId;
       if (padState.totalSupply && padState.totalSupply !== '0') {
         totalSupply = padState.totalSupply;
+      }
+    } else if (smRes.status === 'fulfilled' && smRes.value && smRes.value.price > 0) {
+      const smState = smRes.value;
+      venue = 'shoremarkets';
+      price = smState.price;
+      liquidity = smState.liquidityNear;
+      bondingPhase = smState.phase;
+      bondingProgressPct = smState.bondingProgressPct;
+      dclPoolId = smState.dclPoolId;
+      if (smState.totalSupply && smState.totalSupply !== '0') {
+        totalSupply = smState.totalSupply;
       }
     }
   }

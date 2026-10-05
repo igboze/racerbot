@@ -25,6 +25,7 @@ const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.tkn.near',
   '.nekotoken.near',
   '.nearportnear.near',
+  '.launch.shoremarkets.near',
 ];
 
 export const VERIFIED_CORE_TOKENS = new Set([
