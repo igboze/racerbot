@@ -94,7 +94,7 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
-import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard } from './buyAlerts.js';
+import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -131,9 +131,13 @@ interface PendingAction {
     | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
     // Multi-Wallet Management
     | 'import_near_key' | 'import_near_name' | 'rename_near_wallet'
-    | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet';
+    | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet'
+    // Buy Alert group setup
+    | 'set_group_token';
   tokenAddress?: string;
   deployerAddress?: string;
+  chatId?: string | number;
+  chatTitle?: string;
   // Multi-wallet state
   importNearPrivateKey?: string;
   importNearAccountId?: string;
@@ -1625,7 +1629,7 @@ async function executeBuyHelper(
     }
     const userSuiBal = suiBalRes;
     const effectiveSuiUsd = suiUsdVal > 0 ? suiUsdVal : 2.0;
-    const minReserveSui = Math.max(0.05, 2.0 / effectiveSuiUsd);
+    const minReserveSui = 0.01;
     const amountInMistBigInt = BigInt(Math.floor(amountNear * 1e9));
     const minReserveMist = BigInt(Math.ceil(minReserveSui * 1e9));
 
@@ -1638,7 +1642,7 @@ async function executeBuyHelper(
       const requiredReserveSuiStr = minReserveSui.toFixed(4);
 
       throw new Error(
-        `Insufficient balance after swap. Your wallet must keep at least $2.00 in SUI (${requiredReserveSuiStr} SUI) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
+        `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveSuiStr} SUI (~$${(minReserveSui * effectiveSuiUsd).toFixed(2)}) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
       );
     }
 
@@ -1723,7 +1727,7 @@ async function executeBuyHelper(
     const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
 
     const effectiveNearUsd = nearUsdVal > 0 ? nearUsdVal : 4.5;
-    const minReserveNear = Math.max(0.05, 2.0 / effectiveNearUsd);
+    const minReserveNear = 0.015;
     const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
     const totalNearRequired = nearNeededForSwap + minReserveYocto;
 
@@ -1736,7 +1740,7 @@ async function executeBuyHelper(
       const requiredReserveNearStr = minReserveNear.toFixed(4);
 
       throw new Error(
-        `Insufficient balance after swap. Your wallet must keep at least $2.00 in NEAR (${requiredReserveNearStr} NEAR) to cover gas and account storage. You have $${availUsd} (${availNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
+        `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availUsd} (${availNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
       );
     }
   }
@@ -1897,14 +1901,78 @@ export function setupRoutes(bot: Telegraf): void {
       const isBuyParam = rawPayload.startsWith('buy_');
       const isTokenParam = rawPayload.startsWith('token_') || rawPayload.startsWith('tkn_');
       const isBuyAlertCfg = rawPayload.startsWith('cfg_');
+      const isGroupSetup = rawPayload.startsWith('setup_group_') || rawPayload.startsWith('setup_');
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined unless refCode was explicitly passed.
-      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg) ? undefined : (rawPayload || undefined));
+      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg || isGroupSetup) ? undefined : (rawPayload || undefined));
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
 
-      // 0. Buy Alert Group Settings Deep Link (/start cfg_<alert_id>)
+      // 0a. Group Buy Alert Setup in DM (/start setup_group_<chat_id> or /start setup_<chat_id>)
+      if (isGroupSetup && rawPayload) {
+        const targetChatId = rawPayload.replace(/^setup_group_|^setup_/, '');
+        try {
+          const db = await (await import('@racerbot/db')).getDb();
+          const existing = await db.query('SELECT * FROM group_buy_alerts WHERE chat_id = $1 ORDER BY updated_at DESC', [targetChatId]);
+          if (existing.rows.length > 0) {
+            const row = existing.rows[0];
+            const alertRec = {
+              id: row.id,
+              chat_id: row.chat_id.toString(),
+              chat_title: row.chat_title || undefined,
+              admin_id: row.admin_id.toString(),
+              token_address: row.token_address,
+              chain: row.chain || 'near',
+              min_buy_usd: parseFloat(row.min_buy_usd || '5.00'),
+              emoji: row.emoji || '🏎️',
+              emoji_step_usd: parseFloat(row.emoji_step_usd || '5.00'),
+              media_file_id: row.media_file_id || undefined,
+              media_type: row.media_type || 'default',
+              whale_threshold_usd: parseFloat(row.whale_threshold_usd || '200.00'),
+              is_active: Boolean(row.is_active),
+              created_at: new Date(row.created_at),
+              updated_at: new Date(row.updated_at),
+            };
+            const card = buildAlertSettingsCard(alertRec as any);
+            await ctx.reply(
+              `🏎️ <b>RacerBot Buy Alerts Already Configured!</b>\n\n` +
+              `Here are the settings for your group. You can adjust them anytime below:`,
+              { parse_mode: 'HTML', ...card.keyboard }
+            );
+            return;
+          }
+
+          let groupTitle = 'your group';
+          try {
+            const chatObj: any = await ctx.telegram.getChat(targetChatId);
+            if (chatObj?.title) groupTitle = chatObj.title;
+          } catch { /* ignore */ }
+
+          userPendingActions.set(telegramId, {
+            action: 'set_group_token',
+            chatId: targetChatId,
+            chatTitle: groupTitle,
+            expiresAt: Date.now() + 10 * 60_000,
+          });
+
+          await ctx.reply(
+            `🏎️ <b>Set Up Buy Alerts for ${escapeHtml(groupTitle)}</b>\n\n` +
+            `Please reply with the <b>token contract address</b> you want to track:\n\n` +
+            `Examples:\n` +
+            `• NEAR: <code>uptober.nearlytrade.near</code>\n` +
+            `• NEAR: <code>blackdragon.tkn.near</code>\n` +
+            `• SUI: <code>0x2::sui::SUI</code>\n\n` +
+            `<i>(Or type /cancel anytime to cancel)</i>`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        } catch (e: any) {
+          console.warn('[/start] Failed to initialize group setup:', e?.message);
+        }
+      }
+
+      // 0b. Buy Alert Group Settings Deep Link (/start cfg_<alert_id>)
       if (isBuyAlertCfg && rawPayload) {
         const alertId = rawPayload.slice(4);
         try {
@@ -4909,8 +4977,8 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert, /testalert) ─────
-  bot.command(['track', 'buybot', 'buyalert'], handleBuyBotCommand);
-  bot.hears(/^\/(track|buybot|buyalert)(@\w+)?(\s+.*)?$/i, handleBuyBotCommand);
+  bot.command(['track', 'buybot', 'buyalert', 'alerts', 'setup', 'settings'], handleBuyBotCommand);
+  bot.hears(/^\/(track|buybot|buyalert|alerts|setup|settings)(@\w+)?(\s+.*)?$/i, handleBuyBotCommand);
   bot.command(['testalert', 'testbuy'], handleTestAlertCommand);
   bot.hears(/^\/(testalert|testbuy)(@\w+)?(\s+.*)?$/i, handleTestAlertCommand);
   bot.action(/^ba_/, handleBuyAlertAction);
@@ -4921,16 +4989,46 @@ export function setupRoutes(bot: Telegraf): void {
       const newStatus = ctx.myChatMember.new_chat_member.status;
       const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
       if (isGroup && (newStatus === 'administrator' || newStatus === 'member')) {
+        const botUsername = ctx.botInfo?.username || 'racertradingbot';
+        const setupDmUrl = `https://t.me/${botUsername}?start=setup_group_${ctx.chat.id}`;
+        const inviter = ctx.myChatMember.from;
+        const groupTitle = (ctx.chat as any)?.title || 'your group';
+
+        // Proactively attempt to message the admin who added the bot in DM
+        if (inviter?.id) {
+          try {
+            await ctx.telegram.sendMessage(
+              inviter.id,
+              `🏎️ <b>RacerBot Added to ${escapeHtml(groupTitle)}!</b>\n\n` +
+              `To activate live BUY alerts with 1-tap trading for your community, tap below to choose which token to track:`,
+              {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.url('⚙️ Set Up Buy Alerts in DM', setupDmUrl)],
+                ]),
+              }
+            );
+          } catch {
+            // Inviter hasn't started DM with bot yet — fallback is the inline button in group below!
+          }
+        }
+
         await ctx.reply(
           `🏎️ <b>RacerBot Activated!</b>\n\n` +
           `Welcome to RacerBot — the lightning-fast trading & group buy alert bot.\n\n` +
           `📢 <b>To start broadcasting live BUY alerts with 1-tap trading:</b>\n` +
+          `Tap the button below to set up in private DM, or run:\n` +
           `<code>/track &lt;token_contract_address&gt;</code>\n\n` +
           `✨ <b>Group Perks:</b>\n` +
           `• Live buy alerts with custom GIFs & emojis\n` +
           `• 1-tap buy button on every alert\n` +
           `• <b>Group Admins earn 5% fee share</b> on every community trade!`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('⚙️ Set Up Buy Alerts in DM', setupDmUrl)],
+            ]),
+          }
         );
       }
     } catch {
@@ -4955,6 +5053,62 @@ export function setupRoutes(bot: Telegraf): void {
     const pending = userPendingActions.get(telegramId);
     if (pending && Date.now() < pending.expiresAt) {
       userPendingActions.delete(telegramId);
+
+      if (pending.action === 'set_group_token' && pending.chatId) {
+        const rawToken = rawText.trim();
+        let tokenAddress = rawToken;
+        if (tokenAddress.length <= 12 && !tokenAddress.includes('.')) {
+          const resolved = resolveTokenAddressFromKey(tokenAddress);
+          if (resolved) tokenAddress = resolved;
+        }
+
+        const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
+        let tokenInfo: any = null;
+        try {
+          tokenInfo = await getTokenInfo(tokenAddress);
+        } catch { /* ignore */ }
+
+        const sym = tokenInfo?.symbol || (isSui ? 'TOKEN' : tokenAddress.split('.')[0].toUpperCase());
+
+        try {
+          const { upsertGroupBuyAlert } = await import('@racerbot/db');
+          const alert = await upsertGroupBuyAlert({
+            chatId: pending.chatId,
+            chatTitle: pending.chatTitle || 'Group',
+            adminId: telegramId,
+            tokenAddress,
+            chain: isSui ? 'sui' : 'near',
+            minBuyUsd: 5.0,
+            emoji: '🏎️',
+            emojiStepUsd: 5.0,
+            whaleThresholdUsd: 200.0,
+          });
+
+          const card = buildAlertSettingsCard(alert);
+          await ctx.reply(
+            `✅ <b>Buy Alerts Activated for Your Group!</b>\n\n` +
+            `🪙 Tracking: <b>$${escapeHtml(sym)}</b> (<code>${escapeHtml(tokenAddress)}</code>)\n` +
+            `⚡ Status: 🟢 <b>ACTIVE</b>\n\n` +
+            `Live BUY alerts will now stream into <b>${escapeHtml(pending.chatTitle || 'your group')}</b> with 1-tap buy buttons! You can customize settings below:`,
+            { parse_mode: 'HTML', ...card.keyboard }
+          );
+
+          // Notify the group as well!
+          try {
+            await ctx.telegram.sendMessage(
+              pending.chatId,
+              `✅ <b>RacerBot Buy Alerts Activated!</b>\n\n` +
+              `🪙 Tracking: <b>$${escapeHtml(sym)}</b> (<code>${escapeHtml(tokenAddress)}</code>)\n` +
+              `⚡ Status: 🟢 <b>ACTIVE</b>\n\n` +
+              `🏎️ Every buy will now be broadcast here with 1-tap trading and live charts!`,
+              { parse_mode: 'HTML' }
+            );
+          } catch { /* chat not found or bot lacks rights */ }
+        } catch (err: any) {
+          await ctx.reply(`❌ Failed to activate alerts: ${err?.message || err}`);
+        }
+        return;
+      }
 
       if (pending.action === 'import_near_key') {
         // Delete message containing private key immediately for security!

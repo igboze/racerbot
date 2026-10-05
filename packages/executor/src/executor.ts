@@ -611,10 +611,11 @@ export class SwapExecutor {
         // Required native NEAR if existing wNEAR balance does not cover amount_in
         const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
 
-        // Minimum $2.00 USD remaining after swap to cover gas, account storage, and future trades
+        // Minimal reserve in NEAR remaining after swap to cover gas, account storage, and future trades
+        // Keep at least 0.015 NEAR (~$0.07), allowing users to spend almost their entire balance
         const nearUsd = await getNearUsdPrice().catch(() => 4.5);
         const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
-        const minReserveNear = Math.max(0.05, 2.0 / effectiveNearUsd);
+        const minReserveNear = 0.015;
         const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
         const totalNearRequired = nearNeededForSwap + minReserveYocto;
 
@@ -627,7 +628,7 @@ export class SwapExecutor {
           const requiredReserveNearStr = minReserveNear.toFixed(4);
 
           throw new Error(
-            `Insufficient balance after swap. Your wallet must keep at least $2.00 in NEAR (${requiredReserveNearStr} NEAR) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
+            `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
           );
         }
       }

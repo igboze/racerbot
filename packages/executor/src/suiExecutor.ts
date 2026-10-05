@@ -85,10 +85,11 @@ export async function executeSuiSwap(
     onProgress?.('checking_balance');
     const userSuiBal = await getSuiBalance(userAddress);
     
-    // Minimum $2.00 USD remaining after swap to cover transaction gas
+    // Minimal reserve in SUI remaining after swap to cover transaction gas
+    // Keep at least 0.01 SUI (10,000,000 MIST = ~$0.02), allowing users to spend almost their entire balance
     const suiUsd = await getSuiUsdPrice().catch(() => 2.0);
     const effectiveSuiUsd = suiUsd > 0 ? suiUsd : 2.0;
-    const minReserveSui = Math.max(0.05, 2.0 / effectiveSuiUsd);
+    const minReserveSui = 0.01;
     const minReserveMist = BigInt(Math.ceil(minReserveSui * 1e9));
     const totalRequiredMist = amountInMist + minReserveMist;
 
@@ -101,7 +102,7 @@ export async function executeSuiSwap(
       const requiredReserveSuiStr = minReserveSui.toFixed(4);
 
       throw new Error(
-        `Insufficient balance after swap. Your wallet must keep at least $2.00 in SUI (${requiredReserveSuiStr} SUI) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
+        `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveSuiStr} SUI (~$${(minReserveSui * effectiveSuiUsd).toFixed(2)}) to cover transaction gas. You have $${availUsd} (${availSui} SUI), and would only have $${remainingUsd} (${remainingSui} SUI) left after this swap. Please reduce your buy amount or deposit more SUI.`
       );
     }
 
