@@ -2312,10 +2312,19 @@ export async function getGroupBuyAlertsByChat(chatId: number | string): Promise<
 export async function getGroupBuyAlertsByToken(tokenAddress: string): Promise<GroupBuyAlertRecord[]> {
   const db = await getDb();
   const res = await db.query(
-    'SELECT * FROM group_buy_alerts WHERE token_address = $1 AND is_active = TRUE',
+    'SELECT * FROM group_buy_alerts WHERE lower(token_address) = lower($1) AND is_active = TRUE',
     [tokenAddress]
   );
   return res.rows.map(rowToGroupBuyAlert);
+}
+
+/** Distinct token addresses with currently active group buy alerts. */
+export async function getDistinctActiveBuyAlertTokens(): Promise<string[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT DISTINCT lower(token_address) AS token_address FROM group_buy_alerts WHERE is_active = TRUE'
+  );
+  return res.rows.map(row => row.token_address as string);
 }
 
 export async function updateGroupBuyAlert(id: string, updates: Partial<GroupBuyAlertRecord>): Promise<GroupBuyAlertRecord> {
