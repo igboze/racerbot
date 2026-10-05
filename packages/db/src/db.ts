@@ -88,6 +88,8 @@ export interface TriggerRecord {
   chain?: 'near' | 'sui';
   type: string;
   target_value: string;
+  /** Percentage of the position to sell when this trigger fires (1-100, default 100). */
+  sell_pct: number;
   status: string;
   created_at: Date;
 }
@@ -270,6 +272,8 @@ export interface CreateTriggerParams {
   chain?: 'near' | 'sui';
   type: string;
   target_value: string;
+  /** Percentage of the position to sell when this trigger fires (1-100, default 100). */
+  sell_pct?: number;
 }
 
 export interface UpdatePositionParams {
@@ -903,11 +907,12 @@ export async function createTrigger(params: CreateTriggerParams): Promise<Trigge
   const db = await getDb();
   const id = generateId();
   const chain = params.chain || 'near';
+  const sellPct = params.sell_pct ?? 100;
   await db.query(
-    'INSERT INTO triggers (id, user_id, position_id, chain, type, target_value, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
-    [id, params.user_id, params.position_id, chain, params.type, params.target_value, 'active']
+    'INSERT INTO triggers (id, user_id, position_id, chain, type, target_value, sell_pct, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
+    [id, params.user_id, params.position_id, chain, params.type, params.target_value, sellPct, 'active']
   );
-  return { ...params, id, chain, status: 'active', created_at: new Date() };
+  return { ...params, id, chain, sell_pct: sellPct, status: 'active', created_at: new Date() };
 }
 
 export async function getActiveTriggers(): Promise<TriggerRecord[]> {
@@ -1539,7 +1544,8 @@ function rowToTrigger(row: any): TriggerRecord {
     position_id: row.position_id, 
     chain: row.chain || 'near',
     type: row.type, 
-    target_value: row.target_value, 
+    target_value: row.target_value,
+    sell_pct: row.sell_pct != null ? parseFloat(row.sell_pct) : 100,
     status: row.status, 
     created_at: row.created_at 
   };

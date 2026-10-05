@@ -88,13 +88,15 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const soldForNative = humanQty * currentPrice;
       const costBasisNative = humanQty * entryPrice;
       const diffNative = soldForNative - costBasisNative;
+      const sellPct = typeof (data as any)?.sell_pct === 'number' ? (data as any).sell_pct : 100;
+      const partialNote = sellPct < 100 ? ` (${sellPct}% of position)` : '';
 
       if (triggerType === 'stop_loss') {
         const lossNative = Math.abs(diffNative);
         const lossDisplay = lossNative >= 0.0001 ? lossNative.toFixed(4) : lossNative.toFixed(6);
         const text =
           `🔴 *Stop Loss Triggered!*\n\n` +
-          `*${sym}* hit your -${targetVal}% stop loss target.\n` +
+          `*${sym}* hit your -${targetVal}% stop loss target${partialNote}.\n` +
           `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
           `💸 Loss: \`-${lossDisplay} ${unit}\` (-${targetVal}%)`;
 
@@ -104,7 +106,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         const profitDisplay = profitNative >= 0.0001 ? profitNative.toFixed(4) : profitNative.toFixed(6);
         const text =
           `🟢 *Take Profit Hit!* 🎉\n\n` +
-          `*${sym}* hit your +${targetVal}% take profit target.\n` +
+          `*${sym}* hit your +${targetVal}% take profit target${partialNote}.\n` +
           `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
           `💰 Profit: \`+${profitDisplay} ${unit}\` (+${targetVal}%)`;
 
