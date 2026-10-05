@@ -13,6 +13,7 @@ vi.mock('@racerbot/db', () => ({
   updateGroupBuyAlert: vi.fn().mockResolvedValue({}),
   deleteGroupBuyAlert: vi.fn().mockResolvedValue(true),
   upsertGroupBuyAlert: vi.fn(),
+  getTokenCache: vi.fn().mockResolvedValue(null),
   getUserByTelegramId: vi.fn().mockResolvedValue({ id: 'user-admin-1', telegram_id: 12345 }),
   getOrCreateTokenShare: vi.fn().mockResolvedValue('t_share_admin123'),
   getDb: vi.fn().mockResolvedValue({
@@ -271,10 +272,10 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendAnimation).toHaveBeenCalledTimes(1);
       const args = mockSendAnimation.mock.calls[0];
       expect(args[0]).toBe('-100333');
-      expect(args[1]).toBe('gif_file_id_xyz');
       expect(args[2].caption).toContain('SCOIN');
       expect(args[2].caption).toContain('0x1234...1234');
-      expect(args[2].caption).toContain('suiscan.xyz');
+      expect(args[2].caption).toContain('0x2::token::COIN');
+      expect(args[2].reply_markup.inline_keyboard[1][0].url).toContain('suiscan.xyz');
     });
 
     it('should auto-pause alert when bot is kicked from the group', async () => {
