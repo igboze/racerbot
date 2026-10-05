@@ -974,16 +974,15 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
         const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
 
         if (isTracked) {
+          const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
+          const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
           const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
           const tokensReceivedStr = tokensReceivedNum > 0
-            ? tokensReceivedNum.toLocaleString('en-US', { maximumFractionDigits: 2 })
-            : '0';
+            ? `${tokensReceivedNum.toLocaleString('en-US', { maximumFractionDigits: tokensReceivedNum >= 100 ? 0 : 2 })} ${tokenSymbol}`
+            : `0 ${tokenSymbol}`;
           const buyer = data?.swapper || data?.account_id || data?.trader || data?.signer_id || 'Unknown';
           const priceUsd = price * nearPriceUsd;
           const marketCapUsd = marketCap * nearPriceUsd;
-
-          const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
-          const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
 
           // Fetch buyer's NEAR balance for whale detection (non-fatal)
           let buyerNearBalance: number | undefined;
