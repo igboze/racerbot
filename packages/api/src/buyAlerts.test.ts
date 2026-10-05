@@ -208,7 +208,7 @@ describe('Group Buy Alerts Engine', () => {
       const callArgs = mockSendMessage.mock.calls[0];
       expect(callArgs[0]).toBe('-100222');
       const text = callArgs[1];
-      expect(text).toContain('RACERBOT BUY ALERT');
+      expect(text).toContain('MOON TOKEN BUY ALERT');
       expect(text).toContain('WHALE BUY DETECTED!');
       expect(text).toContain('🔥'.repeat(25));
       expect(text).toContain('50 NEAR');
@@ -383,7 +383,7 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendMessage).toHaveBeenCalledTimes(1);
       const callArgs = mockSendMessage.mock.calls[0];
       const text = callArgs[1];
-      expect(text).toContain('🏎️ <b>RACERBOT BUY ALERT</b> 🏎️');
+      expect(text).toContain('🏎️ <b>UPTOBER BUY ALERT</b> 🏎️');
       expect(text).toContain('🏎️'.repeat(10));
       expect(text).toContain('🪙 <b>Token:</b> Uptober ($UPTOBER)');
       expect(text).toContain('📄 <b>CA:</b> <code>uptober.nearlytrade.near</code>');
