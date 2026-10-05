@@ -26,6 +26,9 @@ const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.nekotoken.near',
   '.nearportnear.near',
   '.launch.shoremarkets.near',
+  '.gaypad.j1-racing.near',
+  '.exchange.kelytradevs.near',
+  '.kelytra.near',
 ];
 
 export const VERIFIED_CORE_TOKENS = new Set([
@@ -144,14 +147,25 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
 
   for (const suffix of VERIFIED_LAUNCHPAD_SUFFIXES) {
     if (normAddress.endsWith(suffix)) {
-      const launchpad = suffix.replace(/^\./, '').split('.')[0] || suffix;
+      let launchpadName = suffix.replace(/^\./, '').split('.')[0] || suffix;
+      if (suffix.includes('kelytra') || suffix.includes('kelytradevs')) {
+        launchpadName = 'Kelytra';
+      } else if (suffix.includes('gaypad')) {
+        launchpadName = 'Gaypad';
+      } else if (suffix.includes('justhoot')) {
+        launchpadName = 'JustHoot';
+      } else if (suffix.includes('shoremarkets')) {
+        launchpadName = 'ShoreMarkets';
+      } else {
+        launchpadName = launchpadName.charAt(0).toUpperCase() + launchpadName.slice(1);
+      }
       const report: TokenSafetyReport = {
         tokenAddress: normAddress,
         isHoneypot: false,
         safe: true,
         risk: 'low',
         isAuditedLaunchpad: true,
-        launchpadName: launchpad.charAt(0).toUpperCase() + launchpad.slice(1),
+        launchpadName,
         reasons: [],
         dangerousMethods: [],
       };

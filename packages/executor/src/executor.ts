@@ -778,7 +778,7 @@ export class SwapExecutor {
     await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -805,6 +805,9 @@ export class SwapExecutor {
         } else if (venue === 'shoremarkets') {
           const smState = await near.getShoremarketsTokenState(tokenTarget).catch(() => null);
           dclPoolId = smState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
+        } else if (venue === 'kelytra') {
+          const ktState = await near.getKelytraTokenState(tokenTarget).catch(() => null);
+          dclPoolId = ktState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
         }
       }
     }
@@ -2059,6 +2062,153 @@ export class SwapExecutor {
           }
         }
       }
+    } else if (venue === 'kelytra') {
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      const targetToken = isBuy ? token_out : token_in;
+      // First check if token has graduated / bonded to Rhea
+      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && typeof rhea.poolId === 'number') {
+        const rheaPoolId = rhea.poolId;
+        if (isBuy) {
+          await ensureStorage(token_out);
+          const rheaActions = [
+            { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+          ];
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId, amountInBigInt, feeAmount, swapAmount,
+            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), BigInt('250000000000000')
+          );
+          result = await signAndSend('wrap.near', actions);
+        } else {
+          await ensureStorage('wrap.near');
+          const rheaActions = [
+            { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+          ];
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+              BigInt('220000000000000'), BigInt('1')
+            ),
+          ];
+          result = await signAndSend(token_in, actions);
+        }
+      } else {
+        // Pre-bonded on Kelytra bonding curve (exchange.kelytradevs.near)
+        const KELYTRA_EXCHANGE = 'exchange.kelytradevs.near';
+        const ktState = await near.getKelytraTokenState(targetToken);
+        const marketId = ktState.launchId;
+
+        if (isBuy) {
+          await ensureStorage(token_out);
+          const [regWrap, regToken] = await Promise.all([
+            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
+            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null),
+          ]);
+          if (!regWrap) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+            ]);
+          }
+          if (!regToken) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall('register_balance', { token_id: token_out, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+            ]);
+          }
+
+          const buyActions = await this.buildWrapNearBuyActions(
+            subaccountId, amountInBigInt, feeAmount, swapAmount,
+            KELYTRA_EXCHANGE, 'deposit', BigInt('200000000000000')
+          );
+          await signAndSend('wrap.near', buyActions);
+
+          const swapAction = [
+            transactions.functionCall(
+              'terminal_swap',
+              {
+                kind: 'curve',
+                market_id: marketId,
+                direction: true,
+                max_input: swapAmount.toString(),
+                min_out: minOutAdj,
+                deadline: String((Date.now() + 120_000) * 1_000_000),
+              },
+              BigInt('150000000000000'),
+              BigInt('1')
+            ),
+          ];
+          result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
+
+          const outBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null);
+          const availableOut = outBal?.available || '0';
+          if (BigInt(availableOut) > 0n) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall(
+                'withdraw',
+                { amount: availableOut, token_id: token_out },
+                BigInt('80000000000000'),
+                BigInt('1')
+              ),
+            ]);
+          }
+        } else {
+          await ensureStorage('wrap.near');
+          const [regToken, regWrap] = await Promise.all([
+            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_in }).catch(() => null),
+            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
+          ]);
+          if (!regToken) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall('register_balance', { token_id: token_in, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+            ]);
+          }
+          if (!regWrap) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+            ]);
+          }
+
+          const depositAction = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              { receiver_id: KELYTRA_EXCHANGE, amount: amountInBigInt.toString(), msg: 'deposit' },
+              BigInt('150000000000000'),
+              BigInt('1')
+            ),
+          ];
+          await signAndSend(token_in, depositAction);
+
+          const swapAction = [
+            transactions.functionCall(
+              'terminal_swap',
+              {
+                kind: 'curve',
+                market_id: marketId,
+                direction: false,
+                max_input: amountInBigInt.toString(),
+                min_out: min_amount_out,
+                deadline: String((Date.now() + 120_000) * 1_000_000),
+              },
+              BigInt('150000000000000'),
+              BigInt('1')
+            ),
+          ];
+          result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
+
+          const wrapBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null);
+          const availableWrap = wrapBal?.available || '0';
+          if (BigInt(availableWrap) > 0n) {
+            await signAndSend(KELYTRA_EXCHANGE, [
+              transactions.functionCall(
+                'withdraw',
+                { amount: availableWrap, token_id: 'wrap.near' },
+                BigInt('80000000000000'),
+                BigInt('1')
+              ),
+            ]);
+          }
+        }
+      }
     } else if (venue === 'memecooking') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
@@ -2344,7 +2494,7 @@ export class SwapExecutor {
     // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
     // This makes sell execution 2-4 seconds faster.
     // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking') && BigInt(netAmountOut) > 0n) {
+    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       let feePaid = false;
 
@@ -2633,6 +2783,20 @@ export class SwapExecutor {
         return { rheaPoolId, dclPoolId, blocked: 'shoremarkets_no_near_route_to_quote' };
       }
       dclPoolId = smState.dclPoolId;
+    } else if (venue === 'kelytra') {
+      const ktState = await near.getKelytraTokenState(tokenAddress).catch(() => null);
+      if (!ktState) {
+        return { rheaPoolId, dclPoolId, blocked: 'kelytra_token_not_found' };
+      }
+      if (ktState.phase === 'bonded') {
+        const rhea = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+        if (rhea) {
+          if (rhea.isDcl) dclPoolId = String(rhea.poolId);
+          else if (typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
+        }
+      }
+      // Prebonded on Kelytra is traded directly on exchange.kelytradevs.near
+      return { rheaPoolId, dclPoolId };
     }
 
     if (!rheaPoolId && !dclPoolId) {

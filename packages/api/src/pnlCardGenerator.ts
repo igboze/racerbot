@@ -245,6 +245,7 @@ export async function generatePNLCardData(
       nearpad:      'NEARpad',
       gaypad:       'Gaypad',
       shoremarkets: 'ShoreMarkets',
+      kelytra:      'Kelytra',
     };
     const venueName = tokenInfo?.venue ? venueMap[tokenInfo.venue] || tokenInfo.venue : 'Unknown';
 
