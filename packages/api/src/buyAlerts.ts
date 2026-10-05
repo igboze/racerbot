@@ -137,7 +137,8 @@ export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
 
   for (const alert of alerts) {
     if (!alert.is_active) continue;
-    if (event.spent_usd < alert.min_buy_usd) continue;
+    const minBuy = parseFloat(String(alert.min_buy_usd ?? '0')) || 0;
+    if (event.spent_usd < minBuy) continue;
 
     // Rate-limit per group to prevent message spam / 429
     const lastTime = lastChatAlertTime.get(alert.chat_id) || 0;
@@ -181,11 +182,12 @@ async function sendGroupAlertMessage(
   if (!_bot) return;
 
   const emoji = alert.emoji || '🏎️';
-  const step = alert.emoji_step_usd > 0 ? alert.emoji_step_usd : 5;
+  const step = parseFloat(String(alert.emoji_step_usd ?? '5')) || 5;
   const count = Math.min(35, Math.max(1, Math.floor(event.spent_usd / step)));
   const emojiBar = emoji.repeat(count);
 
-  const isWhale = event.spent_usd >= (alert.whale_threshold_usd || 200);
+  const whaleThreshold = parseFloat(String(alert.whale_threshold_usd ?? '200')) || 200;
+  const isWhale = event.spent_usd >= whaleThreshold;
   const whaleHeader = isWhale ? '🚨 <b>WHALE BUY DETECTED!</b> 🚨\n\n' : '';
 
   // Generate 1-tap Buy URL with group admin referral attribution
@@ -772,19 +774,47 @@ export async function handleBuyAlertAction(ctx: Context): Promise<void> {
 
     case 'ba_test': {
       await ctx.answerCbQuery('⚡ Sending test alert...').catch(() => {});
+      let tokenName = currentAlert.chain === 'sui' ? 'Sui Token' : 'Near Token';
+      let tokenSymbol = currentAlert.chain === 'sui' ? 'TOKEN' : 'TOKEN';
+      let priceUsd = 0.00005;
+      let marketCapUsd = 50000;
+
+      try {
+        const cached = await getTokenCache(currentAlert.token_address).catch(() => null);
+        if (cached) {
+          if (cached.name) tokenName = cached.name;
+          if (cached.symbol) tokenSymbol = cached.symbol;
+          if (cached.last_price && parseFloat(String(cached.last_price)) > 0) {
+            priceUsd = parseFloat(String(cached.last_price)) * 4.8;
+          }
+        }
+        const live = await getTokenInfo(currentAlert.token_address).catch(() => null);
+        if (live) {
+          if (live.name) tokenName = live.name;
+          if (live.symbol) tokenSymbol = live.symbol;
+          if (live.price_usd && Number(live.price_usd) > 0) priceUsd = Number(live.price_usd);
+          if (live.market_cap_usd && Number(live.market_cap_usd) > 0) marketCapUsd = Number(live.market_cap_usd);
+        }
+      } catch { /* use defaults */ }
+
+      const spentNear = 10;
+      const nearPriceUsd = 4.8;
+      const spentUsd = spentNear * nearPriceUsd;
+      const tokensGotNum = priceUsd > 0 ? spentUsd / priceUsd : 100000;
+
       const sampleEvent: BuyAlertEvent = {
         type: 'buy_alert',
         chain: currentAlert.chain,
         token_address: currentAlert.token_address,
-        token_name: 'Sample Token',
-        token_symbol: currentAlert.chain === 'sui' ? 'SUI_TOKEN' : 'NEAR_TOKEN',
-        buyer_address: currentAlert.chain === 'sui' ? '0x7a3...c91' : 'racer_whale.near',
-        spent_amount_native: currentAlert.chain === 'sui' ? '25.00 SUI' : '15.00 NEAR',
-        spent_usd: 50.00,
-        tokens_received: '1,250,000 TOKEN',
-        price_usd: 0.00004,
-        market_cap_usd: 40000,
-        tx_hash: 'test_tx_hash_preview',
+        token_name: tokenName,
+        token_symbol: tokenSymbol,
+        buyer_address: currentAlert.chain === 'sui' ? '0x7a3...c91' : (ctx.from?.username ? `${ctx.from.username}.near` : 'racer_whale.near'),
+        spent_amount_native: currentAlert.chain === 'sui' ? '25.00 SUI' : `${spentNear.toFixed(2)} NEAR`,
+        spent_usd: spentUsd,
+        tokens_received: `${tokensGotNum.toLocaleString('en-US', { maximumFractionDigits: 0 })} ${tokenSymbol}`,
+        price_usd: priceUsd,
+        market_cap_usd: marketCapUsd,
+        tx_hash: '',
         timestamp: Date.now(),
       };
       const botUsername = ctx.botInfo?.username || 'racertradingbot';
@@ -858,4 +888,94 @@ export async function handleBuyAlertMediaUpload(ctx: Context): Promise<boolean> 
   }
 
   return true;
+}
+
+/**
+ * Handle /testalert or /testbuy command in groups or DMs.
+ * Allows admins to verify bot permissions and preview real alert appearance.
+ */
+export async function handleTestAlertCommand(ctx: Context): Promise<void> {
+  try {
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+
+    const fromId = ctx.from?.id;
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+    if (isGroup && fromId) {
+      const member = await ctx.getChatMember(fromId).catch(() => null);
+      const isAdmin = member && (member.status === 'creator' || member.status === 'administrator');
+      if (!isAdmin) {
+        await ctx.reply('⚠️ Only group administrators can use /testalert.');
+        return;
+      }
+    }
+
+    const alerts = isGroup
+      ? await getGroupBuyAlertsByChat(chatId)
+      : (fromId ? await (await import('@racerbot/db')).getDb().then(db => db.query('SELECT * FROM group_buy_alerts WHERE admin_id = $1 ORDER BY updated_at DESC LIMIT 1', [fromId]).then(r => r.rows)) : []);
+
+    if (!alerts || alerts.length === 0) {
+      await ctx.reply(
+        isGroup
+          ? '⚠️ No token is currently tracked in this group. Use <code>/track &lt;token_address&gt;</code> to set up buy alerts!'
+          : '⚠️ You have not set up any group buy alerts yet. Add the bot to your group and use <code>/track &lt;token_address&gt;</code>!',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    const alert = alerts[0];
+    let tokenName = alert.chain === 'sui' ? 'Sui Token' : 'Near Token';
+    let tokenSymbol = alert.chain === 'sui' ? 'TOKEN' : 'TOKEN';
+    let priceUsd = 0.00005;
+    let marketCapUsd = 50000;
+
+    try {
+      const cached = await getTokenCache(alert.token_address).catch(() => null);
+      if (cached) {
+        if (cached.name) tokenName = cached.name;
+        if (cached.symbol) tokenSymbol = cached.symbol;
+        if (cached.last_price && parseFloat(String(cached.last_price)) > 0) {
+          priceUsd = parseFloat(String(cached.last_price)) * 4.8;
+        }
+      }
+      const live = await getTokenInfo(alert.token_address).catch(() => null);
+      if (live) {
+        if (live.name) tokenName = live.name;
+        if (live.symbol) tokenSymbol = live.symbol;
+        if (live.price_usd && Number(live.price_usd) > 0) priceUsd = Number(live.price_usd);
+        if (live.market_cap_usd && Number(live.market_cap_usd) > 0) marketCapUsd = Number(live.market_cap_usd);
+      }
+    } catch { /* use defaults */ }
+
+    const spentNear = 10;
+    const spentUsd = 48.0;
+    const tokensGotNum = priceUsd > 0 ? spentUsd / priceUsd : 100000;
+
+    const sampleEvent: BuyAlertEvent = {
+      type: 'buy_alert',
+      chain: alert.chain,
+      token_address: alert.token_address,
+      token_name: tokenName,
+      token_symbol: tokenSymbol,
+      buyer_address: alert.chain === 'sui' ? '0x7a3...c91' : (ctx.from?.username ? `${ctx.from.username}.near` : 'racer_whale.near'),
+      spent_amount_native: alert.chain === 'sui' ? '25.00 SUI' : `${spentNear.toFixed(2)} NEAR`,
+      spent_usd: spentUsd,
+      tokens_received: `${tokensGotNum.toLocaleString('en-US', { maximumFractionDigits: 0 })} ${tokenSymbol}`,
+      price_usd: priceUsd,
+      market_cap_usd: marketCapUsd,
+      tx_hash: '',
+      timestamp: Date.now(),
+    };
+
+    const botUsername = ctx.botInfo?.username || 'racertradingbot';
+    await sendGroupAlertMessage(alert, sampleEvent, botUsername);
+
+    if (!isGroup) {
+      await ctx.reply(`✅ Test alert sent to <b>${escapeHtml(alert.chat_title || alert.chat_id)}</b>!`, { parse_mode: 'HTML' });
+    }
+  } catch (err: any) {
+    await ctx.reply(`❌ Failed to send test alert: ${err?.message || err}`).catch(() => {});
+  }
 }
