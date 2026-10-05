@@ -30,6 +30,7 @@ export type EventVenue =
   | 'gaypad'
   | 'nearpad'
   | 'shoremarkets'
+  | 'kelytra'
   | 'suipump'
   | 'cetus'
   | 'turbos'

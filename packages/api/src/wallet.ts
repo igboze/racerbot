@@ -536,7 +536,7 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
   if (
     dbCache &&
     dbCache.venue &&
-    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'suipump'].includes(dbCache.venue)
+    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra', 'suipump'].includes(dbCache.venue)
   ) {
     const isSui = dbCache.chain === 'sui' || isSuiToken(tokenAddress);
     if (isSui && (Number(dbCache.last_liquidity || 0) === 0 || dbCache.total_supply === '1000000000000000')) {
@@ -1074,6 +1074,21 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         }
       }
     } catch { /* no-op */ }
+  } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
+    try {
+      const ktState = await near.getKelytraTokenState(tokenAddress);
+      if (ktState && ktState.price > 0) {
+        venue = 'kelytra';
+        price = ktState.price;
+        liquidity = ktState.liquidityNear;
+        bondingPhase = ktState.phase;
+        bondingProgressPct = ktState.bondingProgressPct;
+        dclPoolId = ktState.dclPoolId;
+        if (ktState.totalSupply && ktState.totalSupply !== '0') {
+          totalSupply = ktState.totalSupply;
+        }
+      }
+    } catch { /* no-op */ }
   }
 
   // Step 2: If price was not found or if token is potentially on Ref/Rhea (bonded or general token)
@@ -1103,11 +1118,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)
   if (venue === 'unknown' && price <= 0) {
-    const [ntRes, hubRes, padRes, smRes] = await Promise.allSettled([
+    const [ntRes, hubRes, padRes, smRes, ktRes] = await Promise.allSettled([
       near.getNearlytradeTokenState(tokenAddress),
       near.getOneTokenHubState(tokenAddress),
       near.getNEARpadState(tokenAddress),
       near.getShoremarketsTokenState(tokenAddress),
+      near.getKelytraTokenState(tokenAddress),
     ]);
 
     if (ntRes.status === 'fulfilled' && ntRes.value && ntRes.value.price > 0) {
@@ -1149,6 +1165,17 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       dclPoolId = smState.dclPoolId;
       if (smState.totalSupply && smState.totalSupply !== '0') {
         totalSupply = smState.totalSupply;
+      }
+    } else if (ktRes.status === 'fulfilled' && ktRes.value && ktRes.value.price > 0) {
+      const ktState = ktRes.value;
+      venue = 'kelytra';
+      price = ktState.price;
+      liquidity = ktState.liquidityNear;
+      bondingPhase = ktState.phase;
+      bondingProgressPct = ktState.bondingProgressPct;
+      dclPoolId = ktState.dclPoolId;
+      if (ktState.totalSupply && ktState.totalSupply !== '0') {
+        totalSupply = ktState.totalSupply;
       }
     }
   }
