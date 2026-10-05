@@ -18,6 +18,7 @@ import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher } from './depositWatcher.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
+import { startBackgroundWorkers, stopBackgroundWorkers } from './workers.js';
 import { TELEGRAM_BOT_TOKEN, PUBLIC_URL, TELEGRAM_WEBHOOK_SECRET } from './config.js';
 
 const logger = createLogger('api');
@@ -291,11 +292,13 @@ async function main(): Promise<void> {
   // ── Real-time NEAR & SUI native deposit watcher ───────────────────────────
   startDepositWatcher(12_000); // Check every 12s for fast real-time deposit alerts
 
-
+  // ── Start background worker processes (detector, executor, triggers) ──────
+  startBackgroundWorkers();
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {
     logger.info('Shutting down', { signal });
+    stopBackgroundWorkers();
     bot.stop(signal);
     stopDepositWatcher();
     if (syncInterval) {

@@ -94,7 +94,7 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
-import { handleBuyBotCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard } from './buyAlerts.js';
+import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -4908,9 +4908,11 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(`✅ Take profit set at +${pct}% for \`${tokenCA}\``, { parse_mode: 'Markdown' });
   });
 
-  // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert) ─────────────────
+  // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert, /testalert) ─────
   bot.command(['track', 'buybot', 'buyalert'], handleBuyBotCommand);
   bot.hears(/^\/(track|buybot|buyalert)(@\w+)?(\s+.*)?$/i, handleBuyBotCommand);
+  bot.command(['testalert', 'testbuy'], handleTestAlertCommand);
+  bot.hears(/^\/(testalert|testbuy)(@\w+)?(\s+.*)?$/i, handleTestAlertCommand);
   bot.action(/^ba_/, handleBuyAlertAction);
 
   // Group welcome when bot is added as administrator
