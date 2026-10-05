@@ -981,23 +981,16 @@ export class SwapExecutor {
             );
           }
         } else {
-          // ── Two-transaction path: wNEAR → quote → launch token ────────
-          // Atomic multi-pool DCL routing is NOT verified; use 2-tx always.
           const route = await near.planNearlytradeRoute(token_out);
           if (route.kind !== 'multihop') throw new Error('Expected multihop route');
 
-          // Retrieve the hop1 min from the extended quote result (may be undefined for legacy)
-          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
-
-          console.log(
-            `[EXECUTOR] NearlyTrade route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
-            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
-          );
-
-          // Tx 1: wNEAR → quote (via DCL or Ref v2)
-          let tx1Result: any;
           if (route.hop1.type === 'dcl') {
-            const tx1Actions = await this.buildWrapNearBuyActions(
+            // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
+            const poolIds = [route.hop1.poolId, route.launchPoolId];
+            console.log(
+              `[EXECUTOR] NearlyTrade route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
+            );
+            const actions = await this.buildWrapNearBuyActions(
               subaccountId,
               amountInBigInt,
               feeAmount,
@@ -1005,14 +998,27 @@ export class SwapExecutor {
               'dclv2.ref-labs.near',
               JSON.stringify({
                 Swap: {
-                  pool_ids: [route.hop1.poolId],
-                  output_token: route.quote,
-                  min_output_amount: minHop1,
+                  pool_ids: poolIds,
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                  swap_out_recipient: subaccountId,
                 },
-              })
+              }),
+              BigInt('250000000000000'),
+              knownWNearBal
             );
-            tx1Result = await signAndSend('wrap.near', tx1Actions);
+            result = await signAndSend('wrap.near', actions);
           } else {
+            // Fallback: Two-transaction path: wNEAR → quote (v2 AMM) → launch token (DCL)
+            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+            console.log(
+              `[EXECUTOR] NearlyTrade route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
+              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
+            );
+
+            // Tx 1: wNEAR → quote via Ref v2
+            let tx1Result: any;
             const tx1Actions = await this.buildWrapNearBuyActions(
               subaccountId,
               amountInBigInt,
@@ -1032,55 +1038,55 @@ export class SwapExecutor {
               })
             );
             tx1Result = await signAndSend('wrap.near', tx1Actions);
+
+            console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
+
+            // Read how much quote we actually received
+            const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            const quoteBalBigInt = BigInt(quoteBal || '0');
+
+            if (quoteBalBigInt <= 0n) {
+              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+              throw new Error(
+                `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
+                `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
+              );
+            }
+
+            // Tx 2: quote → launch token via launch DCL pool
+            let tx2Result: any;
+            try {
+              const tx2Actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'dclv2.ref-labs.near',
+                    amount: quoteBalBigInt.toString(),
+                    msg: JSON.stringify({
+                      Swap: {
+                        pool_ids: [route.launchPoolId],
+                        output_token: token_out,
+                        min_output_amount: minOutAdj,
+                      },
+                    }),
+                  },
+                  BigInt('180000000000000'),
+                  BigInt('1')
+                ),
+              ];
+              tx2Result = await signAndSend(route.quote, tx2Actions);
+            } catch (tx2Err: any) {
+              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+              // Step 2 failed — do NOT record a fill or position for the launch token.
+              // Return a failure reason telling the user about the quote balance.
+              const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(6);
+              throw new Error(
+                `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
+                `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+              );
+            }
+            result = tx2Result;
           }
-
-          console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
-
-          // Read how much quote we actually received
-          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          const quoteBalBigInt = BigInt(quoteBal || '0');
-
-          if (quoteBalBigInt <= 0n) {
-            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-            throw new Error(
-              `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
-              `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
-            );
-          }
-
-          // Tx 2: quote → launch token via launch DCL pool
-          let tx2Result: any;
-          try {
-            const tx2Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: quoteBalBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [route.launchPoolId],
-                      output_token: token_out,
-                      min_output_amount: minOutAdj,
-                    },
-                  }),
-                },
-                BigInt('180000000000000'),
-                BigInt('1')
-              ),
-            ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
-          } catch (tx2Err: any) {
-            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-            // Step 2 failed — do NOT record a fill or position for the launch token.
-            // Return a failure reason telling the user about the quote balance.
-            const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(6);
-            throw new Error(
-              `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
-              `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
-            );
-          }
-          result = tx2Result;
         }
       } else {
         // ── Sell token on Rhea or DCL for wrap.near ────────────────────
@@ -1145,60 +1151,56 @@ export class SwapExecutor {
             );
           }
         } else {
-          // ── Two-transaction sell: launch token → quote → wNEAR ───────
           const route = await near.planNearlytradeRoute(token_in);
           if (route.kind !== 'multihop') throw new Error('Expected multihop route');
 
-          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
-
-          console.log(
-            `[EXECUTOR] NearlyTrade route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
-            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
-          );
-
-          // Tx 1: launch token → quote via launch DCL pool
-          const tx1Actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [route.launchPoolId],
-                    output_token: route.quote,
-                    min_output_amount: minHop1,
-                  },
-                }),
-              },
-              BigInt('180000000000000'),
-              BigInt('1')
-            ),
-          ];
-          await signAndSend(token_in, tx1Actions);
-
-          // Read quote balance and forward to Ref/DCL for wNEAR
-          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          const quoteBalBigInt = BigInt(quoteBal || '0');
-          if (quoteBalBigInt <= 0n) {
-            throw new Error(
-              `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
-            );
-          }
-
-          let tx2Result: any;
           if (route.hop1.type === 'dcl') {
-            const tx2Actions = [
+            // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
+            const poolIds = [route.launchPoolId, route.hop1.poolId];
+            console.log(
+              `[EXECUTOR] NearlyTrade route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
+            );
+            const actions = [
               transactions.functionCall(
                 'ft_transfer_call',
                 {
                   receiver_id: 'dclv2.ref-labs.near',
-                  amount: quoteBalBigInt.toString(),
+                  amount: amountInBigInt.toString(),
                   msg: JSON.stringify({
                     Swap: {
-                      pool_ids: [route.hop1.poolId],
+                      pool_ids: poolIds,
                       output_token: 'wrap.near',
                       min_output_amount: min_amount_out,
+                      swap_out_recipient: subaccountId,
+                    },
+                  }),
+                },
+                BigInt('250000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          } else {
+            // Fallback: Two-transaction sell: launch token (DCL) → quote → wNEAR (Ref v2 AMM)
+            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+            console.log(
+              `[EXECUTOR] NearlyTrade route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
+              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
+            );
+
+            // Tx 1: launch token → quote via launch DCL pool
+            const tx1Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.launchPoolId],
+                      output_token: route.quote,
+                      min_output_amount: minHop1,
                     },
                   }),
                 },
@@ -1206,8 +1208,28 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
-          } else {
+            await signAndSend(token_in, tx1Actions);
+
+            // Read quote balance and forward to Ref for wNEAR
+            const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            const quoteBalBigInt = BigInt(quoteBal || '0');
+            if (quoteBalBigInt <= 0n) {
+              throw new Error(
+                `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+              );
+            }
+
+            // Re-quote hop 2 with actual quoteBalBigInt received
+            const hop2Quote = await near.computeMinAmountOut(
+              'ref',
+              route.quote,
+              'wrap.near',
+              quoteBalBigInt.toString(),
+              userSlippage,
+              Number(route.hop1.poolId)
+            ).catch(() => null);
+            const minTx2 = hop2Quote ? hop2Quote.minAmountOut : '1';
+
             const tx2Actions = [
               transactions.functionCall(
                 'ft_transfer_call',
@@ -1221,7 +1243,7 @@ export class SwapExecutor {
                         token_in: route.quote,
                         token_out: 'wrap.near',
                         amount_in: quoteBalBigInt.toString(),
-                        min_amount_out: min_amount_out,
+                        min_amount_out: minTx2,
                       },
                     ],
                   }),
@@ -1230,9 +1252,17 @@ export class SwapExecutor {
                 BigInt('1')
               ),
             ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
+            try {
+              result = await signAndSend(route.quote, tx2Actions);
+            } catch (tx2Err: any) {
+              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+              const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(4);
+              throw new Error(
+                `Two-transaction sell: step 1 (${token_in} → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → NEAR) failed: ` +
+                `${tx2Err.message}. Your wallet holds ${heldAmount} ${quoteMeta.symbol}.`
+              );
+            }
           }
-          result = tx2Result;
         }
       }
     } else if (venue === 'rhea' || venue === 'ref') {
