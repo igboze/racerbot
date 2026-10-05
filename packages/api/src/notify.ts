@@ -54,12 +54,70 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
     case 'trigger_fired': {
       const triggerType = data.trigger_type as string;
       const token = data.token_address as string;
-      const currentPrice = Number(data.current_price).toFixed(8);
-      const label = triggerType === 'stop_loss' ? '🔴 Stop Loss' : triggerType === 'take_profit' ? '🟢 Take Profit' : '📈 Market Cap Target';
-      await _bot.telegram.sendMessage(telegramId,
-        `${label} triggered!\n\n🪙 Token: \`${token}\`\n💰 Price: ${currentPrice} NEAR\n\nSell order sent to executor.`,
-        { parse_mode: 'Markdown' }
-      );
+      const targetVal = parseFloat(String(data.target_value || '0'));
+      const currentPrice = Number(data.current_price || 0);
+      const entryPrice = Number(data.entry_price || 0);
+      const isSui = data.chain === 'sui' || (typeof token === 'string' && token.includes('::'));
+      const unit = isSui ? 'SUI' : 'NEAR';
+
+      let sym = 'TOKEN';
+      let decimals = isSui ? 6 : 18;
+      try {
+        const { getTokenInfo } = await import('./wallet.js');
+        const info = await getTokenInfo(token, false).catch(() => null);
+        if (info?.symbol) sym = sanitize(info.symbol);
+        if (info?.decimals) decimals = info.decimals;
+      } catch { /* fallback to default */ }
+
+      let humanQty = 0;
+      try {
+        const rawBig = BigInt(String(data.quantity_held || '0').split('.')[0]);
+        humanQty = Number(rawBig) / Math.pow(10, decimals);
+      } catch {
+        humanQty = parseFloat(String(data.quantity_held || '0'));
+      }
+
+      const qtyDisplay = humanQty >= 1_000_000
+        ? `${(humanQty / 1_000_000).toFixed(2)}M`
+        : humanQty >= 1_000
+        ? humanQty.toLocaleString('en-US', { maximumFractionDigits: 1 })
+        : humanQty > 0
+        ? humanQty.toFixed(2)
+        : '—';
+
+      const soldForNative = humanQty * currentPrice;
+      const costBasisNative = humanQty * entryPrice;
+      const diffNative = soldForNative - costBasisNative;
+
+      if (triggerType === 'stop_loss') {
+        const lossNative = Math.abs(diffNative);
+        const lossDisplay = lossNative >= 0.0001 ? lossNative.toFixed(4) : lossNative.toFixed(6);
+        const text =
+          `🔴 *Stop Loss Triggered!*\n\n` +
+          `*${sym}* hit your -${targetVal}% stop loss target.\n` +
+          `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
+          `💸 Loss: \`-${lossDisplay} ${unit}\` (-${targetVal}%)`;
+
+        await _bot.telegram.sendMessage(telegramId, text, { parse_mode: 'Markdown' });
+      } else if (triggerType === 'take_profit') {
+        const profitNative = Math.abs(diffNative);
+        const profitDisplay = profitNative >= 0.0001 ? profitNative.toFixed(4) : profitNative.toFixed(6);
+        const text =
+          `🟢 *Take Profit Hit!* 🎉\n\n` +
+          `*${sym}* hit your +${targetVal}% take profit target.\n` +
+          `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
+          `💰 Profit: \`+${profitDisplay} ${unit}\` (+${targetVal}%)`;
+
+        await _bot.telegram.sendMessage(telegramId, text, { parse_mode: 'Markdown' });
+      } else {
+        const text =
+          `📈 *Market Cap Target Triggered!*\n\n` +
+          `🪙 Token: \`${token}\`\n` +
+          `💰 Price: \`${currentPrice.toFixed(8)} ${unit}\`\n\n` +
+          `Sell order executed to secure position.`;
+
+        await _bot.telegram.sendMessage(telegramId, text, { parse_mode: 'Markdown' });
+      }
       break;
     }
 

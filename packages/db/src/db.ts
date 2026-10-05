@@ -927,6 +927,33 @@ export async function markTriggerFired(triggerId: string): Promise<void> {
   await db.query('UPDATE triggers SET status = $1 WHERE id = $2', ['fired', triggerId]);
 }
 
+export async function cancelTriggersByPosition(
+  positionId: string,
+  type?: 'stop_loss' | 'take_profit' | 'market_cap'
+): Promise<void> {
+  const db = await getDb();
+  if (type) {
+    await db.query(
+      'UPDATE triggers SET status = $1 WHERE position_id = $2 AND type = $3 AND status = $4',
+      ['cancelled', positionId, type, 'active']
+    );
+  } else {
+    await db.query(
+      'UPDATE triggers SET status = $1 WHERE position_id = $2 AND status = $3',
+      ['cancelled', positionId, 'active']
+    );
+  }
+}
+
+export async function upsertTrigger(params: CreateTriggerParams): Promise<TriggerRecord> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE triggers SET status = $1 WHERE position_id = $2 AND type = $3 AND status = $4',
+    ['cancelled', params.position_id, params.type, 'active']
+  );
+  return createTrigger(params);
+}
+
 function computeShortKey(tokenAddress: string): string {
   if (!tokenAddress || typeof tokenAddress !== 'string') return '';
   const trimmed = tokenAddress.trim();

@@ -240,6 +240,10 @@ export class TriggerEngine {
           token_address: position.token_address,
           current_price: currentPrice,
           target_value: trigger.target_value,
+          entry_price: parseFloat(position.avg_entry_price || '0'),
+          quantity_held: position.quantity_held,
+          chain: 'sui',
+          position_id: position.id,
         },
       }));
       return;
@@ -297,6 +301,10 @@ export class TriggerEngine {
         token_address: position.token_address,
         current_price: currentPrice,
         target_value: trigger.target_value,
+        entry_price: parseFloat(position.avg_entry_price || '0'),
+        quantity_held: position.quantity_held,
+        chain: position.chain || 'near',
+        position_id: position.id,
       },
     }));
   }
