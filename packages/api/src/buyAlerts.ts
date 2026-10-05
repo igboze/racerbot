@@ -83,15 +83,22 @@ function maskAddress(addr: string): string {
 
 export function formatPriceUsd(price: number): string {
   if (!price || isNaN(price) || price <= 0) return '';
+  if (price >= 1000) {
+    return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
   if (price >= 1) {
     return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   }
   if (price >= 0.01) {
     return price.toFixed(4);
   }
-  // For micro-prices (e.g. 0.0000056), format up to 9 decimals without scientific notation
-  const str = price.toFixed(9).replace(/0+$/, '');
-  return str.length > 0 ? str : price.toString();
+  if (price >= 0.0001) {
+    return price.toFixed(6).replace(/0+$/, '');
+  }
+  // For micro-prices < 0.0001 (e.g. 0.00000584 or 5.84e-6)
+  // Format up to 12 decimals and strip trailing zeros to prevent any exponential output
+  const str = price.toFixed(12).replace(/0+$/, '');
+  return str.length > 0 ? str : price.toFixed(8);
 }
 
 export function setBotInstance(bot: Telegraf): void {
@@ -282,12 +289,21 @@ async function sendGroupAlertMessage(
   if (alert.media_file_id && alert.media_type !== 'none' && alert.media_type !== 'default') {
     try {
       if (alert.media_type === 'animation') {
-        await _bot.telegram.sendAnimation(alert.chat_id, alert.media_file_id, {
-          caption,
-          parse_mode: 'HTML',
-          ...keyboard,
-        });
-        return;
+        try {
+          await _bot.telegram.sendAnimation(alert.chat_id, alert.media_file_id, {
+            caption,
+            parse_mode: 'HTML',
+            ...keyboard,
+          });
+          return;
+        } catch {
+          await _bot.telegram.sendVideo(alert.chat_id, alert.media_file_id, {
+            caption,
+            parse_mode: 'HTML',
+            ...keyboard,
+          });
+          return;
+        }
       } else if (alert.media_type === 'photo') {
         await _bot.telegram.sendPhoto(alert.chat_id, alert.media_file_id, {
           caption,
@@ -776,30 +792,53 @@ export async function handleBuyAlertAction(ctx: Context): Promise<void> {
     }
 
     case 'ba_prompt_media': {
+      const botUsername = ctx.botInfo?.username || 'racertradingbot';
+      const dmUploadUrl = `https://t.me/${botUsername}?start=setmedia_${currentAlert.id}`;
+
       buyAlertPendingActions.set(fromId, {
         adminId: fromId,
         chatId: currentAlert.chat_id,
         alertId: currentAlert.id,
         type: 'upload_media',
-        expiresAt: Date.now() + 5 * 60_000,
+        expiresAt: Date.now() + 10 * 60_000,
       });
+
       const promptText =
         `🖼️ <b>Upload Custom GIF or Photo Banner</b>\n\n` +
-        `Send a GIF (animation) or photo to this DM right now, and it will be displayed on all live BUY alerts for <b>${escapeHtml(currentAlert.chat_title || currentAlert.chat_id)}</b>!\n\n` +
+        `Send any GIF (animation), photo, or video right now to display it on all live BUY alerts for <b>${escapeHtml(currentAlert.chat_title || currentAlert.chat_id)}</b>!\n\n` +
         `<i>(Send /cancel anytime to cancel)</i>`;
 
       if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
+        let sentDm = false;
         try {
-          await ctx.telegram.sendMessage(fromId, promptText, { parse_mode: 'HTML' });
-          await ctx.answerCbQuery('📬 Check your DM to send the GIF or Photo!').catch(() => {});
+          await ctx.telegram.sendMessage(fromId, promptText, {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('🖼️ Open DM to Upload Media', dmUploadUrl)],
+            ]),
+          });
+          sentDm = true;
         } catch {
-          await ctx.answerCbQuery('⚠️ Please start a chat with RacerBot in DM first!').catch(() => {});
+          // Admin hasn't started DM with bot yet
         }
+
+        await ctx.reply(
+          `🖼️ <b>Custom GIF / Photo Banner Setup</b>\n\n` +
+          `To set a custom banner for this group's buy alerts, tap the button below to upload your GIF or photo in private DM:\n\n` +
+          `<i>(Or send the GIF / photo directly into this group right now!)</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.url('🖼️ Upload Banner in DM', dmUploadUrl)],
+            ]),
+          }
+        );
+        await ctx.answerCbQuery(sentDm ? '📬 Sent to DM! You can also tap the button in chat.' : 'Tap the button in chat to upload in DM').catch(() => {});
         return;
       }
 
       await ctx.reply(promptText, { parse_mode: 'HTML' });
-      await ctx.answerCbQuery('Send your GIF or Photo now').catch(() => {});
+      await ctx.answerCbQuery('Send your GIF, Photo or Video now').catch(() => {});
       break;
     }
 
@@ -888,7 +927,18 @@ export async function handleBuyAlertMediaUpload(ctx: Context): Promise<boolean> 
   const fromId = ctx.from?.id;
   if (!fromId) return false;
 
-  const pending = buyAlertPendingActions.get(fromId);
+  // Look up pending upload action by user ID, OR by chat ID if sent in the group
+  let pending = buyAlertPendingActions.get(fromId);
+  if (!pending && ctx.chat?.id) {
+    for (const [uid, p] of buyAlertPendingActions.entries()) {
+      if (String(p.chatId) === String(ctx.chat.id) && p.type === 'upload_media' && Date.now() <= p.expiresAt) {
+        pending = p;
+        buyAlertPendingActions.delete(uid);
+        break;
+      }
+    }
+  }
+
   if (!pending || pending.type !== 'upload_media' || Date.now() > pending.expiresAt) {
     return false;
   }
@@ -902,16 +952,27 @@ export async function handleBuyAlertMediaUpload(ctx: Context): Promise<boolean> 
   if (message?.animation?.file_id) {
     fileId = message.animation.file_id;
     mediaType = 'animation';
+  } else if (message?.video?.file_id) {
+    fileId = message.video.file_id;
+    mediaType = 'animation';
   } else if (message?.photo && Array.isArray(message.photo) && message.photo.length > 0) {
     fileId = message.photo[message.photo.length - 1].file_id;
     mediaType = 'photo';
-  } else if (message?.document?.mime_type?.includes('gif')) {
+  } else if (message?.document?.file_id) {
     fileId = message.document.file_id;
-    mediaType = 'animation';
+    const mime = (message.document.mime_type || '').toLowerCase();
+    if (mime.includes('gif') || mime.includes('video')) {
+      mediaType = 'animation';
+    } else {
+      mediaType = 'photo';
+    }
+  } else if (message?.sticker?.file_id) {
+    fileId = message.sticker.file_id;
+    mediaType = message.sticker.is_animated || message.sticker.is_video ? 'animation' : 'photo';
   }
 
   if (!fileId) {
-    await ctx.reply('⚠️ Please send a valid GIF or photo to set as the alert banner.');
+    await ctx.reply('⚠️ Please send a valid GIF, photo, or video to set as the alert banner.');
     return true;
   }
 

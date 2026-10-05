@@ -1902,10 +1902,11 @@ export function setupRoutes(bot: Telegraf): void {
       const isTokenParam = rawPayload.startsWith('token_') || rawPayload.startsWith('tkn_');
       const isBuyAlertCfg = rawPayload.startsWith('cfg_');
       const isGroupSetup = rawPayload.startsWith('setup_group_') || rawPayload.startsWith('setup_');
+      const isSetMedia = rawPayload.startsWith('setmedia_') || rawPayload.startsWith('banner_');
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined unless refCode was explicitly passed.
-      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg || isGroupSetup) ? undefined : (rawPayload || undefined));
+      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg || isGroupSetup || isSetMedia) ? undefined : (rawPayload || undefined));
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
 
@@ -1972,7 +1973,38 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // 0b. Buy Alert Group Settings Deep Link (/start cfg_<alert_id>)
+      // 0b. Set Custom Media Deep Link (/start setmedia_<alert_id> or /start banner_<alert_id>)
+      if (isSetMedia && rawPayload) {
+        const alertId = rawPayload.replace(/^setmedia_|^banner_/, '');
+        try {
+          const db = await (await import('@racerbot/db')).getDb();
+          const res = await db.query('SELECT * FROM group_buy_alerts WHERE id = $1', [alertId]);
+          if (res.rows[0]) {
+            const currentAlert = res.rows[0];
+            const { buyAlertPendingActions } = await import('./buyAlerts.js');
+            buyAlertPendingActions.set(telegramId, {
+              adminId: telegramId,
+              chatId: currentAlert.chat_id,
+              alertId: currentAlert.id,
+              type: 'upload_media',
+              expiresAt: Date.now() + 10 * 60_000,
+            });
+
+            await ctx.reply(
+              `🖼️ <b>Upload Custom Banner for ${escapeHtml(currentAlert.chat_title || 'Your Group')}</b>\n\n` +
+              `Send any <b>GIF, photo, or short video</b> directly to this chat right now!\n\n` +
+              `It will immediately be displayed on all live BUY alerts for your community.\n\n` +
+              `<i>(Or send /cancel anytime to cancel)</i>`,
+              { parse_mode: 'HTML' }
+            );
+            return;
+          }
+        } catch (err: any) {
+          console.warn('[/start setmedia] Error:', err?.message);
+        }
+      }
+
+      // 0c. Buy Alert Group Settings Deep Link (/start cfg_<alert_id>)
       if (isBuyAlertCfg && rawPayload) {
         const alertId = rawPayload.slice(4);
         try {
@@ -4981,6 +5013,39 @@ export function setupRoutes(bot: Telegraf): void {
   bot.hears(/^\/(track|buybot|buyalert|alerts|setup|settings)(@\w+)?(\s+.*)?$/i, handleBuyBotCommand);
   bot.command(['testalert', 'testbuy'], handleTestAlertCommand);
   bot.hears(/^\/(testalert|testbuy)(@\w+)?(\s+.*)?$/i, handleTestAlertCommand);
+  bot.command(['setbanner', 'banner', 'setmedia'], async (ctx) => {
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    const botUsername = ctx.botInfo?.username || 'racertradingbot';
+    if (isGroup) {
+      const existing = await (await import('@racerbot/db')).getGroupBuyAlertsByChat(ctx.chat!.id).catch(() => []);
+      if (existing.length === 0) {
+        await ctx.reply('⚠️ Please track a token first with <code>/track &lt;token_address&gt;</code>', { parse_mode: 'HTML' });
+        return;
+      }
+      const alert = existing[0];
+      const dmUploadUrl = `https://t.me/${botUsername}?start=setmedia_${alert.id}`;
+      const { buyAlertPendingActions } = await import('./buyAlerts.js');
+      buyAlertPendingActions.set(ctx.from!.id, {
+        adminId: ctx.from!.id,
+        chatId: alert.chat_id,
+        alertId: alert.id,
+        type: 'upload_media',
+        expiresAt: Date.now() + 10 * 60_000,
+      });
+      await ctx.reply(
+        `🖼️ <b>Upload Custom Banner for Buy Alerts</b>\n\n` +
+        `Tap below to upload your GIF or photo in private DM:\n\n` +
+        `<i>(Or send the GIF / photo directly into this group right now!)</i>`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('🖼️ Upload Banner in DM', dmUploadUrl)],
+          ]),
+        }
+      );
+      return;
+    }
+  });
   bot.action(/^ba_/, handleBuyAlertAction);
 
   // Group welcome when bot is added as administrator
@@ -5036,8 +5101,8 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // Listener for custom media banner uploads (animations, photos, documents)
-  bot.on(['animation', 'photo', 'document'], async (ctx, next) => {
+  // Listener for custom media banner uploads (animations, photos, videos, documents, stickers)
+  bot.on(['animation', 'photo', 'video', 'document', 'sticker'], async (ctx, next) => {
     const handled = await handleBuyAlertMediaUpload(ctx);
     if (!handled) return next();
   });
