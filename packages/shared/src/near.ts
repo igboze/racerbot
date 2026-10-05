@@ -1878,7 +1878,7 @@ export class MultiRpcNear {
       quoteDecimalsCache.set(quote, quoteDecimals);
     }
 
-    const isTokenX = pool.token_x === tokenAddress;
+    const isTokenX = typeof launch.token_is_x === 'boolean' ? launch.token_is_x : pool.token_x === tokenAddress;
     const tokenDecimals = meta?.decimals ?? 18;
 
     const live = pool.state === 'Running';
@@ -1984,6 +1984,19 @@ export class MultiRpcNear {
 
     const quote = st.quote;
 
+    // 1. Prioritize Ref DCL pool! Both ShoreMarkets launch pool and hop1 pool
+    // live on dclv2.ref-labs.near, enabling seamless, single-transaction atomic multi-hop swaps!
+    const dclId = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    if (dclId) {
+      return {
+        kind: 'multihop',
+        quote,
+        launchPoolId,
+        hop1: { type: 'dcl', poolId: dclId },
+      };
+    }
+
+    // 2. Fallback to Rhea pool finder
     const rheaPool = await this.findRheaPoolForToken(quote, true).catch(() => null);
     if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.liquidityNear > 0) {
       return {
@@ -1994,16 +2007,6 @@ export class MultiRpcNear {
           type: rheaPool.isDcl ? 'dcl' : 'v2',
           poolId: String(rheaPool.poolId),
         },
-      };
-    }
-
-    const dclId = await this.findDclPoolId('wrap.near', quote).catch(() => null);
-    if (dclId) {
-      return {
-        kind: 'multihop',
-        quote,
-        launchPoolId,
-        hop1: { type: 'dcl', poolId: dclId },
       };
     }
 
@@ -2315,7 +2318,16 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
     }
 
-    // 2. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
+    // 2. Check Ref DCL pool on dclv2.ref-labs.near with verified liquidity (> 0.1 NEAR)
+    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
+    if (dclId) {
+      try {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0 && st.liquidityNear > 0.1) return st.price;
+      } catch { /* try Ref AMM */ }
+    }
+
+    // 3. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
     // and selects the pool with the deepest real liquidity (> 0.1 NEAR).
     try {
       const bestPool = await this.findRheaPoolForToken(quoteToken, true);
@@ -2324,7 +2336,7 @@ export class MultiRpcNear {
       }
     } catch { /* fallback to other avenues */ }
 
-    // 3. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
+    // 4. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
     const refId = await this.findRheaPoolId('wrap.near', quoteToken).catch(() => null);
     if (refId !== null && refId !== undefined) {
       const rh = await this.getRheaPoolReserves(refId, 'wrap.near', quoteToken).catch(() => null);
@@ -2334,15 +2346,6 @@ export class MultiRpcNear {
         const liqNear = nearHuman * 2;
         if (quoteHuman > 0 && liqNear > 0.1) return nearHuman / quoteHuman;
       }
-    }
-
-    // 4. Fallback: DCL pool on dclv2.ref-labs.near with liquidity validation
-    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
-    if (dclId) {
-      try {
-        const st = await this.getDclPoolState(dclId, 'wrap.near');
-        if (st.price > 0 && st.liquidityNear > 0.1) return st.price;
-      } catch { /* try Ref */ }
     }
 
     // 5. Absolute last resort: if no pool has >0.1 NEAR liquidity, take any pool with price > 0
@@ -2653,71 +2656,79 @@ export class MultiRpcNear {
         const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
 
         if (isBuy) {
-          // Hop 1: wNEAR -> quote
-          let hop1Out: string;
           if (route.hop1.type === 'dcl') {
-            const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-              pool_ids: [route.hop1.poolId],
+            // Atomic multi-pool quote on dclv2.ref-labs.near: wrap.near -> quote -> launch token
+            const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [route.hop1.poolId, launchPoolId],
               input_token: 'wrap.near',
-              output_token: route.quote,
+              output_token: outToken,
               input_amount: amountIn,
             });
-            hop1Out = q1?.amount || '0';
+            const finalOut = BigInt(q?.amount || '0');
+            if (finalOut <= 0n) throw new Error('ShoreMarkets DCL multi-hop quote returned 0');
+            const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+            return { expectedOutput: finalOut.toString(), minAmountOut: minFinal };
           } else {
+            // Fallback: Hop 1 on Ref v2 AMM
             const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
               pool_id: Number(route.hop1.poolId),
               token_in: 'wrap.near',
               amount_in: amountIn,
               token_out: route.quote,
             });
-            hop1Out = ret || '0';
-          }
-          if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 quote returned 0');
+            const hop1Out = ret || '0';
+            if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 quote returned 0');
 
-          // Hop 2: quote -> launch token
-          const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-            pool_ids: [launchPoolId],
-            input_token: route.quote,
-            output_token: outToken,
-            input_amount: hop1Out,
-          });
-          const finalOut = BigInt(q2?.amount || '0');
-          if (finalOut <= 0n) throw new Error('Hop2 quote returned 0');
-          const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
-          const minFinal = calculateMinAmountOut(finalOut, slippagePct);
-          return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
-        } else {
-          // Sell direction: launch token -> quote -> wNEAR
-          const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-            pool_ids: [launchPoolId],
-            input_token: inToken,
-            output_token: route.quote,
-            input_amount: amountIn,
-          });
-          const hop1Out = q1?.amount || '0';
-          if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 sell quote returned 0');
-          let finalOut: string;
-          if (route.hop1.type === 'dcl') {
+            // Hop 2: quote -> launch token on DCL
             const q2 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-              pool_ids: [route.hop1.poolId],
+              pool_ids: [launchPoolId],
               input_token: route.quote,
-              output_token: 'wrap.near',
+              output_token: outToken,
               input_amount: hop1Out,
             });
-            finalOut = q2?.amount || '0';
+            const finalOut = BigInt(q2?.amount || '0');
+            if (finalOut <= 0n) throw new Error('Hop2 quote returned 0');
+            const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+            const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+            return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
+          }
+        } else {
+          if (route.hop1.type === 'dcl') {
+            // Atomic multi-pool sell quote on dclv2.ref-labs.near: launch token -> quote -> wrap.near
+            const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [launchPoolId, route.hop1.poolId],
+              input_token: inToken,
+              output_token: 'wrap.near',
+              input_amount: amountIn,
+            });
+            const finalOut = BigInt(q?.amount || '0');
+            if (finalOut <= 0n) throw new Error('ShoreMarkets DCL multi-hop sell quote returned 0');
+            const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+            return { expectedOutput: finalOut.toString(), minAmountOut: minFinal };
           } else {
+            // Fallback: Hop 1 on DCL
+            const q1 = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [launchPoolId],
+              input_token: inToken,
+              output_token: route.quote,
+              input_amount: amountIn,
+            });
+            const hop1Out = q1?.amount || '0';
+            if (BigInt(hop1Out) <= 0n) throw new Error('Hop1 sell quote returned 0');
+
+            // Hop 2 on Ref v2 AMM
             const ret = await this.view<string>('v2.ref-finance.near', 'get_return', {
               pool_id: Number(route.hop1.poolId),
               token_in: route.quote,
               amount_in: hop1Out,
               token_out: 'wrap.near',
             });
-            finalOut = ret || '0';
+            const finalOut = BigInt(ret || '0');
+            if (finalOut <= 0n) throw new Error('Hop2 sell quote returned 0');
+            const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
+            const minFinal = calculateMinAmountOut(finalOut, slippagePct);
+            return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
           }
-          if (BigInt(finalOut) <= 0n) throw new Error('Hop2 sell quote returned 0');
-          const minHop1 = calculateMinAmountOut(BigInt(hop1Out), slippagePct);
-          const minFinal = calculateMinAmountOut(BigInt(finalOut), slippagePct);
-          return { expectedOutput: finalOut.toString(), minAmountOut: minFinal, minHop1AmountOut: minHop1 } as any;
         }
       }
 
