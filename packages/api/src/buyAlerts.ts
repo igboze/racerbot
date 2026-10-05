@@ -54,6 +54,10 @@ function maskAddress(addr: string): string {
   return addr;
 }
 
+export function setBotInstance(bot: Telegraf): void {
+  _bot = bot;
+}
+
 /**
  * Initialize Redis subscription to BUY_ALERT events and broadcast to Telegram groups.
  */
