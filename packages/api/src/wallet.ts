@@ -57,17 +57,42 @@ import { notifyTokenDeposit } from './notify.js';
 import { recordUserTrade } from './depositWatcher.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
-const configuredRpcList = (process.env.RPC_PROVIDERS || '').split(',').map(u => u.trim()).filter(Boolean);
-const qnUrl = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
-const fnFirstList = [
+const fastnearApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+const hasFastnearKey = fastnearApiKey && !fastnearApiKey.startsWith('TEMP') && !fastnearApiKey.startsWith('change-me') && !fastnearApiKey.startsWith('${');
+
+export function formatNearRpcUrl(url: string): string {
+  let cleanUrl = url.trim();
+  if (!cleanUrl) return '';
+  if (cleanUrl.includes('rpc.mainnet.fastnear.com') && hasFastnearKey && !cleanUrl.includes('apiKey=')) {
+    const sep = cleanUrl.includes('?') ? '&' : '?';
+    cleanUrl = `${cleanUrl}${sep}apiKey=${fastnearApiKey}`;
+  }
+  return cleanUrl;
+}
+
+const configuredRpcList = (process.env.RPC_PROVIDERS || '')
+  .split(',')
+  .map(u => u.trim())
+  .filter(Boolean)
+  .map(formatNearRpcUrl);
+
+const qnUrl = formatNearRpcUrl((process.env.QUICKNODE_ENDPOINT_URL || '').trim());
+
+const fastnearPrimaryUrls = [
+  formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
+  'https://free.rpc.fastnear.com',
   ...configuredRpcList.filter(u => u.includes('fastnear.com')),
-  ...(qnUrl ? [qnUrl] : []),
+];
+
+const fallbackUrls = [
   ...configuredRpcList.filter(u => !u.includes('fastnear.com')),
+  ...(qnUrl ? [qnUrl] : []),
+  'https://rpc.mainnet.near.org',
+  'https://near.lava.build',
+  'https://near.drpc.org',
 ];
-const RPC_URLS = fnFirstList.length > 0 ? Array.from(new Set(fnFirstList)) : [
-  'https://rpc.mainnet.fastnear.com',
-  'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/'
-];
+
+const RPC_URLS = Array.from(new Set([...fastnearPrimaryUrls, ...fallbackUrls])).filter(Boolean);
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
@@ -1415,9 +1440,9 @@ async function connectWithNearRpcFailover<T>(
   await keyStore.setKey('mainnet', accountId, keyPair);
 
   const urls = RPC_URLS.length > 0 ? RPC_URLS : [
+    formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
     'https://free.rpc.fastnear.com',
     'https://rpc.mainnet.near.org',
-    'https://rpc.mainnet.fastnear.com',
     'https://near.lava.build',
     'https://near.drpc.org',
   ];
@@ -1425,28 +1450,28 @@ async function connectWithNearRpcFailover<T>(
   let lastErr: any = null;
   for (const url of urls) {
     try {
+      const formattedUrl = formatNearRpcUrl(url);
       const nearConn = await connect({
         networkId: 'mainnet',
         keyStore,
-        nodeUrl: url,
+        nodeUrl: formattedUrl,
       });
       const account = await nearConn.account(accountId);
       return await fn(account);
     } catch (err: any) {
       lastErr = err;
-      const msg = String(err?.message || err).toLowerCase();
+      const msg = String(err?.message || (typeof err === 'object' ? JSON.stringify(err) : err)).toLowerCase();
+      // Re-throw domain validation/account state errors that will not resolve by changing RPC endpoints
       if (
-        msg.includes('429') ||
-        msg.includes('rate limit') ||
-        msg.includes('too many requests') ||
-        msg.includes('fetch failed') ||
-        msg.includes('timeout') ||
-        msg.includes('econnrefused')
+        msg.includes('does not exist') ||
+        msg.includes('insufficient balance') ||
+        msg.includes('amount exceeds maximum') ||
+        msg.includes('must be greater than 0')
       ) {
-        console.warn(`[NEAR_TX] RPC ${url} rate-limited/failed (${msg.slice(0, 100)}), falling back to next endpoint...`);
-        continue;
+        throw err;
       }
-      throw err;
+      console.warn(`[NEAR_TX] RPC ${url} failed (${msg.slice(0, 120)}), falling back to next endpoint...`);
+      continue;
     }
   }
   throw lastErr || new Error('All NEAR RPC endpoints failed to process transaction.');

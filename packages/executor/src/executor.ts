@@ -1267,22 +1267,34 @@ export class SwapExecutor {
         }
       }
     } else if (venue === 'rhea' || venue === 'ref') {
+        const isBuyTarget = token_in === 'wrap.near' || token_in === 'near';
+        const targetTokenQ = isBuyTarget ? token_out : token_in;
+
+        if (!dclPoolId) {
+          const rhea = await near.findRheaPoolForToken(targetTokenQ).catch(() => null);
+          if (rhea && rhea.isDcl && typeof rhea.poolId === 'string') {
+            dclPoolId = rhea.poolId;
+            if (rhea.intermediateToken) {
+              (event as any).intermediate_token = rhea.intermediateToken;
+              (event as any).intermediate_pool_id = rhea.intermediatePoolId;
+            }
+          }
+        }
+
         // Cross-pool guard: a DCL pool chosen upstream (or hunted above) can
         // sit far off the market price with near-zero depth — slippage settings
         // only protect WITHIN a pool, never against trading the WRONG pool.
         // When a simple AMM pool also exists for this pair, quote both with the
         // real swap amount and route through whichever pays out more.
         if (dclPoolId) {
-          const isBuyQ = token_in === 'wrap.near' || token_in === 'near';
-          const targetTokenQ = isBuyQ ? token_out : token_in;
           let simplePoolId: number | null = (event as any).pool_id ?? null;
           if (simplePoolId === null || simplePoolId === undefined) {
             simplePoolId = await near.findRheaPoolId('wrap.near', targetTokenQ).catch(() => null);
           }
           if (typeof simplePoolId === 'number' && simplePoolId >= 0) {
-            const quoteAmount = (isBuyQ ? swapAmount : amountInBigInt).toString();
-            const inTok = isBuyQ ? 'wrap.near' : token_in;
-            const outTok = isBuyQ ? token_out : 'wrap.near';
+            const quoteAmount = (isBuyTarget ? swapAmount : amountInBigInt).toString();
+            const inTok = isBuyTarget ? 'wrap.near' : token_in;
+            const outTok = isBuyTarget ? token_out : 'wrap.near';
             const [dclOut, simpleOut] = await Promise.all([
               near.view<any>('dclv2.ref-labs.near', 'quote', {
                 pool_ids: [dclPoolId],
@@ -1310,9 +1322,116 @@ export class SwapExecutor {
         if (dclPoolId) {
           // Execute Ref DCL swap on dclv2.ref-labs.near
           const isBuy = token_in === 'wrap.near' || token_in === 'near';
-          if (isBuy) {
-            // Do NOT ensureStorage('wrap.near') on buy — near_deposit in
-            // buildWrapNearBuyActions handles it atomically in the same tx.
+          const interToken = (event as any).intermediate_token as string | undefined;
+          const interPoolId = (event as any).intermediate_pool_id as number | undefined;
+
+          if (isBuy && interToken && interPoolId) {
+            // Two-step DCL buy: wNEAR -> intermediateToken (via Ref AMM simple pool), then intermediateToken -> token_out (via Ref DCL)
+            await ensureStorage(interToken);
+            const buyActions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: interPoolId,
+                    token_in: 'wrap.near',
+                    token_out: interToken,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: '0',
+                  },
+                ],
+              }),
+              BigInt('220000000000000'),
+              knownWNearBal
+            );
+            await signAndSend('wrap.near', buyActions);
+
+            const interBal = await near.getTokenBalance(interToken, subaccountId).catch(() => '0');
+            const interBalBI = BigInt(interBal || '0');
+            if (interBalBI <= 0n) {
+              throw new Error(`Step 1 (${token_in} → ${interToken}) succeeded but no balance received for step 2.`);
+            }
+            await ensureStorage(token_out);
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: interBalBI.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [dclPoolId],
+                      output_token: token_out,
+                      min_output_amount: minOutAdj,
+                    },
+                  }),
+                },
+                BigInt('200000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(interToken, tx2Actions);
+          } else if (!isBuy && interToken && interPoolId) {
+            // Two-step DCL sell: token_in -> intermediateToken (via Ref DCL), then intermediateToken -> wrap.near (via Ref AMM simple pool)
+            await Promise.all([
+              ensureStorage(token_in),
+              ensureStorage(interToken),
+              ensureStorage('wrap.near'),
+            ]);
+            const tx1Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [dclPoolId],
+                      output_token: interToken,
+                      min_output_amount: '0',
+                    },
+                  }),
+                },
+                BigInt('200000000000000'),
+                BigInt('1')
+              ),
+            ];
+            await signAndSend(token_in, tx1Actions);
+
+            const interBal = await near.getTokenBalance(interToken, subaccountId).catch(() => '0');
+            const interBalBI = BigInt(interBal || '0');
+            if (interBalBI <= 0n) {
+              throw new Error(`Step 1 (${token_in} → ${interToken}) succeeded but no balance received for step 2.`);
+            }
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: interBalBI.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: interPoolId,
+                        token_in: interToken,
+                        token_out: 'wrap.near',
+                        amount_in: interBalBI.toString(),
+                        min_amount_out: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                BigInt('180000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(interToken, tx2Actions);
+          } else if (isBuy) {
+            // Direct DCL buy
             const [, actions] = await Promise.all([
               ensureStorage(token_out),
               this.buildWrapNearBuyActions(
@@ -1335,6 +1454,7 @@ export class SwapExecutor {
 
             result = await signAndSend('wrap.near', actions);
           } else {
+            // Direct DCL sell
             await Promise.all([
               ensureStorage(token_in),
               ensureStorage('wrap.near'),
