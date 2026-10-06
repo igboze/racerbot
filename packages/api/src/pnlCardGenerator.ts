@@ -219,8 +219,12 @@ export async function generatePNLCardData(
     const closedAt        = position.closed_at || new Date();
     const holdDuration    = formatHoldDuration(closedAt.getTime() - openedAt.getTime());
 
-    // ── Market caps (NEAR units) ─────────────────────────────────────────────
+    // ── Market caps (NEAR/SUI units) ─────────────────────────────────────────
+    const usdRate = isSuiPos ? (tokenInfo?.sui_usd || 2.0) : (tokenInfo?.near_usd || 4.3);
     let currentMarketCap = tokenInfo?.market_cap || 0;
+    if (currentMarketCap <= 0 && tokenInfo?.market_cap_usd && usdRate > 0) {
+      currentMarketCap = tokenInfo.market_cap_usd / usdRate;
+    }
     if (isClosed && avgExitPrice > 0 && totalSupplyHuman > 0) {
       currentMarketCap = avgExitPrice * totalSupplyHuman;
     } else if (currentMarketCap <= 0 && totalSupplyHuman > 0 && displayPrice > 0) {
