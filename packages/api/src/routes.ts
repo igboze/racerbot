@@ -6550,7 +6550,8 @@ export function setupRoutes(bot: Telegraf): void {
         const amtArg = parts[1]?.toLowerCase();
         const amt: number | 'all' = amtArg === 'all' || !amtArg ? 'all' : parseFloat(amtArg);
         if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".');
+          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".\n\nExample: `mywallet.near 1.5` or `mywallet.near all`', { parse_mode: 'Markdown' });
+          userPendingActions.set(telegramId, { action: 'withdraw', expiresAt: Date.now() + 180000 });
           return;
         }
         await ctx.reply(`⏳ Processing withdrawal to \`${dest}\`...`, { parse_mode: 'Markdown' });
@@ -6865,6 +6866,45 @@ export function setupRoutes(bot: Telegraf): void {
             ...Markup.inlineKeyboard([[cb('🔁 View DCA Orders', 'menu_dca', 'primary'), cb('🔙 Menu', 'menu_home', 'primary')]]),
           }
         );
+        return;
+      }
+    }
+
+    // 1.5. Implicit Withdrawal Format Detection (<destination> <amount|all>)
+    const withdrawParts = rawText.trim().split(/\s+/);
+    if (withdrawParts.length === 2) {
+      const possibleDest = withdrawParts[0];
+      const possibleAmtStr = withdrawParts[1].toLowerCase();
+      const isNearDest = isValidNearAccountId(possibleDest);
+      const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDest.endsWith('.near');
+      const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
+
+      if ((isNearDest || isSuiDest) && isAmtValid) {
+        const amt: number | 'all' = possibleAmtStr === 'all' ? 'all' : parseFloat(possibleAmtStr);
+        await ctx.reply(`⏳ Processing withdrawal to \`${possibleDest}\`...`, { parse_mode: 'Markdown' });
+        try {
+          if (isSuiDest) {
+            const result = await withdrawSuiFunds(telegramId, possibleDest, amt);
+            await ctx.reply(
+              `✅ *SUI Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else {
+            const result = await withdrawFunds(telegramId, possibleDest, amt);
+            await ctx.reply(
+              `✅ *Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          }
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
         return;
       }
     }
