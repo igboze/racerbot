@@ -4368,10 +4368,19 @@ export const DEFAULT_RPC_URLS = [
   'https://free.rpc.fastnear.com',
 ];
 
-/** Singleton factory — call once per process, reuse the connection pool */
 let _nearInstance: MultiRpcNear | null = null;
+let _freeNearInstance: MultiRpcNear | null = null;
+
+export function getFreeNear(): MultiRpcNear {
+  if (!_freeNearInstance) {
+    // Uses FastNEAR free public endpoint — no paid API key attached
+    _freeNearInstance = new MultiRpcNear(['https://free.rpc.fastnear.com']);
+  }
+  return _freeNearInstance;
+}
 
 export function getNear(rpcUrls?: string[]): MultiRpcNear {
+
   if (!_nearInstance) {
     const urls =
       rpcUrls ??

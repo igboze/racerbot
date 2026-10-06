@@ -1375,8 +1375,8 @@ async function pollActiveTokenSnipes(): Promise<void> {
           }
         }
 
-        // 3. Rhea / Ref Finance pool probe (simple, DCL, multihop) with forceCheck=true to bypass negative cache
-        const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+        // 3. Rhea / Ref Finance pool probe (simple, DCL, multihop)
+        const rheaPool = await near.findRheaPoolForToken(tokenAddress, false).catch(() => null);
         if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
           console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
           snipeNegativeCache.delete(tokenAddress);
