@@ -2942,6 +2942,76 @@ export class MultiRpcNear {
         rheaState = await this.findRheaPoolForToken(targetToken).catch(() => null);
       }
 
+      if (rheaState && rheaState.isDcl) {
+        const dclId = String(rheaState.poolId);
+        const interToken = rheaState.intermediateToken;
+        const interPoolId = rheaState.intermediatePoolId;
+
+        const isBuy = inToken === 'wrap.near';
+        if (!interToken || rheaState.pairedToken === 'wrap.near') {
+          try {
+            const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [dclId],
+              input_token: inToken,
+              output_token: outToken,
+              input_amount: amountIn,
+            });
+            const expected = BigInt(quoteRes?.amount || '0');
+            if (expected > 0n) {
+              const minOut = calculateMinAmountOut(expected, slippagePct);
+              return { expectedOutput: expected.toString(), minAmountOut: minOut };
+            }
+          } catch { /* fall through */ }
+        } else if (interToken && interPoolId) {
+          if (isBuy) {
+            const hop1Out = await this.view<string>('v2.ref-finance.near', 'get_return', {
+              pool_id: interPoolId,
+              token_in: 'wrap.near',
+              amount_in: amountIn,
+              token_out: interToken,
+            }).catch(() => null);
+
+            if (hop1Out) {
+              const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: [dclId],
+                input_token: interToken,
+                output_token: outToken,
+                input_amount: hop1Out,
+              }).catch(() => null);
+
+              const expected = BigInt(quoteRes?.amount || '0');
+              if (expected > 0n) {
+                const minOut = calculateMinAmountOut(expected, slippagePct);
+                return { expectedOutput: expected.toString(), minAmountOut: minOut };
+              }
+            }
+          } else {
+            const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: [dclId],
+              input_token: inToken,
+              output_token: interToken,
+              input_amount: amountIn,
+            }).catch(() => null);
+
+            const hop1Out = quoteRes?.amount ? String(quoteRes.amount) : null;
+            if (hop1Out) {
+              const hop2Out = await this.view<string>('v2.ref-finance.near', 'get_return', {
+                pool_id: interPoolId,
+                token_in: interToken,
+                amount_in: hop1Out,
+                token_out: 'wrap.near',
+              }).catch(() => null);
+
+              const expected = BigInt(hop2Out || '0');
+              if (expected > 0n) {
+                const minOut = calculateMinAmountOut(expected, slippagePct);
+                return { expectedOutput: expected.toString(), minAmountOut: minOut };
+              }
+            }
+          }
+        }
+      }
+
       if (rheaState && rheaState.intermediateToken && rheaState.intermediatePoolId) {
         const interToken = rheaState.intermediateToken;
         const interPoolId = rheaState.intermediatePoolId;
@@ -3020,6 +3090,26 @@ export class MultiRpcNear {
         const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, reserves.fee);
         const minOut = calculateMinAmountOut(expected, slippagePct);
         return { expectedOutput: expected.toString(), minAmountOut: minOut };
+      }
+
+      if (rheaState && rheaState.price > 0) {
+        const isBuy = inToken === 'wrap.near';
+        const targetMeta = await this.getTokenMetadata(targetToken).catch(() => ({ decimals: 18 }));
+        const targetDecimals = targetMeta?.decimals ?? 18;
+        let expectedBI = 0n;
+        if (isBuy) {
+          const amountInNear = parseFloat(amountIn) / 1e24;
+          const tokensOut = amountInNear / rheaState.price;
+          expectedBI = BigInt(Math.floor(tokensOut * Math.pow(10, targetDecimals)));
+        } else {
+          const tokensIn = parseFloat(amountIn) / Math.pow(10, targetDecimals);
+          const nearOut = tokensIn * rheaState.price;
+          expectedBI = BigInt(Math.floor(nearOut * 1e24));
+        }
+        if (expectedBI > 0n) {
+          const minOut = calculateMinAmountOut(expectedBI, slippagePct);
+          return { expectedOutput: expectedBI.toString(), minAmountOut: minOut };
+        }
       }
 
       throw new Error(`No active liquidity pool found for token ${outToken} on Rhea / Ref Finance.`);
@@ -4397,8 +4487,8 @@ function sleep(ms: number): Promise<void> {
 /** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR primary, QuickNode fallback). */
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
-  process.env.QUICKNODE_ENDPOINT_URL || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
   'https://free.rpc.fastnear.com',
+  process.env.QUICKNODE_ENDPOINT_URL || 'https://falling-frosty-uranium.near-mainnet.quiknode.pro/0c22cd8057497654c686680b7e7b1dfd0e3bb9ec/',
 ];
 
 let _nearInstance: MultiRpcNear | null = null;

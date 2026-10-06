@@ -102,7 +102,7 @@ describe('wallet: onboarding and key rotation', () => {
       const telegramId = generateTelegramId();
       await onboardUser(telegramId);
 
-      addKeyMock.mockRejectedValueOnce(new Error('RPC network timeout on addKey'));
+      addKeyMock.mockRejectedValue(new Error('RPC network timeout on addKey'));
       deleteKeyMock.mockClear();
 
       await expect(rotateUserKey(telegramId)).rejects.toThrow('RPC network timeout on addKey');
