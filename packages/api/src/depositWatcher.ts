@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { getNear, getSuiBalance, getSuiUsdPrice, createLogger } from '@racerbot/shared';
+import { getFreeNear, getSuiBalance, getSuiUsdPrice, createLogger } from '@racerbot/shared';
 import { getDb, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
 import { getNearUsdPrice, ensureUserSuiWallet } from './wallet.js';
 import { notifyDeposit, notifyTokenDeposit } from './notify.js';
@@ -18,8 +18,21 @@ const userBalanceState = new Map<string, UserBalanceState>();
 // Cooldown tracker to prevent swap sell proceeds from triggering deposit alerts
 const tradeCooldownMap = new Map<string, number>();
 
+// Active user tracking: users active within last 30m are polled frequently; idle users are staggered
+const activeUserMap = new Map<string, number>();
+let idleUserIndex = 0;
+
 let watcherInterval: NodeJS.Timeout | null = null;
 let isPolling = false;
+
+/**
+ * Mark a user as active (e.g. opened wallet, deposited, traded, or tapped menu).
+ * Active users get high-cadence deposit polling for 30 minutes.
+ */
+export function markUserActiveForDeposit(userIdOrTelegramId: string | number): void {
+  const key = String(userIdOrTelegramId);
+  activeUserMap.set(key, Date.now() + 30 * 60 * 1000); // 30 minutes active window
+}
 
 /**
  * Record that a user performed a trade, preventing balance increases from
@@ -28,6 +41,7 @@ let isPolling = false;
 export function recordUserTrade(userIdOrTelegramId: string | number): void {
   const key = String(userIdOrTelegramId);
   tradeCooldownMap.set(key, Date.now() + 30_000); // 30s cooldown
+  markUserActiveForDeposit(key);
 }
 
 /**
@@ -50,7 +64,9 @@ function formatUSD(val: number): string {
 }
 
 /**
- * Poll balances for all active users and alert on incoming NEAR / SUI deposits.
+ * Poll balances for users using free FastNEAR RPC.
+ * Active users (interacted in last 30m) are checked every tick;
+ * idle users are staggered in small batches to preserve zero-cost RPC usage.
  */
 export async function pollUserDeposits(): Promise<void> {
   if (isPolling) return;
@@ -62,22 +78,52 @@ export async function pollUserDeposits(): Promise<void> {
       'SELECT id, telegram_id, subaccount_id, sui_address, scoped_key_encrypted, sui_private_key_enc FROM users'
     );
 
-    const users = result.rows;
-    if (!users || users.length === 0) {
+    const allUsers = result.rows;
+    if (!allUsers || allUsers.length === 0) {
       isPolling = false;
       return;
     }
 
-    const near = getNear();
+    const now = Date.now();
+    const activeUsers: UserRecord[] = [];
+    const idleUsers: UserRecord[] = [];
+
+    for (const u of allUsers) {
+      const expUid = activeUserMap.get(u.id) || 0;
+      const expTid = activeUserMap.get(String(u.telegram_id)) || 0;
+      if (now < expUid || now < expTid) {
+        activeUsers.push(u);
+      } else {
+        idleUsers.push(u);
+      }
+    }
+
+    // Always poll all active users + a staggered batch of up to 10 idle users
+    const MAX_IDLE_PER_TICK = 10;
+    const idleBatch: UserRecord[] = [];
+    if (idleUsers.length > 0) {
+      const start = idleUserIndex % idleUsers.length;
+      idleBatch.push(...idleUsers.slice(start, start + MAX_IDLE_PER_TICK));
+      if (idleBatch.length < MAX_IDLE_PER_TICK && start + MAX_IDLE_PER_TICK > idleUsers.length) {
+        // Wrap around
+        idleBatch.push(...idleUsers.slice(0, MAX_IDLE_PER_TICK - idleBatch.length));
+      }
+      idleUserIndex = (start + MAX_IDLE_PER_TICK) % idleUsers.length;
+    }
+
+    const usersToPoll = [...activeUsers, ...idleBatch];
+
+    // Use free FastNEAR singleton — 0 paid API key credit consumption
+    const near = getFreeNear();
     const [nearUsd, suiUsd] = await Promise.all([
       getNearUsdPrice().catch(() => 4.9),
       getSuiUsdPrice().catch(() => 2.0),
     ]);
 
-    // Process users in parallel batches of 10
+    // Process target users in parallel batches of 10
     const BATCH_SIZE = 10;
-    for (let i = 0; i < users.length; i += BATCH_SIZE) {
-      const batch = users.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < usersToPoll.length; i += BATCH_SIZE) {
+      const batch = usersToPoll.slice(i, i + BATCH_SIZE);
 
       await Promise.allSettled(
         batch.map(async (user) => {
@@ -217,9 +263,9 @@ export async function pollUserDeposits(): Promise<void> {
 }
 
 /**
- * Start the background deposit watcher polling loop.
+ * Start the background deposit watcher polling loop (default 15s interval).
  */
-export function startDepositWatcher(intervalMs = 12_000): void {
+export function startDepositWatcher(intervalMs = 15_000): void {
   if (watcherInterval) {
     clearInterval(watcherInterval);
   }
@@ -246,3 +292,4 @@ export function stopDepositWatcher(): void {
     logger.info('Deposit watcher stopped');
   }
 }
+
