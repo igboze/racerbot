@@ -1132,6 +1132,79 @@ export class MultiRpcNear {
   }
 
   /**
+   * Helper to get conversion rate of any paired token to NEAR.
+   */
+  async getPairedTokenNearRate(pairedToken: string): Promise<{ rateInNear: number; poolId?: number; decimals: number }> {
+    if (pairedToken === 'wrap.near' || pairedToken === 'near') {
+      return { rateInNear: 1, decimals: 24 };
+    }
+    if (pairedToken === 'linear-protocol.near') {
+      try {
+        const rh = await this.getRheaPoolReserves(4474, 'wrap.near', 'linear-protocol.near');
+        const nearRes = parseFloat(rh.reserveIn) / 1e24;
+        const linearRes = parseFloat(rh.reserveOut) / 1e24;
+        if (nearRes > 0 && linearRes > 0) {
+          return { rateInNear: nearRes / linearRes, poolId: 4474, decimals: 24 };
+        }
+      } catch { /* no-op */ }
+      return { rateInNear: 1.048, poolId: 4474, decimals: 24 };
+    }
+    if (pairedToken === 'token.rhealab.near') {
+      try {
+        const rh = await this.getRheaPoolReserves(6458, 'wrap.near', 'token.rhealab.near').catch(() => null);
+        if (rh) {
+          const nearRes = parseFloat(rh.reserveIn) / 1e24;
+          const rheaRes = parseFloat(rh.reserveOut) / 1e18;
+          if (nearRes > 0 && rheaRes > 0) {
+            return { rateInNear: nearRes / rheaRes, poolId: 6458, decimals: 18 };
+          }
+        }
+      } catch { /* no-op */ }
+      return { rateInNear: 0.0175, poolId: 6458, decimals: 18 };
+    }
+    if (pairedToken === 'jambo-1679.meme-cooking.near') {
+      try {
+        const rh = await this.getRheaPoolReserves(6518, 'wrap.near', 'jambo-1679.meme-cooking.near');
+        const nearRes = parseFloat(rh.reserveIn) / 1e24;
+        const jamboRes = parseFloat(rh.reserveOut) / 1e18;
+        if (nearRes > 0 && jamboRes > 0) {
+          return { rateInNear: nearRes / jamboRes, poolId: 6518, decimals: 18 };
+        }
+      } catch { /* no-op */ }
+      return { rateInNear: 0.0003, poolId: 6518, decimals: 18 };
+    }
+    if (pairedToken === 'usdt.tether-token.near' || pairedToken === 'usdc.near') {
+      try {
+        const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
+        if (pId !== null) {
+          const rh = await this.getRheaPoolReserves(pId, 'wrap.near', pairedToken);
+          const nearRes = parseFloat(rh.reserveIn) / 1e24;
+          const stableRes = parseFloat(rh.reserveOut) / 1e6;
+          if (nearRes > 0 && stableRes > 0) {
+            return { rateInNear: nearRes / stableRes, poolId: pId, decimals: 6 };
+          }
+        }
+      } catch { /* no-op */ }
+      return { rateInNear: 0.23, decimals: 6 };
+    }
+    // General fallback: check if pairedToken has a wNEAR pool on Ref
+    try {
+      const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
+      if (pId !== null) {
+        const pMeta = await this.getTokenMetadata(pairedToken).catch(() => ({ decimals: 18 }));
+        const pDec = pMeta?.decimals ?? 18;
+        const rh = await this.getRheaPoolReserves(pId, 'wrap.near', pairedToken);
+        const nearRes = parseFloat(rh.reserveIn) / 1e24;
+        const pairedRes = parseFloat(rh.reserveOut) / Math.pow(10, pDec);
+        if (nearRes > 0 && pairedRes > 0) {
+          return { rateInNear: nearRes / pairedRes, poolId: pId, decimals: pDec };
+        }
+      }
+    } catch { /* no-op */ }
+    return { rateInNear: 0, decimals: 18 };
+  }
+
+  /**
    * Find any active Rhea Finance pool for a token (Rule 1: check Rhea first).
    * Checks direct wrap.near pool, DCL pool, or 2-hop pool (e.g. jambo-1679.meme-cooking.near).
    */
@@ -1158,64 +1231,6 @@ export class MultiRpcNear {
 
     const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 }));
     const decimals = meta?.decimals ?? 18;
-
-    // Helper to get conversion rate of any paired token to NEAR
-    const getPairedTokenNearRate = async (pairedToken: string): Promise<{ rateInNear: number; poolId?: number; decimals: number }> => {
-      if (pairedToken === 'wrap.near' || pairedToken === 'near') {
-        return { rateInNear: 1, decimals: 24 };
-      }
-      if (pairedToken === 'linear-protocol.near') {
-        try {
-          const rh = await this.getRheaPoolReserves(4474, 'wrap.near', 'linear-protocol.near');
-          const nearRes = parseFloat(rh.reserveIn) / 1e24;
-          const linearRes = parseFloat(rh.reserveOut) / 1e24;
-          if (nearRes > 0 && linearRes > 0) {
-            return { rateInNear: nearRes / linearRes, poolId: 4474, decimals: 24 };
-          }
-        } catch { /* no-op */ }
-        return { rateInNear: 1.048, poolId: 4474, decimals: 24 };
-      }
-      if (pairedToken === 'jambo-1679.meme-cooking.near') {
-        try {
-          const rh = await this.getRheaPoolReserves(6518, 'wrap.near', 'jambo-1679.meme-cooking.near');
-          const nearRes = parseFloat(rh.reserveIn) / 1e24;
-          const jamboRes = parseFloat(rh.reserveOut) / 1e18;
-          if (nearRes > 0 && jamboRes > 0) {
-            return { rateInNear: nearRes / jamboRes, poolId: 6518, decimals: 18 };
-          }
-        } catch { /* no-op */ }
-        return { rateInNear: 0.0003, poolId: 6518, decimals: 18 };
-      }
-      if (pairedToken === 'usdt.tether-token.near' || pairedToken === 'usdc.near') {
-        try {
-          const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
-          if (pId !== null) {
-            const rh = await this.getRheaPoolReserves(pId, 'wrap.near', pairedToken);
-            const nearRes = parseFloat(rh.reserveIn) / 1e24;
-            const stableRes = parseFloat(rh.reserveOut) / 1e6;
-            if (nearRes > 0 && stableRes > 0) {
-              return { rateInNear: nearRes / stableRes, poolId: pId, decimals: 6 };
-            }
-          }
-        } catch { /* no-op */ }
-        return { rateInNear: 0.23, decimals: 6 };
-      }
-      // General fallback: check if pairedToken has a wNEAR pool on Ref
-      try {
-        const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
-        if (pId !== null) {
-          const pMeta = await this.getTokenMetadata(pairedToken).catch(() => ({ decimals: 18 }));
-          const pDec = pMeta?.decimals ?? 18;
-          const rh = await this.getRheaPoolReserves(pId, 'wrap.near', pairedToken);
-          const nearRes = parseFloat(rh.reserveIn) / 1e24;
-          const pairedRes = parseFloat(rh.reserveOut) / Math.pow(10, pDec);
-          if (nearRes > 0 && pairedRes > 0) {
-            return { rateInNear: nearRes / pairedRes, poolId: pId, decimals: pDec };
-          }
-        }
-      } catch { /* no-op */ }
-      return { rateInNear: 0, decimals: 18 };
-    };
 
     const candidates: Array<{
       poolId: number | string;
@@ -1307,7 +1322,7 @@ export class MultiRpcNear {
 
           const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
           if (rh) {
-            const pairedInfo = await getPairedTokenNearRate(otherToken);
+            const pairedInfo = await this.getPairedTokenNearRate(otherToken);
             const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
             const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
             if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
@@ -1344,7 +1359,7 @@ export class MultiRpcNear {
             const otherToken = tokens.find((t: string) => t !== tokenAddress) || 'wrap.near';
             const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
             if (rh) {
-              const pairedInfo = await getPairedTokenNearRate(otherToken);
+              const pairedInfo = await this.getPairedTokenNearRate(otherToken);
               const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
               const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
               if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
@@ -1383,7 +1398,7 @@ export class MultiRpcNear {
             const otherToken = tokens.find(t => t !== tokenAddress) || 'wrap.near';
             const rh = await this.getRheaPoolReserves(poolId, otherToken, tokenAddress).catch(() => null);
             if (rh) {
-              const pairedInfo = await getPairedTokenNearRate(otherToken);
+              const pairedInfo = await this.getPairedTokenNearRate(otherToken);
               const rOtherHuman = parseFloat(rh.reserveIn) / Math.pow(10, pairedInfo.decimals);
               const rOutHuman = parseFloat(rh.reserveOut) / Math.pow(10, decimals);
               if (rOtherHuman > 0 && rOutHuman > 0 && pairedInfo.rateInNear > 0) {
@@ -1595,24 +1610,27 @@ export class MultiRpcNear {
     const targetToken = baseIsX ? pool.token_y : pool.token_x;
     const baseAccount = baseIsX ? pool.token_x : pool.token_y;
 
-    const [targetMeta, baseMeta] = await Promise.all([
+    const [targetMeta, baseMeta, pairedInfo] = await Promise.all([
       this.getTokenMetadata(targetToken).catch(() => ({ decimals: 18 })),
       this.getTokenMetadata(baseAccount).catch(() => ({ decimals: 24 })),
+      this.getPairedTokenNearRate(baseAccount).catch(() => ({ rateInNear: baseAccount === 'wrap.near' || baseAccount === 'near' ? 1 : 0, decimals: 24 })),
     ]);
     const targetDecimals = targetMeta?.decimals ?? 18;
     const baseDecimals = baseMeta?.decimals ?? 24;
+    const rateInNear = pairedInfo.rateInNear;
 
     const currentPoint = Number(pool.current_point);
     let price = 0;
     if (pool.current_point !== undefined && pool.current_point !== null && !isNaN(currentPoint)) {
       const rawPrice = Math.pow(1.0001, currentPoint) * Math.pow(10, (baseIsX ? baseDecimals - targetDecimals : targetDecimals - baseDecimals));
-      price = baseIsX ? (rawPrice > 0 ? 1 / rawPrice : 0) : rawPrice;
+      const priceInBase = baseIsX ? (rawPrice > 0 ? 1 / rawPrice : 0) : rawPrice;
+      price = priceInBase * rateInNear;
     }
 
     const reserveNear = baseIsX ? (pool.total_x || '0') : (pool.total_y || '0');
     const reserveToken = baseIsX ? (pool.total_y || '0') : (pool.total_x || '0');
     const reserveNearNum = parseFloat(reserveNear) / Math.pow(10, baseDecimals);
-    const liquidityNear = reserveNearNum * 2;
+    const liquidityNear = reserveNearNum * rateInNear * 2;
 
     return {
       poolId,

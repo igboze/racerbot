@@ -923,12 +923,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       try {
         const parts = dbCache.dcl_pool_id.split('|');
         const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
-        const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
-        if (st.price > 0 && st.liquidityNear >= 0.1) {
-          price = st.price;
-          liquidity = st.liquidityNear;
-          venue = 'rhea';
-          dclPoolId = dbCache.dcl_pool_id;
+        if (paired === 'wrap.near' || paired === 'near') {
+          const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
+          if (st.price > 0 && st.liquidityNear >= 0.1) {
+            price = st.price;
+            liquidity = st.liquidityNear;
+            venue = 'rhea';
+            dclPoolId = dbCache.dcl_pool_id;
+          }
         }
       } catch { /* fallback to discovery below */ }
     } else if (dbCache.rhea_pool_id) {
