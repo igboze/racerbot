@@ -938,9 +938,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
           const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, meta.decimals);
           const poolLiq = reserveNearHuman * 2;
-          // Only trust cached simple pool if it has meaningful liquidity (>= 5 NEAR).
-          // Dust/spam pools (e.g. < 5 NEAR) shouldn't prevent discovery of deep DCL or launchpad pools.
-          if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq >= 5) {
+          // Trust cached simple pool if it has valid liquidity (> 0 NEAR).
+          if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq > 0) {
             price = reserveNearHuman / reserveTokenHuman;
             liquidity = poolLiq;
             venue = 'rhea';

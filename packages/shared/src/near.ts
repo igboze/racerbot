@@ -1286,10 +1286,10 @@ export class MultiRpcNear {
       candidates.push(dclRes.value);
     }
 
-    // Fast-path: if we found a direct wrap.near pool (simple or DCL) with substantial liquidity (>= 5 NEAR),
+    // Fast-path: if we found a direct wrap.near pool (simple or DCL) with liquidity,
     // pick the higher liquidity pool immediately without waiting on slow multi-hop/indexer scans!
     const bestDirect = candidates.reduce((best, c) => (!best || c.liquidityNear > best.liquidityNear ? c : best), null as (typeof candidates)[0] | null);
-    if (bestDirect && bestDirect.liquidityNear >= 5) {
+    if (bestDirect && bestDirect.liquidityNear > 0) {
       return bestDirect;
     }
 
