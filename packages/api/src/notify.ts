@@ -128,7 +128,10 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const token = data.token as string ?? data.token_address as string ?? 'unknown';
       const reason = data.reason as string ?? 'rug check failed';
       await _bot.telegram.sendMessage(telegramId,
-        `⚠️ Auto-buy skipped\n\n🪙 Token: \`${token}\`\n📋 Reason: ${reason}\n\nThis is a safety measure — no funds were used.`,
+        `⚠️ *Auto-Buy Skipped*\n\n` +
+        `🪙 Token: \`${token}\`\n` +
+        `📋 Reason: _${reason}_\n\n` +
+        `_Safety check blocked this buy. No funds were used._`,
         { parse_mode: 'Markdown' }
       );
       break;
@@ -136,7 +139,11 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
 
     case 'allowance_low': {
       await _bot.telegram.sendMessage(telegramId,
-        `⚡ Scoped key allowance is running low.\n\nYour bot cannot execute more trades until you top up.\n\nUse /topup to add more allowance.`
+        `⚡ *Allowance Running Low*\n\n` +
+        `Your bot key allowance is nearly exhausted.\n` +
+        `No more trades until you top up.\n\n` +
+        `Use /topup to add more allowance.`,
+        { parse_mode: 'Markdown' }
       );
       break;
     }
@@ -172,14 +179,18 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         };
       }
 
+      const unit = tokenSym.includes('::') || (pnl.tokenAddress || '').includes('::') ? 'SUI' : 'NEAR';
       await _bot.telegram.sendMessage(telegramId,
         `${emoji} *Trade Closed — PNL Summary*\n\n` +
-        `🪙 ${tokenName} (${tokenSym})\n` +
-        `📥 Entry: ${pnl.entryPrice} NEAR\n` +
-        `📤 Exit: ${exitPrice} NEAR\n` +
-        `📦 Quantity: ${quantity}\n` +
-        `💰 Realized PNL: ${Number(realizedNear).toFixed(4)} NEAR (${pnlSign}${Number(pnlPercent).toFixed(2)}%)\n` +
-        `⏱ Hold: ${holdDuration}`,
+        `🪙 *${tokenName}* (\`${tokenSym}\`)\n\n` +
+        `\`\`\`\n` +
+        `Entry   : ${pnl.entryPrice} ${unit}\n` +
+        `Exit    : ${exitPrice} ${unit}\n` +
+        `Qty     : ${quantity}\n` +
+        `PNL     : ${pnlSign}${Number(realizedNear).toFixed(4)} ${unit}\n` +
+        `PNL %   : ${pnlSign}${Number(pnlPercent).toFixed(2)}%\n` +
+        `Hold    : ${holdDuration}\n` +
+        `\`\`\``,
         extra
       );
       break;
@@ -220,9 +231,9 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       await _bot.telegram.sendMessage(telegramId,
         `❌ *Trade Failed*\n\n` +
         tokenLine +
-        `📋 Reason: ${friendlyReason}\n` +
-        (txHash !== 'none' ? `🧾 TX: \`${sanitize(txHash)}\`\n` : '') +
-        `\n_${refundNote}_`,
+        `📋 *Reason*:\n_${friendlyReason}_\n` +
+        (txHash !== 'none' ? `\n🧾 TX: \`${sanitize(txHash)}\`\n` : '') +
+        `\n💡 _${refundNote}_`,
         { parse_mode: 'Markdown' }
       );
       break;
@@ -268,7 +279,10 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
 
     case 'token_not_found': {
       await _bot.telegram.sendMessage(telegramId,
-        `❌ Token not found in cache.\n\nTry pasting the contract address (CA) directly for an exact match.`
+        `❌ *Token Not Found*\n\n` +
+        `No match in cache.\n` +
+        `Try pasting the contract address (CA) directly.`,
+        { parse_mode: 'Markdown' }
       );
       break;
     }

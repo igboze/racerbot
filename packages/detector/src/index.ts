@@ -8,6 +8,7 @@ import {
   DEFAULT_RPC_URLS,
   getNearUsdPrice,
   isCoreToken,
+  isAuditedLaunchpadToken,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
@@ -1193,6 +1194,15 @@ async function checkAutoBuySignals(
 
   // 2. Skip core/major tokens (USDC, USDT, wrap.near, SWEAT, etc.) from general auto-buy
   if (isCoreToken(tokenAddress)) {
+    return;
+  }
+
+  // 2b. Block auto-buy on unverified standalone Rhea AMM pools with unlocked liquidity (rug-pull risk)
+  if ((venue === 'rhea' || venue === 'ref') && !isAuditedLaunchpadToken(tokenAddress)) {
+    logger.warn('[DETECTOR] Skipping auto-buy for unverified standalone Rhea AMM pool (unlocked liquidity rug risk)', {
+      tokenAddress,
+      venue,
+    });
     return;
   }
 

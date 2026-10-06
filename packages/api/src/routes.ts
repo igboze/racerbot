@@ -320,10 +320,10 @@ export async function buildPointsView(telegramId: number) {
     `⏳ *Snapshot*: Oct 15, 23:59 UTC (${timeLeft})\n\n` +
     (bdLines.length > 0 ? `📊 *Breakdown*\n${bdLines.join('\n')}\n\n` : '') +
     (lbLines.length > 0 ? `🏅 *Top Racers*\n${lbLines.join('\n')}\n\n` : '') +
-    `*Earn Points*:\n` +
-    `📈 1.5 pts per 1 NEAR / SUI volume\n` +
-    `👥 500 pts per referral + 5% volume share\n` +
-    `🔥 25 pts daily trading streak\n\n` +
+    `*Earn Points*\n` +
+    `📈 \`1.5 pts\` per 1 NEAR / SUI traded\n` +
+    `👥 \`500 pts\` per referral + 5% of their volume\n` +
+    `🔥 \`25 pts\` per day of trading streak\n\n` +
     `_Points convert to $RACER at TGE._`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -425,8 +425,8 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     getUserWallets(user.id, 'sui').catch(() => []),
   ]);
 
-  let text = `💼 <b>Multi-Chain Wallets Management</b>\n\n`;
-  text += `Select an active wallet to trade with on each network, or import an existing private key:\n\n`;
+  let text = `💼 <b>Multi-Chain Wallets</b>\n\n`;
+  text += `Switch active wallet per chain,\nor import an existing private key:\n\n`;
 
   const buttons: any[] = [];
 
@@ -683,10 +683,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   // -- Market cap formatting --
   let mcapStr = 'N/A';
+  let mcUsdFormatted = '';
+  let mcNearFormatted = '';
   const mcUsdVal = (tokenInfo as any).market_cap_usd as number | undefined;
   const mcNearVal = tokenInfo.market_cap;
   if (mcUsdVal && mcUsdVal > 0) {
-    const mcUsdFormatted = mcUsdVal >= 1_000_000_000
+    mcUsdFormatted = mcUsdVal >= 1_000_000_000
       ? `$${(mcUsdVal / 1_000_000_000).toFixed(2)}B`
       : mcUsdVal >= 1_000_000
       ? `$${(mcUsdVal / 1_000_000).toFixed(2)}M`
@@ -694,7 +696,6 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ? `$${(mcUsdVal / 1_000).toFixed(2)}K`
       : `$${mcUsdVal.toFixed(2)}`;
 
-    let mcNearFormatted = '';
     if (mcNearVal >= 1_000_000) mcNearFormatted = `${(mcNearVal / 1_000_000).toFixed(2)}M ${nativeUnit}`;
     else if (mcNearVal >= 1_000) mcNearFormatted = `${(mcNearVal / 1_000).toFixed(2)}K ${nativeUnit}`;
     else if (mcNearVal > 0) mcNearFormatted = `${mcNearVal.toFixed(0)} ${nativeUnit}`;
@@ -723,71 +724,79 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     : (nearUsdRate && nearUsdRate > 0 ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n` : '\n');
 
   let safetyBanner = '';
-  if (safety?.isHoneypot) {
+  if (safety?.isDrained) {
     safetyBanner =
-      `🚨 *CRITICAL HONEYPOT WARNING* 🚨\n` +
-      `⚠️ *Risk*: 🔴 *MALICIOUS CONTRACT DETECTED*\n` +
-      `• _${safety.reasons[0] || 'Unauthorized balance confiscation backdoor found.'}_\n` +
-      `🚫 *Buying is blocked by RacerBot to protect your wallet.*\n\n`;
+      `> 🚨 *CRITICAL DRAINED POOL WARNING*\n` +
+      `> 🔴 *Risk*: Liquidity Drained / Rugged\n` +
+      `> • _${safety.reasons[0] || 'Pool liquidity has been pulled.'}_\n` +
+      `> 🚫 *Buying is blocked by RacerBot to protect your wallet.*\n\n`;
+  } else if (safety?.isHoneypot) {
+    const dangerText = safety.reasons[0] || 'Unauthorized balance confiscation backdoor found.';
+    safetyBanner =
+      `> 🚨 *CRITICAL HONEYPOT WARNING*\n` +
+      `> 🔴 *Risk*: Malicious Contract Detected\n` +
+      `> • _${dangerText}_\n` +
+      `> 🚫 *Buying is blocked by RacerBot to protect your wallet.*\n\n`;
+  } else if (safety?.isUnlockedRheaPool) {
+    safetyBanner =
+      `> ⚠️ *HIGH RISK: UNLOCKED LIQUIDITY (RHEA AMM)*\n` +
+      `> • *Launchpad*: ❌ None (Custom Standalone Token)\n` +
+      `> • *Liquidity*: 🔴 100% Unlocked (Creator holds LP shares)\n` +
+      `> • *Warning*: Creator can pull all pool NEAR at any second.\n\n`;
   } else if (safety) {
-    const hpStatus = '🟢 *PASSED* (No honeypot backdoors)';
+    const hpStatus = '🟢 PASSED';
     const contractType = safety.isAuditedLaunchpad
       ? `🛡️ Audited Launchpad (${safety.launchpadName || 'Verified'})`
       : 'Standalone NEP-141';
-    const backdoorInfo = safety.dangerousMethods && safety.dangerousMethods.length > 0
-      ? `🔴 ${safety.dangerousMethods.join(', ')}`
-      : '🟢 0 Found (15 Patterns Scanned)';
 
     let extraWarning = '';
     const liqUsd = parseFloat((tokenInfo as any).liquidity_usd || '0');
-    if (liqUsd > 0 && liqUsd < 10) {
-      extraWarning = `⚠️ *Liquidity Alert*: Very low liquidity (~$${liqUsd.toFixed(2)} USD)\n`;
+    if (liqUsd > 0 && liqUsd < 20) {
+      extraWarning = `> • *Liquidity*: ⚠️ Ultra-low (~$${liqUsd.toFixed(2)} USD)\n`;
     }
 
     safetyBanner =
-      `🛡️ *Security & Honeypot Analysis*:\n` +
-      `• *Honeypot*: ${hpStatus}\n` +
-      `• *Backdoors*: ${backdoorInfo}\n` +
-      `• *Contract*: \`${contractType}\`\n` +
+      `> 🛡️ *Security Analysis*:\n` +
+      `> • *Honeypot*: ${hpStatus}\n` +
+      `> • *Contract*: ${contractType}\n` +
       extraWarning +
       `\n`;
   }
 
-  // -- Holders display (exact count at CA lookup) --
-  let holdersLine = '';
-  if (tokenInfo.holders_count !== undefined && tokenInfo.holders_count !== null && tokenInfo.holders_count > 0) {
-    holdersLine = `👥 *Holders*: \`${tokenInfo.holders_count.toLocaleString('en-US')}\`\n`;
-  }
+  // Mobile-optimized compact stats block (smaller monospace font, perfectly aligned key-value pairs)
+  const priceCol = priceNearStr ? `${priceNearStr} ${nativeUnit}` : '0.00';
+  const usdCol = priceUsdStr ? ` (${priceUsdStr})` : '';
+  const mcapCol = mcUsdFormatted ? mcUsdFormatted : (mcNearFormatted ? `${mcNearFormatted}` : 'N/A');
+  const liqCol = `${liqNearStr} ${nativeUnit}${liqUsdStr ? ` (${liqUsdStr})` : ''}`;
+  const supplyCol = `${supplyStr} (${tokenInfo.decimals} dec)`;
 
-  // -- Activity (Buys & Sells) display with explicit timeframe --
-  let activityLine = '';
+  let statsBlock = '```\n';
+  statsBlock += `Price    : ${priceCol}${usdCol}\n`;
+  statsBlock += `MarketCap: ${mcapCol}\n`;
+  statsBlock += `Liquidity: ${liqCol}\n`;
+  statsBlock += `Supply   : ${supplyCol}\n`;
+  if (tokenInfo.holders_count) {
+    statsBlock += `Holders  : ${tokenInfo.holders_count.toLocaleString('en-US')}\n`;
+  }
   const buys = tokenInfo.buys_count;
   const sells = tokenInfo.sells_count;
   const timeframe = (tokenInfo as any).trades_timeframe === 'Curve' ? 'Curve' : '24h';
   if (buys !== undefined && buys !== null && sells !== undefined && sells !== null) {
-    activityLine = `📊 *Trades (${timeframe})*: 🟢 \`${buys.toLocaleString('en-US')} Buys\` | 🔴 \`${sells.toLocaleString('en-US')} Sells\`\n`;
+    statsBlock += `Trades   : ${buys}B / ${sells}S (${timeframe})\n`;
   } else if (buys !== undefined && buys !== null) {
-    activityLine = `📊 *Trades (${timeframe})*: 🟢 \`${buys.toLocaleString('en-US')} Buys\`\n`;
+    statsBlock += `Trades   : ${buys} buys (${timeframe})\n`;
   }
-
-  // -- Total On-Chain Transactions display --
-  let txnsLine = '';
-  if ((tokenInfo as any).total_txns !== undefined && (tokenInfo as any).total_txns !== null && (tokenInfo as any).total_txns > 0) {
-    txnsLine = `📦 *Total Txns*: \`${Number((tokenInfo as any).total_txns).toLocaleString('en-US')}\`\n`;
+  if ((tokenInfo as any).total_txns) {
+    statsBlock += `TotalTxn : ${Number((tokenInfo as any).total_txns).toLocaleString('en-US')}\n`;
   }
+  statsBlock += '```\n';
 
   let text =
     safetyBanner +
-    `🪙 *${safeName}* (\`${safeSymbol}\`)\n\n` +
-    `📝 *CA*: \`${tokenInfo.address}\`\n` +
-    `${venueText}\n` +
-    `💰 *Price*: \`${priceStr}\`\n` +
-    `💧 *Liquidity*: \`${liqStr}\`\n` +
-    `📊 *Market Cap*: \`${mcapStr}\`\n` +
-    `📦 *Supply*: \`${supplyStr}\` | Decimals: \`${tokenInfo.decimals}\`\n` +
-    holdersLine +
-    activityLine +
-    txnsLine +
+    `🪙 *${safeName}* (\`${safeSymbol}\`)\n` +
+    `📝 \`${tokenInfo.address}\`\n` +
+    `${venueText}\n\n` +
+    statsBlock +
     rateFooter +
     balanceText;
 
@@ -803,10 +812,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
     const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
     const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
-    text += `\n💼 *Your Holdings*:\n`;
-    text += `  Quantity: \`${formattedQty}\`\n`;
-    text += `  Entry Price: \`${entryPrice.toFixed(8)} ${nativeUnit}\`\n`;
-    text += `  Current PNL: ${emoji} \`${pnlDisplay}\`\n\n`;
+    text += `💼 *Your Position*:\n` +
+      '```\n' +
+      `Holding  : ${formattedQty} ${safeSymbol}\n` +
+      `Entry Px : ${entryPrice.toFixed(8)} ${nativeUnit}\n` +
+      `PNL      : ${emoji} ${pnlDisplay}\n` +
+      '```\n\n';
 
     try {
         const pnlCard = await generatePNLCard(userPosition.id);
@@ -837,9 +848,13 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
 
   let keyboard;
   const shortKey = getShortTokenKey(tokenInfo.address);
+  const isBlocked = safety?.isHoneypot || safety?.isDrained;
 
-  if (safety?.isHoneypot) {
-    const blockedBtn = [Markup.button.callback('🚨 Buy Blocked (Honeypot Backdoor)', 'noop_honeypot')];
+  if (isBlocked) {
+    const blockedBtn = [Markup.button.callback(
+      safety?.isDrained ? '🚨 Buy Blocked (Drained Liquidity)' : '🚨 Buy Blocked (Honeypot Backdoor)',
+      safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
+    )];
     if (holdsToken && userPosition) {
       text += `⚡ *Exit Position* (Sell Only):\n`;
       keyboard = Markup.inlineKeyboard([
@@ -882,10 +897,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       ]);
     }
   } else if (tokenInfo.tradeable) {
+    const unlockedRiskRow = safety?.isUnlockedRheaPool
+      ? [[Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]]
+      : [];
+
     if (holdsToken && userPosition) {
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
         [
           cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
@@ -927,6 +947,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
         [
           cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
           cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
@@ -1031,9 +1052,14 @@ export async function buildDeepAuditCard(tokenAddress: string): Promise<{ text: 
   const isSui = isSuiToken(tokenAddress) || tokenAddress.startsWith('0x');
   const shortKey = getShortTokenKey(tokenAddress);
 
-  const hpVerdict = safety?.isHoneypot
-    ? '🔴 *CRITICAL HONEYPOT WARNING*'
-    : '🟢 *PASSED — SAFE TO TRADE*';
+  let hpVerdict = '🟢 *PASSED — SAFE TO TRADE*';
+  if (safety?.isDrained) {
+    hpVerdict = '🔴 *CRITICAL DRAINED POOL WARNING* (Liquidity pulled/drained)';
+  } else if (safety?.isHoneypot) {
+    hpVerdict = '🔴 *CRITICAL HONEYPOT WARNING* (Backdoor detected)';
+  } else if (safety?.isUnlockedRheaPool) {
+    hpVerdict = '⚠️ *HIGH RISK: UNLOCKED LIQUIDITY* (Creator can pull pool at any time)';
+  }
 
   const backdoorVerdict = safety?.dangerousMethods && safety.dangerousMethods.length > 0
     ? `🔴 *DANGEROUS BACKDOOR DETECTED*:\n  • Backdoors: \`${safety.dangerousMethods.join(', ')}\`\n  • Risk: Contract owner can confiscate, freeze, or burn user tokens.`
@@ -1044,6 +1070,15 @@ export async function buildDeepAuditCard(tokenAddress: string): Promise<{ text: 
     : (isSui
         ? '💧 *Sui Move Standard Coin*\n  • Native Sui coin with Move bytecode safety.'
         : '📜 *Standard NEP-141 Verified*\n  • Implements ft_transfer, ft_transfer_call, ft_balance_of.');
+
+  let lockVerdict = '';
+  if (safety?.isAuditedLaunchpad) {
+    lockVerdict = '🔒 *Liquidity Lock*: 🟢 *100% Locked / Burned* (Audited Launchpad)';
+  } else if (safety?.isUnlockedRheaPool) {
+    lockVerdict = '🔓 *Liquidity Lock*: 🔴 *100% UNLOCKED* (Deployer holds LP shares)';
+  } else {
+    lockVerdict = '💧 *Liquidity Lock*: ⚪ Standard DEX Pool';
+  }
 
   const liqUsd = parseFloat((tokenInfo as any)?.liquidity_usd || '0');
   const liqNear = parseFloat(tokenInfo?.liquidity || '0');
@@ -1060,18 +1095,19 @@ export async function buildDeepAuditCard(tokenAddress: string): Promise<{ text: 
   const text =
     `🛡️ *RacerBot Deep Contract & Security Audit*\n\n` +
     `🪙 *Token*: *${safeName}* (\`${safeSymbol}\`)\n` +
-    `📝 *CA*: \`${tokenAddress}\`\n` +
+    `📝 \`${tokenAddress}\`\n` +
     `⛓️ *Chain*: ${isSui ? '💧 SUI' : '⬛ NEAR Protocol'}\n\n` +
-    `🎯 *Honeypot Verdict*:\n${hpVerdict}\n\n` +
-    `🔍 *Backdoor Analysis*:\n${backdoorVerdict}\n\n` +
-    `📋 *Contract Standard*:\n${standardVerdict}\n\n` +
-    `${liqVerdict}` +
+    `> 🎯 *Honeypot Verdict*:\n> ${hpVerdict}\n\n` +
+    `> 🔍 *Backdoor Analysis*:\n> ${backdoorVerdict}\n\n` +
+    `> 📋 *Contract Standard*:\n> ${standardVerdict}\n\n` +
+    `> ${lockVerdict}\n\n` +
+    `> ${liqVerdict}` +
     exportedList +
     `\n\n` +
     `_🛡️ Verified in real-time by RacerBot WASM Anti-Honeypot Shield_`;
 
   const keyboard = Markup.inlineKeyboard([
-    ...(safety?.isHoneypot ? [] : [[cb('⚡ Trade Token', `token_refresh:${shortKey}`, 'success')]]),
+    ...((safety?.isHoneypot || safety?.isDrained) ? [] : [[cb('⚡ Trade Token', `token_refresh:${shortKey}`, 'success')]]),
     [
       cb('🔙 Back to Token Card', `token_refresh:${shortKey}`, 'primary'),
       cb('💳 Open Wallet', 'menu_wallet', 'primary'),
@@ -1250,12 +1286,12 @@ export function buildSnipeDashboard(user: UserRecord) {
 
   const text =
     `🎯 *Snipe Rules*\n\n` +
-    `• *Auto-Buy New Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
+    `• *Auto-Buy Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
     `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
     `• *Min Liquidity*: \`${minLiq} NEAR\`\n\n` +
     `*Targeted Snipes*:\n` +
-    `• 🎯 *Token CA* — Snipe a specific token contract\n` +
-    `• 👤 *Deployer* — Snipe all tokens from a creator wallet`;
+    `• 🎯 Snipe a specific token CA\n` +
+    `• 👤 Snipe all launches by a dev wallet`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -1317,15 +1353,15 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
 
   let text =
     `👥 *Copy Trading*\n\n` +
-    `Mirror trades from target wallets in real-time.\n\n` +
-    `• *Active Targets*: ${activeTargets.length}\n` +
-    `• *Paused Targets*: ${pausedTargets.length}\n\n`;
+    `Mirror any wallet's trades in real-time.\n\n` +
+    `• *Active*: ${activeTargets.length} | *Paused*: ${pausedTargets.length}\n\n`;
 
   if (targets.length === 0) {
     text +=
-      `_No active targets._\n\n` +
-      `Tap *➕ Add Target Wallet* to copy any trader automatically.\n\n` +
-      `🏆 *Season 1*: +25 pts per copy fill + 1.5 pts per volume copied!`;
+      `_No targets added yet._\n\n` +
+      `Tap *➕ Add Target Wallet* to start.\n\n` +
+      `🏆 *Season 1*: +25 pts per fill\n` +
+      `+ 1.5 pts per NEAR volume copied!`;
   } else {
     text += `*Your Target Wallets:*\n`;
     for (const t of targets.slice(0, 10)) {
@@ -1368,14 +1404,13 @@ export async function buildDcaDashboard(user: UserRecord) {
 
   let text =
     `🔁 *DCA Orders*\n\n` +
-    `Automate recurring buys or sells over time.\n\n` +
-    `• *Active Orders*: ${activeOrders.length}\n` +
-    `• *Total Orders*: ${orders.length}\n\n`;
+    `Automate recurring buys or sells.\n\n` +
+    `• *Active*: ${activeOrders.length} | *Total*: ${orders.length}\n\n`;
 
   if (orders.length === 0) {
     text +=
-      `_No DCA orders configured._\n\n` +
-      `Tap *➕ New DCA Order* to schedule automated recurring trades.`;
+      `_No DCA orders set up._\n\n` +
+      `Tap *➕ New DCA Order* to schedule\nautomated recurring trades.`;
   } else {
     text += `*Your Schedules:*\n`;
     for (const o of orders.slice(0, 8)) {
@@ -1895,8 +1930,8 @@ async function sendPostBuySlTpPrompt(ctx: Context, positionId?: string, tokenAdd
     const sym = tokenSymbol && tokenSymbol !== '???' ? tokenSymbol : 'TOKEN';
     const text =
       `🛡️ *Protect your ${sanitizeMd(sym)} position?*\n\n` +
-      `Set automatic Stop Loss & Take Profit orders.\n` +
-      `They execute automatically while you sleep. 🤖`;
+      `Set automatic Stop Loss & Take Profit.\n` +
+      `They execute automatically — even while you sleep. 🤖`;
 
     const keyboard = Markup.inlineKeyboard([
       [
@@ -2388,8 +2423,10 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `👥 *Add Copy Trading Target*\n\n` +
-      `Enter the NEAR wallet address you want to copy (e.g. \`trader.near\` or 64-char hex):\n\n` +
-      `_RacerBot will detect all buys and sells made by this wallet on Rhea, Ref, and Shards, executing the same swaps automatically for you._`,
+      `Enter the NEAR wallet address to copy:\n` +
+      `_e.g. \`trader.near\` or a 64-char hex_\n\n` +
+      `RacerBot will mirror all buys/sells\n` +
+      `from this wallet on Rhea, Ref & Shards.`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_copy', 'primary')]]),
@@ -2496,7 +2533,8 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `🔁 *DCA Order Setup (Step 1/3)*\n\n` +
-      `Enter the Contract Address (CA) of the token you want to DCA into/out of (e.g. \`wrap.near\` or \`token.near\`):`,
+      `Enter the token Contract Address (CA):\n` +
+      `_e.g. \`wrap.near\` or \`token.near\`_`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_dca', 'primary')]]),
@@ -2511,7 +2549,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
-      `Choose whether to accumulate (buy with NEAR) or take-profit / de-risk (sell to NEAR):`,
+      `Choose a direction:`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
@@ -2615,10 +2653,11 @@ export function setupRoutes(bot: Telegraf): void {
     userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `🎯 *Snipe by Token Contract*\n\n` +
-      `Reply with the token contract address (CA), e.g. \`token.nearlytrade.near\`\n\n` +
-      `• Already tradable → the buy executes *immediately*\n` +
-      `• Not launched/bonded yet → the snipe stays *armed* and fires the moment a pool goes live\n\n` +
+      `🎯 *Snipe by Token CA*\n\n` +
+      `Reply with the token contract address:\n` +
+      `_e.g. \`token.nearlytrade.near\`_\n\n` +
+      `• Already tradable → buys *immediately*\n` +
+      `• Not launched yet → stays *armed* until live\n\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     );
@@ -2640,8 +2679,10 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `👤 *Snipe by Deployer*\n\n` +
-      `Reply with the NEAR wallet address whose launches you want to snipe, e.g. \`someuser.near\`\n\n` +
-      `Every new token that wallet launches will be auto-bought — until you cancel the order.\n\n` +
+      `Reply with the dev's NEAR wallet address:\n` +
+      `_e.g. \`someuser.near\`_\n\n` +
+      `Every new token from that wallet\n` +
+      `will be auto-bought until you cancel.\n\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     );
@@ -2658,7 +2699,9 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     if (orders.length === 0) {
       await ctx.reply(
-        `📋 *Snipe Orders*\n\nNo orders yet. Set one up with 🎯 Snipe Token CA or 👤 Snipe by Dev.`,
+        `📋 *Snipe Orders*\n\n` +
+        `No orders yet.\n` +
+        `Use 🎯 Snipe Token CA or 👤 Snipe by Dev.`,
         { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]] } }
       );
       return;
