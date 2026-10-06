@@ -803,16 +803,15 @@ export class MultiRpcNear {
    * Returns name, symbol, decimals, total_supply.
    */
   async getTokenMetadata(tokenAddress: string): Promise<TokenMetadata> {
-    // Metadata is immutable per token — safe for the display-path cache and
-    // it is fetched on nearly every token card / holdings / quote path.
-    return this.viewCached<TokenMetadata>(tokenAddress, 'ft_metadata', {}, 60_000);
+    // Metadata is immutable per contract (name, symbol, decimals) — cache for 1 hour
+    return this.viewCached<TokenMetadata>(tokenAddress, 'ft_metadata', {}, 3600_000);
   }
 
   /**
-   * Get total supply of a fungible token.
+   * Get total supply of a fungible token (cached for 5 minutes).
    */
   async getTokenTotalSupply(tokenAddress: string): Promise<string> {
-    return this.view<string>(tokenAddress, 'ft_total_supply', {});
+    return this.viewCached<string>(tokenAddress, 'ft_total_supply', {}, 300_000);
   }
 
   /**
