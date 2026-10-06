@@ -173,10 +173,13 @@ export type {
 export {
   checkTokenSafety,
   isCoreToken,
+  isAuditedLaunchpadToken,
   VERIFIED_CORE_TOKENS,
+  VERIFIED_LAUNCHPAD_SUFFIXES,
 } from './safety.js';
 export type {
   TokenSafetyReport,
 } from './safety.js';
+
 
 
