@@ -2934,19 +2934,10 @@ export function setupRoutes(bot: Telegraf): void {
         infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
       });
 
-      // 4. Baseline entry price for newly detected tokens or unbaselined tokens so PNL calculation starts from here
-      for (const pos of positions) {
-        const info = infoMap.get(pos.token_address);
-        const currentPrice = info ? parseFloat(info.price) : 0;
-        const entryPrice = parseFloat(pos.avg_entry_price) || 0;
-        if (entryPrice <= 0 && currentPrice > 0) {
-          pos.avg_entry_price = currentPrice.toString();
-          updatePosition({
-            position_id: pos.id,
-            avg_entry_price: currentPrice.toString(),
-          }).catch(() => {});
-        }
-      }
+    // Fetch fills in parallel to calculate exact cost basis and heal entry prices
+    const fillsResults = await Promise.allSettled(
+      positions.map(pos => getFillsByPosition(pos.id).catch(() => []))
+    );
 
       let totalPortfolioValueUsd = 0;
       const buttons: any[] = [];
@@ -2955,7 +2946,8 @@ export function setupRoutes(bot: Telegraf): void {
       const displayedPositions = positions.slice(0, MAX_DISPLAY_HOLDINGS);
       const remainingCount = positions.length - displayedPositions.length;
 
-      for (const pos of displayedPositions) {
+      for (let idx = 0; idx < displayedPositions.length; idx++) {
+        const pos = displayedPositions[idx];
         const info = infoMap.get(pos.token_address);
         const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
         const displayLabel = sanitizeMd(rawSymbol);
@@ -2975,11 +2967,66 @@ export function setupRoutes(bot: Telegraf): void {
         const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
         const tokenValueUsd = humanQuantity * tokenPriceUsd;
         totalPortfolioValueUsd += tokenValueUsd;
+        const fillsResult = fillsResults[idx];
+        const fills = fillsResult && fillsResult.status === 'fulfilled' ? fillsResult.value : [];
+        const buys = fills.filter((f: any) => f.side === 'buy' && !f.tx_hash?.startsWith('deposit_'));
+
+        let totalBuyTokensHuman = 0;
+        let totalBuyCostNative = 0;
+
+        for (const buy of buys) {
+          const val = parseFloat(buy.amount || '0');
+          let amount = val;
+          if (val > 1e10 && decimals > 0) {
+            amount = val / Math.pow(10, decimals);
+          } else if (isSuiPos && val > 1e6) {
+            amount = val / Math.pow(10, decimals);
+          }
+
+          let cost = 0;
+          if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
+            cost = parseFloat(buy.input_amount);
+          } else {
+            const p = parseFloat(buy.price || '0');
+            let fee = parseFloat(buy.fee_paid || '0');
+            if (isSuiPos && fee > 1e6) fee = fee / 1e9;
+            else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
+            cost = amount * p + fee;
+          }
+
+          if (amount > 0 && cost > 0) {
+            totalBuyTokensHuman += amount;
+            totalBuyCostNative += cost;
+          }
+        }
 
         let entryPrice = parseFloat(pos.avg_entry_price) || 0;
-        if (entryPrice <= 0 && currentPrice > 0) {
+
+        // Heal corrupted or uninitialized entry price from actual buy fills
+        if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
+          const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
+          if (
+            entryPrice <= 0 ||
+            entryPrice > 1e6 || // Corrupted atomic price
+            (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) ||
+            Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.5
+          ) {
+            entryPrice = fillAvgEntry;
+            pos.avg_entry_price = fillAvgEntry.toString();
+            updatePosition({
+              position_id: pos.id,
+              avg_entry_price: fillAvgEntry.toString(),
+            }).catch(() => {});
+          }
+        } else if ((entryPrice <= 0 || entryPrice > 1e6) && currentPrice > 0) {
           entryPrice = currentPrice;
+          pos.avg_entry_price = currentPrice.toString();
+          updatePosition({
+            position_id: pos.id,
+            avg_entry_price: currentPrice.toString(),
+          }).catch(() => {});
         }
+
         let pnlDisplay = '+0.0%';
         let emoji = '⚪';
         let pnlStyle: BtnStyle | undefined = undefined; // undefined = default grey button
@@ -3230,14 +3277,24 @@ export function setupRoutes(bot: Telegraf): void {
 
       const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
       let mcNative = info?.market_cap || 0;
+      let mcUsd = info?.market_cap_usd || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
         try {
           const rawSupply = BigInt(String(info.total_supply).split('.')[0]);
           const humanSupply = Number(rawSupply) / Math.pow(10, decimals);
           if (humanSupply > 0) {
             mcNative = humanSupply * currentPrice;
+            if (mcUsd <= 0 && usdRate > 0) {
+              mcUsd = mcNative * usdRate;
+            }
           }
         } catch { /* no-op */ }
+      }
+      if (mcNative <= 0 && mcUsd > 0 && usdRate > 0) {
+        mcNative = mcUsd / usdRate;
+      }
+      if (mcUsd <= 0 && mcNative > 0 && usdRate > 0) {
+        mcUsd = mcNative * usdRate;
       }
 
       // Calculate initial investment across all buy fills, or fallback to position entry * qty
@@ -3341,10 +3398,12 @@ export function setupRoutes(bot: Telegraf): void {
       };
 
       const fmtMcap = () => {
-        if (mcNative <= 0) return '`N/A`';
-        const mcUsd = info?.market_cap_usd || (mcNative * usdRate);
-        const mcUsdStr = mcUsd >= 1e6 ? `$${(mcUsd / 1e6).toFixed(2)}M` : mcUsd >= 1e3 ? `$${(mcUsd / 1e3).toFixed(2)}K` : `$${mcUsd.toFixed(2)}`;
-        const mcNatStr = mcNative >= 1e6 ? `${(mcNative / 1e6).toFixed(2)}M ${nativeUnit}` : mcNative >= 1e3 ? `${(mcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${mcNative.toFixed(2)} ${nativeUnit}`;
+        const effectiveMcUsd = mcUsd > 0 ? mcUsd : (mcNative > 0 ? mcNative * usdRate : 0);
+        const effectiveMcNative = mcNative > 0 ? mcNative : (effectiveMcUsd > 0 && usdRate > 0 ? effectiveMcUsd / usdRate : 0);
+        if (effectiveMcUsd <= 0 && effectiveMcNative <= 0) return '`N/A`';
+
+        const mcUsdStr = effectiveMcUsd >= 1e6 ? `$${(effectiveMcUsd / 1e6).toFixed(2)}M` : effectiveMcUsd >= 1e3 ? `$${(effectiveMcUsd / 1e3).toFixed(2)}K` : `$${effectiveMcUsd.toFixed(2)}`;
+        const mcNatStr = effectiveMcNative >= 1e6 ? `${(effectiveMcNative / 1e6).toFixed(2)}M ${nativeUnit}` : effectiveMcNative >= 1e3 ? `${(effectiveMcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${effectiveMcNative.toFixed(2)} ${nativeUnit}`;
         return `\`${mcUsdStr}\` (${mcNatStr})`;
       };
 
