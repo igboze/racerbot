@@ -2388,6 +2388,11 @@ export class MultiRpcNear {
    * to avoid picking dead or unseeded 0-liquidity pools.
    */
   private async getQuoteNearPrice(quoteToken: string, quoteDecimals: number): Promise<number> {
+    const pairedRate = await this.getPairedTokenNearRate(quoteToken).catch(() => null);
+    if (pairedRate && pairedRate.rateInNear > 0) {
+      return pairedRate.rateInNear;
+    }
+
     // 1. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad curve state
     if (quoteToken.endsWith('.nearlytrade.near')) {
       try {
