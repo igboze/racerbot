@@ -26,7 +26,9 @@ import {
   createSnipeOrder,
   countActiveSnipeOrders,
   getSnipeOrdersByUser,
+  getSnipeOrderById,
   cancelSnipeOrder,
+  deleteSnipeOrder,
   recordSnipeTrigger,
   markSnipeTriggerFilled,
   markSnipeTriggerFailed,
@@ -2725,8 +2727,16 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `📋 *Snipe Orders*\n\n` +
         `No orders yet.\n` +
-        `Use 🎯 Snipe Token CA or 👤 Snipe by Dev.`,
-        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]] } }
+        `Use 🎯 Snipe Token CA or 👤 Snipe by Dev to arm a snipe.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'), cb('👤 Snipe by Dev', 'snipe_dev_start', 'success')],
+              [cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')],
+            ],
+          },
+        }
       );
       return;
     }
@@ -2734,22 +2744,91 @@ export function setupRoutes(bot: Telegraf): void {
     const lines = orders.map((o) => {
       const target = o.snipe_type === 'token' ? `🪙 \`${o.token_address}\`` : `👤 \`${o.deployer_address}\``;
       const extra = o.snipe_type === 'deployer' && o.trigger_count > 0 ? ` · fired ${o.trigger_count}×` : '';
-      const err = o.status === 'failed' && o.last_error ? ` · _${o.last_error.slice(0, 60)}_` : '';
+      const err = o.status === 'failed' && o.last_error ? `\n   └ _${o.last_error.slice(0, 60)}_` : '';
       return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} NEAR*${extra}${err}`;
     });
-    const buttons: any[] = orders
-      .filter((o) => o.status === 'active')
-      .map((o) => [
-        cb(
-          `❌ Cancel ${o.snipe_type === 'token' ? o.token_address : 'dev ' + o.deployer_address}`.slice(0, 60),
-          `snipe_order_cancel:${o.id}`,
-          'danger'
-        ),
-      ]);
+
+    const buttons: any[] = [];
+    for (const o of orders) {
+      const targetShort = (o.token_address || o.deployer_address || 'order').slice(0, 25);
+      const icon = statusEmoji[o.status] ?? '•';
+      if (o.status === 'active') {
+        buttons.push([
+          cb(`🔍 View ${icon} ${targetShort}`, `snipe_order_view:${o.id}`, 'primary'),
+          cb(`❌ Cancel`, `snipe_order_cancel:${o.id}`, 'danger'),
+        ]);
+      } else {
+        buttons.push([
+          cb(`🔍 View ${icon} ${targetShort}`, `snipe_order_view:${o.id}`, 'primary'),
+          cb(`🗑️ Remove`, `snipe_order_delete:${o.id}`, 'primary'),
+        ]);
+      }
+    }
+    buttons.push([
+      cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'),
+      cb('👤 Snipe by Dev', 'snipe_dev_start', 'success'),
+    ]);
     buttons.push([cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]);
-    await ctx.reply(`📋 *Snipe Orders*\n\n` + lines.join('\n'), {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons },
+
+    const text = `📋 *Snipe Orders (${orders.length})*\n\nTap any order below to view details or manage:\n\n` + lines.join('\n');
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => {});
+    });
+  });
+
+  bot.action(/^snipe_order_view:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const orderId = ctx.match![1];
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const o = await getSnipeOrderById(orderId, user.id).catch(() => null);
+    await ctx.answerCbQuery().catch(() => {});
+    if (!o) {
+      await ctx.reply('❌ Snipe order not found.', {
+        reply_markup: { inline_keyboard: [[cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary')]] },
+      });
+      return;
+    }
+    const statusText: Record<string, string> = {
+      active: '🟢 Active (Waiting for Launch / Liquidity)',
+      filled: '✅ Filled (Auto-Buy Completed)',
+      cancelled: '⚪ Cancelled',
+      failed: '🔴 Failed',
+    };
+    const targetLabel = o.snipe_type === 'token' ? 'Token Contract Address' : 'Deployer Wallet Address';
+    const targetVal = o.snipe_type === 'token' ? o.token_address : o.deployer_address;
+    const dateStr = o.created_at ? new Date(o.created_at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'N/A';
+
+    let errText = '';
+    if (o.status === 'failed' && o.last_error) {
+      errText = `\n• *Last Failure Reason*: \`${o.last_error}\``;
+    }
+
+    const text =
+      `🎯 *Snipe Order Details*\n\n` +
+      `• *Status*: ${statusText[o.status] ?? o.status}\n` +
+      `• *${targetLabel}*: \`${targetVal}\`\n` +
+      `• *Amount*: \`${o.amount_near} NEAR\`\n` +
+      `• *Type*: \`${o.snipe_type}\`\n` +
+      `• *Created*: ${dateStr}${errText}\n\n` +
+      `Use the options below to manage this order:`;
+
+    const buttons: any[] = [];
+    if (o.status === 'active') {
+      buttons.push([cb('❌ Cancel Snipe Order', `snipe_order_cancel:${o.id}`, 'danger')]);
+    } else {
+      buttons.push([cb('🗑️ Remove Order from History', `snipe_order_delete:${o.id}`, 'danger')]);
+    }
+    buttons.push([
+      cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary'),
+      cb('🎯 Back to Snipe Rules', 'menu_snipe', 'primary'),
+    ]);
+
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => {});
     });
   });
 
@@ -2763,14 +2842,44 @@ export function setupRoutes(bot: Telegraf): void {
     }
     const ok = await cancelSnipeOrder(orderId, user.id).catch(() => false);
     await ctx.answerCbQuery(ok ? 'Snipe order cancelled.' : 'Order not found or already closed.').catch(() => {});
+    const buttons = [
+      [cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+    ];
     if (ok) {
-      const keyboard = {
-        reply_markup: {
-          inline_keyboard: [[cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]],
-        },
-      };
-      await ctx.editMessageText('✅ *Snipe order cancelled.*', { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
-        await ctx.reply('✅ *Snipe order cancelled.*', { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      await ctx.editMessageText('✅ *Snipe Order Cancelled Successfully.*\n\nYour order has been stopped and marked as cancelled.', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
+      }).catch(async () => {
+        await ctx.reply('✅ *Snipe Order Cancelled Successfully.*', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        }).catch(() => {});
+      });
+    }
+  });
+
+  bot.action(/^snipe_order_delete:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const orderId = ctx.match![1];
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const ok = await deleteSnipeOrder(orderId, user.id).catch(() => false);
+    await ctx.answerCbQuery(ok ? 'Order removed.' : 'Order not found.').catch(() => {});
+    const buttons = [
+      [cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+    ];
+    if (ok) {
+      await ctx.editMessageText('🗑️ *Order Removed from History.*', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons },
+      }).catch(async () => {
+        await ctx.reply('🗑️ *Order Removed from History.*', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons },
+        }).catch(() => {});
       });
     }
   });

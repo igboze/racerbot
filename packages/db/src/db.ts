@@ -1663,6 +1663,24 @@ export async function cancelSnipeOrder(orderId: string, userId: string): Promise
   return (r.rowCount ?? 0) > 0;
 }
 
+export async function getSnipeOrderById(orderId: string, userId: string): Promise<SnipeOrderRecord | null> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT * FROM snipe_orders WHERE id = $1 AND user_id = $2`,
+    [orderId, userId]
+  );
+  return r.rows.length > 0 ? rowToSnipeOrder(r.rows[0]) : null;
+}
+
+export async function deleteSnipeOrder(orderId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  const r = await db.query(
+    `DELETE FROM snipe_orders WHERE id = $1 AND user_id = $2`,
+    [orderId, userId]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
 /** Active one-shot token snipes watching this exact contract address. */
 export async function getActiveTokenSnipes(tokenAddress: string): Promise<SnipeOrderRecord[]> {
   const db = await getDb();
