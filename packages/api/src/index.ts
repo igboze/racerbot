@@ -15,7 +15,7 @@ import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { startBuyAlertListener } from './buyAlerts.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
-import { startDepositWatcher, stopDepositWatcher } from './depositWatcher.js';
+import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } from './depositWatcher.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './workers.js';
@@ -57,7 +57,16 @@ async function main(): Promise<void> {
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
   setBotInstance(bot);
 
+  // Mark user active for high-cadence deposit monitoring whenever they interact
+  bot.use((ctx, next) => {
+    if (ctx.from?.id) {
+      markUserActiveForDeposit(ctx.from.id);
+    }
+    return next();
+  });
+
   // RPC provider health checks every 30s. Without this, providers marked
+
   // unhealthy in THIS process were never restored (only the detector ran
   // health checks), and the trade gate would block every trade forever.
   getNear().startHealthChecks(30_000);

@@ -71,6 +71,7 @@ export type {
 export {
   MultiRpcNear,
   getNear,
+  getFreeNear,
   clearAccessKeyCache,
   DEFAULT_RPC_URLS,
   getFastnearAccountTokens,
