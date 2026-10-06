@@ -1279,21 +1279,45 @@ export function buildSettingsDashboard(user: UserRecord) {
 }
 
 // ── Helper: Build Snipe Rules Dashboard ─────────────────────────────────────
-export function buildSnipeDashboard(user: UserRecord) {
+export async function buildSnipeDashboard(user: UserRecord) {
   const autoBuy = user.auto_buy_enabled;
   const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
   const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
+  const activeOrders = await getSnipeOrdersByUser(user.id)
+    .catch(() => [])
+    .then((orders) => orders.filter((o) => o.status === 'active'));
+
+  let activeText = '';
+  if (activeOrders.length > 0) {
+    activeText =
+      `\n\n🎯 *Active Snipe Orders (${activeOrders.length})*:\n` +
+      activeOrders
+        .map((o) => {
+          const target = o.snipe_type === 'token' ? `🪙 \`${o.token_address}\`` : `👤 \`${o.deployer_address}\``;
+          return `• 🟢 ${target} — *${o.amount_near} NEAR*`;
+        })
+        .join('\n');
+  }
 
   const text =
     `🎯 *Snipe Rules*\n\n` +
     `• *Auto-Buy Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
     `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
-    `• *Min Liquidity*: \`${minLiq} NEAR\`\n\n` +
+    `• *Min Liquidity*: \`${minLiq} NEAR\`${activeText}\n\n` +
     `*Targeted Snipes*:\n` +
     `• 🎯 Snipe a specific token CA\n` +
     `• 👤 Snipe all launches by a dev wallet`;
 
+  const cancelButtons: any[] = activeOrders.map((o) => [
+    cb(
+      `❌ Cancel ${o.snipe_type === 'token' ? o.token_address : 'dev ' + o.deployer_address}`.slice(0, 60),
+      `snipe_order_cancel:${o.id}`,
+      'danger'
+    ),
+  ]);
+
   const keyboard = Markup.inlineKeyboard([
+    ...cancelButtons,
     [
       cb(
         autoBuy ? '🟢 Auto-Buy: ON' : '🔴 Auto-Buy: OFF',
@@ -1306,7 +1330,7 @@ export function buildSnipeDashboard(user: UserRecord) {
       cb('👤 Snipe by Dev', 'snipe_dev_start', 'success'),
     ],
     [
-      cb('📋 My Snipe Orders', 'snipe_orders', 'primary'),
+      cb(`📋 My Snipe Orders (${activeOrders.length})`, 'snipe_orders', 'primary'),
     ],
     [
       cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
@@ -2381,7 +2405,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.answerCbQuery('Please run /start first.').catch(() => {});
         return;
       }
-      const dash = buildSnipeDashboard(user);
+      const dash = await buildSnipeDashboard(user);
       await ctx.answerCbQuery().catch(() => {});
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
@@ -2740,7 +2764,14 @@ export function setupRoutes(bot: Telegraf): void {
     const ok = await cancelSnipeOrder(orderId, user.id).catch(() => false);
     await ctx.answerCbQuery(ok ? 'Snipe order cancelled.' : 'Order not found or already closed.').catch(() => {});
     if (ok) {
-      await ctx.editMessageText('✅ Snipe order cancelled.').catch(() => {});
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [[cb('🔙 Back to Snipe Rules', 'menu_snipe', 'primary')]],
+        },
+      };
+      await ctx.editMessageText('✅ *Snipe order cancelled.*', { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+        await ctx.reply('✅ *Snipe order cancelled.*', { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+      });
     }
   });
 
@@ -4093,7 +4124,7 @@ export function setupRoutes(bot: Telegraf): void {
     const newStatus = !user.auto_buy_enabled;
     const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
     await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
-    const dash = buildSnipeDashboard(updated);
+    const dash = await buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -4134,7 +4165,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!user) return;
     const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
     await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => {});
-    const dash = buildSnipeDashboard(updated);
+    const dash = await buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -4145,7 +4176,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!user) return;
     const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
     await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => {});
-    const dash = buildSnipeDashboard(updated);
+    const dash = await buildSnipeDashboard(updated);
     await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
   });
 
@@ -6228,7 +6259,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
           await ctx.reply(`✅ Auto-buy amount updated to ${amt} NEAR!`);
-          const dash = buildSnipeDashboard(updated);
+          const dash = await buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
         return;
@@ -6244,7 +6275,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
           await ctx.reply(`✅ Min pool liquidity updated to ${liq} NEAR!`);
-          const dash = buildSnipeDashboard(updated);
+          const dash = await buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
         return;
@@ -6334,9 +6365,16 @@ export function setupRoutes(bot: Telegraf): void {
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${tokenAddress}\`\n` +
             `💰 Amount: \`${amt} NEAR\`\n\n` +
-            `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.\n` +
-            `Manage it in 🎯 Snipe Rules → 📋 My Snipe Orders.`,
-            { parse_mode: 'Markdown' }
+            `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
+                  [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+                ],
+              },
+            }
           );
         }
         return;
@@ -6373,7 +6411,7 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`);
           return;
         }
-        await createSnipeOrder({
+        const order = await createSnipeOrder({
           user_id: user.id,
           snipe_type: 'deployer',
           deployer_address: pending.deployerAddress,
@@ -6383,8 +6421,16 @@ export function setupRoutes(bot: Telegraf): void {
           `👤 *Deployer Snipe Armed!*\n\n` +
           `🧑‍💻 Deployer: \`${pending.deployerAddress}\`\n` +
           `💰 Amount per launch: \`${amt} NEAR\`\n\n` +
-          `Every new token launched by this wallet will be auto-bought the moment it's detected — until you cancel in 🎯 Snipe Rules → 📋 My Snipe Orders.`,
-          { parse_mode: 'Markdown' }
+          `Every new token launched by this wallet will be auto-bought the moment it's detected.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
+                [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+              ],
+            },
+          }
         );
         return;
       }
