@@ -258,11 +258,54 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
 
 /**
  * Check if a token is whitelisted on Ref Finance before trading.
- * Swaps on Ref Finance (v2.ref-finance.near and dclv2.ref-labs.near) execute via ft_transfer_call
- * with force: 0, which directly transfers output tokens to the user without requiring register_tokens.
+ * If the token is not on Ref's global whitelist AND not in the user's account whitelist on Ref,
+ * registers the token via register_tokens on v2.ref-finance.near to prevent E407: account not in pool whitelist panics.
  */
-export async function ensureRefTokenRegistered(_tokenAddress: string, _accountId?: string): Promise<void> {
-  return;
+export async function ensureRefTokenRegistered(tokenAddress: string, accountId?: string): Promise<void> {
+  if (!accountId || !tokenAddress || tokenAddress === 'wrap.near' || tokenAddress === 'near') return;
+
+  const cacheKey = `${accountId}:${tokenAddress}`;
+  if (refTracker.isTokenConfirmed(cacheKey)) return;
+
+  const hasKey = await near.hasKey(accountId);
+  if (!hasKey) return;
+
+  // 1. Check if token is globally whitelisted on Ref Finance
+  const globalWhitelisted: string[] = await near.getWhitelistedTokens().catch(() => []);
+  if (Array.isArray(globalWhitelisted) && globalWhitelisted.includes(tokenAddress)) {
+    refTracker.confirmToken(cacheKey);
+    return;
+  }
+
+  // 2. Check if account has registered this token in Ref Finance internal storage
+  const userTokens: string[] = await near.view<string[]>('v2.ref-finance.near', 'get_user_whitelisted_tokens', { account_id: accountId }).catch(() => []);
+  if (Array.isArray(userTokens) && userTokens.includes(tokenAddress)) {
+    refTracker.confirmToken(cacheKey);
+    return;
+  }
+
+  // 3. Register token on v2.ref-finance.near
+  console.log(`[EXECUTOR] Token ${tokenAddress} is not whitelisted on Ref Finance for ${accountId}. Registering token via register_tokens...`);
+  try {
+    const depositYocto = BigInt('1000000000000000000000'); // 0.001 NEAR deposit
+    await near.signAndSendTransactionAll(accountId, 'v2.ref-finance.near', [
+      transactions.functionCall(
+        'register_tokens',
+        { token_ids: [tokenAddress] },
+        BigInt('30000000000000'),
+        depositYocto
+      ),
+    ], 30_000);
+    refTracker.confirmToken(cacheKey);
+    console.log(`[EXECUTOR] Successfully registered token ${tokenAddress} on Ref Finance for ${accountId}`);
+  } catch (err: any) {
+    const msg = (err?.message ?? String(err)).toLowerCase();
+    if (msg.includes('already registered') || msg.includes('token already registered')) {
+      refTracker.confirmToken(cacheKey);
+      return;
+    }
+    console.warn(`[EXECUTOR] Token registration on Ref Finance failed for ${tokenAddress}:`, err?.message);
+  }
 }
 
 // ── Swap execution ────────────────────────────────────────────────────────────
@@ -1507,6 +1550,7 @@ export class SwapExecutor {
               return typeof rheaPoolId === 'number' ? rheaPoolId : null;
             })(),
             ensureRefStorage(subaccountId),
+            ensureRefTokenRegistered(targetToken, subaccountId),
             !isBuy ? ensureStorage(token_in) : Promise.resolve(),
             !isBuy ? ensureStorage('wrap.near') : Promise.resolve(),
           ]);
