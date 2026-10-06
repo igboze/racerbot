@@ -1245,8 +1245,16 @@ export class MultiRpcNear {
       fee?: number;
     }> = [];
 
-    // 1. Direct pool with wrap.near on v2.ref-finance.near AND DCL pool on dclv2.ref-labs.near in parallel
-    const [simpleRes, dclRes] = await Promise.allSettled([
+    const pairedTokensForDcl = [
+      'wrap.near',
+      '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+      'usdc.near',
+      'usdt.tether-token.near',
+      'token.rhealab.near',
+    ];
+
+    // 1. Direct pool with wrap.near on v2.ref-finance.near AND DCL pools on dclv2.ref-labs.near across paired tokens in parallel
+    const [simpleRes, ...dclResults] = await Promise.allSettled([
       (async () => {
         try {
           const poolId = await this.findRheaPoolId('wrap.near', tokenAddress);
@@ -1272,15 +1280,16 @@ export class MultiRpcNear {
         } catch { /* no-op */ }
         return null;
       })(),
-      (async () => {
+      ...pairedTokensForDcl.map(async (paired) => {
         try {
-          const dclPoolId = await this.findDclPoolId('wrap.near', tokenAddress);
+          const dclPoolId = await this.findDclPoolId(paired, tokenAddress);
           if (dclPoolId) {
-            const st = await this.getDclPoolState(dclPoolId, 'wrap.near');
+            const st = await this.getDclPoolState(dclPoolId, paired);
             if (st.price > 0 && st.liquidityNear > 0) {
               return {
                 poolId: dclPoolId,
-                pairedToken: 'wrap.near',
+                pairedToken: paired,
+                intermediateToken: paired !== 'wrap.near' ? paired : undefined,
                 isDcl: true,
                 price: st.price,
                 liquidityNear: st.liquidityNear,
@@ -1291,17 +1300,19 @@ export class MultiRpcNear {
           }
         } catch { /* no-op */ }
         return null;
-      })(),
+      }),
     ]);
 
     if (simpleRes.status === 'fulfilled' && simpleRes.value) {
       candidates.push(simpleRes.value);
     }
-    if (dclRes.status === 'fulfilled' && dclRes.value) {
-      candidates.push(dclRes.value);
+    for (const dclRes of dclResults) {
+      if (dclRes.status === 'fulfilled' && dclRes.value) {
+        candidates.push(dclRes.value);
+      }
     }
 
-    // Fast-path: if we found a direct wrap.near pool (simple or DCL) with liquidity,
+    // Fast-path: if we found a direct pool (simple or DCL) with liquidity,
     // pick the higher liquidity pool immediately without waiting on slow multi-hop/indexer scans!
     const bestDirect = candidates.reduce((best, c) => (!best || c.liquidityNear > best.liquidityNear ? c : best), null as (typeof candidates)[0] | null);
     if (bestDirect && bestDirect.liquidityNear > 0) {
