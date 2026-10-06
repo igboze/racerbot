@@ -1360,32 +1360,169 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     throw new Error('MAIN_WALLET_PRIVATE_KEY is not configured on server.');
   }
 
-  const keyStore = new keyStores.InMemoryKeyStore();
-  await keyStore.setKey(
-    'mainnet',
-    RACERBOT_PARENT_ACCOUNT,
-    KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any)
-  );
-
-  const nearConn = await connect({
-    networkId: 'mainnet',
-    keyStore,
-    nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+  const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+  await connectWithNearRpcFailover(RACERBOT_PARENT_ACCOUNT, parentKeyPair, async (parentAccount) => {
+    // Fund subaccount with NEAR's storage-stake minimum only (182 bytes at 0.00001 NEAR/byte = 0.00182 NEAR)
+    const initialBalance = nearUtils.format.parseNearAmount('0.00182')!;
+    await parentAccount.createAccount(
+      subaccountId,
+      publicKey.toString(),
+      BigInt(initialBalance)
+    );
   });
 
-  const parentAccount = await nearConn.account(RACERBOT_PARENT_ACCOUNT);
+  // Step 3: Encrypt real secret key and store in DB
+  const encryptedKey = encrypt(privateKey, MASTER_KEY);
 
-  // Fund subaccount with NEAR's storage-stake minimum only (182 bytes at 0.00001 NEAR/byte = 0.00182 NEAR),
-  // not a gas buffer. Gas and trading balance are expected to come from the user's own deposit
-  // before any trade or subaccount-signed action.
-  const initialBalance = nearUtils.format.parseNearAmount('0.00182')!;
+  const user = await createUser({
+    telegram_id: telegramId,
+    subaccount_id: subaccountId,
+    scoped_key_encrypted: encryptedKey,
+    sui_address: suiWallet.address,
+    sui_private_key_enc: suiWallet.encryptedPrivateKey,
+  });
 
-  // Submit on-chain createAccount and await confirmation
-  await parentAccount.createAccount(
+  // Generate referral code based on username
+  if (username) {
+    await generateReferralCode(user.id, username);
+  }
+
+  // Create referral record if referrer exists
+  if (referrerId) {
+    await createReferral(referrerId, user.id);
+  }
+
+  return {
+    userId: user.id,
     subaccountId,
-    publicKey.toString(),
-    BigInt(initialBalance)
-  );
+    privateKey, // Raw exported NEAR private key string (ed25519:<base58>)
+    suiAddress: suiWallet.address,
+    suiPrivateKey: suiWallet.privateKeySecret,
+    isExisting: false,
+  };
+}
+
+/**
+ * Executes an account-based NEAR transaction with automatic RPC failover across all configured endpoints.
+ * Prevents 429 rate limit errors from crashing user operations.
+ */
+async function connectWithNearRpcFailover<T>(
+  accountId: string,
+  keyPair: KeyPair,
+  fn: (account: any) => Promise<T>
+): Promise<T> {
+  const keyStore = new keyStores.InMemoryKeyStore();
+  await keyStore.setKey('mainnet', accountId, keyPair);
+
+  const urls = RPC_URLS.length > 0 ? RPC_URLS : [
+    'https://free.rpc.fastnear.com',
+    'https://rpc.mainnet.near.org',
+    'https://rpc.mainnet.fastnear.com',
+    'https://near.lava.build',
+    'https://near.drpc.org',
+  ];
+
+  let lastErr: any = null;
+  for (const url of urls) {
+    try {
+      const nearConn = await connect({
+        networkId: 'mainnet',
+        keyStore,
+        nodeUrl: url,
+      });
+      const account = await nearConn.account(accountId);
+      return await fn(account);
+    } catch (err: any) {
+      lastErr = err;
+      const msg = String(err?.message || err).toLowerCase();
+      if (
+        msg.includes('429') ||
+        msg.includes('rate limit') ||
+        msg.includes('too many requests') ||
+        msg.includes('fetch failed') ||
+        msg.includes('timeout') ||
+        msg.includes('econnrefused')
+      ) {
+        console.warn(`[NEAR_TX] RPC ${url} rate-limited/failed (${msg.slice(0, 100)}), falling back to next endpoint...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error('All NEAR RPC endpoints failed to process transaction.');
+}
+
+/**
+ * Creates a dedicated subaccount (e.g. `u<telegramId>.racerbot.near`) for a user on-chain,
+ * generates a scoped access keypair, encrypts the private key with master key,
+ * and initializes storage with the required minimum deposit.
+ * Returns the plain-text credentials once so the user can export/backup if desired.
+ */
+export async function createSubaccount(
+  telegramId: number,
+  username?: string,
+  referrerId?: string
+): Promise<{
+  userId: string;
+  subaccountId: string;
+  privateKey: string;
+  suiAddress: string;
+  suiPrivateKey: string;
+  isExisting: boolean;
+}> {
+  // Step 1: Check if user already has an active subaccount
+  const existingUser = await getUserByTelegramId(telegramId);
+  if (existingUser && existingUser.subaccount_id) {
+    let privateKey = '';
+    try {
+      privateKey = decrypt(existingUser.scoped_key_encrypted, MASTER_KEY);
+    } catch {
+      privateKey = 'Decryption error — please contact support';
+    }
+
+    let suiPrivateKey = '';
+    if (existingUser.sui_private_key_enc) {
+      try {
+        suiPrivateKey = decrypt(existingUser.sui_private_key_enc, MASTER_KEY);
+      } catch {
+        suiPrivateKey = '';
+      }
+    }
+
+    return {
+      userId: existingUser.id,
+      subaccountId: existingUser.subaccount_id,
+      privateKey,
+      suiAddress: existingUser.sui_address || '',
+      suiPrivateKey,
+      isExisting: true,
+    };
+  }
+
+  const prefix = generateRandomAccountPrefix();
+  const subaccountId = `${prefix}.${RACERBOT_PARENT_ACCOUNT}`;
+  const keyPair = generateScopedAccessKey();
+  const publicKey = keyPair.getPublicKey();
+  const privateKey = keyPair.toString(); // "ed25519:<base58>"
+
+  // Step 2: Generate Sui Ed25519 wallet
+  const suiWallet = generateSuiWallet(MASTER_KEY);
+
+  // Step 4: Actually create subaccount on-chain before returning success
+  if (!MAIN_WALLET_PRIVATE_KEY) {
+    throw new Error('MAIN_WALLET_PRIVATE_KEY is not configured on server.');
+  }
+
+  const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+  await connectWithNearRpcFailover(RACERBOT_PARENT_ACCOUNT, parentKeyPair, async (parentAccount) => {
+    // Fund subaccount with NEAR's storage-stake minimum only (182 bytes at 0.00001 NEAR/byte = 0.00182 NEAR)
+    const initialBalance = nearUtils.format.parseNearAmount('0.00182')!;
+    await parentAccount.createAccount(
+      subaccountId,
+      publicKey.toString(),
+      BigInt(initialBalance)
+    );
+  });
 
   // Step 3: Encrypt real secret key and store in DB
   const encryptedKey = encrypt(privateKey, MASTER_KEY);
@@ -1452,23 +1589,13 @@ export async function rotateUserKey(telegramId: number): Promise<RotateKeyResult
     const newPublicKey = newKeyPair.getPublicKey();
     const newPrivateKey = newKeyPair.toString();
 
-    // Connect as subaccount using current key
-    const keyStore = new keyStores.InMemoryKeyStore();
-    await keyStore.setKey('mainnet', user.subaccount_id, currentKeyPair);
+    await connectWithNearRpcFailover(user.subaccount_id, currentKeyPair, async (subaccount) => {
+      // 1. Add new key first, confirm it landed on-chain
+      await subaccount.addKey(newPublicKey.toString());
 
-    const nearConn = await connect({
-      networkId: 'mainnet',
-      keyStore,
-      nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+      // 2. Delete old key, confirm it landed on-chain
+      await subaccount.deleteKey(currentPublicKey.toString());
     });
-
-    const subaccount = await nearConn.account(user.subaccount_id);
-
-    // 1. Add new key first, confirm it landed on-chain
-    await subaccount.addKey(newPublicKey.toString());
-
-    // 2. Delete old key, confirm it landed on-chain
-    await subaccount.deleteKey(currentPublicKey.toString());
 
     // 3. Encrypt and store new key in DB only after on-chain swap confirmed
     const encryptedNewKey = encrypt(newPrivateKey, MASTER_KEY);
@@ -1746,27 +1873,20 @@ export async function unwrapUserWrapNear(telegramId: number): Promise<{ success:
 
   const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
   const keyPair = KeyPair.fromString(privateKey as any);
-  const keyStore = new keyStores.InMemoryKeyStore();
-  await keyStore.setKey('mainnet', subaccountId, keyPair);
 
-  const nearConn = await connect({
-    networkId: 'mainnet',
-    keyStore,
-    nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+  return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
+    await account.functionCall({
+      contractId: 'wrap.near',
+      methodName: 'near_withdraw',
+      args: { amount: wrapBal },
+      gas: BigInt('30000000000000'),
+      attachedDeposit: BigInt('1'),
+    });
+
+    const formatted = (Number(BigInt(wrapBal) / 1000000000000000000n) / 1e6).toFixed(4);
+    invalidateBalanceCache(telegramId);
+    return { success: true, unwrappedAmount: formatted };
   });
-  const account = await nearConn.account(subaccountId);
-
-  await account.functionCall({
-    contractId: 'wrap.near',
-    methodName: 'near_withdraw',
-    args: { amount: wrapBal },
-    gas: BigInt('30000000000000'),
-    attachedDeposit: BigInt('1'),
-  });
-
-  const formatted = (Number(BigInt(wrapBal) / 1000000000000000000n) / 1e6).toFixed(4);
-  invalidateBalanceCache(telegramId);
-  return { success: true, unwrappedAmount: formatted };
 }
 
 /**
@@ -1819,24 +1939,17 @@ export async function withdrawFunds(
 
   const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
   const keyPair = KeyPair.fromString(privateKey as any);
-  const keyStore = new keyStores.InMemoryKeyStore();
-  await keyStore.setKey('mainnet', subaccountId, keyPair);
 
-  const nearConn = await connect({
-    networkId: 'mainnet',
-    keyStore,
-    nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+  return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
+    const res = await account.sendMoney(destination, withdrawYocto);
+    const formattedWithdrawn = (Number(withdrawYocto / 1000000000000000000n) / 1e6).toFixed(4);
+
+    return {
+      txHash: res.transaction.hash,
+      amountWithdrawn: formattedWithdrawn,
+      destination,
+    };
   });
-  const account = await nearConn.account(subaccountId);
-
-  const res = await account.sendMoney(destination, withdrawYocto);
-  const formattedWithdrawn = (Number(withdrawYocto / 1000000000000000000n) / 1e6).toFixed(4);
-
-  return {
-    txHash: res.transaction.hash,
-    amountWithdrawn: formattedWithdrawn,
-    destination,
-  };
 }
 
 /**
@@ -1925,18 +2038,12 @@ export async function payReferralReward(
   }
 
   const keyPair = KeyPair.fromString(treasuryKey as any);
-  const keyStore = new keyStores.InMemoryKeyStore();
-  await keyStore.setKey('mainnet', TREASURY_ACCOUNT_ID, keyPair);
 
-  const nearConn = await connect({
-    networkId: 'mainnet',
-    keyStore,
-    nodeUrl: RPC_URLS[0] || 'https://rpc.mainnet.fastnear.com',
+  const res = await connectWithNearRpcFailover(TREASURY_ACCOUNT_ID, keyPair, async (account) => {
+    const yocto = BigInt(nearUtils.format.parseNearAmount(amountNear.toFixed(8))!);
+    return await account.sendMoney(destinationSubaccount, yocto);
   });
-  const account = await nearConn.account(TREASURY_ACCOUNT_ID);
 
-  const yocto = BigInt(nearUtils.format.parseNearAmount(amountNear.toFixed(8))!);
-  const res = await account.sendMoney(destinationSubaccount, yocto);
   return { txHash: res.transaction.hash };
 }
 
