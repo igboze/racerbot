@@ -4,17 +4,22 @@ export interface TokenSafetyReport {
   tokenAddress: string;
   isHoneypot: boolean;
   safe: boolean;
-  risk: 'low' | 'medium' | 'high';
+  risk: 'low' | 'medium' | 'high' | 'critical';
   isAuditedLaunchpad: boolean;
   launchpadName?: string;
   reasons: string[];
   dangerousMethods: string[];
   warning?: string;
   allExportedMethods?: string[];
+  isDrained?: boolean;
+  isUnlockedRheaPool?: boolean;
+  liquidityNear?: number;
+  rheaPoolId?: number | null;
+  lpLocked?: boolean;
 }
 
 // ── Established, audited launchpad factories & trusted tokens ────────────────
-const VERIFIED_LAUNCHPAD_SUFFIXES = [
+export const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.meme-cooking.near',
   '.nearlytrade.near',
   '.launchpad.justhoot.near',
@@ -29,6 +34,8 @@ const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.gaypad.j1-racing.near',
   '.exchange.kelytradevs.near',
   '.kelytra.near',
+  '.onetokenhub.near',
+  'pad.onetokenhub.near',
 ];
 
 export const VERIFIED_CORE_TOKENS = new Set([
@@ -45,6 +52,16 @@ export function isCoreToken(tokenAddress: string): boolean {
   if (!tokenAddress) return false;
   const lower = tokenAddress.toLowerCase().trim();
   return VERIFIED_CORE_TOKENS.has(lower) || lower === 'wrap.near' || lower === 'near';
+}
+
+export function isAuditedLaunchpadToken(tokenAddress: string): boolean {
+  if (!tokenAddress) return false;
+  const lower = tokenAddress.toLowerCase().trim();
+  if (isCoreToken(lower)) return true;
+  for (const suffix of VERIFIED_LAUNCHPAD_SUFFIXES) {
+    if (lower.endsWith(suffix) || lower === suffix) return true;
+  }
+  return false;
 }
 
 // ── Known dangerous backdoor method signatures ──────────────────────────────
@@ -100,7 +117,8 @@ const SAFETY_CACHE_TTL_MS = 5 * 60_000;
  *
  * 1. Verifies if token was created by an audited launchpad factory.
  * 2. If standalone / custom contract, inspects compiled WASM exports via RPC.
- * 3. Flags or blocks any unauthorized balance deduction / freeze backdoors.
+ * 3. Inspects Rhea/Ref Finance liquidity to detect drained/rugged pools & unlocked LP shares.
+ * 4. Flags or blocks any unauthorized balance deduction, freeze backdoors, or liquidity rugs.
  */
 export async function checkTokenSafety(tokenAddress: string, forceFresh = false): Promise<TokenSafetyReport> {
   const normAddress = tokenAddress.toLowerCase().trim();
@@ -124,6 +142,9 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
       launchpadName: isSuiPump ? 'SuiPump' : undefined,
       reasons: [],
       dangerousMethods: [],
+      lpLocked: true,
+      isUnlockedRheaPool: false,
+      isDrained: false,
     };
     safetyCache.set(normAddress, { at: Date.now(), report });
     return report;
@@ -140,13 +161,16 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
       launchpadName: 'Verified Native / Core',
       reasons: [],
       dangerousMethods: [],
+      lpLocked: true,
+      isUnlockedRheaPool: false,
+      isDrained: false,
     };
     safetyCache.set(normAddress, { at: Date.now(), report });
     return report;
   }
 
   for (const suffix of VERIFIED_LAUNCHPAD_SUFFIXES) {
-    if (normAddress.endsWith(suffix)) {
+    if (normAddress.endsWith(suffix) || normAddress === suffix) {
       let launchpadName = suffix.replace(/^\./, '').split('.')[0] || suffix;
       if (suffix.includes('kelytra') || suffix.includes('kelytradevs')) {
         launchpadName = 'Kelytra';
@@ -156,6 +180,8 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
         launchpadName = 'JustHoot';
       } else if (suffix.includes('shoremarkets')) {
         launchpadName = 'ShoreMarkets';
+      } else if (suffix.includes('onetokenhub')) {
+        launchpadName = 'OneTokenHub';
       } else {
         launchpadName = launchpadName.charAt(0).toUpperCase() + launchpadName.slice(1);
       }
@@ -168,6 +194,9 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
         launchpadName,
         reasons: [],
         dangerousMethods: [],
+        lpLocked: true,
+        isUnlockedRheaPool: false,
+        isDrained: false,
       };
       safetyCache.set(normAddress, { at: Date.now(), report });
       return report;
@@ -257,7 +286,85 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
       return report;
     }
 
-    // Clean standalone contract without backdoors
+    // ── NEAR Tokens: Step 3 - Check Rhea / Ref Finance Liquidity & LP Locking ──
+    // Standalone tokens on Rhea AMM have high rug-pull risk if LP shares are unlocked.
+    // Also, if liquidity has already been pulled (< 2 NEAR), it is a dead/rugged pool.
+    let isDrained = false;
+    let isUnlockedRheaPool = false;
+    let rheaLiqNear = 0;
+    let rheaPoolId: number | null = null;
+    let lpLocked = false;
+
+    try {
+      const rhea = await near.findRheaPoolForToken(normAddress).catch(() => null);
+      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined) {
+        rheaLiqNear = rhea.liquidityNear;
+        if (!rhea.isDcl && typeof rhea.poolId === 'number') {
+          rheaPoolId = rhea.poolId;
+        }
+
+        // Standard Ref Finance simple pools (SIMPLE_POOL) do NOT lock LP shares by default.
+        if (!rhea.isDcl) {
+          isUnlockedRheaPool = true;
+          lpLocked = false;
+        }
+
+        // If pool liquidity has been drained (< 2.0 NEAR, ~$10), mark as critical drained/rugged pool
+        if (rheaLiqNear < 2.0) {
+          isDrained = true;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[SAFETY] Could not check Rhea pool liquidity for ${normAddress}:`, err.message);
+    }
+
+    if (isDrained) {
+      const report: TokenSafetyReport = {
+        tokenAddress: normAddress,
+        isHoneypot: true, // Block buying to protect user wallet
+        safe: false,
+        risk: 'critical',
+        isAuditedLaunchpad: false,
+        isDrained: true,
+        isUnlockedRheaPool,
+        liquidityNear: rheaLiqNear,
+        rheaPoolId,
+        lpLocked: false,
+        reasons: [
+          `Pool liquidity has been DRAINED or PULLED (${rheaLiqNear.toFixed(4)} NEAR remaining). ` +
+          `Buying into this pool will cause immediate 100% loss of funds.`
+        ],
+        dangerousMethods: [],
+        allExportedMethods: exportedFuncs,
+      };
+      safetyCache.set(normAddress, { at: Date.now(), report });
+      return report;
+    }
+
+    if (isUnlockedRheaPool) {
+      const report: TokenSafetyReport = {
+        tokenAddress: normAddress,
+        isHoneypot: false,
+        safe: false,
+        risk: 'high',
+        isAuditedLaunchpad: false,
+        isDrained: false,
+        isUnlockedRheaPool: true,
+        liquidityNear: rheaLiqNear,
+        rheaPoolId,
+        lpLocked: false,
+        warning: 'Standalone Rhea AMM pool with UNLOCKED liquidity. The creator holds 100% of LP shares and can withdraw all pool liquidity at any moment.',
+        reasons: [
+          'Liquidity is NOT locked. Creator holds pool LP shares and can execute a liquidity rug pull at any time.'
+        ],
+        dangerousMethods: [],
+        allExportedMethods: exportedFuncs,
+      };
+      safetyCache.set(normAddress, { at: Date.now(), report });
+      return report;
+    }
+
+    // Clean standalone contract without backdoors or known pool risks
     const report: TokenSafetyReport = {
       tokenAddress: normAddress,
       isHoneypot: false,

@@ -593,11 +593,12 @@ export class SwapExecutor {
         checkTokenSafety(token_out).catch(() => null),
       ]);
 
-      if (safety?.isHoneypot) {
-        const dangerReason = safety.reasons[0] || `Backdoor method: ${safety.dangerousMethods.join(', ')}`;
+      if (safety?.isHoneypot || safety?.isDrained) {
+        const title = safety?.isDrained ? 'a DRAINED / RUGGED POOL' : 'a MALICIOUS HONEYPOT';
+        const dangerReason = safety.reasons[0] || (safety?.isDrained ? 'Pool liquidity has been drained or pulled' : `Backdoor method: ${safety?.dangerousMethods.join(', ')}`);
         throw new Error(
           `🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\n` +
-          `This token (\`${token_out}\`) was identified as a MALICIOUS HONEYPOT.\n` +
+          `This token (\`${token_out}\`) was identified as ${title}.\n` +
           `• ${dangerReason}\n\n` +
           `🛡️ RacerBot has blocked this transaction to prevent loss of funds.`
         );
@@ -2860,9 +2861,9 @@ export class SwapExecutor {
       checkTokenSafety(tokenAddress).catch(() => null),
     ]);
 
-    if (safety?.isHoneypot) {
-      const dangerReason = safety.reasons[0] || `backdoor_methods:${safety.dangerousMethods.join(',')}`;
-      return { safe: false, reason: `honeypot_backdoor:${dangerReason}` };
+    if (safety?.isHoneypot || safety?.isDrained) {
+      const dangerReason = safety.reasons[0] || (safety?.isDrained ? 'drained_pool' : `backdoor_methods:${safety.dangerousMethods.join(',')}`);
+      return { safe: false, reason: safety?.isDrained ? `drained_pool:${dangerReason}` : `honeypot_backdoor:${dangerReason}` };
     }
 
     if (!meta?.name || !meta?.symbol) {
