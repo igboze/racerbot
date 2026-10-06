@@ -1560,6 +1560,8 @@ function getUserFriendlyError(error: Error | string): string {
     return errorMsg.slice(0, 280);
 
   // ── Token storage / registration ─────────────────────────────────────────
+  if (r.includes('e407') || r.includes('not in pool whitelist') || r.includes('whitelist'))
+    return 'Token is not whitelisted on DEX. Please retry — RacerBot has registered your wallet with the pool.';
   if (r.includes('not registered') || r.includes('account is not registered'))
     return 'Your wallet needs to be registered with this token. This is usually done automatically — please retry.';
 
