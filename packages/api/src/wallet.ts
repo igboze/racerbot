@@ -186,19 +186,6 @@ export function isSuiToken(rawTokenAddress: string): boolean {
 // ── NEAR/USD price with multi-source failover ───────────────────────────────
 const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = [
   {
-    name: 'binance',
-    fetch: async () => {
-      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (!res.ok) throw new Error(`binance http ${res.status}`);
-      const data: any = await res.json();
-      const p = parseFloat(data?.price);
-      if (!(p > 0)) throw new Error('binance bad price');
-      return p;
-    },
-  },
-  {
     name: 'coinbase',
     fetch: async () => {
       const res = await fetch('https://api.coinbase.com/v2/prices/NEAR-USD/spot', {
@@ -222,6 +209,19 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
       const data: any = await res.json();
       const p = data?.near?.usd;
       if (!(p > 0)) throw new Error('coingecko bad price');
+      return p;
+    },
+  },
+  {
+    name: 'binance',
+    fetch: async () => {
+      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) throw new Error(`binance http ${res.status}`);
+      const data: any = await res.json();
+      const p = parseFloat(data?.price);
+      if (!(p > 0)) throw new Error('binance bad price');
       return p;
     },
   },
