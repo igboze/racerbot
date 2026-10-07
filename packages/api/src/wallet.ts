@@ -98,6 +98,8 @@ const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
 const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: number }>();
+// ── Single-flight deduplication to eliminate cache stampedes and duplicate RPC burns ────
+const inflightTokenInfoRequests = new Map<string, Promise<TokenInfoResult>>();
 
 // ── In-memory user balance cache with 8s TTL ──────────────────────────────────
 const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
@@ -156,6 +158,8 @@ export async function warmTokenInfoCache(): Promise<void> {
         bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
         dcl_pool_id: row.dcl_pool_id ?? null,
         tradeable: isTradableVenue(row.venue),
+        buy_tax_pct: row.buy_tax_pct != null ? Number(row.buy_tax_pct) : undefined,
+        sell_tax_pct: row.sell_tax_pct != null ? Number(row.sell_tax_pct) : undefined,
       };
       // Use a shorter TTL (15s) for warmed entries — they're older DB data, not live RPC
       tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 15000 });
@@ -678,13 +682,15 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     const decimals = dbCache.decimals !== null && dbCache.decimals !== undefined ? Number(dbCache.decimals) : (isSui ? 9 : 18);
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, decimals);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
-    const tax = await getDexTax({
-      venue: dbCache.venue,
-      bonding_phase: dbCache.bonding_phase as any,
-      dcl_pool_id: dbCache.dcl_pool_id,
-      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
-      chain: isSui ? 'sui' : 'near',
-    });
+    const tax = (dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined)
+      ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+      : await getDexTax({
+          venue: dbCache.venue,
+          bonding_phase: dbCache.bonding_phase as any,
+          dcl_pool_id: dbCache.dcl_pool_id,
+          rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+          chain: isSui ? 'sui' : 'near',
+        });
     const result: TokenInfoResult = {
       address: tokenAddress,
       chain: (dbCache.chain as any) || (isSui ? 'sui' : 'near'),
@@ -739,6 +745,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       return cached.data;
     }
   }
+
+  // Deduplicate inflight requests to eliminate cache stampedes and duplicate RPC burns
+  const inflightKey = `${tokenAddress}:${forceRefresh ? '1' : '0'}`;
+  const inflight = inflightTokenInfoRequests.get(inflightKey) || (!forceRefresh ? inflightTokenInfoRequests.get(`${tokenAddress}:1`) : null);
+  if (inflight) {
+    return inflight;
+  }
+
+  const fetchPromise = (async (): Promise<TokenInfoResult> => {
 
   // ── SUI / SuiPump Token Resolution ──────────────────────────────────────────
   if (isSuiToken(tokenAddress)) {
@@ -939,13 +954,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       holdersDataPromise,
       totalTxnsPromise,
     ]);
-    const tax = await getDexTax({
-      venue: (dbCache.venue as any) ?? 'unknown',
-      bonding_phase: dbCache.bonding_phase as any,
-      dcl_pool_id: dbCache.dcl_pool_id,
-      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
-      chain: 'near',
-    });
+    const tax = (dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined)
+      ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+      : await getDexTax({
+          venue: (dbCache.venue as any) ?? 'unknown',
+          bonding_phase: dbCache.bonding_phase as any,
+          dcl_pool_id: dbCache.dcl_pool_id,
+          rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+          chain: 'near',
+        });
     const result: TokenInfoResult = {
       address: tokenAddress,
       name: dbCache.name ?? '',
@@ -1100,148 +1117,151 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     }
   }
 
-  // Step 1: Fast launchpad detection by token suffix (instant on-chain RPC lookup)
-  if (isMemooCookingToken(tokenAddress)) {
-    try {
-      const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
-      if (mcInfo.price > 0 || mcInfo.liquidity > 0) {
-        venue = 'memecooking';
-        price = mcInfo.price;
-        liquidity = mcInfo.liquidity;
-        bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
-        bondingProgressPct = mcInfo.progress;
-      }
-    } catch { /* no-op */ }
-  } else if (isIntearToken(tokenAddress)) {
-    try {
-      const intearState = await near.getIntearTokenState(tokenAddress);
-      if (intearState && intearState.price > 0) {
-        venue = 'intear';
-        price = intearState.price;
-        liquidity = intearState.liquidityNear;
-        if (intearState.totalSupply && intearState.totalSupply !== '0') {
-          totalSupply = intearState.totalSupply;
+  // Step 1: Fast launchpad detection by token suffix (instant on-chain RPC lookup - skipped if price resolved by fast-path)
+  if (price <= 0) {
+    if (isMemooCookingToken(tokenAddress)) {
+      try {
+        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
+        if (mcInfo.price > 0 || mcInfo.liquidity > 0) {
+          venue = 'memecooking';
+          price = mcInfo.price;
+          liquidity = mcInfo.liquidity;
+          bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
+          bondingProgressPct = mcInfo.progress;
         }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.nearlytrade.near')) {
-    try {
-      const ntState = await near.getNearlytradeTokenState(tokenAddress);
-      if (ntState && ntState.price > 0) {
-        venue = 'nearlytrade';
-        price = ntState.price;
-        liquidity = ntState.liquidityNear;
-        bondingPhase = ntState.phase;
-        bondingProgressPct = ntState.bondingProgressPct;
-        dclPoolId = ntState.dclPoolId;
-        if (ntState.totalSupply && ntState.totalSupply !== '0') {
-          totalSupply = ntState.totalSupply;
+      } catch { /* no-op */ }
+    } else if (isIntearToken(tokenAddress)) {
+      try {
+        const intearState = await near.getIntearTokenState(tokenAddress);
+        if (intearState && intearState.price > 0) {
+          venue = 'intear';
+          price = intearState.price;
+          liquidity = intearState.liquidityNear;
+          if (intearState.totalSupply && intearState.totalSupply !== '0') {
+            totalSupply = intearState.totalSupply;
+          }
         }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
-    try {
-      const smState = await near.getShardsmarketTokenState(tokenAddress);
-      const reserveNearYocto = parseFloat(smState.poolQuote || '0');
-      const reserveTokenRaw = parseFloat(smState.poolToken || '0');
-      if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
-        const reserveNearHuman = reserveNearYocto / 1e24;
-        const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
-        if (reserveTokenHuman > 0) {
-          price = reserveNearHuman / reserveTokenHuman;
-          liquidity = reserveNearHuman * 2;
-          venue = 'shardsmarket';
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.nearlytrade.near')) {
+      try {
+        const ntState = await near.getNearlytradeTokenState(tokenAddress);
+        if (ntState && ntState.price > 0) {
+          venue = 'nearlytrade';
+          price = ntState.price;
+          liquidity = ntState.liquidityNear;
+          bondingPhase = ntState.phase;
+          bondingProgressPct = ntState.bondingProgressPct;
+          dclPoolId = ntState.dclPoolId;
+          if (ntState.totalSupply && ntState.totalSupply !== '0') {
+            totalSupply = ntState.totalSupply;
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+      try {
+        const smState = await near.getShardsmarketTokenState(tokenAddress);
+        const reserveNearYocto = parseFloat(smState.poolQuote || '0');
+        const reserveTokenRaw = parseFloat(smState.poolToken || '0');
+        if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+          const reserveNearHuman = reserveNearYocto / 1e24;
+          const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+          if (reserveTokenHuman > 0) {
+            price = reserveNearHuman / reserveTokenHuman;
+            liquidity = reserveNearHuman * 2;
+            venue = 'shardsmarket';
+            if (smState.totalSupply && smState.totalSupply !== '0') {
+              totalSupply = smState.totalSupply;
+            }
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+      try {
+        const hubState = await near.getOneTokenHubState(tokenAddress);
+        if (hubState && hubState.price > 0) {
+          venue = 'onetokenhub';
+          price = hubState.price;
+          liquidity = hubState.liquidityNear;
+          dclPoolId = hubState.dclPoolId;
+          if (hubState.totalSupply && hubState.totalSupply !== '0') {
+            totalSupply = hubState.totalSupply;
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
+      try {
+        const padState = await near.getNEARpadState(tokenAddress);
+        if (padState && padState.price > 0) {
+          venue = 'nearpad';
+          price = padState.price;
+          liquidity = padState.liquidityNear;
+          dclPoolId = padState.dclPoolId;
+          if (padState.totalSupply && padState.totalSupply !== '0') {
+            totalSupply = padState.totalSupply;
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.gaypad.j1-racing.near')) {
+      try {
+        const gpState = await near.getGaypadTokenState(tokenAddress);
+        if (gpState && gpState.price > 0) {
+          venue = 'gaypad';
+          price = gpState.price;
+          liquidity = gpState.liquidityNear;
+          bondingPhase = gpState.phase;
+          bondingProgressPct = gpState.bondingProgressPct;
+          if (gpState.totalSupply && gpState.totalSupply !== '0') {
+            totalSupply = gpState.totalSupply;
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
+      try {
+        const dclId = `${tokenAddress}|wrap.near|10000`;
+        const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
+        if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
+          venue = 'rhea';
+          price = dclState.price;
+          liquidity = dclState.liquidityNear;
+          dclPoolId = dclId;
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.launch.shoremarkets.near')) {
+      try {
+        const smState = await near.getShoremarketsTokenState(tokenAddress);
+        if (smState && smState.price > 0) {
+          venue = 'shoremarkets';
+          price = smState.price;
+          liquidity = smState.liquidityNear;
+          bondingPhase = smState.phase;
+          bondingProgressPct = smState.bondingProgressPct;
+          dclPoolId = smState.dclPoolId;
           if (smState.totalSupply && smState.totalSupply !== '0') {
             totalSupply = smState.totalSupply;
           }
         }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
-    try {
-      const hubState = await near.getOneTokenHubState(tokenAddress);
-      if (hubState && hubState.price > 0) {
-        venue = 'onetokenhub';
-        price = hubState.price;
-        liquidity = hubState.liquidityNear;
-        dclPoolId = hubState.dclPoolId;
-        if (hubState.totalSupply && hubState.totalSupply !== '0') {
-          totalSupply = hubState.totalSupply;
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
+      try {
+        const ktState = await near.getKelytraTokenState(tokenAddress);
+        if (ktState && ktState.price > 0) {
+          venue = 'kelytra';
+          price = ktState.price;
+          liquidity = ktState.liquidityNear;
+          bondingPhase = ktState.phase;
+          bondingProgressPct = ktState.bondingProgressPct;
+          dclPoolId = ktState.dclPoolId;
+          if (ktState.totalSupply && ktState.totalSupply !== '0') {
+            totalSupply = ktState.totalSupply;
+          }
         }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
-    try {
-      const padState = await near.getNEARpadState(tokenAddress);
-      if (padState && padState.price > 0) {
-        venue = 'nearpad';
-        price = padState.price;
-        liquidity = padState.liquidityNear;
-        dclPoolId = padState.dclPoolId;
-        if (padState.totalSupply && padState.totalSupply !== '0') {
-          totalSupply = padState.totalSupply;
-        }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.gaypad.j1-racing.near')) {
-    try {
-      const gpState = await near.getGaypadTokenState(tokenAddress);
-      if (gpState && gpState.price > 0) {
-        venue = 'gaypad';
-        price = gpState.price;
-        liquidity = gpState.liquidityNear;
-        bondingPhase = gpState.phase;
-        bondingProgressPct = gpState.bondingProgressPct;
-        if (gpState.totalSupply && gpState.totalSupply !== '0') {
-          totalSupply = gpState.totalSupply;
-        }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
-    try {
-      const dclId = `${tokenAddress}|wrap.near|10000`;
-      const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
-      if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
-        venue = 'rhea';
-        price = dclState.price;
-        liquidity = dclState.liquidityNear;
-        dclPoolId = dclId;
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.launch.shoremarkets.near')) {
-    try {
-      const smState = await near.getShoremarketsTokenState(tokenAddress);
-      if (smState && smState.price > 0) {
-        venue = 'shoremarkets';
-        price = smState.price;
-        liquidity = smState.liquidityNear;
-        bondingPhase = smState.phase;
-        bondingProgressPct = smState.bondingProgressPct;
-        dclPoolId = smState.dclPoolId;
-        if (smState.totalSupply && smState.totalSupply !== '0') {
-          totalSupply = smState.totalSupply;
-        }
-      }
-    } catch { /* no-op */ }
-  } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
-    try {
-      const ktState = await near.getKelytraTokenState(tokenAddress);
-      if (ktState && ktState.price > 0) {
-        venue = 'kelytra';
-        price = ktState.price;
-        liquidity = ktState.liquidityNear;
-        bondingPhase = ktState.phase;
-        bondingProgressPct = ktState.bondingProgressPct;
-        dclPoolId = ktState.dclPoolId;
-        if (ktState.totalSupply && ktState.totalSupply !== '0') {
-          totalSupply = ktState.totalSupply;
-        }
-      }
-    } catch { /* no-op */ }
+      } catch { /* no-op */ }
+    }
   }
 
   let rheaCandidate: { venue: 'rhea'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
-  if (venue === 'unknown' || bondingPhase === 'bonded') {
+  // Step 2: Only probe Rhea if price is still unknown or pool ID is not yet resolved
+  if ((venue === 'unknown' || bondingPhase === 'bonded') && (price <= 0 || (!rheaPoolId && !dclPoolId))) {
     try {
       const rhea = await near.findRheaPoolForToken(tokenAddress);
       if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
@@ -1385,14 +1405,16 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   const tradeable = isTradableVenue(venue);
 
-  const tax = await getDexTax({
-    venue,
-    bonding_phase: bondingPhase,
-    dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
-    rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
-    pool_fee: rheaCandidate?.poolFee,
-    chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
-  });
+  const tax = (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
+    ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+    : await getDexTax({
+        venue,
+        bonding_phase: bondingPhase,
+        dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
+        rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
+        pool_fee: rheaCandidate?.poolFee,
+        chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
+      });
 
   const result: TokenInfoResult = {
     address: tokenAddress,
@@ -1442,11 +1464,22 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       dcl_pool_id: dclPoolId,
       last_price: price,
       last_liquidity: liquidity,
+      buy_tax_pct: tax.buyTaxPct,
+      sell_tax_pct: tax.sellTaxPct,
+      is_safe: true,
       updated_at: new Date(),
     }).catch(() => {})
   );
 
-  return result;
+    return result;
+  })();
+
+  inflightTokenInfoRequests.set(inflightKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    inflightTokenInfoRequests.delete(inflightKey);
+  }
 }
 
 // ── Section 1 Replacement: Custodial Onboarding & Key Rotation ──────────────
