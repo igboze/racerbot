@@ -186,17 +186,15 @@ export function isSuiToken(rawTokenAddress: string): boolean {
 // ── NEAR/USD price with multi-source failover ───────────────────────────────
 const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = [
   {
-    name: 'dexscreener',
+    name: 'binance',
     fetch: async () => {
-      const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/wrap.near', {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(3000),
+      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
+        signal: AbortSignal.timeout(2000),
       });
-      if (!res.ok) throw new Error(`dexscreener http ${res.status}`);
+      if (!res.ok) throw new Error(`binance http ${res.status}`);
       const data: any = await res.json();
-      const topPair = data.pairs?.find((p: any) => p.quoteToken?.symbol === 'USDC' || p.quoteToken?.symbol === 'USDt');
-      const p = parseFloat(topPair?.priceUsd);
-      if (!(p > 0)) throw new Error('dexscreener bad price');
+      const p = parseFloat(data?.price);
+      if (!(p > 0)) throw new Error('binance bad price');
       return p;
     },
   },
@@ -204,7 +202,7 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
     name: 'coinbase',
     fetch: async () => {
       const res = await fetch('https://api.coinbase.com/v2/prices/NEAR-USD/spot', {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(2500),
       });
       if (!res.ok) throw new Error(`coinbase http ${res.status}`);
       const data: any = await res.json();
@@ -218,7 +216,7 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
     fetch: async () => {
       const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd', {
         headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(2500),
       });
       if (!res.ok) throw new Error(`coingecko http ${res.status}`);
       const data: any = await res.json();
@@ -228,15 +226,17 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
     },
   },
   {
-    name: 'binance',
+    name: 'dexscreener',
     fetch: async () => {
-      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
-        signal: AbortSignal.timeout(2000),
+      const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/wrap.near', {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(2500),
       });
-      if (!res.ok) throw new Error(`binance http ${res.status}`);
+      if (!res.ok) throw new Error(`dexscreener http ${res.status}`);
       const data: any = await res.json();
-      const p = parseFloat(data?.price);
-      if (!(p > 0)) throw new Error('binance bad price');
+      const topPair = data.pairs?.find((p: any) => p.quoteToken?.symbol === 'USDC' || p.quoteToken?.symbol === 'USDt');
+      const p = parseFloat(topPair?.priceUsd);
+      if (!(p > 0)) throw new Error('dexscreener bad price');
       return p;
     },
   },

@@ -57,30 +57,35 @@ async function getAllRefPoolsOnChain(near: MultiRpcNear): Promise<{ fromIndex: n
 
   fetchRefPoolsInFlight = (async () => {
     try {
-      const numPools = await near.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0);
+      const numPools = await withTimeout(
+        near.view<number>('v2.ref-finance.near', 'get_number_of_pools', {}).catch(() => 0),
+        3000,
+        'get_number_of_pools timeout'
+      ).catch(() => 0);
       if (!numPools || numPools <= 0) return cachedRefPools || [];
 
-      console.log(`[findRheaPoolForToken] Refreshing on-chain pool cache across all ${numPools} pools (cached for 5m)...`);
       const batchSize = 250;
+      const maxBatches = 2; // Check up to 500 most recently created pools only (new tokens are at the end)
       const starts: number[] = [];
-      for (let s = Math.max(0, numPools - batchSize); s >= 0; s -= batchSize) {
+      for (let s = Math.max(0, numPools - batchSize); s >= 0 && starts.length < maxBatches; s -= batchSize) {
         starts.push(s);
       }
 
+      console.log(`[findRheaPoolForToken] Refreshing latest on-chain pools (${starts.length * batchSize} of ${numPools}, cached 5m)...`);
       const results: { fromIndex: number; pools: any[] }[] = [];
-      const concurrency = 6;
-      for (let i = 0; i < starts.length; i += concurrency) {
-        const slice = starts.slice(i, i + concurrency);
-        const batchResults = await Promise.allSettled(
-          slice.map(async (fromIndex) => {
-            const pools = await near.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize });
-            return { fromIndex, pools: pools || [] };
-          })
-        );
-        for (const r of batchResults) {
-          if (r.status === 'fulfilled') {
-            results.push(r.value);
-          }
+      const batchResults = await Promise.allSettled(
+        starts.map(async (fromIndex) => {
+          const pools = await withTimeout(
+            near.view<any[]>('v2.ref-finance.near', 'get_pools', { from_index: fromIndex, limit: batchSize }),
+            3500,
+            'get_pools timeout'
+          );
+          return { fromIndex, pools: pools || [] };
+        })
+      );
+      for (const r of batchResults) {
+        if (r.status === 'fulfilled') {
+          results.push(r.value);
         }
       }
 
@@ -1396,10 +1401,10 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
     }
 
-    // 4. On-chain scan of ALL Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
+    // 4. On-chain scan of latest Ref Finance AMM pools (LAST RESORT — only if REST API above found nothing)
     // Results are cached globally in memory for 5 minutes across all tokens to prevent repeated scans.
     if (candidates.length === 0) try {
-      const results = await getAllRefPoolsOnChain(this);
+      const results = await withTimeout(getAllRefPoolsOnChain(this), 5000, 'On-chain pool scan timed out').catch(() => []);
       for (const res of results) {
         const { fromIndex, pools } = res;
         for (let i = 0; i < pools.length; i++) {
