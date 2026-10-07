@@ -2333,32 +2333,55 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     // Exclude wrap.near (wNEAR is trading collateral, not a meme/speculative token) and 'near'
     discoveredTokens.delete('wrap.near');
     discoveredTokens.delete('near');
+    discoveredTokens.delete('aurora');
 
-    const allTokensToCheck = Array.from(discoveredTokens);
+    const existingTokens = Array.from(posMap.keys());
+    const newDiscovered = Array.from(discoveredTokens).filter(t => !posMap.has(t));
+    // Prioritize newly discovered tokens with non-zero indexer balances, limit to 20 to avoid RPC saturation
+    const topNewDiscovered = newDiscovered
+      .filter(t => {
+        const bal = indexerBalances.get(t);
+        return bal && bal !== '0';
+      })
+      .slice(0, 20);
+
+    const allTokensToCheck = Array.from(new Set([...existingTokens, ...topNewDiscovered]));
     const near = getNear();
 
-    // 3. Fetch NEAR token balances and metadata in parallel
+    // 3. Fetch NEAR token balances and metadata in batches of 8 to stay well under QuickNode rate limits
     if (allTokensToCheck.length > 0) {
-      const [balanceResults, infoResults] = await Promise.all([
-        Promise.allSettled(
-          allTokensToCheck.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
-            try {
-              const value = await Promise.race([
-                near.getTokenBalanceOnTradeRpc(tokenAddress, subaccountId),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
-              ]);
-              return { value, trusted: true };
-            } catch {
-              const idx = indexerBalances.get(tokenAddress);
-              // Stale indexer data is UNTRUSTED — it lags after DEX sells! Never use it to create new positions!
-              return idx !== undefined ? { value: idx, trusted: false } : { value: '0', trusted: false };
-            }
-          })
-        ),
-        Promise.allSettled(
-          allTokensToCheck.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
-        ),
-      ]);
+      const balanceResults: PromiseSettledResult<{ value: string; trusted: boolean }>[] = [];
+      const infoResults: PromiseSettledResult<TokenInfoResult | null>[] = [];
+      const BATCH_SIZE = 8;
+
+      for (let i = 0; i < allTokensToCheck.length; i += BATCH_SIZE) {
+        const batch = allTokensToCheck.slice(i, i + BATCH_SIZE);
+        const [batchBalances, batchInfos] = await Promise.all([
+          Promise.allSettled(
+            batch.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
+              try {
+                const value = await Promise.race([
+                  near.getTokenBalance(tokenAddress, subaccountId),
+                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3500)),
+                ]);
+                return { value: value || '0', trusted: true };
+              } catch (err: any) {
+                const msg = err?.message || '';
+                if (msg.includes('not registered') || msg.includes('does not exist')) {
+                  return { value: '0', trusted: true };
+                }
+                const idx = indexerBalances.get(tokenAddress);
+                return idx !== undefined ? { value: idx, trusted: false } : { value: '0', trusted: false };
+              }
+            })
+          ),
+          Promise.allSettled(
+            batch.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
+          ),
+        ]);
+        balanceResults.push(...batchBalances);
+        infoResults.push(...batchInfos);
+      }
 
       for (let i = 0; i < allTokensToCheck.length; i++) {
         const tokenAddress = allTokensToCheck[i];
