@@ -2939,15 +2939,22 @@ export function setupRoutes(bot: Telegraf): void {
       return { msg: emptyMsg, keyboard: emptyKeyboard };
     }
 
-    // Fetch all token info in parallel; forceRefresh pulls live pool prices
+    // Fetch all token info in parallel; forceRefresh pulls live pool prices with 5s fallback
     const infoResults = await Promise.allSettled(
-      positions.map(pos => getTokenInfo(pos.token_address, forceRefresh))
+      positions.map(pos =>
+        Promise.race([
+          getTokenInfo(pos.token_address, forceRefresh),
+          new Promise<TokenInfoResult | null>((resolve) =>
+            setTimeout(() => resolve(getTokenInfo(pos.token_address, false).catch(() => null)), 5000)
+          ),
+        ])
+      )
     );
-      const infoMap = new Map<string, TokenInfoResult | null>();
-      positions.forEach((pos, i) => {
-        const r = infoResults[i];
-        infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-      });
+    const infoMap = new Map<string, TokenInfoResult | null>();
+    positions.forEach((pos, i) => {
+      const r = infoResults[i];
+      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
+    });
 
     // Fetch fills in parallel to calculate exact cost basis and heal entry prices
     const fillsResults = await Promise.allSettled(
@@ -3148,11 +3155,20 @@ export function setupRoutes(bot: Telegraf): void {
         if (typeof (ctx as any).answerCbQuery === 'function') {
           await (ctx as any).answerCbQuery('🔄 Refreshing holdings...').catch(() => {});
         }
-        // Force live wallet deposit scan and live DEX/bonding-curve token pricing
-        await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
+        // Run live wallet deposit scan bounded to 4.5s so RPC latency never delays the user view
+        await Promise.race([
+          syncUserTokenDeposits(user.id, user.subaccount_id),
+          new Promise((resolve) => setTimeout(resolve, 4500)),
+        ]).catch((err) => {
           console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
         });
-        const view = await buildHoldingsView(user, true);
+
+        // Bounded view build (max 6s) with fallback to cached DB view
+        const view = await Promise.race([
+          buildHoldingsView(user, true),
+          new Promise<any>((resolve) => setTimeout(() => resolve(buildHoldingsView(user, false)), 6000)),
+        ]);
+
         const canEditMsg = typeof (ctx as any).editMessageText === 'function';
         if (canEditMsg) {
           await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
