@@ -1,5 +1,5 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
-import { getTokenInfo, isSuiToken } from './wallet.js';
+import { getTokenInfo, isSuiToken, getNearUsdPrice, getSuiUsdPrice } from './wallet.js';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -95,7 +95,8 @@ export async function generatePNLCardData(
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
     const isSuiPos     = position.chain === 'sui' || isSuiToken(position.token_address);
-    const nearUsd      = isSuiPos ? (tokenInfo?.sui_usd || 2.0) : (tokenInfo?.near_usd || 4.3);
+    const liveNativeUsd = isSuiPos ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 5.16);
+    const nearUsd      = isSuiPos ? (tokenInfo?.sui_usd || liveNativeUsd) : (tokenInfo?.near_usd || liveNativeUsd);
 
     const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
@@ -131,6 +132,7 @@ export async function generatePNLCardData(
     let totalInitialInvestment = 0;
     let totalFeesPaid          = 0;
     let totalBuyTokensHuman    = 0;
+    let totalNetBuyCostNative  = 0;
     for (const buy of buys) {
       if (buy.tx_hash?.startsWith('deposit_')) continue;
       const amount = toHuman(buy.amount);
@@ -140,11 +142,14 @@ export async function generatePNLCardData(
 
       if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
         // On-chain source of truth: actual SUI/NEAR spent
-        totalInitialInvestment += parseFloat(buy.input_amount);
+        const grossCost = parseFloat(buy.input_amount);
+        totalInitialInvestment += grossCost;
+        totalNetBuyCostNative += Math.max(0, grossCost - fee);
       } else {
         // Legacy fills: approximate from amount*price + normalized fee
         const price = parseFloat(buy.price);
         totalInitialInvestment += amount * price + fee;
+        totalNetBuyCostNative += amount * price;
       }
     }
 
@@ -157,10 +162,10 @@ export async function generatePNLCardData(
     }
 
     let avgEntryPrice = parseFloat(position.avg_entry_price || '0');
-    if (totalBuyTokensHuman > 0 && totalInitialInvestment > 0) {
-      const fillAvgEntry = totalInitialInvestment / totalBuyTokensHuman;
-      // Heal if stored entry is 0, or diverges significantly from on-chain fills (e.g. historical inflated price bugs)
-      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(avgEntryPrice - fillAvgEntry) / fillAvgEntry > 0.5) {
+    if (totalBuyTokensHuman > 0 && totalNetBuyCostNative > 0) {
+      const fillAvgEntry = totalNetBuyCostNative / totalBuyTokensHuman;
+      // Heal if stored entry is 0, or diverges significantly from on-chain fills
+      if (avgEntryPrice <= 0 || (currentPrice > 0 && avgEntryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(avgEntryPrice - fillAvgEntry) / fillAvgEntry > 0.05) {
         avgEntryPrice = fillAvgEntry;
       }
     } else if (avgEntryPrice <= 0 && currentPrice > 0) {
@@ -207,12 +212,11 @@ export async function generatePNLCardData(
     const unrealizedPnl   = unrealizedValue - quantityHeld * avgEntryPrice;
     const totalPnl        = totalValue - totalInitialInvestment;
 
-    // ── PnL % for the hero display ────────────────────────────────────────────
-    const costBasisHeld = quantityHeld * avgEntryPrice;
+    // ── PnL % for the hero display (Token price change relative to entry) ─────
     const pnlPercent = isClosed
-      ? (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : (avgEntryPrice > 0 ? ((avgExitPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0))
-      : (costBasisHeld > 0 ? (unrealizedPnl / costBasisHeld) * 100 : (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0));
-    const isProfit = totalPnl >= 0;
+      ? (avgEntryPrice > 0 && avgExitPrice > 0 ? ((avgExitPrice - avgEntryPrice) / avgEntryPrice) * 100 : (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0))
+      : (avgEntryPrice > 0 && displayPrice > 0 ? ((displayPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0);
+    const isProfit = pnlPercent >= 0;
 
     // ── Hold duration ────────────────────────────────────────────────────────
     const openedAt        = position.opened_at;
@@ -220,7 +224,7 @@ export async function generatePNLCardData(
     const holdDuration    = formatHoldDuration(closedAt.getTime() - openedAt.getTime());
 
     // ── Market caps (NEAR/SUI units) ─────────────────────────────────────────
-    const usdRate = isSuiPos ? (tokenInfo?.sui_usd || 2.0) : (tokenInfo?.near_usd || 4.3);
+    const usdRate = nearUsd;
     let currentMarketCap = tokenInfo?.market_cap || 0;
     if (currentMarketCap <= 0 && tokenInfo?.market_cap_usd && usdRate > 0) {
       currentMarketCap = tokenInfo.market_cap_usd / usdRate;

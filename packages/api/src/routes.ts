@@ -1696,8 +1696,8 @@ async function executeBuyHelper(
     isSuiHint || user.sui_address
       ? getSuiBalance(user.sui_address || '').catch(() => ({ mist: 0n, formatted: '0' }))
       : Promise.resolve({ mist: 0n, formatted: '0' }),
-    !isSuiHint ? getNearUsdPrice().catch(() => 4.5) : Promise.resolve(4.5),
-    isSuiHint ? getSuiUsdPrice().catch(() => 2.0) : Promise.resolve(2.0),
+    !isSuiHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
+    isSuiHint ? getSuiUsdPrice().catch(() => 0) : Promise.resolve(0),
     checkTokenSafety(tokenAddress).catch(() => null),
   ]);
 
@@ -1821,7 +1821,7 @@ async function executeBuyHelper(
     const wNearBal = BigInt(wNearBalStr || '0');
     const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
 
-    const effectiveNearUsd = nearUsdVal > 0 ? nearUsdVal : 4.5;
+    const effectiveNearUsd = nearUsdVal > 0 ? nearUsdVal : 5.16;
     const minReserveNear = 0.015;
     const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
     const totalNearRequired = nearNeededForSwap + minReserveYocto;
@@ -3285,7 +3285,8 @@ export function setupRoutes(bot: Telegraf): void {
 
       const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
       const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-      const usdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
+      const liveNativeUsd = isSuiPos ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 5.16);
+      const usdRate = isSuiPos ? (info?.sui_usd || liveNativeUsd) : (info?.near_usd || liveNativeUsd);
 
       const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
       let mcNative = info?.market_cap || 0;
@@ -3322,28 +3323,31 @@ export function setupRoutes(bot: Telegraf): void {
       const buys = fills.filter(f => f.side === 'buy');
       let initialInvestment = 0;
       let totalBuyTokensHuman = 0;
-      let totalBuyCostNative = 0;
+      let totalNetBuyCostNative = 0;
 
       for (const buy of buys) {
         if (buy.tx_hash?.startsWith('deposit_')) continue;
         const amount = toHuman(buy.amount);
+        let fee = parseFloat(buy.fee_paid || '0');
+        if (isSuiPos && fee > 1e6) fee = fee / 1e9;
+        else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
 
         let cost: number;
+        let netCost: number;
         if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
           // On-chain source of truth: actual SUI/NEAR spent
           cost = parseFloat(buy.input_amount);
+          netCost = Math.max(0, cost - fee);
         } else {
           // Legacy fills: approximate from amount*price + normalized fee
           const price = parseFloat(buy.price);
-          let fee = parseFloat(buy.fee_paid || '0');
-          if (isSuiPos && fee > 1e6) fee = fee / 1e9;
-          else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
           cost = (amount * price) + fee;
+          netCost = amount * price;
         }
 
         initialInvestment += cost;
         totalBuyTokensHuman += amount;
-        totalBuyCostNative += cost;
+        totalNetBuyCostNative += netCost;
       }
 
       let humanQuantity = 0;
@@ -3356,10 +3360,10 @@ export function setupRoutes(bot: Telegraf): void {
 
       let entryPrice = parseFloat(position.avg_entry_price) || 0;
       // Heal corrupted entryPrice: if fills give us a reliable cost basis, recompute
-      if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
-        const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
-        // Heal if: stored entry is 0, OR 10× above current price while fills suggest a much lower value, OR diverges > 50% from fills
-        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.5) {
+      if (totalBuyTokensHuman > 0 && totalNetBuyCostNative > 0) {
+        const fillAvgEntry = totalNetBuyCostNative / totalBuyTokensHuman;
+        // Heal if: stored entry is 0, OR 10× above current price while fills suggest a much lower value, OR diverges > 5% from fills
+        if (entryPrice <= 0 || (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) || Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.05) {
           entryPrice = fillAvgEntry;
           position.avg_entry_price = fillAvgEntry.toString();
           updatePosition({

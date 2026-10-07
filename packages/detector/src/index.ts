@@ -1067,7 +1067,8 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
   // ── Emit Group Buy Alert if this was a BUY of the token ───────────────────
   if (isBuy) {
     try {
-      const nearPriceUsd = await getNearUsdPrice().catch(() => 4.5);
+      const nearPriceUsd = await getNearUsdPrice().catch(() => 0);
+      const effectiveNearPrice = nearPriceUsd > 0 ? nearPriceUsd : 5.16;
       let spentNear = 0;
 
       if (isNearIn && data?.amount_in) {
@@ -1077,7 +1078,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
         spentNear = tokensReceivedNum * price;
       }
 
-      const spentUsd = Math.round(spentNear * nearPriceUsd * 100) / 100;
+      const spentUsd = Math.round(spentNear * effectiveNearPrice * 100) / 100;
 
       if (spentUsd > 0 && !isNaN(spentUsd)) {
         const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
@@ -1223,8 +1224,9 @@ async function checkAutoBuySignals(
     const now = Date.now();
     const normToken = tokenAddress.toLowerCase().trim();
 
-    const nearPriceUsd = await getNearUsdPrice().catch(() => 5.0);
-    const tokenMcapUsd = marketCapNear > 0 && nearPriceUsd > 0 ? marketCapNear * nearPriceUsd : 0;
+    const nearPriceUsd = await getNearUsdPrice().catch(() => 0);
+    const effectiveNearPrice = nearPriceUsd > 0 ? nearPriceUsd : 5.16;
+    const tokenMcapUsd = marketCapNear > 0 ? marketCapNear * effectiveNearPrice : 0;
 
     for (const user of result.rows) {
       const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '10');
