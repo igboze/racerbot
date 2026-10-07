@@ -304,9 +304,8 @@ export async function getDb(): Promise<Pool> {
     connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
   });
   pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
-  pool.on('connect', (client) => {
-    console.log('[DB] Connected to Postgres');
-    client.query('ALTER TABLE fills DROP CONSTRAINT IF EXISTS fills_venue_check').catch(() => {});
+  pool.on('connect', () => {
+    // Connection established
   });
 
   return pool;
