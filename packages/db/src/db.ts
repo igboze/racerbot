@@ -110,6 +110,9 @@ export interface TokenCacheRecord {
   dcl_pool_id?: string | null;
   last_price?: number | null;
   last_liquidity?: number | null;
+  buy_tax_pct?: number | null;
+  sell_tax_pct?: number | null;
+  is_safe?: boolean | null;
   updated_at?: Date | null;
 }
 
@@ -1012,8 +1015,8 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
   const db = await getDb();
   const chain = record.chain || 'near';
   await db.query(
-    `INSERT INTO token_cache (token_address, chain, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+    `INSERT INTO token_cache (token_address, chain, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, buy_tax_pct, sell_tax_pct, is_safe, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
      ON CONFLICT (token_address) DO UPDATE SET 
        chain = COALESCE(EXCLUDED.chain, token_cache.chain),
        name = COALESCE(EXCLUDED.name, token_cache.name), 
@@ -1028,6 +1031,9 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
        dcl_pool_id = COALESCE(EXCLUDED.dcl_pool_id, token_cache.dcl_pool_id),
        last_price = COALESCE(EXCLUDED.last_price, token_cache.last_price), 
        last_liquidity = COALESCE(EXCLUDED.last_liquidity, token_cache.last_liquidity), 
+       buy_tax_pct = COALESCE(EXCLUDED.buy_tax_pct, token_cache.buy_tax_pct),
+       sell_tax_pct = COALESCE(EXCLUDED.sell_tax_pct, token_cache.sell_tax_pct),
+       is_safe = COALESCE(EXCLUDED.is_safe, token_cache.is_safe),
        updated_at = NOW()`,
     [
       record.token_address,
@@ -1044,6 +1050,9 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
       record.dcl_pool_id ?? null,
       record.last_price ?? null,
       record.last_liquidity ?? null,
+      record.buy_tax_pct ?? null,
+      record.sell_tax_pct ?? null,
+      record.is_safe ?? null,
     ]
   );
 }
@@ -1574,6 +1583,9 @@ function rowToTokenCache(row: any): TokenCacheRecord {
     dcl_pool_id: row.dcl_pool_id ?? null,
     last_price: row.last_price != null ? parseFloat(row.last_price) : null, 
     last_liquidity: row.last_liquidity != null ? parseFloat(row.last_liquidity) : null, 
+    buy_tax_pct: row.buy_tax_pct != null ? parseFloat(row.buy_tax_pct) : null,
+    sell_tax_pct: row.sell_tax_pct != null ? parseFloat(row.sell_tax_pct) : null,
+    is_safe: row.is_safe != null ? Boolean(row.is_safe) : null,
     updated_at: row.updated_at 
   };
 }

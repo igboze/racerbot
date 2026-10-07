@@ -502,10 +502,10 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 }
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
-export async function buildTokenCard(tokenAddress: string, telegramId?: number): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
+export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
   const [info, balances, user, safetyRes] = await Promise.allSettled([
-    getTokenInfo(tokenAddress, true),
+    getTokenInfo(tokenAddress, forceRefresh),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
     telegramId ? getUserByTelegramId(telegramId).catch(() => null) : Promise.resolve(null),
     checkTokenSafety(tokenAddress).catch(() => null),
@@ -3195,21 +3195,14 @@ export function setupRoutes(bot: Telegraf): void {
         await replyPaint();
       }
 
-      // 2. Background reconcile (detached — never blocks the user's paint)
+      // 2. Background wallet deposit sync (detached — does not trigger heavy token discovery scans)
       (async () => {
         try {
           await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
             console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
           });
-          const fresh = await buildHoldingsView(user, true);
-          if (fingerprintOf(fresh) === fingerprintOf(view)) return;
-          if (paintedChatId && paintedMessageId) {
-            await ctx.telegram
-              .editMessageText(paintedChatId, paintedMessageId, undefined, fresh.msg, { parse_mode: 'Markdown', ...fresh.keyboard })
-              .catch(() => {});
-          }
         } catch (err: any) {
-          console.warn('[HOLDINGS] Background reconcile error:', err?.message || err);
+          console.warn('[HOLDINGS] Background deposit sync error:', err?.message || err);
         }
       })();
     } catch (err: any) {
@@ -3273,7 +3266,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
        const [info, fills, triggers] = await Promise.all([
-         getTokenInfo(position.token_address, true).catch(() => null),
+         getTokenInfo(position.token_address, false).catch(() => null),
          getFillsByPosition(positionId).catch(() => []),
          getTriggersByPosition(positionId).catch(() => []),
       ]);
@@ -3655,7 +3648,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
 
         // Fetch current market price from token info (not avg_entry_price)
-        const tokenInfo = await getTokenInfo(livePosition.token_address, true).catch(() => null);
+        const tokenInfo = await getTokenInfo(livePosition.token_address, false).catch(() => null);
         const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
         const isSuiPos = livePosition.chain === 'sui' || isSuiToken(livePosition.token_address);
         const decimals = tokenInfo?.decimals ?? (isSuiPos ? 6 : 18);
@@ -4470,7 +4463,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       await ctx.answerCbQuery('🔄 Refreshing token...').catch(() => {});
-      const card = await buildTokenCard(tokenAddress, telegramId);
+      const card = await buildTokenCard(tokenAddress, telegramId, true);
 
       const cbMsg = (ctx as any).callbackQuery?.message;
       const isPhoto = !!cbMsg?.photo;
@@ -4725,7 +4718,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       // FIX 1: All token info in parallel, one round-trip for all positions.
       const infoResults = await Promise.allSettled(
-        positions.map(pos => getTokenInfo(pos.token_address, true))
+        positions.map(pos => getTokenInfo(pos.token_address, false))
       );
 
       for (let i = 0; i < positions.length; i++) {
