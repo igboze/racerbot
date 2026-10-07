@@ -20,7 +20,7 @@ for (const p of envPaths) {
   }
 }
 
-async function runMigrations() {
+export async function runMigrations() {
   const connectionString = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
   if (!connectionString) {
     console.error('DATABASE_URL is not set.');
@@ -81,4 +81,6 @@ async function runMigrations() {
   }
 }
 
-runMigrations();
+if (process.argv[1] && (process.argv[1].endsWith('migrate.ts') || process.argv[1].endsWith('migrate.js'))) {
+  runMigrations();
+}

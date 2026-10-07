@@ -3,6 +3,7 @@ import { CHANNELS, createLogger, type PriceUpdateEvent } from '@racerbot/shared'
 import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { runDcaEngine } from './dca.js';
+import { runLimitOrderEngine } from './limitOrder.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
 const logger = createLogger('triggers');
@@ -19,6 +20,9 @@ async function main(): Promise<void> {
 
   // Start DCA engine concurrently — it has its own independent poll loop
   runDcaEngine().catch(err => logger.error('DCA engine failed to start', err));
+
+  // Start Limit Order engine concurrently
+  runLimitOrderEngine().catch(err => logger.error('Limit order engine failed to start', err));
 
   // Subscribe to price updates from detector — warm local cache
   // This is the only price data source in the trigger hot path

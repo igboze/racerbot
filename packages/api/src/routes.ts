@@ -42,10 +42,15 @@ import {
   createDcaOrder,
   getDcaOrdersByUser,
   updateDcaOrderStatus,
+  // Limit Orders
+  createLimitOrder,
+  getLimitOrdersByUser,
+  cancelLimitOrder,
   getUserWallets,
   getActiveWallet,
   type UserRecord,
   type UserWalletRecord,
+  type LimitOrderRecord,
 } from '@racerbot/db';
 import {
   getTokenInfo,
@@ -140,7 +145,9 @@ interface PendingAction {
     | 'import_near_key' | 'import_near_name' | 'rename_near_wallet'
     | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet'
     // Buy Alert group setup
-    | 'set_group_token';
+    | 'set_group_token'
+    // Limit Order wizard
+    | 'lo_amount' | 'lo_target_value';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -161,6 +168,13 @@ interface PendingAction {
   dcaSide?: 'buy' | 'sell';
   dcaAmount?: number;
   dcaInterval?: number;
+  // Limit Order wizard state
+  loTokenAddress?: string;
+  loSide?: 'buy' | 'sell';
+  loConditionType?: 'price' | 'market_cap' | 'percent_change';
+  loTargetValue?: number;
+  loAmount?: number;
+  loExpiresAt?: number | null; // null = GTC
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -939,6 +953,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...shareButtonRow,
         [
           ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
@@ -968,6 +985,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...shareButtonRow,
         [
           ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
           cb('🔙 Back', 'menu_home', 'primary'),
         ],
@@ -2677,6 +2697,255 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // ── LIMIT ORDERS ─────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────────
+
+  // Helper: format a limit order for display
+  function formatLimitOrder(o: LimitOrderRecord): string {
+    const side = o.side === 'buy' ? '🟢 Buy' : '🔴 Sell';
+    const condMap: Record<string, string> = { price: 'Price', mcap: 'Market Cap', percent_offset: '% Offset' };
+    const cond = condMap[o.target_type] || o.target_type;
+    const dir = o.trigger_condition === 'lte' ? '≤' : '≥';
+    const expiry = o.expires_at ? new Date(o.expires_at).toLocaleDateString() : 'GTC';
+    const token = o.token_address.length > 20 ? o.token_address.slice(0, 10) + '...' + o.token_address.slice(-6) : o.token_address;
+    return `${side} • ${token}\n` +
+      `  Condition: ${cond} ${dir} ${o.target_value}\n` +
+      `  Amount: ${o.amount_input} NEAR • Expires: ${expiry}\n` +
+      `  Status: ${o.status}`;
+  }
+
+  // Step 1: entry point from the token card button
+  bot.action(/^lo_start:(.+)$/, async (ctx) => {
+    const rawKey = (ctx as any).match[1];
+    const tokenCA = resolveTokenAddressFromKey(rawKey);
+    const shortKey = getShortTokenKey(tokenCA);
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `🎯 *Limit Order — ${tokenCA}*\n\n` +
+      `Choose order direction:`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('🟢 Buy (when price dips / breakout)', `lo_side:buy:${shortKey}`, 'success')],
+          [cb('🔴 Sell (take profit / stop loss)', `lo_side:sell:${shortKey}`, 'danger')],
+          [cb('📋 My Active Orders', `lo_list:${shortKey}`, 'primary')],
+          [cb('🔙 Back', `token_refresh:${shortKey}`, 'primary')],
+        ]),
+      }
+    );
+  });
+
+  // Step 2: side chosen → pick condition type
+  bot.action(/^lo_side:(buy|sell):(.+)$/, async (ctx) => {
+    const side = (ctx as any).match[1] as 'buy' | 'sell';
+    const rawKey = (ctx as any).match[2];
+    const tokenCA = resolveTokenAddressFromKey(rawKey);
+    const shortKey = getShortTokenKey(tokenCA);
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'lo_target_value',
+      loTokenAddress: tokenCA,
+      loSide: side,
+      loConditionType: 'price', // default, overridden by next step
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✅ Direction: ${side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n\n` +
+      `📐 *Choose the trigger condition:*`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('💲 Price (NEAR per token)', `lo_cond:price:${shortKey}`, 'primary')],
+          [cb('📊 Market Cap (USD)', `lo_cond:market_cap:${shortKey}`, 'primary')],
+          [cb('📈 % Change (from current)', `lo_cond:percent_change:${shortKey}`, 'primary')],
+          [cb('🔙 Back', `lo_start:${shortKey}`, 'primary')],
+        ]),
+      }
+    );
+  });
+
+  // Step 3: condition type chosen → ask for target value
+  bot.action(/^lo_cond:(price|market_cap|percent_change):(.+)$/, async (ctx) => {
+    const condType = (ctx as any).match[1] as 'price' | 'market_cap' | 'percent_change';
+    const rawKey = (ctx as any).match[2];
+    const tokenCA = resolveTokenAddressFromKey(rawKey);
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || !pending.loSide) {
+      await ctx.answerCbQuery('Session expired. Start again.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      ...pending,
+      loConditionType: condType,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+
+    const dip = pending.loSide === 'buy' ? 'drops to' : 'rises to';
+    const condLabels: Record<string, string> = {
+      price: 'Reply with the *price in NEAR* per token.\n_e.g._ `0.0005` _means trigger when price ' + dip + ' 0.0005 NEAR_',
+      market_cap: 'Reply with the *market cap in USD* that should trigger.\n_e.g._ `50000` _for $50k market cap_',
+      percent_change: 'Reply with the *% change* from current price.\n_e.g._ `-20` _for -20% dip,_ `+50` _for +50% pump_',
+    };
+    await ctx.reply(
+      `Condition: *${condType === 'price' ? 'Price' : condType === 'market_cap' ? 'Market Cap' : '% Change'}*\n\n` +
+      `Enter the trigger value:\n\n${condLabels[condType]}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // Step 5: expiry chosen → create order
+  bot.action(/^lo_expiry:(24h|3d|7d|gtc):(.+)$/, async (ctx) => {
+    const expiryKey = (ctx as any).match[1] as '24h' | '3d' | '7d' | 'gtc';
+    const rawKey = (ctx as any).match[2];
+    const tokenCA = resolveTokenAddressFromKey(rawKey);
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || !pending.loAmount || !pending.loTargetValue || !pending.loTokenAddress) {
+      await ctx.answerCbQuery('Session expired. Start again.').catch(() => {});
+      return;
+    }
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+
+    const expiryDurations: Record<string, number | null> = {
+      '24h': 24 * 60 * 60 * 1000,
+      '3d': 3 * 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      'gtc': null,
+    };
+    const durationMs = expiryDurations[expiryKey];
+    const expiresAt = durationMs !== null ? new Date(Date.now() + durationMs) : null;
+
+    // Determine condition direction from side + condition type
+    let triggerCondition: 'lte' | 'gte' = 'lte';
+    if (pending.loSide === 'sell') triggerCondition = 'gte';
+    if (pending.loConditionType === 'percent_change') {
+      triggerCondition = pending.loTargetValue! < 0 ? 'lte' : 'gte';
+    }
+
+    const targetType: 'mcap' | 'price' | 'percent_offset' =
+      pending.loConditionType === 'market_cap' ? 'mcap' :
+      pending.loConditionType === 'percent_change' ? 'percent_offset' : 'price';
+
+    try {
+      await ctx.answerCbQuery('Creating limit order...').catch(() => {});
+      const order = await createLimitOrder({
+        user_id: user.id,
+        token_address: pending.loTokenAddress!,
+        chain: 'near',
+        side: pending.loSide!,
+        target_type: targetType,
+        trigger_condition: triggerCondition,
+        target_value: pending.loTargetValue!,
+        amount_input: pending.loAmount!,
+        expires_at: expiresAt,
+      });
+      userPendingActions.delete(telegramId);
+
+      const expiryLabel = expiryKey === 'gtc' ? '🔁 GTC (Never expires)' : `${expiryKey === '24h' ? '24 Hours' : expiryKey === '3d' ? '3 Days' : '7 Days'}`;
+      const condLabel = order.target_type === 'price' ? 'Price' : order.target_type === 'mcap' ? 'Market Cap' : '% Offset';
+      const dirLabel = order.trigger_condition === 'lte' ? '≤' : '≥';
+
+      await ctx.reply(
+        `✅ *Limit Order Created!*\n\n` +
+        `🪙 *Token*: \`${order.token_address}\`\n` +
+        `📊 *Direction*: ${order.side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n` +
+        `📐 *Trigger*: ${condLabel} ${dirLabel} \`${order.target_value}\`\n` +
+        `💰 *Amount*: \`${order.amount_input} NEAR\`\n` +
+        `⏰ *Expires*: ${expiryLabel}\n\n` +
+        `RacerBot polls prices every 4 seconds. You'll get a DM when triggered.`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [cb('📋 My Limit Orders', `lo_list:${getShortTokenKey(order.token_address)}`, 'primary'), cb('🔙 Menu', 'menu_home', 'primary')],
+          ]),
+        }
+      );
+    } catch (err: any) {
+      await ctx.answerCbQuery('').catch(() => {});
+      await ctx.reply(`❌ Failed to create limit order: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  // List active limit orders for a token (or all if no shortKey context)
+  async function renderUserLimitOrders(ctx: any, telegramId: number) {
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery('Run /start first.').catch(() => {});
+      else await ctx.reply('Run /start first.').catch(() => {});
+      return;
+    }
+    if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery().catch(() => {});
+
+    const orders = await getLimitOrdersByUser(user.id).catch(() => [] as LimitOrderRecord[]);
+    const active = orders.filter(o => o.status === 'active');
+
+    if (active.length === 0) {
+      await ctx.reply(
+        `📋 *Your Limit Orders*\n\nNo active limit orders. Set one up from any token card!`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([[cb('🔙 Back', 'menu_home', 'primary')]]),
+        }
+      );
+      return;
+    }
+
+    let text = `📋 *Active Limit Orders* (${active.length}):\n\n`;
+    const buttons: any[] = [];
+    active.slice(0, 10).forEach((o, i) => {
+      const side = o.side === 'buy' ? '🟢' : '🔴';
+      const cond = o.target_type === 'price' ? 'Price' : o.target_type === 'mcap' ? 'MC' : '%';
+      const dir = o.trigger_condition === 'lte' ? '≤' : '≥';
+      const token = o.token_address.length > 20 ? o.token_address.slice(0, 8) + '…' : o.token_address;
+      const expiry = o.expires_at ? new Date(o.expires_at).toLocaleDateString() : 'GTC';
+      text += `${i + 1}. ${side} \`${token}\`\n   ${cond} ${dir} \`${o.target_value}\` • \`${o.amount_input} NEAR\` • ${expiry}\n\n`;
+      buttons.push([cb(`❌ Cancel #${i + 1} (${side} ${token})`, `lo_cancel:${o.id}`, 'danger')]);
+    });
+    buttons.push([cb('🔙 Back', 'menu_home', 'primary')]);
+
+    await ctx.reply(text, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons),
+    });
+  }
+
+  // List active limit orders
+  bot.action(['menu_lo', 'lo_list', /^lo_list(?::(.+))?$/], async (ctx) => {
+    await renderUserLimitOrders(ctx, ctx.from!.id);
+  });
+  bot.command(['limitorders', 'orders'], async (ctx) => {
+    await renderUserLimitOrders(ctx, ctx.from!.id);
+  });
+
+  // Cancel a specific limit order
+  bot.action(/^lo_cancel:(.+)$/, async (ctx) => {
+    const orderId = (ctx as any).match[1];
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+    try {
+      await cancelLimitOrder(orderId, user.id);
+      await ctx.answerCbQuery('✅ Limit order cancelled.').catch(() => {});
+      const orders = await getLimitOrdersByUser(user.id).catch(() => [] as LimitOrderRecord[]);
+      const active = orders.filter(o => o.status === 'active');
+      if (active.length === 0) {
+        await ctx.editMessageText('📋 *Your Limit Orders*\n\nNo active limit orders.', {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([[cb('🔙 Back', 'menu_home', 'primary')]]).reply_markup,
+        } as any).catch(() => {});
+      } else {
+        await ctx.answerCbQuery('Order cancelled — refresh list.').catch(() => {});
+      }
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
   // ── Targeted snipes: by token contract address / by deployer wallet ───────
 
   bot.action('snipe_token_start', async (ctx) => {
@@ -3509,6 +3778,13 @@ export function setupRoutes(bot: Telegraf): void {
         sellSpecialRow.push(cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'));
       }
       buttons.push(sellSpecialRow);
+
+      if (!isSuiPos) {
+        buttons.push([
+          cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary'),
+          cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary'),
+        ]);
+      }
 
       // External explorer & chart links
       const linkRows = (() => {
@@ -7195,6 +7471,57 @@ export function setupRoutes(bot: Telegraf): void {
           {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[cb('🔁 View DCA Orders', 'menu_dca', 'primary'), cb('🔙 Menu', 'menu_home', 'primary')]]),
+          }
+        );
+        return;
+      }
+
+      // ── Limit Order wizard: target value input ────────────────────────────
+      if (pending.action === 'lo_target_value') {
+        const val = parseFloat(rawText.replace(/[$,]/g, ''));
+        if (isNaN(val) || val <= 0) {
+          await ctx.reply('❌ Invalid value. Enter a positive number (e.g. `0.001` for price, `50000` for market cap, or `25` for +25%).');
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          ...pending,
+          action: 'lo_amount',
+          loTargetValue: val,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        const condLabel = pending.loConditionType === 'price' ? 'Price' : pending.loConditionType === 'market_cap' ? 'Market Cap' : '% Change';
+        await ctx.reply(
+          `✅ Target ${condLabel}: \`${val}\`\n\n` +
+          `💰 *How much NEAR ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
+          `Reply with a number (e.g. \`5\` for 5 NEAR):`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // ── Limit Order wizard: amount input ─────────────────────────────────
+      if (pending.action === 'lo_amount') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt < 0.01) {
+          await ctx.reply('❌ Invalid amount. Must be ≥ 0.01 NEAR.');
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          ...pending,
+          loAmount: amt,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        const shortKey = getShortTokenKey(pending.loTokenAddress!);
+        await ctx.reply(
+          `✅ Amount: \`${amt} NEAR\`\n\n` +
+          `⏰ *When should this order expire?*`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('24 Hours', `lo_expiry:24h:${shortKey}`), cb('3 Days', `lo_expiry:3d:${shortKey}`), cb('7 Days', `lo_expiry:7d:${shortKey}`)],
+              [cb('🔁 GTC (Never Expires)', `lo_expiry:gtc:${shortKey}`, 'success')],
+              [cb('🔙 Cancel', 'menu_home', 'primary')],
+            ]),
           }
         );
         return;
