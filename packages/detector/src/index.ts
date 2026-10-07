@@ -796,7 +796,9 @@ async function handlePoolCreated(
   // initial price/market-cap both depended on this and silently saw 0 before.
   if ((!initialLiquidity || initialLiquidity === '0') || initialPrice <= 0) {
     try {
-      const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals);
+      const knownRheaPool = venue === 'rhea' && typeof poolAddress === 'number' ? poolAddress : null;
+      const knownDclPool = dclPoolId ?? (typeof poolAddress === 'string' && poolAddress.includes('|') ? poolAddress : null);
+      const spot = await near.getVenueSpotPrice(venue, tokenAddress, decimals, knownRheaPool, knownDclPool);
       if (spot) {
         if (!initialLiquidity || initialLiquidity === '0') {
           initialLiquidity = spot.reserveNearYocto;
@@ -1186,7 +1188,7 @@ async function checkAutoBuySignals(
   tokenAddress: string,
   venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
   liquidityStr: string,
-  _marketCap: number,
+  marketCapNear: number,
   creator = ''
 ): Promise<void> {
   // 1. Check targeted snipe orders
@@ -1211,7 +1213,7 @@ async function checkAutoBuySignals(
     const db = await getDb();
     const result = await db
       .query(
-        `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near 
+        `SELECT id, telegram_id, default_buy_pct, auto_buy_amount_near, auto_buy_min_liquidity_near, auto_buy_max_market_cap_usd 
          FROM users 
          WHERE auto_buy_enabled = true AND auto_buy_amount_near > 0`
       )
@@ -1221,9 +1223,27 @@ async function checkAutoBuySignals(
     const now = Date.now();
     const normToken = tokenAddress.toLowerCase().trim();
 
+    const nearPriceUsd = await getNearUsdPrice().catch(() => 5.0);
+    const tokenMcapUsd = marketCapNear > 0 && nearPriceUsd > 0 ? marketCapNear * nearPriceUsd : 0;
+
     for (const user of result.rows) {
       const minLiquidity = parseFloat(user.auto_buy_min_liquidity_near ?? '10');
       if (liquidity < minLiquidity) continue;
+
+      // Filter: enforce user's max market cap ceiling ($100k safety default)
+      const maxMcapUsd = user.auto_buy_max_market_cap_usd != null
+        ? parseFloat(user.auto_buy_max_market_cap_usd)
+        : 100000;
+
+      if (maxMcapUsd > 0 && tokenMcapUsd > maxMcapUsd) {
+        logger.info('[DETECTOR] Skipping auto-buy: token market cap exceeds user max', {
+          tokenAddress,
+          tokenMcapUsd: Math.round(tokenMcapUsd),
+          maxMcapUsd,
+          userId: user.id,
+        });
+        continue;
+      }
 
       const dedupKey = `${user.id}:${normToken}`;
       const lastFired = autoBuyExecutedCache.get(dedupKey);

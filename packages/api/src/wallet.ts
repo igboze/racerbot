@@ -1244,8 +1244,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   let marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
   let marketCapUsd = marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0;
 
-  // Fallback to DexScreener market cap ONLY if on-chain market cap was 0
-  if (marketCap <= 0 && dexData && (dexData.marketCapUsd > 0 || dexData.fdvUsd > 0)) {
+  // Fallback or override with DexScreener market cap when available so market cap matches live charts
+  if (dexData && (dexData.marketCapUsd > 0 || dexData.fdvUsd > 0)) {
     marketCapUsd = dexData.marketCapUsd || dexData.fdvUsd;
     if (nearUsd > 0) {
       marketCap = marketCapUsd / nearUsd;
@@ -1253,11 +1253,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   let finalPriceUsd = '0';
-  if (price > 0 && nearUsd > 0) {
+  if (dexData && dexData.priceUsd > 0) {
+    finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
+  } else if (price > 0 && nearUsd > 0) {
     const usdVal = price * nearUsd;
     finalPriceUsd = usdVal < 0.000001 ? usdVal.toExponential(4) : usdVal.toFixed(8);
-  } else if (dexData && dexData.priceUsd > 0) {
-    finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
   }
 
   const tradeable = isTradableVenue(venue);
