@@ -1103,7 +1103,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
         if (rh) {
           const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
-          const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, meta.decimals);
+          const tokenDecimals = (typeof meta !== 'undefined' && meta?.decimals !== undefined)
+            ? meta.decimals
+            : (dbCache?.decimals !== null && dbCache?.decimals !== undefined ? Number(dbCache.decimals) : 18);
+          const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, tokenDecimals);
           const poolLiq = reserveNearHuman * 2;
           // Trust cached simple pool if it has valid liquidity (> 0 NEAR).
           if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq > 0) {
