@@ -486,6 +486,64 @@ export interface TokenInfoResult {
   sells_count?: number | null;
   trades_timeframe?: '24h' | 'Curve' | null;
   total_txns?: number | null;
+  buy_tax_pct?: number;  // DEX tax / fee for BUY in %
+  sell_tax_pct?: number; // DEX tax / fee for SELL in %
+}
+
+/**
+ * Calculates the DEX trading tax (swap fee) for Buy and Sell.
+ */
+export function getDexTax(info: Partial<TokenInfoResult>): { buyTaxPct: number; sellTaxPct: number } {
+  const venue = (info.venue || '').toLowerCase();
+  const bondingPhase = info.bonding_phase;
+
+  if (venue === 'memecooking') {
+    if (bondingPhase === 'prebonded') {
+      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    }
+    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+  }
+
+  if (venue === 'nearlytrade') {
+    if (bondingPhase === 'prebonded') {
+      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    }
+    return { buyTaxPct: 0.2, sellTaxPct: 0.2 };
+  }
+
+  if (venue === 'suipump') {
+    if (bondingPhase === 'prebonded') {
+      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    }
+    return { buyTaxPct: 0.25, sellTaxPct: 0.25 };
+  }
+
+  if (venue === 'gaypad' || venue === 'kelytra') {
+    if (bondingPhase === 'prebonded') {
+      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    }
+    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+  }
+
+  if (venue === 'rhea' || venue === 'ref') {
+    if (info.dcl_pool_id) {
+      const parts = info.dcl_pool_id.split('|');
+      const feeTier = parts.length >= 3 ? parseInt(parts[2], 10) : 2000;
+      const pct = feeTier > 0 ? feeTier / 10000 : 0.2;
+      return { buyTaxPct: pct, sellTaxPct: pct };
+    }
+    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+  }
+
+  if (venue === 'shardsmarket' || venue === 'intear' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets') {
+    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+  }
+
+  if (info.chain === 'sui') {
+    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+  }
+
+  return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
 }
 
 /**
@@ -589,6 +647,7 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, decimals);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
 
+    const tax = getDexTax({ venue: dbCache.venue, bonding_phase: dbCache.bonding_phase as any, dcl_pool_id: dbCache.dcl_pool_id, chain: isSui ? 'sui' : 'near' });
     const result: TokenInfoResult = {
       address: tokenAddress,
       chain: (dbCache.chain as any) || (isSui ? 'sui' : 'near'),
@@ -614,6 +673,8 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
       dcl_pool_id: dbCache.dcl_pool_id ?? null,
       tradeable: true,
       sui_coin_type: isSui ? tokenAddress : undefined,
+      buy_tax_pct: tax.buyTaxPct,
+      sell_tax_pct: tax.sellTaxPct,
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
@@ -841,6 +902,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       holdersDataPromise,
       totalTxnsPromise,
     ]);
+    const tax = getDexTax({ venue: (dbCache.venue as any) ?? 'unknown', bonding_phase: dbCache.bonding_phase as any, dcl_pool_id: dbCache.dcl_pool_id, chain: 'near' });
     const result: TokenInfoResult = {
       address: tokenAddress,
       name: dbCache.name ?? '',
@@ -870,6 +932,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       sells_count: dexData?.sells24h ?? null,
       trades_timeframe: '24h',
       total_txns: totalTxns ?? null,
+      buy_tax_pct: tax.buyTaxPct,
+      sell_tax_pct: tax.sellTaxPct,
     };
     // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
     // 3s, not a fresh window. Stale data must never renew itself.
@@ -1278,6 +1342,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   const tradeable = isTradableVenue(venue);
 
+  const tax = getDexTax({ venue, bonding_phase: bondingPhase, dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId, chain: isSuiToken(tokenAddress) ? 'sui' : 'near' });
+
   const result: TokenInfoResult = {
     address: tokenAddress,
     name: meta.name,
@@ -1304,6 +1370,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     sells_count: dexData?.sells24h ?? null,
     trades_timeframe: '24h',
     total_txns: totalTxns ?? null,
+    buy_tax_pct: tax.buyTaxPct,
+    sell_tax_pct: tax.sellTaxPct,
   };
 
   tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

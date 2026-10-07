@@ -777,6 +777,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number):
   statsBlock += `MarketCap: ${mcapCol}\n`;
   statsBlock += `Liquidity: ${liqCol}\n`;
   statsBlock += `Supply   : ${supplyCol}\n`;
+  const buyTax = tokenInfo.buy_tax_pct !== undefined ? `${tokenInfo.buy_tax_pct.toFixed(1)}%` : '0.3%';
+  const sellTax = tokenInfo.sell_tax_pct !== undefined ? `${tokenInfo.sell_tax_pct.toFixed(1)}%` : '0.3%';
+  statsBlock += `DEX Tax  : Buy ${buyTax} / Sell ${sellTax}\n`;
   if (tokenInfo.holders_count) {
     statsBlock += `Holders  : ${tokenInfo.holders_count.toLocaleString('en-US')}\n`;
   }
@@ -3433,12 +3436,16 @@ export function setupRoutes(bot: Telegraf): void {
         venueTag = ` • 💧 _${vName}_`;
       }
 
+      const buyTax = info?.buy_tax_pct !== undefined ? `${info.buy_tax_pct.toFixed(1)}%` : '0.3%';
+      const sellTax = info?.sell_tax_pct !== undefined ? `${info.sell_tax_pct.toFixed(1)}%` : '0.3%';
+
       let msg =
         `📊 *${symbol} Details*${venueTag}\n\n` +
         `${pnlLine}\n` +
         `🛡️ *Stop Loss*: \`${slDisplay}\`  •  🎯 *Take Profit*: \`${tpDisplay}\`\n\n` +
         `💰 *Value*: ${fmtVal(holdingValueNative)}\n` +
-        `📦 *Holding*: \`${formattedQty} ${symbol}\`\n\n` +
+        `📦 *Holding*: \`${formattedQty} ${symbol}\`\n` +
+        `🏷️ *DEX Tax*: \`Buy ${buyTax} / Sell ${sellTax}\`\n\n` +
         `💵 *Price*: ${fmtPrice(currentPrice)}\n` +
         `📥 *Entry*: ${fmtPrice(entryPrice)}\n` +
         (showNetWorth ? `💸 *Invested*: ${fmtVal(initialInvestment)}\n` : '') +
