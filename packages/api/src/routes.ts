@@ -2377,10 +2377,10 @@ export function setupRoutes(bot: Telegraf): void {
       if (canEdit) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
       }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
@@ -2410,7 +2410,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery().catch(() => {});
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -2426,7 +2426,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery().catch(() => {});
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -2446,7 +2446,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
       });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -3212,33 +3212,49 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── menu_holdings — Token list with name/logo and % change ────────────────
   bot.action('menu_holdings', async (ctx) => {
-    await handleHoldings(ctx, false);
+    try {
+      await handleHoldings(ctx, false);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(['refresh_holdings', 'menu_holdings_refresh'], async (ctx) => {
-    await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
-    await handleHoldings(ctx, true);
+    try {
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await handleHoldings(ctx, true);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.command('holdings', async (ctx) => {
-    await handleHoldings(ctx, true);
+    try {
+      await handleHoldings(ctx, true);
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
   });
 
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
   bot.action('import_token_prompt', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'import_token',
-      expiresAt: Date.now() + 2 * 60 * 1000, // 2 minutes expiry
-    });
-    await ctx.reply(
-      '📝 *Import Token*\n\n' +
-      'Please paste the token contract address (CA) you want to import.\n\n' +
-      'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`\n\n' +
-      '_Send the address within 2 minutes to import it into your holdings._',
-      { parse_mode: 'Markdown' }
-    );
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'import_token',
+        expiresAt: Date.now() + 2 * 60 * 1000, // 2 minutes expiry
+      });
+      await ctx.reply(
+        '📝 *Import Token*\n\n' +
+        'Please paste the token contract address (CA) you want to import.\n\n' +
+        'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`\n\n' +
+        '_Send the address within 2 minutes to import it into your holdings._',
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // ── token_detail — Individual token detail modal with PNL card ────────────────
@@ -3567,44 +3583,48 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── sell_custom_prompt — Prompt user for exact token amount to sell ─────────
   bot.action(/^sell_custom_prompt:(.+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
-      return;
-    }
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.answerCbQuery('Position not found.').catch(() => {});
-      return;
-    }
-
-    const tokenInfo = await getTokenInfo(position.token_address, false).catch(() => null);
-    const decimals = tokenInfo?.decimals ?? 18;
-    const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
-    const sym = tokenInfo?.symbol || 'Tokens';
-    const shortKey = getShortTokenKey(position.token_address);
-
-    userPendingActions.set(telegramId, {
-      action: 'sell_custom_tokens',
-      tokenAddress: position.token_address,
-      deployerAddress: positionId,
-      expiresAt: Date.now() + 120_000,
-    });
-
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply(
-      `💸 *Sell Custom Amount of $${sym}*\n\n` +
-      `💼 *Your Current Balance*: \`${formattedQty} ${sym}\`\n\n` +
-      `Reply with the exact number of tokens you want to sell (e.g. \`50000\` or \`100\`):\n\n` +
-      `_Type /cancel to abort._`,
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${shortKey}`, 'primary')]])
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        return;
       }
-    );
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.answerCbQuery('Position not found.').catch(() => {});
+        return;
+      }
+
+      const tokenInfo = await getTokenInfo(position.token_address, false).catch(() => null);
+      const decimals = tokenInfo?.decimals ?? 18;
+      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
+      const sym = sanitizeMd(tokenInfo?.symbol || 'Tokens');
+      const shortKey = getShortTokenKey(position.token_address);
+
+      userPendingActions.set(telegramId, {
+        action: 'sell_custom_tokens',
+        tokenAddress: position.token_address,
+        deployerAddress: positionId,
+        expiresAt: Date.now() + 120_000,
+      });
+
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        `💸 *Sell Custom Amount of $${sym}*\n\n` +
+        `💼 *Your Current Balance*: \`${formattedQty} ${sym}\`\n\n` +
+        `Reply with the exact number of tokens you want to sell (e.g. \`50000\` or \`100\`):\n\n` +
+        `_Type /cancel to abort._`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${shortKey}`, 'primary')]])
+        }
+      ).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // ── sell_initial — Sell exact initial investment amount ───────────────────
@@ -3729,7 +3749,12 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── menu_positions — Redirect to holdings for backwards compatibility ───────
   bot.action('menu_positions', async (ctx) => {
-    await handleHoldings(ctx, true);
+    try {
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await handleHoldings(ctx, true);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // ── menu_pnl & refresh_pnl ────────────────────────────────────────────────
@@ -3872,8 +3897,9 @@ export function setupRoutes(bot: Telegraf): void {
           const tPct = t.cost > 0 ? (t.netPnl / t.cost) * 100 : 0;
           const tEmoji = t.netPnl >= 0 ? '🟢' : '🔴';
           const info = tokenInfoMap.get(t.token);
-          const sym = info?.symbol ? sanitizeMd(info.symbol) : t.token.split('.')[0].toUpperCase();
-          msg += `${tEmoji} *$${sym}*: \`${t.netPnl >= 0 ? '+' : ''}${t.netPnl.toFixed(4)} N\` (\`${tPct >= 0 ? '+' : ''}${tPct.toFixed(1)}%\`) [${t.count} trade${t.count > 1 ? 's' : ''}]\n`;
+          const rawSym = info?.symbol || t.token.split('.')[0].toUpperCase();
+          const sym = sanitizeMd(rawSym);
+          msg += `${tEmoji} *$${sym}*: \`${t.netPnl >= 0 ? '+' : ''}${t.netPnl.toFixed(4)} N\` (\`${tPct >= 0 ? '+' : ''}${tPct.toFixed(1)}%\`) (${t.count} trade${t.count > 1 ? 's' : ''})\n`;
         }
         if (sortedTokens.length > 8) {
           msg += `_...and ${sortedTokens.length - 8} more tokens_\n`;
@@ -3914,30 +3940,47 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
 
       if (ctx.callbackQuery) {
-        await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
-          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+        await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+            await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+          });
         });
       } else {
-        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard });
+        await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
+          await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+        });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   };
 
   bot.action(/^pnl_tf:(24h|7d|30d|all)$/, async (ctx) => {
-    const tf = ctx.match![1] as PnlTimeframe;
-    await ctx.answerCbQuery().catch(() => {});
-    await handlePnl(ctx, tf);
+    try {
+      const tf = ctx.match![1] as PnlTimeframe;
+      await ctx.answerCbQuery().catch(() => {});
+      await handlePnl(ctx, tf);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(['menu_pnl', 'refresh_pnl'], async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    await handlePnl(ctx, '24h');
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      await handlePnl(ctx, '24h');
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.command('pnl', async (ctx) => {
-    await handlePnl(ctx, '24h');
+    try {
+      await handlePnl(ctx, '24h');
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
   });
 
   // ── /wallet & /balance ────────────────────────────────────────────────────
@@ -3945,9 +3988,9 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const wallet = await buildWalletMenu(telegramId);
-      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   };
 
@@ -3963,20 +4006,24 @@ export function setupRoutes(bot: Telegraf): void {
       if (canEdit && ctx.callbackQuery) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   };
 
   bot.command('wallets', handleWallets);
   bot.action('wallets_menu', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    await handleWallets(ctx);
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      await handleWallets(ctx);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^wallet_switch:(.+)$/, async (ctx) => {
@@ -3989,14 +4036,14 @@ export function setupRoutes(bot: Telegraf): void {
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
       }
     } catch (err: any) {
       await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -4302,139 +4349,191 @@ export function setupRoutes(bot: Telegraf): void {
 
   // Settings Dashboard Button Actions
   bot.action('set:toggle_auto_buy', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const newStatus = !user.auto_buy_enabled;
-    const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
-    await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
-    const dash = await buildSnipeDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const newStatus = !user.auto_buy_enabled;
+      const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
+      await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
+      const dash = await buildSnipeDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action('set:toggle_show_net_worth', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const current = user.show_net_worth_on_card !== false;
-    const updated = await updateUserSettings(user.id, { show_net_worth_on_card: !current });
-    await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const current = user.show_net_worth_on_card !== false;
+      const updated = await updateUserSettings(user.id, { show_net_worth_on_card: !current });
+      await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => {});
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^toggle_pnl_nw:([^:]+):([01])$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const showNw = ctx.match![2] === '1';
-    await ctx.answerCbQuery(showNw ? 'Showing net worth...' : 'Hiding net worth...').catch(() => {});
-    await ctx.deleteMessage().catch(() => {});
-    await sendPnlCardMessage(ctx, positionId, undefined, showNw);
+    try {
+      const positionId = ctx.match![1];
+      const showNw = ctx.match![2] === '1';
+      await ctx.answerCbQuery(showNw ? 'Showing net worth...' : 'Hiding net worth...').catch(() => {});
+      await ctx.deleteMessage().catch(() => {});
+      await sendPnlCardMessage(ctx, positionId, undefined, showNw);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:slippage:([0-9.]+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const slip = parseFloat(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { slippage_pct: slip });
-    await ctx.answerCbQuery(`Slippage set to ${slip}%`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const slip = parseFloat(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { slippage_pct: slip });
+      await ctx.answerCbQuery(`Slippage set to ${slip}%`).catch(() => {});
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:auto_amt:([0-9.]+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const amt = parseFloat(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
-    await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => {});
-    const dash = await buildSnipeDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const amt = parseFloat(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
+      await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => {});
+      const dash = await buildSnipeDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:min_liq:([0-9.]+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const liq = parseFloat(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
-    await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => {});
-    const dash = await buildSnipeDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const liq = parseFloat(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
+      await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => {});
+      const dash = await buildSnipeDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:buy_pct:(\d+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const pct = parseInt(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { default_buy_pct: pct });
-    await ctx.answerCbQuery(`Default buy set to ${pct}%`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const pct = parseInt(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { default_buy_pct: pct });
+      await ctx.answerCbQuery(`Default buy set to ${pct}%`).catch(() => {});
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:sell_pct:(\d+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const pct = parseInt(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { default_sell_pct: pct });
-    await ctx.answerCbQuery(`Default sell set to ${pct}%`).catch(() => {});
-    const dash = buildSettingsDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const pct = parseInt(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { default_sell_pct: pct });
+      await ctx.answerCbQuery(`Default sell set to ${pct}%`).catch(() => {});
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action('prompt:custom_slippage', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'custom_slippage',
-      expiresAt: Date.now() + 120000,
-    });
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5`):', { parse_mode: 'Markdown' });
+    try {
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'custom_slippage',
+        expiresAt: Date.now() + 120000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5`):', { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action('prompt:custom_auto_buy', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'custom_auto_buy',
-      expiresAt: Date.now() + 120000,
-    });
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' });
+    try {
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'custom_auto_buy',
+        expiresAt: Date.now() + 120000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action('prompt:custom_min_liq', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'custom_min_liq',
-      expiresAt: Date.now() + 120000,
-    });
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' });
+    try {
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'custom_min_liq',
+        expiresAt: Date.now() + 120000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^set:max_mcap:(\d+)$/, async (ctx) => {
-    const telegramId = ctx.from!.id;
-    const mcap = parseFloat(ctx.match![1]);
-    const user = await getUserByTelegramId(telegramId);
-    if (!user) return;
-    const updated = await updateUserSettings(user.id, { auto_buy_max_market_cap_usd: mcap });
-    await ctx.answerCbQuery(`Max market cap set to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}`).catch(() => {});
-    const dash = await buildSnipeDashboard(updated);
-    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    try {
+      const telegramId = ctx.from!.id;
+      const mcap = parseFloat(ctx.match![1]);
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const updated = await updateUserSettings(user.id, { auto_buy_max_market_cap_usd: mcap });
+      await ctx.answerCbQuery(`Max market cap set to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}`).catch(() => {});
+      const dash = await buildSnipeDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action('prompt:custom_max_mcap', async (ctx) => {
-    const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'custom_max_mcap',
-      expiresAt: Date.now() + 120000,
-    });
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply('✏️ *Enter Max Market Cap ($ USD)*\n\nReply with your maximum token market cap in USD (e.g. `50000` for $50k, or `0` for no limit):', { parse_mode: 'Markdown' });
+    try {
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'custom_max_mcap',
+        expiresAt: Date.now() + 120000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply('✏️ *Enter Max Market Cap ($ USD)*\n\nReply with your maximum token market cap in USD (e.g. `50000` for $50k, or `0` for no limit):', { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // ── /info <token_ca> — Token Details Card with in-chat buy buttons ─────────
@@ -4527,122 +4626,149 @@ export function setupRoutes(bot: Telegraf): void {
   // released immediately (Telegram cannot time out and resend the update) and
   // the detached body always sends a final success or error message.
   bot.action(/^buy_fixed:(.+):([0-9.]+)$/, async (ctx) => {
-    const rawTokenParam = ctx.match![1];
-    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
-    const amountVal = parseFloat(ctx.match![2]);
-    const telegramId = ctx.from!.id;
-    const isSui = isSuiToken(tokenAddress);
-    const unit = isSui ? 'SUI' : 'NEAR';
-    console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
+    try {
+      const rawTokenParam = ctx.match![1];
+      const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
+      const amountVal = parseFloat(ctx.match![2]);
+      const telegramId = ctx.from!.id;
+      const isSui = isSuiToken(tokenAddress);
+      const unit = isSui ? 'SUI' : 'NEAR';
+      console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
 
-    // In-flight guard: reject a duplicate tap while a trade for this token is running.
-    const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-    if (!(await tryAcquireInFlight(guardKey))) {
-      console.warn(`[BUY_FIXED] Duplicate tap rejected: guardKey=${guardKey}`);
-      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
-      return;
-    }
-    await ctx.answerCbQuery(`⚡ Processing buy order for ${amountVal} ${unit}...`).catch(() => {});
-
-    (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountVal} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-      const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
-      try {
-        console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
-        const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
-        console.log(`[BUY_FIXED] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-        await ctx.reply(res.message, {
-          parse_mode: 'Markdown',
-          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-        });
-        if (res.positionId) {
-          await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol);
-        }
-      } catch (err: any) {
-        console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
-      } finally {
-        await releaseInFlight(guardKey);
+      // In-flight guard: reject a duplicate tap while a trade for this token is running.
+      const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+      if (!(await tryAcquireInFlight(guardKey))) {
+        console.warn(`[BUY_FIXED] Duplicate tap rejected: guardKey=${guardKey}`);
+        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+        return;
       }
-    })().catch(async (err: any) => {
-      // Last-resort net: the body above always sends a final message; if it
-      // itself crashed (e.g. Telegram API down), still release the guard.
-      await releaseInFlight(guardKey);
-      console.error('[BUY] Unhandled detached buy error:', err?.message || err);
-    });
+      await ctx.answerCbQuery(`⚡ Processing buy order for ${amountVal} ${unit}...`).catch(() => {});
+
+      (async () => {
+        const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountVal} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
+        try {
+          console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
+          const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
+          console.log(`[BUY_FIXED] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+          await ctx.reply(res.message, {
+            parse_mode: 'Markdown',
+            reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
+          }).catch(async () => {
+            await ctx.reply(res.message.replace(/[*_`]/g, ''), {
+              reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
+            }).catch(() => {});
+          });
+          if (res.positionId) {
+            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+        } finally {
+          await releaseInFlight(guardKey);
+        }
+      })().catch(async (err: any) => {
+        // Last-resort net: the body above always sends a final message; if it
+        // itself crashed (e.g. Telegram API down), still release the guard.
+        await releaseInFlight(guardKey);
+        console.error('[BUY] Unhandled detached buy error:', err?.message || err);
+      });
+    } catch (outerErr: any) {
+      console.error('[BUY_FIXED] Outer handler error:', outerErr);
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+    }
   });
 
   // Percentage buy: buy_pct:<token>:<pct> or legacy buy:<token>:<pct>
   // Same detached + in-flight-guard structure as buy_fixed.
   bot.action(/^(?:buy_pct|buy):(.+):(\d+)$/, async (ctx) => {
-    const rawTokenParam = ctx.match![1];
-    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
-    const pct = parseInt(ctx.match![2]);
-    const telegramId = ctx.from!.id;
-    const isSui = isSuiToken(tokenAddress);
-    const unit = isSui ? 'SUI' : 'NEAR';
-    console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
+    try {
+      const rawTokenParam = ctx.match![1];
+      const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
+      const pct = parseInt(ctx.match![2]);
+      const telegramId = ctx.from!.id;
+      const isSui = isSuiToken(tokenAddress);
+      const unit = isSui ? 'SUI' : 'NEAR';
+      console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
-    const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
-    if (!(await tryAcquireInFlight(guardKey))) {
-      console.warn(`[BUY_PCT] Duplicate tap rejected: guardKey=${guardKey}`);
-      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
-      return;
-    }
-    await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
-
-    (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging ${unit} for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-      const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
-      try {
-        console.log(`[BUY_PCT] Starting executeBuyPctHelper: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
-        const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
-        console.log(`[BUY_PCT] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-
-        await ctx.reply(res.message, {
-          parse_mode: 'Markdown',
-          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-        });
-        if (res.positionId) {
-          await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol);
-        }
-      } catch (err: any) {
-        console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
-      } finally {
-        await releaseInFlight(guardKey);
+      const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
+      if (!(await tryAcquireInFlight(guardKey))) {
+        console.warn(`[BUY_PCT] Duplicate tap rejected: guardKey=${guardKey}`);
+        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+        return;
       }
-    })().catch(async (err: any) => {
-      await releaseInFlight(guardKey);
-      console.error('[BUY] Unhandled detached pct-buy error:', err?.message || err);
-    });
+      await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
+
+      (async () => {
+        const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging ${unit} for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        const onStage = makeStageEditor(ctx, procMsg, `Processing Buy Order (${pct}%)`);
+        try {
+          console.log(`[BUY_PCT] Starting executeBuyPctHelper: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
+          const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
+          console.log(`[BUY_PCT] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+
+          await ctx.reply(res.message, {
+            parse_mode: 'Markdown',
+            reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
+          }).catch(async () => {
+            await ctx.reply(res.message.replace(/[*_`]/g, ''), {
+              reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
+            }).catch(() => {});
+          });
+          if (res.positionId) {
+            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+        } finally {
+          await releaseInFlight(guardKey);
+        }
+      })().catch(async (err: any) => {
+        await releaseInFlight(guardKey);
+        console.error('[BUY] Unhandled detached pct-buy error:', err?.message || err);
+      });
+    } catch (outerErr: any) {
+      console.error('[BUY_PCT] Outer handler error:', outerErr);
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+    }
   });
 
   // Custom buy prompt button
   bot.action(/^buy_custom_prompt:(.+)$/, async (ctx) => {
-    const rawTokenParam = ctx.match![1];
-    const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
-    const telegramId = ctx.from!.id;
-    const isSui = isSuiToken(tokenAddress);
-    const unit = isSui ? 'SUI' : 'NEAR';
-    userPendingActions.set(telegramId, {
-      action: 'buy_custom_near',
-      tokenAddress,
-      expiresAt: Date.now() + 180000,
-    });
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply(
-      `✏️ *Custom Buy Amount*\n\n` +
-      `Token: \`${tokenAddress}\`\n\n` +
-      `Reply with the amount in ${unit} you want to buy (e.g. \`2.5\`):\n` +
-      `_Type /cancel to abort._`,
-      { parse_mode: 'Markdown' }
-    );
+    try {
+      const rawTokenParam = ctx.match![1];
+      const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
+      const telegramId = ctx.from!.id;
+      const isSui = isSuiToken(tokenAddress);
+      const unit = isSui ? 'SUI' : 'NEAR';
+      userPendingActions.set(telegramId, {
+        action: 'buy_custom_near',
+        tokenAddress,
+        expiresAt: Date.now() + 180000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        `✏️ *Custom Buy Amount*\n\n` +
+        `Token: \`${tokenAddress}\`\n\n` +
+        `Reply with the amount in ${unit} you want to buy (e.g. \`2.5\`):\n` +
+        `_Type /cancel to abort._`,
+        { parse_mode: 'Markdown' }
+      ).catch(async () => {
+        await ctx.reply(
+          `Custom Buy Amount\n\nToken: ${tokenAddress}\n\nReply with the amount in ${unit} you want to buy (e.g. 2.5):\nType /cancel to abort.`
+        ).catch(() => {});
+      });
+    } catch (outerErr: any) {
+      console.error('[BUY_CUSTOM_PROMPT] Outer handler error:', outerErr);
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+    }
   });
 
   // ── /buy <token_ca> [amount] ─────────────────────────────────────────────
@@ -4761,54 +4887,59 @@ export function setupRoutes(bot: Telegraf): void {
   // The guard key resolves the position's token address up front so the key
   // stays telegramId + tokenAddress + side as everywhere else.
   bot.action(/^sell:([^:]+):(\d+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const pct = parseInt(ctx.match![2]);
-    const telegramId = ctx.from!.id;
-    console.log(`[SELL] Click: user=${telegramId}, positionId=${positionId}, pct=${pct}%`);
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
+    try {
+      const positionId = ctx.match![1];
+      const pct = parseInt(ctx.match![2]);
+      const telegramId = ctx.from!.id;
+      console.log(`[SELL] Click: user=${telegramId}, positionId=${positionId}, pct=${pct}%`);
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.answerCbQuery('Position not found.').catch(() => {});
-      return;
-    }
-    const tokenAddress = position.token_address;
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.answerCbQuery('Position not found.').catch(() => {});
+        return;
+      }
+      const tokenAddress = position.token_address;
 
-    const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
-    if (!(await tryAcquireInFlight(guardKey))) {
-      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
-      return;
-    }
-    await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
+      const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
+      if (!(await tryAcquireInFlight(guardKey))) {
+        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+        return;
+      }
+      await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
 
-    (async () => {
-      const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
-      const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
+      (async () => {
+        const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
 
-      let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
-      try {
-        console.log(`[SELL] Starting sellAtTarget: user=${user.id}, positionId=${positionId}, pct=${pct}%, token=${tokenAddress}`);
-        result = await sellAtTarget(user.id, positionId, pct, onStage);
-        console.log(`[SELL] sellAtTarget completed: user=${user.id}, success=${result.success}, reason=${result.reason || 'ok'}`);
-      } catch (err: any) {
-        console.error(`[SELL] sellAtTarget threw: user=${user.id}, error=${err?.message}`, err);
-        result = { success: false, reason: err.message || 'Swap execution failed' };
-      } finally {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
+        try {
+          console.log(`[SELL] Starting sellAtTarget: user=${user.id}, positionId=${positionId}, pct=${pct}%, token=${tokenAddress}`);
+          result = await sellAtTarget(user.id, positionId, pct, onStage);
+          console.log(`[SELL] sellAtTarget completed: user=${user.id}, success=${result.success}, reason=${result.reason || 'ok'}`);
+        } catch (err: any) {
+          console.error(`[SELL] sellAtTarget threw: user=${user.id}, error=${err?.message}`, err);
+          result = { success: false, reason: err.message || 'Swap execution failed' };
+        } finally {
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          await releaseInFlight(guardKey);
+        }
+
+        if (result.success) {
+          await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`).catch(() => {});
+        } else {
+          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+        }
+      })().catch(async (err: any) => {
         await releaseInFlight(guardKey);
-      }
-
-      if (result.success) {
-        await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`).catch(() => {});
-      } else {
-        await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
-      }
-    })().catch(async (err: any) => {
-      await releaseInFlight(guardKey);
-      console.error('[SELL] Unhandled detached sell error:', err?.message || err);
-      ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => {});
-    });
+        console.error('[SELL] Unhandled detached sell error:', err?.message || err);
+        ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => {});
+      });
+    } catch (outerErr: any) {
+      console.error('[SELL] Outer handler error:', outerErr);
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+    }
   });
 
   // ── /positions & /pnl ─────────────────────────────────────────────────────
@@ -5380,154 +5511,167 @@ export function setupRoutes(bot: Telegraf): void {
 
   // SL/TP Dismiss / Skip
   bot.action('sl_tp_dismiss', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    await ctx.deleteMessage().catch(async () => {
-      await ctx.editMessageText('🛡️ _SL/TP setup skipped. You can always set them from /positions anytime._', { parse_mode: 'Markdown' }).catch(() => {});
-    });
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.deleteMessage().catch(async () => {
+        await ctx.editMessageText('🛡️ _SL/TP setup skipped. You can always set them from /positions anytime._', { parse_mode: 'Markdown' }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // SL/TP Combined Hub Menu
   bot.action(/^sl_tp_menu:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) return;
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) return;
 
-    const [info, triggers] = await Promise.all([
-      getTokenInfo(position.token_address, false).catch(() => null),
-      getTriggersByPosition(positionId).catch(() => []),
-    ]);
+      const [info, triggers] = await Promise.all([
+        getTokenInfo(position.token_address, false).catch(() => null),
+        getTriggersByPosition(positionId).catch(() => []),
+      ]);
 
-    const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-    const slTrigger = triggers.find(t => t.type === 'stop_loss');
-    const tpTrigger = triggers.find(t => t.type === 'take_profit');
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const slTrigger = triggers.find(t => t.type === 'stop_loss');
+      const tpTrigger = triggers.find(t => t.type === 'take_profit');
 
-    const slStatus = slTrigger ? `-${slTrigger.target_value}%` : 'Not set';
-    const tpStatus = tpTrigger ? `+${tpTrigger.target_value}%` : 'Not set';
+      const slStatus = slTrigger ? `-${slTrigger.target_value}%` : 'Not set';
+      const tpStatus = tpTrigger ? `+${tpTrigger.target_value}%` : 'Not set';
 
-    const msg =
-      `🛡️ *Manage Protection for ${symbol}*\n\n` +
-      `📉 *Stop Loss*: \`${slStatus}\`\n` +
-      `📈 *Take Profit*: \`${tpStatus}\`\n\n` +
-      `Set automatic trigger orders to protect your downside or lock in gains:`;
+      const msg =
+        `🛡️ *Manage Protection for ${symbol}*\n\n` +
+        `📉 *Stop Loss*: \`${slStatus}\`\n` +
+        `📈 *Take Profit*: \`${tpStatus}\`\n\n` +
+        `Set automatic trigger orders to protect your downside or lock in gains:`;
 
-    const buttons = [
-      [
-        cb(slTrigger ? `📉 Edit SL (-${slTrigger.target_value}%)` : '📉 Set Stop Loss', `sl_prompt:${positionId}`, slTrigger ? 'danger' : undefined),
-        cb(tpTrigger ? `📈 Edit TP (+${tpTrigger.target_value}%)` : '📈 Set Take Profit', `tp_prompt:${positionId}`, tpTrigger ? 'success' : undefined),
-      ],
-      [
-        cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
-        cb('Close ✖️', 'sl_tp_dismiss'),
-      ],
-    ];
+      const buttons = [
+        [
+          cb(slTrigger ? `📉 Edit SL (-${slTrigger.target_value}%)` : '📉 Set Stop Loss', `sl_prompt:${positionId}`, slTrigger ? 'danger' : undefined),
+          cb(tpTrigger ? `📈 Edit TP (+${tpTrigger.target_value}%)` : '📈 Set Take Profit', `tp_prompt:${positionId}`, tpTrigger ? 'success' : undefined),
+        ],
+        [
+          cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
+          cb('Close ✖️', 'sl_tp_dismiss'),
+        ],
+      ];
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(async () => {
-      await ctx.reply(msg, {
+      await ctx.editMessageText(msg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-      }).catch(() => {});
-    });
+      }).catch(async () => {
+        await ctx.reply(msg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Stop Loss prompt with preset level buttons
   bot.action(/^sl_prompt:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.reply('Position not found.').catch(() => {});
-      return;
-    }
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.reply('Position not found.').catch(() => {});
+        return;
+      }
 
-    const [info, triggers] = await Promise.all([
-      getTokenInfo(position.token_address, false).catch(() => null),
-      getTriggersByPosition(positionId).catch(() => []),
-    ]);
+      const [info, triggers] = await Promise.all([
+        getTokenInfo(position.token_address, false).catch(() => null),
+        getTriggersByPosition(positionId).catch(() => []),
+      ]);
 
-    const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-    const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-    const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-    const entryPrice = parseFloat(position.avg_entry_price || '0');
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
+      const entryPrice = parseFloat(position.avg_entry_price || '0');
 
-    const slTrigger = triggers.find(t => t.type === 'stop_loss');
-    const currentSlStr = slTrigger ? `\n• Current Stop Loss: \`-${slTrigger.target_value}%\`` : '';
+      const slTrigger = triggers.find(t => t.type === 'stop_loss');
+      const currentSlStr = slTrigger ? `\n• Current Stop Loss: \`-${slTrigger.target_value}%\`` : '';
 
-    const priceInfoStr = entryPrice > 0
-      ? `\n💵 Entry: \`${entryPrice.toFixed(6)} ${nativeUnit}\``
-      : '';
+      const priceInfoStr = entryPrice > 0
+        ? `\n💵 Entry: \`${entryPrice.toFixed(6)} ${nativeUnit}\``
+        : '';
 
-    const msg =
-      `📉 *Stop Loss for ${symbol}*\n` +
-      priceInfoStr +
-      currentSlStr + `\n\n` +
-      `*Step 1 — Drop level:*\n` +
-      `Select how far the price must fall from entry to trigger a sell.\n\n` +
-      `*Step 2 — Sell quantity:*\n` +
-      `_After selecting a drop %, tap how much of your position to sell._`;
+      const msg =
+        `📉 *Stop Loss for ${symbol}*\n` +
+        priceInfoStr +
+        currentSlStr + `\n\n` +
+        `*Step 1 — Drop level:*\n` +
+        `Select how far the price must fall from entry to trigger a sell.\n\n` +
+        `*Step 2 — Sell quantity:*\n` +
+        `_After selecting a drop %, tap how much of your position to sell._`;
 
-    const buttons: any[] = [
-      [
-        cb('-10%', `set_sl:${positionId}:10`, 'danger'),
-        cb('-20%', `set_sl:${positionId}:20`, 'danger'),
-        cb('-30%', `set_sl:${positionId}:30`, 'danger'),
-      ],
-      [
-        cb('-50%', `set_sl:${positionId}:50`, 'danger'),
-        cb('✏️ Custom %', `sl_custom_prompt:${positionId}`),
-      ],
-    ];
+      const buttons: any[] = [
+        [
+          cb('-10%', `set_sl:${positionId}:10`, 'danger'),
+          cb('-20%', `set_sl:${positionId}:20`, 'danger'),
+          cb('-30%', `set_sl:${positionId}:30`, 'danger'),
+        ],
+        [
+          cb('-50%', `set_sl:${positionId}:50`, 'danger'),
+          cb('✏️ Custom %', `sl_custom_prompt:${positionId}`),
+        ],
+      ];
 
-    const bottomRow: any[] = [];
-    if (slTrigger) {
-      bottomRow.push(cb('❌ Cancel SL', `cancel_sl:${positionId}`, 'danger'));
-    }
-    bottomRow.push(cb('🔙 Back', `sl_tp_menu:${positionId}`, 'primary'));
-    buttons.push(bottomRow);
+      const bottomRow: any[] = [];
+      if (slTrigger) {
+        bottomRow.push(cb('❌ Cancel SL', `cancel_sl:${positionId}`, 'danger'));
+      }
+      bottomRow.push(cb('🔙 Back', `sl_tp_menu:${positionId}`, 'primary'));
+      buttons.push(bottomRow);
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(async () => {
-      await ctx.reply(msg, {
+      await ctx.editMessageText(msg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-      }).catch(() => {});
-    });
+      }).catch(async () => {
+        await ctx.reply(msg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Take Profit prompt with preset target buttons
   bot.action(/^tp_prompt:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.reply('Position not found.').catch(() => {});
-      return;
-    }
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.reply('Position not found.').catch(() => {});
+        return;
+      }
 
-    const [info, triggers] = await Promise.all([
-      getTokenInfo(position.token_address, false).catch(() => null),
-      getTriggersByPosition(positionId).catch(() => []),
-    ]);
+      const [info, triggers] = await Promise.all([
+        getTokenInfo(position.token_address, false).catch(() => null),
+        getTriggersByPosition(positionId).catch(() => []),
+      ]);
 
     const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
     const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
@@ -5579,298 +5723,351 @@ export function setupRoutes(bot: Telegraf): void {
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
       }).catch(() => {});
     });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Set Stop Loss percentage (+ optional sell quantity %)
   // Format: set_sl:<positionId>:<dropPct>:<sellPct>
   bot.action(/^set_sl:([^:]+):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const pct = parseFloat(ctx.match![2]);
-    const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const pct = parseFloat(ctx.match![2]);
+      const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.reply('Position not found.').catch(() => {});
-      return;
-    }
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.reply('Position not found.').catch(() => {});
+        return;
+      }
 
-    // If a full set_sl:pos:pct:100 was clicked, show the sell-quantity picker next
-    // so the user can choose how much to sell. This two-step UX avoids long button rows.
-    if (ctx.match![3] === undefined) {
-      // Ask sell quantity before confirming
-      const info = await getTokenInfo(position.token_address, false).catch(() => null);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-      const sellQtyMsg =
-        `📉 *Stop Loss — Sell Quantity for ${symbol}*\n\n` +
-        `Drop level: \`-${pct}%\` from entry\n\n` +
-        `How much of your position should be sold when this triggers?`;
-      const sellQtyButtons = [
-        [
-          cb('25% of position', `set_sl:${positionId}:${pct}:25`, 'danger'),
-          cb('50% of position', `set_sl:${positionId}:${pct}:50`, 'danger'),
-        ],
-        [
-          cb('75% of position', `set_sl:${positionId}:${pct}:75`, 'danger'),
-          cb('100% (all)', `set_sl:${positionId}:${pct}:100`, 'danger'),
-        ],
-        [cb('🔙 Back', `sl_prompt:${positionId}`, 'primary')],
-      ];
-      await ctx.editMessageText(sellQtyMsg, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-      }).catch(async () => {
-        await ctx.reply(sellQtyMsg, {
+      // If a full set_sl:pos:pct:100 was clicked, show the sell-quantity picker next
+      // so the user can choose how much to sell. This two-step UX avoids long button rows.
+      if (ctx.match![3] === undefined) {
+        // Ask sell quantity before confirming
+        const info = await getTokenInfo(position.token_address, false).catch(() => null);
+        const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+        const sellQtyMsg =
+          `📉 *Stop Loss — Sell Quantity for ${symbol}*\n\n` +
+          `Drop level: \`-${pct}%\` from entry\n\n` +
+          `How much of your position should be sold when this triggers?`;
+        const sellQtyButtons = [
+          [
+            cb('25% of position', `set_sl:${positionId}:${pct}:25`, 'danger'),
+            cb('50% of position', `set_sl:${positionId}:${pct}:50`, 'danger'),
+          ],
+          [
+            cb('75% of position', `set_sl:${positionId}:${pct}:75`, 'danger'),
+            cb('100% (all)', `set_sl:${positionId}:${pct}:100`, 'danger'),
+          ],
+          [cb('🔙 Back', `sl_prompt:${positionId}`, 'primary')],
+        ];
+        await ctx.editMessageText(sellQtyMsg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-        }).catch(() => {});
+        }).catch(async () => {
+          await ctx.reply(sellQtyMsg, {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+          }).catch(() => {});
+        });
+        return;
+      }
+
+      await upsertTrigger({
+        user_id: user.id,
+        position_id: positionId,
+        type: 'stop_loss',
+        target_value: pct.toString(),
+        sell_pct: sellPct,
+        chain: position.chain || 'near',
       });
-      return;
-    }
 
-    await upsertTrigger({
-      user_id: user.id,
-      position_id: positionId,
-      type: 'stop_loss',
-      target_value: pct.toString(),
-      sell_pct: sellPct,
-      chain: position.chain || 'near',
-    });
+      const info = await getTokenInfo(position.token_address, false).catch(() => null);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
+      const entryPrice = parseFloat(position.avg_entry_price || '0');
+      const slPrice = entryPrice > 0 ? entryPrice * (1 - pct / 100) : 0;
+      const slPriceStr = slPrice > 0 ? `\n🛑 Triggers at: \`${slPrice.toFixed(6)} ${nativeUnit}\`` : '';
+      const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
 
-    const info = await getTokenInfo(position.token_address, false).catch(() => null);
-    const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-    const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-    const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-    const entryPrice = parseFloat(position.avg_entry_price || '0');
-    const slPrice = entryPrice > 0 ? entryPrice * (1 - pct / 100) : 0;
-    const slPriceStr = slPrice > 0 ? `\n🛑 Triggers at: \`${slPrice.toFixed(6)} ${nativeUnit}\`` : '';
-    const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
+      const msg =
+        `✅ *Stop Loss Activated!*\n\n` +
+        `🪙 Token: *${symbol}*\n` +
+        `📉 Level: \`-${pct}%\` from entry${sellQtyStr}` +
+        slPriceStr + `\n\n` +
+        `If the price drops to this target, an automated market sell will execute to protect your capital.`;
 
-    const msg =
-      `✅ *Stop Loss Activated!*\n\n` +
-      `🪙 Token: *${symbol}*\n` +
-      `📉 Level: \`-${pct}%\` from entry${sellQtyStr}` +
-      slPriceStr + `\n\n` +
-      `If the price drops to this target, an automated market sell will execute to protect your capital.`;
+      const buttons = [
+        [
+          cb('📈 Set Take Profit', `tp_prompt:${positionId}`, 'success'),
+          cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
+        ],
+        [
+          cb('❌ Remove SL', `cancel_sl:${positionId}`, 'danger'),
+          cb('🔙 Menu', `sl_tp_menu:${positionId}`),
+        ],
+      ];
 
-    const buttons = [
-      [
-        cb('📈 Set Take Profit', `tp_prompt:${positionId}`, 'success'),
-        cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
-      ],
-      [
-        cb('❌ Remove SL', `cancel_sl:${positionId}`, 'danger'),
-        cb('🔙 Menu', `sl_tp_menu:${positionId}`),
-      ],
-    ];
-
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(async () => {
-      await ctx.reply(msg, {
+      await ctx.editMessageText(msg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-      }).catch(() => {});
-    });
+      }).catch(async () => {
+        await ctx.reply(msg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Set Take Profit percentage (+ optional sell quantity %)
   // Format: set_tp:<positionId>:<targetPct>:<sellPct>
   bot.action(/^set_tp:([^:]+):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const pct = parseFloat(ctx.match![2]);
-    const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const pct = parseFloat(ctx.match![2]);
+      const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    const position = await getPositionById(positionId).catch(() => null);
-    if (!position || position.user_id !== user.id) {
-      await ctx.reply('Position not found.').catch(() => {});
-      return;
-    }
+      const position = await getPositionById(positionId).catch(() => null);
+      if (!position || position.user_id !== user.id) {
+        await ctx.reply('Position not found.').catch(() => {});
+        return;
+      }
 
-    // If no sell_pct captured yet, show the sell-quantity picker
-    if (ctx.match![3] === undefined) {
-      const info = await getTokenInfo(position.token_address, false).catch(() => null);
-      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-      const sellQtyMsg =
-        `📈 *Take Profit — Sell Quantity for ${symbol}*\n\n` +
-        `Profit target: \`+${pct}%\` from entry\n\n` +
-        `How much of your position should be sold when this triggers?`;
-      const sellQtyButtons = [
-        [
-          cb('25% of position', `set_tp:${positionId}:${pct}:25`, 'success'),
-          cb('50% of position', `set_tp:${positionId}:${pct}:50`, 'success'),
-        ],
-        [
-          cb('75% of position', `set_tp:${positionId}:${pct}:75`, 'success'),
-          cb('100% (all)', `set_tp:${positionId}:${pct}:100`, 'success'),
-        ],
-        [cb('🔙 Back', `tp_prompt:${positionId}`, 'primary')],
-      ];
-      await ctx.editMessageText(sellQtyMsg, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-      }).catch(async () => {
-        await ctx.reply(sellQtyMsg, {
+      // If no sell_pct captured yet, show the sell-quantity picker
+      if (ctx.match![3] === undefined) {
+        const info = await getTokenInfo(position.token_address, false).catch(() => null);
+        const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+        const sellQtyMsg =
+          `📈 *Take Profit — Sell Quantity for ${symbol}*\n\n` +
+          `Profit target: \`+${pct}%\` from entry\n\n` +
+          `How much of your position should be sold when this triggers?`;
+        const sellQtyButtons = [
+          [
+            cb('25% of position', `set_tp:${positionId}:${pct}:25`, 'success'),
+            cb('50% of position', `set_tp:${positionId}:${pct}:50`, 'success'),
+          ],
+          [
+            cb('75% of position', `set_tp:${positionId}:${pct}:75`, 'success'),
+            cb('100% (all)', `set_tp:${positionId}:${pct}:100`, 'success'),
+          ],
+          [cb('🔙 Back', `tp_prompt:${positionId}`, 'primary')],
+        ];
+        await ctx.editMessageText(sellQtyMsg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-        }).catch(() => {});
+        }).catch(async () => {
+          await ctx.reply(sellQtyMsg, {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
+          }).catch(() => {});
+        });
+        return;
+      }
+
+      await upsertTrigger({
+        user_id: user.id,
+        position_id: positionId,
+        type: 'take_profit',
+        target_value: pct.toString(),
+        sell_pct: sellPct,
+        chain: position.chain || 'near',
       });
-      return;
-    }
 
-    await upsertTrigger({
-      user_id: user.id,
-      position_id: positionId,
-      type: 'take_profit',
-      target_value: pct.toString(),
-      sell_pct: sellPct,
-      chain: position.chain || 'near',
-    });
+      const info = await getTokenInfo(position.token_address, false).catch(() => null);
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
+      const entryPrice = parseFloat(position.avg_entry_price || '0');
+      const tpPrice = entryPrice > 0 ? entryPrice * (1 + pct / 100) : 0;
+      const tpPriceStr = tpPrice > 0 ? `\n🎯 Triggers at: \`${tpPrice.toFixed(6)} ${nativeUnit}\`` : '';
+      const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
 
-    const info = await getTokenInfo(position.token_address, false).catch(() => null);
-    const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-    const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-    const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-    const entryPrice = parseFloat(position.avg_entry_price || '0');
-    const tpPrice = entryPrice > 0 ? entryPrice * (1 + pct / 100) : 0;
-    const tpPriceStr = tpPrice > 0 ? `\n🎯 Triggers at: \`${tpPrice.toFixed(6)} ${nativeUnit}\`` : '';
-    const sellQtyStr = sellPct < 100 ? ` (sells ${sellPct}% of position)` : '';
+      const msg =
+        `✅ *Take Profit Activated!*\n\n` +
+        `🪙 Token: *${symbol}*\n` +
+        `📈 Level: \`+${pct}%\` from entry${sellQtyStr}` +
+        tpPriceStr + `\n\n` +
+        `When the price rises to this target, an automated market sell will execute to lock in your profit.`;
 
-    const msg =
-      `✅ *Take Profit Activated!*\n\n` +
-      `🪙 Token: *${symbol}*\n` +
-      `📈 Level: \`+${pct}%\` from entry${sellQtyStr}` +
-      tpPriceStr + `\n\n` +
-      `When the price rises to this target, an automated market sell will execute to lock in your profit.`;
+      const buttons = [
+        [
+          cb('📉 Set Stop Loss', `sl_prompt:${positionId}`, 'danger'),
+          cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
+        ],
+        [
+          cb('❌ Remove TP', `cancel_tp:${positionId}`, 'danger'),
+          cb('🔙 Menu', `sl_tp_menu:${positionId}`),
+        ],
+      ];
 
-    const buttons = [
-      [
-        cb('📉 Set Stop Loss', `sl_prompt:${positionId}`, 'danger'),
-        cb('📊 View Position', `token_detail:${positionId}`, 'primary'),
-      ],
-      [
-        cb('❌ Remove TP', `cancel_tp:${positionId}`, 'danger'),
-        cb('🔙 Menu', `sl_tp_menu:${positionId}`),
-      ],
-    ];
-
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(async () => {
-      await ctx.reply(msg, {
+      await ctx.editMessageText(msg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-      }).catch(() => {});
-    });
+      }).catch(async () => {
+        await ctx.reply(msg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Cancel Stop Loss
   bot.action(/^cancel_sl:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Stop Loss cancelled.').catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery('Stop Loss cancelled.').catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    await cancelTriggersByPosition(positionId, 'stop_loss');
+      await cancelTriggersByPosition(positionId, 'stop_loss');
 
-    const buttons = [
-      [
-        cb('📉 Set Stop Loss', `sl_prompt:${positionId}`, 'danger'),
-        cb('🔙 Back to Menu', `sl_tp_menu:${positionId}`, 'primary'),
-      ],
-    ];
-    await ctx.editMessageText('❌ *Stop Loss removed for this position.*', {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(() => {});
+      const buttons = [
+        [
+          cb('📉 Set Stop Loss', `sl_prompt:${positionId}`, 'danger'),
+          cb('🔙 Back to Menu', `sl_tp_menu:${positionId}`, 'primary'),
+        ],
+      ];
+      await ctx.editMessageText('❌ *Stop Loss removed for this position.*', {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+      }).catch(async () => {
+        await ctx.reply('❌ Stop Loss removed for this position.', {
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Cancel Take Profit
   bot.action(/^cancel_tp:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Take Profit cancelled.').catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery('Take Profit cancelled.').catch(() => {});
 
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) return;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      if (!user) return;
 
-    await cancelTriggersByPosition(positionId, 'take_profit');
+      await cancelTriggersByPosition(positionId, 'take_profit');
 
-    const buttons = [
-      [
-        cb('📈 Set Take Profit', `tp_prompt:${positionId}`, 'success'),
-        cb('🔙 Back to Menu', `sl_tp_menu:${positionId}`, 'primary'),
-      ],
-    ];
-    await ctx.editMessageText('❌ *Take Profit removed for this position.*', {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(() => {});
+      const buttons = [
+        [
+          cb('📈 Set Take Profit', `tp_prompt:${positionId}`, 'success'),
+          cb('🔙 Back to Menu', `sl_tp_menu:${positionId}`, 'primary'),
+        ],
+      ];
+      await ctx.editMessageText('❌ *Take Profit removed for this position.*', {
+        parse_mode: 'Markdown',
+        reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+      }).catch(async () => {
+        await ctx.reply('❌ Take Profit removed for this position.', {
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Prompt Custom Stop Loss
   bot.action(/^sl_custom_prompt:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    userPendingActions.set(telegramId, {
-      action: 'set_sl_custom',
-      positionId,
-      expiresAt: Date.now() + 5 * 60_000,
-    });
+      userPendingActions.set(telegramId, {
+        action: 'set_sl_custom',
+        positionId,
+        expiresAt: Date.now() + 5 * 60_000,
+      });
 
-    await ctx.reply(
-      `✏️ *Set Custom Stop Loss %*\n\n` +
-      `Enter the percentage drop from entry to trigger exit.\n` +
-      `Example: Type \`15\` for -15%, or \`35\` for -35%.\n\n` +
-      `_Reply with a number between 1 and 99:_`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard([
-          [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
-        ]).reply_markup,
-      }
-    );
+      await ctx.reply(
+        `✏️ *Set Custom Stop Loss %*\n\n` +
+        `Enter the percentage drop from entry to trigger exit.\n` +
+        `Example: Type \`15\` for -15%, or \`35\` for -35%.\n\n` +
+        `_Reply with a number between 1 and 99:_`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
+          ]).reply_markup,
+        }
+      ).catch(async () => {
+        await ctx.reply(
+          `Set Custom Stop Loss %\nEnter the percentage drop from entry to trigger exit (between 1 and 99):`,
+          {
+            reply_markup: Markup.inlineKeyboard([
+              [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
+            ]).reply_markup,
+          }
+        ).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // Action: Prompt Custom Take Profit
   bot.action(/^tp_custom_prompt:([^:]+)$/, async (ctx) => {
-    const positionId = ctx.match![1];
-    const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    try {
+      const positionId = ctx.match![1];
+      const telegramId = ctx.from!.id;
+      await ctx.answerCbQuery().catch(() => {});
 
-    userPendingActions.set(telegramId, {
-      action: 'set_tp_custom',
-      positionId,
-      expiresAt: Date.now() + 5 * 60_000,
-    });
+      userPendingActions.set(telegramId, {
+        action: 'set_tp_custom',
+        positionId,
+        expiresAt: Date.now() + 5 * 60_000,
+      });
 
-    await ctx.reply(
-      `✏️ *Set Custom Take Profit %*\n\n` +
-      `Enter the percentage gain from entry to take profit.\n` +
-      `Example: Type \`75\` for +75%, or \`250\` for +250%.\n\n` +
-      `_Reply with a number (e.g. 75, 150, 300):_`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard([
-          [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
-        ]).reply_markup,
-      }
-    );
+      await ctx.reply(
+        `✏️ *Set Custom Take Profit %*\n\n` +
+        `Enter the percentage gain from entry to take profit.\n` +
+        `Example: Type \`75\` for +75%, or \`250\` for +250%.\n\n` +
+        `_Reply with a number (e.g. 75, 150, 300):_`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard([
+            [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
+          ]).reply_markup,
+        }
+      ).catch(async () => {
+        await ctx.reply(
+          `Set Custom Take Profit %\nEnter the percentage gain from entry to take profit (e.g. 75, 150, 300):`,
+          {
+            reply_markup: Markup.inlineKeyboard([
+              [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
+            ]).reply_markup,
+          }
+        ).catch(() => {});
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   // ── Telegram Group Buy Alerts (/track, /buybot, /buyalert, /testalert) ─────
