@@ -2840,6 +2840,37 @@ export class SwapExecutor {
       return { success: false, reason: 'user_wallet_not_found' };
     }
 
+    // Pre-flight Market Cap ceiling guard (for general auto-buys, skips if token cap exceeds limit)
+    if (!snipeOrderId) {
+      const maxMcap = user?.auto_buy_max_market_cap_usd != null
+        ? parseFloat(user.auto_buy_max_market_cap_usd.toString())
+        : 100000;
+      if (maxMcap > 0) {
+        try {
+          const dbCache = await getTokenCache(token_address).catch(() => null);
+          const decimals = dbCache?.decimals ?? 18;
+          const spot = await this.nearClient.getVenueSpotPrice(
+            venue,
+            token_address,
+            decimals,
+            rheaPoolId,
+            dclPoolId
+          ).catch(() => null);
+          if (spot && spot.price > 0 && dbCache?.total_supply) {
+            const supply = parseFloat(dbCache.total_supply) / Math.pow(10, decimals);
+            const nearUsd = await getNearUsdPrice().catch(() => 5.0);
+            const mcapUsd = spot.price * supply * nearUsd;
+            if (mcapUsd > maxMcap) {
+              const reason = `Token market cap ($${Math.round(mcapUsd).toLocaleString()}) exceeds your max auto-buy limit ($${Math.round(maxMcap).toLocaleString()})`;
+              console.log(`[EXECUTOR] Auto-buy skipped for user ${user_id} on ${token_address}: ${reason}`);
+              await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
+              return { success: false, reason };
+            }
+          }
+        } catch { /* non-fatal pre-flight check */ }
+      }
+    }
+
     // Pre-flight balance check: Ensure user actually has spendable balance before executing
     const [nativeBalStr, wNearBalStr] = await Promise.all([
       this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
