@@ -223,15 +223,17 @@ let nearUsdLastFetch = 0;
 
 const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = [
   {
-    name: 'binance',
+    name: 'dexscreener',
     fetch: async () => {
-      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
+      const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/wrap.near', {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
         signal: AbortSignal.timeout(3000),
       });
-      if (!res.ok) throw new Error(`binance http ${res.status}`);
+      if (!res.ok) throw new Error(`dexscreener http ${res.status}`);
       const data: any = await res.json();
-      const p = parseFloat(data?.price);
-      if (!(p > 0)) throw new Error('binance bad price');
+      const topPair = data.pairs?.find((p: any) => p.quoteToken?.symbol === 'USDC' || p.quoteToken?.symbol === 'USDt');
+      const p = parseFloat(topPair?.priceUsd);
+      if (!(p > 0)) throw new Error('dexscreener bad price');
       return p;
     },
   },
@@ -262,6 +264,19 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
       return p;
     },
   },
+  {
+    name: 'binance',
+    fetch: async () => {
+      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=NEARUSDT', {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) throw new Error(`binance http ${res.status}`);
+      const data: any = await res.json();
+      const p = parseFloat(data?.price);
+      if (!(p > 0)) throw new Error('binance bad price');
+      return p;
+    },
+  },
 ];
 
 async function fetchNearUsdPrice(): Promise<number> {
@@ -278,7 +293,7 @@ async function fetchNearUsdPrice(): Promise<number> {
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
   if (nearUsdPrice > 0) {
-    if (now - nearUsdLastFetch >= 120_000) {
+    if (now - nearUsdLastFetch >= 15_000) {
       fetchNearUsdPrice()
         .then((p) => {
           if (p > 0) {
@@ -296,5 +311,5 @@ export async function getNearUsdPrice(): Promise<number> {
     nearUsdPrice = p;
     nearUsdLastFetch = now;
   }
-  return nearUsdPrice || 4.5;
+  return nearUsdPrice || 5.16;
 }

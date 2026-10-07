@@ -116,7 +116,7 @@ export async function pollUserDeposits(): Promise<void> {
     // Use free FastNEAR singleton — 0 paid API key credit consumption
     const near = getFreeNear();
     const [nearUsd, suiUsd] = await Promise.all([
-      getNearUsdPrice().catch(() => 4.9),
+      getNearUsdPrice().catch(() => 5.16),
       getSuiUsdPrice().catch(() => 2.0),
     ]);
 

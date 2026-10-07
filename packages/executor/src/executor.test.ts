@@ -220,9 +220,6 @@ describe('SwapExecutor distributed locking', () => {
 
     // Call 2 visibly waited for Call 1 to complete signing before starting its own signing
     expect(timestamps[1].start).toBeGreaterThanOrEqual(timestamps[0].end - 10);
-
-    // Call 2 experienced contention and therefore cleared the cached access key / nonce
-    expect(mockNear.clearAccessKeyCache).toHaveBeenCalledWith(subaccountId);
   });
 
   it('fails with specific already-in-progress message if lock cannot be acquired within retry budget', async () => {

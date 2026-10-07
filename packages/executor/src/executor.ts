@@ -657,8 +657,8 @@ export class SwapExecutor {
 
         // Minimal reserve in NEAR remaining after swap to cover gas, account storage, and future trades
         // Keep at least 0.015 NEAR (~$0.07), allowing users to spend almost their entire balance
-        const nearUsd = await getNearUsdPrice().catch(() => 4.5);
-        const effectiveNearUsd = nearUsd > 0 ? nearUsd : 4.5;
+        const nearUsd = await getNearUsdPrice().catch(() => 0);
+        const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
         const minReserveNear = nearNeededForSwap > 0n ? 0.015 : 0.003;
         const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
         const totalNearRequired = nearNeededForSwap + minReserveYocto;
@@ -2858,8 +2858,8 @@ export class SwapExecutor {
           ).catch(() => null);
           if (spot && spot.price > 0 && dbCache?.total_supply) {
             const supply = parseFloat(dbCache.total_supply) / Math.pow(10, decimals);
-            const nearUsd = await getNearUsdPrice().catch(() => 5.0);
-            const mcapUsd = spot.price * supply * nearUsd;
+            const nearUsd = await getNearUsdPrice().catch(() => 0);
+            const mcapUsd = spot.price * supply * (nearUsd > 0 ? nearUsd : 5.16);
             if (mcapUsd > maxMcap) {
               const reason = `Token market cap ($${Math.round(mcapUsd).toLocaleString()}) exceeds your max auto-buy limit ($${Math.round(maxMcap).toLocaleString()})`;
               console.log(`[EXECUTOR] Auto-buy skipped for user ${user_id} on ${token_address}: ${reason}`);
@@ -3112,16 +3112,18 @@ export class SwapExecutor {
       tokenQty = netAmountOut;
       nearSpent = parseFloat(utils.format.formatNearAmount(amountIn));
       const tokensReceived = parseFloat(netAmountOut) / Math.pow(10, decimals);
-      priceNear = tokensReceived > 0 ? (nearSpent / tokensReceived) : 0;
 
       // Fee read directly from on-chain receipt logs
       const parsedFeeNear = parseFloat(utils.format.formatNearAmount(onChainFeeYocto));
       if (!isNaN(parsedFeeNear) && parsedFeeNear > 0) {
         feePaidNear = parsedFeeNear;
       } else {
-        const tokensFee = parseFloat(onChainFeeYocto) / Math.pow(10, decimals);
-        feePaidNear = tokensFee * priceNear;
+        feePaidNear = nearSpent * 0.015;
       }
+
+      // Pure DEX execution price (the actual token purchase price on the pool)
+      const netNearSwapped = Math.max(0, nearSpent - feePaidNear);
+      priceNear = tokensReceived > 0 ? (netNearSwapped / tokensReceived) : 0;
     } else {
       // For sells: amountIn is the token units sold, netAmountOut is yoctoNEAR received
       tokenQty = amountIn;
@@ -3199,8 +3201,9 @@ export class SwapExecutor {
 
         // Broadcast buy alert for Telegram groups tracking this token
         try {
-          const nearUsdRate = await getNearUsdPrice().catch(() => 4.5);
-          const spentUsd = nearSpent * nearUsdRate;
+          const nearUsdRate = await getNearUsdPrice().catch(() => 0);
+          const effectiveRate = nearUsdRate > 0 ? nearUsdRate : 5.16;
+          const spentUsd = nearSpent * effectiveRate;
           const userRec = await getUserById(userId);
           // subaccount_id is the on-chain NEAR address; fall back to 'unknown' (not UUID) for display
           const buyerAddress = userRec?.subaccount_id || 'unknown';
