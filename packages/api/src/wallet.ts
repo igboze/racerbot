@@ -490,57 +490,89 @@ export interface TokenInfoResult {
   sell_tax_pct?: number; // DEX tax / fee for SELL in %
 }
 
+const refPoolFeeCache = new Map<number, number>();
+
 /**
- * Calculates the DEX trading tax (swap fee) for Buy and Sell.
+ * Dynamically queries the on-chain swap fee (total_fee) from v2.ref-finance.near for a given pool.
+ * Ref AMM stores total_fee where 10 = 0.10%, 20 = 0.20%, 30 = 0.30%, 40 = 0.40%, 100 = 1.00%.
  */
-export function getDexTax(info: Partial<TokenInfoResult>): { buyTaxPct: number; sellTaxPct: number } {
+export async function fetchRefPoolFee(poolId: number): Promise<number | null> {
+  if (refPoolFeeCache.has(poolId)) {
+    return refPoolFeeCache.get(poolId)!;
+  }
+  try {
+    const near = getNear();
+    const pool = await near.view<any>('v2.ref-finance.near', 'get_pool', { pool_id: poolId });
+    if (pool && typeof pool.total_fee === 'number') {
+      const pct = pool.total_fee / 100;
+      refPoolFeeCache.set(poolId, pct);
+      return pct;
+    }
+  } catch { /* fallback */ }
+  return null;
+}
+
+export interface DexTaxOptions {
+  venue?: string | null;
+  bonding_phase?: 'prebonded' | 'bonded' | null;
+  dcl_pool_id?: string | null;
+  rhea_pool_id?: number | null;
+  pool_fee?: number | null; // Raw on-chain pool fee if already fetched
+  chain?: 'near' | 'sui' | null;
+}
+
+/**
+ * Calculates the DEX trading tax (swap fee) for Buy and Sell dynamically
+ * directly from live smart contract pool state.
+ */
+export async function getDexTax(info: DexTaxOptions): Promise<{ buyTaxPct: number; sellTaxPct: number }> {
   const venue = (info.venue || '').toLowerCase();
   const bondingPhase = info.bonding_phase;
 
-  if (venue === 'memecooking') {
-    if (bondingPhase === 'prebonded') {
-      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+  // 1. If explicit on-chain pool fee was already queried from the contract
+  if (info.pool_fee != null && info.pool_fee > 0) {
+    let pct: number;
+    if (info.pool_fee <= 10) {
+      // Already formatted percentage (e.g. 0.1%, 0.2%, 0.3%)
+      pct = info.pool_fee;
+    } else if (info.pool_fee <= 1000) {
+      // Ref AMM total_fee: 10 = 0.10%, 20 = 0.20%, 30 = 0.30%, 40 = 0.40%, 100 = 1.00%
+      pct = info.pool_fee / 100;
+    } else {
+      // Ref DCL fee tier: 100 = 0.01%, 400 = 0.04%, 2000 = 0.20%, 10000 = 1.00%
+      pct = info.pool_fee / 10000;
     }
-    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+    return { buyTaxPct: pct, sellTaxPct: pct };
   }
 
-  if (venue === 'nearlytrade') {
-    if (bondingPhase === 'prebonded') {
-      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+  // 2. Ref DCL: dynamic fee tier from pool ID (e.g. wrap.near|token|2000 => 0.20%, wrap.near|token|400 => 0.04%)
+  if (info.dcl_pool_id) {
+    const parts = info.dcl_pool_id.split('|');
+    const feeTier = parts.length >= 3 ? parseInt(parts[2], 10) : 2000;
+    const pct = feeTier > 0 ? feeTier / 10000 : 0.2;
+    return { buyTaxPct: pct, sellTaxPct: pct };
+  }
+
+  // 3. Ref AMM / Rhea / Graduated launchpad pools: query live contract total_fee
+  if (info.rhea_pool_id != null && info.rhea_pool_id > 0) {
+    const onChainFee = await fetchRefPoolFee(info.rhea_pool_id);
+    if (onChainFee != null) {
+      return { buyTaxPct: onChainFee, sellTaxPct: onChainFee };
     }
-    return { buyTaxPct: 0.2, sellTaxPct: 0.2 };
   }
 
-  if (venue === 'suipump') {
-    if (bondingPhase === 'prebonded') {
-      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
-    }
-    return { buyTaxPct: 0.25, sellTaxPct: 0.25 };
+  // 4. Launchpads during active bonding curve phase (prebonded)
+  if (bondingPhase === 'prebonded') {
+    if (venue === 'memecooking') return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    if (venue === 'nearlytrade') return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    if (venue === 'suipump') return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    if (venue === 'gaypad' || venue === 'kelytra') return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
+    if (venue === 'shoremarkets') return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
   }
 
-  if (venue === 'gaypad' || venue === 'kelytra') {
-    if (bondingPhase === 'prebonded') {
-      return { buyTaxPct: 1.0, sellTaxPct: 1.0 };
-    }
-    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
-  }
-
-  if (venue === 'rhea' || venue === 'ref') {
-    if (info.dcl_pool_id) {
-      const parts = info.dcl_pool_id.split('|');
-      const feeTier = parts.length >= 3 ? parseInt(parts[2], 10) : 2000;
-      const pct = feeTier > 0 ? feeTier / 10000 : 0.2;
-      return { buyTaxPct: pct, sellTaxPct: pct };
-    }
-    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
-  }
-
-  if (venue === 'shardsmarket' || venue === 'intear' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets') {
-    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
-  }
-
+  // 5. Chain / Venue fallbacks if on-chain query fails
   if (info.chain === 'sui') {
-    return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
+    return { buyTaxPct: 0.25, sellTaxPct: 0.25 };
   }
 
   return { buyTaxPct: 0.3, sellTaxPct: 0.3 };
@@ -646,8 +678,13 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     const decimals = dbCache.decimals !== null && dbCache.decimals !== undefined ? Number(dbCache.decimals) : (isSui ? 9 : 18);
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, decimals);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
-
-    const tax = getDexTax({ venue: dbCache.venue, bonding_phase: dbCache.bonding_phase as any, dcl_pool_id: dbCache.dcl_pool_id, chain: isSui ? 'sui' : 'near' });
+    const tax = await getDexTax({
+      venue: dbCache.venue,
+      bonding_phase: dbCache.bonding_phase as any,
+      dcl_pool_id: dbCache.dcl_pool_id,
+      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+      chain: isSui ? 'sui' : 'near',
+    });
     const result: TokenInfoResult = {
       address: tokenAddress,
       chain: (dbCache.chain as any) || (isSui ? 'sui' : 'near'),
@@ -902,7 +939,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       holdersDataPromise,
       totalTxnsPromise,
     ]);
-    const tax = getDexTax({ venue: (dbCache.venue as any) ?? 'unknown', bonding_phase: dbCache.bonding_phase as any, dcl_pool_id: dbCache.dcl_pool_id, chain: 'near' });
+    const tax = await getDexTax({
+      venue: (dbCache.venue as any) ?? 'unknown',
+      bonding_phase: dbCache.bonding_phase as any,
+      dcl_pool_id: dbCache.dcl_pool_id,
+      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+      chain: 'near',
+    });
     const result: TokenInfoResult = {
       address: tokenAddress,
       name: dbCache.name ?? '',
@@ -1197,8 +1240,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     } catch { /* no-op */ }
   }
 
-  // Step 2: If price was not found or if token is potentially on Ref/Rhea (bonded or general token)
-  let rheaCandidate: { venue: 'rhea'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null } | null = null;
+  let rheaCandidate: { venue: 'rhea'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
   if (venue === 'unknown' || bondingPhase === 'bonded') {
     try {
       const rhea = await near.findRheaPoolForToken(tokenAddress);
@@ -1209,6 +1251,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           liquidity: rhea.liquidityNear,
           rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
           dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
+          poolFee: rhea.fee,
         };
         // Prefer Rhea if it has deeper liquidity or if venue was unknown
         if (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded') {
@@ -1342,7 +1385,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   const tradeable = isTradableVenue(venue);
 
-  const tax = getDexTax({ venue, bonding_phase: bondingPhase, dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId, chain: isSuiToken(tokenAddress) ? 'sui' : 'near' });
+  const tax = await getDexTax({
+    venue,
+    bonding_phase: bondingPhase,
+    dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
+    rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
+    pool_fee: rheaCandidate?.poolFee,
+    chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
+  });
 
   const result: TokenInfoResult = {
     address: tokenAddress,

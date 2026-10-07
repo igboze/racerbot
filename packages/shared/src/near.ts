@@ -1295,6 +1295,7 @@ export class MultiRpcNear {
                 liquidityNear: st.liquidityNear,
                 reserveNear: st.reserveNear,
                 reserveToken: st.reserveToken,
+                fee: parseInt(dclPoolId.split('|')[2] || '2000', 10),
               };
             }
           }
