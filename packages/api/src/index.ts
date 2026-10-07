@@ -8,7 +8,7 @@ import cors from 'cors';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
-import { getDb } from '@racerbot/db';
+import { getDb, runMigrations } from '@racerbot/db';
 import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setInFlightRedis } from './inflight.js';
@@ -45,6 +45,11 @@ async function main(): Promise<void> {
 
   // Connect to Postgres
   await logger.time('Connected to Postgres', () => getDb());
+
+  // Run database migrations on startup to apply any pending schema changes
+  await logger.time('Database migrations', () => runMigrations()).catch((err: any) => {
+    logger.warn('Database migration warning (non-fatal)', { error: err?.message || err });
+  });
 
   // FIX 6: Pre-warm the in-memory token info cache from the DB.
   // Non-blocking — runs in background so startup is not delayed.

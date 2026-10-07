@@ -1,3 +1,5 @@
+export { runMigrations } from './migrate.js';
+
 // Re-export everything from db.ts
 export {
   getDb,
@@ -104,6 +106,17 @@ export {
   getDistinctActiveBuyAlertTokens,
   updateGroupBuyAlert,
   deleteGroupBuyAlert,
+  // Limit Orders
+  createLimitOrder,
+  getLimitOrderById,
+  getActiveLimitOrders,
+  getActiveLimitOrdersByToken,
+  getLimitOrdersByUser,
+  cancelLimitOrder,
+  lockLimitOrderForExecution,
+  markLimitOrderFilled,
+  markLimitOrderFailed,
+  expirePastDueLimitOrders,
 } from './db.js';
 
 export {
@@ -146,4 +159,6 @@ export type {
   UserWalletRecord,
   CreateUserWalletParams,
   GroupBuyAlertRecord,
+  LimitOrderRecord,
+  CreateLimitOrderParams,
 } from './db.js';

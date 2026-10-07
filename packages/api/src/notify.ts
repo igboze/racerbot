@@ -338,6 +338,62 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       });
       break;
     }
+
+    case 'limit_order_fill': {
+      const symbol = (data.symbol as string) || 'TOKEN';
+      const side = (data.side as string) || 'buy';
+      const sideIcon = side === 'buy' ? '🟢' : '🔴';
+      const sideText = side === 'buy' ? 'Limit Buy Triggered' : 'Limit Sell Triggered';
+      const currentPrice = Number(data.current_price || 0);
+      const currentMcap = Number(data.current_mcap || 0);
+      const amount = data.amount_input ? `${Number(data.amount_input).toFixed(2)} NEAR` : (data.sell_pct ? `${data.sell_pct}%` : 'Position');
+
+      const msg =
+        `🎯 <b>${sideIcon} ${sideText}!</b>\n\n` +
+        `🪙 <b>Token:</b> $${symbol}\n` +
+        `💵 <b>Amount:</b> ${amount}\n` +
+        `📊 <b>Trigger Price:</b> $${currentPrice.toFixed(6)}\n` +
+        `📈 <b>Market Cap:</b> $${currentMcap.toLocaleString('en-US', { maximumFractionDigits: 0 })}\n\n` +
+        `🚀 <i>Swap dispatched to DEX executor. Confirmation will follow shortly.</i>`;
+
+      await _bot.telegram.sendMessage(telegramId, msg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+              { text: '🎯 Active Orders', callback_data: 'menu_limit_orders' },
+            ],
+          ],
+        },
+      }).catch(() => {});
+      break;
+    }
+
+    case 'limit_order_failed': {
+      const symbol = (data.symbol as string) || 'TOKEN';
+      const side = (data.side as string) || 'buy';
+      const reason = (data.reason as string) || 'Unknown error';
+
+      const msg =
+        `⚠️ <b>Limit ${side.toUpperCase()} Failed</b>\n\n` +
+        `🪙 <b>Token:</b> $${symbol}\n` +
+        `❌ <b>Reason:</b> ${reason}\n\n` +
+        `<i>Please deposit funds or update your order to resume.</i>`;
+
+      await _bot.telegram.sendMessage(telegramId, msg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '💳 Wallet', callback_data: 'menu_wallet' },
+              { text: '🎯 Active Orders', callback_data: 'menu_limit_orders' },
+            ],
+          ],
+        },
+      }).catch(() => {});
+      break;
+    }
   }
 }
 

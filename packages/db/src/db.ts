@@ -216,6 +216,45 @@ export interface DcaOrderRecord {
   updated_at: Date;
 }
 
+export interface LimitOrderRecord {
+  id: string;
+  user_id: string;
+  chain: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+  target_type: 'mcap' | 'price' | 'percent_offset';
+  trigger_condition: 'lte' | 'gte';
+  target_value: number;
+  reference_price: number | null;
+  reference_mcap: number | null;
+  amount_input: number;
+  sell_pct: number | null;
+  max_slippage_pct: number;
+  expires_at: Date | null;
+  status: 'active' | 'executing' | 'filled' | 'cancelled' | 'failed' | 'expired';
+  fill_tx_hash: string | null;
+  fill_price: number | null;
+  failure_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreateLimitOrderParams {
+  user_id: string;
+  chain?: string;
+  token_address: string;
+  side: 'buy' | 'sell';
+  target_type: 'mcap' | 'price' | 'percent_offset';
+  trigger_condition: 'lte' | 'gte';
+  target_value: number;
+  reference_price?: number | null;
+  reference_mcap?: number | null;
+  amount_input: number;
+  sell_pct?: number | null;
+  max_slippage_pct?: number;
+  expires_at?: Date | null;
+}
+
 export interface CreateCopyTradeTargetParams {
   user_id: string;
   target_wallet: string;
@@ -2457,4 +2496,157 @@ export async function deleteGroupBuyAlert(chatId: number | string, tokenAddress:
     [chatId.toString(), tokenAddress]
   );
   return (res.rowCount ?? 0) > 0;
+}
+
+// ── Limit Orders (DEX Conditional Orders) ───────────────────────────────────
+
+function rowToLimitOrder(row: any): LimitOrderRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    chain: row.chain || 'near',
+    token_address: row.token_address,
+    side: row.side,
+    target_type: row.target_type,
+    trigger_condition: row.trigger_condition,
+    target_value: parseFloat(row.target_value),
+    reference_price: row.reference_price ? parseFloat(row.reference_price) : null,
+    reference_mcap: row.reference_mcap ? parseFloat(row.reference_mcap) : null,
+    amount_input: parseFloat(row.amount_input),
+    sell_pct: row.sell_pct ? parseFloat(row.sell_pct) : null,
+    max_slippage_pct: parseFloat(row.max_slippage_pct ?? '3.0'),
+    expires_at: row.expires_at ? new Date(row.expires_at) : null,
+    status: row.status,
+    fill_tx_hash: row.fill_tx_hash || null,
+    fill_price: row.fill_price ? parseFloat(row.fill_price) : null,
+    failure_reason: row.failure_reason || null,
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
+export async function createLimitOrder(params: CreateLimitOrderParams): Promise<LimitOrderRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO limit_orders
+       (id, user_id, chain, token_address, side, target_type, trigger_condition,
+        target_value, reference_price, reference_mcap, amount_input, sell_pct,
+        max_slippage_pct, expires_at, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'active')
+     RETURNING *`,
+    [
+      generateId(),
+      params.user_id,
+      params.chain || 'near',
+      params.token_address,
+      params.side,
+      params.target_type,
+      params.trigger_condition,
+      params.target_value,
+      params.reference_price ?? null,
+      params.reference_mcap ?? null,
+      params.amount_input,
+      params.sell_pct ?? null,
+      params.max_slippage_pct ?? 3.0,
+      params.expires_at ?? null,
+    ]
+  );
+  return rowToLimitOrder(res.rows[0]);
+}
+
+export async function getLimitOrderById(id: string): Promise<LimitOrderRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM limit_orders WHERE id = $1', [id]);
+  if (!res.rows[0]) return null;
+  return rowToLimitOrder(res.rows[0]);
+}
+
+export async function getActiveLimitOrders(): Promise<LimitOrderRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM limit_orders 
+     WHERE status = 'active' AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY created_at ASC`
+  );
+  return res.rows.map(rowToLimitOrder);
+}
+
+export async function getActiveLimitOrdersByToken(tokenAddress: string, userId?: string): Promise<LimitOrderRecord[]> {
+  const db = await getDb();
+  if (userId) {
+    const res = await db.query(
+      `SELECT * FROM limit_orders 
+       WHERE lower(token_address) = lower($1) AND user_id = $2 AND status = 'active'
+         AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY created_at DESC`,
+      [tokenAddress, userId]
+    );
+    return res.rows.map(rowToLimitOrder);
+  }
+  const res = await db.query(
+    `SELECT * FROM limit_orders 
+     WHERE lower(token_address) = lower($1) AND status = 'active'
+       AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY created_at ASC`,
+    [tokenAddress]
+  );
+  return res.rows.map(rowToLimitOrder);
+}
+
+export async function getLimitOrdersByUser(userId: string, limit: number = 20): Promise<LimitOrderRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM limit_orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return res.rows.map(rowToLimitOrder);
+}
+
+export async function cancelLimitOrder(id: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE limit_orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND user_id = $2 AND status = 'active'`,
+    [id, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export async function lockLimitOrderForExecution(id: string): Promise<LimitOrderRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE limit_orders SET status = 'executing', updated_at = NOW() WHERE id = $1 AND status = 'active' RETURNING *`,
+    [id]
+  );
+  if (!res.rows[0]) return null;
+  return rowToLimitOrder(res.rows[0]);
+}
+
+export async function markLimitOrderFilled(id: string, fillTxHash: string, fillPrice?: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE limit_orders 
+     SET status = 'filled', fill_tx_hash = $2, fill_price = $3, updated_at = NOW() 
+     WHERE id = $1`,
+    [id, fillTxHash, fillPrice ?? null]
+  );
+}
+
+export async function markLimitOrderFailed(id: string, reason: string): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE limit_orders 
+     SET status = 'failed', failure_reason = $2, updated_at = NOW() 
+     WHERE id = $1`,
+    [id, reason.slice(0, 500)]
+  );
+}
+
+export async function expirePastDueLimitOrders(): Promise<number> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE limit_orders 
+     SET status = 'expired', updated_at = NOW() 
+     WHERE status = 'active' AND expires_at <= NOW()`
+  );
+  return res.rowCount ?? 0;
 }

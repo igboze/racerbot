@@ -691,8 +691,6 @@ async function fetchIdentityTracesForHolders(token: string, holders: Array<{ acc
 // ── Combined Bubble Map Data ────────────────────────────────────────────────
 // GET /api/bubblemap-data/:token
 router.get('/bubblemap-data/:token', async (req, res) => {
-  // DISABLED: Bubble map data endpoint temporarily disabled to conserve API credits.
-  return res.status(503).json({ error: 'Bubble map is temporarily disabled', holders: [], txns: [], identityLinks: [], identityClusters: [], meta: null });
   try {
     const { token } = req.params;
     const [holders, rawTxns, meta] = await Promise.all([
