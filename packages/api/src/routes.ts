@@ -127,7 +127,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'withdraw' | 'import_token'
+  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
     | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount'
     | 'sell_custom_tokens'
     // Stop Loss & Take Profit custom input
@@ -1285,6 +1285,8 @@ export async function buildSnipeDashboard(user: UserRecord) {
   const autoBuy = user.auto_buy_enabled;
   const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
   const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
+  const maxMcap = user.auto_buy_max_market_cap_usd != null ? Number(user.auto_buy_max_market_cap_usd) : 100000;
+  const maxMcapStr = maxMcap > 0 ? (maxMcap >= 1000 ? `$${Math.round(maxMcap / 1000)}K` : `$${maxMcap}`) : 'No Limit';
   const activeOrders = await getSnipeOrdersByUser(user.id)
     .catch(() => [])
     .then((orders) => orders.filter((o) => o.status === 'active'));
@@ -1305,7 +1307,8 @@ export async function buildSnipeDashboard(user: UserRecord) {
     `🎯 *Snipe Rules*\n\n` +
     `• *Auto-Buy Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
     `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
-    `• *Min Liquidity*: \`${minLiq} NEAR\`${activeText}\n\n` +
+    `• *Min Liquidity*: \`${minLiq} NEAR\`\n` +
+    `• *Max Market Cap*: \`${maxMcapStr}\`${activeText}\n\n` +
     `*Targeted Snipes*:\n` +
     `• 🎯 Snipe a specific token CA\n` +
     `• 👤 Snipe all launches by a dev wallet`;
@@ -1347,8 +1350,15 @@ export async function buildSnipeDashboard(user: UserRecord) {
       cb(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500', 'primary'),
     ],
     [
+      cb(`Max Mcap: ${maxMcap === 25000 ? '✓ ' : ''}$25K`, 'set:max_mcap:25000', 'primary'),
+      cb(`${maxMcap === 50000 ? '✓ ' : ''}$50K`, 'set:max_mcap:50000', 'primary'),
+      cb(`${maxMcap === 100000 ? '✓ ' : ''}$100K`, 'set:max_mcap:100000', 'primary'),
+      cb(`${maxMcap === 0 ? '✓ ' : ''}No Limit`, 'set:max_mcap:0', 'primary'),
+    ],
+    [
       cb('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy', 'primary'),
       cb('✏️ Custom Min Liq', 'prompt:custom_min_liq', 'primary'),
+      cb('✏️ Custom Max Mcap', 'prompt:custom_max_mcap', 'primary'),
     ],
     [
       cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
@@ -4402,6 +4412,27 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' });
   });
 
+  bot.action(/^set:max_mcap:(\d+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const mcap = parseFloat(ctx.match![1]);
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) return;
+    const updated = await updateUserSettings(user.id, { auto_buy_max_market_cap_usd: mcap });
+    await ctx.answerCbQuery(`Max market cap set to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}`).catch(() => {});
+    const dash = await buildSnipeDashboard(updated);
+    await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+  });
+
+  bot.action('prompt:custom_max_mcap', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'custom_max_mcap',
+      expiresAt: Date.now() + 120000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply('✏️ *Enter Max Market Cap ($ USD)*\n\nReply with your maximum token market cap in USD (e.g. `50000` for $50k, or `0` for no limit):', { parse_mode: 'Markdown' });
+  });
+
   // ── /info <token_ca> — Token Details Card with in-chat buy buttons ─────────
   bot.command('info', async (ctx) => {
     const args = ctx.message!.text!.split(' ').slice(1);
@@ -6445,6 +6476,28 @@ export function setupRoutes(bot: Telegraf): void {
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
           await ctx.reply(`✅ Min pool liquidity updated to ${liq} NEAR!`);
+          const dash = await buildSnipeDashboard(updated);
+          await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+        }
+        return;
+      }
+
+      if (pending.action === 'custom_max_mcap') {
+        const cleaned = rawText.replace(/[\$,]/g, '').trim().toLowerCase();
+        let mcap = parseFloat(cleaned);
+        if (cleaned.endsWith('k')) {
+          mcap = parseFloat(cleaned.slice(0, -1)) * 1000;
+        } else if (cleaned.endsWith('m')) {
+          mcap = parseFloat(cleaned.slice(0, -1)) * 1_000_000;
+        }
+        if (isNaN(mcap) || mcap < 0) {
+          await ctx.reply('❌ Invalid market cap. Must be a non-negative number in USD (e.g. `50000` or `50k` or `0` for no limit).');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId);
+        if (user) {
+          const updated = await updateUserSettings(user.id, { auto_buy_max_market_cap_usd: mcap });
+          await ctx.reply(`✅ Max market cap updated to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}!`);
           const dash = await buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }

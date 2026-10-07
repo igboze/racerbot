@@ -29,6 +29,7 @@ export interface UserRecord {
   auto_buy_enabled: boolean;
   auto_buy_amount_near: number;
   auto_buy_min_liquidity_near: number;
+  auto_buy_max_market_cap_usd?: number | null;
   slippage_pct: number;
   referred_by: string | null;
   referral_code: string | null;
@@ -690,6 +691,7 @@ export interface UpdateUserSettingsParams {
   auto_buy_enabled?: boolean;
   auto_buy_amount_near?: number;
   auto_buy_min_liquidity_near?: number;
+  auto_buy_max_market_cap_usd?: number | null;
   slippage_pct?: number;
   default_buy_pct?: number;
   default_sell_pct?: number;
@@ -714,6 +716,10 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
   if (params.auto_buy_min_liquidity_near !== undefined) {
     setParts.push(`auto_buy_min_liquidity_near = $${idx++}`);
     values.push(params.auto_buy_min_liquidity_near);
+  }
+  if (params.auto_buy_max_market_cap_usd !== undefined) {
+    setParts.push(`auto_buy_max_market_cap_usd = $${idx++}`);
+    values.push(params.auto_buy_max_market_cap_usd);
   }
   if (params.slippage_pct !== undefined) {
     setParts.push(`slippage_pct = $${idx++}`);
@@ -1394,7 +1400,8 @@ function rowToUser(row: any): UserRecord {
     fee_tier: row.fee_tier,
     auto_buy_enabled: Boolean(row.auto_buy_enabled),
     auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
-    auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 500,
+    auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 10,
+    auto_buy_max_market_cap_usd: row.auto_buy_max_market_cap_usd != null ? parseFloat(row.auto_buy_max_market_cap_usd) : 100000,
     slippage_pct: row.slippage_pct != null ? parseFloat(row.slippage_pct) : 2,
     referred_by: row.referred_by,
     referral_code: row.referral_code,
