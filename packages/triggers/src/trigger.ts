@@ -20,7 +20,7 @@ const PRICE_STALENESS_MS = 60_000;
  * Fallback price refresh straight from the venue's live pool state.
  * Returns true and updates localPriceCache on success.
  */
-async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
+export async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
     const cache = await getTokenCache(tokenAddress);
     if (cache?.chain === 'sui' || cache?.venue === 'suipump' || tokenAddress.includes('::')) {
