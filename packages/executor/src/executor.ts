@@ -3226,8 +3226,11 @@ export class SwapExecutor {
           referralActive = true;
         }
         if (referral && referralActive && referral.referrer_id !== userId) {
-          // Calculate 30% reward
-          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          // Calculate referral reward using referrer's configured fee percentage (default 30%, ambassador 45%)
+          const refFeePct = (referral as any).referrer_fee_pct != null
+            ? parseFloat(String((referral as any).referrer_fee_pct))
+            : 30;
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * (refFeePct / 100));
           await addReferralReward(referral.id, rewardAmount);
         }
 
@@ -3367,8 +3370,11 @@ export class SwapExecutor {
           referralActive = true;
         }
         if (referral && referralActive && referral.referrer_id !== userId) {
-          // Calculate 30% reward
-          const rewardAmount = (parseFloat(feePaidNear.toString()) * 0.3);
+          // Calculate referral reward using referrer's configured fee percentage (default 30%, ambassador 45%)
+          const refFeePct = (referral as any).referrer_fee_pct != null
+            ? parseFloat(String((referral as any).referrer_fee_pct))
+            : 30;
+          const rewardAmount = (parseFloat(feePaidNear.toString()) * (refFeePct / 100));
           await addReferralReward(referral.id, rewardAmount);
         }
 
