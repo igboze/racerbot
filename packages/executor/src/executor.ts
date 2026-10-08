@@ -1738,8 +1738,8 @@ export class SwapExecutor {
                     Withdraw: {
                       asset_id: `nep141:${token_out}`,
                       amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                      to: null,
-                      rescue_address: null,
+                      to: subaccountId,
+                      rescue_address: subaccountId,
                     },
                   },
                 ],
@@ -1781,8 +1781,8 @@ export class SwapExecutor {
                       Withdraw: {
                         asset_id: 'near',
                         amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                        to: null,
-                        rescue_address: null,
+                        to: subaccountId,
+                        rescue_address: subaccountId,
                       },
                     },
                   ],
