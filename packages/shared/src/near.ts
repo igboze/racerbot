@@ -374,6 +374,7 @@ export class MultiRpcNear {
     for (const account of this.accountCache.values()) {
       (account as any).accessKeyByPublicKeyCache = {};
     }
+    this.highestUsedNonce.clear();
   }
 
   /**
@@ -921,6 +922,11 @@ export class MultiRpcNear {
     const account = this.accountCache.get(accountId);
     if (account) {
       (account as any).accessKeyByPublicKeyCache = {};
+    }
+    for (const key of this.highestUsedNonce.keys()) {
+      if (key.startsWith(`${accountId}:`)) {
+        this.highestUsedNonce.delete(key);
+      }
     }
   }
 
@@ -3871,12 +3877,15 @@ export class MultiRpcNear {
     // un-advanced. To prevent repeating the exact same dropped/stale nonce across retries
     // or phase-2 re-signs, we maintain highestUsedNonce per account+key and strictly
     // advance past it.
+    let confirmedOnChain = false;
+    let signerPkStr: string | null = null;
     const signOnce = async (forceIncrement = false): Promise<{ hash: string; signedB64: string; nonce: bigint }> => {
       const publicKey = await account.connection.signer.getPublicKey(accountId, account.connection.networkId);
       if (!publicKey) {
         throw new Error(`No matching key pair found for ${accountId}`);
       }
       const pkStr = publicKey.toString();
+      signerPkStr = pkStr;
       const nonceCacheKey = `${accountId}:${pkStr}`;
 
       (account as any).accessKeyByPublicKeyCache = {};
@@ -3890,12 +3899,15 @@ export class MultiRpcNear {
       ]);
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
 
-      const prevTracked = this.highestUsedNonce.get(nonceCacheKey) ?? 0n;
-      let baseNonce = chainNonce > prevTracked ? chainNonce : prevTracked;
-      if (forceIncrement && baseNonce <= prevTracked) {
-        baseNonce = prevTracked;
+      let nextNonce: bigint;
+      if (forceIncrement) {
+        // Re-signing during the SAME transaction execution window after an 8s mempool drop:
+        const prev = this.highestUsedNonce.get(nonceCacheKey) ?? chainNonce;
+        nextNonce = (prev > chainNonce ? prev : chainNonce) + 1n;
+      } else {
+        // Fresh trade: ALWAYS base nonce on true on-chain access key nonce to avoid phantom nonce gaps!
+        nextNonce = chainNonce + 1n;
       }
-      const nextNonce = baseNonce + 1n;
       this.highestUsedNonce.set(nonceCacheKey, nextNonce);
 
       const blockHash = utils.serialize.base_decode(blockHashB58);
@@ -3982,6 +3994,9 @@ export class MultiRpcNear {
         }
       }
 
+      // Mark transaction confirmed on-chain so nonce state is preserved
+      confirmedOnChain = true;
+
       // Perf instrumentation for trade_attempts timings (click→quote→sign→
       // broadcast→confirm). Attached non-enumerably-safe plain fields.
       outcome.__perf = {
@@ -3991,8 +4006,15 @@ export class MultiRpcNear {
       return outcome;
     } finally {
       // Invariant: always wipe access key nonce cache when leaving signAndSendTransactionAll,
-      // so no subsequent trade attempt ever uses a stale or gapped in-memory nonce.
+      // and if the transaction was never confirmed on-chain, clear highestUsedNonce so no
+      // subsequent trade attempt ever uses a stale or gapped in-memory nonce.
       (account as any).accessKeyByPublicKeyCache = {};
+      if (signerPkStr) {
+        const nonceCacheKey = `${accountId}:${signerPkStr}`;
+        if (!confirmedOnChain) {
+          this.highestUsedNonce.delete(nonceCacheKey);
+        }
+      }
     }
   }
 
