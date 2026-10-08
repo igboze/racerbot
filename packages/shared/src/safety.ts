@@ -36,6 +36,7 @@ export const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.kelytra.near',
   '.onetokenhub.near',
   'pad.onetokenhub.near',
+  '.omft.near',
 ];
 
 export const VERIFIED_CORE_TOKENS = new Set([
@@ -182,6 +183,8 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
         launchpadName = 'ShoreMarkets';
       } else if (suffix.includes('onetokenhub')) {
         launchpadName = 'OneTokenHub';
+      } else if (suffix.includes('omft')) {
+        launchpadName = 'Omnichain (Defuse OMFT)';
       } else {
         launchpadName = launchpadName.charAt(0).toUpperCase() + launchpadName.slice(1);
       }
@@ -209,8 +212,11 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
   const near = getNear();
   try {
     const wasmBuf = await near.viewCode(normAddress);
-    if (!wasmBuf || wasmBuf.length === 0) {
-      // Account exists but has no contract deployed
+    if (wasmBuf === null) {
+      // RPC infrastructure failure: do NOT block token or mark as honeypot!
+      console.warn(`[SAFETY] Could not fetch contract code for ${normAddress} due to RPC failure; skipping WASM inspection.`);
+    } else if (wasmBuf.length === 0) {
+      // Account exists on-chain but confirmed to have NO contract code deployed
       const report: TokenSafetyReport = {
         tokenAddress: normAddress,
         isHoneypot: true,
@@ -225,16 +231,18 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
     }
 
     let exportedFuncs: string[] = [];
-    try {
-      const WA = (globalThis as any).WebAssembly;
-      if (WA && typeof WA.Module === 'function') {
-        const mod = new WA.Module(wasmBuf);
-        exportedFuncs = (WA.Module.exports(mod) as any[])
-          .filter((e: any) => e.kind === 'function')
-          .map((e: any) => String(e.name));
+    if (wasmBuf && wasmBuf.length > 0) {
+      try {
+        const WA = (globalThis as any).WebAssembly;
+        if (WA && typeof WA.Module === 'function') {
+          const mod = new WA.Module(wasmBuf);
+          exportedFuncs = (WA.Module.exports(mod) as any[])
+            .filter((e: any) => e.kind === 'function')
+            .map((e: any) => String(e.name));
+        }
+      } catch (err: any) {
+        console.warn(`[SAFETY] Could not parse WASM exports for ${normAddress}:`, err.message);
       }
-    } catch (err: any) {
-      console.warn(`[SAFETY] Could not parse WASM exports for ${normAddress}:`, err.message);
     }
 
     const dangerousFound: string[] = [];
