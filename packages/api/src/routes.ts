@@ -133,7 +133,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
   action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
-    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_dev_addr' | 'snipe_dev_amount'
+    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
     | 'sell_custom_tokens'
     // Stop Loss & Take Profit custom input
     | 'set_sl_custom' | 'set_tp_custom'
@@ -175,6 +175,8 @@ interface PendingAction {
   loTargetValue?: number;
   loAmount?: number;
   loExpiresAt?: number | null; // null = GTC
+  // Snipe timing state
+  snipeAmount?: number;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -1329,6 +1331,21 @@ export function buildSettingsDashboard(user: UserRecord) {
   return { text, keyboard };
 }
 
+function formatUtcTime(d: Date = new Date()): string {
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes} UTC`;
+}
+
+function formatUtcDateTime(d: Date): string {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hours}:${minutes} UTC`;
+}
+
 // ── Helper: Build Snipe Rules Dashboard ─────────────────────────────────────
 export async function buildSnipeDashboard(user: UserRecord) {
   const autoBuy = user.auto_buy_enabled;
@@ -1347,7 +1364,10 @@ export async function buildSnipeDashboard(user: UserRecord) {
       activeOrders
         .map((o) => {
           const target = o.snipe_type === 'token' ? `🪙 \`${o.token_address}\`` : `👤 \`${o.deployer_address}\``;
-          return `• 🟢 ${target} — *${o.amount_near} NEAR*`;
+          const timing = o.execute_after && new Date(o.execute_after) > new Date()
+            ? ` (⏰ ${formatUtcTime(new Date(o.execute_after))})`
+            : '';
+          return `• 🟢 ${target} — *${o.amount_near} NEAR*${timing}`;
         })
         .join('\n');
   }
@@ -2976,6 +2996,261 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── Targeted snipes: by token contract address / by deployer wallet ───────
 
+  const snipeSetupCache = new Map<number, { tokenAddress: string; amt: number; expiresAt: number }>();
+
+  function parseUtcTimeString(input: string): { date: Date | null; error?: string } {
+    const clean = input.trim().replace(/\s*utc\s*$/i, '').trim();
+    const now = new Date();
+
+    // Pattern 1: HH:MM or HH:MM:SS
+    const timeOnlyMatch = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (timeOnlyMatch) {
+      const hours = parseInt(timeOnlyMatch[1], 10);
+      const minutes = parseInt(timeOnlyMatch[2], 10);
+      const seconds = timeOnlyMatch[3] ? parseInt(timeOnlyMatch[3], 10) : 0;
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
+        return { date: null, error: 'Invalid time. Hours must be 0-23 and minutes 0-59.' };
+      }
+      const target = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        hours,
+        minutes,
+        seconds
+      ));
+      if (target.getTime() <= now.getTime() - 60_000) {
+        const currentUtc = formatUtcTime(now);
+        const enteredUtc = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} UTC`;
+        return {
+          date: null,
+          error: `That time (${enteredUtc}) has already passed today (Current UTC: ${currentUtc}). Please enter a future UTC time.`,
+        };
+      }
+      return { date: target };
+    }
+
+    // Pattern 2: YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS
+    const fullDateMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (fullDateMatch) {
+      const year = parseInt(fullDateMatch[1], 10);
+      const month = parseInt(fullDateMatch[2], 10) - 1;
+      const day = parseInt(fullDateMatch[3], 10);
+      const hours = parseInt(fullDateMatch[4], 10);
+      const minutes = parseInt(fullDateMatch[5], 10);
+      const seconds = fullDateMatch[6] ? parseInt(fullDateMatch[6], 10) : 0;
+      const target = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+      if (isNaN(target.getTime())) {
+        return { date: null, error: 'Invalid date/time format.' };
+      }
+      if (target.getTime() <= now.getTime() - 60_000) {
+        return { date: null, error: 'The specified UTC date and time is in the past. Please enter a future UTC time.' };
+      }
+      return { date: target };
+    }
+
+    return { date: null, error: 'Unrecognized format. Please reply with `HH:MM` (e.g. `19:23`) or `YYYY-MM-DD HH:MM` (all in UTC).' };
+  }
+
+  async function completeSnipeOrderCreation(
+    ctx: any,
+    telegramId: number,
+    tokenAddress: string,
+    amt: number,
+    executeAfter: Date | null
+  ): Promise<void> {
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.reply('Use /start to set up your wallet first.').catch(() => {});
+      return;
+    }
+    const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+    if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+      await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`).catch(() => {});
+      return;
+    }
+
+    const order = await createSnipeOrder({
+      user_id: user.id,
+      snipe_type: 'token',
+      token_address: tokenAddress,
+      amount_near: amt,
+      execute_after: executeAfter,
+    });
+
+    if (user) {
+      prewarmStorageDeposit(user, tokenAddress).catch(() => {});
+    }
+
+    // If a scheduled future time was chosen, do NOT fire immediately even if tradeable.
+    // Order stays armed in DB until executeAfter time arrives!
+    if (executeAfter && executeAfter.getTime() > Date.now()) {
+      const timeStr = formatUtcDateTime(executeAfter);
+      const diffMs = executeAfter.getTime() - Date.now();
+      const diffMins = Math.round(diffMs / 60_000);
+      const diffText = diffMins > 60 ? `in ~${(diffMins / 60).toFixed(1)}h` : `in ~${diffMins} min${diffMins === 1 ? '' : 's'}`;
+
+      await ctx.reply(
+        `🎯 *Scheduled Snipe Armed!*\n\n` +
+        `🪙 Token: \`${tokenAddress}\`\n` +
+        `💰 Amount: \`${amt} NEAR\`\n` +
+        `⏰ Trigger Time: \`${timeStr}\` (${diffText})\n\n` +
+        `• The bot will *NOT* buy before this time, bypassing high launch dynamic fees.\n` +
+        `• At the scheduled time, the bot will automatically execute your buy on the pool.\n` +
+        `• Funds stay securely in your wallet until the trade triggers (no token locking needed).`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
+              [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+            ],
+          },
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    // Standard immediate snipe:
+    const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+    if (info?.tradeable) {
+      const triggerId = await recordSnipeTrigger(order.id, tokenAddress, info.venue ?? '').catch(() => null);
+      const procMsg = await ctx.reply(
+        `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} NEAR\` now...`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => null);
+      const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
+      try {
+        const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => {});
+        await markSnipeOrderResult(order.id, true).catch(() => {});
+        await ctx.reply(res.message, {
+          parse_mode: 'Markdown',
+          reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
+        }).catch(() => {});
+        if (res.positionId) {
+          await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+        }
+      } catch (err: any) {
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => {});
+        const msg = err?.message ?? '';
+        const isAwaitingLiq = /no liquidity|not yet tradable|reserves.*positive|bonding phase/i.test(msg);
+        if (isAwaitingLiq) {
+          await ctx.reply(
+            `🎯 *Snipe Armed!*\n\n` +
+            `🪙 Token: \`${tokenAddress}\`\n` +
+            `💰 Amount: \`${amt} NEAR\`\n\n` +
+            `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => {});
+        } else {
+          await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
+          await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`).catch(() => {});
+        }
+      }
+    } else {
+      await ctx.reply(
+        `🎯 *Snipe Armed!*\n\n` +
+        `🪙 Token: \`${tokenAddress}\`\n` +
+        `💰 Amount: \`${amt} NEAR\`\n\n` +
+        `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
+              [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+            ],
+          },
+        }
+      ).catch(() => {});
+    }
+  }
+
+  bot.action(/^snipe_time:now:(.+)$/, async (ctx) => {
+    const amt = parseFloat(ctx.match[1]);
+    const telegramId = ctx.from!.id;
+    const cache = snipeSetupCache.get(telegramId);
+    const pending = userPendingActions.get(telegramId);
+    userPendingActions.delete(telegramId);
+    snipeSetupCache.delete(telegramId);
+    const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
+    const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
+    if (!tokenAddress || finalAmt <= 0) {
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery().catch(() => {});
+    await completeSnipeOrderCreation(ctx, telegramId, tokenAddress, finalAmt, null);
+  });
+
+  bot.action(/^snipe_time:delay:(\d+):(.+)$/, async (ctx) => {
+    const mins = parseInt(ctx.match[1], 10);
+    const amt = parseFloat(ctx.match[2]);
+    const telegramId = ctx.from!.id;
+    const cache = snipeSetupCache.get(telegramId);
+    const pending = userPendingActions.get(telegramId);
+    userPendingActions.delete(telegramId);
+    snipeSetupCache.delete(telegramId);
+    const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
+    const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
+    if (!tokenAddress || finalAmt <= 0) {
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery().catch(() => {});
+    const executeAfter = new Date(Date.now() + mins * 60_000);
+    await completeSnipeOrderCreation(ctx, telegramId, tokenAddress, finalAmt, executeAfter);
+  });
+
+  bot.action(/^snipe_time:custom:(.+)$/, async (ctx) => {
+    const amt = parseFloat(ctx.match[1]);
+    const telegramId = ctx.from!.id;
+    const cache = snipeSetupCache.get(telegramId);
+    const pending = userPendingActions.get(telegramId);
+    const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
+    const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
+    if (!tokenAddress || finalAmt <= 0) {
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, {
+      action: 'snipe_custom_time',
+      tokenAddress,
+      snipeAmount: finalAmt,
+      expiresAt: Date.now() + 180_000,
+    });
+    if (cache) {
+      cache.expiresAt = Date.now() + 180_000;
+    }
+    await ctx.answerCbQuery().catch(() => {});
+    const currentUtc = formatUtcTime();
+    await ctx.reply(
+      `🕒 *Enter Scheduled Time (UTC)*\n\n` +
+      `🪙 Token: \`${tokenAddress}\`\n` +
+      `💰 Amount: \`${finalAmt} NEAR\`\n` +
+      `Current Time: \`${currentUtc}\`\n\n` +
+      `Reply with the exact time in UTC when you want the snipe to trigger.\n\n` +
+      `*Accepted formats:*\n` +
+      `• \`19:23\` (HH:MM today in UTC)\n` +
+      `• \`2026-10-08 19:23\` (YYYY-MM-DD HH:MM in UTC)\n\n` +
+      `Type /cancel to abort.`,
+      { parse_mode: 'Markdown' }
+    ).catch(() => {});
+  });
+
+  bot.action('snipe_time:cancel', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
+    snipeSetupCache.delete(telegramId);
+    await ctx.answerCbQuery('Cancelled.').catch(() => {});
+    await ctx.editMessageText('❌ Snipe order setup cancelled.').catch(async () => {
+      await ctx.reply('❌ Snipe order setup cancelled.').catch(() => {});
+    });
+  });
+
   bot.action('snipe_token_start', async (ctx) => {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -3083,8 +3358,11 @@ export function setupRoutes(bot: Telegraf): void {
     const lines = orders.map((o) => {
       const target = o.snipe_type === 'token' ? `🪙 \`${o.token_address}\`` : `👤 \`${o.deployer_address}\``;
       const extra = o.snipe_type === 'deployer' && o.trigger_count > 0 ? ` · fired ${o.trigger_count}×` : '';
+      const timing = o.status === 'active' && o.execute_after && new Date(o.execute_after) > new Date()
+        ? ` · ⏰ ${formatUtcTime(new Date(o.execute_after))}`
+        : '';
       const err = o.status === 'failed' && o.last_error ? `\n   └ _${o.last_error.slice(0, 60)}_` : '';
-      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} NEAR*${extra}${err}`;
+      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} NEAR*${timing}${extra}${err}`;
     });
 
     const buttons: any[] = [];
@@ -3140,6 +3418,11 @@ export function setupRoutes(bot: Telegraf): void {
     const targetLabel = o.snipe_type === 'token' ? 'Token Contract Address' : 'Deployer Wallet Address';
     const targetVal = o.snipe_type === 'token' ? o.token_address : o.deployer_address;
     const dateStr = o.created_at ? new Date(o.created_at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'N/A';
+    const timingStr = o.execute_after
+      ? (new Date(o.execute_after) > new Date()
+          ? `⏰ Scheduled for ${formatUtcDateTime(new Date(o.execute_after))}`
+          : `⏰ Triggered after ${formatUtcDateTime(new Date(o.execute_after))}`)
+      : '⚡ Immediate on Liquidity';
 
     let errText = '';
     if (o.status === 'failed' && o.last_error) {
@@ -3151,6 +3434,7 @@ export function setupRoutes(bot: Telegraf): void {
       `• *Status*: ${statusText[o.status] ?? o.status}\n` +
       `• *${targetLabel}*: \`${targetVal}\`\n` +
       `• *Amount*: \`${o.amount_near} NEAR\`\n` +
+      `• *Trigger Timing*: \`${timingStr}\`\n` +
       `• *Type*: \`${o.snipe_type}\`\n` +
       `• *Created*: ${dateStr}${errText}\n\n` +
       `Use the options below to manage this order:`;
@@ -7164,74 +7448,79 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
         const tokenAddress = pending.tokenAddress;
-        const order = await createSnipeOrder({
-          user_id: user.id,
-          snipe_type: 'token',
-          token_address: tokenAddress,
-          amount_near: amt,
+
+        // Save into cache & pending actions with TTL of 3 minutes
+        snipeSetupCache.set(telegramId, {
+          tokenAddress,
+          amt,
+          expiresAt: Date.now() + 180_000,
+        });
+        userPendingActions.set(telegramId, {
+          action: 'snipe_custom_time',
+          tokenAddress,
+          snipeAmount: amt,
+          expiresAt: Date.now() + 180_000,
         });
 
-        // Already tradable → fire immediately through the normal buy path.
-        // Not tradable yet → the order stays armed; the detector fires it the
-        // moment the token launches / bonds.
-        const info = await getTokenInfo(tokenAddress, false).catch(() => null);
-        if (info?.tradeable) {
-          const triggerId = await recordSnipeTrigger(order.id, tokenAddress, info.venue ?? '').catch(() => null);
-          const procMsg = await ctx.reply(
-            `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} NEAR\` now...`,
-            { parse_mode: 'Markdown' }
-          ).catch(() => null);
-          const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
-          try {
-            const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-            if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => {});
-            await markSnipeOrderResult(order.id, true).catch(() => {});
-            await ctx.reply(res.message, {
-              parse_mode: 'Markdown',
-              reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-            });
-            if (res.positionId) {
-              await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol);
-            }
-          } catch (err: any) {
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-            if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => {});
-            const msg = err?.message ?? '';
-            const isAwaitingLiq = /no liquidity|not yet tradable|reserves.*positive|bonding phase/i.test(msg);
-            if (isAwaitingLiq) {
-              await ctx.reply(
-                `🎯 *Snipe Armed!*\n\n` +
-                `🪙 Token: \`${tokenAddress}\`\n` +
-                `💰 Amount: \`${amt} NEAR\`\n\n` +
-                `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
-                { parse_mode: 'Markdown' }
-              );
-            } else {
-              await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
-              await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`);
-            }
-          }
-        } else {
-          if (user) {
-            prewarmStorageDeposit(user, tokenAddress).catch(() => {});
-          }
-          await ctx.reply(
-            `🎯 *Snipe Armed!*\n\n` +
-            `🪙 Token: \`${tokenAddress}\`\n` +
-            `💰 Amount: \`${amt} NEAR\`\n\n` +
-            `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.`,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
-                  [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+        const currentUtc = formatUtcTime();
+        await ctx.reply(
+          `⏱ *Select Snipe Trigger Timing*\n\n` +
+          `🪙 Token: \`${tokenAddress}\`\n` +
+          `💰 Amount: \`${amt} NEAR\`\n` +
+          `Current Time: \`${currentUtc}\`\n\n` +
+          `When should the bot execute your snipe?\n\n` +
+          `• *⚡ Immediate on Liquidity*: Executes as soon as trading/liquidity is live.\n` +
+          `• *⏳ Delays (+5m, +10m, +15m)*: Great for tokens with temporary high launch fees (e.g. 70% decay curve).\n` +
+          `• *🕒 Custom UTC Time*: Trigger at an exact time today or a scheduled date.\n\n` +
+          `_You can also reply directly with a time (e.g. \`19:25\` or \`2026-10-08 19:25\`) or pick an option below:_\n` +
+          `Type /cancel to abort.`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [cb('⚡ Immediate on Liquidity', `snipe_time:now:${amt}`, 'success')],
+                [
+                  cb('⏳ +5m Delay', `snipe_time:delay:5:${amt}`, 'primary'),
+                  cb('⏳ +10m Delay', `snipe_time:delay:10:${amt}`, 'primary'),
+                  cb('⏳ +15m Delay', `snipe_time:delay:15:${amt}`, 'primary'),
                 ],
-              },
-            }
-          );
+                [cb('🕒 Custom UTC Time', `snipe_time:custom:${amt}`, 'primary')],
+                [cb('❌ Cancel', 'snipe_time:cancel', 'danger')],
+              ],
+            },
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'snipe_custom_time' && pending.tokenAddress) {
+        const tokenAddress = pending.tokenAddress;
+        const amt = pending.snipeAmount || snipeSetupCache.get(telegramId)?.amt || 0;
+        if (amt <= 0) {
+          await ctx.reply('❌ Session expired or invalid amount. Please start the snipe setup again with /menu.');
+          userPendingActions.delete(telegramId);
+          snipeSetupCache.delete(telegramId);
+          return;
         }
+
+        const parsed = parseUtcTimeString(rawText);
+        if (!parsed.date) {
+          const currentUtc = formatUtcTime();
+          await ctx.reply(
+            `❌ ${parsed.error ?? 'Invalid time format'}\n\n` +
+            `Current Time: \`${currentUtc}\`\n\n` +
+            `Please reply with a valid UTC time in the future:\n` +
+            `• \`19:25\` (HH:MM in UTC)\n` +
+            `• \`2026-10-08 19:25\` (YYYY-MM-DD HH:MM in UTC)\n\n` +
+            `Or type /cancel to abort.`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        userPendingActions.delete(telegramId);
+        snipeSetupCache.delete(telegramId);
+        await completeSnipeOrderCreation(ctx, telegramId, tokenAddress, amt, parsed.date);
         return;
       }
 

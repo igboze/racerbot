@@ -1712,11 +1712,12 @@ export async function createSnipeOrder(params: {
   token_address?: string;
   deployer_address?: string;
   amount_near: number;
+  execute_after?: Date | null;
 }): Promise<SnipeOrderRecord> {
   const db = await getDb();
   const result = await db.query(
-    `INSERT INTO snipe_orders (user_id, snipe_type, token_address, deployer_address, amount_near)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO snipe_orders (user_id, snipe_type, token_address, deployer_address, amount_near, execute_after)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
     [
       params.user_id,
@@ -1724,6 +1725,7 @@ export async function createSnipeOrder(params: {
       params.token_address ? params.token_address.toLowerCase() : null,
       params.deployer_address ? params.deployer_address.toLowerCase() : null,
       params.amount_near,
+      params.execute_after ?? null,
     ]
   );
   return rowToSnipeOrder(result.rows[0]);
