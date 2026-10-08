@@ -2999,57 +2999,117 @@ export function setupRoutes(bot: Telegraf): void {
   const snipeSetupCache = new Map<number, { tokenAddress: string; amt: number; expiresAt: number }>();
 
   function parseUtcTimeString(input: string): { date: Date | null; error?: string } {
-    const clean = input.trim().replace(/\s*utc\s*$/i, '').trim();
+    const raw = input.trim();
     const now = new Date();
 
-    // Pattern 1: HH:MM or HH:MM:SS
-    const timeOnlyMatch = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (timeOnlyMatch) {
-      const hours = parseInt(timeOnlyMatch[1], 10);
-      const minutes = parseInt(timeOnlyMatch[2], 10);
-      const seconds = timeOnlyMatch[3] ? parseInt(timeOnlyMatch[3], 10) : 0;
-      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
-        return { date: null, error: 'Invalid time. Hours must be 0-23 and minutes 0-59.' };
+    // 1. Relative delays: e.g. "+5m", "5m", "10m", "+15m", "in 10 mins", "+1h", "1h", "2 hours"
+    const relMatch = raw.match(/^(?:\+?\s*|in\s+)?(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/i);
+    if (relMatch) {
+      const val = parseInt(relMatch[1], 10);
+      const unit = relMatch[2].toLowerCase();
+      const isHours = unit.startsWith('h');
+      const delayMs = val * (isHours ? 3600_000 : 60_000);
+      if (val <= 0 || delayMs > 7 * 24 * 3600_000) {
+        return { date: null, error: 'Delay must be between 1 minute and 7 days.' };
       }
-      const target = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        hours,
-        minutes,
-        seconds
-      ));
-      if (target.getTime() <= now.getTime() - 60_000) {
-        const currentUtc = formatUtcTime(now);
-        const enteredUtc = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} UTC`;
-        return {
-          date: null,
-          error: `That time (${enteredUtc}) has already passed today (Current UTC: ${currentUtc}). Please enter a future UTC time.`,
-        };
-      }
-      return { date: target };
+      return { date: new Date(now.getTime() + delayMs) };
     }
 
-    // Pattern 2: YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS
-    const fullDateMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    // 2. Check for explicit timezone offset: e.g. "UTC+1", "UTC +1", "UTC-5", "+01:00", "-04"
+    let clean = raw;
+    let offsetMinutes = 0;
+    const tzMatch = clean.match(/(?:utc)?\s*([+-])\s*(\d{1,2})(?::(\d{2}))?\s*$/i);
+    if (tzMatch) {
+      const sign = tzMatch[1] === '-' ? -1 : 1;
+      const tzHours = parseInt(tzMatch[2], 10);
+      const tzMins = tzMatch[3] ? parseInt(tzMatch[3], 10) : 0;
+      // To convert time in UTC+X to UTC, subtract X hours
+      offsetMinutes = sign * (tzHours * 60 + tzMins);
+      clean = clean.slice(0, tzMatch.index).trim();
+    } else {
+      // Strip trailing "UTC"
+      clean = clean.replace(/\s*utc\s*$/i, '').trim();
+    }
+
+    // 3. Full Date + Time: YYYY-MM-DD HH:MM or YYYY/MM/DD HH:MM
+    const fullDateMatch = clean.match(/^(\d{4})[-/](\d{2})[-/](\d{2})[T ](\d{1,2})[:;](\d{2})(?:[:;](\d{2}))?(?:\s*(am|pm))?$/i);
     if (fullDateMatch) {
       const year = parseInt(fullDateMatch[1], 10);
       const month = parseInt(fullDateMatch[2], 10) - 1;
       const day = parseInt(fullDateMatch[3], 10);
-      const hours = parseInt(fullDateMatch[4], 10);
+      let hours = parseInt(fullDateMatch[4], 10);
       const minutes = parseInt(fullDateMatch[5], 10);
       const seconds = fullDateMatch[6] ? parseInt(fullDateMatch[6], 10) : 0;
-      const target = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
-      if (isNaN(target.getTime())) {
-        return { date: null, error: 'Invalid date/time format.' };
-      }
+      const ampm = fullDateMatch[7]?.toLowerCase();
+
+      if (ampm === 'pm' && hours < 12) hours += 12;
+      if (ampm === 'am' && hours === 12) hours = 0;
+
+      const baseMs = Date.UTC(year, month, day, hours, minutes, seconds);
+      if (isNaN(baseMs)) return { date: null, error: 'Invalid date format.' };
+      const targetMs = baseMs - offsetMinutes * 60_000;
+      const target = new Date(targetMs);
+
       if (target.getTime() <= now.getTime() - 60_000) {
-        return { date: null, error: 'The specified UTC date and time is in the past. Please enter a future UTC time.' };
+        return { date: null, error: 'The specified date and time is in the past. Please enter a future UTC time.' };
       }
       return { date: target };
     }
 
-    return { date: null, error: 'Unrecognized format. Please reply with `HH:MM` (e.g. `19:23`) or `YYYY-MM-DD HH:MM` (all in UTC).' };
+    // 4. "Tomorrow HH:MM"
+    let isTomorrow = false;
+    if (/^tomorrow\s+/i.test(clean)) {
+      isTomorrow = true;
+      clean = clean.replace(/^tomorrow\s+/i, '').trim();
+    }
+
+    // 5. Time only: "HH:MM", "HH;MM", with optional AM/PM
+    const timeMatch = clean.match(/^(\d{1,2})[:;](\d{2})(?:[:;](\d{2}))?(?:\s*(am|pm))?$/i);
+    if (timeMatch) {
+      let hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
+      const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      const ampm = timeMatch[4]?.toLowerCase();
+
+      if (ampm === 'pm' && hours < 12) hours += 12;
+      if (ampm === 'am' && hours === 12) hours = 0;
+
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
+        return { date: null, error: 'Invalid time. Hours must be 0-23 and minutes 0-59.' };
+      }
+
+      const dayOffset = isTomorrow ? 1 : 0;
+      const baseMs = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + dayOffset,
+        hours,
+        minutes,
+        seconds
+      );
+      const targetMs = baseMs - offsetMinutes * 60_000;
+      let target = new Date(targetMs);
+
+      // If target is within 60s in the past (typing latency), clamp to now + 5s
+      if (target.getTime() <= now.getTime()) {
+        if (now.getTime() - target.getTime() <= 60_000 && !isTomorrow) {
+          target = new Date(now.getTime() + 5_000);
+        } else if (!isTomorrow) {
+          const currentUtc = formatUtcTime(now);
+          const enteredUtc = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} UTC`;
+          return {
+            date: null,
+            error: `That time (${enteredUtc}) has already passed today (Current UTC: ${currentUtc}). Please enter a future UTC time or reply with a delay like \`+10m\`.`,
+          };
+        }
+      }
+      return { date: target };
+    }
+
+    return {
+      date: null,
+      error: 'Unrecognized format. Please reply with `HH:MM` (e.g. `19:23`), a delay like `+10m` or `15m`, or `YYYY-MM-DD HH:MM` (all in UTC).',
+    };
   }
 
   async function completeSnipeOrderCreation(
@@ -3220,10 +3280,10 @@ export function setupRoutes(bot: Telegraf): void {
       action: 'snipe_custom_time',
       tokenAddress,
       snipeAmount: finalAmt,
-      expiresAt: Date.now() + 180_000,
+      expiresAt: Date.now() + 600_000,
     });
     if (cache) {
-      cache.expiresAt = Date.now() + 180_000;
+      cache.expiresAt = Date.now() + 600_000;
     }
     await ctx.answerCbQuery().catch(() => {});
     const currentUtc = formatUtcTime();
@@ -3234,8 +3294,9 @@ export function setupRoutes(bot: Telegraf): void {
       `Current Time: \`${currentUtc}\`\n\n` +
       `Reply with the exact time in UTC when you want the snipe to trigger.\n\n` +
       `*Accepted formats:*\n` +
-      `• \`19:23\` (HH:MM today in UTC)\n` +
-      `• \`2026-10-08 19:23\` (YYYY-MM-DD HH:MM in UTC)\n\n` +
+      `• \`19:23\` or \`7:23 PM\` (today in UTC)\n` +
+      `• \`+10m\` or \`15 mins\` (delay from now)\n` +
+      `• \`2026-10-08 19:23\` (specific UTC date & time)\n\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     ).catch(() => {});
@@ -7453,13 +7514,13 @@ export function setupRoutes(bot: Telegraf): void {
         snipeSetupCache.set(telegramId, {
           tokenAddress,
           amt,
-          expiresAt: Date.now() + 180_000,
+          expiresAt: Date.now() + 600_000,
         });
         userPendingActions.set(telegramId, {
           action: 'snipe_custom_time',
           tokenAddress,
           snipeAmount: amt,
-          expiresAt: Date.now() + 180_000,
+          expiresAt: Date.now() + 600_000,
         });
 
         const currentUtc = formatUtcTime();
@@ -7472,7 +7533,7 @@ export function setupRoutes(bot: Telegraf): void {
           `• *⚡ Immediate on Liquidity*: Executes as soon as trading/liquidity is live.\n` +
           `• *⏳ Delays (+5m, +10m, +15m)*: Great for tokens with temporary high launch fees (e.g. 70% decay curve).\n` +
           `• *🕒 Custom UTC Time*: Trigger at an exact time today or a scheduled date.\n\n` +
-          `_You can also reply directly with a time (e.g. \`19:25\` or \`2026-10-08 19:25\`) or pick an option below:_\n` +
+          `_You can also reply directly with a time (e.g. \`19:25\`, \`7:25 PM\`, \`+10m\`, or \`2026-10-08 19:25\`) or pick an option below:_\n` +
           `Type /cancel to abort.`,
           {
             parse_mode: 'Markdown',
@@ -7510,7 +7571,8 @@ export function setupRoutes(bot: Telegraf): void {
             `❌ ${parsed.error ?? 'Invalid time format'}\n\n` +
             `Current Time: \`${currentUtc}\`\n\n` +
             `Please reply with a valid UTC time in the future:\n` +
-            `• \`19:25\` (HH:MM in UTC)\n` +
+            `• \`19:25\` or \`7:25 PM\` (HH:MM in UTC)\n` +
+            `• \`+10m\` or \`15 mins\` (delay from now)\n` +
             `• \`2026-10-08 19:25\` (YYYY-MM-DD HH:MM in UTC)\n\n` +
             `Or type /cancel to abort.`,
             { parse_mode: 'Markdown' }
