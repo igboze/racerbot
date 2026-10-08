@@ -55,13 +55,12 @@ import { determineSwapOutcome } from './tradeResult.js';
 import { executeSuiSwap } from './suiExecutor.js';
 
 // ── Gas limits for swaps ──────────────────────────────────────────────────────
-// Ref DCL and Ref AMM burn 12-25 Tgas in practice. Attaching 75 Tgas gives a 3x-5x
-// margin of safety. NEAR Protocol requires attached_gas * 10^9 yocto in unencumbered
-// balance at signing time (10^21 yocto = 0.001 NEAR per Tgas).
-// Keeping swap gas at 75 Tgas (instead of 250 Tgas) reduces the required upfront
-// gas reserve from 0.28 NEAR to 0.075 NEAR, allowing normal-sized trades from wallets
-// with low balances (<0.3 NEAR) to succeed without being rejected with NotEnoughBalance.
-export const DEFAULT_SWAP_GAS = BigInt('75000000000000'); // 75 Tgas
+// ft_transfer_call splits prepaid gas across multiple contracts: the token contract
+// reserves ~35-45 Tgas for ft_resolve_transfer callback, leaving the remainder for
+// the DEX (e.g. Ref DCL). Multi-hop swaps (e.g. token -> QTC -> wNEAR) burn ~25 Tgas
+// and must attach 30+ Tgas to downstream ft_transfer calls. 180 Tgas ensures all hops
+// and cross-contract promises complete without exceeding prepaid gas.
+export const DEFAULT_SWAP_GAS = BigInt('180000000000000'); // 180 Tgas
 export const DEFAULT_TRANSFER_GAS = BigInt('10000000000000'); // 10 Tgas
 export const DEFAULT_WRAP_DEPOSIT_GAS = BigInt('10000000000000'); // 10 Tgas
 
