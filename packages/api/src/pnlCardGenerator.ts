@@ -108,7 +108,7 @@ export async function generatePNLCardData(
       if (isSuiPos) {
         return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
       }
-      if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+      if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
       return val;
     };
 
@@ -125,6 +125,10 @@ export async function generatePNLCardData(
       try {
         const raw = BigInt(String(tokenInfo.total_supply).split('.')[0]);
         totalSupplyHuman = Number(raw) / Math.pow(10, decimals);
+        // For pre-bonded NearlyTrade tokens, use launchpad bonding curve supply (80%)
+        if (tokenInfo?.venue === 'nearlytrade' && tokenInfo?.bonding_phase === 'prebonded') {
+          totalSupplyHuman *= 0.8;
+        }
       } catch { /* leave 0 */ }
     }
 
@@ -172,7 +176,12 @@ export async function generatePNLCardData(
       avgEntryPrice = currentPrice;
     }
 
-    if (totalInitialInvestment === 0 && (isExternalDeposit || quantityHeld > 0)) {
+    const externalTokens = (isExternalDeposit && quantityHeld > totalBuyTokensHuman)
+      ? (quantityHeld - totalBuyTokensHuman)
+      : 0;
+    if (externalTokens > 0) {
+      totalInitialInvestment += externalTokens * avgEntryPrice;
+    } else if (totalInitialInvestment === 0 && (isExternalDeposit || quantityHeld > 0)) {
       totalInitialInvestment = quantityHeld * avgEntryPrice;
     }
 
