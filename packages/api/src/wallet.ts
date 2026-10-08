@@ -537,7 +537,9 @@ export async function getDexTax(info: DexTaxOptions): Promise<{ buyTaxPct: numbe
   // 1. If explicit on-chain pool fee was already queried from the contract
   if (info.pool_fee != null && info.pool_fee > 0) {
     let pct: number;
-    if (info.pool_fee <= 10) {
+    if (venue === 'intear') {
+      pct = info.pool_fee / 100;
+    } else if (info.pool_fee <= 10) {
       // Already formatted percentage (e.g. 0.1%, 0.2%, 0.3%)
       pct = info.pool_fee;
     } else if (info.pool_fee <= 1000) {
@@ -594,7 +596,11 @@ function isMemooCookingToken(tokenAddress: string): boolean {
  * Detect whether a token address belongs to intear launchpad.
  */
 function isIntearToken(tokenAddress: string): boolean {
-  return tokenAddress.endsWith('.launch.intear.near') || tokenAddress.endsWith('.intear.near');
+  return (
+    tokenAddress.endsWith('.intear.near') ||
+    tokenAddress.endsWith('.launch.intear.near') ||
+    (tokenAddress.includes('.launch') && tokenAddress.includes('intear.near'))
+  );
 }
 
 /**
@@ -1085,6 +1091,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ? Number(dbCache.bonding_progress_pct)
       : null;
   let dclPoolId: string | null = null;
+  let intearPoolFee: number | undefined;
   if (dbCache?.dcl_pool_id) {
     const parts = dbCache.dcl_pool_id.split('|');
     const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
@@ -1151,6 +1158,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           venue = 'intear';
           price = intearState.price;
           liquidity = intearState.liquidityNear;
+          if (intearState.feeBps != null) {
+            intearPoolFee = intearState.feeBps;
+          }
           if (intearState.totalSupply && intearState.totalSupply !== '0') {
             totalSupply = intearState.totalSupply;
           }
@@ -1430,7 +1440,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         bonding_phase: bondingPhase,
         dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
         rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
-        pool_fee: rheaCandidate?.poolFee,
+        pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
         chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
       });
 

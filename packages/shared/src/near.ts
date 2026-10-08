@@ -1,7 +1,7 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { markProviderError, markProviderSuccess, createProvider, isProviderAvailable, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
-import { upsertTokenCache } from '@racerbot/db';
+import { upsertTokenCache, getTokenCache } from '@racerbot/db';
 import { redactSecrets, TradeError } from './errors.js';
 
 export interface NearConfig {
@@ -130,47 +130,119 @@ export async function getRefIndexerPools(): Promise<any[]> {
   return indexerPoolsCache;
 }
 
-export function parseIntearPool(rawBytes: Buffer): { asset1: string; reserve1: string; asset2: string; reserve2: string } | null {
-  if (!rawBytes || rawBytes.length < 5 || rawBytes[0] !== 1) return null;
-  let offset = 1;
+export function parseIntearPool(rawBytes: Buffer): {
+  asset1: string;
+  reserve1: string;
+  asset2: string;
+  reserve2: string;
+  type?: 'public' | 'private' | 'launch';
+  feeBps?: number;
+} | null {
+  if (!rawBytes || rawBytes.length < 5) return null;
+  let offset = 0;
+  // Byte 0: Option tag or pool envelope (usually 1)
+  const tag0 = rawBytes[offset++];
+  const poolVariant = rawBytes[offset++];
 
-  // Asset 1
-  const asset1Type = rawBytes.readUInt8(offset);
-  offset += 1;
-  let asset1 = 'near';
-  if (asset1Type === 1) {
+  function readString(): string {
+    if (offset + 4 > rawBytes.length) return '';
     const len = rawBytes.readUInt32LE(offset);
     offset += 4;
-    asset1 = rawBytes.toString('utf8', offset, offset + len);
+    if (offset + len > rawBytes.length) return '';
+    const s = rawBytes.toString('utf8', offset, offset + len);
     offset += len;
-  }
-  // Reserve 1 (u128)
-  const r1Buf = rawBytes.subarray(offset, offset + 16);
-  offset += 16;
-  let reserve1 = 0n;
-  for (let i = 0; i < 16; i++) {
-    reserve1 |= BigInt(r1Buf[i]) << BigInt(8 * i);
+    return s;
   }
 
-  // Asset 2
-  const asset2Type = rawBytes.readUInt8(offset);
-  offset += 1;
-  let asset2 = 'near';
-  if (asset2Type === 1) {
-    const len = rawBytes.readUInt32LE(offset);
-    offset += 4;
-    asset2 = rawBytes.toString('utf8', offset, offset + len);
-    offset += len;
-  }
-  // Reserve 2 (u128)
-  const r2Buf = rawBytes.subarray(offset, offset + 16);
-  offset += 16;
-  let reserve2 = 0n;
-  for (let i = 0; i < 16; i++) {
-    reserve2 |= BigInt(r2Buf[i]) << BigInt(8 * i);
+  function readAssetId(): string {
+    if (offset >= rawBytes.length) return 'unknown';
+    const t = rawBytes[offset++];
+    if (t === 0) return 'near';
+    if (t === 1) return readString();
+    return 'unknown';
   }
 
-  return { asset1, reserve1: reserve1.toString(), asset2, reserve2: reserve2.toString() };
+  function readU128(): bigint {
+    if (offset + 16 > rawBytes.length) return 0n;
+    const s = rawBytes.subarray(offset, offset + 16);
+    offset += 16;
+    let v = 0n;
+    for (let i = 0; i < 16; i++) v |= BigInt(s[i]) << BigInt(8 * i);
+    return v;
+  }
+
+  if (poolVariant === 2) {
+    // Launch pool (INTEARnear/launch LaunchV2):
+    // near_amount: u128 (real deposited NEAR + phantom liquidity)
+    // launched_asset: AssetId
+    // balance: u128 (token balance)
+    const reserveNear = readU128();
+    const asset1 = 'near';
+    const asset2 = readAssetId();
+    const reserveToken = readU128();
+
+    // Fees: Vec<(FeeReceiver, u32)>
+    let totalFeePpm = 0;
+    if (offset + 4 <= rawBytes.length) {
+      const numFees = rawBytes.readUInt32LE(offset);
+      offset += 4;
+      for (let i = 0; i < numFees && offset < rawBytes.length; i++) {
+        const receiverType = rawBytes[offset++];
+        if (receiverType === 0 || receiverType === 2) {
+          readString(); // AccountId
+        }
+        if (offset + 4 <= rawBytes.length) {
+          const fee = rawBytes.readUInt32LE(offset);
+          offset += 4;
+          totalFeePpm += fee;
+        }
+      }
+    }
+    const feeBps = Math.round(totalFeePpm / 100);
+
+    return {
+      asset1,
+      reserve1: reserveNear.toString(),
+      asset2,
+      reserve2: reserveToken.toString(),
+      type: 'launch',
+      feeBps: feeBps > 0 ? feeBps : 110,
+    };
+  } else if (poolVariant === 0 || poolVariant === 1) {
+    // Public (0) or Private (1) XYK pool
+    const saveOffset = offset;
+    const a1 = readAssetId();
+    const r1 = readU128();
+    const a2 = readAssetId();
+    const r2 = readU128();
+
+    if (a1 !== 'unknown' && a2 !== 'unknown') {
+      return {
+        asset1: a1,
+        reserve1: r1.toString(),
+        asset2: a2,
+        reserve2: r2.toString(),
+        type: poolVariant === 0 ? 'public' : 'private',
+        feeBps: 30,
+      };
+    }
+
+    offset = saveOffset;
+    const altA1 = readAssetId();
+    const altA2 = readAssetId();
+    const altR1 = readU128();
+    const altR2 = readU128();
+    return {
+      asset1: altA1,
+      reserve1: altR1.toString(),
+      asset2: altA2,
+      reserve2: altR2.toString(),
+      type: poolVariant === 0 ? 'public' : 'private',
+      feeBps: 30,
+    };
+  }
+
+  return null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): Promise<T> {
@@ -2678,6 +2750,46 @@ export class MultiRpcNear {
   }
 
   /**
+   * Simulate a swap on dex.intear.near (slimedragon.near/xyk).
+   * Executes the exact on-chain math accounting for phantom liquidity and any
+   * custom fee configuration (fixed, scheduled curves, dynamic, holder/creator fees).
+   */
+  async simulateIntearSwap(
+    poolId: number,
+    tokenAddress: string,
+    amountIn: string | bigint,
+    isBuy: boolean
+  ): Promise<{ amountIn: string; amountOut: string } | null> {
+    const poolBuf = Buffer.alloc(4);
+    poolBuf.writeUInt32LE(poolId, 0);
+    const poolMsg = poolBuf.toString('base64');
+
+    const assetIn = isBuy ? 'near' : `nep141:${tokenAddress}`;
+    const assetOut = isBuy ? `nep141:${tokenAddress}` : 'near';
+
+    try {
+      const res = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
+        dex_id: 'slimedragon.near/xyk',
+        message: poolMsg,
+        asset_in: assetIn,
+        asset_out: assetOut,
+        amount: { ExactIn: amountIn.toString() },
+        trader: 'user.intear.near',
+      });
+
+      if (Array.isArray(res) && res.length >= 2) {
+        return {
+          amountIn: String(res[0]),
+          amountOut: String(res[1]),
+        };
+      }
+    } catch {
+      // Fall back on simulation failure
+    }
+    return null;
+  }
+
+  /**
    * Find pool ID on dex.intear.near (slimedragon.near/xyk) for a token
    */
   async findIntearPoolId(tokenAddress: string): Promise<number> {
@@ -2685,11 +2797,37 @@ export class MultiRpcNear {
       return intearPoolCache.get(tokenAddress)!;
     }
 
-    // Scan pools from newest (250 down to 0) in parallel batches of 25
-    for (let start = 250; start >= 0; start -= 25) {
+    // Check DB cache first
+    try {
+      const dbCached = await getTokenCache(tokenAddress);
+      if (dbCached && dbCached.venue === 'intear' && dbCached.dcl_pool_id) {
+        const id = parseInt(dbCached.dcl_pool_id, 10);
+        if (!isNaN(id) && id >= 0) {
+          intearPoolCache.set(tokenAddress, id);
+          return id;
+        }
+      }
+    } catch {}
+
+    // Query live total pool count on dex.intear.near dynamically
+    let totalPools = 300;
+    try {
+      const poolCountB64 = await this.view<string>('dex.intear.near', 'dex_view', {
+        dex_id: 'slimedragon.near/xyk',
+        method: 'get_pool_count',
+        args: '',
+      });
+      if (poolCountB64) {
+        const count = Buffer.from(poolCountB64, 'base64').readUInt32LE(0);
+        if (count > 0) totalPools = count;
+      }
+    } catch {}
+
+    // Scan pools from newest down in parallel batches of 25
+    for (let start = totalPools - 1; start >= 0; start -= 25) {
       const promises: Promise<{ id: number; data: any } | null>[] = [];
-      const batchStart = Math.max(0, start - 24);
-      for (let i = start; i >= batchStart; i--) {
+      const batchEnd = Math.max(0, start - 24);
+      for (let i = start; i >= batchEnd; i--) {
         const buf = Buffer.alloc(4);
         buf.writeUInt32LE(i, 0);
         promises.push(
@@ -2710,18 +2848,19 @@ export class MultiRpcNear {
 
       const results = await Promise.all(promises);
       for (const r of results) {
-        if (r) {
-          if (r.data.asset1.includes('.near')) intearPoolCache.set(r.data.asset1, r.id);
-          if (r.data.asset2.includes('.near')) intearPoolCache.set(r.data.asset2, r.id);
+        if (r && r.data) {
+          if (r.data.asset1 && r.data.asset1 !== 'near' && r.data.asset1.includes('.near')) {
+            intearPoolCache.set(r.data.asset1, r.id);
+          }
+          if (r.data.asset2 && r.data.asset2 !== 'near' && r.data.asset2.includes('.near')) {
+            intearPoolCache.set(r.data.asset2, r.id);
+          }
           if (r.data.asset1 === tokenAddress || r.data.asset2 === tokenAddress) {
             intearPoolCache.set(tokenAddress, r.id);
-            // FIX 5: Persist found pool ID to DB so it survives process restarts.
-            // This prevents the expensive 250-pool scan from repeating after a Railway redeploy.
             setImmediate(() => {
               upsertTokenCache({
                 token_address: tokenAddress,
                 venue: 'intear',
-                // Store pool ID in dcl_pool_id column (reuse existing column; intear uses integer IDs)
                 dcl_pool_id: String(r.id),
                 updated_at: new Date(),
               }).catch(() => {});
@@ -2745,6 +2884,8 @@ export class MultiRpcNear {
     liquidityNear: number;
     reserveNear: string;
     reserveToken: string;
+    feeBps: number;
+    taxPct: number;
     name: string;
     symbol: string;
     decimals: number;
@@ -2795,6 +2936,8 @@ export class MultiRpcNear {
 
     const price = tokenAmt > 0 ? nearAmt / tokenAmt : 0;
     const liquidityNear = nearAmt * 2;
+    const feeBps = pool.feeBps ?? 30;
+    const taxPct = feeBps / 100;
 
     const launchData = await this.view<any>('launch.intear.near', 'get_launch_data', {
       token_account_id: tokenAddress,
@@ -2807,6 +2950,8 @@ export class MultiRpcNear {
       liquidityNear,
       reserveNear: reserveNear.toString(),
       reserveToken: reserveToken.toString(),
+      feeBps,
+      taxPct,
       name: meta.name,
       symbol: meta.symbol,
       decimals: meta.decimals,
@@ -3429,6 +3574,24 @@ export class MultiRpcNear {
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'intear') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
+      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+      let poolId: number | null = typeof rheaPoolId === 'number' ? rheaPoolId : null;
+      if (poolId === null) {
+        poolId = await this.findIntearPoolId(targetToken).catch(() => null);
+      }
+
+      // Priority 1: Exact on-chain simulation via simulate_swap_simple
+      // Accounts for phantom liquidity, scheduled fee curves, dynamic curves,
+      // creator fees, holder fees, and dex fees.
+      if (poolId !== null && poolId !== undefined && poolId >= 0) {
+        const sim = await this.simulateIntearSwap(poolId, targetToken, amountIn, isBuy).catch(() => null);
+        if (sim && BigInt(sim.amountOut) > 0n) {
+          const minOut = calculateMinAmountOut(sim.amountOut, slippagePct);
+          return { expectedOutput: sim.amountOut, minAmountOut: minOut };
+        }
+      }
+
+      // Priority 2: Fallback to token state calculation using true pool fee BPS
       let state;
       try {
         state = await this.getIntearTokenState(targetToken);
@@ -3440,12 +3603,12 @@ export class MultiRpcNear {
       const reserveNear = BigInt(state.reserveNear);
       const reserveToken = BigInt(state.reserveToken);
 
-      const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
       const reserveIn = isBuy ? reserveNear : reserveToken;
       const reserveOut = isBuy ? reserveToken : reserveNear;
 
-      // Intear XYK pool fee (30 bps / 0.3%)
-      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 30);
+      // Use actual on-chain fee bps from pool state (e.g. 110 bps for 1.1%, 9010 bps for 90.1%)
+      const poolFeeBps = Math.min(9999, Math.max(0, state.feeBps ?? 30));
+      const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, poolFeeBps);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
     } else if (venue === 'onetokenhub') {
