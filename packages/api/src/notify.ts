@@ -214,6 +214,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         if (r.includes('prebonded')) return 'Token is still in its bonding curve phase — wait for it to bond before buying.';
         if (r.includes('liquidity') && r.includes('insufficient')) return 'Pool liquidity too low to fill this order.';
         if (r.includes('all near rpc broadcast failed')) return 'Network error — all RPC nodes rejected the transaction. Please retry.';
+        if (r.includes('never reached the near network')) return 'Transaction never reached the NEAR network — no funds were spent. Please retry in a moment.';
         if (r.includes('not confirmed within') || r.includes('taking too long') || r.includes('outcome is unknown')) return 'Transaction was submitted but confirmation is delayed. Please check your wallet balance before retrying to avoid duplicate trades.';
         if (r.includes('another transaction is already in progress') || r.includes('wallet lock') || r.includes('contention')) return 'Another transaction is already in progress for this wallet — please wait a moment and try again.';
         if (r.includes('signing timed out')) return 'Transaction signing timed out. Please retry.';
