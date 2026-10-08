@@ -42,6 +42,7 @@ export {
   VENUES,
   getVenueInfo,
   dexscreenerUrl,
+  isIntearToken,
   nearblocksTokenUrl,
   nearblocksTxUrl,
   bubbleMapUrl,

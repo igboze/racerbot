@@ -139,6 +139,18 @@ export function dexscreenerUrl(tokenAddress: string): string {
   return `https://dexscreener.com/near/${tokenAddress}`;
 }
 
+export function isIntearToken(tokenAddress: string): boolean {
+  if (!tokenAddress) return false;
+  const lower = tokenAddress.toLowerCase().trim();
+  return (
+    lower.endsWith('.intear.near') ||
+    lower.endsWith('.launch.intear.near') ||
+    lower.endsWith('.launch-v2.intear.near') ||
+    lower.includes('intear.near') ||
+    (lower.includes('.launch') && lower.includes('intear.near'))
+  );
+}
+
 /** NearBlocks explorer page for a token contract. */
 export function nearblocksTokenUrl(tokenAddress: string): string {
   return `https://nearblocks.io/tokens/${tokenAddress}`;

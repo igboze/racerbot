@@ -2827,6 +2827,12 @@ export class MultiRpcNear {
    * Find pool ID on dex.intear.near (slimedragon.near/xyk) for a token
    */
   async findIntearPoolId(tokenAddress: string): Promise<number> {
+    // Canonical pool for the platform token itself: pool 216 (token.intear.near <-> near)
+    if (tokenAddress === 'token.intear.near') {
+      intearPoolCache.set('token.intear.near', 216);
+      return 216;
+    }
+
     if (intearPoolCache.has(tokenAddress)) {
       return intearPoolCache.get(tokenAddress)!;
     }
@@ -2883,23 +2889,28 @@ export class MultiRpcNear {
       const results = await Promise.all(promises);
       for (const r of results) {
         if (r && r.data) {
-          if (r.data.asset1 && r.data.asset1 !== 'near' && r.data.asset1.includes('.near')) {
+          // Never cache token.intear.near as a launch token when it's the quote token
+          if (r.data.asset1 && r.data.asset1 !== 'near' && r.data.asset1 !== 'wrap.near' && r.data.asset1 !== 'token.intear.near' && r.data.asset1.includes('.near')) {
             intearPoolCache.set(r.data.asset1, r.id);
           }
-          if (r.data.asset2 && r.data.asset2 !== 'near' && r.data.asset2.includes('.near')) {
+          if (r.data.asset2 && r.data.asset2 !== 'near' && r.data.asset2 !== 'wrap.near' && r.data.asset2 !== 'token.intear.near' && r.data.asset2.includes('.near')) {
             intearPoolCache.set(r.data.asset2, r.id);
           }
           if (r.data.asset1 === tokenAddress || r.data.asset2 === tokenAddress) {
-            intearPoolCache.set(tokenAddress, r.id);
-            setImmediate(() => {
-              upsertTokenCache({
-                token_address: tokenAddress,
-                venue: 'intear',
-                dcl_pool_id: String(r.id),
-                updated_at: new Date(),
-              }).catch(() => {});
-            });
-            return r.id;
+            const paired = r.data.asset1 === tokenAddress ? r.data.asset2 : r.data.asset1;
+            // Only accept pools paired with NEAR, wNEAR, or token.intear.near (for launch tokens)
+            if (paired === 'near' || paired === 'wrap.near' || paired === 'token.intear.near') {
+              intearPoolCache.set(tokenAddress, r.id);
+              setImmediate(() => {
+                upsertTokenCache({
+                  token_address: tokenAddress,
+                  venue: 'intear',
+                  dcl_pool_id: String(r.id),
+                  updated_at: new Date(),
+                }).catch(() => {});
+              });
+              return r.id;
+            }
           }
         }
       }
@@ -2978,12 +2989,30 @@ export class MultiRpcNear {
     if (pairedAsset === 'near' || pairedAsset === 'wrap.near') {
       nearAmt = Number(rawReservePaired) / 1e24;
     } else if (pairedAsset === 'token.intear.near') {
-      // If paired with token.intear.near, convert using INTEAR/NEAR rate (~0.0029 NEAR per INTEAR)
+      // If paired with token.intear.near, resolve INTEAR's live price in NEAR from pool 216
+      let intearPriceNear = 0.002426;
+      try {
+        const intearBuf = Buffer.alloc(4);
+        intearBuf.writeUInt32LE(216, 0);
+        const intearRaw = await this.view<string>('dex.intear.near', 'dex_view', {
+          dex_id: 'slimedragon.near/xyk',
+          method: 'get_pool',
+          args: intearBuf.toString('base64'),
+        });
+        if (intearRaw) {
+          const intearP = parseIntearPool(Buffer.from(intearRaw, 'base64'));
+          if (intearP && BigInt(intearP.reserve1) > 0n) {
+            intearPriceNear = Number(BigInt(intearP.reserve2)) / Number(BigInt(intearP.reserve1));
+          }
+        }
+      } catch {}
       const intearAmt = Number(rawReservePaired) / 1e24;
-      nearAmt = intearAmt * 0.002903;
+      nearAmt = intearAmt * intearPriceNear;
       reserveNear = BigInt(Math.floor(nearAmt * 1e24));
     } else {
-      nearAmt = Number(rawReservePaired) / 1e24;
+      // Unknown paired asset: cannot assume 1:1 with NEAR!
+      nearAmt = 0;
+      reserveNear = 0n;
     }
 
     const price = tokenAmt > 0 ? nearAmt / tokenAmt : 0;
