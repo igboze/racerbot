@@ -30,6 +30,7 @@ const rheaPoolIdCache = new Map<string, number>();
 // NearlyTrade launch record + token metadata + total supply cache (60s TTL).
 // Static per token; the DCL pool view inside getNearlytradeTokenState stays fresh.
 const ntStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
+const ntRouteCache = new Map<string, { at: number; route: any }>();
 // ShoreMarkets launch record + token metadata + total supply cache (60s TTL).
 const smStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
 const intearPoolCache = new Map<string, number>();
@@ -2428,12 +2429,21 @@ export class MultiRpcNear {
    * to avoid picking dead or unseeded 0-liquidity pools.
    */
   private async getQuoteNearPrice(quoteToken: string, quoteDecimals: number): Promise<number> {
+    // 1. Direct DCL pool on dclv2.ref-labs.near with verified liquidity (> 0.1 NEAR) — fast 1 RPC call
+    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
+    if (dclId) {
+      try {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0 && st.liquidityNear > 0.1) return st.price;
+      } catch { /* try other paths */ }
+    }
+
     const pairedRate = await this.getPairedTokenNearRate(quoteToken).catch(() => null);
     if (pairedRate && pairedRate.rateInNear > 0) {
       return pairedRate.rateInNear;
     }
 
-    // 1. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad curve state
+    // 2. If quoteToken is a NearlyTrade token itself (e.g. diarhea.nearlytrade.near), check its launchpad curve state
     if (quoteToken.endsWith('.nearlytrade.near')) {
       try {
         const ntLaunch = await this.view<any>('nearlytrade.near', 'get_launch_by_token', { token: quoteToken }).catch(() => null);
@@ -2466,25 +2476,7 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
     }
 
-    // 2. Check Ref DCL pool on dclv2.ref-labs.near with verified liquidity (> 0.1 NEAR)
-    const dclId = await this.findDclPoolId('wrap.near', quoteToken).catch(() => null);
-    if (dclId) {
-      try {
-        const st = await this.getDclPoolState(dclId, 'wrap.near');
-        if (st.price > 0 && st.liquidityNear > 0.1) return st.price;
-      } catch { /* try Ref AMM */ }
-    }
-
-    // 3. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity,
-    // and selects the pool with the deepest real liquidity (> 0.1 NEAR).
-    try {
-      const bestPool = await this.findRheaPoolForToken(quoteToken, true);
-      if (bestPool && bestPool.price > 0 && bestPool.liquidityNear > 0.1) {
-        return bestPool.price;
-      }
-    } catch { /* fallback to other avenues */ }
-
-    // 4. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
+    // 3. Fallback: Ref AMM (v2.ref-finance.near) with liquidity validation
     const refId = await this.findRheaPoolId('wrap.near', quoteToken).catch(() => null);
     if (refId !== null && refId !== undefined) {
       const rh = await this.getRheaPoolReserves(refId, 'wrap.near', quoteToken).catch(() => null);
@@ -2495,6 +2487,14 @@ export class MultiRpcNear {
         if (quoteHuman > 0 && liqNear > 0.1) return nearHuman / quoteHuman;
       }
     }
+
+    // 4. Comprehensive pool finder: scans both DCL and Ref AMM, verifies on-chain liquidity
+    try {
+      const bestPool = await this.findRheaPoolForToken(quoteToken, false);
+      if (bestPool && bestPool.price > 0 && bestPool.liquidityNear > 0.1) {
+        return bestPool.price;
+      }
+    } catch { /* fallback to other avenues */ }
 
     // 5. Absolute last resort: if no pool has >0.1 NEAR liquidity, take any pool with price > 0
     if (refId !== null && refId !== undefined) {
@@ -2527,17 +2527,53 @@ export class MultiRpcNear {
     | { kind: 'direct'; launchPoolId: string; quote: 'wrap.near' }
     | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string } }
   > {
+    const cachedRoute = ntRouteCache.get(tokenAddress);
+    if (cachedRoute && Date.now() - cachedRoute.at < 600_000) {
+      return cachedRoute.route;
+    }
+
     const st = await this.getNearlytradeTokenState(tokenAddress);
     const launchPoolId = st.pool_id;
 
     if (st.quoteIsNear) {
-      return { kind: 'direct', launchPoolId, quote: 'wrap.near' };
+      const res = { kind: 'direct' as const, launchPoolId, quote: 'wrap.near' as const };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
     }
 
     const quote = st.quote;
 
-    // Pick the best active liquid pool for hop 1 (wNEAR ↔ quote asset) by checking real liquidity first
-    const rheaPool = await this.findRheaPoolForToken(quote, true).catch(() => null);
+    // 1. Fast path: Direct Ref DCL pool for wrap.near <-> quote (instant DCL resolution)
+    const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    if (dclHop) {
+      const dclState = await this.getDclPoolState(dclHop, 'wrap.near').catch(() => null);
+      if (dclState && dclState.liquidityNear > 0.1) {
+        const res = {
+          kind: 'multihop' as const,
+          quote,
+          launchPoolId,
+          hop1: { type: 'dcl' as const, poolId: dclHop },
+        };
+        ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+        return res;
+      }
+    }
+
+    // 2. Fast path: Direct Ref v2 AMM pool for wrap.near <-> quote
+    const refHop = await this.findRheaPoolId('wrap.near', quote).catch(() => null);
+    if (refHop !== null && refHop !== undefined) {
+      const res = {
+        kind: 'multihop' as const,
+        quote,
+        launchPoolId,
+        hop1: { type: 'v2' as const, poolId: String(refHop) },
+      };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
+    }
+
+    // 3. Fallback: comprehensive search (using cached pools, not forceCheck=true)
+    const rheaPool = await this.findRheaPoolForToken(quote, false).catch(() => null);
     if (
       rheaPool &&
       rheaPool.pairedToken === 'wrap.near' &&
@@ -2545,27 +2581,31 @@ export class MultiRpcNear {
       rheaPool.poolId !== undefined &&
       rheaPool.liquidityNear > 0
     ) {
-      return {
-        kind: 'multihop',
+      const res = {
+        kind: 'multihop' as const,
         quote,
         launchPoolId,
         hop1: {
-          type: rheaPool.isDcl ? 'dcl' : 'v2',
+          type: rheaPool.isDcl ? ('dcl' as const) : ('v2' as const),
           poolId: String(rheaPool.poolId),
         },
       };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
     }
 
-    // Fallback: Ref v2 AMM pool
-    const refHop = await this.findRheaPoolId('wrap.near', quote).catch(() => null);
+    // 4. Fallback: Ref v2 AMM pool if not yet found
     if (refHop !== null && refHop !== undefined) {
-      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'v2', poolId: String(refHop) } };
+      const res = { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'v2' as const, poolId: String(refHop) } };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
     }
 
-    // Fallback: DCL pool
-    const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);
+    // 5. Fallback: DCL pool
     if (dclHop) {
-      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: dclHop } };
+      const res = { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'dcl' as const, poolId: dclHop } };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
     }
 
     throw new Error(
