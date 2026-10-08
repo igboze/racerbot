@@ -54,6 +54,17 @@ import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
 
+// ── Gas limits for swaps ──────────────────────────────────────────────────────
+// Ref DCL and Ref AMM burn 12-25 Tgas in practice. Attaching 75 Tgas gives a 3x-5x
+// margin of safety. NEAR Protocol requires attached_gas * 10^9 yocto in unencumbered
+// balance at signing time (10^21 yocto = 0.001 NEAR per Tgas).
+// Keeping swap gas at 75 Tgas (instead of 250 Tgas) reduces the required upfront
+// gas reserve from 0.28 NEAR to 0.075 NEAR, allowing normal-sized trades from wallets
+// with low balances (<0.3 NEAR) to succeed without being rejected with NotEnoughBalance.
+export const DEFAULT_SWAP_GAS = BigInt('75000000000000'); // 75 Tgas
+export const DEFAULT_TRANSFER_GAS = BigInt('10000000000000'); // 10 Tgas
+export const DEFAULT_WRAP_DEPOSIT_GAS = BigInt('10000000000000'); // 10 Tgas
+
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 const REDIS_URL = process.env.REDIS_URL!;
 const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
@@ -340,7 +351,7 @@ export class SwapExecutor {
     swapAmount: bigint,
     dexReceiverId: string,
     dexMsg: string,
-    swapGas: bigint = BigInt('180000000000000'),
+    swapGas: bigint = DEFAULT_SWAP_GAS,
     cachedWNearBal?: bigint
   ): Promise<any[]> {
     const wNearBal = cachedWNearBal !== undefined
@@ -1001,7 +1012,7 @@ export class SwapExecutor {
                   swap_out_recipient: subaccountId,
                 },
               }),
-              BigInt('250000000000000'),
+              DEFAULT_SWAP_GAS,
               knownWNearBal
             );
             result = await signAndSend('wrap.near', actions);
@@ -1058,7 +1069,7 @@ export class SwapExecutor {
                   swap_out_recipient: subaccountId,
                 },
               }),
-              BigInt('250000000000000'),
+              DEFAULT_SWAP_GAS,
               knownWNearBal
             );
             result = await signAndSend('wrap.near', actions);
@@ -1124,7 +1135,7 @@ export class SwapExecutor {
                       },
                     }),
                   },
-                  BigInt('180000000000000'),
+                  DEFAULT_SWAP_GAS,
                   BigInt('1')
                 ),
               ];
@@ -1171,7 +1182,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('250000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1195,7 +1206,7 @@ export class SwapExecutor {
                     ],
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1230,7 +1241,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('250000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1259,7 +1270,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1303,7 +1314,7 @@ export class SwapExecutor {
                     ],
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1400,7 +1411,7 @@ export class SwapExecutor {
                   },
                 ],
               }),
-              BigInt('220000000000000'),
+              DEFAULT_SWAP_GAS,
               knownWNearBal
             );
             await signAndSend('wrap.near', buyActions);
@@ -1425,7 +1436,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('200000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1451,7 +1462,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('200000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1480,7 +1491,7 @@ export class SwapExecutor {
                     ],
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1503,7 +1514,7 @@ export class SwapExecutor {
                     swap_out_recipient: subaccountId,
                   },
                 }),
-                BigInt('250000000000000'),
+                DEFAULT_SWAP_GAS,
                 knownWNearBal
               ),
             ]);
@@ -1531,7 +1542,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('250000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -1629,7 +1640,7 @@ export class SwapExecutor {
                 swapAmount,
                 'v2.ref-finance.near',
                 JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
-                BigInt('250000000000000'),
+                DEFAULT_SWAP_GAS,
                 knownWNearBal
               ),
             ]);
@@ -1681,7 +1692,7 @@ export class SwapExecutor {
                 amount: amountInBigInt.toString(),
                 msg: JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
               },
-              BigInt('220000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -1739,7 +1750,7 @@ export class SwapExecutor {
               ],
               referrer: 'user.intear.near',
             },
-            BigInt('250000000000000'),
+            DEFAULT_SWAP_GAS,
             amountInBigInt  // Deposit full amount_in, fee taken atomically
           ),
         ]);
@@ -1775,7 +1786,7 @@ export class SwapExecutor {
                 referrer: 'user.intear.near',
               }),
             },
-            BigInt('220000000000000'),
+            DEFAULT_SWAP_GAS,
             BigInt('1')
           ),
         ];
@@ -1831,7 +1842,7 @@ export class SwapExecutor {
                 },
               }),
             },
-            BigInt('180000000000000'),
+            DEFAULT_SWAP_GAS,
             BigInt('1')
           ),
         ];
@@ -1886,7 +1897,7 @@ export class SwapExecutor {
                   },
                 }),
               },
-              BigInt('180000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -1954,7 +1965,7 @@ export class SwapExecutor {
                 min_output_amount: minOutAdj,
               },
             }),
-            BigInt('250000000000000'),
+            DEFAULT_SWAP_GAS,
             knownWNearBal
           );
           result = await signAndSend('wrap.near', actions);
@@ -2018,7 +2029,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -2060,7 +2071,7 @@ export class SwapExecutor {
                   },
                 }),
               },
-              BigInt('180000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -2085,7 +2096,7 @@ export class SwapExecutor {
                   },
                 }),
               },
-              BigInt('250000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -2114,7 +2125,7 @@ export class SwapExecutor {
                   },
                 }),
               },
-              BigInt('180000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -2147,7 +2158,7 @@ export class SwapExecutor {
                   ],
                 }),
               },
-              BigInt('180000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -2175,7 +2186,7 @@ export class SwapExecutor {
               ];
           const actions = await this.buildWrapNearBuyActions(
             subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), BigInt('250000000000000')
+            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
           );
           result = await signAndSend('wrap.near', actions);
         } else {
@@ -2192,7 +2203,7 @@ export class SwapExecutor {
             transactions.functionCall(
               'ft_transfer_call',
               { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
-              BigInt('220000000000000'), BigInt('1')
+              DEFAULT_SWAP_GAS, BigInt('1')
             ),
           ];
           result = await signAndSend(token_in, actions);
@@ -2211,7 +2222,7 @@ export class SwapExecutor {
                 { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
               ],
             }),
-            BigInt('200000000000000')
+            DEFAULT_SWAP_GAS
           );
           result = await signAndSend('wrap.near', buyActions);
           // Transfer jambo to gaypad.j1-racing.near
@@ -2225,7 +2236,7 @@ export class SwapExecutor {
                   amount: jamboBal,
                   msg: JSON.stringify({ token: token_out, min_swap_amount: minOutAdj }),
                 },
-                BigInt('200000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -2243,7 +2254,7 @@ export class SwapExecutor {
                 amount: amountInBigInt.toString(),
                 msg: JSON.stringify({ token: 'jambo-1679.meme-cooking.near', min_swap_amount: '0' }),
               },
-              BigInt('200000000000000'),
+              DEFAULT_SWAP_GAS,
               BigInt('1')
             ),
           ];
@@ -2263,7 +2274,7 @@ export class SwapExecutor {
                     ],
                   }),
                 },
-                BigInt('200000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -2285,7 +2296,7 @@ export class SwapExecutor {
           ];
           const actions = await this.buildWrapNearBuyActions(
             subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), BigInt('250000000000000')
+            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
           );
           result = await signAndSend('wrap.near', actions);
         } else {
@@ -2297,7 +2308,7 @@ export class SwapExecutor {
             transactions.functionCall(
               'ft_transfer_call',
               { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
-              BigInt('220000000000000'), BigInt('1')
+              DEFAULT_SWAP_GAS, BigInt('1')
             ),
           ];
           result = await signAndSend(token_in, actions);
@@ -2327,7 +2338,7 @@ export class SwapExecutor {
 
           const buyActions = await this.buildWrapNearBuyActions(
             subaccountId, amountInBigInt, feeAmount, swapAmount,
-            KELYTRA_EXCHANGE, 'deposit', BigInt('200000000000000')
+            KELYTRA_EXCHANGE, 'deposit', DEFAULT_SWAP_GAS
           );
           await signAndSend('wrap.near', buyActions);
 
@@ -2444,7 +2455,7 @@ export class SwapExecutor {
             swapAmount,
             'meme-cooking.near',
             JSON.stringify({ Deposit: { meme_id: memeId } }),
-            BigInt('200000000000000')
+            DEFAULT_SWAP_GAS
           );
 
           result = await signAndSend('wrap.near', actions);
@@ -2520,7 +2531,7 @@ export class SwapExecutor {
                     ],
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -2565,7 +2576,7 @@ export class SwapExecutor {
                     },
                   }),
                 },
-                BigInt('180000000000000'),
+                DEFAULT_SWAP_GAS,
                 BigInt('1')
               ),
             ];
@@ -2589,7 +2600,7 @@ export class SwapExecutor {
           swapAmount,
           token_out,
           JSON.stringify({ min_amount_out: minOutAdj }),
-          BigInt('200000000000000')
+          DEFAULT_SWAP_GAS
         );
 
         result = await signAndSend('wrap.near', actions);
@@ -2602,7 +2613,7 @@ export class SwapExecutor {
               amount: amountInBigInt.toString(),
               msg: JSON.stringify({ min_amount_out: min_amount_out }),
             },
-            BigInt('180000000000000'),
+            DEFAULT_SWAP_GAS,
             BigInt('1')
           ),
         ];

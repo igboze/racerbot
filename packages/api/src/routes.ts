@@ -1542,6 +1542,8 @@ function getUserFriendlyError(error: Error | string): string {
   //    not be swallowed into the generic "confirmation taking longer" message) ─
   if (r.includes('insufficient balance') || (r.includes('insufficient') && r.includes('balanc')))
     return errorMsg.slice(0, 280); // already human-readable from executeBuyHelper / executor
+  if (r.includes('not_enough_balance') || r.includes('notenoughbalance'))
+    return errorMsg.slice(0, 280);
   if (r.includes('available balance') && r.includes('too low'))
     return errorMsg.slice(0, 280);
   if (r.includes('insufficient near') || r.includes('not enough near'))
