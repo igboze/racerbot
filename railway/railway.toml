@@ -4,7 +4,7 @@
 dockerfile = "Dockerfile.api"
 ports = [{ port = 3000 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/,https://rpc.mainnet.fastnear.com" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "FASTNEAR_API_KEY", value = "REDACTED" },
   { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
   { variable = "ROUTER_CONTRACT_ID", value = "router.racerbot.near" },
@@ -25,7 +25,7 @@ environments = [
 dockerfile = "Dockerfile.detector"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/,https://rpc.mainnet.fastnear.com" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "FASTNEAR_API_KEY", value = "REDACTED" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
@@ -37,7 +37,7 @@ environments = [
 dockerfile = "Dockerfile.executor"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/,https://rpc.mainnet.fastnear.com" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "FASTNEAR_API_KEY", value = "REDACTED" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
@@ -49,7 +49,7 @@ environments = [
 dockerfile = "Dockerfile.triggers"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/,https://rpc.mainnet.fastnear.com" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "FASTNEAR_API_KEY", value = "REDACTED" },
   { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
