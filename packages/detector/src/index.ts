@@ -1420,6 +1420,26 @@ async function pollActiveTokenSnipes(): Promise<void> {
           }
         }
 
+        if (tokenAddress.endsWith('.onetokenhub.near')) {
+          const hub = await near.getOneTokenHubState(tokenAddress).catch(() => null);
+          if (hub && hub.price > 0 && hub.liquidityNear > 0) {
+            console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on OneTokenHub! Liq: ${hub.liquidityNear} NEAR`);
+            snipeNegativeCache.delete(tokenAddress);
+            await checkSnipeSignalsOnly(tokenAddress, 'onetokenhub');
+            continue;
+          }
+        }
+
+        if (tokenAddress.endsWith('.nearpad.near')) {
+          const pad = await near.getNEARpadState(tokenAddress).catch(() => null);
+          if (pad && pad.price > 0 && pad.liquidityNear > 0) {
+            console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NEARpad! Liq: ${pad.liquidityNear} NEAR`);
+            snipeNegativeCache.delete(tokenAddress);
+            await checkSnipeSignalsOnly(tokenAddress, 'nearpad');
+            continue;
+          }
+        }
+
         // 5. Intear DEX & Launchpad probe (e.g. token.intear.near or any Intear pool)
         const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
         if (intearPoolId !== null && intearPoolId !== undefined && intearPoolId >= 0) {
