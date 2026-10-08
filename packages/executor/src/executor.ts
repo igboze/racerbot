@@ -1764,29 +1764,27 @@ export class SwapExecutor {
               receiver_id: 'dex.intear.near',
               amount: amountInBigInt.toString(),
               msg: JSON.stringify({
-                operations: {
-                  referrer: 'user.intear.near',
-                  operations: [
-                    {
-                      SwapSimple: {
-                        dex_id: 'slimedragon.near/xyk',
-                        asset_in: `nep141:${token_in}`,
-                        asset_out: 'near',
-                        amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                        constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
-                        message: poolMsg,
-                      },
+                referrer: 'user.intear.near',
+                operations: [
+                  {
+                    SwapSimple: {
+                      dex_id: 'slimedragon.near/xyk',
+                      asset_in: `nep141:${token_in}`,
+                      asset_out: 'near',
+                      amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                      constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                      message: poolMsg,
                     },
-                    {
-                      Withdraw: {
-                        asset_id: 'near',
-                        amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                        to: subaccountId,
-                        rescue_address: subaccountId,
-                      },
+                  },
+                  {
+                    Withdraw: {
+                      asset_id: 'near',
+                      amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                      to: subaccountId,
+                      rescue_address: subaccountId,
                     },
-                  ],
-                },
+                  },
+                ],
               }),
             },
             DEFAULT_SWAP_GAS,
