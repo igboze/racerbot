@@ -595,11 +595,15 @@ function isMemooCookingToken(tokenAddress: string): boolean {
 /**
  * Detect whether a token address belongs to intear launchpad.
  */
-function isIntearToken(tokenAddress: string): boolean {
+export function isIntearToken(tokenAddress: string): boolean {
+  if (!tokenAddress) return false;
+  const lower = tokenAddress.toLowerCase().trim();
   return (
-    tokenAddress.endsWith('.intear.near') ||
-    tokenAddress.endsWith('.launch.intear.near') ||
-    (tokenAddress.includes('.launch') && tokenAddress.includes('intear.near'))
+    lower.endsWith('.intear.near') ||
+    lower.endsWith('.launch.intear.near') ||
+    lower.endsWith('.launch-v2.intear.near') ||
+    lower.includes('intear.near') ||
+    (lower.includes('.launch') && lower.includes('intear.near'))
   );
 }
 
@@ -1151,7 +1155,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           bondingProgressPct = mcInfo.progress;
         }
       } catch { /* no-op */ }
-    } else if (isIntearToken(tokenAddress)) {
+    } else if (isIntearToken(tokenAddress) || (dbCache && dbCache.venue === 'intear')) {
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
         if (intearState && (intearState.price > 0 || intearState.poolId != null)) {
@@ -1168,7 +1172,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
             totalSupply = intearState.totalSupply;
           }
         }
-      } catch { /* no-op */ }
+      } catch (err: any) {
+        console.warn(`[API] Intear state lookup error for ${tokenAddress}:`, err?.message);
+      }
     } else if (tokenAddress.endsWith('.nearlytrade.near')) {
       try {
         const ntState = await near.getNearlytradeTokenState(tokenAddress);
@@ -1436,16 +1442,25 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   const tradeable = isTradableVenue(venue);
 
-  const tax = (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
-    ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
-    : await getDexTax({
+  const tax = (intearPoolFee != null || rheaCandidate?.poolFee != null)
+    ? await getDexTax({
         venue,
         bonding_phase: bondingPhase,
         dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
         rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
         pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
         chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
-      });
+      })
+    : (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
+      ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+      : await getDexTax({
+          venue,
+          bonding_phase: bondingPhase,
+          dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
+          rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
+          pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
+          chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
+        });
 
   const result: TokenInfoResult = {
     address: tokenAddress,
