@@ -1323,8 +1323,9 @@ export class SwapExecutor {
     } else if (venue === 'rhea' || venue === 'ref') {
         const isBuyTarget = token_in === 'wrap.near' || token_in === 'near';
         const targetTokenQ = isBuyTarget ? token_out : token_in;
+        const pinnedSimplePool = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
 
-        if (!dclPoolId) {
+        if (!dclPoolId && (pinnedSimplePool === null || pinnedSimplePool === undefined)) {
           const rhea = await near.findRheaPoolForToken(targetTokenQ).catch(() => null);
           if (rhea && rhea.isDcl && typeof rhea.poolId === 'string') {
             dclPoolId = rhea.poolId;
@@ -1341,7 +1342,7 @@ export class SwapExecutor {
         // When a simple AMM pool also exists for this pair, quote both with the
         // real swap amount and route through whichever pays out more.
         if (dclPoolId) {
-          let simplePoolId: number | null = (event as any).pool_id ?? null;
+          let simplePoolId: number | null = pinnedSimplePool;
           if (simplePoolId === null || simplePoolId === undefined) {
             simplePoolId = await near.findRheaPoolId('wrap.near', targetTokenQ).catch(() => null);
           }
@@ -1551,7 +1552,7 @@ export class SwapExecutor {
 
           const preWork = await Promise.all([
             (async (): Promise<number | null> => {
-              let rheaPoolId = (event as any).pool_id;
+              let rheaPoolId = (event as any).pool_id ?? (event as any).rhea_pool_id;
               if (rheaPoolId === null || rheaPoolId === undefined) {
                 try {
                   rheaPoolId = await near.findRheaPoolId(token_in, token_out);
@@ -1571,8 +1572,8 @@ export class SwapExecutor {
           const rheaPoolId = preWork[0];
 
           // Intermediate-hop discovery depends on the pool resolution above;
-          // it only runs when the event did not already pin the hop.
-          const rheaState = (rheaPoolId && !intermediateToken)
+          // it only runs when neither a direct pool nor the intermediate hop was pinned.
+          const rheaState = (rheaPoolId || intermediateToken)
             ? null
             : await near.findRheaPoolForToken(targetToken).catch(() => null);
 
