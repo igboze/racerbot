@@ -989,9 +989,10 @@ export class SwapExecutor {
                   pool_ids: [effectiveDclPoolId],
                   output_token: token_out,
                   min_output_amount: minOutAdj,
+                  swap_out_recipient: subaccountId,
                 },
               }),
-              undefined,
+              BigInt('250000000000000'),
               knownWNearBal
             );
             result = await signAndSend('wrap.near', actions);
@@ -1157,10 +1158,11 @@ export class SwapExecutor {
                       pool_ids: [effectiveDclPoolId],
                       output_token: 'wrap.near',
                       min_output_amount: min_amount_out,
+                      swap_out_recipient: subaccountId,
                     },
                   }),
                 },
-                BigInt('180000000000000'),
+                BigInt('250000000000000'),
                 BigInt('1')
               ),
             ];
@@ -1488,9 +1490,10 @@ export class SwapExecutor {
                     pool_ids: [dclPoolId],
                     output_token: token_out,
                     min_output_amount: minOutAdj,
+                    swap_out_recipient: subaccountId,
                   },
                 }),
-                undefined,
+                BigInt('250000000000000'),
                 knownWNearBal
               ),
             ]);
@@ -1514,10 +1517,11 @@ export class SwapExecutor {
                       pool_ids: [dclPoolId],
                       output_token: 'wrap.near',
                       min_output_amount: min_amount_out,
+                      swap_out_recipient: subaccountId,
                     },
                   }),
                 },
-                BigInt('180000000000000'),
+                BigInt('250000000000000'),
                 BigInt('1')
               ),
             ];

@@ -85,10 +85,17 @@ function isCircuitBreakerOpen(provider: RPCProvider): boolean {
   return true;
 }
 
-export function markProviderError(provider: RPCProvider): void {
+export function markProviderError(provider: RPCProvider, immediateCircuitTrip: boolean = false): void {
   provider.errorCount++;
   provider.lastErrorTime = Date.now();
   const errorRate = provider.errorCount / (provider.errorCount + provider.successCount);
+
+  if (immediateCircuitTrip) {
+    provider.healthy = false;
+    provider.circuitBreakerOpen = true;
+    provider.circuitBreakerUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    return;
+  }
 
   // Mark unhealthy if error rate is high
   if (errorRate > 0.5 || provider.errorCount > 10) {

@@ -1,5 +1,5 @@
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
-import { markProviderError, markProviderSuccess, createProvider, RPCProvider } from './rpc.js';
+import { markProviderError, markProviderSuccess, createProvider, isProviderAvailable, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
 import { upsertTokenCache } from '@racerbot/db';
 import { redactSecrets, TradeError } from './errors.js';
@@ -227,9 +227,9 @@ export class MultiRpcNear {
     const defaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/';
     const sanitizedUrls = fastnearAndQnUrls.length > 0
       ? Array.from(new Set(fastnearAndQnUrls))
-      : [qnUrl || defaultQn, 'https://rpc.mainnet.fastnear.com'];
+      : ['https://rpc.mainnet.fastnear.com', qnUrl || defaultQn];
 
-    // Prioritize QuickNode first, then FastNEAR as fallback
+    // Prioritize QuickNode first when configured, with FastNEAR as fallback/hedge
     const prioritizedUrls = [
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
@@ -269,14 +269,15 @@ export class MultiRpcNear {
   }
 
   /**
-   * The primary trade RPC (QuickNode when configured, else FastNEAR).
+   * The primary trade RPC (first healthy / non-circuit-broken provider, falling back to index 0).
    * Broadcast order starts here and confirmation polls it first; nonce and
    * block-hash reads hedge across ALL trade providers (see
    * queryAccessKeyHedged / fetchBlockHashHedged) so a stalled endpoint can no
    * longer stall signing.
    */
   private get tradeProvider(): RPCProvider {
-    const p = this.tradeProviders[0];
+    const available = this.tradeProviders.find(p => isProviderAvailable(p));
+    const p = available || this.tradeProviders[0];
     if (!p) throw new Error('No NEAR RPC trade provider configured');
     return p;
   }
@@ -414,7 +415,12 @@ export class MultiRpcNear {
       /\b50[0-4]\b/.test(r) || r.includes('socket hang up') ||
       r.includes('429') || r.includes('-429') ||
       r.includes('toomanyrequestserror') || r.includes('deprecated') ||
-      r.includes('rate limit')
+      r.includes('rate limit') ||
+      r.includes('limit reached') ||
+      r.includes('daily request limit') ||
+      r.includes('-32003') ||
+      r.includes('exceeded') ||
+      r.includes('quota')
     );
   }
 
@@ -480,7 +486,11 @@ export class MultiRpcNear {
     const json = await res.json() as any;
     if (json.error) {
       const errMsg = json.error?.data ?? json.error?.message ?? JSON.stringify(json.error);
-      throw new Error(errMsg);
+      const fullMsg = typeof errMsg === 'object' ? JSON.stringify(errMsg) : String(errMsg);
+      if (MultiRpcNear.isNetworkError(fullMsg) || json.error?.code === -32003) {
+        markProviderError(provider, true);
+      }
+      throw new Error(fullMsg);
     }
 
     // result.result is a Vec<u8> — decode to JSON
@@ -4075,7 +4085,11 @@ export class MultiRpcNear {
       });
       const data: any = await res.json();
       if (data?.error) {
-        throw new Error(data.error.message || JSON.stringify(data.error));
+        const errMsg = data.error.message || JSON.stringify(data.error);
+        if (MultiRpcNear.isNetworkError(errMsg) || data.error?.code === -32003) {
+          markProviderError(provider, true);
+        }
+        throw new Error(errMsg);
       }
       markProviderSuccess(provider, Date.now() - start);
       return data?.result as string;
@@ -4248,12 +4262,13 @@ export class MultiRpcNear {
 
           // Rate limit exceeded handling
           if (
-            errMsg.toLowerCase().includes('rate limit') ||
-            errName.toLowerCase().includes('rate limit') ||
-            errData.toLowerCase().includes('rate limit')
+            code === -32003 ||
+            MultiRpcNear.isNetworkError(errMsg) ||
+            MultiRpcNear.isNetworkError(errName) ||
+            MultiRpcNear.isNetworkError(errData)
           ) {
             const provider = this.tradeProviders.find(p => p.url === providerUrl);
-            if (provider) markProviderError(provider);
+            if (provider) markProviderError(provider, true);
             return null;
           }
 
@@ -4458,12 +4473,13 @@ export class MultiRpcNear {
 
         // Rate limit exceeded handling
         if (
-          errMsg.toLowerCase().includes('rate limit') ||
-          errName.toLowerCase().includes('rate limit') ||
-          errData.toLowerCase().includes('rate limit')
+          code === -32003 ||
+          MultiRpcNear.isNetworkError(errMsg) ||
+          MultiRpcNear.isNetworkError(errName) ||
+          MultiRpcNear.isNetworkError(errData)
         ) {
           const provider = this.tradeProviders.find(p => p.url === providerUrl);
-          if (provider) markProviderError(provider);
+          if (provider) markProviderError(provider, true);
           return { outcome: null, error: null };
         }
 
