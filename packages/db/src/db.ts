@@ -1681,6 +1681,7 @@ export interface SnipeOrderRecord {
   status: 'active' | 'filled' | 'cancelled' | 'failed';
   last_error: string | null;
   trigger_count: number;
+  execute_after?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -1696,6 +1697,7 @@ function rowToSnipeOrder(row: any): SnipeOrderRecord {
     status: row.status,
     last_error: row.last_error ?? null,
     trigger_count: row.trigger_count != null ? Number(row.trigger_count) : 0,
+    execute_after: row.execute_after ? new Date(row.execute_after) : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1780,7 +1782,8 @@ export async function getActiveTokenSnipes(tokenAddress: string): Promise<SnipeO
   const db = await getDb();
   const r = await db.query(
     `SELECT * FROM snipe_orders
-     WHERE snipe_type = 'token' AND status = 'active' AND lower(token_address) = lower($1)`,
+     WHERE snipe_type = 'token' AND status = 'active' AND lower(token_address) = lower($1)
+       AND (execute_after IS NULL OR execute_after <= NOW())`,
     [tokenAddress]
   );
   return r.rows.map(rowToSnipeOrder);
@@ -1791,7 +1794,8 @@ export async function getActiveDeployerSnipes(deployerAddress: string): Promise<
   const db = await getDb();
   const r = await db.query(
     `SELECT * FROM snipe_orders
-     WHERE snipe_type = 'deployer' AND status = 'active' AND lower(deployer_address) = lower($1)`,
+     WHERE snipe_type = 'deployer' AND status = 'active' AND lower(deployer_address) = lower($1)
+       AND (execute_after IS NULL OR execute_after <= NOW())`,
     [deployerAddress]
   );
   return r.rows.map(rowToSnipeOrder);
