@@ -3901,7 +3901,7 @@ export class MultiRpcNear {
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
 
       // Pre-flight balance check: verify account balance covers total attached deposits
-      // plus the network gas reserve (NEAR requires attached_gas * 10^9 yocto upfront).
+      // plus the network gas reserve (NEAR base gas price is 10^8 yocto/gas; using 1.5x buffer = 1.5 * 10^8 yocto).
       if (accountState?.amount && !forceIncrement) {
         let totalGas = 0n;
         let totalDeposit = 0n;
@@ -3913,7 +3913,8 @@ export class MultiRpcNear {
             totalDeposit += BigInt(action.transfer.deposit || 0);
           }
         }
-        const gasReserve = totalGas * 1_000_000_000n;
+        const gasPriceYocto = 150_000_000n; // 1.5x base gas price (1.5 * 10^8 yocto)
+        const gasReserve = totalGas * gasPriceYocto;
         const totalRequired = totalDeposit + gasReserve;
         const currentBal = BigInt(accountState.amount);
         if (currentBal < totalRequired) {
