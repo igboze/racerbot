@@ -38,6 +38,7 @@ export {
   addReferralReward,
   getReferralsByReferrer,
   getReferralByReferredUser,
+  updateUserAmbassadorStatus,
   getTotalReferralEarnings,
   createReferralClaim,
   getTotalReferralClaimed,
