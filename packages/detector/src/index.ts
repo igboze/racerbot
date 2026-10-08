@@ -9,6 +9,7 @@ import {
   getNearUsdPrice,
   isCoreToken,
   isAuditedLaunchpadToken,
+  isIntearToken,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
@@ -1375,6 +1376,54 @@ async function pollActiveTokenSnipes(): Promise<void> {
         if (lastNegative && now - lastNegative < SNIPE_NEGATIVE_TTL_MS) return;
 
         try {
+          // Priority 1: Native Intear token probe (Authoritative DEX source for Intear tokens)
+          if (isIntearToken(tokenAddress)) {
+            const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
+            if (intearPoolId !== null && intearPoolId !== undefined && intearPoolId >= 0) {
+              const intearState = await near.getIntearTokenState(tokenAddress).catch(() => null);
+              if (
+                intearState &&
+                (intearState.liquidityNear > 0 || (intearState.price > 0 && BigInt(intearState.reserveNear) > 0n))
+              ) {
+                console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Intear (pool ${intearPoolId})! Liq: ${intearState.liquidityNear} NEAR, Price: ${intearState.price}`);
+                snipeNegativeCache.delete(tokenAddress);
+                await checkSnipeSignalsOnly(tokenAddress, 'intear');
+                return;
+              }
+            }
+          }
+
+          // Priority 2: Native token launchpads
+          if (tokenAddress.endsWith('.nearlytrade.near')) {
+            const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
+            if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
+              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
+              snipeNegativeCache.delete(tokenAddress);
+              await checkSnipeSignalsOnly(tokenAddress, 'nearlytrade');
+              return;
+            }
+          }
+
+          if (tokenAddress.endsWith('.onetokenhub.near')) {
+            const hub = await near.getOneTokenHubState(tokenAddress).catch(() => null);
+            if (hub && hub.price > 0 && hub.liquidityNear > 0) {
+              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on OneTokenHub! Liq: ${hub.liquidityNear} NEAR`);
+              snipeNegativeCache.delete(tokenAddress);
+              await checkSnipeSignalsOnly(tokenAddress, 'onetokenhub');
+              return;
+            }
+          }
+
+          if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
+            const pad = await near.getNEARpadState(tokenAddress).catch(() => null);
+            if (pad && pad.price > 0 && pad.liquidityNear > 0) {
+              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NEARpad! Liq: ${pad.liquidityNear} NEAR`);
+              snipeNegativeCache.delete(tokenAddress);
+              await checkSnipeSignalsOnly(tokenAddress, 'nearpad');
+              return;
+            }
+          }
+
           // Fast-path: Check if token venue is already known in DB cache
           const dbCache = await getTokenCache(tokenAddress).catch(() => null);
           if (dbCache && dbCache.venue) {
@@ -1408,7 +1457,7 @@ async function pollActiveTokenSnipes(): Promise<void> {
             }
           }
 
-          // 1. Direct DCL pool probe on dclv2.ref-labs.near (fastest, primary DEX route)
+          // Standard probes: DCL & Ref Simple Pools
           const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
           if (dclPoolId) {
             const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
@@ -1420,7 +1469,6 @@ async function pollActiveTokenSnipes(): Promise<void> {
             }
           }
 
-          // 2. Direct simple pool on v2.ref-finance.near
           const rheaPoolId = await near.findRheaPoolId('wrap.near', tokenAddress).catch(() => null);
           if (rheaPoolId !== null && rheaPoolId !== undefined) {
             const res = await near.getRheaPoolReserves(rheaPoolId, 'wrap.near', tokenAddress).catch(() => null);
@@ -1435,59 +1483,12 @@ async function pollActiveTokenSnipes(): Promise<void> {
             }
           }
 
-          // 3. Rhea / Ref Finance pool probe (simple, DCL, multihop)
           const rheaPool = await near.findRheaPoolForToken(tokenAddress, false).catch(() => null);
           if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.price > 0 && rheaPool.liquidityNear > 0) {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Rhea/Ref! Liq: ${rheaPool.liquidityNear} NEAR, Price: ${rheaPool.price}`);
             snipeNegativeCache.delete(tokenAddress);
             await checkSnipeSignalsOnly(tokenAddress, 'rhea');
             return;
-          }
-
-          // 4. Launchpads
-          if (tokenAddress.endsWith('.nearlytrade.near')) {
-            const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
-            if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
-              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
-              snipeNegativeCache.delete(tokenAddress);
-              await checkSnipeSignalsOnly(tokenAddress, 'nearlytrade');
-              return;
-            }
-          }
-
-          if (tokenAddress.endsWith('.onetokenhub.near')) {
-            const hub = await near.getOneTokenHubState(tokenAddress).catch(() => null);
-            if (hub && hub.price > 0 && hub.liquidityNear > 0) {
-              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on OneTokenHub! Liq: ${hub.liquidityNear} NEAR`);
-              snipeNegativeCache.delete(tokenAddress);
-              await checkSnipeSignalsOnly(tokenAddress, 'onetokenhub');
-              return;
-            }
-          }
-
-          if (tokenAddress.endsWith('.nearpad.near')) {
-            const pad = await near.getNEARpadState(tokenAddress).catch(() => null);
-            if (pad && pad.price > 0 && pad.liquidityNear > 0) {
-              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NEARpad! Liq: ${pad.liquidityNear} NEAR`);
-              snipeNegativeCache.delete(tokenAddress);
-              await checkSnipeSignalsOnly(tokenAddress, 'nearpad');
-              return;
-            }
-          }
-
-          // 5. Intear DEX & Launchpad probe (e.g. token.intear.near or any Intear pool)
-          const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
-          if (intearPoolId !== null && intearPoolId !== undefined && intearPoolId >= 0) {
-            const intearState = await near.getIntearTokenState(tokenAddress).catch(() => null);
-            if (
-              intearState &&
-              (intearState.liquidityNear > 0 || (intearState.price > 0 && BigInt(intearState.reserveNear) > 0n))
-            ) {
-              console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Intear (pool ${intearPoolId})! Liq: ${intearState.liquidityNear} NEAR, Price: ${intearState.price}`);
-              snipeNegativeCache.delete(tokenAddress);
-              await checkSnipeSignalsOnly(tokenAddress, 'intear');
-              return;
-            }
           }
 
           // All probes returned nothing — cache negative result for 3s

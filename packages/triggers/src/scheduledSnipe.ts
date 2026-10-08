@@ -4,6 +4,7 @@ import {
   CHANNELS,
   createLogger,
   getNear,
+  isIntearToken,
   type AutoBuySignal,
 } from '@racerbot/shared';
 import {
@@ -63,7 +64,48 @@ export async function runScheduledSnipeEngine(): Promise<void> {
             if (lastNegative && now - lastNegative < SNIPE_NEGATIVE_TTL_MS) return;
 
             try {
-              // Fast path: cached venue
+              // Priority 1: Native Intear token probe (Authoritative DEX source for Intear tokens)
+              if (isIntearToken(tokenAddress)) {
+                const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
+                if (typeof intearPoolId === 'number' && intearPoolId >= 0) {
+                  const st = await near.getIntearTokenState(tokenAddress).catch(() => null);
+                  if (st && (st.liquidityNear > 0 || (st.price > 0 && BigInt(st.reserveNear) > 0n))) {
+                    snipeNegativeCache.delete(tokenAddress);
+                    await checkSnipeSignals(tokenAddress, 'intear');
+                    return;
+                  }
+                }
+              }
+
+              // Priority 2: Native token launchpads
+              if (tokenAddress.endsWith('.nearlytrade.near')) {
+                const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
+                if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
+                  snipeNegativeCache.delete(tokenAddress);
+                  await checkSnipeSignals(tokenAddress, 'nearlytrade');
+                  return;
+                }
+              }
+
+              if (tokenAddress.endsWith('.onetokenhub.near')) {
+                const hub = await near.getOneTokenHubState(tokenAddress).catch(() => null);
+                if (hub && hub.price > 0 && hub.liquidityNear > 0) {
+                  snipeNegativeCache.delete(tokenAddress);
+                  await checkSnipeSignals(tokenAddress, 'onetokenhub');
+                  return;
+                }
+              }
+
+              if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
+                const pad = await near.getNEARpadState(tokenAddress).catch(() => null);
+                if (pad && pad.price > 0 && pad.liquidityNear > 0) {
+                  snipeNegativeCache.delete(tokenAddress);
+                  await checkSnipeSignals(tokenAddress, 'nearpad');
+                  return;
+                }
+              }
+
+              // Fast path: cached venue from DB (if not already handled above)
               const dbCache = await getTokenCache(tokenAddress).catch(() => null);
               if (dbCache && dbCache.venue) {
                 if (dbCache.venue === 'intear') {
@@ -93,7 +135,7 @@ export async function runScheduledSnipeEngine(): Promise<void> {
                 }
               }
 
-              // Standard probes
+              // Standard DEX probes (Ref DCL & Simple Pools)
               const dclPoolId = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
               if (dclPoolId) {
                 const st = await near.getDclPoolState(dclPoolId, 'wrap.near').catch(() => null);
@@ -119,43 +161,6 @@ export async function runScheduledSnipeEngine(): Promise<void> {
                 snipeNegativeCache.delete(tokenAddress);
                 await checkSnipeSignals(tokenAddress, 'rhea');
                 return;
-              }
-
-              if (tokenAddress.endsWith('.nearlytrade.near')) {
-                const nt = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
-                if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
-                  snipeNegativeCache.delete(tokenAddress);
-                  await checkSnipeSignals(tokenAddress, 'nearlytrade');
-                  return;
-                }
-              }
-
-              if (tokenAddress.endsWith('.onetokenhub.near')) {
-                const hub = await near.getOneTokenHubState(tokenAddress).catch(() => null);
-                if (hub && hub.price > 0 && hub.liquidityNear > 0) {
-                  snipeNegativeCache.delete(tokenAddress);
-                  await checkSnipeSignals(tokenAddress, 'onetokenhub');
-                  return;
-                }
-              }
-
-              if (tokenAddress.endsWith('.nearpad.near')) {
-                const pad = await near.getNEARpadState(tokenAddress).catch(() => null);
-                if (pad && pad.price > 0 && pad.liquidityNear > 0) {
-                  snipeNegativeCache.delete(tokenAddress);
-                  await checkSnipeSignals(tokenAddress, 'nearpad');
-                  return;
-                }
-              }
-
-              const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
-              if (typeof intearPoolId === 'number' && intearPoolId >= 0) {
-                const st = await near.getIntearTokenState(tokenAddress).catch(() => null);
-                if (st && (st.liquidityNear > 0 || (st.price > 0 && BigInt(st.reserveNear) > 0n))) {
-                  snipeNegativeCache.delete(tokenAddress);
-                  await checkSnipeSignals(tokenAddress, 'intear');
-                  return;
-                }
               }
 
               snipeNegativeCache.set(tokenAddress, Date.now());
