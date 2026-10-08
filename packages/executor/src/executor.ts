@@ -771,6 +771,15 @@ export class SwapExecutor {
         // Re-check on-chain for a grace window before giving up: if the tx
         // landed, process it exactly like a normally-confirmed trade so the
         // fill is recorded instead of falsely reporting failure.
+        const isNeverSeen =
+          (err as any)?.neverSeen === true ||
+          /never reached the NEAR network/i.test(err?.message ?? '');
+
+        if (isNeverSeen) {
+          console.warn(`[EXECUTOR:SIGN] Transaction ${err?.txHash ?? 'unknown'} never reached the NEAR network — skipping grace window.`);
+          throw err;
+        }
+
         const isNotConfirmed =
           (err instanceof TradeError && err.code === 'NOT_CONFIRMED') ||
           /not confirmed within/.test(err?.message ?? '');
