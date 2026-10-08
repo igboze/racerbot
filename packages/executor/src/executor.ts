@@ -1734,14 +1734,14 @@ export class SwapExecutor {
                     asset_in: 'near',
                     asset_out: `nep141:${token_out}`,
                     amount: { Amount: { ExactIn: swapAmount.toString() } },
-                    constraint: minOutAdj,
+                    constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
                     message: poolMsg,
                   },
                 },
                 {
                   Withdraw: {
                     asset_id: `nep141:${token_out}`,
-                    amount: { Full: { at_least: minOutAdj } },
+                    amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
                     to: null,
                     rescue_address: null,
                   },
@@ -1769,14 +1769,14 @@ export class SwapExecutor {
                       asset_in: `nep141:${token_in}`,
                       asset_out: 'near',
                       amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                      constraint: min_amount_out,
+                      constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
                       message: poolMsg,
                     },
                   },
                   {
                     Withdraw: {
                       asset_id: 'near',
-                      amount: { Full: { at_least: min_amount_out } },
+                      amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
                       to: null,
                       rescue_address: null,
                     },
