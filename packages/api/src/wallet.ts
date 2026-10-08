@@ -81,7 +81,6 @@ const qnUrl = formatNearRpcUrl((process.env.QUICKNODE_ENDPOINT_URL || '').trim()
 
 const fastnearPrimaryUrls = [
   formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
-  'https://free.rpc.fastnear.com',
   ...configuredRpcList.filter(u => u.includes('fastnear.com')),
 ];
 
@@ -89,7 +88,6 @@ const fallbackUrls = [
   ...configuredRpcList.filter(u => !u.includes('fastnear.com')),
   ...(qnUrl ? [qnUrl] : []),
   'https://rpc.mainnet.near.org',
-  'https://near.lava.build',
   'https://near.drpc.org',
 ];
 
@@ -1618,9 +1616,7 @@ async function connectWithNearRpcFailover<T>(
 
   const urls = RPC_URLS.length > 0 ? RPC_URLS : [
     formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
-    'https://free.rpc.fastnear.com',
     'https://rpc.mainnet.near.org',
-    'https://near.lava.build',
     'https://near.drpc.org',
   ];
 
