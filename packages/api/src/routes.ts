@@ -5342,7 +5342,30 @@ export function setupRoutes(bot: Telegraf): void {
               await sendPostBuySlTpPrompt(ctx, res.positionId, query, res.tokenSymbol);
             }
           } catch (err: any) {
-            await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+            const msg = err?.message ?? '';
+            const isAwaitingLiq = /no liquidity|not yet tradable|reserves.*positive|bonding phase/i.test(msg);
+            if (isAwaitingLiq) {
+              const order = await createSnipeOrder({
+                user_id: user.id,
+                snipe_type: 'token',
+                token_address: query,
+                amount_near: amountNear,
+              }).catch(() => null);
+              if (order) {
+                prewarmStorageDeposit(user, query).catch(() => {});
+                await ctx.reply(
+                  `🎯 *Snipe Armed!*\n\n` +
+                  `🪙 Token: \`${query}\`\n` +
+                  `💰 Amount: \`${amountNear} NEAR\`\n\n` +
+                  `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
+                  { parse_mode: 'Markdown' }
+                );
+              } else {
+                await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+              }
+            } else {
+              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+            }
           }
         } else {
           const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
@@ -7174,8 +7197,20 @@ export function setupRoutes(bot: Telegraf): void {
           } catch (err: any) {
             if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
             if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => {});
-            await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
-            await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`);
+            const msg = err?.message ?? '';
+            const isAwaitingLiq = /no liquidity|not yet tradable|reserves.*positive|bonding phase/i.test(msg);
+            if (isAwaitingLiq) {
+              await ctx.reply(
+                `🎯 *Snipe Armed!*\n\n` +
+                `🪙 Token: \`${tokenAddress}\`\n` +
+                `💰 Amount: \`${amt} NEAR\`\n\n` +
+                `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
+                { parse_mode: 'Markdown' }
+              );
+            } else {
+              await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
+              await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`);
+            }
           }
         } else {
           if (user) {
