@@ -3893,11 +3893,40 @@ export class MultiRpcNear {
       // (QuickNode + FastNEAR). Both are chain-global reads, so racing endpoints
       // is safe and removes the single-pinned-RPC stall from the sign path;
       // the nonce read takes the MAX answer across providers.
-      const [rawAccessKey, blockHashB58] = await Promise.all([
+      const [rawAccessKey, blockHashB58, accountState] = await Promise.all([
         this.queryAccessKeyHedged(accountId, pkStr),
         this.fetchBlockHashHedged(),
+        account.state().catch(() => null),
       ]);
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
+
+      // Pre-flight balance check: verify account balance covers total attached deposits
+      // plus the network gas reserve (NEAR requires attached_gas * 10^9 yocto upfront).
+      if (accountState?.amount && !forceIncrement) {
+        let totalGas = 0n;
+        let totalDeposit = 0n;
+        for (const action of actions) {
+          if (action.functionCall) {
+            totalGas += BigInt(action.functionCall.gas || 0);
+            totalDeposit += BigInt(action.functionCall.deposit || 0);
+          } else if (action.transfer) {
+            totalDeposit += BigInt(action.transfer.deposit || 0);
+          }
+        }
+        const gasReserve = totalGas * 1_000_000_000n;
+        const totalRequired = totalDeposit + gasReserve;
+        const currentBal = BigInt(accountState.amount);
+        if (currentBal < totalRequired) {
+          const balNear = (Number(currentBal) / 1e24).toFixed(4);
+          const reqNear = (Number(totalRequired) / 1e24).toFixed(4);
+          const gasNear = (Number(gasReserve) / 1e24).toFixed(4);
+          throw new TradeError(
+            `Insufficient NEAR balance: wallet has ${balNear} NEAR, but this trade requires ${reqNear} NEAR ` +
+            `(${gasNear} NEAR network gas reserve + attached deposit). Please deposit more NEAR.`,
+            { code: 'INSUFFICIENT_BALANCE', txHash: '' }
+          );
+        }
+      }
 
       let nextNonce: bigint;
       if (forceIncrement) {
