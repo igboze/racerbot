@@ -26,6 +26,8 @@ export interface UserRecord {
   default_buy_pct: number | null;
   default_sell_pct: number | null;
   fee_tier: string;
+  referral_fee_pct?: number;
+  is_ambassador?: boolean;
   auto_buy_enabled: boolean;
   auto_buy_amount_near: number;
   auto_buy_min_liquidity_near: number;
@@ -124,6 +126,8 @@ export interface ReferralRecord {
   total_fees_earned: number;
   created_at: Date;
   completed_at: Date | null;
+  referrer_fee_pct?: number;
+  referrer_is_ambassador?: boolean;
 }
 
 export interface TokenShareRecord {
@@ -1267,9 +1271,38 @@ export async function getReferralsByReferrer(referrerId: string): Promise<Referr
 
 export async function getReferralByReferredUser(referredUserId: string): Promise<ReferralRecord | null> {
   const db = await getDb();
-  const result = await db.query('SELECT * FROM referrals WHERE referred_user_id = $1', [referredUserId]);
+  const result = await db.query(
+    `SELECT r.*, u.referral_fee_pct AS ref_fee_pct, u.is_ambassador AS ref_is_ambassador, u.fee_tier AS ref_fee_tier
+     FROM referrals r
+     LEFT JOIN users u ON u.id = r.referrer_id
+     WHERE r.referred_user_id = $1`,
+    [referredUserId]
+  );
   if (result.rows.length === 0) return null;
-  return rowToReferral(result.rows[0]);
+  const row = result.rows[0];
+  const ref = rowToReferral(row);
+  const feePct = row.ref_fee_pct != null
+    ? parseFloat(row.ref_fee_pct)
+    : (row.ref_fee_tier === 'ambassador' || row.ref_is_ambassador ? 45 : 30);
+  ref.referrer_fee_pct = feePct;
+  ref.referrer_is_ambassador = Boolean(row.ref_is_ambassador || row.ref_fee_tier === 'ambassador');
+  return ref;
+}
+
+export async function updateUserAmbassadorStatus(
+  userId: string,
+  isAmbassador: boolean,
+  referralFeePct: number = 45
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE users
+     SET is_ambassador = $1,
+         referral_fee_pct = $2,
+         fee_tier = CASE WHEN $1 = true THEN 'ambassador' ELSE 'standard' END
+     WHERE id = $3`,
+    [isAmbassador, referralFeePct, userId]
+  );
 }
 
 export async function getTotalReferralEarnings(referrerId: string): Promise<number> {
@@ -1445,6 +1478,10 @@ function rowToUser(row: any): UserRecord {
     default_buy_pct: row.default_buy_pct != null ? parseFloat(row.default_buy_pct) : null,
     default_sell_pct: row.default_sell_pct != null ? parseFloat(row.default_sell_pct) : null,
     fee_tier: row.fee_tier,
+    referral_fee_pct: row.referral_fee_pct != null
+      ? parseFloat(row.referral_fee_pct)
+      : (row.fee_tier === 'ambassador' || Boolean(row.is_ambassador) ? 45 : 30),
+    is_ambassador: Boolean(row.is_ambassador || row.fee_tier === 'ambassador'),
     auto_buy_enabled: Boolean(row.auto_buy_enabled),
     auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
     auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 10,

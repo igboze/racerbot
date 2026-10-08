@@ -5649,25 +5649,34 @@ export function setupRoutes(bot: Telegraf): void {
     const claimableUsd = claimableNear * nearUsd;
     const claimReady = claimableUsd >= REFERRAL_CLAIM_MIN_USD;
 
+    const isAmbassador = Boolean((user as any).is_ambassador || user.fee_tier === 'ambassador');
+    const referralPct = (user as any).referral_fee_pct != null
+      ? parseFloat(String((user as any).referral_fee_pct))
+      : (isAmbassador ? 45 : 30);
+    const ambassadorBadge = isAmbassador
+      ? `🎖 *Ambassador Status: Active* (${referralPct}% Referral Fee Share)\n\n`
+      : '';
+
     const text =
       `🎁 *Referral Program*\n\n` +
+      ambassadorBadge +
       `Your referral link:\n` +
       `\`${referralLink}\`\n\n` +
       `📊 *Global Referrals* (account sign-ups):\n` +
       `• Total referrals: ${referrals.length}\n` +
       `• Active referrals: ${activeReferrals}\n` +
-      `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\` (30% fee share)\n\n` +
+      `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\` (${referralPct}% fee share)\n\n` +
       `📤 *Token Share Links*:\n` +
       `• Traders via your links: ${tokenShareCount}\n` +
       `• Earnings: \`${tokenShareEarnings.toFixed(4)} NEAR\` (5% fee share)\n\n` +
       `💰 *Combined Totals*:\n` +
       `• Total earned: \`${totalEarnings.toFixed(4)} NEAR\`\n` +
       `• Already claimed: \`${totalClaimed.toFixed(4)} NEAR\`\n` +
-      `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~$${claimableUsd.toFixed(2)})\n\n` +
+      `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~${claimableUsd.toFixed(2)})\n\n` +
       `💡 *How to earn more*:\n` +
-      `• Earn *30%* of fees from every user you refer with your referral link\n` +
+      `• Earn *${referralPct}%* of fees from every user you refer with your referral link\n` +
       `• Earn *5%* of fees when someone trades via your *📤 Share Token* links\n` +
-      `• Claim once your rewards reach $${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet`;
+      `• Claim once your rewards reach ${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet`;
 
     const buttons: any[] = [];
     if (claimableNear > 0) {
