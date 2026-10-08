@@ -3606,6 +3606,13 @@ export class MultiRpcNear {
       const reserveIn = isBuy ? reserveNear : reserveToken;
       const reserveOut = isBuy ? reserveToken : reserveNear;
 
+      if (reserveIn <= 0n || reserveOut <= 0n) {
+        if (slippagePct >= 100) {
+          return { expectedOutput: '0', minAmountOut: '0' };
+        }
+        throw new Error(`Intear pool ${poolId ?? targetToken} has no liquidity yet.`);
+      }
+
       // Use actual on-chain fee bps from pool state (e.g. 110 bps for 1.1%, 9010 bps for 90.1%)
       const poolFeeBps = Math.min(9999, Math.max(0, state.feeBps ?? 30));
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, poolFeeBps);
