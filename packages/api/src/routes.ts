@@ -1594,7 +1594,7 @@ function getUserFriendlyError(error: Error | string): string {
 
   // ── Token storage / registration ─────────────────────────────────────────
   if (r.includes('e407') || r.includes('not in pool whitelist') || r.includes('whitelist'))
-    return 'Token is not whitelisted on DEX. Please retry — RacerBot has registered your wallet with the pool.';
+    return 'This pool is restricted to DEX solvers (Ref DCL E407). RacerBot automatically re-routes through public liquidity pools.';
   if (r.includes('not registered') || r.includes('account is not registered'))
     return 'Your wallet needs to be registered with this token. This is usually done automatically — please retry.';
 
