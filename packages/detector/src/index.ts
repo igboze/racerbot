@@ -409,10 +409,12 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 for (const t of uniqueNonNear) {
                   await handlePoolCreated(t, 'rhea', decoded).catch(() => {});
                 }
-              } else if (receiverId === 'launch.intear.near') {
-                // Intear launchpad — best-effort field extraction
+              } else if (receiverId === 'launch.intear.near' || receiverId.includes('launch') && receiverId.endsWith('.intear.near')) {
+                // Intear launchpad — field extraction from launch_token or create_pool
+                const symbol = decoded?.symbol ? String(decoded.symbol).toLowerCase() : '';
                 const tokenAddress =
-                  decoded?.token ?? decoded?.token_id ?? decoded?.account_id ?? '';
+                  decoded?.token ?? decoded?.token_id ?? decoded?.account_id ?? decoded?.token_account_id ??
+                  (symbol ? `${symbol}.${receiverId}` : '');
                 if (tokenAddress) {
                   await handlePoolCreated(tokenAddress, 'intear', decoded).catch(() => {});
                 }
@@ -536,10 +538,10 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
 
   // ── Intear launchpad ────────────────────────────────────────────────────
   if (
-    receiverId === 'launch.intear.near' &&
-    (eventName === 'launch' || eventName === 'token_launch' || eventName === 'pool_created')
+    (receiverId === 'launch.intear.near' || receiverId.includes('launch') && receiverId.endsWith('.intear.near')) &&
+    (eventName === 'launch' || eventName === 'token_launch' || eventName === 'pool_created' || eventName === 'dex_event')
   ) {
-    const tokenAddress: string = data?.token ?? data?.token_id ?? data?.account_id ?? '';
+    const tokenAddress: string = data?.token ?? data?.token_id ?? data?.account_id ?? data?.token_account_id ?? '';
     if (tokenAddress) {
       await handlePoolCreated(tokenAddress, 'intear', data);
     }
