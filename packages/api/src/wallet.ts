@@ -134,7 +134,10 @@ export async function warmTokenInfoCache(): Promise<void> {
     for (const row of result.rows) {
       const lastPrice = parseFloat(row.last_price || '0');
       if (lastPrice <= 0) continue;
-      const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
+      let supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
+      if (row.venue === 'nearlytrade' && row.bonding_phase === 'prebonded') {
+        supply *= 0.8;
+      }
       const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
       const tokenData: TokenInfoResult = {
         address: row.token_address,
@@ -944,7 +947,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     Number(dbCache.last_price || 0) > 0
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
-    const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
+    let supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
+    if (dbCache.venue === 'nearlytrade' && dbCache.bonding_phase === 'prebonded') {
+      supply *= 0.8;
+    }
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
     const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
       nearUsdPromise,
@@ -1392,7 +1398,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   // Calculate Market Cap (authoritative on-chain math: price * supply)
-  let marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
+  // For pre-bonded NearlyTrade launchpad tokens, use launchpad bonding curve supply (80%)
+  const effectiveSupply = (venue === 'nearlytrade' && bondingPhase === 'prebonded')
+    ? supplyNum * 0.8
+    : supplyNum;
+  let marketCap = price > 0 && effectiveSupply > 0 ? price * effectiveSupply : 0;
   let marketCapUsd = marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0;
 
   // Fallback to DexScreener ONLY when on-chain pool market cap couldn't be calculated
