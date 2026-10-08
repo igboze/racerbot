@@ -49,7 +49,7 @@ let activeBuyAlertTokens = new Set<string>();
  * Cache is cleared immediately when a block event touches the token contract.
  */
 const snipeNegativeCache = new Map<string, number>(); // tokenAddress → timestamp
-const SNIPE_NEGATIVE_TTL_MS = 15_000;
+const SNIPE_NEGATIVE_TTL_MS = 3_000;
 
 async function refreshActiveBuyAlertTokens(): Promise<void> {
   try {
@@ -100,10 +100,10 @@ async function main() {
     void refreshTriggerTokenPrices();
   }, TRIGGER_PRICE_REFRESH_MS);
 
-  // Active targeted snipe watchdog (checks armed tokens like pearpe.tkn.near every 5s)
+  // Active targeted snipe watchdog (checks armed tokens like token.intear.near every 2.5s)
   setInterval(() => {
     void pollActiveTokenSnipes();
-  }, 5_000);
+  }, 2_500);
 
   // Initialize copy-trade wallet tracker (refreshes every 60s from DB)
   await initCopyTradeDetector().catch(err =>
@@ -360,6 +360,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         RHEA_RECEIVERS.has(receiverId) ||
         receiverId === 'nearlytrade.near' ||
         receiverId === 'launch.intear.near' ||
+        receiverId === 'dex.intear.near' ||
         receiverId === 'meme-cooking.near' ||
         receiverId === 'pad.onetokenhub.near' ||
         receiverId === 'gaypad.j1-racing.near' ||
@@ -1415,6 +1416,21 @@ async function pollActiveTokenSnipes(): Promise<void> {
             console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on NearlyTrade! Liq: ${nt.liquidityNear} NEAR`);
             snipeNegativeCache.delete(tokenAddress);
             await checkSnipeSignalsOnly(tokenAddress, 'nearlytrade');
+            continue;
+          }
+        }
+
+        // 5. Intear DEX & Launchpad probe (e.g. token.intear.near or any Intear pool)
+        const intearPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
+        if (intearPoolId !== null && intearPoolId !== undefined && intearPoolId >= 0) {
+          const intearState = await near.getIntearTokenState(tokenAddress).catch(() => null);
+          if (
+            intearState &&
+            (intearState.liquidityNear > 0 || (intearState.price > 0 && BigInt(intearState.reserveNear) > 0n))
+          ) {
+            console.log(`[SNIPE_WATCHDOG] Armed target ${tokenAddress} is LIVE on Intear (pool ${intearPoolId})! Liq: ${intearState.liquidityNear} NEAR, Price: ${intearState.price}`);
+            snipeNegativeCache.delete(tokenAddress);
+            await checkSnipeSignalsOnly(tokenAddress, 'intear');
             continue;
           }
         }

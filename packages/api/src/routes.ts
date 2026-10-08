@@ -999,21 +999,47 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ]);
     }
   } else {
-    const venueNote = '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
-    text += venueNote;
-    keyboard = Markup.inlineKeyboard([
-      ...linkRows,
-      ...shareButtonRow,
-      [
-        Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
-        Markup.button.callback('🔙 Back', 'menu_home'),
-      ],
-      [
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-        Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-      ],
-    ]);
+    const isAwaitingLiquidity =
+      tokenInfo.venue === 'intear' ||
+      tokenInfo.venue === 'nearlytrade' ||
+      tokenInfo.venue === 'rhea' ||
+      tokenInfo.venue === 'ref' ||
+      Boolean(tokenInfo.dcl_pool_id);
+
+    if (isAwaitingLiquidity) {
+      text += `⏳ *Status*: Pool registered on ${tokenInfo.venue === 'intear' ? 'Intear Launchpad' : 'DEX'} — *Awaiting Initial Liquidity*.\n` +
+        `🎯 *Set a Snipe to buy automatically the moment liquidity is added!*\n\n`;
+      keyboard = Markup.inlineKeyboard([
+        [cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success')],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
+          Markup.button.callback('🔙 Back', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else {
+      const venueNote = '⚠️ This token was detected but its trading venue is not supported. Paste the CA into a supported DEX.';
+      text += venueNote;
+      keyboard = Markup.inlineKeyboard([
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
+          Markup.button.callback('🔙 Back', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    }
   }
 
   return { text, keyboard, pnlCardImage: pnlCardImage || undefined };
@@ -2970,6 +2996,33 @@ export function setupRoutes(bot: Telegraf): void {
       `_e.g. \`token.nearlytrade.near\`_\n\n` +
       `• Already tradable → buys *immediately*\n` +
       `• Not launched yet → stays *armed* until live\n\n` +
+      `Type /cancel to abort.`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action(/^snipe_token_quick:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) {
+      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      return;
+    }
+    const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+    if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress, expiresAt: Date.now() + 120_000 });
+    await ctx.answerCbQuery().catch(() => {});
+    const meta = await near.getTokenMetadata(tokenAddress).catch(() => null);
+    const sym = meta?.symbol || tokenAddress;
+    await ctx.reply(
+      `🎯 *Snipe ${sanitizeMd(sym)}*\n\n` +
+      `Contract: \`${tokenAddress}\`\n\n` +
+      `Reply with the amount in NEAR to snipe (e.g. \`2.5\`):\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     );
@@ -5276,18 +5329,49 @@ export function setupRoutes(bot: Telegraf): void {
       const isCA = query.includes('.near') || query.length === 64;
 
       if (isCA) {
-        await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
-        try {
-          const res = await executeBuyHelper(telegramId, query, amountNear);
-          await ctx.reply(res.message, {
-            parse_mode: 'Markdown',
-            reply_markup: await buildBuySuccessKeyboard(telegramId, query, res.tokenSymbol, res.positionId),
-          });
-          if (res.positionId) {
-            await sendPostBuySlTpPrompt(ctx, res.positionId, query, res.tokenSymbol);
+        const info = await getTokenInfo(query, false).catch(() => null);
+        if (info?.tradeable) {
+          await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
+          try {
+            const res = await executeBuyHelper(telegramId, query, amountNear);
+            await ctx.reply(res.message, {
+              parse_mode: 'Markdown',
+              reply_markup: await buildBuySuccessKeyboard(telegramId, query, res.tokenSymbol, res.positionId),
+            });
+            if (res.positionId) {
+              await sendPostBuySlTpPrompt(ctx, res.positionId, query, res.tokenSymbol);
+            }
+          } catch (err: any) {
+            await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
           }
-        } catch (err: any) {
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        } else {
+          const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
+          if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
+            await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`);
+            return;
+          }
+          const order = await createSnipeOrder({
+            user_id: user.id,
+            snipe_type: 'token',
+            token_address: query,
+            amount_near: amountNear,
+          });
+          prewarmStorageDeposit(user, query).catch(() => {});
+          await ctx.reply(
+            `🎯 *Snipe Armed!*\n\n` +
+            `🪙 Token: \`${query}\`\n` +
+            `💰 Amount: \`${amountNear} NEAR\`\n\n` +
+            `The token is not tradable yet — your snipe order is armed and will fire automatically the instant liquidity appears! No need to watch the chart.`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [cb('❌ Cancel Snipe Order', `snipe_order_cancel:${order.id}`, 'danger')],
+                  [cb('📋 My Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
+                ],
+              },
+            }
+          );
         }
       } else {
         const names = Array.from(localTokenNames.keys());
