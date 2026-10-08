@@ -4,6 +4,7 @@ import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { runDcaEngine } from './dca.js';
 import { runLimitOrderEngine } from './limitOrder.js';
+import { runScheduledSnipeEngine } from './scheduledSnipe.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
 const logger = createLogger('triggers');
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
 
   // Start Limit Order engine concurrently
   runLimitOrderEngine().catch(err => logger.error('Limit order engine failed to start', err));
+
+  // Start Scheduled Snipe Watchdog Engine concurrently
+  runScheduledSnipeEngine().catch(err => logger.error('Scheduled snipe engine failed to start', err));
 
   // Subscribe to price updates from detector — warm local cache
   // This is the only price data source in the trigger hot path
