@@ -230,16 +230,16 @@ export class MultiRpcNear {
       ? Array.from(new Set(fastnearAndQnUrls))
       : ['https://rpc.mainnet.fastnear.com', qnUrl || defaultQn];
 
-    // Prioritize QuickNode first when configured, with FastNEAR as fallback/hedge
+    // Prioritize FastNEAR first (high throughput, no daily credit cap), with QuickNode as fallback/hedge
     const prioritizedUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
-    // Main RPC: QuickNode is primary for both reads and writes.
-    // FastNEAR is the automatic failover / hedge when QuickNode is slow, unhealthy, or circuit-open.
+    // Main RPC: FastNEAR is primary for reads.
+    // QuickNode is the automatic failover / hedge when FastNEAR is slow, unhealthy, or circuit-open.
     const readUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
@@ -716,9 +716,13 @@ export class MultiRpcNear {
 
   /**
    * Fetch compiled WASM bytecode of a contract for anti-honeypot analysis.
+   * Returns Buffer with bytecode on success, Buffer.alloc(0) if confirmed NO_CONTRACT_CODE, or null on RPC failure.
    */
   async viewCode(contractId: string): Promise<Buffer | null> {
-    const provider = this.readProviders[0] || this.tradeProvider;
+    const providers = [...this.readProviders, ...this.tradeProviders].filter(
+      (p, i, arr) => arr.findIndex(x => x.url === p.url) === i
+    );
+
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -730,18 +734,48 @@ export class MultiRpcNear {
       },
     });
 
-    const res = await fetch(provider.url, {
-      method: 'POST',
-      headers: provider.headers,
-      body,
-      signal: AbortSignal.timeout(MultiRpcNear.VIEW_TIMEOUT_MS),
-    }).catch(() => null);
+    for (const provider of providers) {
+      if (!isProviderAvailable(provider)) continue;
+      try {
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: provider.headers,
+          body,
+          signal: AbortSignal.timeout(MultiRpcNear.VIEW_TIMEOUT_MS),
+        }).catch(() => null);
 
-    if (!res || !res.ok) return null;
-    const data = (await res.json().catch(() => null)) as any;
-    const codeB64 = data?.result?.code_base64;
-    if (!codeB64) return null;
-    return Buffer.from(codeB64, 'base64');
+        if (!res || !res.ok) {
+          if (res?.status === 429) {
+            markProviderError(provider, true);
+          }
+          continue;
+        }
+
+        const data = (await res.json().catch(() => null)) as any;
+        if (data?.error) {
+          const errStr = JSON.stringify(data.error);
+          if (errStr.includes('NO_CONTRACT_CODE') || errStr.includes('has never been observed')) {
+            // Account genuinely exists on-chain but has NO contract code deployed
+            return Buffer.alloc(0);
+          }
+          if (errStr.includes('limit reached') || errStr.includes('-32003') || errStr.includes('429')) {
+            markProviderError(provider, true);
+          }
+          continue;
+        }
+
+        const codeB64 = data?.result?.code_base64;
+        if (codeB64) {
+          return Buffer.from(codeB64, 'base64');
+        } else if (codeB64 === '') {
+          return Buffer.alloc(0);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -4029,7 +4063,8 @@ export class MultiRpcNear {
     } catch {}
 
     try {
-      const qnP = createProvider('https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/', 'emergency-qn-ak', true);
+      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/';
+      const qnP = createProvider(qnUrl, 'emergency-qn-ak', true);
       const res = await attempt(qnP, 'final');
       if (res) return res;
     } catch {}
@@ -4065,9 +4100,9 @@ export class MultiRpcNear {
       return hash as string;
     };
 
-    // Fast-path: query QuickNode primary. If it succeeds within 250ms, return immediately
-    // without hitting secondary providers. FastNEAR is only queried if QuickNode fails or is slow.
-    const primary = this.tradeProviders.find(p => p.isQuickNode && p.healthy && !p.circuitBreakerOpen) || this.tradeProviders[0];
+    // Fast-path: query primary trade provider. If it succeeds within 250ms, return immediately
+    // without hitting secondary providers. Secondary providers are only queried if primary fails or is slow.
+    const primary = this.tradeProviders.find(p => p.healthy && !p.circuitBreakerOpen) || this.tradeProviders[0];
     if (primary) {
       try {
         const hash = await Promise.race([
@@ -4076,7 +4111,7 @@ export class MultiRpcNear {
         ]);
         if (hash) return hash;
       } catch {
-        // QuickNode failed or exceeded 250ms — fall back to all trade providers
+        // Primary failed or exceeded 250ms — fall back to all trade providers
       }
     }
 
@@ -4099,7 +4134,8 @@ export class MultiRpcNear {
     } catch {}
 
     try {
-      const qnP = createProvider('https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/', 'emergency-qn-block', true);
+      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/';
+      const qnP = createProvider(qnUrl, 'emergency-qn-block', true);
       const hash = await fetchFrom(qnP);
       if (hash) return hash;
     } catch {}
@@ -4565,11 +4601,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (QuickNode primary, FastNEAR fallback). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR primary, QuickNode fallback). */
 export const DEFAULT_RPC_URLS = [
-  process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/',
   'https://rpc.mainnet.fastnear.com',
   'https://free.rpc.fastnear.com',
+  process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/',
 ];
 
 let _nearInstance: MultiRpcNear | null = null;
