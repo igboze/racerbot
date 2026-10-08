@@ -1716,46 +1716,45 @@ export class SwapExecutor {
       if (isBuy) {
         await ensureStorage(token_out);
 
-        // Buy on dex.intear.near — atomic transaction with fee skimmed from input
-        // User deposits full amount_in, fee is taken from that amount before swap
+        // Buy on dex.intear.near
         result = await signAndSend('dex.intear.near', [
           transactions.functionCall(
             'deposit_near',
             {
-              operations: [
-                {
-                  // Send 1.5% fee to treasury atomically before swap
-                  Transfer: {
-                    asset_id: 'near',
-                    amount: feeAmount.toString(),
-                    to: TREASURY_ACCOUNT_ID,
+              operations: {
+                referrer: 'user.intear.near',
+                operations: [
+                  {
+                    SwapSimple: {
+                      dex_id: 'slimedragon.near/xyk',
+                      asset_in: 'near',
+                      asset_out: `nep141:${token_out}`,
+                      amount: { Amount: { ExactIn: swapAmount.toString() } },
+                      constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
+                      message: poolMsg,
+                    },
                   },
-                },
-                {
-                  SwapSimple: {
-                    dex_id: 'slimedragon.near/xyk',
-                    asset_in: 'near',
-                    asset_out: `nep141:${token_out}`,
-                    amount: { Amount: { ExactIn: swapAmount.toString() } },
-                    constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
-                    message: poolMsg,
+                  {
+                    Withdraw: {
+                      asset_id: `nep141:${token_out}`,
+                      amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
+                      to: null,
+                      rescue_address: null,
+                    },
                   },
-                },
-                {
-                  Withdraw: {
-                    asset_id: `nep141:${token_out}`,
-                    amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                    to: null,
-                    rescue_address: null,
-                  },
-                },
-              ],
-              referrer: 'user.intear.near',
+                ],
+              },
             },
             DEFAULT_SWAP_GAS,
-            amountInBigInt  // Deposit full amount_in, fee taken atomically
+            swapAmount
           ),
         ]);
+
+        if (feeAmount > 0n) {
+          signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000).catch((err: any) => {
+            console.warn('[EXECUTOR] Intear fee transfer error:', err?.message);
+          });
+        }
       } else {
         // Sell token on dex.intear.near
         const actions = [
@@ -1765,27 +1764,29 @@ export class SwapExecutor {
               receiver_id: 'dex.intear.near',
               amount: amountInBigInt.toString(),
               msg: JSON.stringify({
-                operations: [
-                  {
-                    SwapSimple: {
-                      dex_id: 'slimedragon.near/xyk',
-                      asset_in: `nep141:${token_in}`,
-                      asset_out: 'near',
-                      amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                      constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
-                      message: poolMsg,
+                operations: {
+                  referrer: 'user.intear.near',
+                  operations: [
+                    {
+                      SwapSimple: {
+                        dex_id: 'slimedragon.near/xyk',
+                        asset_in: `nep141:${token_in}`,
+                        asset_out: 'near',
+                        amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                        constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                        message: poolMsg,
+                      },
                     },
-                  },
-                  {
-                    Withdraw: {
-                      asset_id: 'near',
-                      amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                      to: null,
-                      rescue_address: null,
+                    {
+                      Withdraw: {
+                        asset_id: 'near',
+                        amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                        to: null,
+                        rescue_address: null,
+                      },
                     },
-                  },
-                ],
-                referrer: 'user.intear.near',
+                  ],
+                },
               }),
             },
             DEFAULT_SWAP_GAS,
