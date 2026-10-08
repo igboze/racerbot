@@ -224,9 +224,7 @@ export class MultiRpcNear {
       const isFn = url.includes('fastnear.com') && !url.includes('free.rpc.fastnear.com'); // exclude rate-limited free endpoint from trade/read list
       const isShitzu = url.includes('shitzuapes.xyz');
       const isIntear = url.includes('intea.rs');
-      const isNearOrg = url.includes('near.org');
-      const isDrpc = url.includes('drpc.org');
-      return isQn || isFn || isShitzu || isIntear || isNearOrg || isDrpc;
+      return isQn || isFn || isShitzu || isIntear;
     });
 
     const defaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
@@ -234,14 +232,12 @@ export class MultiRpcNear {
       ? Array.from(new Set(allowedUrls))
       : ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', qnUrl || defaultQn];
 
-    // Read URLs: QuickNode first (dedicated RPC), then FastNEAR, Shitzu, Intear, dRPC
+    // Read URLs: QuickNode first (dedicated RPC), then FastNEAR, Shitzu, Intear
     const readUrls = [
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
-      ...sanitizedUrls.filter(u => u.includes('near.org')),
-      ...sanitizedUrls.filter(u => u.includes('drpc.org')),
     ];
 
     // Trade URLs: QuickNode first, then FastNEAR, Shitzu, Intear validator nodes.
@@ -252,8 +248,6 @@ export class MultiRpcNear {
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
-      ...sanitizedUrls.filter(u => u.includes('near.org')),
-      ...sanitizedUrls.filter(u => u.includes('drpc.org')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
@@ -4029,8 +4023,19 @@ export class MultiRpcNear {
         console.warn(`[NEAR] Cleared exhausted Authorization header from ${provider.url}`);
       }
 
+      if (res.status === 429) {
+        markProviderError(provider, true);
+        throw new Error(`HTTP 429 Rate Limit from ${provider.url}`);
+      }
+
       const data: any = await res.json();
-      if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      if (data?.error) {
+        const errMsg = data.error.message || JSON.stringify(data.error);
+        if (MultiRpcNear.isNetworkError(errMsg) || errMsg.includes('limit') || errMsg.includes('429')) {
+          markProviderError(provider, true);
+        }
+        throw new Error(errMsg);
+      }
       markProviderSuccess(provider, Date.now() - start);
       return data?.result;
     };
@@ -4123,9 +4128,20 @@ export class MultiRpcNear {
         console.warn(`[NEAR] Cleared exhausted Authorization header from ${provider.url}`);
       }
 
+      if (res.status === 429) {
+        markProviderError(provider, true);
+        throw new Error(`HTTP 429 Rate Limit from ${provider.url}`);
+      }
+
       const data: any = await res.json();
       const hash = data?.result?.header?.hash;
-      if (!hash) throw new Error(data?.error?.message || 'no block hash in response');
+      if (!hash) {
+        const errMsg = data?.error?.message || 'no block hash in response';
+        if (MultiRpcNear.isNetworkError(errMsg) || errMsg.includes('limit') || errMsg.includes('429')) {
+          markProviderError(provider, true);
+        }
+        throw new Error(errMsg);
+      }
       markProviderSuccess(provider, Date.now() - start);
       return hash as string;
     };
@@ -4224,10 +4240,17 @@ export class MultiRpcNear {
         }),
         signal: AbortSignal.timeout(5000),
       });
+      if (res.status === 429) {
+        markProviderError(provider, true);
+        throw new Error(`${provider.name || provider.url}: HTTP 429 Rate Limit`);
+      }
       const data: any = await res.json();
       if (data?.error) {
         const errMsg = data.error.message || JSON.stringify(data.error);
         console.warn(`[NEAR] broadcastToAll ${provider.name || provider.url} error:`, errMsg);
+        if (MultiRpcNear.isNetworkError(errMsg) || errMsg.includes('limit') || errMsg.includes('429')) {
+          markProviderError(provider, true);
+        }
         throw new Error(`${provider.name || provider.url}: ${errMsg}`);
       }
       console.log(`[NEAR] broadcastToAll ${provider.name || provider.url} accepted tx`);
@@ -4277,9 +4300,16 @@ export class MultiRpcNear {
     const deadline = Date.now() + maxMs;
     let lastErr: Error | null = null;
     const pinnedUrl = this.tradeProvider.url;
-    // All URLs to poll in round-robin. Always starts with pinned.
-    // extraUrls are queried after pinned each iteration (fan-out polling after rescue).
-    const allPollUrls: string[] = [pinnedUrl, ...((extraUrls ?? []).filter(u => u !== pinnedUrl))];
+    // All healthy trade URLs to poll. Start with tradeProvider, but include all available trade providers
+    const healthyTradeUrls = this.tradeProviders
+      .filter(p => isProviderAvailable(p))
+      .map(p => p.url);
+    const candidateUrls = healthyTradeUrls.length > 0 ? healthyTradeUrls : this.tradeProviders.map(p => p.url);
+    const allPollUrls: string[] = Array.from(new Set([
+      pinnedUrl,
+      ...candidateUrls,
+      ...(extraUrls ?? []),
+    ]));
 
     /**
      * Try a single RPC provider for tx status.
@@ -4304,7 +4334,7 @@ export class MultiRpcNear {
           });
 
           if (res.status === 429) {
-            if (provider) markProviderError(provider);
+            if (provider) markProviderError(provider, true);
             return null;
           }
 
@@ -4408,10 +4438,10 @@ export class MultiRpcNear {
         const msg = (err.message || '').toLowerCase();
         
         // If it's a parse error or rate limit, mark the provider as unhealthy
-        if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit')) {
+        if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit') || msg.includes('daily request limit')) {
           const provider = this.tradeProviders.find(p => p.url === providerUrl);
           if (provider) {
-            markProviderError(provider);
+            markProviderError(provider, true);
           }
         }
       }
@@ -4420,7 +4450,7 @@ export class MultiRpcNear {
 
     let polls = 0;
     while (Date.now() < deadline) {
-      // Primary check: pinnedUrl (QuickNode)
+      // Primary check: pinnedUrl
       const outcome = await tryRpc(pinnedUrl).catch((err) => {
         lastErr = err as Error;
         return null;
@@ -4434,8 +4464,8 @@ export class MultiRpcNear {
         }
       }
 
-      // If primary RPC hasn't confirmed after 2 polls (~200ms), also query secondary endpoints in parallel
-      if (polls >= 2 && allPollUrls.length > 1) {
+      // If primary RPC hasn't confirmed after 1 poll (~100ms), also query secondary endpoints in parallel
+      if (polls >= 1 && allPollUrls.length > 1) {
         for (const url of allPollUrls) {
           if (url === pinnedUrl) continue;
           if (Date.now() >= deadline) break;
@@ -4616,10 +4646,10 @@ export class MultiRpcNear {
       const msg = (err.message || '').toLowerCase();
 
       // If it's a parse error or rate limit, mark the provider as unhealthy
-      if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit')) {
+      if (msg.includes('parse error') || msg.includes('429') || msg.includes('rate limit') || msg.includes('daily request limit')) {
         const provider = this.tradeProviders.find(p => p.url === providerUrl);
         if (provider) {
-          markProviderError(provider);
+          markProviderError(provider, true);
         }
       }
       return { outcome: null, error: lastError };
