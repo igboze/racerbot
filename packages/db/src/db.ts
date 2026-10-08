@@ -1809,6 +1809,7 @@ export async function getDistinctActiveSnipeTokens(): Promise<string[]> {
   const r = await db.query(
     `SELECT DISTINCT lower(so.token_address) AS token_address FROM snipe_orders so
      WHERE so.snipe_type = 'token' AND so.status = 'active' AND so.token_address IS NOT NULL
+       AND (so.execute_after IS NULL OR so.execute_after <= NOW())
        AND NOT EXISTS (
          SELECT 1 FROM snipe_triggers st
          WHERE st.order_id = so.id AND (st.status = 'filled' OR (st.status = 'failed' AND st.attempts >= 5))
