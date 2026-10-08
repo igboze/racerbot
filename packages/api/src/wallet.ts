@@ -1080,7 +1080,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     dbCache?.bonding_progress_pct !== null && dbCache?.bonding_progress_pct !== undefined
       ? Number(dbCache.bonding_progress_pct)
       : null;
-  let dclPoolId: string | null = dbCache?.dcl_pool_id ?? null;
+  let dclPoolId: string | null = null;
+  if (dbCache?.dcl_pool_id) {
+    const parts = dbCache.dcl_pool_id.split('|');
+    const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
+    if (paired === 'wrap.near' || paired === 'near') {
+      dclPoolId = dbCache.dcl_pool_id;
+    }
+  }
 
   // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
   if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
@@ -1273,7 +1280,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           price: rhea.price,
           liquidity: rhea.liquidityNear,
           rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
-          dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
+          dclPoolId: rhea.isDcl && (rhea.pairedToken === 'wrap.near' || rhea.pairedToken === 'near') ? String(rhea.poolId) : null,
           poolFee: rhea.fee,
         };
         // Prefer Rhea if it has deeper liquidity or if venue was unknown

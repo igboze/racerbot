@@ -1320,6 +1320,15 @@ export class MultiRpcNear {
 
     // Fast-path: if we found a direct pool (simple or DCL) with liquidity,
     // pick the higher liquidity pool immediately without waiting on slow multi-hop/indexer scans!
+    // Priority: Always prefer pools directly paired with wrap.near if available!
+    const directNearCandidates = candidates.filter(
+      (c) => c.pairedToken === 'wrap.near' && c.liquidityNear > 0
+    );
+    if (directNearCandidates.length > 0) {
+      directNearCandidates.sort((a, b) => b.liquidityNear - a.liquidityNear);
+      return directNearCandidates[0];
+    }
+
     const bestDirect = candidates.reduce((best, c) => (!best || c.liquidityNear > best.liquidityNear ? c : best), null as (typeof candidates)[0] | null);
     if (bestDirect && bestDirect.liquidityNear > 0) {
       return bestDirect;
@@ -1571,7 +1580,8 @@ export class MultiRpcNear {
       feeTiers.map(async (fee) => {
         const poolId = `${tokenX}|${tokenY}|${fee}`;
         const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
-        if (pool && pool.state === 'Running') {
+        const isWhitelisted = pool?.whitelist && Array.isArray(pool.whitelist) && pool.whitelist.length > 0;
+        if (pool && pool.state === 'Running' && !isWhitelisted) {
           const quoteReserve = BigInt(
             pool.token_x === quoteToken ? (pool.total_x || '0')
             : pool.token_y === quoteToken ? (pool.total_y || '0')
@@ -1579,7 +1589,7 @@ export class MultiRpcNear {
           );
           return { poolId, quoteReserve };
         }
-        throw new Error('not running');
+        throw new Error('not running or whitelisted');
       })
     );
 
@@ -1616,6 +1626,9 @@ export class MultiRpcNear {
     const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
     if (!pool) {
       throw new Error(`DCL pool ${poolId} not found`);
+    }
+    if (pool.whitelist && Array.isArray(pool.whitelist) && pool.whitelist.length > 0) {
+      throw new Error(`DCL pool ${poolId} is a private solver pool (whitelist restricted)`);
     }
 
     const isBaseTokenX = pool.token_x === (baseToken || 'wrap.near');
@@ -2515,7 +2528,13 @@ export class MultiRpcNear {
 
     // Pick the best active liquid pool for hop 1 (wNEAR ↔ quote asset) by checking real liquidity first
     const rheaPool = await this.findRheaPoolForToken(quote, true).catch(() => null);
-    if (rheaPool && rheaPool.poolId !== null && rheaPool.poolId !== undefined && rheaPool.liquidityNear > 0) {
+    if (
+      rheaPool &&
+      rheaPool.pairedToken === 'wrap.near' &&
+      rheaPool.poolId !== null &&
+      rheaPool.poolId !== undefined &&
+      rheaPool.liquidityNear > 0
+    ) {
       return {
         kind: 'multihop',
         quote,
