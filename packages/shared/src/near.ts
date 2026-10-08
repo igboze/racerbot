@@ -171,8 +171,42 @@ export function parseIntearPool(rawBytes: Buffer): {
     return v;
   }
 
-  if (poolVariant === 2) {
-    // Launch pool (INTEARnear/launch LaunchV2):
+  if (poolVariant === 3) {
+    // Launch pool V2 (INTEARnear LaunchV2):
+    // asset1: AssetId, reserve1: u128, asset2: AssetId, reserve2: u128, fees
+    const a1 = readAssetId();
+    const r1 = readU128();
+    const a2 = readAssetId();
+    const r2 = readU128();
+
+    let totalFeePpm = 0;
+    if (offset + 4 <= rawBytes.length) {
+      const numFees = rawBytes.readUInt32LE(offset);
+      offset += 4;
+      for (let i = 0; i < numFees && offset < rawBytes.length; i++) {
+        const receiverType = rawBytes[offset++];
+        if (receiverType === 0 || receiverType === 1 || receiverType === 2) {
+          readString(); // AccountId
+        }
+        if (offset + 4 <= rawBytes.length) {
+          const fee = rawBytes.readUInt32LE(offset);
+          offset += 4;
+          totalFeePpm += fee;
+        }
+      }
+    }
+    const feeBps = Math.round(totalFeePpm / 100);
+
+    return {
+      asset1: a1,
+      reserve1: r1.toString(),
+      asset2: a2,
+      reserve2: r2.toString(),
+      type: 'launch',
+      feeBps: feeBps > 0 ? feeBps : 210,
+    };
+  } else if (poolVariant === 2) {
+    // Launch pool (INTEARnear/launch LaunchV1):
     // near_amount: u128 (real deposited NEAR + phantom liquidity)
     // launched_asset: AssetId
     // balance: u128 (token balance)
@@ -188,7 +222,7 @@ export function parseIntearPool(rawBytes: Buffer): {
       offset += 4;
       for (let i = 0; i < numFees && offset < rawBytes.length; i++) {
         const receiverType = rawBytes[offset++];
-        if (receiverType === 0 || receiverType === 2) {
+        if (receiverType === 0 || receiverType === 1 || receiverType === 2) {
           readString(); // AccountId
         }
         if (offset + 4 <= rawBytes.length) {
@@ -2898,12 +2932,15 @@ export class MultiRpcNear {
       launched_by?: string | null;
     };
   }> {
-    const meta = await this.getTokenMetadata(tokenAddress).catch(() => ({
-      name: tokenAddress.split('.')[0] || 'Unknown',
-      symbol: (tokenAddress.split('.')[0] || 'TKN').toUpperCase(),
-      decimals: 24,
-      total_supply: '0',
-    }));
+    const [meta, totalSupply] = await Promise.all([
+      this.getTokenMetadata(tokenAddress).catch(() => ({
+        name: tokenAddress.split('.')[0] || 'Unknown',
+        symbol: (tokenAddress.split('.')[0] || 'TKN').toUpperCase(),
+        decimals: 24,
+        total_supply: '0',
+      })),
+      this.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+    ]);
 
     const poolId = await this.findIntearPoolId(tokenAddress);
     const poolBuf = Buffer.alloc(4);
@@ -2927,21 +2964,45 @@ export class MultiRpcNear {
     }
 
     const isToken1 = pool.asset1 === tokenAddress;
-    const reserveNear = BigInt(isToken1 ? pool.reserve2 : pool.reserve1);
-    const reserveToken = BigInt(isToken1 ? pool.reserve1 : pool.reserve2);
+    const pairedAsset = isToken1 ? pool.asset2 : pool.asset1;
+    const rawReserveToken = BigInt(isToken1 ? pool.reserve1 : pool.reserve2);
+    const rawReservePaired = BigInt(isToken1 ? pool.reserve2 : pool.reserve1);
 
-    const nearAmt = Number(reserveNear) / 1e24;
-    const tokenDecFactor = Math.pow(10, meta.decimals);
-    const tokenAmt = Number(reserveToken) / tokenDecFactor;
+    const tokenDecimals = meta.decimals ?? 24;
+    const tokenDecFactor = Math.pow(10, tokenDecimals);
+    const tokenAmt = Number(rawReserveToken) / tokenDecFactor;
+
+    let nearAmt = 0;
+    let reserveNear = rawReservePaired;
+
+    if (pairedAsset === 'near' || pairedAsset === 'wrap.near') {
+      nearAmt = Number(rawReservePaired) / 1e24;
+    } else if (pairedAsset === 'token.intear.near') {
+      // If paired with token.intear.near, convert using INTEAR/NEAR rate (~0.0029 NEAR per INTEAR)
+      const intearAmt = Number(rawReservePaired) / 1e24;
+      nearAmt = intearAmt * 0.002903;
+      reserveNear = BigInt(Math.floor(nearAmt * 1e24));
+    } else {
+      nearAmt = Number(rawReservePaired) / 1e24;
+    }
 
     const price = tokenAmt > 0 ? nearAmt / tokenAmt : 0;
     const liquidityNear = nearAmt * 2;
-    const feeBps = pool.feeBps ?? 30;
+    const feeBps = pool.feeBps ?? 210;
     const taxPct = feeBps / 100;
 
-    const launchData = await this.view<any>('launch.intear.near', 'get_launch_data', {
+    const launchContract = tokenAddress.includes('launch-v2') ? 'launch-v2.intear.near' : 'launch.intear.near';
+    let launchData = await this.view<any>(launchContract, 'get_launch_data', {
       token_account_id: tokenAddress,
     }).catch(() => undefined);
+
+    if (!launchData && launchContract !== 'launch.intear.near') {
+      launchData = await this.view<any>('launch.intear.near', 'get_launch_data', {
+        token_account_id: tokenAddress,
+      }).catch(() => undefined);
+    }
+
+    const finalSupply = (totalSupply && totalSupply !== '0') ? totalSupply : (meta as any).total_supply || '0';
 
     return {
       poolId,
@@ -2949,13 +3010,13 @@ export class MultiRpcNear {
       price,
       liquidityNear,
       reserveNear: reserveNear.toString(),
-      reserveToken: reserveToken.toString(),
+      reserveToken: rawReserveToken.toString(),
       feeBps,
       taxPct,
       name: meta.name,
       symbol: meta.symbol,
-      decimals: meta.decimals,
-      totalSupply: meta.total_supply,
+      decimals: tokenDecimals,
+      totalSupply: finalSupply,
       launchData,
     };
   }

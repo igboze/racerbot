@@ -360,6 +360,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         RHEA_RECEIVERS.has(receiverId) ||
         receiverId === 'nearlytrade.near' ||
         receiverId === 'launch.intear.near' ||
+        receiverId === 'launch-v2.intear.near' ||
         receiverId === 'dex.intear.near' ||
         receiverId === 'meme-cooking.near' ||
         receiverId === 'pad.onetokenhub.near' ||

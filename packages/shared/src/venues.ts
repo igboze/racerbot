@@ -66,9 +66,10 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     id: 'intear',
     label: 'Intear Launch',
     kind: 'launchpad+amm',
-    contracts: ['launch.intear.near', 'dex.intear.near'],
+    contracts: ['launch.intear.near', 'launch-v2.intear.near', 'dex.intear.near'],
     tradeable: true,
     website: 'https://intea.rs',
+    tokenPage: (t) => `https://intea.rs/launch/${t}`,
   },
   memecooking: {
     id: 'memecooking',
