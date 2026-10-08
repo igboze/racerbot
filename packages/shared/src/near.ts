@@ -218,58 +218,77 @@ export class MultiRpcNear {
       initialUrls.push(qnUrl);
     }
 
-    // Allow FastNEAR, official Pagoda RPC, dRPC, and QuickNode endpoints
+    // Allow FastNEAR, community validator nodes (Shitzu, Intear), and QuickNode endpoints
     const allowedUrls = initialUrls.filter(url => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
       const isFn = url.includes('fastnear.com') && !url.includes('free.rpc.fastnear.com'); // exclude rate-limited free endpoint from trade/read list
+      const isShitzu = url.includes('shitzuapes.xyz');
+      const isIntear = url.includes('intea.rs');
       const isNearOrg = url.includes('near.org');
       const isDrpc = url.includes('drpc.org');
-      return isQn || isFn || isNearOrg || isDrpc;
+      return isQn || isFn || isShitzu || isIntear || isNearOrg || isDrpc;
     });
 
     const defaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/';
     const sanitizedUrls = allowedUrls.length > 0
       ? Array.from(new Set(allowedUrls))
-      : ['https://rpc.mainnet.fastnear.com', 'https://rpc.mainnet.near.org', 'https://near.drpc.org', qnUrl || defaultQn];
+      : ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', qnUrl || defaultQn];
 
-    // Read URLs: QuickNode first (dedicated RPC), then Pagoda, FastNEAR, dRPC
+    // Read URLs: QuickNode first (dedicated RPC), then FastNEAR, Shitzu, Intear, dRPC
     const readUrls = [
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      ...sanitizedUrls.filter(u => u.includes('near.org')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+      ...sanitizedUrls.filter(u => u.includes('intea.rs')),
+      ...sanitizedUrls.filter(u => u.includes('near.org')),
       ...sanitizedUrls.filter(u => u.includes('drpc.org')),
     ];
 
-    // Trade URLs: QuickNode first, then Pagoda official node, FastNEAR, dRPC.
-    // Pagoda (rpc.mainnet.near.org) and dRPC connect directly to block producers,
-    // ensuring broadcasted transactions are instantly relayed to the mempool even
-    // if QuickNode reaches daily quota limits.
+    // Trade URLs: QuickNode first, then FastNEAR, Shitzu, Intear validator nodes.
+    // Shitzu and Intear connect directly to block producers with zero rate limiting on broadcasts,
+    // ensuring broadcasted transactions are instantly relayed to the consensus mempool.
     const tradeUrls = [
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      ...sanitizedUrls.filter(u => u.includes('near.org')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+      ...sanitizedUrls.filter(u => u.includes('intea.rs')),
+      ...sanitizedUrls.filter(u => u.includes('near.org')),
       ...sanitizedUrls.filter(u => u.includes('drpc.org')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
-      const isNearOrg = url.includes('near.org');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
-      const name = isQn ? `quicknode-read-${i}` : (isNearOrg ? `pagoda-read-${i}` : `fastnear-read-${i}`);
+      const name = isQn
+        ? `quicknode-read-${i}`
+        : url.includes('shitzu')
+        ? `shitzu-read-${i}`
+        : url.includes('intea')
+        ? `intear-read-${i}`
+        : url.includes('near.org')
+        ? `pagoda-read-${i}`
+        : `fastnear-read-${i}`;
       return createProvider(url, name, isQn, headers);
     });
 
     this.tradeProviders = tradeUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
-      const isNearOrg = url.includes('near.org');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
-      const name = isQn ? `quicknode-trade-${i}` : (isNearOrg ? `pagoda-trade-${i}` : `trade-rpc-${i}`);
+      const name = isQn
+        ? `quicknode-trade-${i}`
+        : url.includes('shitzu')
+        ? `shitzu-trade-${i}`
+        : url.includes('intea')
+        ? `intear-trade-${i}`
+        : url.includes('near.org')
+        ? `pagoda-trade-${i}`
+        : `trade-rpc-${i}`;
       return createProvider(url, name, isQn, headers);
     });
 
@@ -4612,11 +4631,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR, Pagoda, dRPC, QuickNode). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR, Shitzu, Intear, QuickNode). */
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
-  'https://rpc.mainnet.near.org',
-  'https://near.drpc.org',
+  'https://rpc.shitzuapes.xyz',
+  'https://rpc.intea.rs',
   process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/',
 ];
 
