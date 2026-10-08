@@ -3270,7 +3270,8 @@ export function setupRoutes(bot: Telegraf): void {
         for (const buy of buys) {
           const val = parseFloat(buy.amount || '0');
           let amount = val;
-          if (val > 1e10 && decimals > 0) {
+          const rawAmtStr = String(buy.amount || '');
+          if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
             amount = val / Math.pow(10, decimals);
           } else if (isSuiPos && val > 1e6) {
             amount = val / Math.pow(10, decimals);
@@ -3593,7 +3594,10 @@ export function setupRoutes(bot: Telegraf): void {
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
         try {
           const rawSupply = BigInt(String(info.total_supply).split('.')[0]);
-          const humanSupply = Number(rawSupply) / Math.pow(10, decimals);
+          let humanSupply = Number(rawSupply) / Math.pow(10, decimals);
+          if (info?.venue === 'nearlytrade' && info?.bonding_phase === 'prebonded') {
+            humanSupply *= 0.8;
+          }
           if (humanSupply > 0) {
             mcNative = humanSupply * currentPrice;
             if (mcUsd <= 0 && usdRate > 0) {
@@ -3616,7 +3620,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (isSuiPos) {
           return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
         }
-        if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+        if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
         return val;
       };
       const buys = fills.filter(f => f.side === 'buy');
@@ -3679,7 +3683,12 @@ export function setupRoutes(bot: Telegraf): void {
         }).catch(() => {});
       }
 
-      if (initialInvestment === 0 && humanQuantity > 0) {
+      const externalTokens = (position.is_external_deposit && humanQuantity > totalBuyTokensHuman)
+        ? (humanQuantity - totalBuyTokensHuman)
+        : 0;
+      if (externalTokens > 0) {
+        initialInvestment += externalTokens * entryPrice;
+      } else if (initialInvestment === 0 && humanQuantity > 0) {
         initialInvestment = humanQuantity * entryPrice;
       }
 
@@ -3973,7 +3982,7 @@ export function setupRoutes(bot: Telegraf): void {
           if (isSuiPos) {
             return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
           }
-          if (val > 1e10 && decimals > 0) return val / Math.pow(10, decimals);
+          if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
           return val;
         };
 
@@ -4138,7 +4147,7 @@ export function setupRoutes(bot: Telegraf): void {
         const decimals = info?.decimals ?? (isSuiTokenAddr ? 6 : (rawAmt > 1e25 ? 24 : 18));
         const humanQty = isSuiTokenAddr
           ? (String(s.amount || '').includes('.') && rawAmt < 1e6 ? rawAmt : rawAmt / Math.pow(10, decimals))
-          : (rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt);
+          : (!String(s.amount || '').includes('.') || rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt);
         const sellPrice = parseFloat(s.price || '0');
         let sellFee = parseFloat(s.fee_paid || '0');
         if (isSuiTokenAddr && sellFee > 1e6) sellFee = sellFee / 1e9;
@@ -4767,7 +4776,7 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 120000,
       });
       await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5`):', { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5` or up to `100`):', { parse_mode: 'Markdown' }).catch(() => {});
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -6931,8 +6940,8 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'custom_slippage') {
         const slip = parseFloat(rawText);
-        if (isNaN(slip) || slip < 0.1 || slip > 50) {
-          await ctx.reply('❌ Invalid slippage. Must be a number between 0.1% and 50%.');
+        if (isNaN(slip) || slip < 0.1 || slip > 100) {
+          await ctx.reply('❌ Invalid slippage. Must be a number between 0.1% and 100%.');
           return;
         }
         const user = await getUserByTelegramId(telegramId);
