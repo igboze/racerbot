@@ -1702,7 +1702,10 @@ export class SwapExecutor {
     } else if (venue === 'intear') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
-      const poolId = await near.findIntearPoolId(targetToken).catch(() => null);
+      const pinnedPoolId = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
+      const poolId = (typeof pinnedPoolId === 'number' && pinnedPoolId >= 0)
+        ? pinnedPoolId
+        : await near.findIntearPoolId(targetToken).catch(() => null);
       if (poolId === null || poolId === undefined || typeof poolId !== 'number' || poolId < 0) {
         throw new Error(`No Intear pool found for token ${targetToken}.`);
       }
@@ -3047,6 +3050,19 @@ export class SwapExecutor {
       }
       // Prebonded on Kelytra is traded directly on exchange.kelytradevs.near
       return { rheaPoolId, dclPoolId };
+    } else if (venue === 'intear') {
+      const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+      if (dbCache && dbCache.venue === 'intear' && dbCache.dcl_pool_id) {
+        const id = parseInt(dbCache.dcl_pool_id, 10);
+        if (!isNaN(id) && id >= 0) rheaPoolId = id;
+      }
+      if (rheaPoolId === null) {
+        rheaPoolId = await near.findIntearPoolId(tokenAddress).catch(() => null);
+      }
+      if (rheaPoolId !== null && rheaPoolId !== undefined && rheaPoolId >= 0) {
+        return { rheaPoolId, dclPoolId: null };
+      }
+      return { rheaPoolId: null, dclPoolId: null, blocked: 'intear_no_pool_found' };
     }
 
     if (!rheaPoolId && !dclPoolId) {

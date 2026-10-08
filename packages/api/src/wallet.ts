@@ -1154,10 +1154,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     } else if (isIntearToken(tokenAddress)) {
       try {
         const intearState = await near.getIntearTokenState(tokenAddress);
-        if (intearState && intearState.price > 0) {
+        if (intearState && (intearState.price > 0 || intearState.poolId != null)) {
           venue = 'intear';
           price = intearState.price;
           liquidity = intearState.liquidityNear;
+          if (intearState.poolId != null) {
+            dclPoolId = String(intearState.poolId);
+          }
           if (intearState.feeBps != null) {
             intearPoolFee = intearState.feeBps;
           }
