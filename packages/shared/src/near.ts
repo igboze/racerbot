@@ -36,6 +36,7 @@ const smStaticCache = new Map<string, { at: number; launch: any; meta: any; supp
 const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
 const registeredCache = new Set<string>();
+export const intearRegisteredCache = new Set<string>();
 const noRheaPoolCache = new Map<string, number>();
 // Permanent cache for quote-asset decimals (decimals never change after launch).
 const quoteDecimalsCache = new Map<string, number>();
@@ -3151,6 +3152,84 @@ export class MultiRpcNear {
       totalSupply: finalSupply,
       launchData,
     };
+  }
+
+  /**
+   * Check if assets are registered on dex.intear.near for a user account.
+   */
+  async areIntearAssetsRegistered(accountId: string, assetIds: string[]): Promise<boolean> {
+    if (!assetIds || assetIds.length === 0) return true;
+    try {
+      const formatted = assetIds.map(a => (a === 'near' || a.startsWith('nep141:') ? a : `nep141:${a}`));
+      return await this.view<boolean>('dex.intear.near', 'are_assets_registered', {
+        asset_ids: formatted,
+        for: { Account: accountId },
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get user storage balance on dex.intear.near.
+   */
+  async getIntearStorageBalance(accountId: string): Promise<{ total: string; available: string } | null> {
+    try {
+      return await this.view<any>('dex.intear.near', 'storage_balance_of', {
+        account_id: accountId,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Ensure an asset is registered for the account on dex.intear.near.
+   * If not registered, performs storage_deposit (if available < 0.002 NEAR) and register_assets.
+   */
+  async ensureIntearAssetRegistered(accountId: string, assetId: string): Promise<void> {
+    const formattedAsset = assetId === 'near' || assetId.startsWith('nep141:') ? assetId : `nep141:${assetId}`;
+    const cacheKey = `${accountId}:${formattedAsset}`;
+    if (intearRegisteredCache.has(cacheKey)) return;
+
+    const isRegistered = await this.areIntearAssetsRegistered(accountId, [formattedAsset]).catch(() => false);
+    if (isRegistered) {
+      intearRegisteredCache.add(cacheKey);
+      return;
+    }
+
+    const storageBal = await this.getIntearStorageBalance(accountId).catch(() => null);
+    const available = BigInt(storageBal?.available ?? '0');
+    const actions: any[] = [];
+
+    // dex.intear.near requires min 0.005 NEAR storage deposit. Each registered asset costs ~0.001 NEAR.
+    if (available < BigInt('2000000000000000000000')) {
+      actions.push(
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: accountId },
+          BigInt('30000000000000'),
+          BigInt('5000000000000000000000') // 0.005 NEAR
+        )
+      );
+    }
+
+    actions.push(
+      transactions.functionCall(
+        'register_assets',
+        { asset_ids: [formattedAsset] },
+        BigInt('30000000000000'),
+        BigInt('1') // 1 yoctoNEAR
+      )
+    );
+
+    await this.signAndSendTransactionAll(accountId, 'dex.intear.near', actions);
+    intearRegisteredCache.add(cacheKey);
+  }
+
+  markIntearAssetRegistered(accountId: string, assetId: string): void {
+    const formattedAsset = assetId === 'near' || assetId.startsWith('nep141:') ? assetId : `nep141:${assetId}`;
+    intearRegisteredCache.add(`${accountId}:${formattedAsset}`);
   }
 
   /**

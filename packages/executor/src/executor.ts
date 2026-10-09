@@ -21,6 +21,7 @@ import {
   type BuyAlertEvent,
   type RedisClient,
   type MultiRpcNear,
+  intearRegisteredCache,
 } from '@racerbot/shared';
 
 export { calculateMinOutAdj };
@@ -1780,7 +1781,37 @@ export class SwapExecutor {
         }
 
         // Buy on dex.intear.near
-        result = await signAndSend('dex.intear.near', [
+        // dex.intear.near requires the receiving account to have the output asset registered in internal balances
+        // for rescue address validation during Withdraw. Batch storage_deposit + register_assets atomically if not yet registered.
+        const actions: transactions.Action[] = [];
+        const cacheKey = `${subaccountId}:nep141:${token_out}`;
+        const isRegisteredOnIntear = intearRegisteredCache.has(cacheKey) || (await near.areIntearAssetsRegistered(subaccountId, [token_out]).catch(() => false));
+
+        if (!isRegisteredOnIntear) {
+          const storageBal = await near.getIntearStorageBalance(subaccountId).catch(() => null);
+          const available = BigInt(storageBal?.available ?? '0');
+          // Minimum deposit on dex.intear.near is 0.005 NEAR (5e21 yocto). Each registered asset costs ~0.001 NEAR.
+          if (available < BigInt('2000000000000000000000')) {
+            actions.push(
+              transactions.functionCall(
+                'storage_deposit',
+                { account_id: subaccountId },
+                BigInt('20000000000000'), // 20 Tgas
+                BigInt('5000000000000000000000') // 0.005 NEAR
+              )
+            );
+          }
+          actions.push(
+            transactions.functionCall(
+              'register_assets',
+              { asset_ids: [`nep141:${token_out}`] },
+              BigInt('20000000000000'), // 20 Tgas
+              BigInt('1') // 1 yocto
+            )
+          );
+        }
+
+        actions.push(
           transactions.functionCall(
             'deposit_near',
             {
@@ -1791,8 +1822,11 @@ export class SwapExecutor {
             },
             DEFAULT_SWAP_GAS,
             swapAmount
-          ),
-        ]);
+          )
+        );
+
+        result = await signAndSend('dex.intear.near', actions);
+        near.markIntearAssetRegistered(subaccountId, token_out);
 
         if (feeAmount > 0n) {
           signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000).catch((err: any) => {
@@ -1801,6 +1835,8 @@ export class SwapExecutor {
         }
       } else {
         // Sell token on dex.intear.near
+        // Ensure subaccount has 'near' registered on dex.intear.near so Withdraw of 'near' never fails
+        await near.ensureIntearAssetRegistered(subaccountId, 'near');
         let operations: any[];
         if (isPairedWithIntear) {
           const pool216Buf = Buffer.alloc(4);
