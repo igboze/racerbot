@@ -145,7 +145,7 @@ describe('RaceDrop formatting and card generators', () => {
     expect(buttons[0][1].text).toBe('🎒 View Wallet');
   });
 
-  it('builds creator share card with Share to Group button', () => {
+  it('builds creator share card with Post to Group and Share Link buttons', () => {
     const card = buildRaceDropCreatorShareCard(mockDropWithName, 'racertradingbot');
     expect(card.text).toContain('RaceDrop Ready to Share!');
     expect(card.text).toContain('Satoshi Nakamoto');
@@ -153,8 +153,10 @@ describe('RaceDrop formatting and card generators', () => {
     expect(card.text).toContain('100k BLACKDRAGON');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons[0][0].text).toContain('Share RaceDrop to Group');
-    expect((buttons[0][0] as any).url).toContain('https://t.me/share/url');
-    expect(buttons[1][0].text).toContain('Preview Claim Page');
+    expect(buttons[0][0].text).toContain('Post to Group');
+    expect((buttons[0][0] as any).url).toContain('https://t.me/racertradingbot?startgroup=drop_');
+    expect(buttons[1][0].text).toContain('Share Link');
+    expect((buttons[1][0] as any).url).toContain('https://t.me/share/url');
+    expect(buttons[1][1].text).toContain('Preview Claim Page');
   });
 });

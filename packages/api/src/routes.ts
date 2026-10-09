@@ -113,6 +113,7 @@ import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, hand
 import {
   setupRaceDropRoutes,
   handleRaceDropClaim,
+  handleRaceDropGroupPost,
   startRaceDropWizard,
   getUserAvailableBalance,
   formatDropAmount,
@@ -2130,6 +2131,11 @@ export function setupRoutes(bot: Telegraf): void {
       // Handle RaceDrop claim deep link (/start drop_<drop_id>)
       if (rawPayload.startsWith('drop_')) {
         const dropId = rawPayload.slice(5);
+        const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+        if (isGroup) {
+          await handleRaceDropGroupPost(ctx, dropId);
+          return;
+        }
         await handleRaceDropClaim(ctx, dropId);
         return;
       }
