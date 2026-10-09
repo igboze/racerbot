@@ -2054,9 +2054,15 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
     throw new Error('User not found. Run /start first.');
   }
 
-  const nativeNearYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
+  const [nativeNearYocto, wNearYocto] = await Promise.all([
+    near.getNearBalance(user.subaccount_id).catch(() => '0'),
+    near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+  ]);
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
-  const spendable = Math.max(0, nativeNear - 0.015);
+  const wNear = Number(BigInt(wNearYocto) / 1000000000000000000n) / 1e6;
+  const spendableNative = Math.max(0, nativeNear - 0.05);
+  // User must retain at least 0.035 native NEAR for network gas
+  const spendable = nativeNear >= 0.035 ? spendableNative + wNear : 0;
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;
