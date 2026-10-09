@@ -103,7 +103,7 @@ const inflightTokenInfoRequests = new Map<string, Promise<TokenInfoResult>>();
 const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
 
 // ── Permanent in-memory token metadata cache (never changes for NEP-141) ───────
-const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number; totalSupply: string }>();
+const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number; totalSupply: string; icon?: string }>();
 
 // ── User token deposit sync debounce map (10s TTL) ───────────────────────────
 const lastSyncDepositsMap = new Map<string, number>();
@@ -463,6 +463,7 @@ export interface TokenInfoResult {
   total_supply: string;
   price: string;           // price in native token (NEAR or SUI)
   price_usd: string;       // price in USD
+  icon?: string;           // base64 Data URI or HTTP URL of token logo
   price_24h_change?: number; // 24h % change from DexScreener/Rhea
   volume_24h_usd?: number;   // 24h volume in USD
   liquidity: string;       // liquidity in native token (NEAR or SUI)
@@ -1494,6 +1495,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     paired_symbol: pairedSymbol,
     price_in_paired: priceInPaired,
     liquidity_in_paired: liquidityInPaired,
+    icon: (meta as any)?.icon || (dexData as any)?.imageUrl || undefined,
   };
 
   tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

@@ -823,15 +823,6 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
   statsBlock += '```\n';
 
-  let text =
-    safetyBanner +
-    `🪙 *${safeName}* (\`${safeSymbol}\`)\n` +
-    `📝 \`${tokenInfo.address}\`\n` +
-    `${venueText}\n\n` +
-    statsBlock +
-    rateFooter +
-    balanceText;
-
   // In-memory 15s cache for rendered token info card images
   let tokenCardImage: Buffer | null = null;
   const priceNumVal = parseFloat(tokenInfo.price || '0');
@@ -855,6 +846,17 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       }
     }
   }
+
+  const hasImageCard = !!tokenCardImage;
+
+  let text =
+    safetyBanner +
+    `🪙 *${safeName}* (\`${safeSymbol}\`)\n` +
+    `📝 \`${tokenInfo.address}\`\n` +
+    `${venueText}\n\n` +
+    (hasImageCard ? '' : statsBlock) +
+    rateFooter +
+    balanceText;
 
   let pnlCardImage: Buffer | null = null;
 
@@ -1079,7 +1081,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
   }
 
-  const photoCaption = tokenCardImage ? text.replace(/```\nPrice[\s\S]*?```\n/g, '').trim() : text;
+  const photoCaption = text;
 
   return { text, caption: photoCaption, keyboard, tokenCardImage: tokenCardImage || undefined, pnlCardImage: pnlCardImage || undefined };
 }
