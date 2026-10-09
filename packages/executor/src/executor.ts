@@ -844,7 +844,7 @@ export class SwapExecutor {
     await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -874,6 +874,8 @@ export class SwapExecutor {
         } else if (venue === 'kelytra') {
           const ktState = await near.getKelytraTokenState(tokenTarget).catch(() => null);
           dclPoolId = ktState?.dclPoolId ?? (await near.findDclPoolId(token_in, token_out).catch(() => null));
+        } else if (venue === 'nearpumpfun') {
+          dclPoolId = null;
         }
       }
     }
@@ -2552,6 +2554,62 @@ export class SwapExecutor {
           }
         }
       }
+    } else if (venue === 'nearpumpfun') {
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+      const targetToken = isBuy ? token_out : token_in;
+
+      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+      if (rhea && typeof rhea.poolId === 'number') {
+        const rheaPoolId = rhea.poolId;
+        if (isBuy) {
+          await ensureStorage(token_out);
+          const rheaActions = [
+            { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+          ];
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId, amountInBigInt, feeAmount, swapAmount,
+            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
+          );
+          result = await signAndSend('wrap.near', actions);
+        } else {
+          await ensureStorage('wrap.near');
+          const rheaActions = [
+            { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+          ];
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+              DEFAULT_SWAP_GAS, BigInt('1')
+            ),
+          ];
+          result = await signAndSend(token_in, actions);
+        }
+      } else {
+        const deadlineSec = Math.floor(Date.now() / 1000) + 120;
+        if (isBuy) {
+          await ensureStorage(token_out);
+          const buyActions = [
+            transactions.functionCall(
+              'buy',
+              { min_tokens_out: minOutAdj || '0', deadline_sec: deadlineSec },
+              DEFAULT_SWAP_GAS,
+              swapAmount
+            )
+          ];
+          result = await signAndSend(token_out, buyActions);
+        } else {
+          const sellActions = [
+            transactions.functionCall(
+              'sell',
+              { tokens_in: amountInBigInt.toString(), min_near_out: min_amount_out || '0', deadline_sec: deadlineSec },
+              DEFAULT_SWAP_GAS,
+              BigInt('1')
+            )
+          ];
+          result = await signAndSend(token_in, sellActions);
+        }
+      }
     } else if (venue === 'memecooking') {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
@@ -2837,7 +2895,7 @@ export class SwapExecutor {
     // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
     // This makes sell execution 2-4 seconds faster.
     // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra') && BigInt(netAmountOut) > 0n) {
+    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       let feePaid = false;
 
@@ -3170,6 +3228,19 @@ export class SwapExecutor {
         }
       }
       // Prebonded on Kelytra is traded directly on exchange.kelytradevs.near
+      return { rheaPoolId, dclPoolId };
+    } else if (venue === 'nearpumpfun') {
+      const npState = await near.getNearpumpfunTokenState(tokenAddress).catch(() => null);
+      if (!npState) {
+        return { rheaPoolId, dclPoolId, blocked: 'nearpumpfun_token_not_found' };
+      }
+      if (npState.phase === 'bonded') {
+        const rhea = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+        if (rhea) {
+          if (rhea.isDcl) dclPoolId = String(rhea.poolId);
+          else if (typeof rhea.poolId === 'number') rheaPoolId = rhea.poolId;
+        }
+      }
       return { rheaPoolId, dclPoolId };
     } else if (venue === 'intear') {
       const dbCache = await getTokenCache(tokenAddress).catch(() => null);

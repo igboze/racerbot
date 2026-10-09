@@ -77,7 +77,9 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
       ? venue
       : (position.token_address.endsWith('.nearlytrade.near')
           ? 'nearlytrade'
-          : (position.token_address.endsWith('.launch.shoremarkets.near') ? 'shoremarkets' : undefined));
+          : (position.token_address.endsWith('.nearpumpfun.near')
+              ? 'nearpumpfun'
+              : (position.token_address.endsWith('.launch.shoremarkets.near') ? 'shoremarkets' : undefined)));
     if (launchpadVenue) {
       try {
         const [rheaRes, launchpadRes] = await Promise.allSettled([

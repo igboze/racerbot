@@ -31,6 +31,7 @@ export type EventVenue =
   | 'nearpad'
   | 'shoremarkets'
   | 'kelytra'
+  | 'nearpumpfun'
   | 'suipump'
   | 'cetus'
   | 'turbos'

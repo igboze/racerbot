@@ -371,7 +371,9 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         receiverId.endsWith('.launch.shoremarkets.near') ||
         receiverId === 'exchange.kelytradevs.near' ||
         receiverId.endsWith('.exchange.kelytradevs.near') ||
-        receiverId.endsWith('.kelytra.near')
+        receiverId.endsWith('.kelytra.near') ||
+        receiverId === 'nearpumpfun.near' ||
+        receiverId.endsWith('.nearpumpfun.near')
       ) {
         const actions = tx?.actions ?? [];
         for (const action of actions) {
@@ -475,6 +477,14 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
                 }
               } else if (receiverId.endsWith('.exchange.kelytradevs.near') || receiverId.endsWith('.kelytra.near')) {
                 await handlePoolCreated(receiverId, 'kelytra', decoded).catch(() => {});
+              } else if (receiverId === 'nearpumpfun.near' && (fn.method_name === 'create_token' || fn.method_name === 'buy')) {
+                const prefix = decoded?.account_prefix ?? decoded?.prefix ?? '';
+                const tokenAddress = decoded?.token_account_id ?? decoded?.token_id ?? decoded?.token ?? (prefix ? `${prefix}.nearpumpfun.near` : '');
+                if (tokenAddress) {
+                  await handlePoolCreated(tokenAddress, 'nearpumpfun', decoded).catch(() => {});
+                }
+              } else if (receiverId.endsWith('.nearpumpfun.near') && (fn.method_name === 'buy' || fn.method_name === 'sell')) {
+                await handlePoolCreated(receiverId, 'nearpumpfun', decoded).catch(() => {});
               }
             } catch {
               // Ignore binary or non-JSON arguments
@@ -674,7 +684,7 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
 /** When a new pool is detected: fetch token metadata, cache it, publish event */
 async function handlePoolCreated(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun',
   rawData: any
 ): Promise<void> {
   const correlationId = generateCorrelationId();
@@ -1151,7 +1161,7 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
  */
 async function checkSnipeSignalsOnly(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun',
   creator = ''
 ): Promise<void> {
   try {
@@ -1192,7 +1202,7 @@ const autoBuyExecutedCache = new Map<string, number>();
  */
 async function checkAutoBuySignals(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun',
   liquidityStr: string,
   marketCapNear: number,
   creator = ''
