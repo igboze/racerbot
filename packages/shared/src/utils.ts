@@ -313,3 +313,32 @@ export async function getNearUsdPrice(): Promise<number> {
   }
   return nearUsdPrice || 5.16;
 }
+
+// ── NEAR account id validator ────────────────────────────────────────────────
+const NEAR_NAMED_ACCOUNT_RE = /^(([a-z0-9]+[-_])*[a-z0-9]+\.)*([a-z0-9]+[-_])*[a-z0-9]+$/;
+export function isValidNearAccountId(id: string): boolean {
+  if (!id || id.length < 2 || id.length > 64) return false;
+  if (/^[0-9a-f]{64}$/.test(id)) return true;
+  return NEAR_NAMED_ACCOUNT_RE.test(id);
+}
+
+// ── Token unit conversions (arbitrary decimals without float drift) ──────────
+export function parseTokenUnits(amountStr: string, decimals: number): bigint {
+  const trimmed = amountStr.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error(`Invalid amount format: "${amountStr}". Please provide a valid positive number.`);
+  }
+  const [whole, frac = ''] = trimmed.split('.');
+  const truncatedFrac = frac.slice(0, decimals).padEnd(decimals, '0');
+  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(truncatedFrac);
+}
+
+export function formatTokenUnits(amountRaw: bigint, decimals: number, maxDecimals = 6): string {
+  const divisor = 10n ** BigInt(decimals);
+  const whole = amountRaw / divisor;
+  const rem = amountRaw % divisor;
+  if (rem === 0n) return whole.toString();
+  const fracStr = rem.toString().padStart(decimals, '0');
+  const trimmedFrac = fracStr.slice(0, maxDecimals).replace(/0+$/, '');
+  return trimmedFrac ? `${whole}.${trimmedFrac}` : whole.toString();
+}
