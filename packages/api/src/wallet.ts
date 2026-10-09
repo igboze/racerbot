@@ -134,10 +134,7 @@ export async function warmTokenInfoCache(): Promise<void> {
     for (const row of result.rows) {
       const lastPrice = parseFloat(row.last_price || '0');
       if (lastPrice <= 0) continue;
-      let supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
-      if (row.venue === 'nearlytrade' && row.bonding_phase === 'prebonded') {
-        supply *= 0.8;
-      }
+      const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
       const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
       const tokenData: TokenInfoResult = {
         address: row.token_address,
@@ -493,6 +490,9 @@ export interface TokenInfoResult {
   total_txns?: number | null;
   buy_tax_pct?: number;  // DEX tax / fee for BUY in %
   sell_tax_pct?: number; // DEX tax / fee for SELL in %
+  paired_symbol?: string;      // Ticker of the paired asset if not NEAR (e.g. 'QTC')
+  price_in_paired?: string;    // Spot price denominated in paired asset
+  liquidity_in_paired?: string;// Liquidity denominated in paired asset
 }
 
 const refPoolFeeCache = new Map<number, number>();
@@ -957,11 +957,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     Number(dbCache.last_price || 0) > 0
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
-    let supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
-    if (dbCache.venue === 'nearlytrade' && dbCache.bonding_phase === 'prebonded') {
-      supply *= 0.8;
-    }
+    const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
     const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+    const dclParts = (dbCache.dcl_pool_id || '').split('|');
+    const cachedPaired = dclParts.length >= 2 ? (dclParts[0] === tokenAddress ? dclParts[1] : dclParts[0]) : null;
+    const cachedPairedSymbol = cachedPaired && cachedPaired !== 'wrap.near' && cachedPaired !== 'near' ? cachedPaired.split('.')[0].toUpperCase() : undefined;
     const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
       nearUsdPromise,
       dexDataPromise,
@@ -1008,6 +1008,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       total_txns: totalTxns ?? null,
       buy_tax_pct: tax.buyTaxPct,
       sell_tax_pct: tax.sellTaxPct,
+      paired_symbol: cachedPairedSymbol,
     };
     // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
     // 3s, not a fresh window. Stale data must never renew itself.
@@ -1096,6 +1097,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       : null;
   let dclPoolId: string | null = null;
   let intearPoolFee: number | undefined;
+  let pairedSymbol: string | undefined;
+  let priceInPaired: string | undefined;
+  let liquidityInPaired: string | undefined;
   if (dbCache?.dcl_pool_id) {
     const parts = dbCache.dcl_pool_id.split('|');
     const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
@@ -1187,6 +1191,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           dclPoolId = ntState.dclPoolId;
           if (ntState.totalSupply && ntState.totalSupply !== '0') {
             totalSupply = ntState.totalSupply;
+          }
+          if (ntState.quoteSymbol && !ntState.quoteIsNear) {
+            pairedSymbol = ntState.quoteSymbol;
+            priceInPaired = ntState.priceInQuote > 0 ? ntState.priceInQuote.toString() : undefined;
+            liquidityInPaired = ntState.reserveQuoteHuman > 0 ? ntState.reserveQuoteHuman.toFixed(2) : undefined;
           }
         }
       } catch { /* no-op */ }
@@ -1417,11 +1426,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   // Calculate Market Cap (authoritative on-chain math: price * supply)
-  // For pre-bonded NearlyTrade launchpad tokens, use launchpad bonding curve supply (80%)
-  const effectiveSupply = (venue === 'nearlytrade' && bondingPhase === 'prebonded')
-    ? supplyNum * 0.8
-    : supplyNum;
-  let marketCap = price > 0 && effectiveSupply > 0 ? price * effectiveSupply : 0;
+  let marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
   let marketCapUsd = marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0;
 
   // Fallback to DexScreener ONLY when on-chain pool market cap couldn't be calculated
@@ -1490,6 +1495,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     total_txns: totalTxns ?? null,
     buy_tax_pct: tax.buyTaxPct,
     sell_tax_pct: tax.sellTaxPct,
+    paired_symbol: pairedSymbol,
+    price_in_paired: priceInPaired,
+    liquidity_in_paired: liquidityInPaired,
   };
 
   tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
