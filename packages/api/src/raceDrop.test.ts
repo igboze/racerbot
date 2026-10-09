@@ -3,6 +3,7 @@ import {
   formatDropAmount,
   getTelegramDisplayName,
   buildRaceDropGroupCard,
+  buildRaceDropClaimMenuCard,
   buildRaceDropClaimSuccessCard,
   buildRaceDropCreatorShareCard,
 } from './raceDrop.js';
@@ -63,6 +64,30 @@ describe('RaceDrop formatting and card generators', () => {
     );
   });
 
+  it('builds interactive Claim MENU page with Claim Now button', () => {
+    const card = buildRaceDropClaimMenuCard(mockDropWithName, false, 'satoshi', 'racertradingbot');
+    expect(card.text).toContain('🏎️ <b>Satoshi Nakamoto created a RaceDrop!</b> 🏎️');
+    expect(card.text).toContain('Claim Reward:</b> <code>10k BLACKDRAGON</code>');
+    expect(card.text).toContain('Tap the button below to claim your tokens:');
+
+    const buttons = card.keyboard.reply_markup.inline_keyboard;
+    expect(buttons[0][0].text).toBe('🏎️ Claim 10k BLACKDRAGON Now!');
+    expect((buttons[0][0] as any).callback_data).toBe(
+      'racedrop_claim_exec:11111111-2222-3333-4444-555555555555'
+    );
+    expect(buttons[1][0].text).toBe('🎒 View Wallet');
+    expect(buttons[1][1].text).toBe('🏁 Main Menu');
+  });
+
+  it('builds Claim MENU page showing already claimed for prior claimants', () => {
+    const card = buildRaceDropClaimMenuCard(mockDropWithName, true, 'satoshi', 'racertradingbot');
+    expect(card.text).toContain('You have already claimed this RaceDrop!');
+
+    const buttons = card.keyboard.reply_markup.inline_keyboard;
+    expect(buttons[0][0].text).toBe('🎒 View Wallet');
+    expect(buttons[0][1].text).toBe('🏁 Main Menu');
+  });
+
   it('builds group card header with fallback username if creator_name is not set', () => {
     const mockDropNoName: RaceDropRecord = {
       ...mockDropWithName,
@@ -111,17 +136,14 @@ describe('RaceDrop formatting and card generators', () => {
 
   it('builds creator share card with Share to Group button', () => {
     const card = buildRaceDropCreatorShareCard(mockDropWithName, 'racertradingbot');
-    expect(card.text).toContain('RaceDrop Successfully Created!');
+    expect(card.text).toContain('RaceDrop Ready to Share!');
     expect(card.text).toContain('Satoshi Nakamoto');
     expect(card.text).toContain('10k BLACKDRAGON');
     expect(card.text).toContain('100k BLACKDRAGON');
-    expect(card.text).toContain('https://t.me/racertradingbot?start=drop_11111111-2222-3333-4444-555555555555');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons[0][0].text).toContain('Share to Group');
-    expect((buttons[0][0] as any).switch_inline_query).toBe(
-      'drop_11111111-2222-3333-4444-555555555555'
-    );
-    expect((buttons[1][0] as any).url).toContain('https://t.me/share/url');
+    expect(buttons[0][0].text).toContain('Share RaceDrop to Group');
+    expect((buttons[0][0] as any).url).toContain('https://t.me/share/url');
+    expect(buttons[1][0].text).toContain('Preview Claim Page');
   });
 });
