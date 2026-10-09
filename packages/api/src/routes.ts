@@ -104,6 +104,7 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
+import { generateTokenCardImage } from './tokenCardGenerator.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
@@ -518,7 +519,7 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 }
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
-export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
+export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
   const [info, balances, user, safetyRes] = await Promise.allSettled([
     getTokenInfo(tokenAddress, forceRefresh),
@@ -826,6 +827,25 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     rateFooter +
     balanceText;
 
+  // Generate sleek Token Card Image using Satori + Resvg
+  let tokenCardImage: Buffer | null = null;
+  try {
+    const isAudited = safety?.isAuditedLaunchpad ? (safety.launchpadName || 'Audited') : 'Paid';
+    tokenCardImage = await generateTokenCardImage({
+      name: tokenInfo.name || 'Token',
+      symbol: tokenInfo.symbol || 'TOKEN',
+      iconUrl: (tokenInfo as any).icon_url || (tokenInfo as any).icon || undefined,
+      supply: supplyStr,
+      launchpad: tokenInfo.venue || 'Ref DCL',
+      pair: tokenInfo.paired_symbol || nativeUnit,
+      dexStatus: isAudited,
+      marketCap: mcUsdFormatted || (mcNearFormatted ? mcNearFormatted : 'N/A'),
+      footerText: 'racerbot.trade'
+    });
+  } catch (err: any) {
+    console.warn('[buildTokenCard] Failed to generate token card image:', err?.message || err);
+  }
+
   let pnlCardImage: Buffer | null = null;
 
   // If user holds the token, add holdings info
@@ -1049,18 +1069,19 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
   }
 
-  return { text, keyboard, pnlCardImage: pnlCardImage || undefined };
+  return { text, keyboard, tokenCardImage: tokenCardImage || undefined, pnlCardImage: pnlCardImage || undefined };
 }
 
 /**
  * Safely send a token card to Telegram.
  * Handles photo or text rendering, and gracefully falls back to plain text if Telegram Markdown entity parsing fails.
  */
-export async function sendTokenCard(ctx: any, card: { text: string; keyboard: any; pnlCardImage?: Buffer }) {
-  if (card.pnlCardImage) {
+export async function sendTokenCard(ctx: any, card: { text: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }) {
+  const cardImage = card.tokenCardImage || card.pnlCardImage;
+  if (cardImage) {
     try {
       await ctx.replyWithPhoto(
-        { source: card.pnlCardImage },
+        { source: cardImage },
         {
           caption: card.text,
           parse_mode: 'Markdown',
@@ -1072,7 +1093,7 @@ export async function sendTokenCard(ctx: any, card: { text: string; keyboard: an
       console.warn('[API] replyWithPhoto Markdown failed, retrying plain caption:', err.message);
       try {
         await ctx.replyWithPhoto(
-          { source: card.pnlCardImage },
+          { source: cardImage },
           {
             caption: card.text.replace(/[*_`]/g, ''),
             reply_markup: card.keyboard.reply_markup,
