@@ -830,16 +830,32 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // Generate sleek Token Card Image using Satori + Resvg
   let tokenCardImage: Buffer | null = null;
   try {
-    const isAudited = safety?.isAuditedLaunchpad ? (safety.launchpadName || 'Audited') : 'Paid';
+    const secStatus = safety?.isHoneypot ? '🔴 HONEYPOT' : (safety?.isDrained ? '🔴 DRAINED' : '🟢 Honeypot PASSED');
+    const cType = safety?.isAuditedLaunchpad ? `Audited (${safety.launchpadName || 'Verified'})` : 'Standalone NEP-141';
+    const pairStr = tokenInfo.paired_symbol && tokenInfo.paired_symbol !== 'NEAR' && tokenInfo.paired_symbol !== 'wNEAR'
+      ? `${safeSymbol} / ${tokenInfo.paired_symbol}`
+      : `${safeSymbol} / ${nativeUnit}`;
+    const tradesStr = (buys !== undefined && buys !== null && sells !== undefined && sells !== null)
+      ? `${buys}B / ${sells}S`
+      : 'N/A';
+
     tokenCardImage = await generateTokenCardImage({
       name: tokenInfo.name || 'Token',
       symbol: tokenInfo.symbol || 'TOKEN',
+      address: tokenInfo.address || '',
       iconUrl: (tokenInfo as any).icon_url || (tokenInfo as any).icon || undefined,
+      priceNear: `${priceNearStr} ${nativeUnit}`,
+      priceUsd: priceUsdStr ? `(~${priceUsdStr})` : '',
+      marketCap: mcapCol,
+      liquidity: liqCol,
       supply: supplyStr,
-      launchpad: tokenInfo.venue || 'Ref DCL',
-      pair: tokenInfo.paired_symbol || nativeUnit,
-      dexStatus: isAudited,
-      marketCap: mcUsdFormatted || (mcNearFormatted ? mcNearFormatted : 'N/A'),
+      dexTax: `Buy ${buyTax} / Sell ${sellTax}`,
+      holders: tokenInfo.holders_count ? tokenInfo.holders_count.toLocaleString('en-US') : 'N/A',
+      trades: tradesStr,
+      pair: pairStr,
+      venue: tokenInfo.venue || 'NEAR Protocol DEX',
+      securityStatus: secStatus,
+      contractType: cType,
       footerText: 'racerbot.trade'
     });
   } catch (err: any) {
