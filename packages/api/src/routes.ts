@@ -205,18 +205,22 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     if (!info || !info.tradeable) return;
 
     const venue = info.venue;
-    const rheaLike = ['rhea', 'ref', 'nearlytrade', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra'].includes(venue);
 
     const jobs: Promise<unknown>[] = [
       near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
       checkTokenSafety(tokenAddress).catch(() => null),
     ];
-    if (rheaLike) {
+
+    if (venue === 'rhea' || venue === 'ref') {
       jobs.push(
         near.findRheaPoolForToken(tokenAddress).catch(() => null),
         near.findDclPoolId('wrap.near', tokenAddress).catch(() => null),
         near.getWhitelistedTokens().catch(() => []),
       );
+    } else if (venue === 'nearlytrade') {
+      jobs.push(near.planNearlytradeRoute(tokenAddress).catch(() => null));
+    } else if (venue === 'shoremarkets') {
+      jobs.push(near.planShoremarketsRoute(tokenAddress).catch(() => null));
     }
     await Promise.all(jobs);
   } catch {

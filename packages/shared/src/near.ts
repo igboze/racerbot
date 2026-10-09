@@ -35,6 +35,8 @@ const ntRouteCache = new Map<string, { at: number; route: any }>();
 const smStaticCache = new Map<string, { at: number; launch: any; meta: any; supply: string }>();
 const intearPoolCache = new Map<string, number>();
 const dclPoolIdCache = new Map<string, string>();
+const noDclPoolCache = new Map<string, number>();
+const noRheaPoolPairCache = new Map<string, number>();
 const registeredCache = new Set<string>();
 export const intearRegisteredCache = new Set<string>();
 const noRheaPoolCache = new Map<string, number>();
@@ -1200,6 +1202,11 @@ export class MultiRpcNear {
     if (rheaPoolIdCache.has(cacheKey1)) return rheaPoolIdCache.get(cacheKey1)!;
     if (rheaPoolIdCache.has(cacheKey2)) return rheaPoolIdCache.get(cacheKey2)!;
 
+    const noRheaAt = noRheaPoolPairCache.get(cacheKey1) || noRheaPoolPairCache.get(cacheKey2);
+    if (noRheaAt && Date.now() - noRheaAt < 300_000) {
+      throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
+    }
+
     // 1. Check Ref Finance indexer top pools (covers thousands of active pools instantly)
     try {
       const indexerPools = await getRefIndexerPools();
@@ -1281,6 +1288,8 @@ export class MultiRpcNear {
       }
     }
 
+    noRheaPoolPairCache.set(cacheKey1, Date.now());
+    noRheaPoolPairCache.set(cacheKey2, Date.now());
     throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
   }
 
@@ -1739,6 +1748,9 @@ export class MultiRpcNear {
     const cached = dclPoolIdCache.get(key);
     if (cached) return cached;
 
+    const noDclAt = noDclPoolCache.get(key) || noDclPoolCache.get(`${tokenB}:${tokenA}`);
+    if (noDclAt && Date.now() - noDclAt < 300_000) return null;
+
     const tokenX = tokenA < tokenB ? tokenA : tokenB;
     const tokenY = tokenA < tokenB ? tokenB : tokenA;
     // Compare fee tiers by the QUOTE side's reserves. total_x + total_y adds
@@ -1754,7 +1766,8 @@ export class MultiRpcNear {
         const poolId = `${tokenX}|${tokenY}|${fee}`;
         const pool = await this.view<any>('dclv2.ref-labs.near', 'get_pool', { pool_id: poolId });
         const isWhitelisted = pool?.whitelist && Array.isArray(pool.whitelist) && pool.whitelist.length > 0;
-        if (pool && pool.state === 'Running' && !isWhitelisted) {
+        const hasLiquidity = pool?.liquidity && pool.liquidity !== '0' && BigInt(pool.liquidity) > 0n;
+        if (pool && pool.state === 'Running' && !isWhitelisted && hasLiquidity) {
           const quoteReserve = BigInt(
             pool.token_x === quoteToken ? (pool.total_x || '0')
             : pool.token_y === quoteToken ? (pool.total_y || '0')
@@ -1762,7 +1775,7 @@ export class MultiRpcNear {
           );
           return { poolId, quoteReserve };
         }
-        throw new Error('not running or whitelisted');
+        throw new Error('not running or whitelisted or empty');
       })
     );
 
@@ -1781,6 +1794,8 @@ export class MultiRpcNear {
       dclPoolIdCache.set(`${tokenB}:${tokenA}`, bestPoolId);
       return bestPoolId;
     }
+    noDclPoolCache.set(key, Date.now());
+    noDclPoolCache.set(`${tokenB}:${tokenA}`, Date.now());
     return null;
   }
 
@@ -1830,10 +1845,11 @@ export class MultiRpcNear {
       price = priceInBase * rateInNear;
     }
 
-    const reserveNear = baseIsX ? (pool.total_x || '0') : (pool.total_y || '0');
-    const reserveToken = baseIsX ? (pool.total_y || '0') : (pool.total_x || '0');
+    const hasLiquidity = pool.liquidity && pool.liquidity !== '0' && BigInt(pool.liquidity) > 0n;
+    const reserveNear = hasLiquidity ? (baseIsX ? (pool.total_x || '0') : (pool.total_y || '0')) : '0';
+    const reserveToken = hasLiquidity ? (baseIsX ? (pool.total_y || '0') : (pool.total_x || '0')) : '0';
     const reserveNearNum = parseFloat(reserveNear) / Math.pow(10, baseDecimals);
-    const liquidityNear = reserveNearNum * rateInNear * 2;
+    const liquidityNear = hasLiquidity ? reserveNearNum * rateInNear * 2 : 0;
 
     return {
       poolId,
@@ -2866,11 +2882,14 @@ export class MultiRpcNear {
       return res;
     }
 
-    // 5. Fallback: DCL pool
+    // 5. Fallback: DCL pool with verified liquidity
     if (dclHop) {
-      const res = { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'dcl' as const, poolId: dclHop } };
-      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
-      return res;
+      const dclState = await this.getDclPoolState(dclHop, 'wrap.near').catch(() => null);
+      if (dclState && dclState.liquidityNear > 0) {
+        const res = { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'dcl' as const, poolId: dclHop } };
+        ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+        return res;
+      }
     }
 
     throw new Error(

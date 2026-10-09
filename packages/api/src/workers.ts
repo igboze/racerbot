@@ -19,8 +19,12 @@ let isShuttingDown = false;
  * when running in single-service environments such as Railway.
  */
 export function startBackgroundWorkers(): void {
-  if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
-    console.log('[WORKERS] Background workers disabled via DISABLE_BACKGROUND_WORKERS');
+  if (
+    process.env.DISABLE_BACKGROUND_WORKERS === 'true' ||
+    process.env.RAILWAY_SERVICE_NAME === 'api' ||
+    process.env.RAILWAY_SERVICE_NAME === 'bot'
+  ) {
+    console.log('[WORKERS] Background workers disabled in multi-service deployment');
     return;
   }
 
