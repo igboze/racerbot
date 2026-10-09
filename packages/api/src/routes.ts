@@ -581,12 +581,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         : '';
     venueText = `💧 *Venue*: SuiPump (${phaseStr}${progressStr})`;
   } else if (tokenInfo.venue === 'nearlytrade') {
-    const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
-    const progressStr =
-      tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
-        ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
-        : '';
-    venueText = `💧 *Venue*: NearlyTrade (${phaseStr}${progressStr})`;
+    const pairTag = tokenInfo.paired_symbol && tokenInfo.paired_symbol !== 'NEAR' && tokenInfo.paired_symbol !== 'wNEAR'
+      ? ` • ${tokenInfo.paired_symbol} Pair`
+      : '';
+    venueText = `💧 *Venue*: NearlyTrade (Ref DCL${pairTag})`;
   } else if (tokenInfo.venue === 'rhea' || tokenInfo.venue === 'ref') {
     venueText = tokenInfo.dcl_pool_id
       ? `💧 *Venue*: Ref Finance / Rhea (DCL)`
@@ -790,8 +788,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   let statsBlock = '```\n';
   statsBlock += `Price    : ${priceCol}${usdCol}\n`;
+  if (tokenInfo.paired_symbol && tokenInfo.paired_symbol !== 'NEAR' && tokenInfo.paired_symbol !== 'wNEAR') {
+    statsBlock += `Pair     : ${safeSymbol} / ${tokenInfo.paired_symbol}\n`;
+  }
   statsBlock += `MarketCap: ${mcapCol}\n`;
-  statsBlock += `Liquidity: ${liqCol}\n`;
+  if (tokenInfo.paired_symbol && tokenInfo.paired_symbol !== 'NEAR' && tokenInfo.paired_symbol !== 'wNEAR' && tokenInfo.liquidity_in_paired) {
+    statsBlock += `Liquidity: ${tokenInfo.liquidity_in_paired} ${tokenInfo.paired_symbol} (~${liqCol})\n`;
+  } else {
+    statsBlock += `Liquidity: ${liqCol}\n`;
+  }
   statsBlock += `Supply   : ${supplyCol}\n`;
   const buyTax = tokenInfo.buy_tax_pct !== undefined ? `${tokenInfo.buy_tax_pct.toFixed(1)}%` : '0.3%';
   const sellTax = tokenInfo.sell_tax_pct !== undefined ? `${tokenInfo.sell_tax_pct.toFixed(1)}%` : '0.3%';
@@ -3993,9 +3998,6 @@ export function setupRoutes(bot: Telegraf): void {
         try {
           const rawSupply = BigInt(String(info.total_supply).split('.')[0]);
           let humanSupply = Number(rawSupply) / Math.pow(10, decimals);
-          if (info?.venue === 'nearlytrade' && info?.bonding_phase === 'prebonded') {
-            humanSupply *= 0.8;
-          }
           if (humanSupply > 0) {
             mcNative = humanSupply * currentPrice;
             if (mcUsd <= 0 && usdRate > 0) {

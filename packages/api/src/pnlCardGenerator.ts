@@ -125,10 +125,6 @@ export async function generatePNLCardData(
       try {
         const raw = BigInt(String(tokenInfo.total_supply).split('.')[0]);
         totalSupplyHuman = Number(raw) / Math.pow(10, decimals);
-        // For pre-bonded NearlyTrade tokens, use launchpad bonding curve supply (80%)
-        if (tokenInfo?.venue === 'nearlytrade' && tokenInfo?.bonding_phase === 'prebonded') {
-          totalSupplyHuman *= 0.8;
-        }
       } catch { /* leave 0 */ }
     }
 
