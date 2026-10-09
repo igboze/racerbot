@@ -519,7 +519,7 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 }
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
-export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }> {
+export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; caption?: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
   const [info, balances, user, safetyRes] = await Promise.allSettled([
     getTokenInfo(tokenAddress, forceRefresh),
@@ -1085,21 +1085,24 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
   }
 
-  return { text, keyboard, tokenCardImage: tokenCardImage || undefined, pnlCardImage: pnlCardImage || undefined };
+  const photoCaption = tokenCardImage ? text.replace(/```\nPrice[\s\S]*?```\n/g, '').trim() : text;
+
+  return { text, caption: photoCaption, keyboard, tokenCardImage: tokenCardImage || undefined, pnlCardImage: pnlCardImage || undefined };
 }
 
 /**
  * Safely send a token card to Telegram.
  * Handles photo or text rendering, and gracefully falls back to plain text if Telegram Markdown entity parsing fails.
  */
-export async function sendTokenCard(ctx: any, card: { text: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }) {
+export async function sendTokenCard(ctx: any, card: { text: string; caption?: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }) {
   const cardImage = card.tokenCardImage || card.pnlCardImage;
+  const captionText = card.caption || card.text;
   if (cardImage) {
     try {
       await ctx.replyWithPhoto(
         { source: cardImage },
         {
-          caption: card.text,
+          caption: captionText,
           parse_mode: 'Markdown',
           reply_markup: card.keyboard.reply_markup,
         }
@@ -1111,7 +1114,7 @@ export async function sendTokenCard(ctx: any, card: { text: string; keyboard: an
         await ctx.replyWithPhoto(
           { source: cardImage },
           {
-            caption: card.text.replace(/[*_`]/g, ''),
+            caption: captionText.replace(/[*_`]/g, ''),
             reply_markup: card.keyboard.reply_markup,
           }
         );
