@@ -212,20 +212,31 @@ export interface SuiBalanceResult {
   formatted: string;
 }
 
+const suiBalanceCache = new Map<string, { result: SuiBalanceResult; at: number }>();
+const SUI_BAL_CACHE_TTL_MS = 3_000;
+
 /**
  * Gets native SUI coin balance for an address.
  */
 export async function getSuiBalance(address: string): Promise<SuiBalanceResult> {
+  const normAddr = address.toLowerCase().trim();
+  const cached = suiBalanceCache.get(normAddr);
+  if (cached && Date.now() - cached.at < SUI_BAL_CACHE_TTL_MS) {
+    return cached.result;
+  }
+
   const client = getSuiClient();
   try {
     const res = await client.getBalance({ owner: address });
     const mist = BigInt(res.totalBalance || '0');
     const sui = Number(mist) / 1e9;
-    return {
+    const result: SuiBalanceResult = {
       mist,
       sui,
       formatted: sui.toFixed(4),
     };
+    suiBalanceCache.set(normAddr, { result, at: Date.now() });
+    return result;
   } catch (err: any) {
     // Retry once with rotated RPC on network failure
     try {
@@ -233,7 +244,9 @@ export async function getSuiBalance(address: string): Promise<SuiBalanceResult> 
       const res = await fallbackClient.getBalance({ owner: address });
       const mist = BigInt(res.totalBalance || '0');
       const sui = Number(mist) / 1e9;
-      return { mist, sui, formatted: sui.toFixed(4) };
+      const result: SuiBalanceResult = { mist, sui, formatted: sui.toFixed(4) };
+      suiBalanceCache.set(normAddr, { result, at: Date.now() });
+      return result;
     } catch (e2: any) {
       throw new Error(`Failed to fetch Sui balance for ${address}: ${err.message}`);
     }

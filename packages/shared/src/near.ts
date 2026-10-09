@@ -511,7 +511,7 @@ export class MultiRpcNear {
   // ── Hedged-request constants ─────────────────────────────────────────────────
   // Send to FastNEAR immediately. If no reply within HEDGE_MS, also send to
   // QuickNode. First success wins; the loser is aborted. Hard cap = VIEW_TIMEOUT_MS.
-  private static readonly HEDGE_MS = 250;
+  private static readonly HEDGE_MS = 100;
   private static readonly VIEW_TIMEOUT_MS = 3000;
 
   /**
@@ -1042,42 +1042,32 @@ export class MultiRpcNear {
    * Get account NEAR balance from trade RPC providers (hedged optimistic/final view_account).
    */
   async getNearBalance(accountId: string): Promise<string> {
-    for (const provider of this.tradeProviders) {
+    const fetchBalanceFromProvider = async (provider: typeof this.tradeProviders[0], finality = 'optimistic') => {
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'racerbot-bal',
+          method: 'query',
+          params: { request_type: 'view_account', account_id: accountId, finality },
+        }),
+        signal: AbortSignal.timeout(1500),
+      });
+      const data: any = await res.json();
+      if (data?.result?.amount) return data.result.amount as string;
+      throw new Error('No balance in response');
+    };
+
+    try {
+      return await Promise.any(this.tradeProviders.map(p => fetchBalanceFromProvider(p, 'optimistic')));
+    } catch {
       try {
-        const res = await fetch(provider.url, {
-          method: 'POST',
-          headers: provider.headers ?? { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'racerbot-bal',
-            method: 'query',
-            params: { request_type: 'view_account', account_id: accountId, finality: 'optimistic' },
-          }),
-          signal: AbortSignal.timeout(2500),
-        });
-        const data: any = await res.json();
-        if (data?.result?.amount) return data.result.amount as string;
-      } catch {}
+        return await Promise.any(this.tradeProviders.map(p => fetchBalanceFromProvider(p, 'final')));
+      } catch {
+        throw new Error('Failed to fetch NEAR balance from all RPC nodes');
+      }
     }
-    // Fallback: final finality across providers
-    for (const provider of this.tradeProviders) {
-      try {
-        const res = await fetch(provider.url, {
-          method: 'POST',
-          headers: provider.headers ?? { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'racerbot-bal-final',
-            method: 'query',
-            params: { request_type: 'view_account', account_id: accountId, finality: 'final' },
-          }),
-          signal: AbortSignal.timeout(2500),
-        });
-        const data: any = await res.json();
-        if (data?.result?.amount) return data.result.amount as string;
-      } catch {}
-    }
-    throw new Error('Failed to fetch NEAR balance from all RPC nodes');
   }
 
   /**

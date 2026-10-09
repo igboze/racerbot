@@ -134,16 +134,26 @@ export async function resolveTokenIconDataUri(tokenAddress: string, iconCandidat
   return null;
 }
 
+const inflightCardGenerations = new Map<string, Promise<Buffer | null>>();
+
 /**
  * Generates an official RacerBot Token Info Card PNG image using Satori & Resvg.
  * Optimized with in-memory asset caching for maximum speed.
  * Output Dimensions: 1200 x 860.
  */
 export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promise<Buffer | null> {
-  try {
-    initStaticAssets();
+  const tokenAddress = data.tokenAddress || '';
+  const dedupeKey = `${tokenAddress}:${data.priceNear || ''}:${data.priceUsd || ''}:${data.bondingProgressPct || ''}`;
+  
+  if (tokenAddress && inflightCardGenerations.has(dedupeKey)) {
+    return inflightCardGenerations.get(dedupeKey)!;
+  }
 
-    const tokenName = data.name || 'Token';
+  const renderPromise = (async (): Promise<Buffer | null> => {
+    try {
+      initStaticAssets();
+
+      const tokenName = data.name || 'Token';
     const rawSymbol = (data.symbol || 'TOKEN').replace(/^\$/, '');
     const symbolText = `$${rawSymbol}`;
     const tokenAddress = data.tokenAddress || '';
@@ -444,4 +454,12 @@ export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promi
     console.error('[TOKEN_INFO_CARD_IMAGE] Error generating card image with Satori:', err);
     return null;
   }
+  })();
+
+  if (tokenAddress) {
+    inflightCardGenerations.set(dedupeKey, renderPromise);
+    renderPromise.finally(() => inflightCardGenerations.delete(dedupeKey));
+  }
+
+  return renderPromise;
 }
