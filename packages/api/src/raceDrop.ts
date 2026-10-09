@@ -27,7 +27,81 @@ import {
   syncUserTokenDeposits,
 } from './wallet.js';
 import { getUserFriendlyError } from './routes.js';
-import { getNear, getSuiBalance } from '@racerbot/shared';
+import { getNear, getSuiBalance, createRedis } from '@racerbot/shared';
+import { REDIS_URL } from './config.js';
+
+let _raceDropRedis: ReturnType<typeof createRedis> | null = null;
+function getRaceDropRedis() {
+  if (!_raceDropRedis && REDIS_URL) {
+    try {
+      _raceDropRedis = createRedis(REDIS_URL);
+    } catch {
+      _raceDropRedis = null;
+    }
+  }
+  return _raceDropRedis;
+}
+
+export async function setRaceDropWizardState(
+  telegramId: number,
+  state: any,
+  userPendingActions?: Map<number, any>
+): Promise<void> {
+  state.expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins TTL
+  userPendingActions?.set(telegramId, state);
+
+  try {
+    const redis = getRaceDropRedis();
+    if (redis) {
+      await redis.set(`racedrop:wizard:${telegramId}`, JSON.stringify(state), 900);
+    }
+  } catch {
+    // non-fatal in-memory fallback
+  }
+}
+
+export async function getRaceDropWizardState(
+  telegramId: number,
+  userPendingActions?: Map<number, any>
+): Promise<any | null> {
+  const mem = userPendingActions?.get(telegramId);
+  if (mem && Date.now() < mem.expiresAt) {
+    return mem;
+  }
+
+  try {
+    const redis = getRaceDropRedis();
+    if (redis) {
+      const data = await redis.get(`racedrop:wizard:${telegramId}`);
+      if (data) {
+        const state = JSON.parse(data);
+        if (state && Date.now() < state.expiresAt) {
+          userPendingActions?.set(telegramId, state);
+          return state;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+export async function clearRaceDropWizardState(
+  telegramId: number,
+  userPendingActions?: Map<number, any>
+): Promise<void> {
+  userPendingActions?.delete(telegramId);
+  try {
+    const redis = getRaceDropRedis();
+    if (redis) {
+      await redis.del(`racedrop:wizard:${telegramId}`);
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export function getBotUsername(ctx: Context): string {
   return ctx.botInfo?.username || 'racertradingbot';
@@ -707,7 +781,7 @@ export async function handleRaceDropAmountPerUserInput(
   amountPerUser: number,
   userPendingActions: Map<number, any>
 ): Promise<void> {
-  const pending = userPendingActions.get(telegramId);
+  const pending = await getRaceDropWizardState(telegramId, userPendingActions);
   if (!pending || !pending.raceDropToken) {
     await ctx.reply('❌ Session expired. Please tap Create RaceDrop again.');
     return;
@@ -735,22 +809,25 @@ export async function handleRaceDropAmountPerUserInput(
     return;
   }
 
-  userPendingActions.set(telegramId, {
-    ...pending,
-    action: 'racedrop_claims',
-    raceDropAmountPerUser: amountPerUser,
-    expiresAt: Date.now() + 180000,
-  });
+  await setRaceDropWizardState(
+    telegramId,
+    {
+      ...pending,
+      action: 'racedrop_claims',
+      raceDropAmountPerUser: amountPerUser,
+    },
+    userPendingActions
+  );
 
   const buttons: any[] = [];
-  const claimPresets = [5, 10, 25, 50].filter((n) => n < maxUsers);
+  const claimPresets = [5, 10, 20, 50, 100].filter((n) => n <= maxUsers);
   if (claimPresets.length > 0) {
-    const row1 = claimPresets.slice(0, 2).map((n) =>
+    const row1 = claimPresets.slice(0, 3).map((n) =>
       Markup.button.callback(`🏎️ ${n} Users`, `racedrop_set_claims:${n}`)
     );
     buttons.push(row1);
-    if (claimPresets.length > 2) {
-      const row2 = claimPresets.slice(2).map((n) =>
+    if (claimPresets.length > 3) {
+      const row2 = claimPresets.slice(3).map((n) =>
         Markup.button.callback(`🏎️ ${n} Users`, `racedrop_set_claims:${n}`)
       );
       buttons.push(row2);
@@ -759,6 +836,7 @@ export async function handleRaceDropAmountPerUserInput(
 
   buttons.push([
     Markup.button.callback(`⚡ Max (${maxUsers} Users)`, `racedrop_set_claims:${maxUsers}`),
+    Markup.button.callback('✏️ Custom Count', 'racedrop_prompt_custom_claims'),
   ]);
   buttons.push([Markup.button.callback('❌ Cancel', 'racedrop_cancel')]);
 
@@ -768,7 +846,7 @@ export async function handleRaceDropAmountPerUserInput(
     `💰 <b>Available Balance:</b> <code>${formatDropAmount(balance)} ${pending.raceDropSymbol || symbol}</code>\n` +
     `📊 <b>Maximum Claimers:</b> <b>${maxUsers} users</b>\n\n` +
     `How many users should be able to claim this RaceDrop?\n\n` +
-    `<i>Select an option below or reply with a number (1–${maxUsers}):</i>`;
+    `Tap a preset below or <b>reply with any number</b> in this chat (1–${maxUsers}):`;
 
   await ctx.reply(text, {
     parse_mode: 'HTML',
@@ -785,7 +863,7 @@ export async function handleRaceDropClaimsInput(
   claims: number,
   userPendingActions: Map<number, any>
 ): Promise<void> {
-  const pending = userPendingActions.get(telegramId);
+  const pending = await getRaceDropWizardState(telegramId, userPendingActions);
   if (!pending || !pending.raceDropToken || !pending.raceDropAmountPerUser) {
     await ctx.reply('❌ Session expired. Please tap Create RaceDrop again.');
     return;
@@ -831,7 +909,7 @@ export async function handleRaceDropClaimsInput(
     split_mode: 'equal',
   });
 
-  userPendingActions.delete(telegramId);
+  await clearRaceDropWizardState(telegramId, userPendingActions);
 
   const botUsername = getBotUsername(ctx);
   const shareCard = buildRaceDropCreatorShareCard(drop, botUsername);
@@ -1163,58 +1241,100 @@ export function setupRaceDropRoutes(
 
       const creatorName = getTelegramDisplayName(ctx.from);
 
-      userPendingActions.set(telegramId, {
-        action: 'racedrop_amount',
-        raceDropToken: tokenAddress,
-        raceDropSymbol: symbol,
-        raceDropChain: chain,
-        raceDropCreatorName: creatorName,
-        expiresAt: Date.now() + 180000,
-      });
+      await setRaceDropWizardState(
+        telegramId,
+        {
+          action: 'racedrop_amount',
+          raceDropToken: tokenAddress,
+          raceDropSymbol: symbol,
+          raceDropChain: chain,
+          raceDropCreatorName: creatorName,
+        },
+        userPendingActions
+      );
 
-      // Calculate quick presets for amount per user
+      // Calculate quick presets for amount per user (beginning from 50, 100, 200 for tokens)
       const presets: number[] = [];
-      if (balance >= 10) {
-        presets.push(0.5, 1, 2);
-      } else if (balance >= 1) {
-        presets.push(0.1, 0.5, 1);
+      const isNativeMajor = tokenAddress === 'near' || tokenAddress === 'sui';
+
+      if (isNativeMajor) {
+        if (balance >= 10) {
+          presets.push(0.5, 1, 2, 5);
+        } else if (balance >= 1) {
+          presets.push(0.1, 0.25, 0.5, 1);
+        } else {
+          presets.push(
+            Number((balance * 0.1).toFixed(4)),
+            Number((balance * 0.25).toFixed(4)),
+            Number((balance * 0.5).toFixed(4))
+          );
+        }
       } else {
-        presets.push(
-          Number((balance * 0.1).toFixed(4)),
-          Number((balance * 0.25).toFixed(4)),
-          Number((balance * 0.5).toFixed(4))
-        );
+        // Larger numbers beginning from 50, 100, 200 as requested
+        const candidates = [50, 100, 200, 500, 1000, 5000];
+        const validCandidates = candidates.filter((amt) => amt <= balance);
+
+        if (validCandidates.length >= 3) {
+          presets.push(...validCandidates.slice(0, 4));
+        } else if (validCandidates.length > 0) {
+          presets.push(...validCandidates);
+        } else if (balance >= 10) {
+          presets.push(5, 10, 25);
+        } else {
+          presets.push(
+            Number((balance * 0.1).toFixed(2)),
+            Number((balance * 0.25).toFixed(2)),
+            Number((balance * 0.5).toFixed(2))
+          );
+        }
       }
 
       const presetButtons = presets.map((amt) =>
-        Markup.button.callback(`${amt} ${symbol}`, `racedrop_set_amt_user:${amt}`)
+        Markup.button.callback(`${formatDropAmount(amt)} ${symbol}`, `racedrop_set_amt_user:${amt}`)
       );
+
+      // Arrange buttons in clean rows
+      const keyboardRows: any[] = [];
+      if (presetButtons.length <= 3) {
+        keyboardRows.push(presetButtons);
+      } else {
+        keyboardRows.push(presetButtons.slice(0, 3));
+        keyboardRows.push(presetButtons.slice(3));
+      }
+
+      keyboardRows.push([
+        Markup.button.callback('✏️ Custom Amount', 'racedrop_prompt_custom_amt'),
+        Markup.button.callback('❌ Cancel', 'racedrop_cancel'),
+      ]);
 
       const text =
         `🪙 <b>Selected Token:</b> <code>${symbol}</code>\n` +
         `💰 <b>Available Balance:</b> <code>${formatDropAmount(balance)} ${symbol}</code>\n\n` +
         `👉 <b>Step 1 of 2: Amount of tokens per user to claim</b>\n\n` +
         `How many <b>${symbol}</b> should each user receive when they claim?\n\n` +
-        `<i>Reply with the amount per user (e.g. <code>${presets[0]}</code>) or tap a preset below:</i>`;
+        `Tap a preset below or <b>reply with any custom amount</b> in this chat (e.g. <code>${presets[0] || '100'}</code>):`;
 
       await ctx.editMessageText(text, {
         parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          presetButtons,
-          [Markup.button.callback('❌ Cancel', 'racedrop_cancel')],
-        ]),
+        ...Markup.inlineKeyboard(keyboardRows),
       }).catch(async () => {
         await ctx.reply(text, {
           parse_mode: 'HTML',
-          ...Markup.inlineKeyboard([
-            presetButtons,
-            [Markup.button.callback('❌ Cancel', 'racedrop_cancel')],
-          ]),
+          ...Markup.inlineKeyboard(keyboardRows),
         });
       });
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
+  });
+
+  // ── Action: racedrop_prompt_custom_amt & racedrop_prompt_custom_claims ──────
+  bot.action('racedrop_prompt_custom_amt', async (ctx) => {
+    await ctx.answerCbQuery('💡 Type any custom amount in this chat (e.g. 300, 750, 5000)').catch(() => {});
+  });
+
+  bot.action('racedrop_prompt_custom_claims', async (ctx) => {
+    await ctx.answerCbQuery('💡 Type the number of users in this chat (e.g. 15, 30, 50)').catch(() => {});
   });
 
   // ── Action: racedrop_set_amt_user:<amount> (Step 2 -> Step 3) ──────────────
@@ -1246,7 +1366,7 @@ export function setupRaceDropRoutes(
 
   // ── Action: racedrop_cancel ────────────────────────────────────────────────
   bot.action('racedrop_cancel', async (ctx) => {
-    userPendingActions.delete(ctx.from!.id);
+    await clearRaceDropWizardState(ctx.from!.id, userPendingActions);
     await ctx.answerCbQuery('RaceDrop cancelled.').catch(() => {});
     await ctx.deleteMessage().catch(() => {});
   });
