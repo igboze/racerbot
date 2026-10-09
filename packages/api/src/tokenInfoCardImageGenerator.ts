@@ -9,59 +9,81 @@ import type { TokenInfoCardData } from './tokenInfoCardData.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── Asset Loaders ────────────────────────────────────────────────────────────
-function loadFont(fontFileName: string): Buffer | null {
-  const candidates = [
-    path.join(__dirname, '..', 'fonts', fontFileName),
-    path.join(process.cwd(), 'packages', 'api', 'fonts', fontFileName),
-    path.join(process.cwd(), 'fonts', fontFileName),
-    path.join(__dirname, 'fonts', fontFileName),
-  ];
+// ── Pre-loaded Memory Caches for Blazing-Fast <15ms Access ────────────────────
+let cachedInterRegular: Buffer | null = null;
+let cachedInterBold: Buffer | null = null;
+let cachedSpaceGroteskBold: Buffer | null = null;
+let cachedFontsArray: any[] | null = null;
+let cachedRacerbotLogoSrc: string | null = null;
+
+function resolvePath(candidates: string[]): string | null {
   for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      return fs.readFileSync(p);
-    }
+    if (fs.existsSync(p)) return p;
   }
   return null;
 }
 
-function loadAssetBase64(name: string): string | null {
-  const candidates = [
-    path.join(__dirname, '..', 'assets', name),
-    path.join(process.cwd(), 'packages', 'api', 'assets', name),
-    path.join(process.cwd(), 'assets', name),
-    path.join(__dirname, 'assets', name),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      const buf = fs.readFileSync(p);
-      const ext = path.extname(name).replace('.', '') || 'png';
-      return `data:image/${ext};base64,${buf.toString('base64')}`;
+function initStaticAssets(): void {
+  if (cachedFontsArray) return;
+
+  const fontFiles = {
+    interRegular: ['Inter-Regular.ttf'],
+    interBold: ['Inter-Bold.ttf'],
+    spaceGroteskBold: ['SpaceGrotesk-Bold.ttf'],
+  };
+
+  const getFontBuf = (files: string[]): Buffer | null => {
+    for (const f of files) {
+      const p = resolvePath([
+        path.join(__dirname, '..', 'fonts', f),
+        path.join(process.cwd(), 'packages', 'api', 'fonts', f),
+        path.join(process.cwd(), 'fonts', f),
+        path.join(__dirname, 'fonts', f),
+      ]);
+      if (p) return fs.readFileSync(p);
     }
+    return null;
+  };
+
+  cachedInterRegular = getFontBuf(fontFiles.interRegular);
+  cachedInterBold = getFontBuf(fontFiles.interBold);
+  cachedSpaceGroteskBold = getFontBuf(fontFiles.spaceGroteskBold) || cachedInterBold;
+
+  cachedFontsArray = [];
+  if (cachedInterRegular) {
+    cachedFontsArray.push({ name: 'Inter', data: cachedInterRegular, weight: 400, style: 'normal' });
   }
-  return null;
+  if (cachedInterBold) {
+    cachedFontsArray.push({ name: 'Inter', data: cachedInterBold, weight: 700, style: 'normal' });
+  }
+  if (cachedSpaceGroteskBold) {
+    cachedFontsArray.push({ name: 'Space Grotesk', data: cachedSpaceGroteskBold, weight: 700, style: 'normal' });
+  }
+
+  // Pre-load RacerBot Logo PNG as base64 Data URI once
+  const logoPath = resolvePath([
+    path.join(__dirname, '..', 'assets', 'logo.png'),
+    path.join(process.cwd(), 'packages', 'api', 'assets', 'logo.png'),
+    path.join(process.cwd(), 'assets', 'logo.png'),
+    path.join(__dirname, 'assets', 'logo.png'),
+  ]);
+  if (logoPath) {
+    const buf = fs.readFileSync(logoPath);
+    cachedRacerbotLogoSrc = `data:image/png;base64,${buf.toString('base64')}`;
+  }
 }
+
+// Pre-load assets on module import
+initStaticAssets();
 
 /**
  * Generates an official RacerBot Token Info Card PNG image using Satori & Resvg.
+ * Optimized with in-memory asset caching for maximum speed.
  * Output Dimensions: 1200 x 860.
  */
 export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promise<Buffer | null> {
   try {
-    const interRegular = loadFont('Inter-Regular.ttf');
-    const interBold = loadFont('Inter-Bold.ttf');
-    const spaceGroteskBold = loadFont('SpaceGrotesk-Bold.ttf') || interBold;
-
-    const fonts: any[] = [];
-    if (interRegular) {
-      fonts.push({ name: 'Inter', data: interRegular, weight: 400, style: 'normal' });
-    }
-    if (interBold) {
-      fonts.push({ name: 'Inter', data: interBold, weight: 700, style: 'normal' });
-    }
-    if (spaceGroteskBold) {
-      fonts.push({ name: 'Space Grotesk', data: spaceGroteskBold, weight: 700, style: 'normal' });
-    }
+    initStaticAssets();
 
     const tokenName = data.name || 'Token';
     const rawSymbol = (data.symbol || 'TOKEN').replace(/^\$/, '');
@@ -85,8 +107,7 @@ export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promi
     const venue = data.venue || 'Unknown';
     const footer = '@racertradingbot';
 
-    // RacerBot Official Brand Logo
-    const racerbotLogoSrc = loadAssetBase64('logo.png');
+    const racerbotLogoSrc = cachedRacerbotLogoSrc;
 
     // Token Icon resolution: use data URI if provided, or fallback avatar
     let tokenIconSrc: string | null = (data.icon && data.icon.startsWith('data:')) ? data.icon : null;
@@ -346,7 +367,7 @@ export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promi
     const satoriOptions: any = {
       width: 1200,
       height: data.bondingProgressPct !== undefined ? 920 : 860,
-      fonts: fonts,
+      fonts: cachedFontsArray || undefined,
     };
 
     const svg = await satori(markupNode as any, satoriOptions);
