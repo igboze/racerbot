@@ -101,6 +101,7 @@ export interface SwapEvent {
    * (default true) since no other message reaches the user.
    */
   notify_user?: boolean;
+  is_snipe?: boolean;
   timestamp?: number;
 }
 
