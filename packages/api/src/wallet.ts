@@ -2589,9 +2589,9 @@ export async function payReferralReward(
  * and RPC. Catches all tokens inside the wallet, creates or updates positions, and initializes the
  * entry price baseline for PNL calculation from the point of discovery.
  */
-export async function syncUserTokenDeposits(userId: string, subaccountId: string): Promise<number> {
+export async function syncUserTokenDeposits(userId: string, subaccountId: string, forceRefresh = false): Promise<number> {
   const lastSync = lastSyncDepositsMap.get(userId);
-  if (lastSync && Date.now() - lastSync < 10_000) {
+  if (!forceRefresh && lastSync && Date.now() - lastSync < 10_000) {
     return 0;
   }
   lastSyncDepositsMap.set(userId, Date.now());
@@ -2600,12 +2600,13 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
   try {
     const discoveredTokens = new Set<string>();
     const indexerBalances = new Map<string, string>();
+    const indexerTimeoutMs = forceRefresh ? 2000 : 3500;
 
     // 1. Fetch FT holdings across FastNEAR and NearBlocks in parallel
     const fastnearPromise = (async () => {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
+        const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
         const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
         const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
         const res = await fetch(url, { signal: controller.signal });
@@ -2634,7 +2635,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     const nearblocksPromise = (async () => {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3500);
+        const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
         const res = await fetch(`https://api.nearblocks.io/v1/account/${subaccountId}/inventory`, {
           signal: controller.signal,
         });
