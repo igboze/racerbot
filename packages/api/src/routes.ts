@@ -65,6 +65,7 @@ import {
   unwrapUserWrapNear,
   withdrawFunds,
   withdrawSuiFunds,
+  withdrawTokenFunds,
   syncUserTokenDeposits,
   getNearUsdPrice,
   payReferralReward,
@@ -1602,7 +1603,9 @@ function getUserFriendlyError(error: Error | string): string {
     return errorMsg.slice(0, 280);
   if (r.includes('insufficient near') || r.includes('not enough near'))
     return errorMsg.slice(0, 280);
-  if (r.includes('insufficient token balance'))
+  if (r.includes('insufficient token balance') || r.includes('you have 0'))
+    return errorMsg.slice(0, 280);
+  if (r.includes('amount exceeds') || r.includes('recipient is not registered') || r.includes('invalid destination'))
     return errorMsg.slice(0, 280);
   if (r.includes("doesn't have enough balance") || r.includes('does not have enough balance') || r.includes('not enough balance'))
     return 'Insufficient NEAR balance — your wallet does not have enough NEAR. Please deposit more NEAR and retry.';
@@ -4237,8 +4240,9 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // Navigation buttons
+      // Send Token & Navigation buttons
       buttons.push([
+        cb('📤 Send Token', `send_token_prompt:${positionId}`, 'primary'),
         cb(
           showNetWorth ? '🙈 Hide NW' : '👁 Show NW',
           `token_detail:${positionId}:${showNetWorth ? 0 : 1}`,
@@ -4961,6 +4965,47 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // Helper: parse withdrawal/send command or prompt arguments
+  const parseTransferArgs = (parts: string[]): {
+    destination?: string;
+    amount?: number | 'all';
+    token?: string;
+  } => {
+    if (parts.length === 0) return {};
+    let destination: string | undefined;
+    let amount: number | 'all' | undefined;
+    let token: string | undefined;
+    const remaining: string[] = [];
+
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (amount === undefined && (lower === 'all' || (/^\d+(\.\d+)?$/.test(lower) && !isNaN(parseFloat(lower))))) {
+        amount = lower === 'all' ? 'all' : parseFloat(lower);
+      } else {
+        remaining.push(part);
+      }
+    }
+
+    if (remaining.length === 1) {
+      destination = remaining[0];
+    } else if (remaining.length >= 2) {
+      const first = remaining[0];
+      const second = remaining[1];
+      if (second.includes('.tkn.near') || (!second.includes('.') && !isValidSuiAddress(second))) {
+        destination = first;
+        token = second;
+      } else if (first.includes('.tkn.near') || (!first.includes('.') && !isValidSuiAddress(first))) {
+        token = first;
+        destination = second;
+      } else {
+        destination = first;
+        token = second;
+      }
+    }
+
+    return { destination, amount, token };
+  };
+
   bot.action('wallet_withdraw_prompt', async (ctx) => {
     const telegramId = ctx.from!.id;
     userPendingActions.set(telegramId, {
@@ -4969,19 +5014,128 @@ export function setupRoutes(bot: Telegraf): void {
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `💸 *Withdraw Funds (NEAR & SUI)*\n\n` +
-      `Reply with the recipient address and amount, for example:\n` +
+      `💸 *Withdraw & Send Funds (NEAR, SUI & Tokens)*\n\n` +
+      `Reply with the recipient address, amount, and optional token, for example:\n` +
       `• *NEAR*: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
+      `• *Token*: \`mywallet.near 100 LONK\` or \`mywallet.near all blackdragon.tkn.near\`\n` +
       `• *SUI*: \`0x1234...abcd 1.0\` or \`0x1234...abcd all\`\n\n` +
-      `_Type /cancel to abort withdrawal._`,
+      `_Or tap below to choose a token from your bags to send:_`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
+          [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
+        ]),
+      }
+    );
+  });
+
+  bot.action('wallet_withdraw_tokens_list', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply('Please run /start first.');
+      return;
+    }
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    if (positions.length === 0) {
+      await ctx.reply(
+        '📭 *No Token Holdings*\n\n' +
+        'You currently have no token holdings in your wallet to send.\n' +
+        'Deposit tokens to your wallet or buy some first!',
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [cb('💸 Withdraw NEAR/SUI', 'wallet_withdraw_prompt', 'primary')],
+            [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
+          ]),
+        }
+      );
+      return;
+    }
+
+    const btnRows: any[] = [];
+    for (const pos of positions.slice(0, 15)) {
+      const info = await getTokenInfo(pos.token_address, false).catch(() => null);
+      const sym = info?.symbol || pos.token_address.split('.')[0].toUpperCase();
+      const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+      const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
+      let humanQty = '';
+      try {
+        const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
+        const qty = Number(rawBig) / Math.pow(10, decimals);
+        humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      } catch {
+        humanQty = pos.quantity_held;
+      }
+      btnRows.push([cb(`📤 Send ${sym} (${humanQty})`, `send_token_prompt:${pos.id}`, 'primary')]);
+    }
+    btnRows.push([
+      cb('💸 Withdraw NEAR/SUI', 'wallet_withdraw_prompt', 'primary'),
+      cb('🔙 Back to Wallet', 'wallet_refresh', 'primary'),
+    ]);
+
+    await ctx.reply(
+      '🎒 *Select Token to Send*\n\n' +
+      'Choose a token from your bags to withdraw / send:',
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard(btnRows) }
+    );
+  });
+
+  bot.action(/^send_token_prompt:([^:]+)$/, async (ctx) => {
+    const positionId = ctx.match![1];
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply('Please run /start first.');
+      return;
+    }
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    const pos = positions.find((p) => p.id === positionId);
+    if (!pos) {
+      await ctx.reply('Position not found or already closed.');
+      return;
+    }
+
+    const info = await getTokenInfo(pos.token_address, false).catch(() => null);
+    const sym = info?.symbol || pos.token_address.split('.')[0].toUpperCase();
+    const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+    const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
+    let humanQty = '';
+    try {
+      const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
+      const qty = Number(rawBig) / Math.pow(10, decimals);
+      humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 4 });
+    } catch {
+      humanQty = pos.quantity_held;
+    }
+
+    userPendingActions.set(telegramId, {
+      action: 'withdraw',
+      tokenAddress: pos.token_address,
+      positionId: pos.id,
+      expiresAt: Date.now() + 180000,
+    });
+
+    await ctx.reply(
+      `📤 *Send $${sanitizeMd(sym)}*\n\n` +
+      `💰 Balance: \`${humanQty} ${sanitizeMd(sym)}\`\n` +
+      `📋 Contract: \`${pos.token_address}\`\n\n` +
+      `Reply with the recipient address and amount, for example:\n` +
+      `• \`recipient.near 100\`\n` +
+      `• \`recipient.near all\`\n\n` +
+      `_Type /cancel to abort transfer._`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // ── /withdraw <destination> [amount] ──────────────────────────────────────
-  bot.command('withdraw', async (ctx) => {
+  // ── /withdraw, /send, /transfer <destination> [amount] [token] ─────────────
+  const handleWithdrawCommand = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
-    const args = ctx.message!.text!.split(' ').slice(1).filter(Boolean);
+    const msgText = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const args = msgText.split(' ').slice(1).filter(Boolean);
 
     if (args.length === 0) {
       userPendingActions.set(telegramId, {
@@ -4989,30 +5143,66 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 180000,
       });
       await ctx.reply(
-        `💸 *Withdraw Funds (NEAR & SUI)*\n\n` +
-        `Usage: \`/withdraw <destination_address> [amount]\`\n\n` +
-        `Or reply directly now with:\n` +
-        `• NEAR: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
-        `• SUI: \`0x1234...abcd 1.0\` or \`0x1234...abcd all\``,
-        { parse_mode: 'Markdown' }
+        `💸 *Withdraw & Send Funds (NEAR, SUI & Tokens)*\n\n` +
+        `*Usage:*\n` +
+        `• Native NEAR: \`/send <destination> <amount>\`\n` +
+        `• Token: \`/send <destination> <amount> <token>\`\n` +
+        `• Native SUI: \`/send <sui_address> <amount>\`\n\n` +
+        `*Examples:*\n` +
+        `• \`/send mywallet.near 1.5\`\n` +
+        `• \`/send mywallet.near 500 LONK\`\n` +
+        `• \`/send mywallet.near all blackdragon.tkn.near\`\n` +
+        `• \`/send 0x1234...abcd 1.0\`\n\n` +
+        `Or reply directly now with destination and amount!`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
+            [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
+          ]),
+        }
       );
       return;
     }
 
-    const destination = args[0].trim();
-    const amountArg = args[1]?.toLowerCase();
-    const amountNum: number | 'all' = amountArg === 'all' || !amountArg ? 'all' : parseFloat(amountArg);
+    const parsed = parseTransferArgs(args);
+    if (!parsed.destination) {
+      await ctx.reply('❌ Please specify a destination recipient address.');
+      return;
+    }
+
+    const destination = parsed.destination.trim();
+    const amountNum: number | 'all' = parsed.amount === undefined || parsed.amount === 'all' ? 'all' : parsed.amount;
+    const tokenArg = parsed.token;
 
     if (typeof amountNum === 'number' && (isNaN(amountNum) || amountNum <= 0)) {
       await ctx.reply('❌ Invalid amount. Please specify a positive number or "all".');
       return;
     }
 
-    await ctx.reply(`⏳ Processing withdrawal to \`${destination}\`...`, { parse_mode: 'Markdown' });
+    const targetDesc = tokenArg ? `token \`${tokenArg}\`` : 'funds';
+    await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${destination}\`...`, { parse_mode: 'Markdown' });
 
     try {
       const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
-      if (isSuiDest) {
+      const isExplicitToken = tokenArg && tokenArg.toLowerCase() !== 'near' && tokenArg.toLowerCase() !== 'sui';
+
+      if (isExplicitToken) {
+        const result = await withdrawTokenFunds(telegramId, tokenArg, destination, amountNum);
+        const explorerUrl = result.chain === 'sui'
+          ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+          : `https://nearblocks.io/txns/${result.txHash}`;
+        const explorerName = result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+
+        await ctx.reply(
+          `✅ *Token Transfer Successful!*\n\n` +
+          `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+          `📬 Destination: \`${result.destination}\`\n` +
+          `🪙 Contract: \`${result.tokenAddress}\`\n\n` +
+          `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (isSuiDest) {
         const result = await withdrawSuiFunds(telegramId, destination, amountNum);
         await ctx.reply(
           `✅ *SUI Withdrawal Successful!*\n\n` +
@@ -5034,7 +5224,9 @@ export function setupRoutes(bot: Telegraf): void {
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
-  });
+  };
+
+  bot.command(['withdraw', 'send', 'transfer'], handleWithdrawCommand);
 
   // ── /settings & /filters — Interactive Settings Dashboard ─────────────────
   const handleSettings = async (ctx: Context) => {
@@ -7650,18 +7842,47 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'withdraw') {
         const parts = rawText.split(' ').filter(Boolean);
-        const dest = parts[0];
-        const amtArg = parts[1]?.toLowerCase();
-        const amt: number | 'all' = amtArg === 'all' || !amtArg ? 'all' : parseFloat(amtArg);
-        if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".\n\nExample: `mywallet.near 1.5` or `mywallet.near all`', { parse_mode: 'Markdown' });
-          userPendingActions.set(telegramId, { action: 'withdraw', expiresAt: Date.now() + 180000 });
+        const parsed = parseTransferArgs(parts);
+
+        // If user was prompted for a specific token (e.g. from send_token_prompt)
+        const tokenToUse = pending.tokenAddress || parsed.token;
+        const dest = parsed.destination;
+        const amt: number | 'all' = parsed.amount === undefined ? 'all' : parsed.amount;
+
+        if (!dest) {
+          await ctx.reply('❌ Destination address is required.\n\nExample: `recipient.near 100` or `recipient.near all`', { parse_mode: 'Markdown' });
+          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
           return;
         }
-        await ctx.reply(`⏳ Processing withdrawal to \`${dest}\`...`, { parse_mode: 'Markdown' });
+
+        if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".\n\nExample: `mywallet.near 1.5` or `mywallet.near all`', { parse_mode: 'Markdown' });
+          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+          return;
+        }
+
+        const isExplicitToken = tokenToUse && tokenToUse.toLowerCase() !== 'near' && tokenToUse.toLowerCase() !== 'sui';
+        const targetDesc = isExplicitToken ? `token \`${tokenToUse}\`` : 'funds';
+        await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${dest}\`...`, { parse_mode: 'Markdown' });
+
         try {
           const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
-          if (isSuiDest) {
+          if (isExplicitToken) {
+            const result = await withdrawTokenFunds(telegramId, tokenToUse, dest, amt);
+            const explorerUrl = result.chain === 'sui'
+              ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+              : `https://nearblocks.io/txns/${result.txHash}`;
+            const explorerName = result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+
+            await ctx.reply(
+              `✅ *Token Transfer Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+              `📬 Destination: \`${result.destination}\`\n` +
+              `🪙 Contract: \`${result.tokenAddress}\`\n\n` +
+              `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else if (isSuiDest) {
             const result = await withdrawSuiFunds(telegramId, dest, amt);
             await ctx.reply(
               `✅ *SUI Withdrawal Successful!*\n\n` +

@@ -22,6 +22,9 @@ import {
   resolveTokenAddressFromKey,
   getShortTokenKey,
   registerShortTokenKey,
+  isValidNearAccountId,
+  parseTokenUnits,
+  formatTokenUnits,
   type VenueName,
   isTradableVenue,
 } from '@racerbot/shared';
@@ -52,7 +55,7 @@ import {
   type UserRecord,
   type UserWalletRecord,
 } from '@racerbot/db';
-import { utils as nearUtils, keyStores, KeyPair, connect } from 'near-api-js';
+import { utils as nearUtils, keyStores, KeyPair, connect, transactions } from 'near-api-js';
 import { MAIN_WALLET_PRIVATE_KEY, RACERBOT_PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
 import { notifyTokenDeposit } from './notify.js';
 import { recordUserTrade } from './depositWatcher.js';
@@ -2282,6 +2285,278 @@ export async function withdrawSuiFunds(
     destination,
   };
 }
+
+/**
+ * Withdraw / send NEP-141 or SUI token from user's wallet to an external destination address.
+ * Automatically checks recipient storage registration (for NEAR NEP-141) and registers them if needed,
+ * validates user balance, converts human amounts according to token decimals, and updates position quantities.
+ */
+export async function withdrawTokenFunds(
+  telegramId: number,
+  tokenInput: string,
+  destination: string,
+  amount?: number | 'all' | string
+): Promise<{
+  txHash: string;
+  amountWithdrawn: string;
+  symbol: string;
+  tokenAddress: string;
+  destination: string;
+  chain: 'near' | 'sui';
+}> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    throw new Error('User not found. Run /start first.');
+  }
+
+  destination = destination.trim();
+  if (!destination) {
+    throw new Error('Invalid destination account address.');
+  }
+
+  const rawToken = tokenInput.trim();
+  if (!rawToken) {
+    throw new Error('Token contract or symbol is required.');
+  }
+
+  // 1. Resolve token address from holdings or input
+  const openPositions = await getOpenPositions(user.id).catch(() => []);
+  let resolvedAddress = rawToken;
+
+  // Check if rawToken matches any user position by token_address, symbol, or shortKey
+  const matchingPos = openPositions.find((p) => {
+    if (p.token_address.toLowerCase() === rawToken.toLowerCase()) return true;
+    const short = getShortTokenKey(p.token_address);
+    if (short.toLowerCase() === rawToken.toLowerCase()) return true;
+    return false;
+  });
+
+  if (matchingPos) {
+    resolvedAddress = matchingPos.token_address;
+  } else {
+    // Check ticker resolution
+    const resolvedFromKey = resolveTokenAddressFromKey(rawToken);
+    if (resolvedFromKey) {
+      resolvedAddress = resolvedFromKey;
+    }
+  }
+
+  const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
+  const isSuiTok = isSuiToken(resolvedAddress);
+
+  if (isSuiDest || isSuiTok) {
+    // ── SUI Token Withdrawal ────────────────────────────────────────────────
+    if (!user.sui_address || !user.sui_private_key_enc) {
+      throw new Error('SUI wallet not configured. Please initialize your wallet via /start.');
+    }
+    if (!isValidSuiAddress(destination)) {
+      throw new Error('Invalid destination SUI address. Must be a valid 0x... hex address.');
+    }
+    if (destination.toLowerCase() === user.sui_address.toLowerCase()) {
+      throw new Error('Cannot withdraw to your own wallet address.');
+    }
+
+    const keypair = restoreSuiKeypair(user.sui_private_key_enc, MASTER_KEY);
+    const [tokenBal, meta] = await Promise.all([
+      getSuiTokenBalance(user.sui_address, resolvedAddress),
+      getSuiTokenMetadata(resolvedAddress).catch(() => ({ name: 'Token', symbol: 'TOKEN', decimals: 6 })),
+    ]);
+
+    if (!tokenBal || tokenBal.raw <= 0n || tokenBal.coinObjectIds.length === 0) {
+      throw new Error(`You have 0 ${meta.symbol} in your SUI wallet.`);
+    }
+
+    let withdrawRaw: bigint;
+    if (!amount || amount === 'all') {
+      withdrawRaw = tokenBal.raw;
+    } else {
+      withdrawRaw = parseTokenUnits(String(amount), meta.decimals);
+      if (withdrawRaw > tokenBal.raw) {
+        throw new Error(`Amount exceeds your balance (${tokenBal.formatted} ${meta.symbol}).`);
+      }
+    }
+
+    if (withdrawRaw <= 0n) {
+      throw new Error('Withdrawal amount must be greater than 0.');
+    }
+
+    const tx = new Transaction();
+    tx.setSender(user.sui_address);
+    let primaryCoin = tx.object(tokenBal.coinObjectIds[0]);
+    if (tokenBal.coinObjectIds.length > 1) {
+      tx.mergeCoins(primaryCoin, tokenBal.coinObjectIds.slice(1).map((id) => tx.object(id)));
+    }
+    const [coinToSend] = tx.splitCoins(primaryCoin, [tx.pure.u64(withdrawRaw.toString())]);
+    tx.transferObjects([coinToSend], destination);
+
+    const res = await executeSuiTransaction(tx, keypair);
+    if (res.status !== 'success') {
+      throw new Error(`SUI token transfer failed: ${res.errorMessage || 'Transaction execution rejected'}`);
+    }
+
+    // Invalidate caches & update position
+    balanceCache.delete(telegramId);
+    tradeBalanceCache.delete(telegramId);
+    suiTradeBalanceCache.delete(telegramId);
+
+    const pos = openPositions.find((p) => p.token_address === resolvedAddress);
+    if (pos) {
+      const remaining = tokenBal.raw - withdrawRaw;
+      if (remaining <= 0n) {
+        await updatePosition({ position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' });
+      } else {
+        await updatePosition({ position_id: pos.id, quantity_held: remaining.toString() });
+      }
+    }
+
+    const formattedWithdrawn = formatTokenUnits(withdrawRaw, meta.decimals);
+    return {
+      txHash: res.digest,
+      amountWithdrawn: formattedWithdrawn,
+      symbol: meta.symbol,
+      tokenAddress: resolvedAddress,
+      destination,
+      chain: 'sui',
+    };
+  }
+
+  // ── NEAR NEP-141 Token Withdrawal ─────────────────────────────────────────
+  if (!isValidNearAccountId(destination)) {
+    throw new Error('Invalid destination NEAR account address.');
+  }
+  if (destination === user.subaccount_id) {
+    throw new Error('Cannot withdraw to your own wallet address.');
+  }
+
+  // Fetch token metadata
+  const metadata = await near.getTokenMetadata(resolvedAddress).catch(() => null);
+  if (!metadata || metadata.decimals === undefined) {
+    throw new Error(`Could not find NEP-141 metadata for "${resolvedAddress}". Verify the token address.`);
+  }
+
+  const decimals = metadata.decimals ?? 18;
+  const symbol = metadata.symbol || resolvedAddress.split('.')[0].toUpperCase();
+
+  // Fetch user's token balance
+  const balanceRaw = await near.getTokenBalance(resolvedAddress, user.subaccount_id).catch(() => '0');
+  const rawBalBig = BigInt(balanceRaw || '0');
+  if (rawBalBig <= 0n) {
+    throw new Error(`You have 0 ${symbol} in your wallet.`);
+  }
+
+  let withdrawRaw: bigint;
+  if (!amount || amount === 'all') {
+    withdrawRaw = rawBalBig;
+  } else {
+    withdrawRaw = parseTokenUnits(String(amount), decimals);
+    if (withdrawRaw > rawBalBig) {
+      const humanHeld = formatTokenUnits(rawBalBig, decimals);
+      throw new Error(`Amount exceeds your balance (${humanHeld} ${symbol}).`);
+    }
+  }
+
+  if (withdrawRaw <= 0n) {
+    throw new Error('Withdrawal amount must be greater than 0.');
+  }
+
+  // Storage registration check for recipient
+  let needsRegistration = false;
+  let minDeposit = BigInt('1250000000000000000000'); // 0.00125 NEAR
+  try {
+    const isRegistered = await near.checkStorageRegistered(destination, resolvedAddress);
+    if (!isRegistered) {
+      const bounds = await near.view<any>(resolvedAddress, 'storage_balance_bounds', {}).catch(() => null);
+      if (bounds?.min) {
+        minDeposit = BigInt(bounds.min);
+      }
+      needsRegistration = true;
+    }
+  } catch {
+    // If view fails or contract doesn't support storage_balance_of, proceed with direct ft_transfer
+  }
+
+  // Pre-flight check: ensure user has enough native NEAR for gas and storage deposit
+  const userNearYocto = BigInt(await near.getNearBalance(user.subaccount_id).catch(() => '0'));
+  const gasReserveYocto = BigInt('15000000000000000000000'); // 0.015 NEAR gas
+  const totalNeededNearYocto = (needsRegistration ? minDeposit : 0n) + gasReserveYocto;
+  if (userNearYocto < totalNeededNearYocto) {
+    if (needsRegistration) {
+      const neededFormatted = (Number(minDeposit / 1000000000000000000n) / 1e6).toFixed(4);
+      throw new Error(`Recipient is not registered for ${symbol}. Your wallet needs ~${neededFormatted} NEAR to cover recipient storage deposit.`);
+    } else {
+      throw new Error('Insufficient NEAR balance for transaction gas (~0.015 NEAR needed).');
+    }
+  }
+
+  const actions: any[] = [];
+  if (needsRegistration) {
+    actions.push(
+      transactions.functionCall(
+        'storage_deposit',
+        { account_id: destination, registration_only: true },
+        BigInt('30000000000000'), // 30 Tgas
+        minDeposit
+      )
+    );
+  }
+  actions.push(
+    transactions.functionCall(
+      'ft_transfer',
+      {
+        receiver_id: destination,
+        amount: withdrawRaw.toString(),
+        memo: 'Sent via RacerBot',
+      },
+      BigInt('50000000000000'), // 50 Tgas
+      BigInt('1') // 1 yoctoNEAR attached deposit required by NEP-141
+    )
+  );
+
+  const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+  const keyPair = KeyPair.fromString(privateKey as any);
+
+  const res = await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
+    return await account.signAndSendTransaction({
+      receiverId: resolvedAddress,
+      actions,
+    });
+  });
+
+  if (res?.status && typeof res.status === 'object' && 'Failure' in res.status) {
+    throw new Error(`Token transfer failed on-chain: ${JSON.stringify(res.status.Failure)}`);
+  }
+
+  // Cache invalidation & position update
+  invalidateBalanceCache(telegramId);
+  const pos = openPositions.find((p) => p.token_address === resolvedAddress);
+  if (pos) {
+    const remaining = rawBalBig - withdrawRaw;
+    if (remaining <= 0n) {
+      await updatePosition({
+        position_id: pos.id,
+        status: 'closed',
+        closed_at: new Date(),
+        quantity_held: '0',
+      });
+    } else {
+      await updatePosition({
+        position_id: pos.id,
+        quantity_held: remaining.toString(),
+      });
+    }
+  }
+
+  const formattedWithdrawn = formatTokenUnits(withdrawRaw, decimals);
+  return {
+    txHash: res.transaction.hash,
+    amountWithdrawn: formattedWithdrawn,
+    symbol,
+    tokenAddress: resolvedAddress,
+    destination,
+    chain: 'near',
+  };
+}
+
 
 /**
  * Pay accrued referral rewards from the treasury wallet to a referrer's
