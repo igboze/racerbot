@@ -299,7 +299,7 @@ export interface DexScreenerData {
 export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(1000),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as any;
@@ -335,10 +335,10 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
   }
 }
 
-// ── In-memory cache for token holders count (60s TTL) ────────────────────────
+// ── In-memory cache for token holders count (5-min TTL) ────────────────────────
 const holdersCountCache = new Map<string, { at: number; data: { count: number } | null }>();
-const HOLDERS_CACHE_TTL_MS = 60_000;
-const TXNS_CACHE_TTL_MS = 60_000;
+const HOLDERS_CACHE_TTL_MS = 300_000;
+const TXNS_CACHE_TTL_MS = 300_000;
 const txnsCountCache = new Map<string, { at: number; count: number }>();
 
 /**
@@ -358,7 +358,7 @@ export async function fetchTokenHoldersCount(
   // 1. Primary: NearBlocks exact holders count endpoint (returns total network-wide holders integer)
   try {
     const res = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(norm)}/holders/count`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(600),
       headers: { Accept: 'application/json' },
     });
     if (res.ok) {
@@ -378,7 +378,7 @@ export async function fetchTokenHoldersCount(
   // 2. Secondary: NearBlocks holders list (can also carry total in count field or pagination)
   try {
     const res = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(norm)}/holders?page=1&per_page=1`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(600),
       headers: { Accept: 'application/json' },
     });
     if (res.ok) {
@@ -396,12 +396,10 @@ export async function fetchTokenHoldersCount(
     }
   } catch { /* fallback */ }
 
-  // 3. FastNear API fallback — this endpoint returns at most the top 100 accounts;
-  //    do NOT use accounts.length as a total because it will always be capped at 100.
-  //    Only use it to confirm there is at least 1 holder with a non-zero balance.
+  // 3. FastNear API fallback — fast 600ms timeout
   try {
     const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(600),
     });
     if (res.ok) {
       const data = (await res.json()) as any;
@@ -409,8 +407,6 @@ export async function fetchTokenHoldersCount(
       const active = accounts.filter((a: any) => {
         try { return a.balance && BigInt(a.balance) > 0n; } catch { return false; }
       });
-      // Only return a count if fewer than 100 active — otherwise the value is capped/unreliable.
-      // If exactly 100, we cannot distinguish "exactly 100 holders" from "100+ holders" (cap hit).
       if (active.length > 0 && active.length < 100) {
         const result = { count: active.length };
         holdersCountCache.set(norm, { at: Date.now(), data: result });
@@ -439,7 +435,7 @@ export async function fetchTokenTotalTxns(
 
   try {
     const res = await fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(norm)}/txns/count`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(600),
       headers: { Accept: 'application/json' },
     });
     if (res.ok) {
