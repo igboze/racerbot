@@ -16,6 +16,9 @@ export {
   retryWithBackoff,
   sleep,
   getNearUsdPrice,
+  isValidNearAccountId,
+  parseTokenUnits,
+  formatTokenUnits,
 } from './utils.js';
 
 // Structured logging
