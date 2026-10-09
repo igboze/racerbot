@@ -51,6 +51,7 @@ import {
   type UserRecord,
   type UserWalletRecord,
   type LimitOrderRecord,
+  type PositionRecord,
 } from '@racerbot/db';
 import {
   getTokenInfo,
@@ -97,6 +98,7 @@ import {
   getShortTokenKey,
   resolveTokenAddressFromKey,
   getSuiBalance,
+  getSuiTokenBalance,
   getSuiUsdPrice,
   checkTokenSafety,
   restoreSuiKeypairFromSecret,
@@ -3603,7 +3605,7 @@ export function setupRoutes(bot: Telegraf): void {
   // pulls live pool prices (background reconcile pass).
   async function buildHoldingsView(user: UserRecord, forceRefresh: boolean) {
     // Fetch all open positions (including previously synced wallet deposits)
-    const positions = await getOpenPositions(user.id).catch(() => []);
+    let positions: PositionRecord[] = await getOpenPositions(user.id).catch(() => []);
 
     const emptyKeyboard = Markup.inlineKeyboard([
       [cb('🔄 Refresh', 'refresh_holdings', 'primary')],
@@ -3615,6 +3617,79 @@ export function setupRoutes(bot: Telegraf): void {
         Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
       ],
     ]);
+
+    // Live on-chain balance reconciliation:
+    // If a user sent out or sold tokens externally via another wallet, detect the 0 or dust balance,
+    // mark the position closed in DB immediately, and clear it from active holdings.
+    if (positions.length > 0) {
+      const balanceChecks = await Promise.allSettled(
+        positions.map(async (pos) => {
+          const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+          if (isSuiPos) {
+            if (!user.sui_address) return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            try {
+              const bal = await Promise.race([
+                getSuiTokenBalance(user.sui_address, pos.token_address),
+                new Promise<{ raw: bigint; uiAmount: number }>((_, reject) =>
+                  setTimeout(() => reject(new Error('timeout')), 3000)
+                ),
+              ]);
+              const isZero = bal.raw === 0n || bal.uiAmount < 0.000001;
+              return { isZero, rawBal: bal.raw.toString(), verified: true };
+            } catch {
+              return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            }
+          } else {
+            if (!user.subaccount_id) return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            try {
+              const rawBal = await Promise.race([
+                near.getTokenBalance(pos.token_address, user.subaccount_id),
+                new Promise<string>((_, reject) =>
+                  setTimeout(() => reject(new Error('timeout')), 3000)
+                ),
+              ]);
+              const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
+              let rawBig = 0n;
+              try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
+              const isZero = rawBig === 0n;
+              return { isZero, rawBal: clean, verified: true };
+            } catch (err: any) {
+              const msg = err?.message || '';
+              if (msg.includes('not registered') || msg.includes('does not exist')) {
+                return { isZero: true, rawBal: '0', verified: true };
+              }
+              return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            }
+          }
+        })
+      );
+
+      const activePositions: PositionRecord[] = [];
+      for (let i = 0; i < positions.length; i++) {
+        const check = balanceChecks[i];
+        const pos = positions[i];
+        if (check.status === 'fulfilled' && check.value.verified) {
+          const { isZero, rawBal } = check.value;
+          if (isZero) {
+            await updatePosition({
+              position_id: pos.id,
+              status: 'closed',
+              closed_at: new Date(),
+            }).catch(() => {});
+            console.log(`[HOLDINGS] Cleared externally transferred/zero balance token ${pos.token_address} (user ${user.id})`);
+            continue; // Dropped from active holdings!
+          } else if (rawBal && rawBal !== pos.quantity_held) {
+            pos.quantity_held = rawBal;
+            updatePosition({
+              position_id: pos.id,
+              quantity_held: rawBal,
+            }).catch(() => {});
+          }
+        }
+        activePositions.push(pos);
+      }
+      positions = activePositions;
+    }
 
     if (positions.length === 0) {
       const emptyMsg =
@@ -3670,6 +3745,16 @@ export function setupRoutes(bot: Telegraf): void {
           humanQuantity = Number(rawBig) / Math.pow(10, decimals);
         } catch {
           humanQuantity = parseFloat(pos.quantity_held) || 0;
+        }
+
+        if (humanQuantity < 0.000001) {
+          await updatePosition({
+            position_id: pos.id,
+            status: 'closed',
+            closed_at: new Date(),
+          }).catch(() => {});
+          console.log(`[HOLDINGS] Cleared dust/zero token ${pos.token_address} (user ${user.id})`);
+          continue;
         }
 
         const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
@@ -3844,7 +3929,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
         // Run live wallet deposit scan bounded to 4.5s so RPC latency never delays the user view
         await Promise.race([
-          syncUserTokenDeposits(user.id, user.subaccount_id),
+          syncUserTokenDeposits(user.id, user.subaccount_id, true),
           new Promise((resolve) => setTimeout(resolve, 4500)),
         ]).catch((err) => {
           console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
@@ -3931,7 +4016,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.command('holdings', async (ctx) => {
+  bot.command(['holdings', 'bags', 'positions'], async (ctx) => {
     try {
       await handleHoldings(ctx, true);
     } catch (err: any) {
@@ -3984,6 +4069,77 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      // Live on-chain balance check: if user transferred this token out via another wallet,
+      // close position in DB immediately and inform user.
+      let onChainZero = false;
+      let liveRawBal: string | null = null;
+      if (isSuiPos) {
+        if (user.sui_address) {
+          try {
+            const bal = await Promise.race([
+              getSuiTokenBalance(user.sui_address, position.token_address),
+              new Promise<{ raw: bigint; uiAmount: number }>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+            ]);
+            if (bal.raw === 0n || bal.uiAmount < 0.000001) {
+              onChainZero = true;
+            } else {
+              liveRawBal = bal.raw.toString();
+            }
+          } catch { /* ignore network error */ }
+        }
+      } else {
+        if (user.subaccount_id) {
+          try {
+            const rawBal = await Promise.race([
+              near.getTokenBalance(position.token_address, user.subaccount_id),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+            ]);
+            const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
+            let rawBig = 0n;
+            try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
+            if (rawBig === 0n) {
+              onChainZero = true;
+            } else {
+              liveRawBal = clean;
+            }
+          } catch (err: any) {
+            const msg = err?.message || '';
+            if (msg.includes('not registered') || msg.includes('does not exist')) {
+              onChainZero = true;
+            }
+          }
+        }
+      }
+
+      if (onChainZero) {
+        await updatePosition({
+          position_id: position.id,
+          status: 'closed',
+          closed_at: new Date(),
+        }).catch(() => {});
+        const sym = position.token_address.length > 14 ? position.token_address.slice(0, 12) + '...' : position.token_address;
+        await ctx.reply(
+          `ℹ️ You no longer hold *${sanitizeMd(sym)}* in your wallet (balance is 0).\nIt has been removed from your holdings.`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🎒 View Holdings', 'refresh_holdings')],
+              [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+            ]),
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (liveRawBal && liveRawBal !== position.quantity_held) {
+        position.quantity_held = liveRawBal;
+        updatePosition({
+          position_id: position.id,
+          quantity_held: liveRawBal,
+        }).catch(() => {});
+      }
+
        const [info, fills, triggers] = await Promise.all([
          getTokenInfo(position.token_address, false).catch(() => null),
          getFillsByPosition(positionId).catch(() => []),
@@ -3997,8 +4153,6 @@ export function setupRoutes(bot: Telegraf): void {
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-
-      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
       const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
       const liveNativeUsd = isSuiPos ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 5.16);
       const usdRate = isSuiPos ? (info?.sui_usd || liveNativeUsd) : (info?.near_usd || liveNativeUsd);
@@ -5846,10 +6000,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  // ── /positions & /pnl ─────────────────────────────────────────────────────
-  bot.command('positions', async (ctx) => {
-    await handleHoldings(ctx, false);
-  });
+  // ── /pnl handled via /holdings & /positions ─────────────────────────────
 
 
 
