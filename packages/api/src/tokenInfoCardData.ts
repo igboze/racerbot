@@ -143,9 +143,9 @@ export function toTokenInfoCardData(
     });
   }
 
-  // Icon: pass only if ft_metadata icon is already in hand as a data URI
-  const rawIcon = (info as any).icon || (info as any).icon_url;
-  const icon = (typeof rawIcon === 'string' && rawIcon.startsWith('data:')) ? rawIcon : undefined;
+  // Icon: pass ft_metadata icon or image URL
+  const rawIcon = info.icon || (info as any).icon_url;
+  const icon = (typeof rawIcon === 'string' && rawIcon.trim().length > 0) ? rawIcon.trim() : undefined;
 
   return {
     tokenAddress: info.address,
