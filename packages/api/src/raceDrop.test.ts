@@ -64,6 +64,17 @@ describe('RaceDrop formatting and card generators', () => {
     );
   });
 
+  it('builds group card displaying recent claimers when claims exist', () => {
+    const claimants = [
+      { claimant_name: '@alice', claim_amount: '10000' },
+      { claimant_name: '@bob', claim_amount: '10000' },
+    ];
+    const card = buildRaceDropGroupCard(mockDropWithName, 'satoshi', 'racertradingbot', claimants);
+    expect(card.text).toContain('Claimers (2/10):');
+    expect(card.text).toContain('@alice');
+    expect(card.text).toContain('@bob');
+  });
+
   it('builds interactive Claim MENU page with Claim Now button', () => {
     const card = buildRaceDropClaimMenuCard(mockDropWithName, false, 'satoshi', 'racertradingbot');
     expect(card.text).toContain('🏎️ <b>Satoshi Nakamoto created a RaceDrop!</b> 🏎️');

@@ -271,6 +271,7 @@ export interface RaceDropClaimRecord {
   drop_id: string;
   user_id: string;
   telegram_id: number;
+  claimant_name?: string;
   claim_amount: string;
   is_new_user: boolean;
   tx_hash?: string;
@@ -2780,6 +2781,7 @@ function rowToRaceDropClaim(row: any): RaceDropClaimRecord {
     drop_id: row.drop_id,
     user_id: row.user_id,
     telegram_id: parseInt(row.telegram_id, 10),
+    claimant_name: row.claimant_name || undefined,
     claim_amount: row.claim_amount.toString(),
     is_new_user: Boolean(row.is_new_user),
     tx_hash: row.tx_hash || undefined,
@@ -2848,6 +2850,35 @@ export async function updateRaceDropGroupMessage(
     'UPDATE race_drops SET group_chat_id = $2, group_message_id = $3 WHERE id = $1',
     [id, groupChatId, groupMessageId]
   );
+  await recordRaceDropGroupMessage(id, groupChatId, groupMessageId);
+}
+
+export async function recordRaceDropGroupMessage(
+  dropId: string,
+  chatId: number,
+  messageId: number
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO race_drop_group_messages (drop_id, chat_id, message_id, created_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (drop_id, chat_id) DO UPDATE SET message_id = $3`,
+    [dropId, chatId, messageId]
+  );
+}
+
+export async function getRaceDropGroupMessages(
+  dropId: string
+): Promise<Array<{ chat_id: number; message_id: number }>> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT chat_id, message_id FROM race_drop_group_messages WHERE drop_id = $1`,
+    [dropId]
+  );
+  return res.rows.map((r) => ({
+    chat_id: parseInt(r.chat_id, 10),
+    message_id: parseInt(r.message_id, 10),
+  }));
 }
 
 export async function hasUserClaimedDrop(dropId: string, userId: string): Promise<boolean> {
@@ -2863,6 +2894,7 @@ export async function recordRaceDropClaim(params: {
   dropId: string;
   userId: string;
   telegramId: number;
+  claimantName?: string;
   claimAmount: string;
   isNewUser: boolean;
   txHash?: string;
@@ -2889,13 +2921,14 @@ export async function recordRaceDropClaim(params: {
     }
 
     const claimRes = await client.query(
-      `INSERT INTO race_drop_claims (drop_id, user_id, telegram_id, claim_amount, is_new_user, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO race_drop_claims (drop_id, user_id, telegram_id, claimant_name, claim_amount, is_new_user, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         params.dropId,
         params.userId,
         params.telegramId,
+        params.claimantName || null,
         params.claimAmount,
         params.isNewUser,
         params.txHash || null,
