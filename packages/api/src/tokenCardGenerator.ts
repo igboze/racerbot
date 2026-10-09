@@ -123,7 +123,7 @@ export async function generateTokenCardImage(data: TokenCardData): Promise<Buffe
     const venue = data.venue || 'NEAR Protocol DEX';
     const securityStatus = data.securityStatus || '🟢 Honeypot PASSED';
     const contractType = data.contractType || 'Audited Contract';
-    const footer = data.footerText || 'racerbot.trade';
+    const footer = data.footerText || '@racertradingbot';
 
     // RacerBot Official Brand Logo
     const racerbotLogoSrc = loadAssetBase64('logo.png');
