@@ -187,5 +187,14 @@ export type {
   TokenSafetyReport,
 } from './safety.js';
 
+// NEAR Builders Activity
+export {
+  publishActivityEvent,
+} from './activity.js';
+export type {
+  ActivityEventType,
+  ActivityEventParams,
+} from './activity.js';
+
 
 

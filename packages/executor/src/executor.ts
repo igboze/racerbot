@@ -15,6 +15,7 @@ import {
   getSuiBalance,
   getSuiTokenSupply,
   checkTokenSafety,
+  publishActivityEvent,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
@@ -3232,6 +3233,7 @@ export class SwapExecutor {
         min_amount_out: minAmountOut,
         venue,
         slippage_pct: slippagePct,
+        is_snipe: true,
         timestamp: Date.now(),
       };
       if (rheaPoolId !== null) {
@@ -3525,6 +3527,32 @@ export class SwapExecutor {
           console.warn('[POINTS] Failed to award points for buy fill:', err.message);
         }
 
+        // NEAR Builders Activity event publication (non-blocking)
+        try {
+          const userRec = await getUserById(userId);
+          const actor = userRec?.subaccount_id;
+          if (actor && actor.includes('.')) {
+            const isSnipe = _event.is_snipe === true;
+            const eventType = isSnipe ? 'snipe.executed' : 'trade.buy';
+            const idempotencyKey = isSnipe ? `snipe:${txHash}` : `trade:buy:${txHash}`;
+            publishActivityEvent({
+              eventType,
+              actor,
+              idempotencyKey,
+              payload: {
+                tokenAddress,
+                tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+                amountNear: nearSpent,
+                tokenQty,
+                venue,
+                txHash,
+              },
+            }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.warn('[ACTIVITY] Error publishing buy event:', err?.message || err);
+        }
+
         // Broadcast buy alert for Telegram groups tracking this token
         try {
           const nearUsdRate = await getNearUsdPrice().catch(() => 0);
@@ -3667,6 +3695,29 @@ export class SwapExecutor {
           await awardPointsForTradeFill(userId, fillResult.fillId, txHash, qtyHumanPts * priceNear, new Date());
         } catch (err: any) {
           console.warn('[POINTS] Failed to award points for sell fill:', err.message);
+        }
+
+        // NEAR Builders Activity event publication (non-blocking)
+        try {
+          const userRec = await getUserById(userId);
+          const actor = userRec?.subaccount_id;
+          if (actor && actor.includes('.')) {
+            publishActivityEvent({
+              eventType: 'trade.sell',
+              actor,
+              idempotencyKey: `trade:sell:${txHash}`,
+              payload: {
+                tokenAddress,
+                tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+                amountNear: nearReceived,
+                tokenQty,
+                venue,
+                txHash,
+              },
+            }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.warn('[ACTIVITY] Error publishing sell event:', err?.message || err);
         }
 
         // Notify user with PNL card summary and link (exact on-chain math)
