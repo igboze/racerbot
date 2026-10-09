@@ -7,6 +7,8 @@ import {
   getRaceDropById,
   getRaceDropsByUser,
   updateRaceDropGroupMessage,
+  recordRaceDropGroupMessage,
+  getRaceDropGroupMessages,
   hasUserClaimedDrop,
   recordRaceDropClaim,
   getRaceDropClaimsByDrop,
@@ -63,11 +65,13 @@ export function escapeHtml(text: string): string {
 /**
  * Builds the Telegram message card posted in groups.
  * Header displays: Name of user as on Telegram created a RaceDrop!
+ * Includes live list of recent claimers.
  */
 export function buildRaceDropGroupCard(
   drop: RaceDropRecord,
   creatorUsername?: string,
-  botUsername: string = 'racertradingbot'
+  botUsername: string = 'racertradingbot',
+  claimants: Array<{ claimant_name?: string; claim_amount: string }> = []
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
@@ -95,6 +99,15 @@ export function buildRaceDropGroupCard(
     noteSection = `\n💬 <i>"${escapeHtml(drop.message_text)}"</i>\n`;
   }
 
+  let claimersSection = '';
+  if (claimants && claimants.length > 0) {
+    claimersSection = `\n🏆 <b>Claimers (${claimants.length}/${drop.total_claims}):</b>\n`;
+    const recent = claimants.slice(-5).reverse();
+    recent.forEach((c) => {
+      claimersSection += `• ${escapeHtml(c.claimant_name || 'Racer')} (<code>+${formatDropAmount(c.claim_amount)}</code>)\n`;
+    });
+  }
+
   const text =
     `🏎️ <b>${escapeHtml(creatorDisplay)} created a RaceDrop!</b> 🏎️\n\n` +
     `🎁 <b>Amount per User:</b> <code>${perUserFormatted}</code>\n` +
@@ -103,6 +116,7 @@ export function buildRaceDropGroupCard(
     `💰 <b>Total Pool:</b> <code>${totalFormatted}</code>\n` +
     `🚦 <b>Status:</b> ${statusBadge}\n` +
     noteSection +
+    claimersSection +
     `\nTap below to claim tokens into your wallet! 🏁`;
 
   const buttons: any[] = [];
@@ -134,7 +148,8 @@ export function buildRaceDropClaimMenuCard(
   drop: RaceDropRecord,
   hasClaimed: boolean,
   creatorUsername?: string,
-  botUsername: string = 'racertradingbot'
+  botUsername: string = 'racertradingbot',
+  claimants: Array<{ claimant_name?: string; claim_amount: string }> = []
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
@@ -162,11 +177,20 @@ export function buildRaceDropClaimMenuCard(
     noteSection = `\n💬 <i>"${escapeHtml(drop.message_text)}"</i>\n`;
   }
 
+  let claimersSection = '';
+  if (claimants && claimants.length > 0) {
+    claimersSection = `\n🏆 <b>Claimers (${claimants.length}/${drop.total_claims}):</b>\n`;
+    const recent = claimants.slice(-5).reverse();
+    recent.forEach((c) => {
+      claimersSection += `• ${escapeHtml(c.claimant_name || 'Racer')} (<code>+${formatDropAmount(c.claim_amount)}</code>)\n`;
+    });
+  }
+
   let promptSection = '';
   const buttons: any[] = [];
 
   if (hasClaimed) {
-    promptSection = `\n✅ <b>You have already claimed this RaceDrop!</b>\nYour tokens are available in your RacerBot wallet.`;
+    promptSection = `\n✅ <b>You have already claimed this RaceDrop!</b>\nYour tokens have been credited to your RacerBot wallet.`;
     buttons.push([
       Markup.button.callback('🎒 View Wallet', 'wallet_refresh'),
       Markup.button.callback('🏁 Main Menu', 'menu_home'),
@@ -202,6 +226,7 @@ export function buildRaceDropClaimMenuCard(
     `💰 <b>Total Pool:</b> <code>${totalFormatted}</code>\n` +
     `🚦 <b>Status:</b> ${statusBadge}\n` +
     noteSection +
+    claimersSection +
     promptSection;
 
   return { text, keyboard: Markup.inlineKeyboard(buttons as any) };
@@ -324,7 +349,9 @@ export async function showRaceDropClaimMenu(ctx: Context, dropId: string): Promi
     const creatorUsername = creatorTgUser?.username || undefined;
     const botUsername = getBotUsername(ctx);
 
-    const card = buildRaceDropClaimMenuCard(drop, hasClaimed, creatorUsername, botUsername);
+    const allClaims = await getRaceDropClaimsByDrop(drop.id).catch(() => []);
+    const card = buildRaceDropClaimMenuCard(drop, hasClaimed, creatorUsername, botUsername, allClaims);
+
     await ctx.reply(card.text, {
       parse_mode: 'HTML',
       ...card.keyboard,
@@ -336,7 +363,8 @@ export async function showRaceDropClaimMenu(ctx: Context, dropId: string): Promi
 }
 
 /**
- * Executes the on-chain transfer and records claim when user taps "Claim Now".
+ * Executes the on-chain transfer, records claim, updates group messages,
+ * notifies creator, and updates the claimant view automatically.
  */
 export async function executeRaceDropClaim(ctx: Context, dropId: string): Promise<void> {
   const telegramId = ctx.from!.id;
@@ -364,7 +392,7 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       return;
     }
 
-    // Group membership check if restricted to group
+    // Group membership check if drop is locked to a group
     if (drop.group_chat_id) {
       try {
         const member = await ctx.telegram.getChatMember(drop.group_chat_id, telegramId);
@@ -439,10 +467,13 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     }
 
     let txHash: string | undefined = undefined;
+    const claimantName = getTelegramDisplayName(ctx.from);
 
-    await ctx.reply(`🏎️ <i>Securing your RaceDrop of ${formatDropAmount(claimAmountNum)} ${drop.token_symbol}...</i>`, {
-      parse_mode: 'HTML',
-    });
+    // Provide immediate in-chat feedback
+    const pendingMsg = await ctx.reply(
+      `🏎️ <i>Securing your RaceDrop of ${formatDropAmount(claimAmountNum)} ${drop.token_symbol}...</i>`,
+      { parse_mode: 'HTML' }
+    ).catch(() => null);
 
     try {
       if (drop.token_address.toLowerCase() === 'near') {
@@ -464,6 +495,7 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       }
     } catch (err: any) {
       console.error('[RACEDROP] On-chain transfer failed:', err?.message || err);
+      if (pendingMsg) ctx.deleteMessage(pendingMsg.message_id).catch(() => {});
       await ctx.reply(
         `❌ <b>Claim Failed:</b> ${getUserFriendlyError(err)}\n\nThe creator's wallet balance may be depleted.`,
         { parse_mode: 'HTML' }
@@ -471,11 +503,14 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       return;
     }
 
+    if (pendingMsg) ctx.deleteMessage(pendingMsg.message_id).catch(() => {});
+
     // Record Claim in DB
     const { claim, drop: updatedDrop } = await recordRaceDropClaim({
       dropId: drop.id,
       userId: user.id,
       telegramId,
+      claimantName,
       claimAmount: claimAmountNum.toString(),
       isNewUser,
       txHash,
@@ -489,28 +524,80 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     const creatorUsername = creatorTgUser?.username || undefined;
     const successCard = buildRaceDropClaimSuccessCard(updatedDrop, claim, creatorUsername);
 
-    await ctx.reply(successCard.text, {
-      parse_mode: 'HTML',
-      ...successCard.keyboard,
-    });
-
-    // Update Group Message Live if recorded
-    if (updatedDrop.group_chat_id && updatedDrop.group_message_id) {
-      const botUsername = getBotUsername(ctx);
-      const groupCard = buildRaceDropGroupCard(updatedDrop, creatorUsername, botUsername);
-      await ctx.telegram
-        .editMessageText(
-          updatedDrop.group_chat_id,
-          updatedDrop.group_message_id,
-          undefined,
-          groupCard.text,
-          { parse_mode: 'HTML', ...groupCard.keyboard }
-        )
-        .catch((err: any) => {
-          if (!err?.message?.includes('message is not modified')) {
-            console.warn('[RACEDROP] Failed to update group message:', err?.message);
-          }
+    // Automatically update the claimant's interactive MENU card to success
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(successCard.text, {
+        parse_mode: 'HTML',
+        ...successCard.keyboard,
+      }).catch(async () => {
+        await ctx.reply(successCard.text, {
+          parse_mode: 'HTML',
+          ...successCard.keyboard,
         });
+      });
+    } else {
+      await ctx.reply(successCard.text, {
+        parse_mode: 'HTML',
+        ...successCard.keyboard,
+      });
+    }
+
+    // ── 1. Notify Creator in DM ──────────────────────────────────────────────
+    try {
+      if (creatorUser.telegram_id !== telegramId) {
+        const creatorNotice =
+          `🎉 <b>RaceDrop Claimed!</b> 🏎️💨\n\n` +
+          `👤 <b>Claimant:</b> ${escapeHtml(claimantName)}\n` +
+          `💸 <b>Amount Claimed:</b> <code>+${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</code>\n` +
+          `👥 <b>Progress:</b> <b>${updatedDrop.claims_count}</b> / <b>${updatedDrop.total_claims}</b> spots claimed\n` +
+          `💰 <b>Remaining in Drop:</b> <code>${formatDropAmount(updatedDrop.remaining_amount)} ${drop.token_symbol}</code>\n` +
+          (isNewUser ? `\n🎁 <i>New user automatically bound under your referral link!</i>\n` : '') +
+          (updatedDrop.claims_count >= updatedDrop.total_claims ? `\n🏁 <b>All spots have been claimed! Your RaceDrop is complete.</b>` : '');
+
+        await ctx.telegram.sendMessage(creatorUser.telegram_id, creatorNotice, { parse_mode: 'HTML' }).catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('[RACEDROP] Failed to notify creator:', err?.message);
+    }
+
+    // ── 2. Live Update Group Messages & Announce Claim in Groups ─────────────
+    try {
+      const allClaims = await getRaceDropClaimsByDrop(drop.id).catch(() => [] as any[]);
+      const groupMsgs: Array<{ chat_id: number; message_id: number }> =
+        await getRaceDropGroupMessages(drop.id).catch(() => []);
+
+      if (updatedDrop.group_chat_id && updatedDrop.group_message_id) {
+        if (!groupMsgs.some((m) => m.chat_id === updatedDrop.group_chat_id)) {
+          groupMsgs.push({ chat_id: updatedDrop.group_chat_id, message_id: updatedDrop.group_message_id });
+        }
+      }
+
+      const botUsername = getBotUsername(ctx);
+      const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
+      const updatedGroupCard = buildRaceDropGroupCard(updatedDrop, creatorUsername, botUsername, allClaims);
+
+      for (const gm of groupMsgs) {
+        // Edit group card with new count and claimers list
+        await ctx.telegram
+          .editMessageText(
+            gm.chat_id,
+            gm.message_id,
+            undefined,
+            updatedGroupCard.text,
+            { parse_mode: 'HTML', ...updatedGroupCard.keyboard }
+          )
+          .catch(() => {});
+
+        // Announce in group so group members immediately see that they claimed
+        const remainingSpots = updatedDrop.total_claims - updatedDrop.claims_count;
+        const groupAnnouncement = remainingSpots > 0
+          ? `🏎️ <b>${escapeHtml(claimantName)}</b> just claimed <b>${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</b> from <b>${escapeHtml(creatorDisplay)}</b>'s RaceDrop! (${remainingSpots} spots left) 🏁`
+          : `🏁 <b>All spots filled!</b> <b>${escapeHtml(claimantName)}</b> claimed the final <b>${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</b> from <b>${escapeHtml(creatorDisplay)}</b>'s RaceDrop! 🎉`;
+
+        await ctx.telegram.sendMessage(gm.chat_id, groupAnnouncement, { parse_mode: 'HTML' }).catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('[RACEDROP] Group live update error:', err?.message);
     }
   } catch (err: any) {
     console.error('[RACEDROP] Claim execution error:', err);
@@ -703,7 +790,7 @@ export async function handleRaceDropClaimsInput(
   });
 
   // Also send the standalone group card preview with the claim button
-  const groupCard = buildRaceDropGroupCard(drop, ctx.from?.username, botUsername);
+  const groupCard = buildRaceDropGroupCard(drop, ctx.from?.username, botUsername, []);
   await ctx.reply(groupCard.text, {
     parse_mode: 'HTML',
     ...groupCard.keyboard,
@@ -817,12 +904,14 @@ export function setupRaceDropRoutes(
       const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
 
       if (isGroup) {
-        const groupCard = buildRaceDropGroupCard(drop, undefined, botUsername);
+        const allClaims = await getRaceDropClaimsByDrop(drop.id).catch(() => []);
+        const groupCard = buildRaceDropGroupCard(drop, undefined, botUsername, allClaims);
         const sentMsg = await ctx.reply(groupCard.text, {
           parse_mode: 'HTML',
           ...groupCard.keyboard,
         });
         await updateRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id).catch(() => {});
+        await recordRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id).catch(() => {});
         ctx.deleteMessage().catch(() => {});
       } else {
         await showRaceDropClaimMenu(ctx, dropId);
@@ -846,12 +935,14 @@ export function setupRaceDropRoutes(
           const drop = await getRaceDropById(uuidMatch[1]).catch(() => null);
           if (drop) {
             if (isGroup) {
-              const groupCard = buildRaceDropGroupCard(drop, undefined, botUsername);
+              const allClaims = await getRaceDropClaimsByDrop(drop.id).catch(() => []);
+              const groupCard = buildRaceDropGroupCard(drop, undefined, botUsername, allClaims);
               const sentMsg = await ctx.reply(groupCard.text, {
                 parse_mode: 'HTML',
                 ...groupCard.keyboard,
               });
               await updateRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id).catch(() => {});
+              await recordRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id).catch(() => {});
               ctx.deleteMessage().catch(() => {});
             } else {
               await showRaceDropClaimMenu(ctx, drop.id);
@@ -923,13 +1014,14 @@ export function setupRaceDropRoutes(
             group_chat_id: ctx.chat.id,
           });
 
-          const groupCard = buildRaceDropGroupCard(drop, ctx.from!.username, botUsername);
+          const groupCard = buildRaceDropGroupCard(drop, ctx.from!.username, botUsername, []);
           const sentMsg = await ctx.reply(groupCard.text, {
             parse_mode: 'HTML',
             ...groupCard.keyboard,
           });
 
           await updateRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id);
+          await recordRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id);
           ctx.deleteMessage().catch(() => {});
           return;
         }
@@ -1000,7 +1092,7 @@ export function setupRaceDropRoutes(
           ...shareCard.keyboard,
         });
 
-        const groupCard = buildRaceDropGroupCard(drop, ctx.from!.username, botUsername);
+        const groupCard = buildRaceDropGroupCard(drop, ctx.from!.username, botUsername, []);
         await ctx.reply(groupCard.text, {
           parse_mode: 'HTML',
           ...groupCard.keyboard,

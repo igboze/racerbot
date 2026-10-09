@@ -123,6 +123,8 @@ export {
   getRaceDropById,
   getRaceDropsByUser,
   updateRaceDropGroupMessage,
+  recordRaceDropGroupMessage,
+  getRaceDropGroupMessages,
   hasUserClaimedDrop,
   recordRaceDropClaim,
   getRaceDropClaimsByDrop,
