@@ -114,6 +114,7 @@ import {
   setupRaceDropRoutes,
   handleRaceDropClaim,
   handleRaceDropGroupPost,
+  getRaceDropWizardState,
   startRaceDropWizard,
   getUserAvailableBalance,
   formatDropAmount,
@@ -7339,14 +7340,15 @@ export function setupRoutes(bot: Telegraf): void {
 
     const telegramId = ctx.from.id;
 
-    // 1. Process active pending user prompt (e.g. custom buy, custom slippage, withdraw)
-    const pending = userPendingActions.get(telegramId);
-    if (pending && Date.now() < pending.expiresAt) {
-      userPendingActions.delete(telegramId);
+    // 1. Process active pending user prompt (e.g. custom buy, custom slippage, withdraw, racedrop)
+    let pending = userPendingActions.get(telegramId);
+    if (!pending || Date.now() >= pending.expiresAt) {
+      pending = await getRaceDropWizardState(telegramId, userPendingActions);
+    }
 
+    if (pending && Date.now() < pending.expiresAt) {
       // RaceDrop Wizard: Step 1 (Amount of tokens per user)
       if (pending.action === 'racedrop_amount' && pending.raceDropToken) {
-        userPendingActions.set(telegramId, pending);
         const amountPerUser = parseFloat(rawText);
         await handleRaceDropAmountPerUserInput(ctx, telegramId, amountPerUser, userPendingActions);
         return;
@@ -7354,11 +7356,12 @@ export function setupRoutes(bot: Telegraf): void {
 
       // RaceDrop Wizard: Step 2 (Number of users)
       if (pending.action === 'racedrop_claims' && pending.raceDropAmountPerUser) {
-        userPendingActions.set(telegramId, pending);
         const claims = parseInt(rawText, 10);
         await handleRaceDropClaimsInput(ctx, telegramId, claims, userPendingActions);
         return;
       }
+
+      userPendingActions.delete(telegramId);
 
       if (pending.action === 'set_group_token' && pending.chatId) {
         const rawToken = rawText.trim();
