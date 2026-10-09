@@ -1086,6 +1086,11 @@ export class SwapExecutor {
               ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
             );
 
+            // Ensure quote storage and Ref Finance registration before step 1
+            await ensureStorage(route.quote);
+            await ensureRefStorage(subaccountId);
+            await ensureRefTokenRegistered(route.quote, subaccountId);
+
             // Tx 1: wNEAR → quote via Ref v2
             let tx1Result: any;
             const tx1Actions = await this.buildWrapNearBuyActions(
@@ -1110,9 +1115,28 @@ export class SwapExecutor {
 
             console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
-            // Read how much quote we actually received
-            const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-            const quoteBalBigInt = BigInt(quoteBal || '0');
+            // Read how much quote we actually received in the wallet
+            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            let quoteBalBigInt = BigInt(quoteBal || '0');
+
+            // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
+            if (quoteBalBigInt <= 0n) {
+              const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+              const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
+              if (refQuoteBal > 0n) {
+                console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
+                await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                  transactions.functionCall(
+                    'withdraw',
+                    { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
+                    DEFAULT_SWAP_GAS,
+                    BigInt('1')
+                  ),
+                ], 30_000);
+                quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+                quoteBalBigInt = BigInt(quoteBal || '0');
+              }
+            }
 
             if (quoteBalBigInt <= 0n) {
               const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
@@ -1259,6 +1283,13 @@ export class SwapExecutor {
               ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
             );
 
+            // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
+            await ensureStorage(route.quote);
+            await ensureStorage('wrap.near');
+            await ensureRefStorage(subaccountId);
+            await ensureRefTokenRegistered(route.quote, subaccountId);
+            await ensureRefTokenRegistered('wrap.near', subaccountId);
+
             // Tx 1: launch token → quote via launch DCL pool
             const tx1Actions = [
               transactions.functionCall(
@@ -1281,8 +1312,8 @@ export class SwapExecutor {
             await signAndSend(token_in, tx1Actions);
 
             // Read quote balance and forward to Ref for wNEAR
-            const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-            const quoteBalBigInt = BigInt(quoteBal || '0');
+            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            let quoteBalBigInt = BigInt(quoteBal || '0');
             if (quoteBalBigInt <= 0n) {
               throw new Error(
                 `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
@@ -1324,6 +1355,21 @@ export class SwapExecutor {
             ];
             try {
               result = await signAndSend(route.quote, tx2Actions);
+
+              // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
+              const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+              const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
+              if (refWnearBal > 0n) {
+                console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
+                await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                  transactions.functionCall(
+                    'withdraw',
+                    { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
+                    DEFAULT_SWAP_GAS,
+                    BigInt('1')
+                  ),
+                ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
+              }
             } catch (tx2Err: any) {
               const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
               const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(4);
@@ -2096,6 +2142,8 @@ export class SwapExecutor {
           result = await signAndSend('wrap.near', actions);
         } else {
           await ensureStorage(smState.quote);
+          await ensureRefStorage(subaccountId);
+          await ensureRefTokenRegistered(route.quote, subaccountId);
           const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
           console.log(
@@ -2126,8 +2174,27 @@ export class SwapExecutor {
 
           console.log(`[EXECUTOR] ShoreMarkets hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
-          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          const quoteBalBigInt = BigInt(quoteBal || '0');
+          let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          let quoteBalBigInt = BigInt(quoteBal || '0');
+
+          // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
+          if (quoteBalBigInt <= 0n) {
+            const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+            const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
+            if (refQuoteBal > 0n) {
+              console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
+              await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                transactions.functionCall(
+                  'withdraw',
+                  { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ], 30_000);
+              quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+              quoteBalBigInt = BigInt(quoteBal || '0');
+            }
+          }
 
           if (quoteBalBigInt <= 0n) {
             const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
@@ -2235,6 +2302,13 @@ export class SwapExecutor {
             ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
           );
 
+          // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
+          await ensureStorage(smState.quote);
+          await ensureStorage('wrap.near');
+          await ensureRefStorage(subaccountId);
+          await ensureRefTokenRegistered(route.quote, subaccountId);
+          await ensureRefTokenRegistered('wrap.near', subaccountId);
+
           // Tx 1: token -> quote
           const tx1Actions = [
             transactions.functionCall(
@@ -2256,8 +2330,8 @@ export class SwapExecutor {
           ];
           await signAndSend(token_in, tx1Actions);
 
-          const quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          const quoteBalBigInt = BigInt(quoteBal || '0');
+          let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+          let quoteBalBigInt = BigInt(quoteBal || '0');
           if (quoteBalBigInt <= 0n) {
             throw new Error(
               `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
@@ -2288,6 +2362,22 @@ export class SwapExecutor {
             ),
           ];
           const tx2Result = await signAndSend(route.quote, tx2Actions);
+
+          // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
+          const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+          const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
+          if (refWnearBal > 0n) {
+            console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
+            await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+              transactions.functionCall(
+                'withdraw',
+                { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
+          }
+
           result = tx2Result;
         }
       }
