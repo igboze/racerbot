@@ -1703,9 +1703,10 @@ export class SwapExecutor {
       const isBuy = token_in === 'wrap.near' || token_in === 'near';
       const targetToken = isBuy ? token_out : token_in;
       const pinnedPoolId = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
+      const intearState = await near.getIntearTokenState(targetToken).catch(() => null);
       const poolId = (typeof pinnedPoolId === 'number' && pinnedPoolId >= 0)
         ? pinnedPoolId
-        : await near.findIntearPoolId(targetToken).catch(() => null);
+        : (intearState?.poolId ?? (await near.findIntearPoolId(targetToken).catch(() => null)));
       if (poolId === null || poolId === undefined || typeof poolId !== 'number' || poolId < 0) {
         throw new Error(`No Intear pool found for token ${targetToken}.`);
       }
@@ -1713,8 +1714,70 @@ export class SwapExecutor {
       poolBuf.writeUInt32LE(poolId, 0);
       const poolMsg = poolBuf.toString('base64');
 
+      const pairedAsset = intearState?.pairedAsset ?? 'near';
+      const isPairedWithIntear = pairedAsset === 'token.intear.near';
+
       if (isBuy) {
         await ensureStorage(token_out);
+
+        let operations: any[];
+        if (isPairedWithIntear) {
+          const pool216Buf = Buffer.alloc(4);
+          pool216Buf.writeUInt32LE(216, 0);
+          const intearPoolMsg = pool216Buf.toString('base64');
+
+          operations = [
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: 'near',
+                asset_out: 'nep141:token.intear.near',
+                amount: { Amount: { ExactIn: swapAmount.toString() } },
+                constraint: null,
+                message: intearPoolMsg,
+              },
+            },
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: 'nep141:token.intear.near',
+                asset_out: `nep141:${token_out}`,
+                amount: 'OutputOfLastIn',
+                constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
+                message: poolMsg,
+              },
+            },
+            {
+              Withdraw: {
+                asset_id: `nep141:${token_out}`,
+                amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
+                to: subaccountId,
+                rescue_address: subaccountId,
+              },
+            },
+          ];
+        } else {
+          operations = [
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: 'near',
+                asset_out: `nep141:${token_out}`,
+                amount: { Amount: { ExactIn: swapAmount.toString() } },
+                constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
+                message: poolMsg,
+              },
+            },
+            {
+              Withdraw: {
+                asset_id: `nep141:${token_out}`,
+                amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
+                to: subaccountId,
+                rescue_address: subaccountId,
+              },
+            },
+          ];
+        }
 
         // Buy on dex.intear.near
         result = await signAndSend('dex.intear.near', [
@@ -1722,27 +1785,8 @@ export class SwapExecutor {
             'deposit_near',
             {
               operations: {
-                referrer: 'user.intear.near',
-                operations: [
-                  {
-                    SwapSimple: {
-                      dex_id: 'slimedragon.near/xyk',
-                      asset_in: 'near',
-                      asset_out: `nep141:${token_out}`,
-                      amount: { Amount: { ExactIn: swapAmount.toString() } },
-                      constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
-                      message: poolMsg,
-                    },
-                  },
-                  {
-                    Withdraw: {
-                      asset_id: `nep141:${token_out}`,
-                      amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                      to: subaccountId,
-                      rescue_address: subaccountId,
-                    },
-                  },
-                ],
+                referrer: 'dex-aggregator.intear.near',
+                operations,
               },
             },
             DEFAULT_SWAP_GAS,
@@ -1757,6 +1801,65 @@ export class SwapExecutor {
         }
       } else {
         // Sell token on dex.intear.near
+        let operations: any[];
+        if (isPairedWithIntear) {
+          const pool216Buf = Buffer.alloc(4);
+          pool216Buf.writeUInt32LE(216, 0);
+          const intearPoolMsg = pool216Buf.toString('base64');
+
+          operations = [
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: `nep141:${token_in}`,
+                asset_out: 'nep141:token.intear.near',
+                amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                constraint: null,
+                message: poolMsg,
+              },
+            },
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: 'nep141:token.intear.near',
+                asset_out: 'near',
+                amount: 'OutputOfLastIn',
+                constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                message: intearPoolMsg,
+              },
+            },
+            {
+              Withdraw: {
+                asset_id: 'near',
+                amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                to: subaccountId,
+                rescue_address: subaccountId,
+              },
+            },
+          ];
+        } else {
+          operations = [
+            {
+              SwapSimple: {
+                dex_id: 'slimedragon.near/xyk',
+                asset_in: `nep141:${token_in}`,
+                asset_out: 'near',
+                amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                message: poolMsg,
+              },
+            },
+            {
+              Withdraw: {
+                asset_id: 'near',
+                amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                to: subaccountId,
+                rescue_address: subaccountId,
+              },
+            },
+          ];
+        }
+
         const actions = [
           transactions.functionCall(
             'ft_transfer_call',
@@ -1764,27 +1867,8 @@ export class SwapExecutor {
               receiver_id: 'dex.intear.near',
               amount: amountInBigInt.toString(),
               msg: JSON.stringify({
-                referrer: 'user.intear.near',
-                operations: [
-                  {
-                    SwapSimple: {
-                      dex_id: 'slimedragon.near/xyk',
-                      asset_in: `nep141:${token_in}`,
-                      asset_out: 'near',
-                      amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                      constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
-                      message: poolMsg,
-                    },
-                  },
-                  {
-                    Withdraw: {
-                      asset_id: 'near',
-                      amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                      to: subaccountId,
-                      rescue_address: subaccountId,
-                    },
-                  },
-                ],
+                referrer: 'dex-aggregator.intear.near',
+                operations,
               }),
             },
             DEFAULT_SWAP_GAS,

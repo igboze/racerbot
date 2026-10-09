@@ -2787,13 +2787,86 @@ export class MultiRpcNear {
    * Simulate a swap on dex.intear.near (slimedragon.near/xyk).
    * Executes the exact on-chain math accounting for phantom liquidity and any
    * custom fee configuration (fixed, scheduled curves, dynamic, holder/creator fees).
+   * Supports two-hop routes when the launch token is paired with token.intear.near.
    */
   async simulateIntearSwap(
     poolId: number,
     tokenAddress: string,
     amountIn: string | bigint,
-    isBuy: boolean
+    isBuy: boolean,
+    pairedAsset: string = 'near'
   ): Promise<{ amountIn: string; amountOut: string } | null> {
+    if (pairedAsset === 'token.intear.near') {
+      const pool216Buf = Buffer.alloc(4);
+      pool216Buf.writeUInt32LE(216, 0);
+      const pool216Msg = pool216Buf.toString('base64');
+
+      const targetPoolBuf = Buffer.alloc(4);
+      targetPoolBuf.writeUInt32LE(poolId, 0);
+      const targetPoolMsg = targetPoolBuf.toString('base64');
+
+      try {
+        if (isBuy) {
+          // Hop 1: near -> token.intear.near on Pool 216
+          const hop1 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
+            dex_id: 'slimedragon.near/xyk',
+            message: pool216Msg,
+            asset_in: 'near',
+            asset_out: 'nep141:token.intear.near',
+            amount: { ExactIn: amountIn.toString() },
+            trader: 'user.intear.near',
+          });
+          if (!Array.isArray(hop1) || hop1.length < 2) return null;
+          const tearOut = String(hop1[1]);
+
+          // Hop 2: token.intear.near -> targetToken on target pool
+          const hop2 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
+            dex_id: 'slimedragon.near/xyk',
+            message: targetPoolMsg,
+            asset_in: 'nep141:token.intear.near',
+            asset_out: `nep141:${tokenAddress}`,
+            amount: { ExactIn: tearOut },
+            trader: 'user.intear.near',
+          });
+          if (!Array.isArray(hop2) || hop2.length < 2) return null;
+          return {
+            amountIn: amountIn.toString(),
+            amountOut: String(hop2[1]),
+          };
+        } else {
+          // Hop 1: targetToken -> token.intear.near on target pool
+          const hop1 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
+            dex_id: 'slimedragon.near/xyk',
+            message: targetPoolMsg,
+            asset_in: `nep141:${tokenAddress}`,
+            asset_out: 'nep141:token.intear.near',
+            amount: { ExactIn: amountIn.toString() },
+            trader: 'user.intear.near',
+          });
+          if (!Array.isArray(hop1) || hop1.length < 2) return null;
+          const tearOut = String(hop1[1]);
+
+          // Hop 2: token.intear.near -> near on Pool 216
+          const hop2 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
+            dex_id: 'slimedragon.near/xyk',
+            message: pool216Msg,
+            asset_in: 'nep141:token.intear.near',
+            asset_out: 'near',
+            amount: { ExactIn: tearOut },
+            trader: 'user.intear.near',
+          });
+          if (!Array.isArray(hop2) || hop2.length < 2) return null;
+          return {
+            amountIn: amountIn.toString(),
+            amountOut: String(hop2[1]),
+          };
+        }
+      } catch {
+        return null;
+      }
+    }
+
+    // Direct single hop (e.g. token.intear.near or near-paired token)
     const poolBuf = Buffer.alloc(4);
     poolBuf.writeUInt32LE(poolId, 0);
     const poolMsg = poolBuf.toString('base64');
@@ -2925,6 +2998,7 @@ export class MultiRpcNear {
   async getIntearTokenState(tokenAddress: string): Promise<{
     poolId: number;
     poolMsg: string;
+    pairedAsset: string;
     price: number;
     liquidityNear: number;
     reserveNear: string;
@@ -3036,6 +3110,7 @@ export class MultiRpcNear {
     return {
       poolId,
       poolMsg,
+      pairedAsset: pairedAsset || 'near',
       price,
       liquidityNear,
       reserveNear: reserveNear.toString(),
@@ -3665,16 +3740,22 @@ export class MultiRpcNear {
     } else if (venue === 'intear') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
       const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
-      let poolId: number | null = typeof rheaPoolId === 'number' ? rheaPoolId : null;
-      if (poolId === null) {
-        poolId = await this.findIntearPoolId(targetToken).catch(() => null);
+      let state: any;
+      try {
+        state = await this.getIntearTokenState(targetToken);
+      } catch {
+        // Fall back on lookup error
       }
+      const poolId: number | null = typeof rheaPoolId === 'number'
+        ? rheaPoolId
+        : (state?.poolId ?? (await this.findIntearPoolId(targetToken).catch(() => null)));
+      const pairedAsset = state?.pairedAsset ?? 'near';
 
       // Priority 1: Exact on-chain simulation via simulate_swap_simple
       // Accounts for phantom liquidity, scheduled fee curves, dynamic curves,
-      // creator fees, holder fees, and dex fees.
+      // creator fees, holder fees, and dex fees (including 2-hop routes).
       if (poolId !== null && poolId !== undefined && poolId >= 0) {
-        const sim = await this.simulateIntearSwap(poolId, targetToken, amountIn, isBuy).catch(() => null);
+        const sim = await this.simulateIntearSwap(poolId, targetToken, amountIn, isBuy, pairedAsset).catch(() => null);
         if (sim && BigInt(sim.amountOut) > 0n) {
           const minOut = calculateMinAmountOut(sim.amountOut, slippagePct);
           return { expectedOutput: sim.amountOut, minAmountOut: minOut };
@@ -3682,13 +3763,14 @@ export class MultiRpcNear {
       }
 
       // Priority 2: Fallback to token state calculation using true pool fee BPS
-      let state;
-      try {
-        state = await this.getIntearTokenState(targetToken);
-      } catch {
-        throw new Error(
-          `Intear RPC failed for ${targetToken}. Token may be on Intear but RPC is unreachable.`
-        );
+      if (!state) {
+        try {
+          state = await this.getIntearTokenState(targetToken);
+        } catch {
+          throw new Error(
+            `Intear RPC failed for ${targetToken}. Token may be on Intear but RPC is unreachable.`
+          );
+        }
       }
       const reserveNear = BigInt(state.reserveNear);
       const reserveToken = BigInt(state.reserveToken);
