@@ -667,10 +667,10 @@ export class SwapExecutor {
         const nearNeededForSwap = amountInBigInt > wNearBal ? amountInBigInt - wNearBal : 0n;
 
         // Minimal reserve in NEAR remaining after swap to cover gas, account storage, and future trades
-        // Keep at least 0.015 NEAR (~$0.07), allowing users to spend almost their entire balance
+        // Keep at least 0.05 NEAR, allowing users to safely cover 0.0315-0.045 NEAR network gas reserve + storage
         const nearUsd = await getNearUsdPrice().catch(() => 0);
         const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
-        const minReserveNear = nearNeededForSwap > 0n ? 0.015 : 0.003;
+        const minReserveNear = nearNeededForSwap > 0n ? 0.05 : 0.035;
         const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
         const totalNearRequired = nearNeededForSwap + minReserveYocto;
 
@@ -3085,14 +3085,15 @@ export class SwapExecutor {
 
     const nativeBal = BigInt(nativeBalStr || '0');
     const wNearBal = BigInt(wNearBalStr || '0');
-    const MIN_RESERVE_YOCTO = 15000000000000000000000n; // 0.015 NEAR gas reserve
+    const MIN_RESERVE_YOCTO = 50000000000000000000000n; // 0.05 NEAR reserve (covers 0.0315-0.045 NEAR gas reserve + storage)
     const availableNative = nativeBal > MIN_RESERVE_YOCTO ? nativeBal - MIN_RESERVE_YOCTO : 0n;
     const totalSpendableYocto = availableNative + wNearBal;
     const MIN_SPEND_YOCTO = 10000000000000000000000n; // 0.01 NEAR minimum trade size
 
-    if (totalSpendableYocto < MIN_SPEND_YOCTO) {
+    // Must have at least 0.035 native NEAR to pay for gas even if paying with wNEAR
+    if (nativeBal < 35000000000000000000000n || totalSpendableYocto < MIN_SPEND_YOCTO) {
       const availNear = (Number(nativeBal) / 1e24).toFixed(4);
-      const reason = `Insufficient balance. Wallet has ${availNear} NEAR (must keep at least 0.015 NEAR for gas).`;
+      const reason = `Insufficient balance. Wallet has ${availNear} NEAR (must keep at least 0.05 NEAR for gas and storage reserve).`;
       if (snipeOrderId) {
         await finalizeSnipe(false, { error: reason, permanent: true });
         await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
