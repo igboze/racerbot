@@ -520,11 +520,8 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
-// ── In-memory 15s cache for rendered token info card image buffers ─────────────
-const tokenCardImageCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
-
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
-export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; caption?: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }> {
+export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
   const [info, balances, user, safetyRes] = await Promise.allSettled([
     getTokenInfo(tokenAddress, forceRefresh),
@@ -823,38 +820,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
   statsBlock += '```\n';
 
-  // In-memory 15s cache for rendered token info card images
-  let tokenCardImage: Buffer | null = null;
-  const priceNumVal = parseFloat(tokenInfo.price || '0');
-
-  // Generate card image only when tokenInfo returned a positive price
-  if (priceNumVal > 0) {
-    const cachedImage = tokenCardImageCache.get(tokenAddress);
-    if (cachedImage && cachedImage.expiresAt > Date.now()) {
-      tokenCardImage = cachedImage.buffer;
-    } else {
-      try {
-        const nearUsdVal = (tokenInfo as any).near_usd || null;
-        const cardData = toTokenInfoCardData(tokenInfo, nearUsdVal, safety);
-        const generated = await generateTokenInfoCardImage(cardData);
-        if (generated) {
-          tokenCardImage = generated;
-          tokenCardImageCache.set(tokenAddress, { buffer: generated, expiresAt: Date.now() + 15000 });
-        }
-      } catch (err: any) {
-        console.warn('[buildTokenCard] Failed to generate token info card image:', err?.message || err);
-      }
-    }
-  }
-
-  const hasImageCard = !!tokenCardImage;
-
   let text =
     safetyBanner +
     `🪙 *${safeName}* (\`${safeSymbol}\`)\n` +
     `📝 \`${tokenInfo.address}\`\n` +
     `${venueText}\n\n` +
-    (hasImageCard ? '' : statsBlock) +
+    statsBlock +
     rateFooter +
     balanceText;
 
@@ -1081,24 +1052,20 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
   }
 
-  const photoCaption = text;
-
-  return { text, caption: photoCaption, keyboard, tokenCardImage: tokenCardImage || undefined, pnlCardImage: pnlCardImage || undefined };
+  return { text, keyboard, pnlCardImage: pnlCardImage || undefined };
 }
 
 /**
  * Safely send a token card to Telegram.
  * Handles photo or text rendering, and gracefully falls back to plain text if Telegram Markdown entity parsing fails.
  */
-export async function sendTokenCard(ctx: any, card: { text: string; caption?: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }) {
-  const cardImage = card.tokenCardImage || card.pnlCardImage;
-  const captionText = card.caption || card.text;
-  if (cardImage) {
+export async function sendTokenCard(ctx: any, card: { text: string; keyboard: any; pnlCardImage?: Buffer }) {
+  if (card.pnlCardImage) {
     try {
       await ctx.replyWithPhoto(
-        { source: cardImage },
+        { source: card.pnlCardImage },
         {
-          caption: captionText,
+          caption: card.text,
           parse_mode: 'Markdown',
           reply_markup: card.keyboard.reply_markup,
         }
@@ -1108,9 +1075,9 @@ export async function sendTokenCard(ctx: any, card: { text: string; caption?: st
       console.warn('[API] replyWithPhoto Markdown failed, retrying plain caption:', err.message);
       try {
         await ctx.replyWithPhoto(
-          { source: cardImage },
+          { source: card.pnlCardImage },
           {
-            caption: captionText.replace(/[*_`]/g, ''),
+            caption: card.text.replace(/[*_`]/g, ''),
             reply_markup: card.keyboard.reply_markup,
           }
         );
