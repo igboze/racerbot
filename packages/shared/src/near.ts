@@ -39,6 +39,7 @@ const registeredCache = new Set<string>();
 const noRheaPoolCache = new Map<string, number>();
 // Permanent cache for quote-asset decimals (decimals never change after launch).
 const quoteDecimalsCache = new Map<string, number>();
+const quoteSymbolCache = new Map<string, string>();
 // 10-second cache for the NEAR-denominated price of a quote asset.
 const quoteNearPriceCache = new Map<string, { at: number; rate: number }>();
 const QUOTE_NEAR_PRICE_TTL_MS = 10_000;
@@ -2405,6 +2406,12 @@ export class MultiRpcNear {
     quoteDecimals: number;
     /** True when the quote asset is wNEAR / native NEAR. */
     quoteIsNear: boolean;
+    /** Quote asset ticker symbol (e.g. 'NEAR', 'QTC'). */
+    quoteSymbol: string;
+    /** Spot price of 1 token in quote units. */
+    priceInQuote: number;
+    /** Quote asset reserves in human-readable units. */
+    reserveQuoteHuman: number;
     /** True when step === 'Done' and the DCL pool state is Running. */
     live: boolean;
     /** True when the price cannot be converted to NEAR (no wrap.near<->quote pool). */
@@ -2493,6 +2500,21 @@ export class MultiRpcNear {
       quoteDecimalsCache.set(quote, quoteDecimals);
     }
 
+    let quoteSymbol = quoteIsNear ? 'NEAR' : 'TOKEN';
+    if (!quoteIsNear) {
+      if (quoteSymbolCache.has(quote)) {
+        quoteSymbol = quoteSymbolCache.get(quote)!;
+      } else {
+        try {
+          const quoteMeta = await this.getTokenMetadata(quote).catch(() => null);
+          quoteSymbol = quoteMeta?.symbol ?? quote.split('.')[0].toUpperCase();
+        } catch {
+          quoteSymbol = quote.split('.')[0].toUpperCase();
+        }
+        quoteSymbolCache.set(quote, quoteSymbol);
+      }
+    }
+
     const leftPoint = Number(launch.left_point);
     const rightPoint = Number(launch.right_point);
     const currentPoint = Number(pool.current_point);
@@ -2501,8 +2523,11 @@ export class MultiRpcNear {
     const progressPct = span > 0 ? Math.min(100, Math.max(0, (offset / span) * 100)) : 100;
 
     const live = launch.step === 'Done' && pool.state === 'Running';
-    const isBonded = launch.step === 'Done' && (progressPct >= 100 || pool.state !== 'Running');
+    // NearlyTrade operates directly on Ref DCL with permanently locked LP (no separate graduation step).
+    // Once launch.step === 'Done', the pool is permanently live on the DEX ('bonded').
+    const isBonded = launch.step === 'Done';
     const bondingPhase: 'prebonded' | 'bonded' = isBonded ? 'bonded' : 'prebonded';
+    const bondingProgressPct = isBonded ? 100 : Number(progressPct.toFixed(2));
 
     const isTokenX = launch.token_is_x !== false;
     const reserveToken = isTokenX ? pool.total_x : pool.total_y;
@@ -2576,8 +2601,8 @@ export class MultiRpcNear {
       dclPoolId: launch.pool_id,
       phase: bondingPhase,
       bonding_phase: bondingPhase,
-      bondingProgressPct: Number(progressPct.toFixed(2)),
-      bonding_progress_pct: Number(progressPct.toFixed(2)),
+      bondingProgressPct,
+      bonding_progress_pct: bondingProgressPct,
       price,
       liquidityNear,
       reserveNear: reserveNearConverted,
@@ -2586,6 +2611,9 @@ export class MultiRpcNear {
       quote,
       quoteDecimals,
       quoteIsNear,
+      quoteSymbol,
+      priceInQuote,
+      reserveQuoteHuman: reserveQuoteNum,
       live,
       creator: launch.creator ?? '',
       ...(priceUnavailable ? { priceUnavailable: true } : {}),
