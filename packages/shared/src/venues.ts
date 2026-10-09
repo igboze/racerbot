@@ -10,7 +10,7 @@
  * MultiRpcNear.computeMinAmountOut / SwapExecutor.
  */
 
-export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra';
+export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun';
 
 export interface VenueInfo {
   id: VenueId;
@@ -122,6 +122,15 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     contracts: ['exchange.kelytradevs.near'],
     tradeable: true,
     website: 'https://exchange.kelytradevs.near',
+    tokenPage: (t) => `https://nearblocks.io/tokens/${t}`,
+  },
+  nearpumpfun: {
+    id: 'nearpumpfun',
+    label: 'NearPumpFun',
+    kind: 'launchpad+amm',
+    contracts: ['nearpumpfun.near'],
+    tradeable: true,
+    website: 'https://nearpump.fun',
     tokenPage: (t) => `https://nearblocks.io/tokens/${t}`,
   },
 };

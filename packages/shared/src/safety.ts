@@ -34,6 +34,8 @@ export const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.gaypad.j1-racing.near',
   '.exchange.kelytradevs.near',
   '.kelytra.near',
+  '.nearpumpfun.near',
+  'nearpumpfun.near',
   '.onetokenhub.near',
   'pad.onetokenhub.near',
   '.omft.near',
@@ -175,6 +177,8 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
       let launchpadName = suffix.replace(/^\./, '').split('.')[0] || suffix;
       if (suffix.includes('kelytra') || suffix.includes('kelytradevs')) {
         launchpadName = 'Kelytra';
+      } else if (suffix.includes('nearpumpfun')) {
+        launchpadName = 'NearPumpFun';
       } else if (suffix.includes('gaypad')) {
         launchpadName = 'Gaypad';
       } else if (suffix.includes('justhoot')) {

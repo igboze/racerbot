@@ -2376,6 +2376,82 @@ export class MultiRpcNear {
   }
 
   /**
+   * Query NearPumpFun token state and bonding curve details from nearpumpfun.near.
+   */
+  async getNearpumpfunTokenState(tokenAddress: string): Promise<{
+    token: string;
+    phase: 'prebonded' | 'bonded';
+    bonding_phase: 'prebonded' | 'bonded';
+    bondingProgressPct: number;
+    bonding_progress_pct: number;
+    price: number;
+    liquidityNear: number;
+    totalSupply: string;
+    creationId?: string;
+    creatorId?: string;
+  }> {
+    const [factoryTokenRes, meta, supply, balRes, rheaPool] = await Promise.all([
+      this.view<any>('nearpumpfun.near', 'get_token_by_account', { token_account_id: tokenAddress }).catch(() => null),
+      this.getTokenMetadata(tokenAddress).catch(() => ({ decimals: 18 })),
+      this.getTokenTotalSupply(tokenAddress).catch(() => '1000000000000000000000000000'),
+      this.view<string>(tokenAddress, 'ft_balance_of', { account_id: tokenAddress }).catch(() => '0'),
+      this.findRheaPoolForToken(tokenAddress).catch(() => null),
+    ]);
+
+    let nearYoctoStr = '0';
+    try {
+      nearYoctoStr = await this.getNearBalance(tokenAddress);
+    } catch { /* no-op */ }
+
+    const decimals = meta?.decimals ?? 18;
+    const totalTokensBI = BigInt(supply || '1000000000000000000000000000');
+    const reserveTokensBI = BigInt(balRes || '0');
+
+    if (rheaPool && typeof rheaPool.poolId === 'number' && rheaPool.price > 0) {
+      return {
+        token: tokenAddress,
+        phase: 'bonded',
+        bonding_phase: 'bonded',
+        bondingProgressPct: 100,
+        bonding_progress_pct: 100,
+        price: rheaPool.price,
+        liquidityNear: rheaPool.liquidityNear,
+        totalSupply: supply || '1000000000000000000000000000',
+        creationId: factoryTokenRes?.creation_id,
+        creatorId: factoryTokenRes?.creator_id,
+      };
+    }
+
+    const nearYocto = BigInt(nearYoctoStr || '0');
+    const nearAmt = Number(nearYocto) / 1e24;
+
+    const vNear0 = 700;
+    const vToken0 = 1000000000;
+    const k = vNear0 * vToken0;
+    const tokensSoldBI = totalTokensBI > reserveTokensBI ? totalTokensBI - reserveTokensBI : 0n;
+    const tokensSoldAmt = Number(tokensSoldBI) / Math.pow(10, decimals);
+
+    const vTokenCurrent = Math.max(1, vToken0 - tokensSoldAmt);
+    const vNearCurrent = k / vTokenCurrent;
+    const priceNearPerToken = (vNearCurrent * vNearCurrent) / k;
+    const liquidityNear = nearAmt * 2;
+    const bondingProgressPct = Math.min(100, Math.max(0, Math.round((nearAmt / 100) * 100)));
+
+    return {
+      token: tokenAddress,
+      phase: 'prebonded',
+      bonding_phase: 'prebonded',
+      bondingProgressPct,
+      bonding_progress_pct: bondingProgressPct,
+      price: priceNearPerToken,
+      liquidityNear,
+      totalSupply: supply || '1000000000000000000000000000',
+      creationId: factoryTokenRes?.creation_id,
+      creatorId: factoryTokenRes?.creator_id,
+    };
+  }
+
+  /**
    * Query NearlyTrade token state and DCL pool details on-chain.
    * Throws real error if token or pool cannot be fetched (no fallback data).
    */
@@ -3227,7 +3303,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -4141,6 +4217,23 @@ export class MultiRpcNear {
         return {
           price: st.price,
           reserveNearYocto: (st.liquidityNear * 1e24 / 2).toFixed(0),
+        };
+      }
+      return null;
+    }
+    if (venue === 'nearpumpfun') {
+      const rhea = await this.findRheaPoolForToken(tokenAddress).catch(() => null);
+      if (rhea && rhea.price > 0) {
+        return {
+          price: rhea.price,
+          reserveNearYocto: rhea.reserveNear || ((rhea.liquidityNear * 1e24) / 2).toFixed(0),
+        };
+      }
+      const st = await this.getNearpumpfunTokenState(tokenAddress).catch(() => null);
+      if (st && st.price > 0) {
+        return {
+          price: st.price,
+          reserveNearYocto: ((st.liquidityNear * 1e24) / 2).toFixed(0),
         };
       }
       return null;

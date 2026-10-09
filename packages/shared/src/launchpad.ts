@@ -55,6 +55,13 @@ export const LAUNCHPAD_CONFIGS: Record<string, LaunchpadConfig> = {
     sellMethod: 'sell',
     pairedToken: 'wrap.near',
   },
+  nearpumpfun: {
+    factoryContract: 'nearpumpfun.near',
+    getLaunchMethod: 'get_token_by_account',
+    buyMethod: 'buy',
+    sellMethod: 'sell',
+    pairedToken: 'wrap.near',
+  },
   // gaypad: {
   //   factoryContract: 'gaypad.near', // TODO: Update with actual contract
   //   getLaunchMethod: 'get_launch_by_token',

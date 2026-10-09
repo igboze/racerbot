@@ -679,7 +679,7 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
   if (
     dbCache &&
     dbCache.venue &&
-    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra', 'suipump'].includes(dbCache.venue)
+    ['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra', 'nearpumpfun', 'suipump'].includes(dbCache.venue)
   ) {
     const isSui = dbCache.chain === 'sui' || isSuiToken(tokenAddress);
     if (isSui && (Number(dbCache.last_liquidity || 0) === 0 || dbCache.total_supply === '1000000000000000')) {
@@ -1292,6 +1292,20 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           dclPoolId = ktState.dclPoolId;
           if (ktState.totalSupply && ktState.totalSupply !== '0') {
             totalSupply = ktState.totalSupply;
+          }
+        }
+      } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.nearpumpfun.near') || tokenAddress === 'nearpumpfun.near') {
+      try {
+        const npState = await near.getNearpumpfunTokenState(tokenAddress);
+        if (npState && npState.price > 0) {
+          venue = 'nearpumpfun';
+          price = npState.price;
+          liquidity = npState.liquidityNear;
+          bondingPhase = npState.phase;
+          bondingProgressPct = npState.bondingProgressPct;
+          if (npState.totalSupply && npState.totalSupply !== '0') {
+            totalSupply = npState.totalSupply;
           }
         }
       } catch { /* no-op */ }
