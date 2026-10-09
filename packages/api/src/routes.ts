@@ -110,6 +110,15 @@ import { generatePNLCard } from './pnlCardGenerator.js';
 import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
 import { toTokenInfoCardData } from './tokenInfoCardData.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
+import {
+  setupRaceDropRoutes,
+  handleRaceDropClaim,
+  startRaceDropWizard,
+  getUserAvailableBalance,
+  formatDropAmount,
+  handleRaceDropAmountPerUserInput,
+  handleRaceDropClaimsInput,
+} from './raceDrop.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
@@ -152,7 +161,9 @@ interface PendingAction {
     // Buy Alert group setup
     | 'set_group_token'
     // Limit Order wizard
-    | 'lo_amount' | 'lo_target_value';
+    | 'lo_amount' | 'lo_target_value'
+    // RaceDrop wizard
+    | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -182,6 +193,16 @@ interface PendingAction {
   loExpiresAt?: number | null; // null = GTC
   // Snipe timing state
   snipeAmount?: number;
+  // RaceDrop wizard state
+  raceDropToken?: string;
+  raceDropSymbol?: string;
+  raceDropChain?: 'near' | 'sui';
+  raceDropAmount?: number;
+  raceDropAmountPerUser?: number;
+  raceDropClaims?: number;
+  raceDropMode?: 'equal' | 'lucky';
+  raceDropNote?: string;
+  raceDropCreatorName?: string;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -297,6 +318,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
     [
       cb('📢 Buy Alerts', 'menu_buyalerts', 'success'),
+      cb('🏎️ Create RaceDrop', 'racedrop_start', 'success'),
     ],
     [
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
@@ -405,6 +427,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     [
       cb('🔄 Refresh', 'wallet_refresh', 'primary'),
       cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
+      cb('🏎️ RaceDrop', 'racedrop_start', 'primary'),
     ],
   ];
 
@@ -1565,7 +1588,7 @@ export async function buildDcaDashboard(user: UserRecord) {
 }
 
 // ── User-Friendly Error Messages ────────────────────────────────────────
-function getUserFriendlyError(error: Error | string): string {
+export function getUserFriendlyError(error: Error | string): string {
   const errorMsg = typeof error === 'string' ? error : (error.message || String(error));
   console.error('[USER_ERROR]', errorMsg);
   const r = errorMsg.toLowerCase();
@@ -2079,6 +2102,8 @@ async function sendPostBuySlTpPrompt(ctx: Context, positionId?: string, tokenAdd
 
 
 export function setupRoutes(bot: Telegraf): void {
+  // ── Register RaceDrop commands, actions, and wizards ───────────────────────
+  setupRaceDropRoutes(bot, userPendingActions);
 
   // ── /start — custodial onboarding with in-chat menu buttons ────────────────
   bot.command('start', async (ctx) => {
@@ -2101,6 +2126,19 @@ export function setupRoutes(bot: Telegraf): void {
       // ── Deep links: Token share (/start t_XXXX), Copy Trade (/start copy_wallet), or Quick Buy (/start buy_token_amount) ──
       let rawPayload = payload || '';
       let refCode: string | undefined = undefined;
+
+      // Handle RaceDrop claim deep link (/start drop_<drop_id>)
+      if (rawPayload.startsWith('drop_')) {
+        const dropId = rawPayload.slice(5);
+        await handleRaceDropClaim(ctx, dropId);
+        return;
+      }
+
+      // Handle RaceDrop wizard deep link (/start racedrop)
+      if (rawPayload === 'racedrop') {
+        await startRaceDropWizard(ctx);
+        return;
+      }
 
       if (rawPayload.includes('_ref_')) {
         const parts = rawPayload.split('_ref_');
@@ -6410,6 +6448,7 @@ export function setupRoutes(bot: Telegraf): void {
         ),
       ]);
     }
+    buttons.push([cb('🏎️ Create a RaceDrop (Group Airdrop)', 'racedrop_start', 'primary')]);
     buttons.push([cb('🔄 Refresh', 'referral_refresh', 'primary')]);
     buttons.push([cb('🔙 Back', 'menu_home', 'primary')]);
 
@@ -7298,6 +7337,22 @@ export function setupRoutes(bot: Telegraf): void {
     const pending = userPendingActions.get(telegramId);
     if (pending && Date.now() < pending.expiresAt) {
       userPendingActions.delete(telegramId);
+
+      // RaceDrop Wizard: Step 1 (Amount of tokens per user)
+      if (pending.action === 'racedrop_amount' && pending.raceDropToken) {
+        userPendingActions.set(telegramId, pending);
+        const amountPerUser = parseFloat(rawText);
+        await handleRaceDropAmountPerUserInput(ctx, telegramId, amountPerUser, userPendingActions);
+        return;
+      }
+
+      // RaceDrop Wizard: Step 2 (Number of users)
+      if (pending.action === 'racedrop_claims' && pending.raceDropAmountPerUser) {
+        userPendingActions.set(telegramId, pending);
+        const claims = parseInt(rawText, 10);
+        await handleRaceDropClaimsInput(ctx, telegramId, claims, userPendingActions);
+        return;
+      }
 
       if (pending.action === 'set_group_token' && pending.chatId) {
         const rawToken = rawText.trim();
