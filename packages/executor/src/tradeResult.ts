@@ -83,6 +83,14 @@ export function distillFailureReason(failure: any): string {
   ) {
     return 'No liquidity pool found on-chain for this token. It may have been removed or is not yet live.';
   }
+  if (
+    errStr.includes('err_token_') ||
+    errStr.includes('err token') ||
+    (errStr.includes('wrap.near') && errStr.includes('not_enough')) ||
+    (errStr.includes('wrap.near') && errStr.includes('not enough'))
+  ) {
+    return 'DEX pool has insufficient liquidity (pool is empty or drained). There is not enough wNEAR in the pool to buy your tokens.';
+  }
   if (errStr.includes('insufficient liquidity') || errStr.includes('not enough liquidity')) {
     return 'Not enough liquidity in the pool for this trade size. Try a smaller amount.';
   }
