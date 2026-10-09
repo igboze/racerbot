@@ -104,7 +104,8 @@ import {
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
-import { generateTokenCardImage } from './tokenCardGenerator.js';
+import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
+import { toTokenInfoCardData } from './tokenInfoCardData.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
@@ -518,6 +519,9 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
+// ── In-memory 15s cache for rendered token info card image buffers ─────────────
+const tokenCardImageCache = new Map<string, { buffer: Buffer; expiresAt: number }>();
+
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
 export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; caption?: string; keyboard: any; tokenCardImage?: Buffer; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
@@ -827,39 +831,28 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     rateFooter +
     balanceText;
 
-  // Generate sleek Token Card Image using Satori + Resvg
+  // In-memory 15s cache for rendered token info card images
   let tokenCardImage: Buffer | null = null;
-  try {
-    const secStatus = safety?.isHoneypot ? '🔴 HONEYPOT' : (safety?.isDrained ? '🔴 DRAINED' : '🟢 Honeypot PASSED');
-    const cType = safety?.isAuditedLaunchpad ? `Audited (${safety.launchpadName || 'Verified'})` : 'Standalone NEP-141';
-    const pairStr = tokenInfo.paired_symbol && tokenInfo.paired_symbol !== 'NEAR' && tokenInfo.paired_symbol !== 'wNEAR'
-      ? `${safeSymbol} / ${tokenInfo.paired_symbol}`
-      : `${safeSymbol} / ${nativeUnit}`;
-    const tradesStr = (buys !== undefined && buys !== null && sells !== undefined && sells !== null)
-      ? `${buys}B / ${sells}S`
-      : 'N/A';
+  const priceNumVal = parseFloat(tokenInfo.price || '0');
 
-    tokenCardImage = await generateTokenCardImage({
-      name: tokenInfo.name || 'Token',
-      symbol: tokenInfo.symbol || 'TOKEN',
-      address: tokenInfo.address || '',
-      iconUrl: (tokenInfo as any).icon_url || (tokenInfo as any).icon || undefined,
-      priceNear: `${priceNearStr} ${nativeUnit}`,
-      priceUsd: priceUsdStr ? `(~${priceUsdStr})` : '',
-      marketCap: mcapCol,
-      liquidity: liqCol,
-      supply: supplyStr,
-      dexTax: `Buy ${buyTax} / Sell ${sellTax}`,
-      holders: tokenInfo.holders_count ? tokenInfo.holders_count.toLocaleString('en-US') : 'N/A',
-      trades: tradesStr,
-      pair: pairStr,
-      venue: tokenInfo.venue || 'NEAR Protocol DEX',
-      securityStatus: secStatus,
-      contractType: cType,
-      footerText: '@racertradingbot'
-    });
-  } catch (err: any) {
-    console.warn('[buildTokenCard] Failed to generate token card image:', err?.message || err);
+  // Generate card image only when tokenInfo returned a positive price
+  if (priceNumVal > 0) {
+    const cachedImage = tokenCardImageCache.get(tokenAddress);
+    if (cachedImage && cachedImage.expiresAt > Date.now()) {
+      tokenCardImage = cachedImage.buffer;
+    } else {
+      try {
+        const nearUsdVal = (tokenInfo as any).near_usd || null;
+        const cardData = toTokenInfoCardData(tokenInfo, nearUsdVal, safety);
+        const generated = await generateTokenInfoCardImage(cardData);
+        if (generated) {
+          tokenCardImage = generated;
+          tokenCardImageCache.set(tokenAddress, { buffer: generated, expiresAt: Date.now() + 15000 });
+        }
+      } catch (err: any) {
+        console.warn('[buildTokenCard] Failed to generate token info card image:', err?.message || err);
+      }
+    }
   }
 
   let pnlCardImage: Buffer | null = null;
