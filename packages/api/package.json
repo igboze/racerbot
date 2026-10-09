@@ -12,6 +12,7 @@
     "@racerbot/db": "*",
     "@racerbot/executor": "*",
     "@racerbot/shared": "*",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/helmet": "^0.0.48",
     "@types/qrcode": "^1.5.6",
     "canvas": "^3.2.3",
@@ -23,6 +24,8 @@
     "near-api-js": "^4.0.0",
     "pg": "^8.11.0",
     "qrcode": "^1.5.4",
+    "satori": "^0.44.3",
+    "satori-html": "^0.3.2",
     "telegraf": "^4.16.3",
     "uuid": "^9.0.0"
   },
