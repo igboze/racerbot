@@ -734,12 +734,14 @@ export class SwapExecutor {
     // is awaited BEFORE signing so the pre-balance snapshot always predates
     // the swap — success is later measured as the balance increase.
     let capturedPreOutBalance: string | null = null;
-    const signAndSend = async (receiverId: string, actions: transactions.Action[], waitForMs?: number) => {
+    const signAndSend = async (receiverId: string, actions: transactions.Action[], waitForMs?: number, isSecondary = false) => {
       timings.presign_ms = Date.now() - t0;
-      timings.signStart = Date.now();
-      onProgress?.('signing');
-      capturedPreOutBalance = await preOutBalanceP;
-      const slowTimer = setTimeout(() => onProgress?.('confirming_slow'), 15_000);
+      if (!isSecondary) {
+        timings.signStart = Date.now();
+        onProgress?.('signing');
+        capturedPreOutBalance = await preOutBalanceP;
+      }
+      const slowTimer = !isSecondary ? setTimeout(() => onProgress?.('confirming_slow'), 15_000) : null;
       console.log(`[EXECUTOR:SIGN] Requesting lock & signing for subaccount=${subaccountId}, receiver=${receiverId}`);
       try {
         const outcome = await withAccountLock(
@@ -750,7 +752,7 @@ export class SwapExecutor {
             receiverId,
             actions,
             waitForMs,
-            () => onProgress?.('submitted')
+            isSecondary ? undefined : () => onProgress?.('submitted')
           ),
           {
             // Must outlive the whole sign+broadcast+confirm window (40s
@@ -827,7 +829,7 @@ export class SwapExecutor {
         console.error(`[EXECUTOR:SIGN] Failed for subaccount=${subaccountId}:`, err?.message);
         throw err;
       } finally {
-        clearTimeout(slowTimer);
+        if (slowTimer) clearTimeout(slowTimer);
       }
     };
 
@@ -1829,7 +1831,7 @@ export class SwapExecutor {
         near.markIntearAssetRegistered(subaccountId, token_out);
 
         if (feeAmount > 0n) {
-          signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000).catch((err: any) => {
+          signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true).catch((err: any) => {
             console.warn('[EXECUTOR] Intear fee transfer error:', err?.message);
           });
         }
@@ -2852,7 +2854,7 @@ export class SwapExecutor {
 
           if (paidNativeNear) {
             // DCL/native sell: transfer native NEAR fee to treasury
-            await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000);
+            await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
             feePaid = true;
             console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR sent to treasury for ${subaccountId}`);
           } else {
@@ -2864,7 +2866,7 @@ export class SwapExecutor {
                 BigInt('20000000000000'),
                 BigInt('1')
               ),
-            ], 10_000);
+            ], 10_000, true);
             feePaid = true;
             console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR sent to treasury for ${subaccountId}`);
           }
