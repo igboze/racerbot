@@ -76,6 +76,64 @@ function initStaticAssets(): void {
 // Pre-load assets on module import
 initStaticAssets();
 
+const tokenIconDataUriCache = new Map<string, string>();
+
+/**
+ * Resolves a token icon candidate (data URI or HTTP/HTTPS URL) into a base64 Data URI.
+ * Caches resolved Data URIs in memory permanently per token address.
+ */
+export async function resolveTokenIconDataUri(tokenAddress: string, iconCandidate?: string): Promise<string | null> {
+  const normKey = (tokenAddress || '').toLowerCase().trim();
+  if (normKey && tokenIconDataUriCache.has(normKey)) {
+    return tokenIconDataUriCache.get(normKey)!;
+  }
+
+  let src = iconCandidate ? iconCandidate.trim() : '';
+
+  // Fallback: query FastNear metadata if candidate is missing and it's a NEAR token
+  if (!src && normKey && !normKey.includes('::') && !normKey.startsWith('0x')) {
+    try {
+      const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(normKey)}`, {
+        signal: AbortSignal.timeout(1000),
+      });
+      if (res.ok) {
+        const fnMeta = (await res.json()) as any;
+        if (fnMeta?.icon && typeof fnMeta.icon === 'string') {
+          src = fnMeta.icon.trim();
+        }
+      }
+    } catch { /* fallback */ }
+  }
+
+  if (!src) return null;
+
+  // 1. Data URI
+  if (src.startsWith('data:')) {
+    if (normKey) tokenIconDataUriCache.set(normKey, src);
+    return src;
+  }
+
+  // 2. HTTP / HTTPS image URL
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    try {
+      const res = await fetch(src, {
+        headers: { Accept: 'image/*, */*' },
+        signal: AbortSignal.timeout(1500),
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || 'image/png';
+        const buffer = await res.arrayBuffer();
+        const b64 = Buffer.from(buffer).toString('base64');
+        const dataUri = `data:${contentType.split(';')[0]};base64,${b64}`;
+        if (normKey) tokenIconDataUriCache.set(normKey, dataUri);
+        return dataUri;
+      }
+    } catch { /* fallback to default avatar */ }
+  }
+
+  return null;
+}
+
 /**
  * Generates an official RacerBot Token Info Card PNG image using Satori & Resvg.
  * Optimized with in-memory asset caching for maximum speed.
@@ -109,8 +167,8 @@ export async function generateTokenInfoCardImage(data: TokenInfoCardData): Promi
 
     const racerbotLogoSrc = cachedRacerbotLogoSrc;
 
-    // Token Icon resolution: use data URI if provided, or fallback avatar
-    let tokenIconSrc: string | null = (data.icon && data.icon.startsWith('data:')) ? data.icon : null;
+    // Token Icon resolution: resolve Data URI or HTTP URL into inline base64 Data URI
+    let tokenIconSrc: string | null = await resolveTokenIconDataUri(tokenAddress, data.icon);
 
     if (!tokenIconSrc) {
       const initialLetter = rawSymbol.charAt(0).toUpperCase() || 'T';
