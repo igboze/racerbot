@@ -1631,6 +1631,8 @@ function getUserFriendlyError(error: Error | string): string {
   ) {
     return 'No active liquidity pool found for this token on DEX. It may not be tradeable yet.';
   }
+  if (r.includes('err_token') || r.includes('not_enough') || r.includes('drained') || (r.includes('wrap.near') && r.includes('enough')))
+    return 'DEX pool has insufficient liquidity (pool is empty or drained). There is not enough wNEAR in the pool to complete your trade.';
   if (r.includes('insufficient liquidity') || r.includes('not enough liquidity'))
     return 'Not enough liquidity in the pool for this trade size. Try a smaller amount.';
   if (r.includes('prebonded') || r.includes('not yet bonded') || r.includes('bonding curve phase') || r.includes('bonding phase'))

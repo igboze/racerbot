@@ -3583,7 +3583,10 @@ export class MultiRpcNear {
               const minOut = calculateMinAmountOut(expected, slippagePct);
               return { expectedOutput: expected.toString(), minAmountOut: minOut };
             }
-          } catch { /* fall through */ }
+          } catch (err: any) {
+            console.warn(`[computeMinAmountOut] DCL quote error for pool ${dclId}:`, err?.message || err);
+          }
+          throw new Error(`Insufficient liquidity in Ref DCL pool (${dclId}) — pool has zero active liquidity or has been drained.`);
         } else if (interToken && interPoolId) {
           if (isBuy) {
             const hop1Out = await this.view<string>('v2.ref-finance.near', 'get_return', {
@@ -3631,6 +3634,7 @@ export class MultiRpcNear {
               }
             }
           }
+          throw new Error(`Insufficient liquidity in Ref DCL route (${dclId}) — pool has zero active liquidity or has been drained.`);
         }
       }
 
