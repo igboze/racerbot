@@ -118,6 +118,15 @@ export {
   markLimitOrderFilled,
   markLimitOrderFailed,
   expirePastDueLimitOrders,
+  // Race Drops
+  createRaceDrop,
+  getRaceDropById,
+  getRaceDropsByUser,
+  updateRaceDropGroupMessage,
+  hasUserClaimedDrop,
+  recordRaceDropClaim,
+  getRaceDropClaimsByDrop,
+  cancelRaceDrop,
 } from './db.js';
 
 export {
@@ -162,4 +171,7 @@ export type {
   GroupBuyAlertRecord,
   LimitOrderRecord,
   CreateLimitOrderParams,
+  RaceDropRecord,
+  RaceDropClaimRecord,
+  CreateRaceDropParams,
 } from './db.js';

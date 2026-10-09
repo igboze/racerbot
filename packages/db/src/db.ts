@@ -243,6 +243,58 @@ export interface LimitOrderRecord {
   updated_at: Date;
 }
 
+export interface RaceDropRecord {
+  id: string;
+  creator_id: string;
+  creator_telegram_id: number;
+  creator_name?: string;
+  chain: 'near' | 'sui';
+  token_address: string;
+  token_symbol: string;
+  decimals: number;
+  amount_per_user?: string;
+  total_amount: string;
+  remaining_amount: string;
+  total_claims: number;
+  claims_count: number;
+  split_mode: 'equal' | 'lucky';
+  message_text?: string;
+  group_chat_id?: number;
+  group_message_id?: number;
+  status: 'active' | 'completed' | 'expired' | 'cancelled';
+  expires_at: Date;
+  created_at: Date;
+}
+
+export interface RaceDropClaimRecord {
+  id: string;
+  drop_id: string;
+  user_id: string;
+  telegram_id: number;
+  claim_amount: string;
+  is_new_user: boolean;
+  tx_hash?: string;
+  created_at: Date;
+}
+
+export interface CreateRaceDropParams {
+  creator_id: string;
+  creator_telegram_id: number;
+  creator_name?: string;
+  chain?: 'near' | 'sui';
+  token_address: string;
+  token_symbol: string;
+  decimals?: number;
+  amount_per_user?: string | number;
+  total_amount: string | number;
+  total_claims: number;
+  split_mode?: 'equal' | 'lucky';
+  message_text?: string;
+  group_chat_id?: number;
+  group_message_id?: number;
+  expires_in_hours?: number;
+}
+
 export interface CreateLimitOrderParams {
   user_id: string;
   chain?: string;
@@ -2693,4 +2745,205 @@ export async function expirePastDueLimitOrders(): Promise<number> {
      WHERE status = 'active' AND expires_at <= NOW()`
   );
   return res.rowCount ?? 0;
-}
+}
+
+// ── RaceDrops Functions ───────────────────────────────────────────────────────
+
+function rowToRaceDrop(row: any): RaceDropRecord {
+  return {
+    id: row.id,
+    creator_id: row.creator_id,
+    creator_telegram_id: parseInt(row.creator_telegram_id, 10),
+    creator_name: row.creator_name || undefined,
+    chain: row.chain || 'near',
+    token_address: row.token_address,
+    token_symbol: row.token_symbol,
+    decimals: row.decimals != null ? parseInt(row.decimals, 10) : 18,
+    amount_per_user: row.amount_per_user ? row.amount_per_user.toString() : undefined,
+    total_amount: row.total_amount.toString(),
+    remaining_amount: row.remaining_amount.toString(),
+    total_claims: parseInt(row.total_claims, 10),
+    claims_count: parseInt(row.claims_count, 10),
+    split_mode: row.split_mode || 'equal',
+    message_text: row.message_text || undefined,
+    group_chat_id: row.group_chat_id ? parseInt(row.group_chat_id, 10) : undefined,
+    group_message_id: row.group_message_id ? parseInt(row.group_message_id, 10) : undefined,
+    status: row.status,
+    expires_at: new Date(row.expires_at),
+    created_at: new Date(row.created_at),
+  };
+}
+
+function rowToRaceDropClaim(row: any): RaceDropClaimRecord {
+  return {
+    id: row.id,
+    drop_id: row.drop_id,
+    user_id: row.user_id,
+    telegram_id: parseInt(row.telegram_id, 10),
+    claim_amount: row.claim_amount.toString(),
+    is_new_user: Boolean(row.is_new_user),
+    tx_hash: row.tx_hash || undefined,
+    created_at: new Date(row.created_at),
+  };
+}
+
+export async function createRaceDrop(params: CreateRaceDropParams): Promise<RaceDropRecord> {
+  const db = await getDb();
+  const hours = params.expires_in_hours ?? 48;
+  const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
+  const totalAmountStr = params.total_amount.toString();
+
+  const res = await db.query(
+    `INSERT INTO race_drops (
+      creator_id, creator_telegram_id, creator_name, chain, token_address, token_symbol, decimals,
+      amount_per_user, total_amount, remaining_amount, total_claims, claims_count, split_mode,
+      message_text, group_chat_id, group_message_id, status, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15, 'active', $16)
+    RETURNING *`,
+    [
+      params.creator_id,
+      params.creator_telegram_id,
+      params.creator_name || null,
+      params.chain || 'near',
+      params.token_address,
+      params.token_symbol,
+      params.decimals ?? 18,
+      params.amount_per_user != null ? params.amount_per_user.toString() : null,
+      totalAmountStr,
+      totalAmountStr,
+      params.total_claims,
+      params.split_mode || 'equal',
+      params.message_text || null,
+      params.group_chat_id || null,
+      params.group_message_id || null,
+      expiresAt,
+    ]
+  );
+  return rowToRaceDrop(res.rows[0]);
+}
+
+export async function getRaceDropById(id: string): Promise<RaceDropRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM race_drops WHERE id = $1', [id]);
+  if (!res.rows[0]) return null;
+  return rowToRaceDrop(res.rows[0]);
+}
+
+export async function getRaceDropsByUser(userId: string, limit: number = 20): Promise<RaceDropRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM race_drops WHERE creator_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [userId, limit]
+  );
+  return res.rows.map(rowToRaceDrop);
+}
+
+export async function updateRaceDropGroupMessage(
+  id: string,
+  groupChatId: number,
+  groupMessageId: number
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE race_drops SET group_chat_id = $2, group_message_id = $3 WHERE id = $1',
+    [id, groupChatId, groupMessageId]
+  );
+}
+
+export async function hasUserClaimedDrop(dropId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT 1 FROM race_drop_claims WHERE drop_id = $1 AND user_id = $2 LIMIT 1',
+    [dropId, userId]
+  );
+  return res.rows.length > 0;
+}
+
+export async function recordRaceDropClaim(params: {
+  dropId: string;
+  userId: string;
+  telegramId: number;
+  claimAmount: string;
+  isNewUser: boolean;
+  txHash?: string;
+}): Promise<{ claim: RaceDropClaimRecord; drop: RaceDropRecord }> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const dropRes = await client.query('SELECT * FROM race_drops WHERE id = $1 FOR UPDATE', [params.dropId]);
+    if (!dropRes.rows[0]) {
+      throw new Error('RaceDrop not found.');
+    }
+    const currentDrop = rowToRaceDrop(dropRes.rows[0]);
+    if (currentDrop.status !== 'active') {
+      throw new Error(`RaceDrop is no longer active (status: ${currentDrop.status}).`);
+    }
+    if (new Date() > currentDrop.expires_at) {
+      await client.query("UPDATE race_drops SET status = 'expired' WHERE id = $1", [params.dropId]);
+      throw new Error('RaceDrop has expired.');
+    }
+    if (currentDrop.claims_count >= currentDrop.total_claims) {
+      throw new Error('All drops have already been claimed.');
+    }
+
+    const claimRes = await client.query(
+      `INSERT INTO race_drop_claims (drop_id, user_id, telegram_id, claim_amount, is_new_user, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        params.dropId,
+        params.userId,
+        params.telegramId,
+        params.claimAmount,
+        params.isNewUser,
+        params.txHash || null,
+      ]
+    );
+
+    const newClaimsCount = currentDrop.claims_count + 1;
+    const remainingNum = Math.max(0, parseFloat(currentDrop.remaining_amount) - parseFloat(params.claimAmount));
+    const newStatus = (newClaimsCount >= currentDrop.total_claims || remainingNum <= 0) ? 'completed' : 'active';
+
+    const updatedDropRes = await client.query(
+      `UPDATE race_drops
+       SET claims_count = $2, remaining_amount = $3, status = $4
+       WHERE id = $1
+       RETURNING *`,
+      [params.dropId, newClaimsCount, remainingNum.toString(), newStatus]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      claim: rowToRaceDropClaim(claimRes.rows[0]),
+      drop: rowToRaceDrop(updatedDropRes.rows[0]),
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getRaceDropClaimsByDrop(dropId: string): Promise<RaceDropClaimRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM race_drop_claims WHERE drop_id = $1 ORDER BY created_at ASC',
+    [dropId]
+  );
+  return res.rows.map(rowToRaceDropClaim);
+}
+
+export async function cancelRaceDrop(id: string, userId: string): Promise<RaceDropRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    "UPDATE race_drops SET status = 'cancelled' WHERE id = $1 AND creator_id = $2 AND status = 'active' RETURNING *",
+    [id, userId]
+  );
+  if (!res.rows[0]) return null;
+  return rowToRaceDrop(res.rows[0]);
+}
+
