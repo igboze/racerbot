@@ -242,7 +242,7 @@ async function sendGroupAlertMessage(
   // Check if token has bonded on DEX (or is a standard non-curve pool)
   const tokenCache = await getTokenCache(event.token_address).catch(() => null);
   const isPrebonded = tokenCache?.bonding_phase === 'prebonded' ||
-    (event.token_address.endsWith('.nearlytrade.near') && tokenCache?.bonding_phase !== 'bonded');
+    ((event.token_address.endsWith('.nearlytrade.near') || event.token_address.endsWith('.nearpumpfun.near')) && tokenCache?.bonding_phase !== 'bonded');
   const isBonded = !isPrebonded;
 
   // Resolve market cap — use event value if present, otherwise fetch live from token info cache
@@ -289,6 +289,8 @@ async function sendGroupAlertMessage(
     actionButtons.push(Markup.button.url('📈 DexScreener', dexUrl));
   } else if (event.token_address.endsWith('.nearlytrade.near')) {
     actionButtons.push(Markup.button.url('💧 NearlyTrade', `https://nearlytrade.com/token/${event.token_address}`));
+  } else if (event.token_address.endsWith('.nearpumpfun.near')) {
+    actionButtons.push(Markup.button.url('🚀 NearPumpFun', `https://nearblocks.io/tokens/${event.token_address}`));
   }
 
   const keyboard = Markup.inlineKeyboard([

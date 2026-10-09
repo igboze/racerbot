@@ -22,7 +22,7 @@ const SNIPE_NEGATIVE_TTL_MS = 3_000;
 
 async function checkSnipeSignals(
   tokenAddress: string,
-  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra'
+  venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun'
 ): Promise<void> {
   try {
     const tokenOrders = await getActiveTokenSnipes(tokenAddress).catch(() => []);
@@ -83,6 +83,15 @@ export async function runScheduledSnipeEngine(): Promise<void> {
                 if (nt && nt.live && nt.price > 0 && nt.liquidityNear > 0) {
                   snipeNegativeCache.delete(tokenAddress);
                   await checkSnipeSignals(tokenAddress, 'nearlytrade');
+                  return;
+                }
+              }
+
+              if (tokenAddress.endsWith('.nearpumpfun.near')) {
+                const np = await near.getNearpumpfunTokenState(tokenAddress).catch(() => null);
+                if (np && np.price > 0 && np.liquidityNear > 0) {
+                  snipeNegativeCache.delete(tokenAddress);
+                  await checkSnipeSignals(tokenAddress, 'nearpumpfun');
                   return;
                 }
               }

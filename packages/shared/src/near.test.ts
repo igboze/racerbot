@@ -539,3 +539,38 @@ describe('near: waitForOutcome recovery fan-out', () => {
     vi.unstubAllGlobals();
   }, 15_000);
 });
+
+describe('near: nearpumpfun bonding-curve state', () => {
+  const token = 'npump.nearpumpfun.near';
+
+  it('fetches nearpumpfun token state correctly for pre-bonded curve', async () => {
+    const near = new MultiRpcNear(['https://rpc.mainnet.fastnear.com']);
+
+    vi.spyOn(near, 'view').mockImplementation(async (contractId: string, method: string) => {
+      if (contractId === 'nearpumpfun.near' && method === 'get_token_by_account') {
+        return { creation_id: '0', token_account_id: token, creator_id: 'creator.near' };
+      }
+      if (contractId === token && method === 'ft_metadata') {
+        return { name: 'NearPump', symbol: 'NPUMP', decimals: 18 };
+      }
+      if (contractId === token && method === 'ft_total_supply') {
+        return '1000000000000000000000000000';
+      }
+      if (contractId === token && method === 'ft_balance_of') {
+        return '560000000000000000000000000';
+      }
+      return null;
+    });
+
+    vi.spyOn(near, 'getNearBalance').mockResolvedValue('21659730973371034924861965');
+    vi.spyOn(near, 'findRheaPoolForToken').mockResolvedValue(null);
+
+    const state = await near.getNearpumpfunTokenState(token);
+    expect(state.phase).toBe('prebonded');
+    expect(state.bondingProgressPct).toBeGreaterThan(0);
+    expect(state.price).toBeGreaterThan(0);
+    expect(state.totalSupply).toBe('1000000000000000000000000000');
+
+    vi.restoreAllMocks();
+  });
+});
