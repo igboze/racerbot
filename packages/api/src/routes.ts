@@ -208,6 +208,7 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
 
     const jobs: Promise<unknown>[] = [
       near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false),
+      checkTokenSafety(tokenAddress).catch(() => null),
     ];
     if (rheaLike) {
       jobs.push(

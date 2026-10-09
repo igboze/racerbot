@@ -109,9 +109,9 @@ const DANGEROUS_METHOD_PATTERNS = [
   'emergency_stop',
 ];
 
-// In-memory safety cache with 5-minute TTL to keep trade paths fast
+// In-memory safety cache with 15-minute TTL to keep trade paths fast
 const safetyCache = new Map<string, { at: number; report: TokenSafetyReport }>();
-const SAFETY_CACHE_TTL_MS = 5 * 60_000;
+const SAFETY_CACHE_TTL_MS = 15 * 60_000;
 
 /**
  * Perform a comprehensive safety and honeypot inspection on any token.
