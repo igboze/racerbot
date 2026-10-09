@@ -856,7 +856,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       venue: tokenInfo.venue || 'NEAR Protocol DEX',
       securityStatus: secStatus,
       contractType: cType,
-      footerText: 'racerbot.trade'
+      footerText: '@racertradingbot'
     });
   } catch (err: any) {
     console.warn('[buildTokenCard] Failed to generate token card image:', err?.message || err);
