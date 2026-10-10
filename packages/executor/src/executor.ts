@@ -2986,7 +2986,7 @@ export class SwapExecutor {
     // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
     // This makes sell execution 2-4 seconds faster.
     // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun') && BigInt(netAmountOut) > 0n) {
+    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun' || venue === 'intear') && BigInt(netAmountOut) > 0n) {
       const sellFeeNear = (BigInt(netAmountOut) * 150n) / 10000n;
       let feePaid = false;
 
