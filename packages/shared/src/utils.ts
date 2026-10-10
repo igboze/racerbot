@@ -280,14 +280,11 @@ const NEAR_USD_SOURCES: Array<{ name: string; fetch: () => Promise<number> }> = 
 ];
 
 async function fetchNearUsdPrice(): Promise<number> {
-  for (const src of NEAR_USD_SOURCES) {
-    try {
-      return await src.fetch();
-    } catch {
-      // try next source
-    }
+  try {
+    return await Promise.any(NEAR_USD_SOURCES.map(src => src.fetch()));
+  } catch {
+    return 0;
   }
-  return 0;
 }
 
 export async function getNearUsdPrice(): Promise<number> {

@@ -241,13 +241,15 @@ export function setupMonitor(bot: Telegraf): void {
     return;
   }
 
-  // 1. Persist admin chat id on any interaction from an admin.
-  bot.use(async (ctx, next) => {
+  // 1. Persist admin chat id on any interaction from an admin (non-blocking).
+  bot.use((ctx, next) => {
     if (isAdmin(ctx) && ctx.from) {
-      adminChatId = ctx.from.id;
-      await setBotSetting(ADMIN_CHAT_SETTING_KEY, String(ctx.from.id)).catch((err: any) => {
-        logger.warn('Failed to persist admin chat id', { error: err.message });
-      });
+      if (adminChatId !== ctx.from.id) {
+        adminChatId = ctx.from.id;
+        setBotSetting(ADMIN_CHAT_SETTING_KEY, String(ctx.from.id)).catch((err: any) => {
+          logger.warn('Failed to persist admin chat id', { error: err.message });
+        });
+      }
     }
     return next();
   });
