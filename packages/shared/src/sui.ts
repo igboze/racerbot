@@ -452,27 +452,29 @@ export async function getSuiUsdPrice(): Promise<number> {
   if (Date.now() - lastSuiUsdFetch < 60_000 && cachedSuiUsdPrice > 0) {
     return cachedSuiUsdPrice;
   }
-  try {
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=sui&vs_currencies=usd');
-    if (res.ok) {
-      const data = (await res.json()) as any;
-      if (data.sui?.usd) {
-        cachedSuiUsdPrice = Number(data.sui.usd);
-        lastSuiUsdFetch = Date.now();
-        return cachedSuiUsdPrice;
-      }
-    }
-  } catch {}
+  const sources = [
+    fetch('https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT', { signal: AbortSignal.timeout(2000) })
+      .then(r => r.json())
+      .then((d: any) => {
+        const p = parseFloat(d?.price);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+    fetch('https://api.coingecko.com/api/v3/simple/price?ids=sui&vs_currencies=usd', { signal: AbortSignal.timeout(2000) })
+      .then(r => r.json())
+      .then((d: any) => {
+        const p = Number(d?.sui?.usd);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+  ];
 
   try {
-    const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT');
-    if (binanceRes.ok) {
-      const bData = (await binanceRes.json()) as any;
-      if (bData.price) {
-        cachedSuiUsdPrice = parseFloat(bData.price);
-        lastSuiUsdFetch = Date.now();
-        return cachedSuiUsdPrice;
-      }
+    const fastest = await Promise.any(sources);
+    if (fastest > 0) {
+      cachedSuiUsdPrice = fastest;
+      lastSuiUsdFetch = Date.now();
+      return cachedSuiUsdPrice;
     }
   } catch {}
 
