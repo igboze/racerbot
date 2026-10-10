@@ -342,22 +342,22 @@ export class MultiRpcNear {
       ? Array.from(new Set(allowedUrls))
       : ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', qnUrl || defaultQn];
 
-    // Read URLs: QuickNode first (dedicated RPC), then FastNEAR, Shitzu, Intear
+    // Read URLs: FastNEAR first (primary dedicated RPC), Shitzu, Intear, then QuickNode fallback
     const readUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
 
-    // Trade URLs: QuickNode first, then FastNEAR, Shitzu, Intear validator nodes.
+    // Trade URLs: FastNEAR first (primary RPC), Shitzu, Intear validator nodes, then QuickNode fallback.
     // Shitzu and Intear connect directly to block producers with zero rate limiting on broadcasts,
     // ensuring broadcasted transactions are instantly relayed to the consensus mempool.
     const tradeUrls = [
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
     ];
 
     this.readProviders = readUrls.map((url, i) => {
@@ -643,13 +643,13 @@ export class MultiRpcNear {
   }
 
   /**
-   * Read-only view call — QuickNode-first with hedged FastNEAR fallback.
+   * Read-only view call — FastNEAR-first with hedged QuickNode fallback.
    *
    * Semantics:
-   *   1. Send to ALL eligible QuickNode providers immediately.
+   *   1. Send to ALL eligible FastNEAR providers immediately.
    *   2. First success wins, abort all others.
-   *   3. If QuickNode rejects (network error) before HEDGE_MS, launch FastNEAR immediately.
-   *      If still no success at HEDGE_MS, launch FastNEAR regardless.
+   *   3. If FastNEAR rejects (network error) before HEDGE_MS, launch QuickNode immediately.
+   *      If still no success at HEDGE_MS, launch QuickNode regardless.
    *   4. Reject only when every started provider has failed OR the 3000 ms cap hits.
    *   5. Contract-level errors (panic, unknown account) return at once — no hedge.
    *
@@ -749,11 +749,11 @@ export class MultiRpcNear {
           return;
         }
 
-        // Network error on QuickNode before HEDGE_MS → launch FastNEAR early.
-        if (!settled && fnTargets.length > 0 && hedgeTimer !== null) {
+        // Network error on FastNEAR before HEDGE_MS → launch QuickNode early.
+        if (!settled && qnTargets.length > 0 && hedgeTimer !== null) {
           clearTimeout(hedgeTimer);
           hedgeTimer = null;
-          launchFastNear();
+          launchQuickNode();
         }
 
         // If all started attempts have failed, reject.
@@ -785,18 +785,18 @@ export class MultiRpcNear {
         fail(new Error('NEAR RPC view hard cap exceeded (3000 ms)'));
       }, VIEW_TIMEOUT_MS);
 
-      if (qnTargets.length > 0) {
-        launchQuickNode();
-        // Hedge: after HEDGE_MS with no response from QuickNode, also send to FastNEAR fallback.
-        if (fnTargets.length > 0) {
+      if (fnTargets.length > 0) {
+        launchFastNear();
+        // Hedge: after HEDGE_MS with no response from FastNEAR, also send to QuickNode fallback.
+        if (qnTargets.length > 0) {
           hedgeTimer = setTimeout(() => {
             hedgeTimer = null;
-            if (!settled) launchFastNear();
+            if (!settled) launchQuickNode();
           }, HEDGE_MS);
         }
       } else {
-        // QuickNode not configured — go straight to FastNEAR.
-        launchFastNear();
+        // FastNEAR not configured — go straight to QuickNode.
+        launchQuickNode();
       }
     });
   }
