@@ -62,12 +62,41 @@ async function main(): Promise<void> {
   const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
   setBotInstance(bot);
 
-  // Mark user active for high-cadence deposit monitoring whenever they interact
-  bot.use((ctx, next) => {
+  // High-performance Telegram interaction middleware:
+  // 1. Auto-acknowledge callback queries immediately so button clicks never hang the Telegram UI
+  // 2. Mark active user for high-cadence deposit monitoring
+  // 3. 15-second handler timeout safeguard to prevent hanging handlers from leaking resources
+  bot.use(async (ctx, next) => {
+    if (ctx.callbackQuery) {
+      ctx.answerCbQuery().catch(() => {});
+    }
+
     if (ctx.from?.id) {
       markUserActiveForDeposit(ctx.from.id);
     }
-    return next();
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Handler timeout after 15000ms (update_id: ${ctx.update?.update_id})`));
+      }, 15_000);
+    });
+
+    try {
+      await Promise.race([next(), timeoutPromise]);
+    } catch (err: any) {
+      if (err?.message?.includes('Handler timeout after 15000ms')) {
+        logger.warn('Handler processing timed out', {
+          updateId: ctx.update?.update_id,
+          userId: ctx.from?.id,
+          chatId: ctx.chat?.id,
+        });
+      } else {
+        throw err;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   });
 
   // RPC provider health checks every 30s. Without this, providers marked
@@ -125,12 +154,30 @@ async function main(): Promise<void> {
   app.use(express.json({ limit: '64kb' }));
   app.use(metricsMiddleware);
 
-  // Mount Telegram webhook handler on the existing Express app
+  // Mount Telegram webhook handler on the existing Express app.
+  // Responds 200 OK immediately so Telegram never hits "Read timeout expired" or blocks the queue,
+  // then dispatches the update asynchronously into Telegraf's pipeline.
   const webhookPath = '/telegram-webhook';
   if (PUBLIC_URL) {
-    app.use(bot.webhookCallback(webhookPath, {
-      secretToken: TELEGRAM_WEBHOOK_SECRET || undefined,
-    }));
+    app.post(webhookPath, (req, res) => {
+      if (TELEGRAM_WEBHOOK_SECRET) {
+        const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
+        if (secretHeader !== TELEGRAM_WEBHOOK_SECRET) {
+          res.status(403).send('Forbidden');
+          return;
+        }
+      }
+
+      // Immediately acknowledge HTTP 200 so Telegram clears the pending update instantly
+      res.status(200).send('OK');
+
+      const update = req.body;
+      if (update && typeof update === 'object') {
+        bot.handleUpdate(update).catch((err: any) => {
+          logger.error('Error in bot.handleUpdate', err, { updateId: update.update_id });
+        });
+      }
+    });
   }
 
   app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));

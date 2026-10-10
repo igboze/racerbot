@@ -249,6 +249,15 @@ async function main() {
   }
 }
 
+function getDetectorRpcHeaders(url: string): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+  if (fastnearKey && (url.includes('fastnear.com') || url.includes('neardata.xyz'))) {
+    headers['Authorization'] = `Bearer ${fastnearKey}`;
+  }
+  return headers;
+}
+
 /** Fetch current block height directly from NEAR RPC JSON-RPC */
 async function fetchBlockHeight(): Promise<number> {
   // Try providers in random order with a hard timeout each — a hung RPC
@@ -258,7 +267,7 @@ async function fetchBlockHeight(): Promise<number> {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getDetectorRpcHeaders(url),
         body: JSON.stringify({
           jsonrpc: '2.0',
           id: 'detector',
@@ -314,7 +323,7 @@ async function processBlock(height: number): Promise<void> {
     const rpcUrl = RPC_URLS[Math.floor(Math.random() * RPC_URLS.length)];
     const response = await fetch(rpcUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDetectorRpcHeaders(rpcUrl),
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 'block',
@@ -342,7 +351,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
   try {
     const response = await fetch(rpcUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getDetectorRpcHeaders(rpcUrl),
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: 'chunk',

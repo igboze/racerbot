@@ -401,7 +401,9 @@ export async function fetchTokenHoldersCount(
 
   // 3. FastNear API fallback — fast 600ms timeout
   try {
-    const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top`, {
+    const apiKey = hasFastnearKey ? fastnearApiKey : '';
+    const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(norm)}/top${apiKey ? `?api_key=${apiKey}` : ''}`, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
       signal: AbortSignal.timeout(600),
     });
     if (res.ok) {
