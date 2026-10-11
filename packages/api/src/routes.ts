@@ -74,6 +74,7 @@ import {
   isStarknetToken,
   ensureUserAllWallets,
   ensureUserStarknetWallet,
+  resetUserStarknetWallet,
   listUserNearWallets,
   switchActiveNearWallet,
   renameUserNearWallet,
@@ -495,9 +496,10 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('User not found. Run /start first.');
 
-  const [nearWallets, suiWallets] = await Promise.all([
+  const [nearWallets, suiWallets, starknetWallets] = await Promise.all([
     getUserWallets(user.id, 'near').catch(() => []),
     getUserWallets(user.id, 'sui').catch(() => []),
+    getUserWallets(user.id, 'starknet').catch(() => []),
   ]);
 
   let text = `💼 <b>Multi-Chain Wallets</b>\n\n`;
@@ -555,7 +557,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     }
   }
 
-  // Import buttons row
+  // 3. Starknet Wallets Section
+  text += `⚡ <b>Starknet Wallets</b>\n`;
+  const activeStarknet = starknetWallets.find((w: any) => w.is_active) || starknetWallets[0] || (user.starknet_address ? { address: user.starknet_address, name: 'Wallet 1', is_active: true } : null);
+  if (activeStarknet) {
+    text += `1. 🟢 <b>${activeStarknet.name || 'Wallet 1'}</b> <b>[Active]</b>\n`;
+    text += `   <code>${activeStarknet.address}</code>\n\n`;
+  } else {
+    text += `<i>No Starknet wallet found. Tap below to generate.</i>\n\n`;
+  }
+
+  // Import / action buttons row
   const actionRow: any[] = [];
   if (nearWallets.length < MAX_NEAR_WALLETS_PER_USER) {
     actionRow.push(cb('📥 Import NEAR', 'wallet_import_prompt', 'primary'));
@@ -566,6 +578,10 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   if (actionRow.length > 0) {
     buttons.push(actionRow);
   }
+
+  buttons.push([
+    cb('🔄 New Starknet Wallet', 'wallet_new_starknet', 'primary'),
+  ]);
 
   buttons.push([
     cb('🔙 Back to Wallet', 'wallet_refresh', 'primary'),
@@ -1898,7 +1914,7 @@ async function executeBuyHelper(
     }
     const userStarknetAddr = user.starknet_address!;
     const userBal = await getStarknetBalance(userStarknetAddr);
-    const amountInWei = BigInt(Math.floor(amountNear * 1e18));
+    let amountInWei = BigInt(Math.floor(amountNear * 1e18));
 
     // Support both STRK and ETH input tokens seamlessly depending on user's wallet funds
     const hasEnoughStrk = userBal.strk >= amountInWei;
@@ -1919,6 +1935,34 @@ async function executeBuyHelper(
     const useEth = !hasEnoughStrk && hasEnoughEth;
     const tokenIn = useEth ? 'eth' : 'strk';
     const tokenInSymbol = useEth ? 'ETH' : 'STRK';
+
+    // Auto-reserve gas to prevent out-of-gas errors during deployment or multicall execution
+    const STRK_GAS_RESERVE = 50_000_000_000_000_000n; // 0.05 STRK
+    const ETH_GAS_RESERVE = 100_000_000_000_000n;     // 0.0001 ETH
+
+    if (!useEth) {
+      // Paying swap in STRK. If user has < 0.0001 ETH, gas is paid in STRK.
+      if (userBal.eth < ETH_GAS_RESERVE) {
+        if (amountInWei + STRK_GAS_RESERVE > userBal.strk) {
+          if (userBal.strk > STRK_GAS_RESERVE) {
+            amountInWei = userBal.strk - STRK_GAS_RESERVE;
+          } else {
+            throw new Error('Insufficient STRK to cover gas fees. Please leave at least 0.05 STRK in your wallet.');
+          }
+        }
+      }
+    } else {
+      // Paying swap in ETH. If user has < 0.05 STRK, gas is paid in ETH.
+      if (userBal.strk < STRK_GAS_RESERVE) {
+        if (amountInWei + ETH_GAS_RESERVE > userBal.eth) {
+          if (userBal.eth > ETH_GAS_RESERVE) {
+            amountInWei = userBal.eth - ETH_GAS_RESERVE;
+          } else {
+            throw new Error('Insufficient ETH to cover gas fees. Please leave at least 0.0001 ETH in your wallet.');
+          }
+        }
+      }
+    }
 
     const swapResult = await publishSwap({
       user_id: user.id,
@@ -5230,6 +5274,36 @@ export function setupRoutes(bot: Telegraf): void {
     } catch (err: any) {
       await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  const handleNewStarknet = async (ctx: Context) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) throw new Error('User not found. Run /start first.');
+      const newWallet = await resetUserStarknetWallet(user.id);
+      await ctx.reply(
+        `⚡ <b>New Starknet Wallet Generated!</b>\n\n` +
+        `<b>Address:</b>\n<code>${newWallet.address}</code>\n\n` +
+        `🛡️ <b>Standard:</b> OpenZeppelin v0.8.1 Account Abstraction\n` +
+        `💰 <b>Next Step:</b> Deposit STRK or ETH to this address. Your account contract will automatically deploy on your first swap!`,
+        { parse_mode: 'HTML' }
+      );
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  };
+
+  bot.command('newstarknet', handleNewStarknet);
+  bot.action('wallet_new_starknet', async (ctx) => {
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      await handleNewStarknet(ctx);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 

@@ -592,10 +592,11 @@ export async function updateUserSuiWallet(userId: string, suiAddress: string, su
 export async function updateUserStarknetWallet(userId: string, starknetAddress: string, starknetPrivateKeyEnc: string): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3', [starknetAddress, starknetPrivateKeyEnc, userId]);
+  await db.query("UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = 'starknet'", [userId]).catch(() => {});
   await db.query(
     `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
      VALUES ($1, 'starknet', $2, 'Wallet 1', $3, FALSE, TRUE)
-     ON CONFLICT (user_id, chain, address) DO NOTHING`,
+     ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE, encrypted_private_key = EXCLUDED.encrypted_private_key`,
     [userId, starknetAddress, starknetPrivateKeyEnc]
   ).catch((err: any) => console.warn('[DB] user_wallets starknet update warning:', err?.message));
   invalidateUserCache(userId);
