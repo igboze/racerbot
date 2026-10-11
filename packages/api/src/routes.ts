@@ -89,6 +89,8 @@ import {
   deleteUserSuiWallet,
   importSuiWallet,
   MAX_SUI_WALLETS_PER_USER,
+  switchActiveStarknetWallet,
+  renameUserStarknetWallet,
   prewarmStorageDeposit,
   type TokenInfoResult,
 } from './wallet.js';
@@ -166,6 +168,7 @@ interface PendingAction {
     // Multi-Wallet Management
     | 'import_near_key' | 'import_near_name' | 'rename_near_wallet'
     | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet'
+    | 'rename_starknet_wallet'
     // Buy Alert group setup
     | 'set_group_token'
     // Limit Order wizard
@@ -183,6 +186,7 @@ interface PendingAction {
   renameWalletId?: string;
   importSuiPrivateKey?: string;
   renameSuiWalletId?: string;
+  renameStarknetWalletId?: string;
   // Copy trading wizard state
   copyWallet?: string;
   copyBuyAmount?: number;
@@ -560,12 +564,31 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 
   // 3. Starknet Wallets Section
   text += `⚡ <b>Starknet Wallets</b>\n`;
-  const activeStarknet = starknetWallets.find((w: any) => w.is_active) || starknetWallets[0] || (user.starknet_address ? { address: user.starknet_address, name: 'Wallet 1', is_active: true } : null);
-  if (activeStarknet) {
-    text += `1. 🟢 <b>${activeStarknet.name || 'Wallet 1'}</b> <b>[Active]</b>\n`;
-    text += `   <code>${activeStarknet.address}</code>\n\n`;
-  } else {
+  if (starknetWallets.length === 0 && user.starknet_address) {
+    text += `1. 🟢 <b>Wallet 1</b> <b>[Active]</b>\n`;
+    text += `   <code>${user.starknet_address}</code>\n\n`;
+  } else if (starknetWallets.length === 0) {
     text += `<i>No Starknet wallet found. Tap below to generate.</i>\n\n`;
+  } else {
+    for (let i = 0; i < starknetWallets.length; i++) {
+      const w = starknetWallets[i];
+      const isActive = w.is_active;
+      const statusIcon = isActive ? '🟢' : '⚪';
+      const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+      const importedLabel = w.is_imported ? ' 📥' : '';
+
+      text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
+      text += `   <code>${w.address}</code>\n\n`;
+
+      const row: any[] = [];
+      if (!isActive) {
+        row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_starknet:${w.id}`, 'primary'));
+      }
+      row.push(cb(`✏️ Rename`, `wallet_rename_starknet_prompt:${w.id}`, 'primary'));
+      if (row.length > 0) {
+        buttons.push(row);
+      }
+    }
   }
 
   // Import / action buttons row
@@ -5374,6 +5397,44 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  bot.action(/^wallet_switch_starknet:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    try {
+      const switched = await switchActiveStarknetWallet(telegramId, walletId);
+      await ctx.answerCbQuery(`⚡ Switched active Starknet wallet to ${switched.name}!`).catch(() => {});
+      const menu = await buildWalletsManagementMenu(telegramId);
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit) {
+        await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        });
+      } else {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      }
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^wallet_rename_starknet_prompt:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const walletId = ctx.match![1];
+    userPendingActions.set(telegramId, {
+      action: 'rename_starknet_wallet',
+      renameStarknetWalletId: walletId,
+      expiresAt: Date.now() + 180000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✏️ <b>Rename Starknet Wallet</b>\n\n` +
+      `Please reply with the new name for this wallet (e.g. <i>Starknet Main</i>, <i>Sniper</i>, <i>Degen</i>):\n\n` +
+      `_Send /cancel to abort._`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
   bot.action(/^wallet_pick_acc:(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const chosenAccount = ctx.match![1];
@@ -7912,6 +7973,24 @@ export function setupRoutes(bot: Telegraf): void {
         try {
           const updated = await renameUserSuiWallet(telegramId, pending.renameSuiWalletId, newName);
           await ctx.reply(`✅ SUI Wallet renamed to <b>${updated.name}</b>!`, { parse_mode: 'HTML' });
+          const menu = await buildWalletsManagementMenu(telegramId);
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'rename_starknet_wallet') {
+        const newName = rawText.trim();
+        if (!pending.renameStarknetWalletId) {
+          await ctx.reply('❌ Rename session expired. Please start over via /wallets.');
+          return;
+        }
+
+        try {
+          const updated = await renameUserStarknetWallet(telegramId, pending.renameStarknetWalletId, newName);
+          await ctx.reply(`✅ Starknet Wallet renamed to <b>${updated.name}</b>!`, { parse_mode: 'HTML' });
           const menu = await buildWalletsManagementMenu(telegramId);
           await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
         } catch (err: any) {
