@@ -25,17 +25,30 @@ import {
   isValidNearAccountId,
   parseTokenUnits,
   formatTokenUnits,
+  generateStarknetWallet,
+  getStarknetProvider,
+  getStarknetAccount,
+  getStarknetBalance,
+  getStarknetTokenBalance,
+  getStarknetTokenMetadata,
+  getStarknetAVNUQuote,
+  formatTokenBalance,
+  STRK_TOKEN_ADDRESS,
+  ETH_TOKEN_ADDRESS,
   type VenueName,
   isTradableVenue,
 } from '@racerbot/shared';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
+import { CallData, uint256 } from 'starknet';
 import {
   getDb,
   createUser,
   getUserByTelegramId,
   updateUserScopedKey,
   updateUserSuiWallet,
+  updateUserStarknetWallet,
+  getUserByStarknetAddress,
   getTokenCache,
   findTokenAddressByShortKey,
   upsertTokenCache,
@@ -178,10 +191,19 @@ export function isSuiToken(rawTokenAddress: string): boolean {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress.trim());
   const clean = tokenAddress.trim();
   return (
-    clean.startsWith('0x') ||
     clean.includes('::') ||
-    clean.toLowerCase().includes('suipump')
+    clean.toLowerCase().includes('suipump') ||
+    clean.toLowerCase() === 'sui'
   );
+}
+
+// ── Helper to detect Starknet token addresses & symbols ─────────────────────
+export function isStarknetToken(rawTokenAddress: string): boolean {
+  if (!rawTokenAddress || typeof rawTokenAddress !== 'string') return false;
+  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress.trim());
+  const clean = tokenAddress.trim().toLowerCase();
+  if (clean === 'strk' || clean === 'starknet') return true;
+  return clean.startsWith('0x') && !clean.includes('::');
 }
 
 // ── NEAR/USD price with multi-source failover ───────────────────────────────
@@ -461,7 +483,7 @@ export async function fetchTokenTotalTxns(
 
 export interface TokenInfoResult {
   address: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   name: string;
   symbol: string;
   decimals: number;
@@ -767,6 +789,66 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   const fetchPromise = (async (): Promise<TokenInfoResult> => {
+
+  // ── Starknet Token Resolution (AVNU / Ekubo / Unruggable) ───────────────────
+  if (isStarknetToken(tokenAddress)) {
+    const isStrk = tokenAddress.toLowerCase() === 'strk' || tokenAddress.toLowerCase() === STRK_TOKEN_ADDRESS.toLowerCase();
+    const isEth = tokenAddress.toLowerCase() === 'eth' || tokenAddress.toLowerCase() === ETH_TOKEN_ADDRESS.toLowerCase();
+    const canonicalAddr = isStrk ? STRK_TOKEN_ADDRESS : (isEth ? ETH_TOKEN_ADDRESS : tokenAddress);
+
+    const [meta, dexscreenerData] = await Promise.all([
+      getStarknetTokenMetadata(canonicalAddr).catch(() => ({
+        address: canonicalAddr,
+        name: isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Starknet Token'),
+        symbol: isStrk ? 'STRK' : (isEth ? 'ETH' : 'TOKEN'),
+        decimals: 18,
+        totalSupply: '1000000000000000000000000000',
+      })),
+      fetchDexScreenerTokenData(canonicalAddr).catch(() => null),
+    ]);
+
+    let quotePriceNative = 0;
+    try {
+      const quote = await getStarknetAVNUQuote({
+        sellTokenAddress: STRK_TOKEN_ADDRESS,
+        buyTokenAddress: canonicalAddr,
+        sellAmount: 1000000000000000000n, // 1 STRK
+      }).catch(() => null);
+      if (quote && quote.buyAmount) {
+        const outHuman = Number(quote.buyAmount) / Math.pow(10, meta.decimals);
+        if (outHuman > 0) quotePriceNative = 1 / outHuman;
+      }
+    } catch { /* ignore */ }
+
+    const price = quotePriceNative > 0
+      ? quotePriceNative.toString()
+      : (dexscreenerData?.priceNative?.toString() || (isStrk || isEth ? '1' : '0.001'));
+    const priceUsd = dexscreenerData?.priceUsd?.toString() || (quotePriceNative > 0 ? (quotePriceNative * 0.4).toFixed(6) : '0');
+    const liqUsd = dexscreenerData?.liquidityUsd?.toString() || '10000';
+    const mcapUsd = dexscreenerData?.marketCapUsd || (parseFloat(priceUsd) > 0 ? (Number(meta.totalSupply || '1000000000') / Math.pow(10, meta.decimals)) * parseFloat(priceUsd) : 50000);
+
+    const result: TokenInfoResult = {
+      name: meta.name,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      total_supply: meta.totalSupply || '0',
+      price,
+      price_usd: priceUsd,
+      liquidity: liqUsd,
+      liquidity_usd: liqUsd,
+      market_cap: Math.round(mcapUsd),
+      market_cap_usd: Math.round(mcapUsd),
+      near_usd: 0.4,
+      address: canonicalAddr,
+      chain: 'starknet',
+      venue: (dexscreenerData?.dexId as any) || 'avnu',
+      tradeable: true,
+      bonding_phase: 'bonded',
+    };
+
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
+    return result;
+  }
 
   // ── SUI / SuiPump Token Resolution ──────────────────────────────────────────
   if (isSuiToken(tokenAddress)) {
@@ -1561,6 +1643,8 @@ export interface OnboardResult {
   privateKey?: string;
   suiAddress?: string;
   suiPrivateKey?: string;
+  starknetAddress?: string;
+  starknetPrivateKey?: string;
   isExisting: boolean;
 }
 
@@ -1580,9 +1664,33 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
 }
 
 /**
+ * Ensures user record has an initialized Starknet address & encrypted private key.
+ * If missing, generates a new Starknet OpenZeppelin counterfactual wallet and saves to DB.
+ */
+export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRecord> {
+  if (user.starknet_address && user.starknet_private_key_enc) {
+    return user;
+  }
+  const starknetWallet = generateStarknetWallet(MASTER_KEY);
+  await updateUserStarknetWallet(user.id, starknetWallet.address, starknetWallet.encryptedPrivateKey);
+  user.starknet_address = starknetWallet.address;
+  user.starknet_private_key_enc = starknetWallet.encryptedPrivateKey;
+  return user;
+}
+
+/**
+ * Ensures user record has all multi-chain wallets initialized (NEAR, SUI, and Starknet).
+ */
+export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord> {
+  let updated = await ensureUserSuiWallet(user);
+  updated = await ensureUserStarknetWallet(updated);
+  return updated;
+}
+
+/**
  * Onboards user via Telegram chat.
- * Generates NEAR subaccount keypair and Sui Ed25519 keypair, creates & funds the NEAR subaccount on-chain,
- * and returns the user account details.
+ * Generates NEAR subaccount keypair, Sui Ed25519 keypair, and Starknet OpenZeppelin account,
+ * creates & funds the NEAR subaccount on-chain, and returns the user account details.
  * Idempotent: returns existing account info if user is already onboarded.
  * Optionally accepts a referral code to track who referred the user.
  */
@@ -1590,11 +1698,12 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   // Step 5: Check for existing user row (idempotency)
   const existing = await getUserByTelegramId(telegramId).catch(() => null);
   if (existing) {
-    const updated = await ensureUserSuiWallet(existing);
+    const updated = await ensureUserAllWallets(existing);
     return {
       userId: updated.id,
       subaccountId: updated.subaccount_id,
       suiAddress: updated.sui_address ?? undefined,
+      starknetAddress: updated.starknet_address ?? undefined,
       isExisting: true,
     };
   }
@@ -1617,6 +1726,9 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
 
   // Step 2: Generate Sui Ed25519 wallet
   const suiWallet = generateSuiWallet(MASTER_KEY);
+
+  // Step 2b: Generate Starknet OpenZeppelin wallet
+  const starknetWallet = generateStarknetWallet(MASTER_KEY);
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -1643,6 +1755,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     scoped_key_encrypted: encryptedKey,
     sui_address: suiWallet.address,
     sui_private_key_enc: suiWallet.encryptedPrivateKey,
+    starknet_address: starknetWallet.address,
+    starknet_private_key_enc: starknetWallet.encryptedPrivateKey,
   });
 
   // Generate referral code based on username
@@ -1661,6 +1775,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     privateKey, // Raw exported NEAR private key string (ed25519:<base58>)
     suiAddress: suiWallet.address,
     suiPrivateKey: suiWallet.privateKeySecret,
+    starknetAddress: starknetWallet.address,
+    starknetPrivateKey: starknetWallet.privateKeySecret,
     isExisting: false,
   };
 }
@@ -1881,7 +1997,7 @@ let directExecutor: any = null;
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -1956,10 +2072,13 @@ export interface UserBalances {
   suiBalanceFormatted?: string;
   suiBalanceUsd?: string;
   suiUsd?: number;
+  starknetAddress?: string;
+  strkBalanceFormatted?: string;
+  ethBalanceFormatted?: string;
 }
 
 /**
- * Fetch native NEAR, wrap.near, and SUI balances for user's account with caching & parallel requests.
+ * Fetch native NEAR, wrap.near, SUI, and Starknet (STRK/ETH) balances for user's account with caching & parallel requests.
  */
 export async function getUserBalances(telegramId: number, forceRefresh = false): Promise<UserBalances> {
   if (!forceRefresh) {
@@ -1974,18 +2093,22 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     throw new Error('User not found. Run /start first.');
   }
 
-  const user = await ensureUserSuiWallet(rawUser);
+  const user = await ensureUserAllWallets(rawUser);
   const subaccountId = user.subaccount_id;
   const suiAddress = user.sui_address;
+  const starknetAddress = user.starknet_address;
 
   let nativeNearYocto = '0';
   let wrapNearYocto = '0';
   let suiMist = 0n;
+  let strkBal = '0';
+  let ethBal = '0';
 
-  const [nativeRes, wrapRes, suiRes, nearUsd, suiUsd] = await Promise.allSettled([
+  const [nativeRes, wrapRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
     near.getNearBalance(subaccountId),
     near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
     suiAddress ? getSuiBalance(suiAddress) : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
+    starknetAddress ? getStarknetBalance(starknetAddress) : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
     getNearUsdPrice(),
     getSuiUsdPrice(),
   ]);
@@ -1998,6 +2121,10 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
   }
   if (suiRes.status === 'fulfilled') {
     suiMist = suiRes.value.mist;
+  }
+  if (starknetRes.status === 'fulfilled') {
+    strkBal = starknetRes.value.strkFormatted || '0';
+    ethBal = starknetRes.value.ethFormatted || '0';
   }
 
   const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
@@ -2037,6 +2164,9 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     suiBalanceFormatted: spendableSui.toFixed(4),
     suiBalanceUsd: formatUSD(spendableSui, suiPrice),
     suiUsd: suiPrice,
+    starknetAddress: starknetAddress ?? undefined,
+    strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
+    ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
   };
 
   balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });

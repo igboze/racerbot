@@ -23,6 +23,8 @@ export interface UserRecord {
   scoped_key_encrypted: string;
   sui_address?: string | null;
   sui_private_key_enc?: string | null;
+  starknet_address?: string | null;
+  starknet_private_key_enc?: string | null;
   default_buy_pct: number | null;
   default_sell_pct: number | null;
   fee_tier: string;
@@ -44,7 +46,7 @@ export interface UserRecord {
 export interface UserWalletRecord {
   id: string;
   user_id: string;
-  chain: 'near' | 'sui';
+  chain: 'near' | 'sui' | 'starknet';
   address: string;
   name: string;
   encrypted_private_key: string;
@@ -56,7 +58,7 @@ export interface UserWalletRecord {
 export interface PositionRecord {
   id: string;
   user_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   token_address: string;
   quantity_held: string;
   avg_entry_price: string;
@@ -71,7 +73,7 @@ export interface FillRecord {
   id: string;
   user_id: string;
   position_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   side: string;
   token_address: string;
   amount: string;
@@ -88,7 +90,7 @@ export interface TriggerRecord {
   id: string;
   user_id: string;
   position_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   type: string;
   target_value: string;
   /** Percentage of the position to sell when this trigger fires (1-100, default 100). */
@@ -99,7 +101,7 @@ export interface TriggerRecord {
 
 export interface TokenCacheRecord {
   token_address: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   name?: string | null;
   symbol?: string | null;
   decimals?: number | null;
@@ -339,13 +341,15 @@ export interface CreateUserParams {
   scoped_key_encrypted: string;
   sui_address?: string | null;
   sui_private_key_enc?: string | null;
+  starknet_address?: string | null;
+  starknet_private_key_enc?: string | null;
   default_buy_pct?: number;
   default_sell_pct?: number;
 }
 
 export interface CreatePositionParams {
   user_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   token_address: string;
   quantity_held: string;
   avg_entry_price: string;
@@ -354,7 +358,7 @@ export interface CreatePositionParams {
 export interface CreateFillParams {
   user_id: string;
   position_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   side: string;
   token_address: string;
   amount: string;
@@ -369,7 +373,7 @@ export interface CreateFillParams {
 export interface CreateTriggerParams {
   user_id: string;
   position_id: string;
-  chain?: 'near' | 'sui';
+  chain?: 'near' | 'sui' | 'starknet';
   type: string;
   target_value: string;
   /** Percentage of the position to sell when this trigger fires (1-100, default 100). */
@@ -425,15 +429,29 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
   const db = await getDb();
   const id = randomUUID();
   const result = await db.query(
-    `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, sui_address, sui_private_key_enc, default_buy_pct, default_sell_pct, fee_tier)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, sui_address, sui_private_key_enc, starknet_address, starknet_private_key_enc, default_buy_pct, default_sell_pct, fee_tier)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (telegram_id) DO UPDATE SET 
        subaccount_id = EXCLUDED.subaccount_id, 
        scoped_key_encrypted = EXCLUDED.scoped_key_encrypted,
        sui_address = COALESCE(EXCLUDED.sui_address, users.sui_address),
-       sui_private_key_enc = COALESCE(EXCLUDED.sui_private_key_enc, users.sui_private_key_enc)
+       sui_private_key_enc = COALESCE(EXCLUDED.sui_private_key_enc, users.sui_private_key_enc),
+       starknet_address = COALESCE(EXCLUDED.starknet_address, users.starknet_address),
+       starknet_private_key_enc = COALESCE(EXCLUDED.starknet_private_key_enc, users.starknet_private_key_enc)
      RETURNING *`,
-    [id, params.telegram_id, params.subaccount_id, params.scoped_key_encrypted, params.sui_address || null, params.sui_private_key_enc || null, params.default_buy_pct || null, params.default_sell_pct || null, 'standard']
+    [
+      id,
+      params.telegram_id,
+      params.subaccount_id,
+      params.scoped_key_encrypted,
+      params.sui_address || null,
+      params.sui_private_key_enc || null,
+      params.starknet_address || null,
+      params.starknet_private_key_enc || null,
+      params.default_buy_pct || null,
+      params.default_sell_pct || null,
+      'standard',
+    ]
   );
   const createdUser = rowToUser(result.rows[0]);
 
@@ -455,6 +473,16 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
        ON CONFLICT (user_id, chain, address) DO NOTHING`,
       [createdUser.id, params.sui_address, params.sui_private_key_enc]
     ).catch((err: any) => console.warn('[DB] user_wallets sui insert warning:', err?.message));
+  }
+
+  // Ensure initial Starknet wallet is recorded in user_wallets
+  if (params.starknet_address && params.starknet_private_key_enc) {
+    await db.query(
+      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+       VALUES ($1, 'starknet', $2, 'Wallet 1', $3, FALSE, TRUE)
+       ON CONFLICT (user_id, chain, address) DO NOTHING`,
+      [createdUser.id, params.starknet_address, params.starknet_private_key_enc]
+    ).catch((err: any) => console.warn('[DB] user_wallets starknet insert warning:', err?.message));
   }
 
   invalidateUserCache(undefined, params.telegram_id);
@@ -536,6 +564,13 @@ export async function getUserBySuiAddress(suiAddress: string): Promise<UserRecor
   return rowToUser(result.rows[0]);
 }
 
+export async function getUserByStarknetAddress(starknetAddress: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE LOWER(starknet_address) = LOWER($1)', [starknetAddress]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
 export async function updateUserScopedKey(userId: string, encryptedKey: string): Promise<void> {
   const db = await getDb();
   await db.query('UPDATE users SET scoped_key_encrypted = $1 WHERE id = $2', [encryptedKey, userId]);
@@ -551,6 +586,18 @@ export async function updateUserSuiWallet(userId: string, suiAddress: string, su
      ON CONFLICT (user_id, chain, address) DO NOTHING`,
     [userId, suiAddress, suiPrivateKeyEnc]
   ).catch((err: any) => console.warn('[DB] user_wallets sui update warning:', err?.message));
+  invalidateUserCache(userId);
+}
+
+export async function updateUserStarknetWallet(userId: string, starknetAddress: string, starknetPrivateKeyEnc: string): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3', [starknetAddress, starknetPrivateKeyEnc, userId]);
+  await db.query(
+    `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+     VALUES ($1, 'starknet', $2, 'Wallet 1', $3, FALSE, TRUE)
+     ON CONFLICT (user_id, chain, address) DO NOTHING`,
+    [userId, starknetAddress, starknetPrivateKeyEnc]
+  ).catch((err: any) => console.warn('[DB] user_wallets starknet update warning:', err?.message));
   invalidateUserCache(userId);
 }
 
@@ -570,7 +617,7 @@ function rowToUserWallet(row: any): UserWalletRecord {
   };
 }
 
-export async function getUserWallets(userId: string, chain: 'near' | 'sui'): Promise<UserWalletRecord[]> {
+export async function getUserWallets(userId: string, chain: 'near' | 'sui' | 'starknet'): Promise<UserWalletRecord[]> {
   const db = await getDb();
   const res = await db.query(
     'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 ORDER BY created_at ASC',
@@ -579,7 +626,7 @@ export async function getUserWallets(userId: string, chain: 'near' | 'sui'): Pro
   return res.rows.map(rowToUserWallet);
 }
 
-export async function getActiveWallet(userId: string, chain: 'near' | 'sui'): Promise<UserWalletRecord | null> {
+export async function getActiveWallet(userId: string, chain: 'near' | 'sui' | 'starknet'): Promise<UserWalletRecord | null> {
   const db = await getDb();
   const res = await db.query(
     'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE LIMIT 1',
@@ -598,7 +645,7 @@ export async function getUserWalletById(walletId: string): Promise<UserWalletRec
 
 export interface CreateUserWalletParams {
   userId: string;
-  chain: 'near' | 'sui';
+  chain: 'near' | 'sui' | 'starknet';
   address: string;
   name: string;
   encryptedPrivateKey: string;
@@ -645,6 +692,11 @@ export async function createUserWallet(params: CreateUserWalletParams): Promise<
           'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
           [params.address, params.encryptedPrivateKey, params.userId]
         );
+      } else if (params.chain === 'starknet') {
+        await client.query(
+          'UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3',
+          [params.address, params.encryptedPrivateKey, params.userId]
+        );
       }
     }
 
@@ -659,7 +711,7 @@ export async function createUserWallet(params: CreateUserWalletParams): Promise<
   }
 }
 
-export async function setActiveWallet(userId: string, chain: 'near' | 'sui', walletId: string): Promise<UserWalletRecord> {
+export async function setActiveWallet(userId: string, chain: 'near' | 'sui' | 'starknet', walletId: string): Promise<UserWalletRecord> {
   const db = await getDb();
   const client = await db.connect();
   try {
@@ -692,6 +744,11 @@ export async function setActiveWallet(userId: string, chain: 'near' | 'sui', wal
     } else if (chain === 'sui') {
       await client.query(
         'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+        [targetWallet.address, targetWallet.encrypted_private_key, userId]
+      );
+    } else if (chain === 'starknet') {
+      await client.query(
+        'UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3',
         [targetWallet.address, targetWallet.encrypted_private_key, userId]
       );
     }
@@ -763,6 +820,11 @@ export async function deleteUserWallet(userId: string, walletId: string): Promis
       } else if (wallet.chain === 'sui') {
         await client.query(
           'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+          [fallbackWallet.address, fallbackWallet.encrypted_private_key, userId]
+        );
+      } else if (wallet.chain === 'starknet') {
+        await client.query(
+          'UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3',
           [fallbackWallet.address, fallbackWallet.encrypted_private_key, userId]
         );
       }
@@ -1528,6 +1590,8 @@ function rowToUser(row: any): UserRecord {
     scoped_key_encrypted: row.scoped_key_encrypted,
     sui_address: row.sui_address ?? null,
     sui_private_key_enc: row.sui_private_key_enc ?? null,
+    starknet_address: row.starknet_address ?? null,
+    starknet_private_key_enc: row.starknet_private_key_enc ?? null,
     default_buy_pct: row.default_buy_pct != null ? parseFloat(row.default_buy_pct) : null,
     default_sell_pct: row.default_sell_pct != null ? parseFloat(row.default_sell_pct) : null,
     fee_tier: row.fee_tier,

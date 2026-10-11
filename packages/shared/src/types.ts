@@ -43,7 +43,12 @@ export type VenueName =
   | 'aftermath'
   | 'kriya'
   | 'momentum'
-  | 'sui_dex';
+  | 'sui_dex'
+  | 'avnu'
+  | 'ekubo'
+  | 'unruggable'
+  | 'jediswap'
+  | 'stark_dex';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
   'rhea',
@@ -68,15 +73,22 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'kriya',
   'momentum',
   'sui_dex',
+  'avnu',
+  'ekubo',
+  'unruggable',
+  'jediswap',
+  'stark_dex',
 ];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
 }
 
+export type SupportedChain = 'near' | 'sui' | 'starknet';
+
 export interface SwapRequest {
   user_id: string;
-  chain?: 'near' | 'sui';
+  chain?: SupportedChain;
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -86,6 +98,7 @@ export interface SwapRequest {
   dcl_pool_id?: string;
   pool_id?: number | null;
   intermediate_token?: string | null;
+  gas_token?: 'STRK' | 'ETH';
 }
 
 export interface TriggerConfig {

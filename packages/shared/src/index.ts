@@ -175,6 +175,39 @@ export type {
   ExecuteSuiTxResult,
 } from './sui.js';
 
+// Starknet Protocol Integration
+export {
+  STARKNET_DECIMALS,
+  FRI_PER_STRK,
+  STRK_TOKEN_ADDRESS,
+  ETH_TOKEN_ADDRESS,
+  OZ_ACCOUNT_CLASS_HASH,
+  UDC_ADDRESS,
+  STARKNET_FEE_BPS,
+  STARKNET_BPS_DENOMINATOR,
+  DEFAULT_STARKNET_TREASURY_ADDRESS,
+  getStarknetTreasuryAddress,
+  getStarknetProvider,
+  getStarknetReadProvider,
+  rotateStarknetRpc,
+  invalidateStarknetBalanceCache,
+  computeStarknetAccountAddress,
+  generateStarknetWallet,
+  getStarknetAccount,
+  getStarknetBalance,
+  getStarknetTokenBalance,
+  formatTokenBalance,
+  getStarknetTokenMetadata,
+  getStarknetAVNUQuote,
+} from './starknet.js';
+
+export type {
+  GeneratedStarknetWallet,
+  StarknetNativeBalances,
+  StarknetTokenMetadata,
+  StarknetQuoteParams,
+} from './starknet.js';
+
 // Anti-Honeypot & Token Safety
 export {
   checkTokenSafety,

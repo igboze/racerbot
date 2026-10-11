@@ -55,6 +55,7 @@ import { TREASURY_ACCOUNT_ID } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
+import { executeStarknetSwap } from './starknetExecutor.js';
 
 // ── Gas limits for swaps ──────────────────────────────────────────────────────
 // ft_transfer_call splits prepaid gas across multiple contracts: the token contract
@@ -520,6 +521,38 @@ export class SwapExecutor {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
+    // Route Starknet chain trades directly to StarknetExecutor
+    if (
+      event.chain === 'starknet' ||
+      venue === 'avnu' ||
+      venue === 'ekubo' ||
+      venue === 'unruggable' ||
+      venue === 'jediswap' ||
+      venue === 'stark_dex' ||
+      token_in.toLowerCase() === 'strk' ||
+      token_out.toLowerCase() === 'strk' ||
+      (token_in.startsWith('0x') && !token_in.includes('::') && event.chain !== 'sui') ||
+      (token_out.startsWith('0x') && !token_out.includes('::') && event.chain !== 'sui')
+    ) {
+      const presignStart = Date.now();
+      const res = await executeStarknetSwap(event, onProgress);
+      timings.presign_ms = Date.now() - presignStart;
+      timings.sign_ms = 0;
+      timings.post_ms = 0;
+
+      return {
+        txHash: res.txHash,
+        success: res.success,
+        positionId: res.positionId,
+        reason: res.reason,
+        tokenName: res.tokenName,
+        tokenSymbol: res.tokenSymbol,
+        tokenQty: res.tokenQty,
+        priceNear: res.price,
+        nearSpent: res.spent,
+      };
+    }
+
     // Route SUI chain trades directly to SuiExecutor
     if (
       event.chain === 'sui' ||
@@ -531,8 +564,8 @@ export class SwapExecutor {
       token_in === 'sui' ||
       token_in === '0x2::sui::SUI' ||
       token_in === 'SUI' ||
-      token_in.startsWith('0x') ||
-      token_out.startsWith('0x')
+      token_in.includes('::') ||
+      token_out.includes('::')
     ) {
       const presignStart = Date.now();
       const res = await executeSuiSwap(event, onProgress);
@@ -934,7 +967,7 @@ export class SwapExecutor {
     const freshQuote = quoteFresh
       ? null
       : await near.computeMinAmountOut(
-          venue,
+          venue as any,
           token_in,
           token_out,
           (isBuyPath ? swapAmount : amountInBigInt).toString(),
@@ -2945,7 +2978,7 @@ export class SwapExecutor {
       if (isSlippageBreach && !(event as any).__slippage_retry) {
         const bumpedSlippage = userSlippage + 2;
         const bumpedQuote = await near.computeMinAmountOut(
-          venue,
+          venue as any,
           token_in,
           token_out,
           (isBuyPath ? swapAmount : amountInBigInt).toString(),
