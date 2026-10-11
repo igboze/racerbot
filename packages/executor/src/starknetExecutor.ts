@@ -252,6 +252,8 @@ export async function executeStarknetSwap(
 
   // Evict balance cache so next wallet/balance fetch immediately shows new balance
   invalidateStarknetBalanceCache(userAddress);
+  invalidateStarknetBalanceCache(tokenInCanonical);
+  invalidateStarknetBalanceCache(tokenOutCanonical);
 
   const humanFee = Number(nativeFeeAmount) / 1e18;
 

@@ -37,7 +37,7 @@ import {
   ETH_TOKEN_ADDRESS,
   OZ_ACCOUNT_CLASS_HASH,
   TYPO_OZ_ACCOUNT_CLASS_HASH,
-  computeStarknetAccountAddress,
+  invalidateStarknetBalanceCache,
   type GeneratedStarknetWallet,
   type VenueName,
   isTradableVenue,
@@ -2080,6 +2080,9 @@ export async function publishSwap(swapEvent: {
       if (u?.telegram_id) {
         balanceCache.delete(u.telegram_id);
       }
+      if (u?.starknet_address) {
+        invalidateStarknetBalanceCache(u.starknet_address);
+      }
     }).catch(() => {});
   }
 
@@ -2157,7 +2160,7 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     near.getNearBalance(subaccountId),
     near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
     suiAddress ? getSuiBalance(suiAddress) : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
-    starknetAddress ? getStarknetBalance(starknetAddress) : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
+    starknetAddress ? getStarknetBalance(starknetAddress, forceRefresh) : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
     getNearUsdPrice(),
     getSuiUsdPrice(),
   ]);
@@ -3506,4 +3509,31 @@ export async function deleteUserSuiWallet(telegramId: number, walletId: string):
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
   return result;
+}
+
+export async function listUserStarknetWallets(telegramId: number): Promise<UserWalletRecord[]> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  return getUserWallets(user.id, 'starknet');
+}
+
+export async function switchActiveStarknetWallet(telegramId: number, walletId: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const wallet = await setActiveWallet(user.id, 'starknet', walletId);
+  balanceCache.delete(telegramId);
+  if (wallet.address) {
+    invalidateStarknetBalanceCache(wallet.address);
+  }
+  return wallet;
+}
+
+export async function renameUserStarknetWallet(telegramId: number, walletId: string, newName: string): Promise<UserWalletRecord> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed.length > 30) {
+    throw new Error('Wallet name must be between 1 and 30 characters.');
+  }
+  return renameUserWallet(user.id, walletId, trimmed);
 }
