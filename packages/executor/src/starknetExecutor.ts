@@ -139,7 +139,7 @@ export async function executeStarknetSwap(
   });
 
   if (!quotes || quotes.length === 0) {
-    throw new Error('No liquid route found on Starknet for this token pair.');
+    throw new Error('No liquid route found on Starknet for this token pair. The DEX pool (Ekubo/AVNU) currently has insufficient active liquidity or is out of tick range.');
   }
 
   const selectedQuote = quotes[0];
