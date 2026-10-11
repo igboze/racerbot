@@ -296,7 +296,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
       const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
       const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-      const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * 0.4;
+      const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
       const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
       totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
 
@@ -431,7 +431,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const b = await getUserBalances(telegramId, forceRefresh);
   const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-  const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * 0.4;
+  const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
   const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
   const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
