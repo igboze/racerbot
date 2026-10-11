@@ -105,6 +105,7 @@ import {
   getSuiTokenBalance,
   getSuiUsdPrice,
   getStarknetBalance,
+  getStarknetTokenBalance,
   checkTokenSafety,
   restoreSuiKeypairFromSecret,
   isValidSuiAddress,
@@ -3858,8 +3859,23 @@ export function setupRoutes(bot: Telegraf): void {
     if (positions.length > 0) {
       const balanceChecks = await Promise.allSettled(
         positions.map(async (pos) => {
+          const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
           const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-          if (isSuiPos) {
+          if (isStarknetPos) {
+            if (!user.starknet_address) return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            try {
+              const bal = await Promise.race([
+                getStarknetTokenBalance(user.starknet_address, pos.token_address),
+                new Promise<bigint>((_, reject) =>
+                  setTimeout(() => reject(new Error('timeout')), 3000)
+                ),
+              ]);
+              const isZero = bal === 0n;
+              return { isZero, rawBal: bal.toString(), verified: true };
+            } catch {
+              return { isZero: false, rawBal: pos.quantity_held, verified: false };
+            }
+          } else if (isSuiPos) {
             if (!user.sui_address) return { isZero: false, rawBal: pos.quantity_held, verified: false };
             try {
               const bal = await Promise.race([
@@ -3970,13 +3986,22 @@ export function setupRoutes(bot: Telegraf): void {
         const displayLabel = sanitizeMd(rawSymbol);
         const currentPrice = info ? parseFloat(info.price) : 0;
         const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-        const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
-        const nativeUsdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
+        const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
+        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+        const nativeUsdRate = isStarknetPos
+          ? (info?.strk_usd || 0.12)
+          : isSuiPos
+          ? (info?.sui_usd || 2.0)
+          : (info?.near_usd || 4.3);
 
         let humanQuantity = 0;
         try {
           const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-          humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+          if (isStarknetPos && (pos.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
+            humanQuantity = parseFloat(pos.quantity_held) || 0;
+          } else {
+            humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+          }
         } catch {
           humanQuantity = parseFloat(pos.quantity_held) || 0;
         }
@@ -4005,7 +4030,9 @@ export function setupRoutes(bot: Telegraf): void {
           const val = parseFloat(buy.amount || '0');
           let amount = val;
           const rawAmtStr = String(buy.amount || '');
-          if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
+          if (isStarknetPos) {
+            amount = rawAmtStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
+          } else if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
             amount = val / Math.pow(10, decimals);
           } else if (isSuiPos && val > 1e6) {
             amount = val / Math.pow(10, decimals);
@@ -4095,8 +4122,13 @@ export function setupRoutes(bot: Telegraf): void {
         const info = infoMap.get(pos.token_address);
         const currentPrice = info ? parseFloat(info.price) : 0;
         const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-        const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
-        const nativeUsdRate = isSuiPos ? (info?.sui_usd || 2.0) : (info?.near_usd || 4.3);
+        const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
+        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+        const nativeUsdRate = isStarknetPos
+          ? (info?.strk_usd || 0.12)
+          : isSuiPos
+          ? (info?.sui_usd || 2.0)
+          : (info?.near_usd || 4.3);
         const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
         try {
           const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
@@ -4303,12 +4335,27 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      const isStarknetPos = position.chain === 'starknet' || isStarknetToken(position.token_address);
       const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
       // Live on-chain balance check: if user transferred this token out via another wallet,
       // close position in DB immediately and inform user.
       let onChainZero = false;
       let liveRawBal: string | null = null;
-      if (isSuiPos) {
+      if (isStarknetPos) {
+        if (user.starknet_address) {
+          try {
+            const bal = await Promise.race([
+              getStarknetTokenBalance(user.starknet_address, position.token_address),
+              new Promise<bigint>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+            ]);
+            if (bal === 0n) {
+              onChainZero = true;
+            } else {
+              liveRawBal = bal.toString();
+            }
+          } catch { /* ignore network error */ }
+        }
+      } else if (isSuiPos) {
         if (user.sui_address) {
           try {
             const bal = await Promise.race([
@@ -4387,11 +4434,19 @@ export function setupRoutes(bot: Telegraf): void {
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       const currentPrice = info ? parseFloat(info.price) : 0;
-      const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-      const liveNativeUsd = isSuiPos ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 5.16);
-      const usdRate = isSuiPos ? (info?.sui_usd || liveNativeUsd) : (info?.near_usd || liveNativeUsd);
+      const nativeUnit = isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR';
+      const liveNativeUsd = isStarknetPos
+        ? (info?.strk_usd || 0.12)
+        : isSuiPos
+        ? await getSuiUsdPrice().catch(() => 2.0)
+        : await getNearUsdPrice().catch(() => 5.16);
+      const usdRate = isStarknetPos
+        ? (info?.strk_usd || liveNativeUsd)
+        : isSuiPos
+        ? (info?.sui_usd || liveNativeUsd)
+        : (info?.near_usd || liveNativeUsd);
 
-      const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
+      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
       let mcNative = info?.market_cap || 0;
       let mcUsd = info?.market_cap_usd || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
@@ -4419,6 +4474,9 @@ export function setupRoutes(bot: Telegraf): void {
         if (decimals <= 0) return val;
         if (isSuiPos) {
           return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
+        }
+        if (isStarknetPos) {
+          return rawStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
         }
         if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
         return val;
@@ -4456,7 +4514,11 @@ export function setupRoutes(bot: Telegraf): void {
       let humanQuantity = 0;
       try {
         const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
-        humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+        if (isStarknetPos && (position.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
+          humanQuantity = parseFloat(position.quantity_held) || 0;
+        } else {
+          humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+        }
       } catch {
         humanQuantity = parseFloat(position.quantity_held || '0');
       }
@@ -4560,7 +4622,7 @@ export function setupRoutes(bot: Telegraf): void {
       // Build keyboard buttons first (needed for both text and image paths)
       const buttons: any[] = [];
       const shortKey = getShortTokenKey(position.token_address);
-      const unitBtn = isSuiPos ? 'SUI' : 'N';
+      const unitBtn = isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'N';
 
       // Sell percentage buttons (Red 🔴)
       buttons.push([

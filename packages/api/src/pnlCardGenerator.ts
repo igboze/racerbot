@@ -1,5 +1,5 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
-import { getTokenInfo, isSuiToken, getNearUsdPrice, getSuiUsdPrice } from './wallet.js';
+import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice } from './wallet.js';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -36,6 +36,7 @@ export interface PNLCardData {
   /** How much the token price itself moved (entry → exit/current), in % */
   tokenPriceChangePct: number;
   nearUsd: number;
+  nativeUnit?: string;
   /** Whether to show the user's personal net worth (investment / value) on the card */
   showNetWorth: boolean;
   /** User referral code for QR/bar code link */
@@ -94,19 +95,31 @@ export async function generatePNLCardData(
       tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
+    const isStarknetPos = position.chain === 'starknet' || isStarknetToken(position.token_address);
     const isSuiPos     = position.chain === 'sui' || isSuiToken(position.token_address);
-    const liveNativeUsd = isSuiPos ? await getSuiUsdPrice().catch(() => 2.0) : await getNearUsdPrice().catch(() => 5.16);
-    const nearUsd      = isSuiPos ? (tokenInfo?.sui_usd || liveNativeUsd) : (tokenInfo?.near_usd || liveNativeUsd);
+    const liveNativeUsd = isStarknetPos
+      ? (tokenInfo?.strk_usd || 0.12)
+      : isSuiPos
+      ? await getSuiUsdPrice().catch(() => 2.0)
+      : await getNearUsdPrice().catch(() => 5.16);
+    const nearUsd      = isStarknetPos
+      ? (tokenInfo?.strk_usd || liveNativeUsd)
+      : isSuiPos
+      ? (tokenInfo?.sui_usd || liveNativeUsd)
+      : (tokenInfo?.near_usd || liveNativeUsd);
 
     const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
-    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 6 : 18);
+    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
     const toHuman = (rawStr: string): number => {
       const val = parseFloat(rawStr || '0');
       if (decimals <= 0) return val;
       if (isSuiPos) {
         return rawStr.includes('.') && val < 1e6 ? val : val / Math.pow(10, decimals);
+      }
+      if (isStarknetPos) {
+        return rawStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
       }
       if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
       return val;
@@ -259,6 +272,11 @@ export async function generatePNLCardData(
       gaypad:       'Gaypad',
       shoremarkets: 'ShoreMarkets',
       kelytra:      'Kelytra',
+      avnu:         'AVNU Aggregator',
+      ekubo:        'Ekubo Protocol',
+      unruggable:   'Unruggable Meme',
+      jediswap:     'JediSwap',
+      stark_dex:    'Starknet DEX',
     };
     const venueName = tokenInfo?.venue ? venueMap[tokenInfo.venue] || tokenInfo.venue : 'Unknown';
 
@@ -296,6 +314,7 @@ export async function generatePNLCardData(
       sellFeesPaid,
       tokenPriceChangePct,
       nearUsd,
+      nativeUnit:     isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR',
       showNetWorth,
       referralCode,
       referralLink,
@@ -329,7 +348,7 @@ export function generatePNLCardMessage(data: PNLCardData): string {
   const pnlSign     = data.isProfit ? '+' : '';
   const isClosed    = data.positionStatus === 'closed';
   const statusEmoji = isClosed ? '🔒' : '🟢';
-  const nativeUnit  = data.tokenAddress.includes('::') ? 'SUI' : 'NEAR';
+  const nativeUnit  = data.nativeUnit || (isStarknetToken(data.tokenAddress) ? 'STRK' : data.tokenAddress.includes('::') ? 'SUI' : 'NEAR');
 
   const safe = (s: string) => (s || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\/]/g, ' ');
   const safeSymbol  = safe(data.tokenSymbol);
