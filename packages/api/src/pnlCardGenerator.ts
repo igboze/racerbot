@@ -128,7 +128,8 @@ export async function generatePNLCardData(
     const normalizeFee = (rawFeeStr: string): number => {
       let fee = parseFloat(rawFeeStr || '0');
       if (isSuiPos && fee > 1e6) fee = fee / 1e9;
-      else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
+      else if (isStarknetPos && fee > 1e10) fee = fee / 1e18;
+      else if (!isSuiPos && !isStarknetPos && fee > 1e18) fee = fee / 1e24;
       return fee;
     };
 
@@ -204,8 +205,19 @@ export async function generatePNLCardData(
     for (const sell of sells) {
       const amount   = toHuman(sell.amount);
       const price    = parseFloat(sell.price);
-      const fee      = normalizeFee(sell.fee_paid || '0');
-      const sellValue = amount * price - fee;
+      let fee        = normalizeFee(sell.fee_paid || '0');
+
+      let sellValue = 0;
+      if (sell.input_amount != null && parseFloat(sell.input_amount) > 0) {
+        // On-chain source of truth: actual net native proceeds received from on-chain sell
+        sellValue = parseFloat(sell.input_amount);
+        if (fee > sellValue) {
+          fee = sellValue * 0.015;
+        }
+      } else {
+        sellValue = Math.max(0, amount * price - fee);
+      }
+
       const costBasis = amount * avgEntryPrice;
       totalRealizedValue += sellValue;
       totalRealizedCost  += costBasis;

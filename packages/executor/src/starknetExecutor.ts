@@ -117,12 +117,20 @@ export async function executeStarknetSwap(
     throw new Error('Swap amount must be greater than 0.');
   }
 
-  // 3. Platform Fee deduction (1.5%)
-  const platformFeeAmount = (amountInBigInt * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
-  const netAmountIn = amountInBigInt - platformFeeAmount;
+  // 3. Platform Fee & AVNU Quote setup
+  // For Buys: fee is deducted from the native input token (STRK/ETH) before the swap
+  // For Sells: the full token amount is swapped, and fee is deducted from the native proceeds (STRK/ETH)
+  let sellAmountForQuote: bigint;
+  let buyFeeAmount = 0n;
 
-  if (netAmountIn <= 0n) {
-    throw new Error('Amount too small after platform fee.');
+  if (isBuy) {
+    buyFeeAmount = (amountInBigInt * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+    sellAmountForQuote = amountInBigInt - buyFeeAmount;
+    if (sellAmountForQuote <= 0n) {
+      throw new Error('Amount too small after platform fee.');
+    }
+  } else {
+    sellAmountForQuote = amountInBigInt;
   }
 
   onProgress?.('fetching_quote');
@@ -131,7 +139,7 @@ export async function executeStarknetSwap(
   const quotes = await getQuotes({
     sellTokenAddress: tokenInCanonical,
     buyTokenAddress: tokenOutCanonical,
-    sellAmount: netAmountIn,
+    sellAmount: sellAmountForQuote,
     takerAddress: userAddress,
     size: 1,
   }).catch((err) => {
@@ -149,14 +157,25 @@ export async function executeStarknetSwap(
   onProgress?.('building_transaction');
 
   // 5. Construct multicall transactions:
-  // - Transfer platform fee to treasury
-  // - Execute swap via AVNU router
+  // - For Buys: [feeTransferCall, ...avnuCalls]
+  // - For Sells: [...avnuCalls, feeTransferCall] (transfer dev fee in STRK/ETH after swap lands)
+  let nativeFeeAmount: bigint;
+  let feeTokenAddress: string;
+
+  if (isBuy) {
+    nativeFeeAmount = buyFeeAmount;
+    feeTokenAddress = tokenInCanonical;
+  } else {
+    nativeFeeAmount = (BigInt(selectedQuote.buyAmount) * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+    feeTokenAddress = tokenOutCanonical;
+  }
+
   const feeTransferCall = {
-    contractAddress: tokenInCanonical,
+    contractAddress: feeTokenAddress,
     entrypoint: 'transfer',
     calldata: CallData.compile({
       recipient: getStarknetTreasuryAddress(),
-      amount: uint256.bnToUint256(platformFeeAmount),
+      amount: uint256.bnToUint256(nativeFeeAmount),
     }),
   };
 
@@ -166,14 +185,15 @@ export async function executeStarknetSwap(
     takerAddress: userAddress,
   });
 
-  const callsToExecute = [
-    feeTransferCall,
-    ...avnuCalls.map((c: any) => ({
-      contractAddress: c.contractAddress,
-      entrypoint: c.entrypoint,
-      calldata: c.calldata,
-    })),
-  ];
+  const parsedAvnuCalls = avnuCalls.map((c: any) => ({
+    contractAddress: c.contractAddress,
+    entrypoint: c.entrypoint,
+    calldata: c.calldata,
+  }));
+
+  const callsToExecute = isBuy
+    ? [feeTransferCall, ...parsedAvnuCalls]
+    : [...parsedAvnuCalls, feeTransferCall];
 
   // 5b. Auto-deploy account if undeployed (Starknet Account Abstraction requirement)
   const normAddress = userAddress.toLowerCase();
@@ -233,7 +253,7 @@ export async function executeStarknetSwap(
   // Evict balance cache so next wallet/balance fetch immediately shows new balance
   invalidateStarknetBalanceCache(userAddress);
 
-  const humanFee = Number(platformFeeAmount) / 1e18;
+  const humanFee = Number(nativeFeeAmount) / 1e18;
 
   // 7. Update Positions and Fills
   const rawBuyQty = selectedQuote.buyAmount ? selectedQuote.buyAmount.toString() : '0';
@@ -242,12 +262,13 @@ export async function executeStarknetSwap(
     : '0';
 
   const humanBuyQtyNum = Number(rawBuyQty) / Math.pow(10, targetTokenMetadata.decimals);
-  const humanNetIn = Number(netAmountIn) / 1e18;
+  const humanNetIn = Number(sellAmountForQuote) / 1e18;
   const buyPricePerToken = humanBuyQtyNum > 0 ? humanNetIn / humanBuyQtyNum : 0;
 
   const humanSellQtyNum = Number(amountInBigInt) / Math.pow(10, targetTokenMetadata.decimals);
-  const humanProceeds = Number(selectedQuote.buyAmount) / 1e18;
-  const sellPricePerToken = humanSellQtyNum > 0 ? humanProceeds / humanSellQtyNum : 0;
+  const humanGrossProceeds = Number(selectedQuote.buyAmount) / 1e18;
+  const humanNetProceeds = (Number(selectedQuote.buyAmount) - Number(nativeFeeAmount)) / 1e18;
+  const sellPricePerToken = humanSellQtyNum > 0 ? humanGrossProceeds / humanSellQtyNum : 0;
 
   let positionId: string | undefined;
 
@@ -323,7 +344,7 @@ export async function executeStarknetSwap(
       fee_paid: humanFee.toString(),
       input_amount: isBuy
         ? (Number(amountInBigInt) / 1e18).toString()
-        : humanProceeds.toString(),
+        : humanNetProceeds.toString(),
       venue: 'avnu',
       tx_hash: txHash,
     }).catch((e) => {
@@ -345,7 +366,7 @@ export async function executeStarknetSwap(
     tokenName: targetTokenMetadata.name,
     tokenSymbol: targetTokenMetadata.symbol,
     tokenQty: isBuy ? humanBuyQty : formatTokenBalance(amountInBigInt, targetTokenMetadata.decimals),
-    spent: Number(amountInBigInt) / 1e18,
+    spent: isBuy ? Number(amountInBigInt) / 1e18 : humanNetProceeds,
     gasTokenUsed,
   };
 }
