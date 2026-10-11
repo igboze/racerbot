@@ -817,9 +817,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // -- Rate footnote --
   const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
-  const rateFooter = isSui
-    ? (tokenInfo.sui_usd ? `\n_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)} USD_\n` : '\n')
-    : (nearUsdRate && nearUsdRate > 0 ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n` : '\n');
+  const strkUsdRate = (tokenInfo as any).strk_usd as number | undefined;
+  const rateFooter = isStarknet
+    ? (strkUsdRate && strkUsdRate > 0 ? `\n_1 STRK ≈ $${strkUsdRate.toFixed(2)} USD_\n` : '\n')
+    : (isSui
+      ? (tokenInfo.sui_usd ? `\n_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)} USD_\n` : '\n')
+      : (nearUsdRate && nearUsdRate > 0 ? `\n_1 NEAR ≈ $${nearUsdRate.toFixed(2)} USD_\n` : '\n'));
 
   let safetyBanner = '';
   if (safety?.isDrained) {
