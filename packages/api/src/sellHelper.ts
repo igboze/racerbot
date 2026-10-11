@@ -28,6 +28,28 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   const user = await getUserById(userId).catch(() => null);
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
+  // Starknet Chain Execution Route
+  if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'unruggable') {
+    const swapEvent = {
+      type: 'execute_swap' as const,
+      chain: 'starknet' as const,
+      user_id: userId,
+      token_in: position.token_address,
+      token_out: 'strk',
+      amount_in: sellQty,
+      min_amount_out: '1',
+      venue: (info.venue as any) || 'avnu',
+      timestamp: Date.now(),
+      slippage_pct: slippagePct,
+    };
+
+    const swapResult = await publishSwap(swapEvent, onProgress);
+    if (swapResult.success === false) {
+      return { success: false, reason: swapResult.reason || 'Starknet sell failed on-chain.' };
+    }
+    return { success: true };
+  }
+
   // Sui Chain Execution Route
   if (position.chain === 'sui' || info.chain === 'sui' || info.venue === 'suipump') {
     const swapEvent = {
