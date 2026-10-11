@@ -2123,6 +2123,7 @@ export interface UserBalances {
   starknetAddress?: string;
   strkBalanceFormatted?: string;
   ethBalanceFormatted?: string;
+  strkUsd?: number;
 }
 
 /**
@@ -2215,6 +2216,7 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     starknetAddress: starknetAddress ?? undefined,
     strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
     ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
+    strkUsd: 0.12,
   };
 
   balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });

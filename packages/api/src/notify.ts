@@ -57,11 +57,12 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const targetVal = parseFloat(String(data.target_value || '0'));
       const currentPrice = Number(data.current_price || 0);
       const entryPrice = Number(data.entry_price || 0);
-      const isSui = data.chain === 'sui' || (typeof token === 'string' && token.includes('::'));
-      const unit = isSui ? 'SUI' : 'NEAR';
+      const isStarknet = data.chain === 'starknet' || (typeof token === 'string' && token.startsWith('0x') && !token.includes('::'));
+      const isSui = !isStarknet && (data.chain === 'sui' || (typeof token === 'string' && token.includes('::')));
+      const unit = isStarknet ? 'STRK' : isSui ? 'SUI' : 'NEAR';
 
       let sym = 'TOKEN';
-      let decimals = isSui ? 6 : 18;
+      let decimals = isStarknet ? 18 : isSui ? 9 : 18;
       try {
         const { getTokenInfo } = await import('./wallet.js');
         const info = await getTokenInfo(token, false).catch(() => null);
@@ -309,12 +310,12 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
     case 'deposit_received': {
       const chain = (data.chain as string) || 'near';
       const amount = (data.amount as string) || '0';
-      const symbol = (data.symbol as string) || (chain === 'sui' ? 'SUI' : 'NEAR');
+      const symbol = (data.symbol as string) || (chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
       const address = (data.address as string) || '';
       const usdValue = (data.usdValue as string) || '';
-      const icon = chain === 'sui' ? '🔷' : '⬛';
-      const tokenIcon = chain === 'sui' ? '💧' : 'Ⓝ';
-      const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+      const icon = chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
+      const tokenIcon = chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
+      const chainLabel = chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
 
       const msg =
         `💰 <b>Deposit Confirmed!</b>\n\n` +
