@@ -1705,24 +1705,9 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
 /**
  * Ensures user record has an initialized Starknet address & encrypted private key.
  * If missing, generates a new Starknet OpenZeppelin counterfactual wallet and saves to DB.
- * Automatically migrates existing accounts derived with the previous typo class hash to the canonical OZ v0.8.1 hash.
  */
 export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRecord> {
   if (user.starknet_address && user.starknet_private_key_enc) {
-    try {
-      const priv = decrypt(user.starknet_private_key_enc, MASTER_KEY);
-      const pub = ec.starkCurve.getStarkKey(priv);
-      const typoAddr = computeStarknetAccountAddress(pub, TYPO_OZ_ACCOUNT_CLASS_HASH);
-      // If address was computed with previous typo hash, migrate to canonical OpenZeppelin v0.8.1 contract address
-      if (user.starknet_address.toLowerCase() === typoAddr.toLowerCase()) {
-        const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
-        console.log(`[STARKNET] Auto-migrating user ${user.id} address from typo hash to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
-        await updateUserStarknetWallet(user.id, canonicalAddr, user.starknet_private_key_enc);
-        user.starknet_address = canonicalAddr;
-      }
-    } catch {
-      // Key encryption mismatch or already valid
-    }
     return user;
   }
   const starknetWallet = generateStarknetWallet(MASTER_KEY);
