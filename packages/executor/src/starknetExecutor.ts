@@ -9,6 +9,7 @@ import {
   formatTokenBalance,
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
+  OZ_ACCOUNT_CLASS_HASH,
   getStarknetTreasuryAddress,
   invalidateStarknetBalanceCache,
   DEFAULT_STARKNET_TREASURY_ADDRESS,
@@ -26,7 +27,7 @@ import {
   recordFee,
 } from '@racerbot/db';
 import { getQuotes, quoteToCalls } from '@avnu/avnu-sdk';
-import { CallData, uint256 } from 'starknet';
+import { CallData, uint256, ec } from 'starknet';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
 
@@ -171,6 +172,29 @@ export async function executeStarknetSwap(
       calldata: c.calldata,
     })),
   ];
+
+  // 5b. Auto-deploy account if undeployed (Starknet Account Abstraction requirement)
+  let isDeployed = false;
+  try {
+    const classHash = await provider.getClassHashAt(userAddress);
+    if (classHash) isDeployed = true;
+  } catch {
+    isDeployed = false;
+  }
+
+  if (!isDeployed) {
+    onProgress?.('deploying_account');
+    console.log(`[STARKNET_EXECUTOR] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
+    const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+    const deployRes = await account.deployAccount({
+      classHash: OZ_ACCOUNT_CLASS_HASH,
+      constructorCalldata: CallData.compile({ publicKey }),
+      addressSalt: publicKey,
+    });
+    console.log(`[STARKNET_EXECUTOR] Account deployment tx submitted: ${deployRes.transaction_hash}. Waiting for confirmation...`);
+    await provider.waitForTransaction(deployRes.transaction_hash);
+    console.log(`[STARKNET_EXECUTOR] Account ${userAddress} successfully deployed on Starknet!`);
+  }
 
   onProgress?.('executing_swap');
 

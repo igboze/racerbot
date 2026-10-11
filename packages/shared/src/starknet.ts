@@ -22,9 +22,13 @@ export const STRK_TOKEN_ADDRESS =
 export const ETH_TOKEN_ADDRESS =
   '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';
 
-// Standard OpenZeppelin Account v0.8.1 class hash (widely deployed and verified)
+// Standard OpenZeppelin Account v0.8.1 class hash (canonical declared Sierra contract on Starknet Mainnet)
 export const OZ_ACCOUNT_CLASS_HASH =
   process.env.STARKNET_ACCOUNT_CLASS_HASH ||
+  '0x061dac032f228abef9c6626f995015233097ae253a7f72d68552db02f2971b8f';
+
+// Previous typo hash for backwards compatibility and auto-migration detection
+export const TYPO_OZ_ACCOUNT_CLASS_HASH =
   '0x061dac032f228abef0c420218e6349b33f79f2f5eaf0d4a14c47fa1ea9ec8662';
 
 // Universal Deployer Contract (UDC)
@@ -273,7 +277,7 @@ export interface StarknetTokenMetadata {
 
 /**
  * Retrieve token name, symbol, decimals, and total supply for any Starknet ERC-20.
- * Utilizes in-memory caching and free read RPCs to avoid draining QuickNode credits.
+ * Utilizes GeckoTerminal zero-credit lookup, in-memory caching, and RPC fallback.
  */
 export async function getStarknetTokenMetadata(
   tokenAddress: string
@@ -282,7 +286,7 @@ export async function getStarknetTokenMetadata(
 
   // 1. Check in-memory metadata cache
   const cached = tokenMetadataCache.get(norm);
-  if (cached) return cached;
+  if (cached && cached.name !== 'Unknown' && cached.symbol !== 'UNKNOWN') return cached;
 
   // 2. Handle known core tokens instantly with 0 RPC calls
   if (norm === STRK_TOKEN_ADDRESS.toLowerCase() || norm === 'strk') {
@@ -291,6 +295,7 @@ export async function getStarknetTokenMetadata(
       name: 'Starknet Token',
       symbol: 'STRK',
       decimals: 18,
+      totalSupply: '10000000000000000000000000000',
     };
     tokenMetadataCache.set(norm, res);
     return res;
@@ -301,24 +306,51 @@ export async function getStarknetTokenMetadata(
       name: 'Ether',
       symbol: 'ETH',
       decimals: 18,
+      totalSupply: '120000000000000000000000000',
     };
     tokenMetadataCache.set(norm, res);
     return res;
   }
 
-  // 3. Use free read provider first to conserve QuickNode credits
-  const provider = getStarknetReadProvider();
+  // 3. Try GeckoTerminal zero-credit free public API first
+  try {
+    const geckoRes: any = await fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${norm}`, {
+      headers: { Accept: 'application/json' },
+    }).then((r) => r.json()).catch(() => null);
+
+    if (geckoRes?.data?.attributes) {
+      const attr = geckoRes.data.attributes;
+      const metadata: StarknetTokenMetadata = {
+        address: tokenAddress,
+        name: attr.name || 'Token',
+        symbol: (attr.symbol || 'TOKEN').toUpperCase(),
+        decimals: Number(attr.decimals) || 18,
+        totalSupply: attr.total_supply ? attr.total_supply.split('.')[0] : undefined,
+      };
+      tokenMetadataCache.set(norm, metadata);
+      return metadata;
+    }
+  } catch {
+    // Fall back to RPC inspection
+  }
+
+  // 4. On-chain RPC calls using primary provider for reliable execution
+  const provider = getStarknetProvider();
 
   try {
-    const [nameRes, symbolRes, decimalsRes] = await Promise.allSettled([
+    const [nameRes, symbolRes, decimalsRes, supplyRes] = await Promise.allSettled([
       provider.callContract({ contractAddress: tokenAddress, entrypoint: 'name', calldata: [] }),
       provider.callContract({ contractAddress: tokenAddress, entrypoint: 'symbol', calldata: [] }),
       provider.callContract({ contractAddress: tokenAddress, entrypoint: 'decimals', calldata: [] }),
+      provider.callContract({ contractAddress: tokenAddress, entrypoint: 'totalSupply', calldata: [] }).catch(() =>
+        provider.callContract({ contractAddress: tokenAddress, entrypoint: 'total_supply', calldata: [] })
+      ),
     ]);
 
-    let name = 'Unknown';
-    let symbol = 'UNKNOWN';
+    let name = 'Token';
+    let symbol = 'TOKEN';
     let decimals = 18;
+    let totalSupply: string | undefined;
 
     if (nameRes.status === 'fulfilled' && nameRes.value.length > 0) {
       name = parseFeltOrByteArray(nameRes.value);
@@ -329,57 +361,31 @@ export async function getStarknetTokenMetadata(
     if (decimalsRes.status === 'fulfilled' && decimalsRes.value.length > 0) {
       decimals = Number(BigInt(decimalsRes.value[0]));
     }
+    if (supplyRes.status === 'fulfilled' && supplyRes.value && supplyRes.value.length >= 2) {
+      totalSupply = uint256.uint256ToBN({ low: supplyRes.value[0], high: supplyRes.value[1] }).toString();
+    } else if (supplyRes.status === 'fulfilled' && supplyRes.value && supplyRes.value.length === 1) {
+      totalSupply = BigInt(supplyRes.value[0]).toString();
+    }
 
     const metadata: StarknetTokenMetadata = {
       address: tokenAddress,
       name,
       symbol,
       decimals,
+      totalSupply,
     };
 
-    tokenMetadataCache.set(norm, metadata);
+    if (name !== 'Token' && symbol !== 'TOKEN') {
+      tokenMetadataCache.set(norm, metadata);
+    }
     return metadata;
   } catch {
-    // If read provider fails, fall back to primary provider once
-    try {
-      const primaryProvider = getStarknetProvider();
-      const [nameRes, symbolRes, decimalsRes] = await Promise.allSettled([
-        primaryProvider.callContract({ contractAddress: tokenAddress, entrypoint: 'name', calldata: [] }),
-        primaryProvider.callContract({ contractAddress: tokenAddress, entrypoint: 'symbol', calldata: [] }),
-        primaryProvider.callContract({ contractAddress: tokenAddress, entrypoint: 'decimals', calldata: [] }),
-      ]);
-
-      let name = 'Unknown';
-      let symbol = 'UNKNOWN';
-      let decimals = 18;
-
-      if (nameRes.status === 'fulfilled' && nameRes.value.length > 0) {
-        name = parseFeltOrByteArray(nameRes.value);
-      }
-      if (symbolRes.status === 'fulfilled' && symbolRes.value.length > 0) {
-        symbol = parseFeltOrByteArray(symbolRes.value);
-      }
-      if (decimalsRes.status === 'fulfilled' && decimalsRes.value.length > 0) {
-        decimals = Number(BigInt(decimalsRes.value[0]));
-      }
-
-      const metadata: StarknetTokenMetadata = {
-        address: tokenAddress,
-        name,
-        symbol,
-        decimals,
-      };
-
-      tokenMetadataCache.set(norm, metadata);
-      return metadata;
-    } catch {
-      return {
-        address: tokenAddress,
-        name: 'Token',
-        symbol: 'TOKEN',
-        decimals: 18,
-      };
-    }
+    return {
+      address: tokenAddress,
+      name: 'Token',
+      symbol: 'TOKEN',
+      decimals: 18,
+    };
   }
 }
 

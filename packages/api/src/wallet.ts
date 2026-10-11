@@ -35,12 +35,16 @@ import {
   formatTokenBalance,
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
+  OZ_ACCOUNT_CLASS_HASH,
+  TYPO_OZ_ACCOUNT_CLASS_HASH,
+  computeStarknetAccountAddress,
+  type GeneratedStarknetWallet,
   type VenueName,
   isTradableVenue,
 } from '@racerbot/shared';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
-import { CallData, uint256 } from 'starknet';
+import { CallData, uint256, ec } from 'starknet';
 import {
   getDb,
   createUser,
@@ -499,6 +503,7 @@ export interface TokenInfoResult {
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD or SUI/USD exchange rate
   sui_usd?: number;
+  strk_usd?: number;
   venue: VenueName | 'unknown' | (string & {});
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;
@@ -796,7 +801,18 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     const isEth = tokenAddress.toLowerCase() === 'eth' || tokenAddress.toLowerCase() === ETH_TOKEN_ADDRESS.toLowerCase();
     const canonicalAddr = isStrk ? STRK_TOKEN_ADDRESS : (isEth ? ETH_TOKEN_ADDRESS : tokenAddress);
 
-    const [meta, dexscreenerData] = await Promise.all([
+    // Fetch live STRK USD price (default ~$0.40)
+    let strkUsd = 0.40;
+    try {
+      const geckoStrk: any = await fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${STRK_TOKEN_ADDRESS.toLowerCase()}`, {
+        headers: { Accept: 'application/json' },
+      }).then((r) => r.json()).catch(() => null);
+      const fetchedPrice = parseFloat(geckoStrk?.data?.attributes?.price_usd || '0');
+      if (fetchedPrice > 0) strkUsd = fetchedPrice;
+    } catch { /* use default */ }
+
+    // Fetch token metadata from GeckoTerminal or on-chain
+    const [meta, dexscreenerData, geckoData] = await Promise.all([
       getStarknetTokenMetadata(canonicalAddr).catch(() => ({
         address: canonicalAddr,
         name: isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Starknet Token'),
@@ -805,7 +821,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         totalSupply: '1000000000000000000000000000',
       })),
       fetchDexScreenerTokenData(canonicalAddr).catch(() => null),
+      fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`, {
+        headers: { Accept: 'application/json' },
+      }).then((r) => r.json()).catch(() => null) as Promise<any>,
     ]);
+
+    const geckoAttr = (geckoData as any)?.data?.attributes;
 
     let quotePriceNative = 0;
     try {
@@ -820,25 +841,42 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       }
     } catch { /* ignore */ }
 
-    const price = quotePriceNative > 0
-      ? quotePriceNative.toString()
-      : (dexscreenerData?.priceNative?.toString() || (isStrk || isEth ? '1' : '0.001'));
-    const priceUsd = dexscreenerData?.priceUsd?.toString() || (quotePriceNative > 0 ? (quotePriceNative * 0.4).toFixed(6) : '0');
-    const liqUsd = dexscreenerData?.liquidityUsd?.toString() || '10000';
-    const mcapUsd = dexscreenerData?.marketCapUsd || (parseFloat(priceUsd) > 0 ? (Number(meta.totalSupply || '1000000000') / Math.pow(10, meta.decimals)) * parseFloat(priceUsd) : 50000);
+    // Prices
+    const priceUsdNum = parseFloat(geckoAttr?.price_usd || dexscreenerData?.priceUsd?.toString() || '0') ||
+      (quotePriceNative > 0 ? quotePriceNative * strkUsd : (isStrk ? strkUsd : 0));
+    const priceNativeNum = quotePriceNative > 0
+      ? quotePriceNative
+      : (strkUsd > 0 && priceUsdNum > 0 ? priceUsdNum / strkUsd : (isStrk ? 1 : 0.001));
+
+    // Liquidity
+    const liqUsdNum = parseFloat(geckoAttr?.total_reserve_in_usd || dexscreenerData?.liquidityUsd?.toString() || '0');
+    const liqNativeNum = strkUsd > 0 && liqUsdNum > 0 ? liqUsdNum / strkUsd : 0;
+
+    // Supply & Market Cap
+    const rawTotalSupply = geckoAttr?.total_supply
+      ? geckoAttr.total_supply.split('.')[0]
+      : (meta.totalSupply || '1000000000000000000000000000');
+    const supplyHuman = parseFloat(rawTotalSupply) / Math.pow(10, meta.decimals);
+    const mcapUsdNum = parseFloat(geckoAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0') ||
+      (priceUsdNum > 0 && supplyHuman > 0 ? priceUsdNum * supplyHuman : 0);
+    const mcapNativeNum = strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : (priceNativeNum > 0 ? priceNativeNum * supplyHuman : 0);
+
+    const tokenName = geckoAttr?.name || (meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : ((dexscreenerData as any)?.name || 'Starknet Token'));
+    const tokenSymbol = (geckoAttr?.symbol || (meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : ((dexscreenerData as any)?.symbol || 'STRK'))).toUpperCase();
 
     const result: TokenInfoResult = {
-      name: meta.name,
-      symbol: meta.symbol,
+      name: tokenName,
+      symbol: tokenSymbol,
       decimals: meta.decimals,
-      total_supply: meta.totalSupply || '0',
-      price,
-      price_usd: priceUsd,
-      liquidity: liqUsd,
-      liquidity_usd: liqUsd,
-      market_cap: Math.round(mcapUsd),
-      market_cap_usd: Math.round(mcapUsd),
-      near_usd: 0.4,
+      total_supply: rawTotalSupply,
+      price: priceNativeNum.toFixed(8),
+      price_usd: priceUsdNum.toFixed(8),
+      liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / 0.4).toFixed(2) : '0'),
+      liquidity_usd: liqUsdNum > 0 ? liqUsdNum.toFixed(2) : '0',
+      market_cap: Math.round(mcapNativeNum),
+      market_cap_usd: Math.round(mcapUsdNum),
+      near_usd: strkUsd,
+      strk_usd: strkUsd,
       address: canonicalAddr,
       chain: 'starknet',
       venue: (dexscreenerData?.dexId as any) || 'avnu',
@@ -847,6 +885,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
+    tokenInfoCache.set(canonicalAddr, { data: result, expiresAt: Date.now() + 10000 });
     return result;
   }
 
@@ -1666,9 +1705,24 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
 /**
  * Ensures user record has an initialized Starknet address & encrypted private key.
  * If missing, generates a new Starknet OpenZeppelin counterfactual wallet and saves to DB.
+ * Automatically migrates existing accounts derived with the previous typo class hash to the canonical OZ v0.8.1 hash.
  */
 export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRecord> {
   if (user.starknet_address && user.starknet_private_key_enc) {
+    try {
+      const priv = decrypt(user.starknet_private_key_enc, MASTER_KEY);
+      const pub = ec.starkCurve.getStarkKey(priv);
+      const typoAddr = computeStarknetAccountAddress(pub, TYPO_OZ_ACCOUNT_CLASS_HASH);
+      // If address was computed with previous typo hash, migrate to canonical OpenZeppelin v0.8.1 contract address
+      if (user.starknet_address.toLowerCase() === typoAddr.toLowerCase()) {
+        const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
+        console.log(`[STARKNET] Auto-migrating user ${user.id} address from typo hash to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
+        await updateUserStarknetWallet(user.id, canonicalAddr, user.starknet_private_key_enc);
+        user.starknet_address = canonicalAddr;
+      }
+    } catch {
+      // Key encryption mismatch or already valid
+    }
     return user;
   }
   const starknetWallet = generateStarknetWallet(MASTER_KEY);
@@ -1676,6 +1730,15 @@ export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRe
   user.starknet_address = starknetWallet.address;
   user.starknet_private_key_enc = starknetWallet.encryptedPrivateKey;
   return user;
+}
+
+/**
+ * Resets/re-generates a user's Starknet wallet with fresh OpenZeppelin v0.8.1 credentials.
+ */
+export async function resetUserStarknetWallet(userId: string): Promise<GeneratedStarknetWallet> {
+  const newWallet = generateStarknetWallet(MASTER_KEY);
+  await updateUserStarknetWallet(userId, newWallet.address, newWallet.encryptedPrivateKey);
+  return newWallet;
 }
 
 /**
