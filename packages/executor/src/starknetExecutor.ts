@@ -236,9 +236,18 @@ export async function executeStarknetSwap(
   const humanFee = Number(platformFeeAmount) / 1e18;
 
   // 7. Update Positions and Fills
-  const estimatedBuyQty = selectedQuote.buyAmount
+  const rawBuyQty = selectedQuote.buyAmount ? selectedQuote.buyAmount.toString() : '0';
+  const humanBuyQty = selectedQuote.buyAmount
     ? formatTokenBalance(selectedQuote.buyAmount, targetTokenMetadata.decimals)
     : '0';
+
+  const humanBuyQtyNum = Number(rawBuyQty) / Math.pow(10, targetTokenMetadata.decimals);
+  const humanNetIn = Number(netAmountIn) / 1e18;
+  const buyPricePerToken = humanBuyQtyNum > 0 ? humanNetIn / humanBuyQtyNum : 0;
+
+  const humanSellQtyNum = Number(amountInBigInt) / Math.pow(10, targetTokenMetadata.decimals);
+  const humanProceeds = Number(selectedQuote.buyAmount) / 1e18;
+  const sellPricePerToken = humanSellQtyNum > 0 ? humanProceeds / humanSellQtyNum : 0;
 
   let positionId: string | undefined;
 
@@ -249,10 +258,16 @@ export async function executeStarknetSwap(
     );
 
     if (matchingPos) {
-      const newQty = (parseFloat(matchingPos.quantity_held) + parseFloat(estimatedBuyQty)).toString();
+      const prevBig = BigInt((matchingPos.quantity_held || '0').split('.')[0]);
+      const prevHuman = Number(prevBig) / Math.pow(10, targetTokenMetadata.decimals);
+      const prevEntry = parseFloat(matchingPos.avg_entry_price || '0');
+      const newQty = (prevBig + BigInt(rawBuyQty)).toString();
+      const newHuman = prevHuman + humanBuyQtyNum;
+      const weightedEntry = newHuman > 0 ? (prevHuman * prevEntry + humanNetIn) / newHuman : buyPricePerToken;
       await updatePosition({
         position_id: matchingPos.id,
         quantity_held: newQty,
+        avg_entry_price: weightedEntry.toString(),
       }).catch((e) => console.warn('[STARKNET_EXECUTOR] updatePosition error:', e?.message));
       positionId = matchingPos.id;
     } else {
@@ -260,13 +275,39 @@ export async function executeStarknetSwap(
         user_id: user.id,
         chain: 'starknet',
         token_address: tokenOutCanonical,
-        quantity_held: estimatedBuyQty,
-        avg_entry_price: (Number(netAmountIn) / 1e18).toString(),
+        quantity_held: rawBuyQty,
+        avg_entry_price: buyPricePerToken.toString(),
       }).catch((e) => {
         console.warn('[STARKNET_EXECUTOR] createPosition error:', e?.message);
         return null;
       });
       positionId = newPos?.id;
+    }
+  } else {
+    // SELL: locate the position, update remaining tokens or close
+    const existingPositions = await getOpenPositions(user.id).catch(() => []);
+    const matchingPos = existingPositions.find(
+      (p) => p.chain === 'starknet' && p.token_address.toLowerCase() === tokenInCanonical.toLowerCase()
+    );
+
+    if (matchingPos) {
+      positionId = matchingPos.id;
+      const prevBig = BigInt((matchingPos.quantity_held || '0').split('.')[0]);
+      const remainingQty = prevBig > amountInBigInt ? prevBig - amountInBigInt : 0n;
+
+      if (remainingQty === 0n) {
+        await updatePosition({
+          position_id: matchingPos.id,
+          quantity_held: '0',
+          status: 'closed',
+          closed_at: new Date(),
+        }).catch((e) => console.warn('[STARKNET_EXECUTOR] close position error:', e?.message));
+      } else {
+        await updatePosition({
+          position_id: matchingPos.id,
+          quantity_held: remainingQty.toString(),
+        }).catch((e) => console.warn('[STARKNET_EXECUTOR] update position error:', e?.message));
+      }
     }
   }
 
@@ -277,10 +318,12 @@ export async function executeStarknetSwap(
       chain: 'starknet',
       side: isBuy ? 'buy' : 'sell',
       token_address: isBuy ? tokenOutCanonical : tokenInCanonical,
-      amount: estimatedBuyQty,
-      price: (Number(netAmountIn) / 1e18).toString(),
+      amount: isBuy ? rawBuyQty : amountInBigInt.toString(),
+      price: isBuy ? buyPricePerToken.toString() : sellPricePerToken.toString(),
       fee_paid: humanFee.toString(),
-      input_amount: (Number(amountInBigInt) / 1e18).toString(),
+      input_amount: isBuy
+        ? (Number(amountInBigInt) / 1e18).toString()
+        : humanProceeds.toString(),
       venue: 'avnu',
       tx_hash: txHash,
     }).catch((e) => {
@@ -301,7 +344,7 @@ export async function executeStarknetSwap(
     positionId,
     tokenName: targetTokenMetadata.name,
     tokenSymbol: targetTokenMetadata.symbol,
-    tokenQty: estimatedBuyQty,
+    tokenQty: isBuy ? humanBuyQty : formatTokenBalance(amountInBigInt, targetTokenMetadata.decimals),
     spent: Number(amountInBigInt) / 1e18,
     gasTokenUsed,
   };
