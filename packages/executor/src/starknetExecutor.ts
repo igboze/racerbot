@@ -31,6 +31,7 @@ import { getQuotes, quoteToCalls } from '@avnu/avnu-sdk';
 import { CallData, uint256, ec } from 'starknet';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
+const DEPLOYED_ACCOUNTS_CACHE = new Set<string>();
 
 export interface StarknetSwapExecutionResult {
   txHash: string;
@@ -175,12 +176,18 @@ export async function executeStarknetSwap(
   ];
 
   // 5b. Auto-deploy account if undeployed (Starknet Account Abstraction requirement)
-  let isDeployed = false;
-  try {
-    const classHash = await provider.getClassHashAt(userAddress);
-    if (classHash) isDeployed = true;
-  } catch {
-    isDeployed = false;
+  const normAddress = userAddress.toLowerCase();
+  let isDeployed = DEPLOYED_ACCOUNTS_CACHE.has(normAddress);
+  if (!isDeployed) {
+    try {
+      const classHash = await provider.getClassHashAt(userAddress);
+      if (classHash) {
+        isDeployed = true;
+        DEPLOYED_ACCOUNTS_CACHE.add(normAddress);
+      }
+    } catch {
+      isDeployed = false;
+    }
   }
 
   if (!isDeployed) {
@@ -207,7 +214,8 @@ export async function executeStarknetSwap(
       addressSalt: publicKey,
     });
     console.log(`[STARKNET_EXECUTOR] Account deployment tx submitted: ${deployRes.transaction_hash}. Waiting for confirmation...`);
-    await provider.waitForTransaction(deployRes.transaction_hash);
+    await provider.waitForTransaction(deployRes.transaction_hash, { retryInterval: 1500 });
+    DEPLOYED_ACCOUNTS_CACHE.add(normAddress);
     console.log(`[STARKNET_EXECUTOR] Account ${userAddress} successfully deployed on Starknet!`);
   }
 
@@ -218,7 +226,7 @@ export async function executeStarknetSwap(
   const txHash = txResponse.transaction_hash;
 
   onProgress?.('confirming_tx');
-  await provider.waitForTransaction(txHash).catch((err) => {
+  await provider.waitForTransaction(txHash, { retryInterval: 1500 }).catch((err) => {
     console.warn(`[STARKNET_EXECUTOR] waitForTransaction warning for ${txHash}:`, err?.message);
   });
 

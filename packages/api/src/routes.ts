@@ -1839,6 +1839,11 @@ const ORDER_STAGE_LINES: Record<string, string> = {
   confirming_slow:
     '⏳ *Trade was submitted, but confirmation is taking longer than usual.*\n\n' +
     'The RPC is still waiting for the on-chain result. Do not retry yet: I\'ll confirm the outcome as soon as it arrives.',
+  // Starknet Live Stages
+  routing_starknet: '⚡ Routing trade via AVNU & Ekubo…',
+  deploying_account: '🛡️ Deploying your Starknet Account contract (one-time setup)…',
+  executing_swap: '✍️ Signing & submitting swap to Starknet sequencer…',
+  confirming_tx: '🚀 Trade submitted to Starknet! Awaiting block confirmation…',
 };
 
 function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, orderLabel: string) {
