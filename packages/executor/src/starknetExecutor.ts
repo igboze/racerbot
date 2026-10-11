@@ -10,6 +10,7 @@ import {
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
   OZ_ACCOUNT_CLASS_HASH,
+  computeStarknetAccountAddress,
   getStarknetTreasuryAddress,
   invalidateStarknetBalanceCache,
   DEFAULT_STARKNET_TREASURY_ADDRESS,
@@ -184,8 +185,22 @@ export async function executeStarknetSwap(
 
   if (!isDeployed) {
     onProgress?.('deploying_account');
-    console.log(`[STARKNET_EXECUTOR] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
     const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+    const expectedAddress = computeStarknetAccountAddress(publicKey);
+
+    // Verify user address matches canonical OZ account address (modulo leading zeros)
+    try {
+      if (BigInt(expectedAddress) !== BigInt(userAddress)) {
+        throw new Error(
+          `Your Starknet wallet (${userAddress.slice(0, 10)}...) was created with a legacy format and cannot be deployed on-chain.\n` +
+          `Please run /newstarknet in the bot to switch to a fresh canonical Starknet wallet.`
+        );
+      }
+    } catch (e: any) {
+      if (e.message.includes('legacy format')) throw e;
+    }
+
+    console.log(`[STARKNET_EXECUTOR] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
     const deployRes = await account.deployAccount({
       classHash: OZ_ACCOUNT_CLASS_HASH,
       constructorCalldata: CallData.compile({ publicKey }),
