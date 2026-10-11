@@ -70,8 +70,10 @@ import {
   syncUserTokenDeposits,
   getNearUsdPrice,
   payReferralReward,
-  prewarmStorageDeposit,
   isSuiToken,
+  isStarknetToken,
+  ensureUserAllWallets,
+  ensureUserStarknetWallet,
   listUserNearWallets,
   switchActiveNearWallet,
   renameUserNearWallet,
@@ -86,6 +88,7 @@ import {
   deleteUserSuiWallet,
   importSuiWallet,
   MAX_SUI_WALLETS_PER_USER,
+  prewarmStorageDeposit,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -100,6 +103,7 @@ import {
   getSuiBalance,
   getSuiTokenBalance,
   getSuiUsdPrice,
+  getStarknetBalance,
   checkTokenSafety,
   restoreSuiKeypairFromSecret,
   isValidSuiAddress,
@@ -261,26 +265,38 @@ function sanitizeMd(str: string): string {
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
 export async function buildMainMenu(telegramId: number, forceRefresh = false) {
-  const user = await getUserByTelegramId(telegramId).catch(() => null);
+  let user = await getUserByTelegramId(telegramId).catch(() => null);
   let subaccount = 'Not initialized';
   let suiAddress = '';
+  let starknetAddress = '';
   let nearBalFormatted = '0';
   let nearUsdFormatted = '$0';
   let suiBalFormatted = '0';
   let suiUsdFormatted = '$0';
+  let strkBalFormatted = '0';
+  let ethBalFormatted = '0';
   let totalUsdNum = 0;
 
   if (user) {
+    if (!user.starknet_address || !user.starknet_private_key_enc) {
+      const upgraded = await ensureUserAllWallets(user).catch(() => null);
+      if (upgraded) user = upgraded;
+    }
     subaccount = user.subaccount_id;
     try {
       const b = await getUserBalances(telegramId, forceRefresh);
       nearBalFormatted = b.totalNearFormatted;
       suiAddress = b.suiAddress || '';
       suiBalFormatted = b.suiBalanceFormatted || '0';
+      starknetAddress = b.starknetAddress || '';
+      strkBalFormatted = b.strkBalanceFormatted || '0';
+      ethBalFormatted = b.ethBalanceFormatted || '0';
 
       const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
       const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum;
+      const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * 0.4;
+      const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
 
       nearUsdFormatted = nearTotalUsdNum >= 1000 ? `$${(nearTotalUsdNum / 1000).toFixed(2)}K` : `$${nearTotalUsdNum.toFixed(2)}`;
       suiUsdFormatted = suiTotalUsdNum >= 1000 ? `$${(suiTotalUsdNum / 1000).toFixed(2)}K` : `$${suiTotalUsdNum.toFixed(2)}`;
@@ -296,10 +312,12 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     `The Ultimate Fast Trading Partner\n\n` +
     `💼 <b>W1</b> ⭐\n\n` +
     `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
-    `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n\n` +
+    `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
+    (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> | ETH: <b>${ethBalFormatted}</b>\n\n` : '\n') +
     `Total: <b>${totalUsdStr}</b>\n\n` +
     `<u>NEAR</u>: <code>${subaccount}</code>\n` +
-    (suiAddress ? `<u>SUI</u>: <code>${suiAddress}</code>` : '');
+    (suiAddress ? `<u>SUI</u>: <code>${suiAddress}</code>\n` : '') +
+    (starknetAddress ? `<u>Starknet</u>: <code>${starknetAddress}</code>` : '');
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -411,7 +429,9 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const b = await getUserBalances(telegramId, forceRefresh);
   const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum;
+  const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * 0.4;
+  const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const user = await getUserByTelegramId(telegramId);
@@ -461,9 +481,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
     `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n\n` +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n\n` +
+    `✨ Starknet: <b>${b.strkBalanceFormatted || '0.0000'}</b> STRK | <b>${b.ethBalanceFormatted || '0.0000'}</b> ETH\n\n` +
     `Total: <b>${totalUsdStr}</b>\n\n` +
     `<u>NEAR</u>: <code>${b.subaccountId}</code>\n` +
-    (b.suiAddress ? `<u>SUI</u>: <code>${b.suiAddress}</code>` : '');
+    (b.suiAddress ? `<u>SUI</u>: <code>${b.suiAddress}</code>\n` : '') +
+    (b.starknetAddress ? `<u>Starknet</u>: <code>${b.starknetAddress}</code>` : '');
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -598,17 +620,33 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const userPosition = userPositions.find(p => p.token_address === tokenAddress);
   const holdsToken = !!userPosition;
 
-  const isSui = tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump';
-  const nativeUnit = isSui ? 'SUI' : 'NEAR';
-  const unitBtn = isSui ? 'SUI' : 'N';
+  const isStarknet = tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress);
+  const isSui = !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
+  const nativeUnit = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+  const unitBtn = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'N');
 
-  const balanceText = isSui
-    ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
-    : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` : '');
+  const balanceText = isStarknet
+    ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
+    : (isSui
+      ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
+      : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` : ''));
 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
-  if (tokenInfo.venue === 'suipump') {
+  if (isStarknet) {
+    if (tokenInfo.venue === 'unruggable') {
+      const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (Ekubo DEX)' : 'Bonding Curve';
+      const progressStr =
+        tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+          ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+          : '';
+      venueText = `💧 *Venue*: Unruggable Meme (${phaseStr}${progressStr})`;
+    } else if (tokenInfo.venue === 'ekubo') {
+      venueText = `💧 *Venue*: Ekubo DEX`;
+    } else {
+      venueText = `💧 *Venue*: AVNU Aggregator (Starknet)`;
+    }
+  } else if (tokenInfo.venue === 'suipump') {
     const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (DEX)' : 'Bonding Curve';
     const progressStr =
       tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
@@ -678,6 +716,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // ── Deep links ───────────────────────────────────────────────────────────
   const linkRows = (() => {
+    if (isStarknet) {
+      const rows: any[] = [];
+      rows.push([
+        Markup.button.url('🔍 Starkscan', `https://starkscan.co/token/${tokenInfo.address}`),
+        Markup.button.url('📈 DexScreener', `https://dexscreener.com/starknet/${tokenInfo.address}`),
+      ]);
+      rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+      return rows;
+    }
     if (isSui) {
       const rows: any[] = [];
       if (tokenInfo.sui_curve_address) {
@@ -794,6 +841,14 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       `> • *Launchpad*: ❌ None (Custom Standalone Token)\n` +
       `> • *Liquidity*: 🔴 100% Unlocked (Creator holds LP shares)\n` +
       `> • *Warning*: Creator can pull all pool NEAR at any second.\n\n`;
+  } else if (safety?.unlockedLiquidityPct !== undefined && safety.unlockedLiquidityPct > 0) {
+    const unlocked = safety.unlockedLiquidityPct;
+    const locked = safety.lockedLiquidityPct ?? (100 - unlocked);
+    safetyBanner =
+      `> ⚠️ *LIQUIDITY LOCK AUDIT*\n` +
+      `> • *Locked Liquidity*: 🔒 ${locked.toFixed(1)}%\n` +
+      `> • *Unlocked / Unprotected*: 🔴 ${unlocked.toFixed(1)}%\n` +
+      (unlocked >= 50 ? `> • *Warning*: High rug risk — creator or LP holders can pull liquidity at any time.\n\n` : `\n`);
   } else if (safety) {
     const hpStatus = '🟢 PASSED';
     const contractType = safety.isAuditedLaunchpad
@@ -1798,11 +1853,12 @@ async function executeBuyHelper(
   }
 
   const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
+  const isStarknetHint = isStarknetToken(tokenAddress);
 
   // Parallel pre-flight: resolve fast route, wallet balances, USD prices, and honeypot safety audit all in one parallel round-trip!
   const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal, safetyRes] = await Promise.all([
     getFastTokenRoute(tokenAddress).catch(() => null),
-    !isSuiHint && user.subaccount_id
+    !isSuiHint && !isStarknetHint && user.subaccount_id
       ? Promise.all([
           near.getNearBalance(user.subaccount_id).catch(() => null),
           near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
@@ -1811,7 +1867,7 @@ async function executeBuyHelper(
     isSuiHint || user.sui_address
       ? getSuiBalance(user.sui_address || '').catch(() => ({ mist: 0n, formatted: '0' }))
       : Promise.resolve({ mist: 0n, formatted: '0' }),
-    !isSuiHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
+    !isSuiHint && !isStarknetHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
     isSuiHint ? getSuiUsdPrice().catch(() => 0) : Promise.resolve(0),
     checkTokenSafety(tokenAddress).catch(() => null),
   ]);
@@ -1831,6 +1887,77 @@ async function executeBuyHelper(
   }
 
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // ── Starknet Trading Path ──────────────────────────────────────────────────
+  if (info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'unruggable' || isStarknetHint) {
+    if (!user.starknet_address) {
+      await ensureUserStarknetWallet(user);
+    }
+    const userStarknetAddr = user.starknet_address!;
+    const userBal = await getStarknetBalance(userStarknetAddr);
+    const amountInWei = BigInt(Math.floor(amountNear * 1e18));
+
+    // Support both STRK and ETH input tokens seamlessly depending on user's wallet funds
+    const hasEnoughStrk = userBal.strk >= amountInWei;
+    const hasEnoughEth = userBal.eth >= amountInWei;
+
+    if (!hasEnoughStrk && !hasEnoughEth) {
+      if (userBal.strk === 0n && userBal.eth === 0n) {
+        throw new Error(
+          `Your Starknet wallet (\`${userStarknetAddr}\`) has 0 balance.\n\nPlease deposit STRK or ETH to trade.`
+        );
+      }
+      throw new Error(
+        `Insufficient balance for ${amountNear} purchase.\n` +
+        `Available: ${userBal.strkFormatted} STRK | ${userBal.ethFormatted} ETH`
+      );
+    }
+
+    const useEth = !hasEnoughStrk && hasEnoughEth;
+    const tokenIn = useEth ? 'eth' : 'strk';
+    const tokenInSymbol = useEth ? 'ETH' : 'STRK';
+
+    const swapResult = await publishSwap({
+      user_id: user.id,
+      chain: 'starknet',
+      token_in: tokenIn,
+      token_out: tokenAddress,
+      amount_in: amountInWei.toString(),
+      min_amount_out: '1',
+      venue: (info.venue as any) || 'avnu',
+      slippage_pct: slippagePct,
+    }, onProgress);
+
+    if (swapResult.success === false) {
+      throw new Error(swapResult.reason || 'Starknet swap failed on-chain.');
+    }
+
+    const tokenSym = swapResult.tokenSymbol || info.symbol || 'TOKEN';
+    const tokenName = swapResult.tokenName || info.name || tokenSym;
+    const tokenQtyHuman = Number(swapResult.tokenQty ?? 0);
+    const tokenQtyDisplay = tokenQtyHuman >= 1_000_000
+      ? `${(tokenQtyHuman / 1_000_000).toFixed(3)}M`
+      : tokenQtyHuman >= 1_000
+      ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
+      : tokenQtyHuman.toFixed(4);
+
+    return {
+      success: true,
+      amountNear,
+      tokenAddress,
+      tokenName,
+      tokenSymbol: tokenSym,
+      tokenQty: swapResult.tokenQty,
+      priceNear: swapResult.priceNear,
+      nearSpent: amountNear,
+      positionId: swapResult.positionId,
+      message:
+        `🚀 *Buy Confirmed!* (Starknet)\n\n` +
+        `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
+        `Spent: *${amountNear} ${tokenInSymbol}*\n` +
+        `Tx Hash: \`${swapResult.txHash}\``,
+    };
+  }
 
   // ── SUI / SuiPump Trading Path ──────────────────────────────────────────────
   if (info.chain === 'sui' || info.venue === 'suipump' || isSuiToken(tokenAddress)) {
@@ -2033,6 +2160,16 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+  if (info?.chain === 'starknet' || isStarknetToken(tokenAddress)) {
+    const balances = await getUserBalances(telegramId);
+    const strkBal = parseFloat(balances.strkBalanceFormatted || '0');
+    const amountStrk = (strkBal * pct) / 100;
+    if (amountStrk < 0.1) {
+      throw new Error(`Available balance (${strkBal.toFixed(4)} STRK) is too low to buy.`);
+    }
+    return executeBuyHelper(telegramId, tokenAddress, Number(amountStrk.toFixed(4)), onProgress);
+  }
+
   if (info?.chain === 'sui' || info?.venue === 'suipump' || isSuiToken(tokenAddress)) {
     const balanceSui = await getTradeSpendableSui(telegramId);
     const amountSui = (balanceSui * pct) / 100;
@@ -5734,8 +5871,9 @@ export function setupRoutes(bot: Telegraf): void {
       const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
       const amountVal = parseFloat(ctx.match![2]);
       const telegramId = ctx.from!.id;
-      const isSui = isSuiToken(tokenAddress);
-      const unit = isSui ? 'SUI' : 'NEAR';
+      const isStk = isStarknetToken(tokenAddress);
+      const isSui = !isStk && isSuiToken(tokenAddress);
+      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
 
       // In-flight guard: reject a duplicate tap while a trade for this token is running.
@@ -5794,8 +5932,9 @@ export function setupRoutes(bot: Telegraf): void {
       const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
       const pct = parseInt(ctx.match![2]);
       const telegramId = ctx.from!.id;
-      const isSui = isSuiToken(tokenAddress);
-      const unit = isSui ? 'SUI' : 'NEAR';
+      const isStk = isStarknetToken(tokenAddress);
+      const isSui = !isStk && isSuiToken(tokenAddress);
+      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -5849,8 +5988,9 @@ export function setupRoutes(bot: Telegraf): void {
       const rawTokenParam = ctx.match![1];
       const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
       const telegramId = ctx.from!.id;
-      const isSui = isSuiToken(tokenAddress);
-      const unit = isSui ? 'SUI' : 'NEAR';
+      const isStk = isStarknetToken(tokenAddress);
+      const isSui = !isStk && isSuiToken(tokenAddress);
+      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       userPendingActions.set(telegramId, {
         action: 'buy_custom_near',
         tokenAddress,
@@ -5884,8 +6024,9 @@ export function setupRoutes(bot: Telegraf): void {
     }
 
     const tokenAddress = args[0].trim();
-    const isSui = isSuiToken(tokenAddress);
-    const unit = isSui ? 'SUI' : 'NEAR';
+    const isStk = isStarknetToken(tokenAddress);
+    const isSui = !isStk && isSuiToken(tokenAddress);
+    const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
     const amountVal = parseFloat(args[1] ?? '0');
 
     if (amountVal <= 0) {
@@ -6201,10 +6342,14 @@ export function setupRoutes(bot: Telegraf): void {
   const handleExportPrompt = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
     try {
-      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      let user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) {
         await ctx.reply('Use /start to set up your wallet first.');
         return;
+      }
+      if (!user.starknet_address || !user.starknet_private_key_enc) {
+        const upgraded = await ensureUserAllWallets(user).catch(() => null);
+        if (upgraded) user = upgraded;
       }
 
       const last = lastExportTime.get(telegramId);
@@ -6216,7 +6361,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.reply(
         `⚠️ *Export Private Keys*\n\n` +
-        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}.\n\n` +
+        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}${user.starknet_address ? ` and *Starknet* (\`${user.starknet_address}\`)` : ''}.\n\n` +
         `Anyone with these keys will have full control over your funds.\n\n` +
         `Are you sure you want to display your private keys?`,
         {
@@ -6244,10 +6389,14 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('export_confirm', async (ctx) => {
     const telegramId = ctx.from!.id;
-    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    let user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
       await ctx.answerCbQuery('Wallet not found.').catch(() => {});
       return;
+    }
+    if (!user.starknet_address || !user.starknet_private_key_enc) {
+      const upgraded = await ensureUserAllWallets(user).catch(() => null);
+      if (upgraded) user = upgraded;
     }
 
     const last = lastExportTime.get(telegramId);
@@ -6278,6 +6427,12 @@ export function setupRoutes(bot: Telegraf): void {
           rawSuiKey = decrypt(user.sui_private_key_enc, MASTER_KEY);
         } catch {}
       }
+      let rawStarknetKey = '';
+      if (user.starknet_private_key_enc) {
+        try {
+          rawStarknetKey = decrypt(user.starknet_private_key_enc, MASTER_KEY);
+        } catch {}
+      }
 
       await ctx.answerCbQuery('Keys decrypted.').catch(() => {});
 
@@ -6291,6 +6446,12 @@ export function setupRoutes(bot: Telegraf): void {
           `<tg-spoiler><code>${rawSuiKey}</code></tg-spoiler>\n\n`;
       }
 
+      if (user.starknet_address && rawStarknetKey) {
+        keyHtml +=
+          `✨ <b>Starknet Private Key</b> (<code>${user.starknet_address}</code>):\n` +
+          `<tg-spoiler><code>${rawStarknetKey}</code></tg-spoiler>\n\n`;
+      }
+
       keyHtml +=
         `👆 <i>Tap the covered boxes above to uncover and copy your keys.</i>\n\n` +
         `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`;
@@ -6300,7 +6461,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🛡️ *Security Reminder*:\n` +
         `• Keep your private keys confidential.\n` +
-        `• Import into MyNearWallet/Meteor (NEAR) or Sui Wallet (SUI) to manage outside RacerBot.`,
+        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), or Argent X / Braavos (Starknet) to manage outside RacerBot.`,
         { parse_mode: 'Markdown' }
       );
 

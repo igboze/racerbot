@@ -17,30 +17,15 @@ export const CHANNELS = {
   BUY_ALERT: 'buy-alert',
 } as const;
 
+import type { VenueName, SupportedChain } from './types.js';
+
 // ── Event interfaces ──────────────────────────────────────────────────────────
 
-export type EventVenue =
-  | 'rhea'
-  | 'ref'
-  | 'shardsmarket'
-  | 'nearlytrade'
-  | 'intear'
-  | 'memecooking'
-  | 'onetokenhub'
-  | 'gaypad'
-  | 'nearpad'
-  | 'shoremarkets'
-  | 'kelytra'
-  | 'nearpumpfun'
-  | 'suipump'
-  | 'cetus'
-  | 'turbos'
-  | 'deepbook'
-  | 'sui_dex';
+export type EventVenue = VenueName;
 
 export interface TokenDetectedEvent {
   type: 'token_detected';
-  chain?: 'near' | 'sui';
+  chain?: SupportedChain;
   token_address: string;
   name: string;
   symbol: string;
@@ -53,7 +38,7 @@ export interface TokenDetectedEvent {
 
 export interface PoolCreatedEvent {
   type: 'pool_created';
-  chain?: 'near' | 'sui';
+  chain?: SupportedChain;
   token_address: string;
   pool_address: string;
   venue: EventVenue;
@@ -64,7 +49,7 @@ export interface PoolCreatedEvent {
 
 export interface TriggerEvent {
   type: 'trigger_fired';
-  chain?: 'near' | 'sui';
+  chain?: SupportedChain;
   user_id: string;
   position_id: string;
   trigger_type: 'stop_loss' | 'take_profit' | 'market_cap';
@@ -75,7 +60,7 @@ export interface TriggerEvent {
 
 export interface SwapEvent {
   type: 'execute_swap';
-  chain?: 'near' | 'sui';
+  chain?: SupportedChain;
   user_id: string;
   token_in: string;
   token_out: string;
@@ -147,7 +132,7 @@ export interface NotifyUserEvent {
 
 export interface BuyAlertEvent {
   type: 'buy_alert';
-  chain: 'near' | 'sui';
+  chain: 'near' | 'sui' | 'starknet';
   token_address: string;
   token_name: string;
   token_symbol: string;
@@ -161,6 +146,8 @@ export interface BuyAlertEvent {
   buyer_near_balance?: number;
   /** Buyer's native SUI balance in SUI (human-readable), fetched at trade time */
   buyer_sui_balance?: number;
+  /** Buyer's native Starknet balance (STRK/ETH) in human-readable units, fetched at trade time */
+  buyer_starknet_balance?: number;
   tx_hash: string;
   timestamp: number;
 }
