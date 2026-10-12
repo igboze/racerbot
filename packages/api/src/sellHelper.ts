@@ -29,7 +29,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // Starknet Chain Execution Route
-  if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'unruggable') {
+  if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable') {
     const swapEvent = {
       type: 'execute_swap' as const,
       chain: 'starknet' as const,

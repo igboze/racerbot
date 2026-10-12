@@ -1,5 +1,5 @@
 import { getNear } from './near.js';
-import { getStarknetProvider, getStarknetReadProvider, STRK_TOKEN_ADDRESS, ETH_TOKEN_ADDRESS } from './starknet.js';
+import { getStarknetProvider, getStarknetReadProvider, STRK_TOKEN_ADDRESS, ETH_TOKEN_ADDRESS, detectStarknetLaunchpad } from './starknet.js';
 
 export interface TokenSafetyReport {
   tokenAddress: string;
@@ -498,20 +498,27 @@ export async function checkStarknetTokenSafety(tokenAddress: string): Promise<To
       }
     }
 
-    const isUnruggable =
+    const launchpadInfo = await detectStarknetLaunchpad(normAddress).catch(() => null);
+    const isLaunchpad = !!launchpadInfo && launchpadInfo.launchpad !== 'none';
+    const isAuditedLaunchpad =
+      isLaunchpad ||
       abiString.includes('unruggable') ||
-      abiString.includes('initial_holder') ||
-      abiString.includes('ekubo');
+      abiString.includes('initial_holder');
+
+    const launchpadName =
+      isLaunchpad
+        ? launchpadInfo.name
+        : (abiString.includes('unruggable') ? 'Unruggable Meme' : undefined);
 
     const isHoneypot = dangerousMethods.length > 0;
-    const lockedLiquidityPct = isUnruggable ? 100 : (isHoneypot ? 0 : 50);
+    const lockedLiquidityPct = isAuditedLaunchpad ? 100 : (isHoneypot ? 0 : 50);
     const unlockedLiquidityPct = 100 - lockedLiquidityPct;
 
     const reasons: string[] = [];
     if (dangerousMethods.length > 0) {
       reasons.push(`Dangerous admin methods detected in Cairo ABI: ${dangerousMethods.join(', ')}`);
     }
-    if (unlockedLiquidityPct > 0 && !isUnruggable) {
+    if (unlockedLiquidityPct > 0 && !isAuditedLaunchpad) {
       reasons.push(`Notice: Liquidity lock status could not be verified on-chain (${unlockedLiquidityPct}% estimated unlocked).`);
     }
 
@@ -519,15 +526,15 @@ export async function checkStarknetTokenSafety(tokenAddress: string): Promise<To
       tokenAddress: normAddress,
       isHoneypot,
       safe: !isHoneypot,
-      risk: isHoneypot ? 'critical' : (isUnruggable ? 'low' : 'medium'),
-      isAuditedLaunchpad: isUnruggable,
-      launchpadName: isUnruggable ? 'Unruggable Meme' : undefined,
+      risk: isHoneypot ? 'critical' : (isAuditedLaunchpad ? 'low' : 'medium'),
+      isAuditedLaunchpad,
+      launchpadName,
       reasons,
       dangerousMethods,
       lpLocked: lockedLiquidityPct >= 80,
       lockedLiquidityPct,
       unlockedLiquidityPct,
-      warning: unlockedLiquidityPct > 0 && !isUnruggable
+      warning: unlockedLiquidityPct > 0 && !isAuditedLaunchpad
         ? `⚠️ ${unlockedLiquidityPct}% of liquidity may be UNLOCKED! Developer could remove LP.`
         : undefined,
       isUnlockedRheaPool: false,

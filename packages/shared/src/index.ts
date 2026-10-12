@@ -200,6 +200,10 @@ export {
   formatTokenBalance,
   getStarknetTokenMetadata,
   getStarknetAVNUQuote,
+  detectStarknetLaunchpad,
+  getLaunchyQuote,
+  LAUNCHY_FACTORY_V6,
+  LAUNCHY_SWAPPER_V3,
 } from './starknet.js';
 
 export type {
@@ -207,6 +211,9 @@ export type {
   StarknetNativeBalances,
   StarknetTokenMetadata,
   StarknetQuoteParams,
+  StarknetLaunchpadInfo,
+  StarknetLaunchpadPoolKey,
+  LaunchyQuoteResult,
 } from './starknet.js';
 
 // Anti-Honeypot & Token Safety

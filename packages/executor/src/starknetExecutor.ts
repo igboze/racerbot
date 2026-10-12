@@ -16,6 +16,9 @@ import {
   DEFAULT_STARKNET_TREASURY_ADDRESS,
   STARKNET_FEE_BPS,
   STARKNET_BPS_DENOMINATOR,
+  detectStarknetLaunchpad,
+  getLaunchyQuote,
+  LAUNCHY_SWAPPER_V3,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -135,65 +138,194 @@ export async function executeStarknetSwap(
 
   onProgress?.('fetching_quote');
 
-  // 4. Fetch quote from AVNU (Ekubo, JediSwap, Nostra, 10KSwap)
-  const quotes = await getQuotes({
-    sellTokenAddress: tokenInCanonical,
-    buyTokenAddress: tokenOutCanonical,
-    sellAmount: sellAmountForQuote,
-    takerAddress: userAddress,
-    size: 1,
-  }).catch((err) => {
-    console.warn('[STARKNET_EXECUTOR] AVNU getQuotes warning:', err?.message);
-    return [];
-  });
+  onProgress?.('fetching_quote');
 
-  if (!quotes || quotes.length === 0) {
-    throw new Error('No liquid route found on Starknet for this token pair. The DEX pool (Ekubo/AVNU) currently has insufficient active liquidity or is out of tick range.');
-  }
+  const targetTokenCanonical = isBuy ? tokenOutCanonical : tokenInCanonical;
+  const targetTokenMetadata = await getStarknetTokenMetadata(targetTokenCanonical);
+  const launchpadInfo = await detectStarknetLaunchpad(targetTokenCanonical).catch(() => null);
 
-  const selectedQuote = quotes[0];
-  const targetTokenMetadata = await getStarknetTokenMetadata(isBuy ? tokenOutCanonical : tokenInCanonical);
-
-  onProgress?.('building_transaction');
-
-  // 5. Construct multicall transactions:
-  // - For Buys: [feeTransferCall, ...avnuCalls]
-  // - For Sells: [...avnuCalls, feeTransferCall] (transfer dev fee in STRK/ETH after swap lands)
+  let selectedQuoteBuyAmount: bigint;
   let nativeFeeAmount: bigint;
-  let feeTokenAddress: string;
+  let callsToExecute: any[] = [];
 
-  if (isBuy) {
-    nativeFeeAmount = buyFeeAmount;
-    feeTokenAddress = tokenInCanonical;
+  const isLaunchy = launchpadInfo?.launchpad === 'launchy' && !!launchpadInfo.poolKey;
+
+  if (isLaunchy && launchpadInfo.poolKey) {
+    onProgress?.('routing_launchpad');
+    const routerAddress = launchpadInfo.routerAddress || LAUNCHY_SWAPPER_V3;
+    const poolKey = launchpadInfo.poolKey;
+
+    if (isBuy) {
+      nativeFeeAmount = buyFeeAmount;
+      const launchyQuote = await getLaunchyQuote(
+        targetTokenCanonical,
+        tokenInCanonical,
+        sellAmountForQuote,
+        slippage_pct || 2,
+        poolKey,
+        routerAddress
+      );
+
+      if (!launchyQuote || launchyQuote.outputAmount <= 0n) {
+        throw new Error('Launchy pool has insufficient liquidity or trade amount is too small.');
+      }
+
+      selectedQuoteBuyAmount = launchyQuote.outputAmount;
+      const minAmountOut = launchyQuote.minReceived;
+
+      const feeTransferCall = {
+        contractAddress: tokenInCanonical,
+        entrypoint: 'transfer',
+        calldata: CallData.compile({
+          recipient: getStarknetTreasuryAddress(),
+          amount: uint256.bnToUint256(nativeFeeAmount),
+        }),
+      };
+
+      const approveCall = {
+        contractAddress: tokenInCanonical,
+        entrypoint: 'approve',
+        calldata: CallData.compile({
+          spender: routerAddress,
+          amount: uint256.bnToUint256(sellAmountForQuote),
+        }),
+      };
+
+      const swapCall = {
+        contractAddress: routerAddress,
+        entrypoint: 'swap_exact_input',
+        calldata: [
+          poolKey.token0,
+          poolKey.token1,
+          poolKey.fee,
+          poolKey.tick_spacing,
+          poolKey.extension,
+          tokenInCanonical,
+          uint256.bnToUint256(sellAmountForQuote).low.toString(),
+          uint256.bnToUint256(sellAmountForQuote).high.toString(),
+          uint256.bnToUint256(minAmountOut).low.toString(),
+          uint256.bnToUint256(minAmountOut).high.toString(),
+          userAddress,
+        ],
+      };
+
+      callsToExecute = [feeTransferCall, approveCall, swapCall];
+    } else {
+      // SELL: swap meme tokens for STRK, then transfer platform fee in STRK
+      const launchyQuote = await getLaunchyQuote(
+        targetTokenCanonical,
+        tokenInCanonical,
+        amountInBigInt,
+        slippage_pct || 2,
+        poolKey,
+        routerAddress
+      );
+
+      if (!launchyQuote || launchyQuote.outputAmount <= 0n) {
+        throw new Error('Launchy pool has insufficient liquidity to execute this sell order.');
+      }
+
+      selectedQuoteBuyAmount = launchyQuote.outputAmount;
+      const minAmountOut = launchyQuote.minReceived;
+      nativeFeeAmount = (selectedQuoteBuyAmount * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+
+      const approveCall = {
+        contractAddress: tokenInCanonical,
+        entrypoint: 'approve',
+        calldata: CallData.compile({
+          spender: routerAddress,
+          amount: uint256.bnToUint256(amountInBigInt),
+        }),
+      };
+
+      const swapCall = {
+        contractAddress: routerAddress,
+        entrypoint: 'swap_exact_input',
+        calldata: [
+          poolKey.token0,
+          poolKey.token1,
+          poolKey.fee,
+          poolKey.tick_spacing,
+          poolKey.extension,
+          tokenInCanonical,
+          uint256.bnToUint256(amountInBigInt).low.toString(),
+          uint256.bnToUint256(amountInBigInt).high.toString(),
+          uint256.bnToUint256(minAmountOut).low.toString(),
+          uint256.bnToUint256(minAmountOut).high.toString(),
+          userAddress,
+        ],
+      };
+
+      const feeTransferCall = {
+        contractAddress: tokenOutCanonical,
+        entrypoint: 'transfer',
+        calldata: CallData.compile({
+          recipient: getStarknetTreasuryAddress(),
+          amount: uint256.bnToUint256(nativeFeeAmount),
+        }),
+      };
+
+      callsToExecute = [approveCall, swapCall, feeTransferCall];
+    }
   } else {
-    nativeFeeAmount = (BigInt(selectedQuote.buyAmount) * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
-    feeTokenAddress = tokenOutCanonical;
+    // 4. Fetch quote from AVNU (Ekubo, JediSwap, Nostra, 10KSwap)
+    const quotes = await getQuotes({
+      sellTokenAddress: tokenInCanonical,
+      buyTokenAddress: tokenOutCanonical,
+      sellAmount: sellAmountForQuote,
+      takerAddress: userAddress,
+      size: 1,
+    }).catch((err) => {
+      console.warn('[STARKNET_EXECUTOR] AVNU getQuotes warning:', err?.message);
+      return [];
+    });
+
+    if (!quotes || quotes.length === 0) {
+      const launchpadName = launchpadInfo?.name || 'DEX';
+      throw new Error(
+        `No liquid route found on Starknet for this token pair (${launchpadName}). The liquidity pool currently has insufficient active liquidity or is out of tick range.`
+      );
+    }
+
+    const selectedQuote = quotes[0];
+    selectedQuoteBuyAmount = BigInt(selectedQuote.buyAmount);
+
+    onProgress?.('building_transaction');
+
+    let feeTokenAddress: string;
+    if (isBuy) {
+      nativeFeeAmount = buyFeeAmount;
+      feeTokenAddress = tokenInCanonical;
+    } else {
+      nativeFeeAmount = (selectedQuoteBuyAmount * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+      feeTokenAddress = tokenOutCanonical;
+    }
+
+    const feeTransferCall = {
+      contractAddress: feeTokenAddress,
+      entrypoint: 'transfer',
+      calldata: CallData.compile({
+        recipient: getStarknetTreasuryAddress(),
+        amount: uint256.bnToUint256(nativeFeeAmount),
+      }),
+    };
+
+    const { calls: avnuCalls } = await quoteToCalls({
+      quoteId: selectedQuote.quoteId,
+      slippage: (slippage_pct || 2) / 100,
+      takerAddress: userAddress,
+    });
+
+    const parsedAvnuCalls = avnuCalls.map((c: any) => ({
+      contractAddress: c.contractAddress,
+      entrypoint: c.entrypoint,
+      calldata: c.calldata,
+    }));
+
+    callsToExecute = isBuy
+      ? [feeTransferCall, ...parsedAvnuCalls]
+      : [...parsedAvnuCalls, feeTransferCall];
   }
-
-  const feeTransferCall = {
-    contractAddress: feeTokenAddress,
-    entrypoint: 'transfer',
-    calldata: CallData.compile({
-      recipient: getStarknetTreasuryAddress(),
-      amount: uint256.bnToUint256(nativeFeeAmount),
-    }),
-  };
-
-  const { calls: avnuCalls } = await quoteToCalls({
-    quoteId: selectedQuote.quoteId,
-    slippage: (slippage_pct || 2) / 100,
-    takerAddress: userAddress,
-  });
-
-  const parsedAvnuCalls = avnuCalls.map((c: any) => ({
-    contractAddress: c.contractAddress,
-    entrypoint: c.entrypoint,
-    calldata: c.calldata,
-  }));
-
-  const callsToExecute = isBuy
-    ? [feeTransferCall, ...parsedAvnuCalls]
-    : [...parsedAvnuCalls, feeTransferCall];
 
   // 5b. Auto-deploy account if undeployed (Starknet Account Abstraction requirement)
   const normAddress = userAddress.toLowerCase();
@@ -258,18 +390,16 @@ export async function executeStarknetSwap(
   const humanFee = Number(nativeFeeAmount) / 1e18;
 
   // 7. Update Positions and Fills
-  const rawBuyQty = selectedQuote.buyAmount ? selectedQuote.buyAmount.toString() : '0';
-  const humanBuyQty = selectedQuote.buyAmount
-    ? formatTokenBalance(selectedQuote.buyAmount, targetTokenMetadata.decimals)
-    : '0';
+  const rawBuyQty = selectedQuoteBuyAmount.toString();
+  const humanBuyQty = formatTokenBalance(selectedQuoteBuyAmount, targetTokenMetadata.decimals);
 
   const humanBuyQtyNum = Number(rawBuyQty) / Math.pow(10, targetTokenMetadata.decimals);
   const humanNetIn = Number(sellAmountForQuote) / 1e18;
   const buyPricePerToken = humanBuyQtyNum > 0 ? humanNetIn / humanBuyQtyNum : 0;
 
   const humanSellQtyNum = Number(amountInBigInt) / Math.pow(10, targetTokenMetadata.decimals);
-  const humanGrossProceeds = Number(selectedQuote.buyAmount) / 1e18;
-  const humanNetProceeds = (Number(selectedQuote.buyAmount) - Number(nativeFeeAmount)) / 1e18;
+  const humanGrossProceeds = Number(selectedQuoteBuyAmount) / 1e18;
+  const humanNetProceeds = (Number(selectedQuoteBuyAmount) - Number(nativeFeeAmount)) / 1e18;
   const sellPricePerToken = humanSellQtyNum > 0 ? humanGrossProceeds / humanSellQtyNum : 0;
 
   let positionId: string | undefined;
@@ -347,7 +477,7 @@ export async function executeStarknetSwap(
       input_amount: isBuy
         ? (Number(amountInBigInt) / 1e18).toString()
         : humanNetProceeds.toString(),
-      venue: 'avnu',
+      venue: launchpadInfo?.venue || (event.venue as any) || 'avnu',
       tx_hash: txHash,
     }).catch((e) => {
       console.warn('[STARKNET_EXECUTOR] createFill error:', e?.message);

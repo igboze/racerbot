@@ -46,6 +46,7 @@ export type VenueName =
   | 'sui_dex'
   | 'avnu'
   | 'ekubo'
+  | 'launchy'
   | 'unruggable'
   | 'jediswap'
   | 'stark_dex';
@@ -75,6 +76,7 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'sui_dex',
   'avnu',
   'ekubo',
+  'launchy',
   'unruggable',
   'jediswap',
   'stark_dex',

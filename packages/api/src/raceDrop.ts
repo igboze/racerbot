@@ -496,25 +496,35 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
   const telegramId = ctx.from!.id;
   const username = ctx.from!.username || undefined;
 
+  const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+  const sendErrorFeedback = async (msg: string) => {
+    if (isGroup && ctx.callbackQuery) {
+      await ctx.answerCbQuery(msg, { show_alert: true }).catch(() => {});
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML' }).catch(() => {});
+    }
+  };
+
   try {
     const drop = await getRaceDropById(dropId);
     if (!drop) {
-      await ctx.reply('❌ RaceDrop not found or has ended.');
+      await sendErrorFeedback('❌ RaceDrop not found or has ended.');
       return;
     }
 
     if (drop.status !== 'active') {
-      await ctx.reply(`🏁 This RaceDrop is no longer active (status: ${drop.status}).`);
+      await sendErrorFeedback(`🏁 This RaceDrop is no longer active (status: ${drop.status}).`);
       return;
     }
 
     if (new Date() > drop.expires_at) {
-      await ctx.reply('⌛ This RaceDrop has expired.');
+      await sendErrorFeedback('⌛ This RaceDrop has expired.');
       return;
     }
 
     if (drop.claims_count >= drop.total_claims || parseFloat(drop.remaining_amount) <= 0) {
-      await ctx.reply('🏁 All drops have already been claimed! All spots are filled.');
+      await sendErrorFeedback('🏁 All drops have already been claimed! All spots are filled.');
       return;
     }
 
@@ -523,9 +533,8 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       try {
         const member = await ctx.telegram.getChatMember(drop.group_chat_id, telegramId);
         if (member.status === 'left' || member.status === 'kicked') {
-          await ctx.reply(
-            '❌ <b>Membership Required</b>\n\nYou must be a member of the group where this RaceDrop was shared in order to claim it!',
-            { parse_mode: 'HTML' }
+          await sendErrorFeedback(
+            '❌ <b>Membership Required</b>\n\nYou must be a member of the group where this RaceDrop was shared in order to claim it!'
           );
           return;
         }
@@ -549,7 +558,7 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       await onboardUser(telegramId, creatorRefCode || undefined, username);
       user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) {
-        await ctx.reply('❌ Failed to initialize wallet. Please run /start and try again.');
+        await sendErrorFeedback('❌ Failed to initialize wallet. Please start @' + getBotUsername(ctx) + ' in DM and try again.');
         return;
       }
     }
@@ -557,7 +566,7 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     // Prevent duplicate claims
     const alreadyClaimed = await hasUserClaimedDrop(drop.id, user.id);
     if (alreadyClaimed) {
-      await ctx.reply('⚠️ You have already claimed this RaceDrop!');
+      await sendErrorFeedback('⚠️ You have already claimed this RaceDrop!');
       return;
     }
 
@@ -582,24 +591,27 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
 
     claimAmountNum = Math.min(claimAmountNum, remainingNum);
     if (claimAmountNum <= 0) {
-      await ctx.reply('🏁 All drops have already been claimed!');
+      await sendErrorFeedback('🏁 All drops have already been claimed!');
       return;
     }
 
     const creatorUser = await getUserById(drop.creator_id);
     if (!creatorUser) {
-      await ctx.reply('❌ Drop creator account not found.');
+      await sendErrorFeedback('❌ Drop creator account not found.');
       return;
     }
 
     let txHash: string | undefined = undefined;
     const claimantName = getTelegramDisplayName(ctx.from);
 
-    // Provide immediate in-chat feedback
-    const pendingMsg = await ctx.reply(
-      `🏎️ <i>Securing your RaceDrop of ${formatDropAmount(claimAmountNum)} ${drop.token_symbol}...</i>`,
-      { parse_mode: 'HTML' }
-    ).catch(() => null);
+    // Provide immediate in-chat feedback only in DM to avoid cluttering groups
+    let pendingMsg: any = null;
+    if (!isGroup) {
+      pendingMsg = await ctx.reply(
+        `🏎️ <i>Securing your RaceDrop of ${formatDropAmount(claimAmountNum)} ${drop.token_symbol}...</i>`,
+        { parse_mode: 'HTML' }
+      ).catch(() => null);
+    }
 
     try {
       if (drop.token_address.toLowerCase() === 'near') {
@@ -622,9 +634,8 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     } catch (err: any) {
       console.error('[RACEDROP] On-chain transfer failed:', err?.message || err);
       if (pendingMsg) ctx.deleteMessage(pendingMsg.message_id).catch(() => {});
-      await ctx.reply(
-        `❌ <b>Claim Failed:</b> ${getUserFriendlyError(err)}\n\nThe creator's wallet balance may be depleted.`,
-        { parse_mode: 'HTML' }
+      await sendErrorFeedback(
+        `❌ <b>Claim Failed:</b> ${getUserFriendlyError(err)}\n\nThe creator's wallet balance may be depleted.`
       );
       return;
     }
@@ -650,22 +661,40 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     const creatorUsername = creatorTgUser?.username || undefined;
     const successCard = buildRaceDropClaimSuccessCard(updatedDrop, claim, creatorUsername);
 
-    // Automatically update the claimant's interactive MENU card to success
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(successCard.text, {
+    // PRIVACY ENFORCEMENT:
+    // In public groups, NEVER post wallet buttons, balances, or private menus into the group.
+    // Send success card privately to claimant's DM, and notify via popup alert in group.
+    if (isGroup) {
+      await ctx.telegram.sendMessage(telegramId, successCard.text, {
         parse_mode: 'HTML',
         ...successCard.keyboard,
-      }).catch(async () => {
+      }).catch(() => {
+        // Claimant may not have DM open yet
+      });
+
+      if (ctx.callbackQuery) {
+        await ctx.answerCbQuery(
+          `🎉 You claimed +${formatDropAmount(claimAmountNum)} ${drop.token_symbol}! Details sent to your private DM.`,
+          { show_alert: true }
+        ).catch(() => {});
+      }
+    } else {
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(successCard.text, {
+          parse_mode: 'HTML',
+          ...successCard.keyboard,
+        }).catch(async () => {
+          await ctx.reply(successCard.text, {
+            parse_mode: 'HTML',
+            ...successCard.keyboard,
+          });
+        });
+      } else {
         await ctx.reply(successCard.text, {
           parse_mode: 'HTML',
           ...successCard.keyboard,
         });
-      });
-    } else {
-      await ctx.reply(successCard.text, {
-        parse_mode: 'HTML',
-        ...successCard.keyboard,
-      });
+      }
     }
 
     // ── 1. Notify Creator in DM ──────────────────────────────────────────────
@@ -1074,71 +1103,12 @@ export function setupRaceDropRoutes(
         return;
       }
 
-      // If called in group with arguments:
-      // Format: /racedrop <token> <amount_per_user> <number_of_users>
+      // If called in group without a drop ID, direct them to DM to setup the drop securely
       if (isGroup) {
-        if (args.length >= 3) {
-          const rawToken = args[0].toLowerCase();
-          const amountPerUser = parseFloat(args[1]);
-          const totalClaims = parseInt(args[2], 10);
-          const note = args.slice(3).join(' ') || undefined;
-
-          if (isNaN(amountPerUser) || amountPerUser <= 0) {
-            await ctx.reply('❌ Invalid amount per user. Please specify a positive number.');
-            return;
-          }
-          if (isNaN(totalClaims) || totalClaims < 1 || totalClaims > 100) {
-            await ctx.reply('❌ Total claimers must be between 1 and 100.');
-            return;
-          }
-
-          const totalAmount = Number((amountPerUser * totalClaims).toFixed(6));
-          const isNear = rawToken === 'near';
-          const isSui = rawToken === 'sui';
-          const chain: 'near' | 'sui' = isSui ? 'sui' : 'near';
-          const tokenAddress = isNear ? 'near' : isSui ? 'sui' : args[0];
-          const { balance, symbol } = await getUserAvailableBalance(telegramId, tokenAddress, chain);
-
-          if (balance < totalAmount) {
-            await ctx.reply(
-              `❌ Insufficient balance. You need ${formatDropAmount(totalAmount)} ${symbol}, but have ${formatDropAmount(balance)} ${symbol}.`
-            );
-            return;
-          }
-
-          const creatorName = getTelegramDisplayName(ctx.from);
-
-          const drop = await createRaceDrop({
-            creator_id: user.id,
-            creator_telegram_id: telegramId,
-            creator_name: creatorName,
-            chain,
-            token_address: tokenAddress,
-            token_symbol: symbol,
-            amount_per_user: amountPerUser,
-            total_amount: totalAmount,
-            total_claims: totalClaims,
-            split_mode: 'equal',
-            message_text: note,
-            group_chat_id: ctx.chat.id,
-          });
-
-          const groupCard = buildRaceDropGroupCard(drop, ctx.from!.username, botUsername, []);
-          const sentMsg = await ctx.reply(groupCard.text, {
-            parse_mode: 'HTML',
-            ...groupCard.keyboard,
-          });
-
-          await updateRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id);
-          await recordRaceDropGroupMessage(drop.id, ctx.chat.id, sentMsg.message_id);
-          ctx.deleteMessage().catch(() => {});
-          return;
-        }
-
         await ctx.reply(
           `🏎️ <b>Want to send a RaceDrop to this group?</b>\n\n` +
-          `Airdrop tokens for group members to claim! New users will be automatically bound under your referral link.\n\n` +
-          `Tap below to configure your RaceDrop in private DM:`,
+          `Airdrop tokens for group members to claim!\n\n` +
+          `To protect your wallet details, please configure your RaceDrop in private DM:`,
           {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
