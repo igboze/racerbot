@@ -452,10 +452,30 @@ export async function getStarknetAVNUQuote(
 
 // ── Starknet Launchpad Detection & Routing ───────────────────────────────────
 
+export const LAUNCHY_OFFICIAL_URL = 'https://starklaunchy.fun';
+export const LAUNCHY_TOKEN_ADDRESS =
+  '0x03663d816450fa6d639d9d3e0b72187007d733266d70fc507a20671c32a7bfd1';
 export const LAUNCHY_FACTORY_V6 =
   '0x03865fb40c5b7a493299323e71967656243006101e6221246eccdda2bba356c3';
+export const LAUNCHY_FACTORY_V2 =
+  '0x063883bfd87f65a2e42193f0f5cf18eb69d983abb99b07f7ec9a561b11c85ef4';
 export const LAUNCHY_SWAPPER_V3 =
   '0x033175f310b7e5218aa6c9f5a9cad931f62f5119c07541b1b12ec34df92e08d3';
+
+// Launchy trading pairs from https://starklaunchy.fun/docs
+export const ZEC_TOKEN_ADDRESS =
+  '0x05ce53b9b68fb8e9ecab9283a96d97948914733fd6ed8d9a53a276a419497841';
+export const STRKBTC_TOKEN_ADDRESS =
+  '0x0787150e306e6eae6e3f79dea881770e8bbff2c1b8eb490f969669ee945b3135';
+
+// Launchy fee and protection policy from https://starklaunchy.fun/docs
+export const LAUNCHY_POOL_FEE_PCT = 1.0; // 1% pool trading fee
+export const LAUNCHY_CREATOR_FEE_SHARE_PCT = 50; // 50% to Creator (0.5% of trade)
+export const LAUNCHY_PLATFORM_FEE_SHARE_PCT = 30; // 30% to Launchy Treasury (0.3% of trade)
+export const LAUNCHY_EKUBO_FEE_SHARE_PCT = 20; // 20% to Ekubo (0.2% of trade)
+export const LAUNCHY_CREATION_FEE_EST_USD = 1.50; // ≈ $1.50 in STRK
+export const LAUNCHY_PROTECTION_MAX_BUY_PCT = 2; // Up to 2% of initial supply per buy
+export const LAUNCHY_PROTECTION_WINDOW_SEC = 900; // 15 minutes fixed on chain
 
 export interface StarknetLaunchpadPoolKey {
   token0: string;
@@ -474,7 +494,11 @@ export interface StarknetLaunchpadInfo {
   factoryAddress?: string;
   routerAddress?: string;
   quoteToken?: string;
+  quoteTokenSymbol?: 'STRK' | 'ZEC' | 'strkBTC' | string;
   poolKey?: StarknetLaunchpadPoolKey;
+  websiteUrl?: string;
+  poolFeePct?: number;
+  launchProtectionNote?: string;
 }
 
 const launchpadInfoCache = new Map<string, { info: StarknetLaunchpadInfo; expiresAt: number }>();
@@ -584,6 +608,13 @@ export async function detectStarknetLaunchpad(
           // ignore
         }
 
+        let quoteTokenSymbol: 'STRK' | 'ZEC' | 'strkBTC' | string = 'STRK';
+        if (quoteToken.toLowerCase() === ZEC_TOKEN_ADDRESS.toLowerCase()) {
+          quoteTokenSymbol = 'ZEC';
+        } else if (quoteToken.toLowerCase() === STRKBTC_TOKEN_ADDRESS.toLowerCase()) {
+          quoteTokenSymbol = 'strkBTC';
+        }
+
         const info: StarknetLaunchpadInfo = {
           launchpad: 'launchy',
           name: 'Launchy',
@@ -593,7 +624,11 @@ export async function detectStarknetLaunchpad(
           factoryAddress: factoryAddr,
           routerAddress: LAUNCHY_SWAPPER_V3,
           quoteToken,
+          quoteTokenSymbol,
           poolKey,
+          websiteUrl: `${LAUNCHY_OFFICIAL_URL}/token/${norm}`,
+          poolFeePct: LAUNCHY_POOL_FEE_PCT,
+          launchProtectionNote: 'First 15 min: max 2% of initial supply per buy',
         };
         launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
         return info;
@@ -647,7 +682,11 @@ export async function detectStarknetLaunchpad(
         factoryAddress: LAUNCHY_FACTORY_V6,
         routerAddress: LAUNCHY_SWAPPER_V3,
         quoteToken: STRK_TOKEN_ADDRESS,
+        quoteTokenSymbol: 'STRK',
         poolKey,
+        websiteUrl: `${LAUNCHY_OFFICIAL_URL}/token/${norm}`,
+        poolFeePct: LAUNCHY_POOL_FEE_PCT,
+        launchProtectionNote: 'First 15 min: max 2% of initial supply per buy',
       };
       launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
       return info;
