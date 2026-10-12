@@ -16,6 +16,7 @@ import {
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
   USDC_TOKEN_ADDRESS,
+  USDC_NATIVE_TOKEN_ADDRESS,
   USDC_BRIDGED_TOKEN_ADDRESS,
   USDT_TOKEN_ADDRESS,
   ZEC_TOKEN_ADDRESS,
@@ -37,14 +38,15 @@ export const EKUBO_CORE_CONTRACT = '0x00000005dd3d2f4429af886cd1a3b08289dbcea99a
 export const CORE_QUOTE_TOKENS = [
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
-  USDC_TOKEN_ADDRESS,
-  USDC_BRIDGED_TOKEN_ADDRESS,
+  USDC_TOKEN_ADDRESS, // 0x053b40... (StarkGate Bridged v1)
+  USDC_NATIVE_TOKEN_ADDRESS, // 0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8 (Circle Native USDC)
+  USDC_BRIDGED_TOKEN_ADDRESS, // 0x05574e... (StarkGate Bridged v2)
   '0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb', // Ekubo Legacy USDC (6 decimals)
   USDT_TOKEN_ADDRESS,
-  '0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3', // DAI
-  '0x03fe2b97c1fd336e750087d68b9b867997fd64a2661ff3ca5a7c771641e8e7ac', // wBTC
-  STRKBTC_TOKEN_ADDRESS,
-  ZEC_TOKEN_ADDRESS,
+  '0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3', // DAI (18 decimals)
+  '0x03fe2b97c1fd336e750087d68b9b867997fd64a2661ff3ca5a7c771641e8e7ac', // wBTC (8 decimals)
+  STRKBTC_TOKEN_ADDRESS, // 0x078715... (8 decimals)
+  ZEC_TOKEN_ADDRESS, // 0x05ce53... (18 decimals)
 ];
 
 export function isCoreQuoteToken(addr: string): boolean {
@@ -56,6 +58,50 @@ export function isCoreQuoteToken(addr: string): boolean {
 export const TRANSFER_SELECTOR = '0x99cd8bde557814842a3121e8ddfd433a539b8c9f14bf31ebf108d12e6196e9';
 export const EKUBO_SWAPPED_SELECTOR = '0x157717768aca88da4ac4279765f09f4d0151823d573537fbbeb950cdbd9a870';
 export const UDC_DEPLOYED_SELECTOR = '0x26b160f10156dea0639bec90696772c640b9706a47f5b8c52ea1abe5858b34d';
+
+export interface ParsedTransferEvent {
+  tokenAddress: string;
+  from: string;
+  to: string;
+  amount: bigint;
+}
+
+/**
+ * Robustly parses Starknet ERC-20 Transfer events.
+ * Handles both:
+ * 1. Cairo 1 indexed: Transfer(from, to, value) -> keys: [TRANSFER_SELECTOR, from, to], data: [low, high]
+ * 2. Cairo 0 / non-indexed: Transfer(from, to, value) -> keys: [TRANSFER_SELECTOR], data: [from, to, low, high]
+ */
+export function parseStarknetTransferEvent(rev: any): ParsedTransferEvent | null {
+  if (rev.keys?.[0] !== TRANSFER_SELECTOR) return null;
+  const tokenAddress = rev.from_address || '';
+
+  let from = '';
+  let to = '';
+  let amount = 0n;
+
+  if (rev.keys.length >= 3) {
+    from = rev.keys[1];
+    to = rev.keys[2];
+    const lowVal = rev.data?.[0] ? BigInt(rev.data[0]) : 0n;
+    const highVal = rev.data?.[1] ? BigInt(rev.data[1]) : 0n;
+    amount = (highVal << 128n) + lowVal;
+  } else if (rev.keys.length === 1 && rev.data?.length >= 4) {
+    from = rev.data[0];
+    to = rev.data[1];
+    const lowVal = rev.data[2] ? BigInt(rev.data[2]) : 0n;
+    const highVal = rev.data[3] ? BigInt(rev.data[3]) : 0n;
+    amount = (highVal << 128n) + lowVal;
+  } else if (rev.data?.length === 3) {
+    from = rev.data[0];
+    to = rev.data[1];
+    amount = rev.data[2] ? BigInt(rev.data[2]) : 0n;
+  } else {
+    return null;
+  }
+
+  return { tokenAddress, from, to, amount };
+}
 
 // Whale alert thresholds:
 // 1. Tokens > $400k Market Cap: buys from $1,000+
@@ -140,6 +186,32 @@ function formatPriceAmount(price?: number | string | null): string {
     return `$${num.toFixed(4)}`;
   }
   return `$${num.toFixed(2)}`;
+}
+
+/**
+ * Format token quantities cleanly (e.g. 1.25M, 500K, 1,250.50) without scientific notation or 100-digit overflow
+ */
+export function formatTokenAmount(amount: number, symbol: string): string {
+  if (amount == null || isNaN(amount) || amount <= 0) return `0 ${symbol}`;
+  if (amount >= 1_000_000_000_000) {
+    return `${(amount / 1_000_000_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}T ${symbol}`;
+  }
+  if (amount >= 1_000_000_000) {
+    return `${(amount / 1_000_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}B ${symbol}`;
+  }
+  if (amount >= 1_000_000) {
+    return `${(amount / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })}M ${symbol}`;
+  }
+  if (amount >= 1_000) {
+    return `${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${symbol}`;
+  }
+  if (amount < 0.0001) {
+    return `${amount.toFixed(6)} ${symbol}`;
+  }
+  if (amount < 1) {
+    return `${amount.toFixed(4)} ${symbol}`;
+  }
+  return `${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${symbol}`;
 }
 
 /**
@@ -571,14 +643,13 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
 
       // Inspect ERC20 Transfer events inside the transaction
       for (const rev of receipt.events) {
-        if (rev.keys?.[0] !== TRANSFER_SELECTOR) continue;
+        const parsed = parseStarknetTransferEvent(rev);
+        if (!parsed) continue;
 
-        const tokenAddr = rev.from_address || '';
-        const fromAddr = rev.keys[1] || '';
-        const toAddr = rev.keys[2] || '';
-        const lowVal = rev.data?.[0] ? BigInt(rev.data[0]) : 0n;
-        const highVal = rev.data?.[1] ? BigInt(rev.data[1]) : 0n;
-        const totalVal = (highVal << 128n) + lowVal;
+        const tokenAddr = parsed.tokenAddress;
+        const fromAddr = parsed.from;
+        const toAddr = parsed.to;
+        const totalVal = parsed.amount;
 
         // Is this a recognized quote token being spent into the pool?
         if (isSameStarknetAddress(tokenAddr, STRK_TOKEN_ADDRESS)) {
@@ -601,6 +672,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
           }
         } else if (
           isSameStarknetAddress(tokenAddr, USDC_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(tokenAddr, USDC_NATIVE_TOKEN_ADDRESS) ||
           isSameStarknetAddress(tokenAddr, USDC_BRIDGED_TOKEN_ADDRESS) ||
           isSameStarknetAddress(tokenAddr, '0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb') ||
           isSameStarknetAddress(tokenAddr, USDT_TOKEN_ADDRESS)
@@ -659,6 +731,8 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
       // Check if this swap qualifies as a whale buy (minimum $100) and targets a non-quote token
       if (
         spentUsd < WHALE_BUY_THRESHOLD_DEFAULT_USD ||
+        spentUsd > 10_000_000 ||
+        isNaN(spentUsd) ||
         !targetTokenAddress ||
         targetTokenRawAmount <= 0n ||
         isCoreQuoteToken(targetTokenAddress)
@@ -682,7 +756,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
 
       // Calculate exact tokens received using token's real decimals
       const tokensReceived = Number(targetTokenRawAmount) / (10 ** decimals);
-      if (tokensReceived <= 0 || isNaN(tokensReceived)) continue;
+      if (tokensReceived <= 0 || isNaN(tokensReceived) || tokensReceived > 1e18) continue;
 
       const isNewToken = seenTokenLaunches.has(normalizeStarknetAddress(targetTokenAddress));
       const isLaunchy =
@@ -722,11 +796,8 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
       const threshold = getStarknetWhaleThreshold(mcapUsd, isNewToken);
       if (spentUsd < threshold) continue;
 
-      const spentNativeStr = `${spentNativeAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${spentToken}`;
-      const formattedTokens = tokensReceived < 1
-        ? tokensReceived.toFixed(4)
-        : tokensReceived.toLocaleString('en-US', { maximumFractionDigits: 2 });
-      const tokensRecStr = `${formattedTokens} ${symbol}`;
+      const spentNativeStr = `${spentNativeAmount.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${spentToken}`;
+      const tokensRecStr = formatTokenAmount(tokensReceived, symbol);
 
       await sendStarknetWhaleBuyAlert({
         tokenAddress: targetTokenAddress,
