@@ -294,7 +294,11 @@ export async function executeSuiSwap(
         expectedSuiProceeds = (curve.reserveSuiMist * tokenAmountRaw) / (curve.reserveTokensRaw + tokenAmountRaw);
       }
 
-      devFeeMist = (expectedSuiProceeds * SUI_FEE_BPS) / SUI_BPS_DENOMINATOR;
+      const suiUsdPrice = await getSuiUsdPrice().catch(() => 2.0);
+      const proceedsUsd = (Number(expectedSuiProceeds) / 1e9) * suiUsdPrice;
+      const feeBps = proceedsUsd > 200 ? 200n : 150n;
+
+      devFeeMist = (expectedSuiProceeds * feeBps) / SUI_BPS_DENOMINATOR;
       netSuiOut = expectedSuiProceeds - devFeeMist;
 
       const slippageBps = BigInt(Math.floor(slippage_pct * 100));
@@ -320,22 +324,37 @@ export async function executeSuiSwap(
       txResult = await executeSuiTransaction(tx, keypair);
     } else {
       // Multi-DEX sell route via Aftermath Smart-Order Router
-      // Let Aftermath router collect 1.5% platform fee via externalFee natively from swap proceeds
+      // Dynamic fee: 2% for sells above $200, 1.5% for sells <= $200
+      const suiUsdPrice = await getSuiUsdPrice().catch(() => 2.0);
+      const rawQuote = await getSuiRouterQuote({
+        coinInType: tokenTarget,
+        coinOutType: '0x2::sui::SUI',
+        amountIn: tokenAmountRaw,
+        includeFee: false,
+      });
+
+      if (!rawQuote) {
+        throw new Error(`No sell route found for ${tokenTarget} on Sui DEXes. Please check pool liquidity.`);
+      }
+
+      const rawSuiProceeds = Number(rawQuote.expectedAmountOut) / 1e9;
+      const proceedsUsd = rawSuiProceeds * suiUsdPrice;
+      const isOver200 = proceedsUsd > 200;
+      const feePercentage = isOver200 ? 0.02 : 0.015;
+      const feeBps = isOver200 ? 200n : 150n;
+
       const routerQuote = await getSuiRouterQuote({
         coinInType: tokenTarget,
         coinOutType: '0x2::sui::SUI',
         amountIn: tokenAmountRaw,
         treasuryAddress: DEFAULT_SUI_TREASURY_ADDRESS,
         includeFee: true,
-      });
+        feePercentage,
+      }) || rawQuote;
 
-      if (!routerQuote) {
-        throw new Error(`No sell route found for ${tokenTarget} on Sui DEXes. Please check pool liquidity.`);
-      }
-
-      // Expected SUI proceeds after 1.5% externalFee has already been routed to treasury
+      // Expected SUI proceeds after platform fee has already been routed to treasury
       netSuiOut = routerQuote.expectedAmountOut;
-      devFeeMist = (netSuiOut * SUI_FEE_BPS) / (SUI_BPS_DENOMINATOR - SUI_FEE_BPS);
+      devFeeMist = (netSuiOut * feeBps) / (SUI_BPS_DENOMINATOR - feeBps);
       venue = routerQuote.venue;
 
       const tokensHuman = Number(tokenAmountRaw) / Math.pow(10, meta.decimals);

@@ -227,7 +227,11 @@ export async function executeStarknetSwap(
 
       selectedQuoteBuyAmount = launchyQuote.outputAmount;
       const minAmountOut = launchyQuote.minReceived;
-      nativeFeeAmount = (selectedQuoteBuyAmount * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+      const proceedsNative = Number(selectedQuoteBuyAmount) / 1e18;
+      const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.12;
+      const proceedsUsd = proceedsNative * unitPrice;
+      const feeBps = proceedsUsd > 200 ? 200n : STARKNET_FEE_BPS;
+      nativeFeeAmount = (selectedQuoteBuyAmount * feeBps) / STARKNET_BPS_DENOMINATOR;
 
       const approveCall = {
         contractAddress: tokenInCanonical,
@@ -297,7 +301,11 @@ export async function executeStarknetSwap(
       nativeFeeAmount = buyFeeAmount;
       feeTokenAddress = tokenInCanonical;
     } else {
-      nativeFeeAmount = (selectedQuoteBuyAmount * STARKNET_FEE_BPS) / STARKNET_BPS_DENOMINATOR;
+      const proceedsNative = Number(selectedQuoteBuyAmount) / 1e18;
+      const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.12;
+      const proceedsUsd = proceedsNative * unitPrice;
+      const feeBps = proceedsUsd > 200 ? 200n : STARKNET_FEE_BPS;
+      nativeFeeAmount = (selectedQuoteBuyAmount * feeBps) / STARKNET_BPS_DENOMINATOR;
       feeTokenAddress = tokenOutCanonical;
     }
 
