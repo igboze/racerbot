@@ -526,6 +526,7 @@ export class SwapExecutor {
       event.chain === 'starknet' ||
       venue === 'avnu' ||
       venue === 'ekubo' ||
+      venue === 'launchy' ||
       venue === 'unruggable' ||
       venue === 'jediswap' ||
       venue === 'stark_dex' ||

@@ -32,6 +32,10 @@ import {
   getStarknetTokenBalance,
   getStarknetTokenMetadata,
   getStarknetAVNUQuote,
+  detectStarknetLaunchpad,
+  getLaunchyQuote,
+  LAUNCHY_FACTORY_V6,
+  LAUNCHY_SWAPPER_V3,
   formatTokenBalance,
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
@@ -522,6 +526,7 @@ export interface TokenInfoResult {
   paired_symbol?: string;      // Ticker of the paired asset if not NEAR (e.g. 'QTC')
   price_in_paired?: string;    // Spot price denominated in paired asset
   liquidity_in_paired?: string;// Liquidity denominated in paired asset
+  launchpad?: string;          // Launchpad name if launched via launchpad (e.g. 'Launchy', 'Unruggable Meme')
 }
 
 const refPoolFeeCache = new Map<number, number>();
@@ -811,8 +816,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       if (fetchedPrice > 0) strkUsd = fetchedPrice;
     } catch { /* use default */ }
 
-    // Fetch token metadata from GeckoTerminal or on-chain
-    const [meta, dexscreenerData, geckoData] = await Promise.all([
+    // Fetch token metadata from GeckoTerminal, pools endpoint, or on-chain
+    const [meta, dexscreenerData, geckoData, geckoPoolsData, launchpadInfo] = await Promise.all([
       getStarknetTokenMetadata(canonicalAddr).catch(() => ({
         address: canonicalAddr,
         name: isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Starknet Token'),
@@ -824,9 +829,20 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`, {
         headers: { Accept: 'application/json' },
       }).then((r) => r.json()).catch(() => null) as Promise<any>,
+      fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}/pools`, {
+        headers: { Accept: 'application/json' },
+      }).then((r) => r.json()).catch(() => null) as Promise<any>,
+      detectStarknetLaunchpad(canonicalAddr).catch(() => ({
+        launchpad: 'none' as const,
+        name: 'AVNU Aggregator',
+        venue: 'avnu' as const,
+        isBonded: true,
+        bondingPhase: 'bonded' as const,
+      })),
     ]);
 
     const geckoAttr = (geckoData as any)?.data?.attributes;
+    const topPoolAttr = (geckoPoolsData as any)?.data?.[0]?.attributes;
 
     let quotePriceNative = 0;
     try {
@@ -841,15 +857,36 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       }
     } catch { /* ignore */ }
 
+    // If AVNU quote failed and it's Launchy, query Launchy swapper router on-chain
+    if (quotePriceNative === 0 && launchpadInfo.launchpad === 'launchy') {
+      try {
+        const launchyQuote = await getLaunchyQuote(
+          canonicalAddr,
+          STRK_TOKEN_ADDRESS,
+          1000000000000000000n
+        ).catch(() => null);
+        if (launchyQuote && launchyQuote.outputAmount > 0n) {
+          const outHuman = Number(launchyQuote.outputAmount) / Math.pow(10, meta.decimals);
+          if (outHuman > 0) quotePriceNative = 1 / outHuman;
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Fallback to top pool price in quote token if available
+    if (quotePriceNative === 0 && topPoolAttr?.base_token_price_quote_token) {
+      const p = parseFloat(topPoolAttr.base_token_price_quote_token);
+      if (p > 0) quotePriceNative = p;
+    }
+
     // Prices
-    const priceUsdNum = parseFloat(geckoAttr?.price_usd || dexscreenerData?.priceUsd?.toString() || '0') ||
+    const priceUsdNum = parseFloat(geckoAttr?.price_usd || topPoolAttr?.base_token_price_usd || dexscreenerData?.priceUsd?.toString() || '0') ||
       (quotePriceNative > 0 ? quotePriceNative * strkUsd : (isStrk ? strkUsd : 0));
     const priceNativeNum = quotePriceNative > 0
       ? quotePriceNative
       : (strkUsd > 0 && priceUsdNum > 0 ? priceUsdNum / strkUsd : (isStrk ? 1 : 0.001));
 
     // Liquidity
-    const liqUsdNum = parseFloat(geckoAttr?.total_reserve_in_usd || dexscreenerData?.liquidityUsd?.toString() || '0');
+    const liqUsdNum = parseFloat(geckoAttr?.total_reserve_in_usd || topPoolAttr?.reserve_in_usd || dexscreenerData?.liquidityUsd?.toString() || '0');
     const liqNativeNum = strkUsd > 0 && liqUsdNum > 0 ? liqUsdNum / strkUsd : 0;
 
     // Supply & Market Cap
@@ -857,12 +894,23 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ? geckoAttr.total_supply.split('.')[0]
       : (meta.totalSupply || '1000000000000000000000000000');
     const supplyHuman = parseFloat(rawTotalSupply) / Math.pow(10, meta.decimals);
-    const mcapUsdNum = parseFloat(geckoAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0') ||
+    const mcapUsdNum = parseFloat(geckoAttr?.fdv_usd || topPoolAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0') ||
       (priceUsdNum > 0 && supplyHuman > 0 ? priceUsdNum * supplyHuman : 0);
     const mcapNativeNum = strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : (priceNativeNum > 0 ? priceNativeNum * supplyHuman : 0);
 
-    const tokenName = geckoAttr?.name || (meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : ((dexscreenerData as any)?.name || 'Starknet Token'));
+    const tokenName = geckoAttr?.name || topPoolAttr?.name?.split('/')[0]?.trim() || (meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : ((dexscreenerData as any)?.name || 'Starknet Token'));
     const tokenSymbol = (geckoAttr?.symbol || (meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : ((dexscreenerData as any)?.symbol || 'STRK'))).toUpperCase();
+
+    let resolvedVenue: VenueName = 'avnu';
+    if (launchpadInfo.launchpad === 'launchy') {
+      resolvedVenue = 'launchy';
+    } else if (launchpadInfo.launchpad === 'unruggable') {
+      resolvedVenue = 'unruggable';
+    } else if (launchpadInfo.launchpad === 'ekubo' || (dexscreenerData?.dexId as any) === 'ekubo') {
+      resolvedVenue = 'ekubo';
+    } else if (dexscreenerData?.dexId && isTradableVenue(dexscreenerData.dexId)) {
+      resolvedVenue = dexscreenerData.dexId as VenueName;
+    }
 
     const result: TokenInfoResult = {
       name: tokenName,
@@ -871,7 +919,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       total_supply: rawTotalSupply,
       price: priceNativeNum.toFixed(8),
       price_usd: priceUsdNum.toFixed(8),
-      liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / 0.4).toFixed(2) : '0'),
+      liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / strkUsd).toFixed(2) : '0'),
       liquidity_usd: liqUsdNum > 0 ? liqUsdNum.toFixed(2) : '0',
       market_cap: Math.round(mcapNativeNum),
       market_cap_usd: Math.round(mcapUsdNum),
@@ -879,9 +927,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       strk_usd: strkUsd,
       address: canonicalAddr,
       chain: 'starknet',
-      venue: (dexscreenerData?.dexId as any) || 'avnu',
+      venue: resolvedVenue,
       tradeable: true,
-      bonding_phase: 'bonded',
+      bonding_phase: launchpadInfo.bondingPhase === 'bonding_curve' ? 'prebonded' : 'bonded',
+      launchpad: launchpadInfo.name !== 'AVNU Aggregator' && launchpadInfo.name !== 'Starknet DEX' ? launchpadInfo.name : undefined,
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
