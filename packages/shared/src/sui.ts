@@ -679,13 +679,15 @@ export async function getSuiRouterQuote(params: {
   amountIn: bigint;
   treasuryAddress?: string;
   includeFee?: boolean;
+  feePercentage?: number;
 }): Promise<SuiRouterQuoteResult | null> {
   try {
     const af = await Aftermath.create({ network: 'MAINNET' });
     const router = af.Router();
+    const feePct = params.feePercentage ?? 0.015;
     const externalFee = params.includeFee !== false ? {
       recipient: params.treasuryAddress || DEFAULT_SUI_TREASURY_ADDRESS,
-      feePercentage: 0.015, // 1.5% platform fee
+      feePercentage: feePct,
     } : undefined;
 
     const completeRoute = await router.getCompleteTradeRouteGivenAmountIn({

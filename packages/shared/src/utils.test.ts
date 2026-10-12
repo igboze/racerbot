@@ -1,7 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { calculateMinAmountOut, calculateExpectedOutput, calculateMinOutAdj, parseMemeCookingId } from './utils.js';
+import {
+  calculateMinAmountOut,
+  calculateExpectedOutput,
+  calculateMinOutAdj,
+  parseMemeCookingId,
+  getPlatformFeeBps,
+  getPlatformFeeRatio,
+} from './utils.js';
 
 describe('utils: fee and slippage math', () => {
+  describe('getPlatformFeeBps & getPlatformFeeRatio (Dynamic Fees)', () => {
+    it('charges 1.5% (150 bps) for all buys regardless of amount', () => {
+      expect(getPlatformFeeBps(true, 50)).toBe(150n);
+      expect(getPlatformFeeBps(true, 200)).toBe(150n);
+      expect(getPlatformFeeBps(true, 500)).toBe(150n);
+      expect(getPlatformFeeBps(true, 5000)).toBe(150n);
+      expect(getPlatformFeeRatio(true, 500)).toBe(0.015);
+    });
+
+    it('charges 1.5% (150 bps) for sells <= $200 USD', () => {
+      expect(getPlatformFeeBps(false, 50)).toBe(150n);
+      expect(getPlatformFeeBps(false, 199.99)).toBe(150n);
+      expect(getPlatformFeeBps(false, 200)).toBe(150n);
+      expect(getPlatformFeeRatio(false, 200)).toBe(0.015);
+    });
+
+    it('charges 2.0% (200 bps) for sells above $200 USD', () => {
+      expect(getPlatformFeeBps(false, 200.01)).toBe(200n);
+      expect(getPlatformFeeBps(false, 250)).toBe(200n);
+      expect(getPlatformFeeBps(false, 1000)).toBe(200n);
+      expect(getPlatformFeeRatio(false, 1000)).toBe(0.02);
+    });
+  });
   describe('calculateMinAmountOut & calculateExpectedOutput', () => {
     it('calculates normal buy at 2% slippage', () => {
       // 1000 tokens expected -> 2% slippage -> 980 minimum tokens
