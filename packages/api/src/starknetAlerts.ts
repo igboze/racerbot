@@ -2,14 +2,22 @@ import type { Telegraf } from 'telegraf';
 import { Markup } from 'telegraf';
 import {
   getStarknetProvider,
+  rotateStarknetRpc,
   getStarknetTokenMetadata,
   detectStarknetLaunchpad,
+  normalizeStarknetAddress,
+  isSameStarknetAddress,
   LAUNCHY_FACTORY_V6,
   LAUNCHY_FACTORY_V2,
+  UNRUGGABLE_FACTORY_ADDRESS,
+  UDC_ADDRESS,
   LAUNCHY_OFFICIAL_URL,
   LAUNCHY_TOKEN_ADDRESS,
   STRK_TOKEN_ADDRESS,
   ETH_TOKEN_ADDRESS,
+  USDC_TOKEN_ADDRESS,
+  USDC_BRIDGED_TOKEN_ADDRESS,
+  USDT_TOKEN_ADDRESS,
   ZEC_TOKEN_ADDRESS,
   STRKBTC_TOKEN_ADDRESS,
   LAUNCHY_POOL_FEE_PCT,
@@ -22,15 +30,18 @@ import { escapeHtml } from './buyAlerts.js';
 export const STARKNET_ALERTS_CHANNEL = process.env.STARKNET_ALERTS_CHANNEL || '@racerbotalert';
 
 // Ekubo Core router contract where all on-chain swaps occur
-export const EKUBO_CORE_CONTRACT = '0x05dd3d2f4429af886cd1a3b08289dbcea99a294197e9eb43b0e0325b4b';
+export const EKUBO_CORE_CONTRACT = '0x00000005dd3d2f4429af886cd1a3b08289dbcea99a294197e9eb43b0e0325b4b';
 
-// Keccak selectors on Starknet
+// Keccak / Pedersen event selectors on Starknet
 export const TRANSFER_SELECTOR = '0x99cd8bde557814842a3121e8ddfd433a539b8c9f14bf31ebf108d12e6196e9';
 export const EKUBO_SWAPPED_SELECTOR = '0x157717768aca88da4ac4279765f09f4d0151823d573537fbbeb950cdbd9a870';
+export const UDC_DEPLOYED_SELECTOR = '0x26b160f10156dea0639bec90696772c640b9706a47f5b8c52ea1abe5858b34d';
 
 // Whale alert thresholds:
 // 1. Tokens > $400k Market Cap: buys from $1,000+
-// 2. New tokens / tokens <= $400k Market Cap: buys from $200+
+// 2. New tokens / Launchy tokens: buys from $200+
+// 3. Standard Starknet tokens: buys from $100+
+export const WHALE_BUY_THRESHOLD_DEFAULT_USD = 100.0;
 export const WHALE_BUY_THRESHOLD_NEW_USD = 200.0;
 export const WHALE_BUY_THRESHOLD_HIGH_MCAP_USD = 1000.0;
 export const HIGH_MCAP_THRESHOLD_USD = 400_000.0;
@@ -40,16 +51,17 @@ const STRK_PRICE_USD = 0.12;
 const ETH_PRICE_USD = 2600.0;
 const ZEC_PRICE_USD = 35.0;
 const BTC_PRICE_USD = 65_000.0;
+const USD_PRICE_USD = 1.0;
 
 /**
  * Returns the whale threshold for a token based on its Market Cap and new token status
  */
 export function getStarknetWhaleThreshold(marketCapUsd?: number | null, isNewToken?: boolean): number {
-  if (isNewToken) return WHALE_BUY_THRESHOLD_NEW_USD; // $200 for new tokens
+  if (isNewToken) return WHALE_BUY_THRESHOLD_NEW_USD; // $200 for new / launchpad tokens
   if (marketCapUsd && marketCapUsd > HIGH_MCAP_THRESHOLD_USD) {
     return WHALE_BUY_THRESHOLD_HIGH_MCAP_USD; // $1,000 for >400k MC
   }
-  return WHALE_BUY_THRESHOLD_NEW_USD; // $200 for new / <=400k MC
+  return WHALE_BUY_THRESHOLD_DEFAULT_USD; // $100 for standard Starknet tokens
 }
 
 let _bot: Telegraf | null = null;
@@ -113,10 +125,12 @@ export async function sendStarknetTokenCreationAlert(params: {
   const symbol = (params.tokenSymbol || 'TOKEN').toUpperCase();
   const name = params.tokenName || symbol;
   const creator = params.creatorAddress ? maskAddress(params.creatorAddress) : 'Contract Deployer';
-  const isLaunchy = params.isLaunchy !== false; // Launchy is Starknet's top launchpad
-  const venue = isLaunchy ? 'Launchy (Ekubo Concentrated Liquidity)' : params.venue || 'Starknet On-Chain DEX';
+  const isLaunchy = params.isLaunchy !== false && params.launchpad === 'launchy';
+  const venue = isLaunchy
+    ? 'Launchy (Ekubo Concentrated Liquidity)'
+    : params.venue || 'Starknet On-Chain DEX';
   const quoteSym = params.quoteTokenSymbol || 'STRK';
-  const isOfficialLaunchy = ca === LAUNCHY_TOKEN_ADDRESS.toLowerCase();
+  const isOfficialLaunchy = isSameStarknetAddress(ca, LAUNCHY_TOKEN_ADDRESS);
 
   const mcapStr = formatUsdAmount(params.marketCapUsd);
   const liqStr = formatUsdAmount(params.liquidityUsd);
@@ -161,9 +175,10 @@ export async function sendStarknetTokenCreationAlert(params: {
       ],
     ];
   } else {
-    // Standard Starknet On-Chain DEX creation
+    // Standard Starknet On-Chain Token creation / deployment
     text =
-      `🚀 <b>NEW STARKNET TOKEN CREATED!</b> 🚀\n\n` +
+      `🚀 <b>NEW STARKNET TOKEN DETECTED!</b> 🚀\n` +
+      `<i>Pure On-Chain Starknet Mainnet Deployment</i>\n\n` +
       `🪙 <b>Token:</b> ${escapeHtml(name)} (<code>$${escapeHtml(symbol)}</code>)\n` +
       `📄 <b>CA:</b> <code>${ca}</code>\n` +
       `👤 <b>Creator:</b> <code>${creator}</code>\n` +
@@ -171,7 +186,7 @@ export async function sendStarknetTokenCreationAlert(params: {
       `💵 <b>Price:</b> <b>${priceStr}</b>\n` +
       `💧 <b>Liquidity:</b> <b>${liqStr}</b>\n` +
       `🏛️ <b>Venue:</b> ${escapeHtml(venue)}\n\n` +
-      `🔗 <a href="${explorerUrl}">Starkscan</a>`;
+      `🔗 <a href="${explorerUrl}">Starkscan Explorer</a>`;
 
     keyboardButtons = [
       [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
@@ -198,7 +213,8 @@ export async function sendStarknetTokenCreationAlert(params: {
  * Dispatches a formatted Whale Buy Alert to @racerbotalert
  * Threshold:
  * - $1,000+ for tokens > $400k Market Cap
- * - $200+ for new tokens / tokens <= $400k Market Cap
+ * - $200+ for new tokens / Launchy tokens
+ * - $100+ for standard Starknet tokens
  * Pure on-chain RPC data from Starknet
  */
 export async function sendStarknetWhaleBuyAlert(params: {
@@ -225,7 +241,7 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const symbol = (params.tokenSymbol || 'TOKEN').toUpperCase();
   const name = params.tokenName || symbol;
   const buyer = maskAddress(params.buyerAddress);
-  const isLaunchy = params.isLaunchy || ca === LAUNCHY_TOKEN_ADDRESS.toLowerCase();
+  const isLaunchy = params.isLaunchy || isSameStarknetAddress(ca, LAUNCHY_TOKEN_ADDRESS);
 
   const whaleIconsCount = Math.min(25, Math.max(3, Math.round(params.spentUsd / 50)));
   const whaleBar = '🐋'.repeat(whaleIconsCount);
@@ -244,11 +260,11 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const headerTitle =
     params.spentUsd >= WHALE_BUY_THRESHOLD_HIGH_MCAP_USD
       ? `🚨 <b>STARKNET MEGA WHALE BUY! ($1,000+)</b> 🚨`
-      : `🚨 <b>STARKNET WHALE BUY DETECTED!</b> 🚨`;
+      : `🚨 <b>STARKNET WHALE BUY DETECTED! ($100+)</b> 🚨`;
 
   const venueLine = isLaunchy
     ? `🏛️ <b>Venue:</b> 🚀 <b>Launchy</b> (starklaunchy.fun)\n`
-    : '';
+    : `🏛️ <b>Venue:</b> ⚡ <b>Ekubo DEX / Starknet On-Chain</b>\n`;
 
   const text =
     `${headerTitle}\n` +
@@ -291,12 +307,16 @@ export async function sendStarknetWhaleBuyAlert(params: {
 }
 
 /**
- * Poll on-chain Launchy factory events directly from Starknet RPC
- * Launchy is Starknet's #1 memecoin launchpad (https://starklaunchy.fun)
+ * Poll on-chain token creations across the entire Starknet blockchain
+ * Covers:
+ * 1. Launchy (V6 & V2) - Starknet's #1 memecoin launchpad (https://starklaunchy.fun)
+ * 2. Unruggable Meme Factory
+ * 3. Universal Deployer Contract (UDC) for direct ERC20 deployments
  */
-async function pollOnChainLaunchyCreations(provider: any, fromBlock: number, toBlock: number): Promise<void> {
-  const FACTORIES = [LAUNCHY_FACTORY_V6, LAUNCHY_FACTORY_V2];
-  for (const factoryAddr of FACTORIES) {
+async function pollOnChainTokenCreations(provider: any, fromBlock: number, toBlock: number): Promise<void> {
+  // 1. Launchy Factory V6 & V2
+  const LAUNCHY_FACTORIES = [LAUNCHY_FACTORY_V6, LAUNCHY_FACTORY_V2];
+  for (const factoryAddr of LAUNCHY_FACTORIES) {
     try {
       const eventRes = await provider.getEvents({
         address: factoryAddr,
@@ -312,7 +332,6 @@ async function pollOnChainLaunchyCreations(provider: any, fromBlock: number, toB
         let creatorAddress: string | null = null;
 
         if (ev.data.length === 6) {
-          // [creator, name, symbol, supply_low, supply_high, token_addr]
           creatorAddress = ev.data[0];
           tokenAddress = ev.data[ev.data.length - 1];
         } else if (ev.data.length === 9) {
@@ -323,12 +342,12 @@ async function pollOnChainLaunchyCreations(provider: any, fromBlock: number, toB
         }
 
         if (!tokenAddress) continue;
-        const normAddr = tokenAddress.toLowerCase();
+        const normAddr = normalizeStarknetAddress(tokenAddress);
         if (
-          normAddr === STRK_TOKEN_ADDRESS.toLowerCase() ||
-          normAddr === ETH_TOKEN_ADDRESS.toLowerCase() ||
-          normAddr === ZEC_TOKEN_ADDRESS.toLowerCase() ||
-          normAddr === STRKBTC_TOKEN_ADDRESS.toLowerCase()
+          isSameStarknetAddress(normAddr, STRK_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(normAddr, ETH_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(normAddr, ZEC_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(normAddr, STRKBTC_TOKEN_ADDRESS)
         ) {
           continue;
         }
@@ -336,28 +355,21 @@ async function pollOnChainLaunchyCreations(provider: any, fromBlock: number, toB
         if (seenTokenLaunches.has(normAddr)) continue;
         seenTokenLaunches.add(normAddr);
 
-        // Fetch on-chain metadata directly via RPC
-        let meta: any = { name: 'Launchy Token', symbol: 'TOKEN', decimals: 18, totalSupply: '1000000000000000000000000000' };
+        let meta: any = { name: 'Launchy Token', symbol: 'TOKEN', decimals: 18 };
         try {
           meta = await getStarknetTokenMetadata(normAddr);
         } catch { /* ignore */ }
 
-        // Query launchpad details (quote pair, fees, etc.)
         const launchpadInfo = await detectStarknetLaunchpad(normAddr).catch(() => null);
-
-        // Standard Launchy initial bonding curve metrics from on-chain pool config
-        const mcapUsd = 10_000.0;
-        const liquidityUsd = 1_500.0;
-        const priceUsd = 0.00001;
 
         await sendStarknetTokenCreationAlert({
           tokenAddress: normAddr,
           tokenName: meta.name || 'Launchy Token',
           tokenSymbol: meta.symbol || 'TOKEN',
           creatorAddress: creatorAddress || undefined,
-          marketCapUsd: mcapUsd,
-          priceUsd,
-          liquidityUsd,
+          marketCapUsd: 10_000.0,
+          priceUsd: 0.00001,
+          liquidityUsd: 1_500.0,
           venue: 'Launchy (Ekubo Concentrated Liquidity)',
           launchpad: 'launchy',
           isLaunchy: true,
@@ -365,11 +377,91 @@ async function pollOnChainLaunchyCreations(provider: any, fromBlock: number, toB
           poolFeePct: launchpadInfo?.poolFeePct || LAUNCHY_POOL_FEE_PCT,
         });
 
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 1000));
       }
-    } catch (err: any) {
-      // Non-fatal RPC rate-limit or transient issue
+    } catch {
+      // Non-fatal
     }
+  }
+
+  // 2. Unruggable Meme Factory
+  try {
+    const unruggableRes = await provider.getEvents({
+      address: UNRUGGABLE_FACTORY_ADDRESS,
+      from_block: { block_number: fromBlock },
+      to_block: { block_number: toBlock },
+      chunk_size: 20,
+    });
+    if (unruggableRes?.events) {
+      for (const ev of unruggableRes.events) {
+        const tokenAddr = ev.data?.[0];
+        if (!tokenAddr) continue;
+        const normAddr = normalizeStarknetAddress(tokenAddr);
+        if (seenTokenLaunches.has(normAddr)) continue;
+        seenTokenLaunches.add(normAddr);
+
+        let meta: any = { name: 'Unruggable Token', symbol: 'MEME', decimals: 18 };
+        try {
+          meta = await getStarknetTokenMetadata(normAddr);
+        } catch { /* ignore */ }
+
+        await sendStarknetTokenCreationAlert({
+          tokenAddress: normAddr,
+          tokenName: meta.name || 'Unruggable Token',
+          tokenSymbol: meta.symbol || 'MEME',
+          marketCapUsd: 12_000.0,
+          priceUsd: 0.000012,
+          liquidityUsd: 2_000.0,
+          venue: 'Unruggable Meme (Ekubo DEX)',
+          launchpad: 'unruggable',
+          isLaunchy: false,
+        });
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // 3. Universal Deployer Contract (UDC) deployments
+  try {
+    const udcRes = await provider.getEvents({
+      address: UDC_ADDRESS,
+      keys: [[UDC_DEPLOYED_SELECTOR]],
+      from_block: { block_number: fromBlock },
+      to_block: { block_number: toBlock },
+      chunk_size: 20,
+    });
+    if (udcRes?.events) {
+      for (const ev of udcRes.events) {
+        const deployedAddr = ev.data?.[0];
+        if (!deployedAddr) continue;
+        const normAddr = normalizeStarknetAddress(deployedAddr);
+        if (seenTokenLaunches.has(normAddr)) continue;
+
+        // Verify if deployed contract is an ERC20 token
+        const meta = await getStarknetTokenMetadata(normAddr).catch(() => null);
+        if (!meta || meta.symbol === 'UNKNOWN' || meta.name === 'Unknown') continue;
+
+        seenTokenLaunches.add(normAddr);
+        const creator = ev.data?.[1] ? normalizeStarknetAddress(ev.data[1]) : undefined;
+
+        await sendStarknetTokenCreationAlert({
+          tokenAddress: normAddr,
+          tokenName: meta.name,
+          tokenSymbol: meta.symbol,
+          creatorAddress: creator,
+          marketCapUsd: null,
+          priceUsd: null,
+          liquidityUsd: null,
+          venue: 'Starknet Mainnet (Direct Contract Deployment)',
+          isLaunchy: false,
+        });
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  } catch {
+    // Non-fatal
   }
 }
 
@@ -385,7 +477,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
       keys: [[EKUBO_SWAPPED_SELECTOR]],
       from_block: { block_number: fromBlock },
       to_block: { block_number: toBlock },
-      chunk_size: 20,
+      chunk_size: 40,
     });
 
     if (!swapEventsRes?.events || swapEventsRes.events.length === 0) return;
@@ -410,7 +502,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
       for (const rev of receipt.events) {
         if (rev.keys?.[0] !== TRANSFER_SELECTOR) continue;
 
-        const tokenAddr = (rev.from_address || '').toLowerCase();
+        const tokenAddr = rev.from_address || '';
         const fromAddr = rev.keys[1] || '';
         const toAddr = rev.keys[2] || '';
         const lowVal = rev.data?.[0] ? BigInt(rev.data[0]) : 0n;
@@ -418,7 +510,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
         const totalVal = (highVal << 128n) + lowVal;
 
         // Is this a supported quote token being paid into the pool?
-        if (tokenAddr === STRK_TOKEN_ADDRESS.toLowerCase()) {
+        if (isSameStarknetAddress(tokenAddr, STRK_TOKEN_ADDRESS)) {
           const humanStrk = Number(totalVal) / 1e18;
           const usdVal = humanStrk * STRK_PRICE_USD;
           if (usdVal > spentUsd) {
@@ -427,7 +519,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
             spentToken = 'STRK';
             buyerAddress = fromAddr;
           }
-        } else if (tokenAddr === ETH_TOKEN_ADDRESS.toLowerCase()) {
+        } else if (isSameStarknetAddress(tokenAddr, ETH_TOKEN_ADDRESS)) {
           const humanEth = Number(totalVal) / 1e18;
           const usdVal = humanEth * ETH_PRICE_USD;
           if (usdVal > spentUsd) {
@@ -436,7 +528,19 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
             spentToken = 'ETH';
             buyerAddress = fromAddr;
           }
-        } else if (tokenAddr === ZEC_TOKEN_ADDRESS.toLowerCase()) {
+        } else if (
+          isSameStarknetAddress(tokenAddr, USDC_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(tokenAddr, USDC_BRIDGED_TOKEN_ADDRESS) ||
+          isSameStarknetAddress(tokenAddr, USDT_TOKEN_ADDRESS)
+        ) {
+          const humanUsd = Number(totalVal) / 1e6; // 6 decimals
+          if (humanUsd > spentUsd) {
+            spentUsd = humanUsd * USD_PRICE_USD;
+            spentNativeAmount = humanUsd;
+            spentToken = isSameStarknetAddress(tokenAddr, USDT_TOKEN_ADDRESS) ? 'USDT' : 'USDC';
+            buyerAddress = fromAddr;
+          }
+        } else if (isSameStarknetAddress(tokenAddr, ZEC_TOKEN_ADDRESS)) {
           const humanZec = Number(totalVal) / 1e18;
           const usdVal = humanZec * ZEC_PRICE_USD;
           if (usdVal > spentUsd) {
@@ -445,7 +549,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
             spentToken = 'ZEC';
             buyerAddress = fromAddr;
           }
-        } else if (tokenAddr === STRKBTC_TOKEN_ADDRESS.toLowerCase()) {
+        } else if (isSameStarknetAddress(tokenAddr, STRKBTC_TOKEN_ADDRESS)) {
           const humanBtc = Number(totalVal) / 1e8; // BTC 8 decimals
           const usdVal = humanBtc * BTC_PRICE_USD;
           if (usdVal > spentUsd) {
@@ -460,12 +564,15 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
           if (humanTokens > 0) {
             targetTokenAddress = tokenAddr;
             tokensReceived = humanTokens;
+            if (toAddr && !isSameStarknetAddress(toAddr, EKUBO_CORE_CONTRACT)) {
+              buyerAddress = toAddr;
+            }
           }
         }
       }
 
-      // Check if this swap qualifies as a whale buy
-      if (spentUsd < WHALE_BUY_THRESHOLD_NEW_USD || !targetTokenAddress) continue;
+      // Check if this swap qualifies as a whale buy (minimum $100)
+      if (spentUsd < WHALE_BUY_THRESHOLD_DEFAULT_USD || !targetTokenAddress) continue;
 
       // Query token metadata directly from Starknet contract via RPC
       const meta = await getStarknetTokenMetadata(targetTokenAddress).catch(() => ({
@@ -476,10 +583,10 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
         totalSupply: '1000000000000000000000000000',
       }));
 
-      const isNewToken = seenTokenLaunches.has(targetTokenAddress);
+      const isNewToken = seenTokenLaunches.has(normalizeStarknetAddress(targetTokenAddress));
       const isLaunchy =
-        seenTokenLaunches.has(targetTokenAddress) ||
-        targetTokenAddress === LAUNCHY_TOKEN_ADDRESS.toLowerCase();
+        isNewToken ||
+        isSameStarknetAddress(targetTokenAddress, LAUNCHY_TOKEN_ADDRESS);
 
       const priceUsd = tokensReceived > 0 ? spentUsd / tokensReceived : 0;
       const totalHumanSupply = meta.totalSupply
@@ -508,7 +615,7 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
         isLaunchy,
       });
 
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 1000));
     }
   } catch (err: any) {
     // Non-fatal RPC issue
@@ -520,15 +627,15 @@ async function pollOnChainWhaleSwaps(provider: any, fromBlock: number, toBlock: 
  */
 async function primeOnChainState(provider: any): Promise<void> {
   try {
-    const latest = await provider.getBlock('latest');
-    _lastCheckedBlock = latest.block_number;
+    const latestBlockNumber = await provider.getBlockNumber();
+    _lastCheckedBlock = latestBlockNumber;
 
-    // Seed recent Launchy tokens from last 500 blocks from both V6 and V2 factories
+    // Seed recent Launchy tokens from last 1,000 blocks
     const factories = [LAUNCHY_FACTORY_V6, LAUNCHY_FACTORY_V2];
     for (const factoryAddr of factories) {
       const recents = await provider.getEvents({
         address: factoryAddr,
-        from_block: { block_number: Math.max(1, _lastCheckedBlock - 500) },
+        from_block: { block_number: Math.max(1, _lastCheckedBlock - 1000) },
         to_block: { block_number: _lastCheckedBlock },
         chunk_size: 25,
       }).catch(() => null);
@@ -536,9 +643,9 @@ async function primeOnChainState(provider: any): Promise<void> {
       if (recents?.events) {
         for (const ev of recents.events) {
           if (ev.data.length === 6) {
-            seenTokenLaunches.add((ev.data[ev.data.length - 1] || '').toLowerCase());
+            seenTokenLaunches.add(normalizeStarknetAddress(ev.data[ev.data.length - 1]));
           } else if (ev.data.length === 9 || ev.data.length === 15) {
-            seenTokenLaunches.add((ev.data[0] || '').toLowerCase());
+            seenTokenLaunches.add(normalizeStarknetAddress(ev.data[0]));
           }
         }
       }
@@ -558,7 +665,7 @@ export async function startStarknetAlertsEngine(bot: Telegraf): Promise<void> {
 
   console.log(`[STARKNET_ALERTS] Initializing Pure On-Chain RPC Starknet Alerts Engine for: ${STARKNET_ALERTS_CHANNEL}`);
 
-  const provider = getStarknetProvider();
+  let provider = getStarknetProvider();
   await primeOnChainState(provider).catch(() => {});
 
   if (_engineInterval) clearInterval(_engineInterval);
@@ -568,11 +675,13 @@ export async function startStarknetAlertsEngine(bot: Telegraf): Promise<void> {
     _isPolling = true;
 
     try {
-      const latestBlock = await provider.getBlock('latest');
-      const currentBlockNum = latestBlock.block_number;
+      const currentBlockNum = await provider.getBlockNumber().catch(async () => {
+        provider = rotateStarknetRpc();
+        return await provider.getBlockNumber();
+      });
 
       if (!_lastCheckedBlock) {
-        _lastCheckedBlock = currentBlockNum - 2;
+        _lastCheckedBlock = currentBlockNum - 5;
       }
 
       if (currentBlockNum > _lastCheckedBlock) {
@@ -580,16 +689,17 @@ export async function startStarknetAlertsEngine(bot: Telegraf): Promise<void> {
         const toBlock = currentBlockNum;
         _lastCheckedBlock = currentBlockNum;
 
-        // 1. Check for token creations on Launchy (Starknet's premier launchpad)
-        await pollOnChainLaunchyCreations(provider, fromBlock, toBlock);
+        // 1. Check for token creations chain-wide (Launchy V6 & V2, Unruggable Meme, UDC)
+        await pollOnChainTokenCreations(provider, fromBlock, toBlock);
 
-        // 2. Check for on-chain whale buys on Ekubo Core & DEX pools
+        // 2. Check for on-chain whale buys on Ekubo Core & DEX pools ($100+, $200+, $1000+)
         await pollOnChainWhaleSwaps(provider, fromBlock, toBlock);
       }
     } catch (err: any) {
-      console.warn('[STARKNET_ALERTS] On-chain RPC polling error:', err?.message);
+      console.warn('[STARKNET_ALERTS] On-chain RPC polling error (will retry next block):', err?.message);
+      provider = rotateStarknetRpc();
     } finally {
       _isPolling = false;
     }
-  }, 12_000);
+  }, 10_000);
 }

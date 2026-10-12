@@ -21,6 +21,37 @@ export const STRK_TOKEN_ADDRESS =
   '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
 export const ETH_TOKEN_ADDRESS =
   '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7';
+export const USDC_TOKEN_ADDRESS =
+  '0x053b40a647cedf4301a4126a35d7d8e120cad0437ec04bde68e8d39e5ec95b1f';
+export const USDC_BRIDGED_TOKEN_ADDRESS =
+  '0x05574eb6b8789a91466f902c380d978e472db68170ff82a5b650b95a58ddf4ad';
+export const USDT_TOKEN_ADDRESS =
+  '0x068f5c6a61780768455de69077e07e89787839bf8166decfbf92b645209c0fb8';
+export const UNRUGGABLE_FACTORY_ADDRESS =
+  '0x01a46467a9246f45c830a5eb440b544873cba2c4cee663951568e188352e033f';
+
+/**
+ * Robustly normalizes Starknet contract and account addresses.
+ * Strips/adds leading zeroes to canonical 64 hex characters (0x + 64 hex chars).
+ */
+export function normalizeStarknetAddress(addr?: string | null): string {
+  if (!addr) return '';
+  try {
+    const clean = addr.trim().toLowerCase();
+    if (!clean.startsWith('0x')) return clean;
+    return '0x' + BigInt(clean).toString(16).padStart(64, '0');
+  } catch {
+    return (addr || '').toLowerCase().trim();
+  }
+}
+
+/**
+ * Compares two Starknet addresses regardless of leading-zero variations from JSON-RPC nodes.
+ */
+export function isSameStarknetAddress(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  return normalizeStarknetAddress(a) === normalizeStarknetAddress(b);
+}
 
 // Standard OpenZeppelin Account v0.8.1 class hash (canonical declared Sierra contract on Starknet Mainnet)
 export const OZ_ACCOUNT_CLASS_HASH =
@@ -50,11 +81,11 @@ export function getStarknetTreasuryAddress(): string {
 export const DEFAULT_STARKNET_TREASURY_ADDRESS =
   '0x0679eC47817013974A8f45df792fcf77504360c1344A0E0bfd1aB4b6dDbaB39A';
 
-// Dynamic RPC endpoints with rotation support
+// Dynamic RPC endpoints with Cartridge Mainnet and PublicNode as primary high-performance RPCs
 const FALLBACK_STARKNET_RPCS = [
+  'https://api.cartridge.gg/x/starknet/mainnet',
+  'https://starknet-rpc.publicnode.com',
   'https://free-rpc.nethermind.io/mainnet-juno',
-  'https://rpc.starknet.lava.build',
-  'https://starknet.drpc.org',
 ];
 
 export function getStarknetRpcEndpoints(): string[] {
