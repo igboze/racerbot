@@ -898,8 +898,17 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       (priceUsdNum > 0 && supplyHuman > 0 ? priceUsdNum * supplyHuman : 0);
     const mcapNativeNum = strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : (priceNativeNum > 0 ? priceNativeNum * supplyHuman : 0);
 
-    const tokenName = geckoAttr?.name || topPoolAttr?.name?.split('/')[0]?.trim() || (meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : ((dexscreenerData as any)?.name || 'Starknet Token'));
-    const tokenSymbol = (geckoAttr?.symbol || (meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : ((dexscreenerData as any)?.symbol || 'STRK'))).toUpperCase();
+    const tokenName =
+      geckoAttr?.name ||
+      topPoolAttr?.name?.split('/')[0]?.trim() ||
+      (meta.name && meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : (dexscreenerData as any)?.name) ||
+      (isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Unknown Token'));
+
+    const tokenSymbol = (
+      geckoAttr?.symbol ||
+      (meta.symbol && meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : (dexscreenerData as any)?.symbol) ||
+      (isStrk ? 'STRK' : (isEth ? 'ETH' : 'UNKNOWN'))
+    ).toUpperCase();
 
     let resolvedVenue: VenueName = 'avnu';
     if (launchpadInfo.launchpad === 'launchy') {

@@ -278,8 +278,7 @@ export async function sendStarknetTokenCreationAlert(params: {
       `💧 <b>Pool Fee:</b> 1% (50% Creator / 30% Launchy / 20% Ekubo)\n` +
       `🛡️ <b>Launch Protection:</b> Max 2% (20M tokens) per buy (First 15 min)\n` +
       `🏛️ <b>Launchpad:</b> 🚀 <b>Launchy</b> (Ekubo DEX)\n` +
-      `📈 <b>Status:</b> 🟢 Bonding Curve Active\n\n` +
-      `🔗 <a href="${explorerUrl}">Starkscan</a> | <a href="${launchyUrl}">starklaunchy.fun</a>`;
+      `📈 <b>Status:</b> 🟢 Bonding Curve Active`;
 
     keyboardButtons = [
       [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
@@ -299,8 +298,7 @@ export async function sendStarknetTokenCreationAlert(params: {
       `📊 <b>Market Cap:</b> <b>${mcapStr}</b>\n` +
       `💵 <b>Price:</b> <b>${priceStr}</b>\n` +
       `💧 <b>Liquidity:</b> <b>${liqStr}</b>\n` +
-      `🏛️ <b>Venue:</b> ${escapeHtml(venue)}\n\n` +
-      `🔗 <a href="${explorerUrl}">Starkscan Explorer</a>`;
+      `🏛️ <b>Venue:</b> ${escapeHtml(venue)}`;
 
     keyboardButtons = [
       [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
@@ -313,6 +311,7 @@ export async function sendStarknetTokenCreationAlert(params: {
   try {
     await _bot.telegram.sendMessage(STARKNET_ALERTS_CHANNEL, text, {
       parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
       ...keyboard,
     });
     console.log(`[STARKNET_ALERTS] Creation alert posted for ${symbol} (${ca}) [Venue: ${venue}]`);
@@ -377,8 +376,8 @@ export async function sendStarknetWhaleBuyAlert(params: {
       : `🚨 <b>STARKNET WHALE BUY DETECTED! ($100+)</b> 🚨`;
 
   const venueLine = isLaunchy
-    ? `🏛️ <b>Venue:</b> 🚀 <b>Launchy</b> (starklaunchy.fun)\n`
-    : `🏛️ <b>Venue:</b> ⚡ <b>Ekubo DEX / Starknet On-Chain</b>\n`;
+    ? `🏛️ <b>Venue:</b> 🚀 <b>Launchy</b> (starklaunchy.fun)`
+    : `🏛️ <b>Venue:</b> ⚡ <b>Ekubo DEX / Starknet On-Chain</b>`;
 
   const text =
     `${headerTitle}\n` +
@@ -390,10 +389,7 @@ export async function sendStarknetWhaleBuyAlert(params: {
     `👤 <b>Buyer:</b> <code>${buyer}</code>\n` +
     `💵 <b>Price:</b> <b>${priceStr}</b>\n` +
     `📊 <b>Market Cap:</b> <b>${mcapStr}</b>\n` +
-    venueLine +
-    `\n` +
-    `🔗 <a href="${explorerUrl}">Starkscan On-Chain Tx</a>` +
-    (isLaunchy ? ` | <a href="${launchyUrl}">starklaunchy.fun</a>` : '');
+    venueLine;
 
   const row2Buttons = [Markup.button.url('🔍 Starkscan Tx Explorer', explorerUrl)];
   if (isLaunchy) {
@@ -408,6 +404,7 @@ export async function sendStarknetWhaleBuyAlert(params: {
   try {
     await _bot.telegram.sendMessage(STARKNET_ALERTS_CHANNEL, text, {
       parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
       ...keyboard,
     });
     console.log(
@@ -575,13 +572,39 @@ async function pollOnChainTokenCreations(provider: any, fromBlock: number, toBlo
         if (!deployedAddr) continue;
         const normAddr = normalizeStarknetAddress(deployedAddr);
         if (seenTokenLaunches.has(normAddr)) continue;
+        if (isCoreQuoteToken(normAddr) || isSameStarknetAddress(normAddr, STRK_TOKEN_ADDRESS)) continue;
 
-        // Verify if deployed contract is an ERC20 token
-        const tokenInfo = await getTokenInfo(normAddr).catch(() => null);
+        // Verify if deployed contract is an actual ERC-20 token
         const meta = await getStarknetTokenMetadata(normAddr).catch(() => null);
-        const name = tokenInfo?.name || meta?.name;
-        const symbol = tokenInfo?.symbol || meta?.symbol;
-        if (!symbol || symbol === 'UNKNOWN' || symbol === 'Unknown' || !name || name === 'Unknown') continue;
+        if (
+          !meta ||
+          !meta.symbol ||
+          meta.symbol === 'UNKNOWN' ||
+          meta.symbol === 'TOKEN' ||
+          meta.symbol === 'STRK' || // Canonical STRK is not a new UDC deployment
+          meta.symbol === 'ETH' ||
+          !meta.name ||
+          meta.name === 'Unknown' ||
+          meta.name === 'Token' ||
+          meta.name === 'Starknet Token' ||
+          meta.name === 'Unknown Token'
+        ) {
+          continue;
+        }
+
+        const tokenInfo = await getTokenInfo(normAddr).catch(() => null);
+        const name =
+          tokenInfo?.name && tokenInfo.name !== 'Unknown Token' && tokenInfo.name !== 'Starknet Token'
+            ? tokenInfo.name
+            : meta.name;
+        const symbol =
+          tokenInfo?.symbol && tokenInfo.symbol !== 'UNKNOWN' && tokenInfo.symbol !== 'STRK'
+            ? tokenInfo.symbol
+            : meta.symbol;
+
+        if (!symbol || symbol === 'UNKNOWN' || symbol === 'TOKEN' || symbol === 'STRK' || !name || name === 'Unknown') {
+          continue;
+        }
 
         seenTokenLaunches.add(normAddr);
         const creator = ev.data?.[1] ? normalizeStarknetAddress(ev.data[1]) : undefined;

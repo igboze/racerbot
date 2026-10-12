@@ -380,8 +380,8 @@ export async function getStarknetTokenMetadata(
       ),
     ]);
 
-    let name = 'Token';
-    let symbol = 'TOKEN';
+    let name = 'Unknown';
+    let symbol = 'UNKNOWN';
     let decimals = 18;
     let totalSupply: string | undefined;
 
@@ -408,15 +408,15 @@ export async function getStarknetTokenMetadata(
       totalSupply,
     };
 
-    if (name !== 'Token' && symbol !== 'TOKEN') {
+    if (name !== 'Unknown' && symbol !== 'UNKNOWN') {
       tokenMetadataCache.set(norm, metadata);
     }
     return metadata;
   } catch {
     return {
       address: tokenAddress,
-      name: 'Token',
-      symbol: 'TOKEN',
+      name: 'Unknown',
+      symbol: 'UNKNOWN',
       decimals: 18,
     };
   }
