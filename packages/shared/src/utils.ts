@@ -109,6 +109,22 @@ export function computePnL(
 }
 
 /**
+ * Dynamic Platform Fee Calculation:
+ * - Sells above $200 USD: 2% (200 bps)
+ * - Buys & Sells <= $200 USD: 1.5% (150 bps)
+ */
+export function getPlatformFeeBps(isBuy: boolean, amountUsd?: number | null): bigint {
+  if (!isBuy && amountUsd != null && amountUsd > 200) {
+    return 200n; // 2%
+  }
+  return 150n; // 1.5%
+}
+
+export function getPlatformFeeRatio(isBuy: boolean, amountUsd?: number | null): number {
+  return Number(getPlatformFeeBps(isBuy, amountUsd)) / 10000;
+}
+
+/**
  * Compute minimum output with slippage tolerance.
  * Formula: min_amount_out = expected_output * (1 - slippage_pct / 100)
  *

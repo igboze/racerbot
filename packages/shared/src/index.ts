@@ -12,6 +12,8 @@ export {
   calculateMinAmountOut,
   calculateExpectedOutput,
   calculateMinOutAdj,
+  getPlatformFeeBps,
+  getPlatformFeeRatio,
   fuzzyMatch,
   retryWithBackoff,
   sleep,
