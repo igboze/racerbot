@@ -499,21 +499,31 @@ export async function executeStarknetSwap(
         const { createRedis, CHANNELS } = await import('@racerbot/shared');
         const redisClient = createRedis(redisUrl);
         const spentUsd = (Number(amountInBigInt) / 1e18) * (gasTokenUsed === 'ETH' ? 2600.0 : 0.12);
-        const buyAlert = {
-          type: 'buy_alert' as const,
-          chain: 'starknet' as const,
-          token_address: tokenOutCanonical,
-          token_name: targetTokenMetadata.name,
-          token_symbol: targetTokenMetadata.symbol,
-          buyer_address: userAddress,
-          spent_amount_native: `${(Number(amountInBigInt) / 1e18).toFixed(4)} ${gasTokenUsed}`,
-          spent_usd: spentUsd,
-          tokens_received: `${Number(humanBuyQty).toLocaleString('en-US', { maximumFractionDigits: 0 })} ${targetTokenMetadata.symbol}`,
-          price_usd: buyPricePerToken * (gasTokenUsed === 'ETH' ? 2600.0 : 0.12),
-          tx_hash: txHash,
-          timestamp: Date.now(),
-        };
-        await redisClient.publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert)).catch(() => {});
+        const priceUsd = buyPricePerToken * (gasTokenUsed === 'ETH' ? 2600.0 : 0.12);
+        const totalHumanSupply = targetTokenMetadata.totalSupply
+          ? Number(BigInt(targetTokenMetadata.totalSupply) / BigInt(10 ** (targetTokenMetadata.decimals || 18)))
+          : 1_000_000_000;
+        const marketCapUsd = priceUsd > 0 ? totalHumanSupply * priceUsd : null;
+        const whaleThreshold = (marketCapUsd && marketCapUsd > 400_000) ? 1000.0 : 200.0;
+
+        if (spentUsd >= whaleThreshold) {
+          const buyAlert = {
+            type: 'buy_alert' as const,
+            chain: 'starknet' as const,
+            token_address: tokenOutCanonical,
+            token_name: targetTokenMetadata.name,
+            token_symbol: targetTokenMetadata.symbol,
+            buyer_address: userAddress,
+            spent_amount_native: `${(Number(amountInBigInt) / 1e18).toFixed(4)} ${gasTokenUsed}`,
+            spent_usd: spentUsd,
+            tokens_received: `${Number(humanBuyQty).toLocaleString('en-US', { maximumFractionDigits: 0 })} ${targetTokenMetadata.symbol}`,
+            price_usd: priceUsd,
+            market_cap_usd: marketCapUsd,
+            tx_hash: txHash,
+            timestamp: Date.now(),
+          };
+          await redisClient.publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert)).catch(() => {});
+        }
         redisClient.disconnect();
       }
     } catch {
