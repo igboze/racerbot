@@ -2621,7 +2621,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // 1. Quick Buy Deep Link (/start buy_token_near_1 or buy_token_near)
+      // 1. Quick Buy Deep Link (/start buy_token_near_1 or buy_0x... or buy_token_near)
       if (isBuyParam && rawPayload) {
         const raw = rawPayload.slice(4); // strip 'buy_'
         let tokenRaw = raw;
@@ -2636,14 +2636,14 @@ export function setupRoutes(bot: Telegraf): void {
           }
         }
 
-        const tokenAddress = decodeTelegramAccountId(tokenRaw);
-        if (tokenAddress && isValidNearAccountId(tokenAddress)) {
+        const tokenAddress = tokenRaw.startsWith('0x') ? tokenRaw : decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x'))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
             prewarmTradePath(telegramId, tokenAddress).catch(() => {});
             await sendTokenCard(ctx, card);
 
-            if (quickBuyAmount) {
+            if (quickBuyAmount && isValidNearAccountId(tokenAddress)) {
               const user = await getUserByTelegramId(telegramId);
               const balances = await getUserBalances(telegramId).catch(() => null);
               const spendable = balances ? parseFloat(balances.totalNearFormatted) : 0;
@@ -2681,11 +2681,11 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // 2. Direct Token Details Deep Link (/start token_pearpe_tkn_near)
+      // 2. Direct Token Details Deep Link (/start token_0x... or /start token_pearpe_tkn_near)
       if (isTokenParam && rawPayload) {
         const tokenRaw = rawPayload.startsWith('token_') ? rawPayload.slice(6) : rawPayload.slice(4);
-        const tokenAddress = decodeTelegramAccountId(tokenRaw);
-        if (tokenAddress && isValidNearAccountId(tokenAddress)) {
+        const tokenAddress = tokenRaw.startsWith('0x') ? tokenRaw : decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x'))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
             prewarmTradePath(telegramId, tokenAddress).catch(() => {});
@@ -2722,7 +2722,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // 4. Token Share Referral Code (/start t_XXXX)
+      // 4. Token Share Referral Code (/start t_XXXX or /start t_0x...)
       if (isTokenShare && rawPayload) {
         // Look up the token share record
         const shareRecord = await getTokenShareByCode(rawPayload).catch(() => null);
@@ -2741,18 +2741,25 @@ export function setupRoutes(bot: Telegraf): void {
             // Prewarm trade path in background
             prewarmTradePath(telegramId, shareRecord.token_address).catch(() => {});
             await sendTokenCard(ctx, card);
+            return;
           } catch (cardErr: any) {
-            // Token may be invalid/delisted — fall through to main menu
             console.warn('[/start] Token share card failed:', cardErr?.message);
-            const menu = await buildMainMenu(telegramId);
-            await ctx.reply(
-              `⚠️ This share link points to a token that is no longer available.\n\n` + menu.text,
-              { parse_mode: 'Markdown', ...menu.keyboard }
-            );
           }
-          return;
         }
-        // Unknown token share code — fall through to normal start
+
+        // Direct token key fallback (/start t_0x... or /start t_<key>)
+        const tokenKey = rawPayload.slice(2);
+        const resolvedAddress = tokenKey.startsWith('0x') ? tokenKey : resolveTokenAddressFromKey(tokenKey) || decodeTelegramAccountId(tokenKey);
+        if (resolvedAddress && (isValidNearAccountId(resolvedAddress) || resolvedAddress.startsWith('0x'))) {
+          try {
+            const card = await buildTokenCard(resolvedAddress, telegramId);
+            prewarmTradePath(telegramId, resolvedAddress).catch(() => {});
+            await sendTokenCard(ctx, card);
+            return;
+          } catch (cardErr: any) {
+            console.warn('[/start] Token card from key failed:', cardErr?.message);
+          }
+        }
       }
 
       const menu = await buildMainMenu(telegramId);

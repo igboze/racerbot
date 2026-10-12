@@ -150,6 +150,27 @@ export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
     }
   }
 
+  // Forward Starknet Whale Buys ($100+) to @racerbotalert channel
+  if (event.chain === 'starknet' && event.spent_usd >= 100) {
+    try {
+      const { sendStarknetWhaleBuyAlert } = await import('./starknetAlerts.js');
+      await sendStarknetWhaleBuyAlert({
+        tokenAddress: event.token_address,
+        tokenName: event.token_name || 'Starknet Token',
+        tokenSymbol: event.token_symbol || 'TOKEN',
+        buyerAddress: event.buyer_address,
+        spentUsd: event.spent_usd,
+        spentNative: event.spent_amount_native,
+        tokensReceived: event.tokens_received,
+        priceUsd: event.price_usd,
+        marketCapUsd: event.market_cap_usd,
+        txHash: event.tx_hash,
+      });
+    } catch (e: any) {
+      console.warn('[BUY_ALERTS] Starknet whale channel broadcast failed:', e?.message);
+    }
+  }
+
   const alerts = await getGroupBuyAlertsByToken(event.token_address).catch(() => []);
   if (!alerts || alerts.length === 0) return;
 

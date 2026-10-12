@@ -14,6 +14,7 @@ import { setupRoutes, localTokenNames } from './routes.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { startBuyAlertListener } from './buyAlerts.js';
+import { startStarknetAlertsEngine } from './starknetAlerts.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } from './depositWatcher.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
@@ -293,6 +294,13 @@ async function main(): Promise<void> {
     } catch (err: any) {
       console.warn('[API] Telegram group buy alert listener inactive:', err?.message || err);
     }
+  }
+
+  // ── Start Starknet Alerts Engine (@racerbotalert) ─────────────────────────
+  try {
+    await startStarknetAlertsEngine(bot);
+  } catch (err: any) {
+    console.warn('[API] Starknet alerts engine inactive:', err?.message || err);
   }
 
   // ── Start background sync for external token deposits ─────────────────────
