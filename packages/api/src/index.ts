@@ -211,21 +211,36 @@ async function main(): Promise<void> {
     const host = (req.headers.host || req.hostname || '').toLowerCase().split(':')[0];
     const parts = host.split('.');
 
-    // Check if host has a token subdomain prefix before bubblemap or root
-    // e.g., ["kookdog", "bubblemap", "xyz"], ["kookdog", "localhost"], ["kookdog-42db38", "launchpad", ...]
-    const ignoredSubdomains = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'localhost', '127', 'railway', 'app', 'racerbot']);
+    // Ignored root domains, railway deployment hosts, and system prefixes
+    const ignoredSubdomains = new Set([
+      'www', 'api', 'bot', 'admin', 'bubblemap', 'racerbotbubblemap',
+      'localhost', '127', 'railway', 'app', 'racerbot', 'racerbot-production', 'up'
+    ]);
     
     let tokenSubdomain: string | null = null;
-    if (parts.length >= 2) {
-      const first = parts[0];
-      if (!ignoredSubdomains.has(first)) {
-        tokenSubdomain = first;
+    const isRailwayHost = host.endsWith('.railway.app');
+    if (!isRailwayHost) {
+      // Token subdomain only exists when there are 3+ parts (e.g. kookdog.racerbotbubblemap.buzz)
+      // or 2 parts on localhost (kookdog.localhost)
+      if ((parts.length >= 3 && !host.includes('localhost')) || (parts.length >= 2 && host.includes('localhost'))) {
+        const first = parts[0];
+        if (!ignoredSubdomains.has(first)) {
+          tokenSubdomain = first;
+        }
       }
     }
 
-    // If accessing via token subdomain on root path or competition path, serve competition UI
-    if (tokenSubdomain && (req.path === '/' || req.path === '/competition' || req.path === '/leaderboard')) {
-      return serveCompetitionHtml(res);
+    // Only serve competition UI when explicitly requesting /competition or /leaderboard
+    if (req.path === '/competition' || req.path === '/leaderboard') {
+      return serveCompetitionHtml(res, tokenSubdomain || 'kookdog');
+    }
+
+    // If an actual token subdomain is used on root (e.g. kookdog.racerbotbubblemap.buzz),
+    // redirect to the bubble map with token query parameter
+    if (tokenSubdomain && (req.path === '/' || req.path === '/bubblemap')) {
+      const rootDomain = parts.slice(1).join('.');
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      return res.redirect(`${protocol}://${rootDomain}/bubblemap?token=${encodeURIComponent(tokenSubdomain)}`);
     }
 
     next();
@@ -239,8 +254,9 @@ async function main(): Promise<void> {
   });
 
   // Serve Trading Competition page directly at `/competition` and `/leaderboard`
-  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id', '/:token/competition', '/:token/leaderboard'], (_req, res) => {
-    serveCompetitionHtml(res);
+  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id', '/:token/competition', '/:token/leaderboard'], (req, res) => {
+    const compId = (req.params as any)?.id || (req.params as any)?.token || 'kookdog';
+    serveCompetitionHtml(res, compId);
   });
 
   // Add monitoring routes
