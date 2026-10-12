@@ -10,7 +10,7 @@
  * MultiRpcNear.computeMinAmountOut / SwapExecutor.
  */
 
-export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun';
+export type VenueId = 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun' | 'launchy' | 'unruggable' | 'ekubo' | 'avnu';
 
 export interface VenueInfo {
   id: VenueId;
@@ -133,6 +133,43 @@ export const VENUES: Record<VenueId, VenueInfo> = {
     website: 'https://nearpump.fun',
     tokenPage: (t) => `https://nearblocks.io/tokens/${t}`,
   },
+  launchy: {
+    id: 'launchy',
+    label: 'Launchy',
+    kind: 'launchpad+amm',
+    contracts: [
+      '0x03865fb40c5b7a493299323e71967656243006101e6221246eccdda2bba356c3',
+      '0x063883bfd87f65a2e42193f0f5cf18eb69d983abb99b07f7ec9a561b11c85ef4',
+    ],
+    tradeable: true,
+    website: 'https://starklaunchy.fun',
+    tokenPage: (t) => `https://starklaunchy.fun/token/${t}`,
+  },
+  unruggable: {
+    id: 'unruggable',
+    label: 'Unruggable Meme',
+    kind: 'launchpad+amm',
+    contracts: ['0x01a46467a9246f45c830a5eb440b544873cba2c4cee663951568e188352e033f'],
+    tradeable: true,
+    website: 'https://unruggable.meme',
+    tokenPage: (t) => `https://unruggable.meme/memecoins/${t}`,
+  },
+  ekubo: {
+    id: 'ekubo',
+    label: 'Ekubo DEX',
+    kind: 'dex',
+    contracts: ['0x00000005dd3d2f4429af886cd1a3b08289dbcea99a294197e9eb43b0e0325b4b'],
+    tradeable: true,
+    website: 'https://app.ekubo.org',
+  },
+  avnu: {
+    id: 'avnu',
+    label: 'AVNU Aggregator',
+    kind: 'dex',
+    contracts: ['0x04270219d365d6b017231b52e92b3fb5d7c8378b05e9abc89c45f737bc0c5bba'],
+    tradeable: true,
+    website: 'https://app.avnu.fi',
+  },
 };
 
 export function getVenueInfo(venue: string | null | undefined): VenueInfo | null {
@@ -140,8 +177,17 @@ export function getVenueInfo(venue: string | null | undefined): VenueInfo | null
   return VENUES[venue as VenueId] ?? null;
 }
 
-/** DexScreener chart/search page for a token on NEAR or SUI. */
-export function dexscreenerUrl(tokenAddress: string): string {
+/** DexScreener chart/search page for a token on NEAR, SUI, or Starknet. */
+export function dexscreenerUrl(tokenAddress: string, venue?: string | null): string {
+  if (
+    venue === 'launchy' ||
+    venue === 'unruggable' ||
+    venue === 'avnu' ||
+    venue === 'ekubo' ||
+    (!tokenAddress.includes('::') && tokenAddress.startsWith('0x') && tokenAddress.length >= 60)
+  ) {
+    return `https://dexscreener.com/starknet/${tokenAddress}`;
+  }
   if (tokenAddress.includes('::') || tokenAddress.startsWith('0x')) {
     return `https://dexscreener.com/sui/${tokenAddress}`;
   }
@@ -210,14 +256,27 @@ export function tokenLinks(
   symbol?: string,
   name?: string,
 ): VenueLink[] {
-  const isSui = tokenAddress.includes('::') || tokenAddress.startsWith('0x');
-  const explorerLink: VenueLink = isSui
-    ? { label: '🔎 Suiscan', url: `https://suiscan.xyz/mainnet/coin/${encodeURIComponent(tokenAddress)}` }
-    : { label: '🔎 NearBlocks', url: nearblocksTokenUrl(tokenAddress) };
+  const isStarknet =
+    venue === 'launchy' ||
+    venue === 'unruggable' ||
+    venue === 'avnu' ||
+    venue === 'ekubo' ||
+    (!tokenAddress.includes('::') && tokenAddress.startsWith('0x') && tokenAddress.length >= 60);
+
+  const isSui = !isStarknet && (tokenAddress.includes('::') || tokenAddress.startsWith('0x'));
+
+  let explorerLink: VenueLink;
+  if (isStarknet) {
+    explorerLink = { label: '🔎 Starkscan', url: `https://starkscan.co/contract/${tokenAddress}` };
+  } else if (isSui) {
+    explorerLink = { label: '🔎 Suiscan', url: `https://suiscan.xyz/mainnet/coin/${encodeURIComponent(tokenAddress)}` };
+  } else {
+    explorerLink = { label: '🔎 NearBlocks', url: nearblocksTokenUrl(tokenAddress) };
+  }
 
   const links: VenueLink[] = [
     { label: '🫧 Bubble Map', url: bubbleMapUrl(tokenAddress, symbol, name) },
-    { label: '📊 DexScreener', url: dexscreenerUrl(tokenAddress) },
+    { label: '📊 DexScreener', url: dexscreenerUrl(tokenAddress, venue) },
     explorerLink,
   ];
   const info = getVenueInfo(venue);
