@@ -128,10 +128,38 @@ import {
   formatDropAmount,
   handleRaceDropAmountPerUserInput,
   handleRaceDropClaimsInput,
+  getBotUsername,
 } from './raceDrop.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
+
+export function isGroupChat(ctx: { chat?: { type?: string } }): boolean {
+  const type = ctx.chat?.type;
+  return type === 'group' || type === 'supergroup' || type === 'channel';
+}
+
+export function isPrivateChat(ctx: { chat?: { type?: string } }): boolean {
+  return ctx.chat?.type === 'private';
+}
+
+export async function replyGroupDmRedirect(
+  ctx: Context,
+  featureName = 'Trading and wallet details'
+): Promise<void> {
+  const botUsername = getBotUsername(ctx);
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.url('🏎️ Open RacerBot in DM', `https://t.me/${botUsername}?start=menu`)],
+  ]);
+  await ctx.reply(
+    `🔒 <b>${featureName} are private.</b>\n\n` +
+    `To protect your wallet balance and security, trading, wallets, and settings are strictly restricted to private DM with @${botUsername}.`,
+    {
+      parse_mode: 'HTML',
+      ...keyboard,
+    }
+  ).catch(() => {});
+}
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
 
@@ -674,7 +702,14 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
   if (isStarknet) {
-    if (tokenInfo.venue === 'unruggable') {
+    if (tokenInfo.venue === 'launchy') {
+      const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (Ekubo DEX)' : 'Bonding Curve';
+      const progressStr =
+        tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
+          ? ` — ${tokenInfo.bonding_progress_pct.toFixed(1)}% bonded`
+          : '';
+      venueText = `💧 *Venue*: Launchy (${phaseStr}${progressStr})`;
+    } else if (tokenInfo.venue === 'unruggable') {
       const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (Ekubo DEX)' : 'Bonding Curve';
       const progressStr =
         tokenInfo.bonding_progress_pct !== null && tokenInfo.bonding_progress_pct !== undefined
@@ -1937,7 +1972,7 @@ async function executeBuyHelper(
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // ── Starknet Trading Path ──────────────────────────────────────────────────
-  if (info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'unruggable' || isStarknetHint) {
+  if (info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable' || isStarknetHint) {
     if (!user.starknet_address) {
       await ensureUserStarknetWallet(user);
     }
@@ -2319,6 +2354,82 @@ async function sendPostBuySlTpPrompt(ctx: Context, positionId?: string, tokenAdd
 export function setupRoutes(bot: Telegraf): void {
   // ── Register RaceDrop commands, actions, and wizards ───────────────────────
   setupRaceDropRoutes(bot, userPendingActions);
+
+  // ── Critical Group Security & Privacy Guard ──────────────────────────────
+  // User wallet details, balances, settings, and trading MUST NEVER appear in public groups.
+  // Only claiming of RaceDrop is allowed in public groups.
+  bot.use(async (ctx, next) => {
+    if (!isGroupChat(ctx)) {
+      return next();
+    }
+
+    // A. Callback Queries in Groups:
+    if (ctx.callbackQuery) {
+      const data = (ctx.callbackQuery as any).data || '';
+      // Only RaceDrop claim action is allowed to execute in public groups:
+      if (typeof data === 'string' && data.startsWith('racedrop_claim_exec:')) {
+        return next();
+      }
+
+      // Any other button (wallet, trading, settings, pnl, etc.) is strictly blocked in groups:
+      const botUsername = getBotUsername(ctx);
+      await ctx.answerCbQuery(
+        '🔒 Trading and wallet actions are only available in private DM with @' + botUsername,
+        {
+          show_alert: true,
+          url: `https://t.me/${botUsername}?start=menu`,
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    // B. Text Messages in Groups:
+    if (ctx.message && 'text' in ctx.message) {
+      const text = ctx.message.text.trim();
+
+      // Check if message is a command
+      if (text.startsWith('/')) {
+        const cmd = text.split(' ')[0].toLowerCase().split('@')[0];
+
+        // Allowed group commands:
+        // 1. RaceDrop commands (/drop, /racedrop, /redpacket):
+        if (cmd === '/racedrop' || cmd === '/drop' || cmd === '/redpacket') {
+          return next();
+        }
+
+        // 2. Buy Alert commands for community admins (/track, /buyalert, etc.):
+        if (cmd === '/track' || cmd === '/buybot' || cmd === '/buyalert' || cmd === '/alerts' || cmd === '/testalert' || cmd === '/testbuy' || cmd === '/setbanner' || cmd === '/banner' || cmd === '/setmedia') {
+          return next();
+        }
+
+        // 3. /start with drop_<id> allowed for posting a drop into the group:
+        if (cmd === '/start') {
+          const args = text.split(' ').slice(1);
+          if (args[0]?.startsWith('drop_')) {
+            return next();
+          }
+        }
+
+        // ALL other commands (/wallet, /balance, /wallets, /buy, /sell, /holdings, /pnl, /settings, /start, /menu, /newstarknet, etc.):
+        // Intercept and redirect to private DM so no sensitive data or trading is shown in public:
+        await replyGroupDmRedirect(ctx);
+        return;
+      }
+
+      // Non-command text in public groups (chat, CA pasting, etc.):
+      // Check if it's a RaceDrop ID / link (e.g. drop_<uuid> or uuid):
+      const isRaceDropLink = /(?:@\w+\s+)?(?:drop_|racedrop_)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i.test(text);
+      if (isRaceDropLink) {
+        return next();
+      }
+
+      // If it's NOT a RaceDrop link, completely ignore!
+      // NEVER look up tokens, NEVER show wallet balances, NEVER show "Paste any CA..." guide in groups!
+      return;
+    }
+
+    return next();
+  });
 
   // ── /start — custodial onboarding with in-chat menu buttons ────────────────
   bot.command('start', async (ctx) => {
@@ -5174,6 +5285,10 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── /wallet & /balance ────────────────────────────────────────────────────
   const handleWallet = async (ctx: Context) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Wallet details');
+      return;
+    }
     const telegramId = ctx.from!.id;
     try {
       const wallet = await buildWalletMenu(telegramId);
@@ -5188,6 +5303,10 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── /wallets — Multi-Wallet Management (Option A) ─────────────────────────
   const handleWallets = async (ctx: Context) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Multi-wallet management');
+      return;
+    }
     const telegramId = ctx.from!.id;
     try {
       const menu = await buildWalletsManagementMenu(telegramId);
@@ -7701,6 +7820,9 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── Central Message Listener (Direct CA Pasting & Interactive Prompts) ────
   bot.on('text', async (ctx) => {
+    // CRITICAL: Public groups must never process arbitrary text, prompt wizards, or token CA pastes
+    if (isGroupChat(ctx)) return;
+
     const rawText = ctx.message.text.trim();
     if (rawText.startsWith('/')) return; // Handled by command dispatch
 

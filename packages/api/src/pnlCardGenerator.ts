@@ -286,6 +286,7 @@ export async function generatePNLCardData(
       kelytra:      'Kelytra',
       avnu:         'AVNU Aggregator',
       ekubo:        'Ekubo Protocol',
+      launchy:      'Launchy',
       unruggable:   'Unruggable Meme',
       jediswap:     'JediSwap',
       stark_dex:    'Starknet DEX',

@@ -449,3 +449,337 @@ export async function getStarknetAVNUQuote(
     return null;
   }
 }
+
+// ── Starknet Launchpad Detection & Routing ───────────────────────────────────
+
+export const LAUNCHY_FACTORY_V6 =
+  '0x03865fb40c5b7a493299323e71967656243006101e6221246eccdda2bba356c3';
+export const LAUNCHY_SWAPPER_V3 =
+  '0x033175f310b7e5218aa6c9f5a9cad931f62f5119c07541b1b12ec34df92e08d3';
+
+export interface StarknetLaunchpadPoolKey {
+  token0: string;
+  token1: string;
+  fee: string;
+  tick_spacing: string;
+  extension: string;
+}
+
+export interface StarknetLaunchpadInfo {
+  launchpad: 'launchy' | 'unruggable' | 'ekubo' | 'jediswap' | 'none';
+  name: string;
+  venue: 'launchy' | 'unruggable' | 'ekubo' | 'jediswap' | 'avnu';
+  isBonded: boolean;
+  bondingPhase: 'bonding_curve' | 'bonded';
+  factoryAddress?: string;
+  routerAddress?: string;
+  quoteToken?: string;
+  poolKey?: StarknetLaunchpadPoolKey;
+}
+
+const launchpadInfoCache = new Map<string, { info: StarknetLaunchpadInfo; expiresAt: number }>();
+
+/**
+ * Detect the launchpad a Starknet token was created/launched on.
+ * Inspects factory(), protocol_version(), and pool_config() on-chain.
+ */
+export async function detectStarknetLaunchpad(
+  tokenAddress: string
+): Promise<StarknetLaunchpadInfo> {
+  const norm = tokenAddress.toLowerCase();
+  const cached = launchpadInfoCache.get(norm);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.info;
+  }
+
+  // Core tokens are not launchpad memecoins
+  if (
+    norm === STRK_TOKEN_ADDRESS.toLowerCase() ||
+    norm === 'strk' ||
+    norm === ETH_TOKEN_ADDRESS.toLowerCase() ||
+    norm === 'eth'
+  ) {
+    const defaultInfo: StarknetLaunchpadInfo = {
+      launchpad: 'none',
+      name: 'Starknet DEX',
+      venue: 'avnu',
+      isBonded: true,
+      bondingPhase: 'bonded',
+    };
+    return defaultInfo;
+  }
+
+  const provider = getStarknetProvider();
+
+  try {
+    // 1. Check if token contract has a factory() method
+    const factoryRes = await provider
+      .callContract({
+        contractAddress: tokenAddress,
+        entrypoint: 'factory',
+        calldata: [],
+      })
+      .catch(() => null);
+
+    const factoryAddr = factoryRes && factoryRes[0] ? factoryRes[0] : null;
+
+    // Check if token exposes is_launched()
+    const isLaunchedRes = await provider
+      .callContract({
+        contractAddress: tokenAddress,
+        entrypoint: 'is_launched',
+        calldata: [],
+      })
+      .catch(() => null);
+
+    const isBonded =
+      isLaunchedRes && isLaunchedRes.length > 0
+        ? isLaunchedRes[0] === '0x1' || isLaunchedRes[0] === '1'
+        : true;
+
+    if (factoryAddr) {
+      const normFactory = factoryAddr.toLowerCase();
+
+      // Check protocol_version on the factory
+      let protocolVersion = '';
+      try {
+        const pvRes = await provider.callContract({
+          contractAddress: factoryAddr,
+          entrypoint: 'protocol_version',
+          calldata: [],
+        });
+        if (pvRes && pvRes[0]) {
+          protocolVersion = parseFeltOrByteArray([pvRes[0]]).toLowerCase();
+        }
+      } catch {
+        // fallback
+      }
+
+      const isLaunchy =
+        normFactory === LAUNCHY_FACTORY_V6.toLowerCase() ||
+        protocolVersion.includes('launchy') ||
+        protocolVersion.includes('launchpad_cairo');
+
+      if (isLaunchy) {
+        // Query pool config from Launchy factory
+        let poolKey: StarknetLaunchpadPoolKey | undefined;
+        let quoteToken = STRK_TOKEN_ADDRESS;
+        try {
+          const pcRes = await provider.callContract({
+            contractAddress: factoryAddr,
+            entrypoint: 'pool_config',
+            calldata: [tokenAddress],
+          });
+          if (pcRes && pcRes.length >= 5) {
+            poolKey = {
+              token0: pcRes[0],
+              token1: pcRes[1],
+              fee: pcRes[2],
+              tick_spacing: pcRes[3],
+              extension: pcRes[4],
+            };
+            quoteToken = pcRes[1];
+          }
+        } catch {
+          // ignore
+        }
+
+        const info: StarknetLaunchpadInfo = {
+          launchpad: 'launchy',
+          name: 'Launchy',
+          venue: 'launchy',
+          isBonded,
+          bondingPhase: isBonded ? 'bonded' : 'bonding_curve',
+          factoryAddress: factoryAddr,
+          routerAddress: LAUNCHY_SWAPPER_V3,
+          quoteToken,
+          poolKey,
+        };
+        launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
+        return info;
+      }
+
+      if (protocolVersion.includes('unruggable')) {
+        const info: StarknetLaunchpadInfo = {
+          launchpad: 'unruggable',
+          name: 'Unruggable Meme',
+          venue: 'unruggable',
+          isBonded,
+          bondingPhase: isBonded ? 'bonded' : 'bonding_curve',
+          factoryAddress: factoryAddr,
+        };
+        launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
+        return info;
+      }
+    }
+
+    // 2. Check token class ABI for signature strings
+    const contractClass: any = await provider.getClassAt(tokenAddress).catch(() => null);
+    const abiString = contractClass?.abi ? JSON.stringify(contractClass.abi).toLowerCase() : '';
+
+    if (abiString.includes('launchy') || abiString.includes('launchpad_cairo')) {
+      let poolKey: StarknetLaunchpadPoolKey | undefined;
+      try {
+        const pcRes = await provider.callContract({
+          contractAddress: LAUNCHY_FACTORY_V6,
+          entrypoint: 'pool_config',
+          calldata: [tokenAddress],
+        });
+        if (pcRes && pcRes.length >= 5) {
+          poolKey = {
+            token0: pcRes[0],
+            token1: pcRes[1],
+            fee: pcRes[2],
+            tick_spacing: pcRes[3],
+            extension: pcRes[4],
+          };
+        }
+      } catch {
+        // ignore
+      }
+
+      const info: StarknetLaunchpadInfo = {
+        launchpad: 'launchy',
+        name: 'Launchy',
+        venue: 'launchy',
+        isBonded,
+        bondingPhase: isBonded ? 'bonded' : 'bonding_curve',
+        factoryAddress: LAUNCHY_FACTORY_V6,
+        routerAddress: LAUNCHY_SWAPPER_V3,
+        quoteToken: STRK_TOKEN_ADDRESS,
+        poolKey,
+      };
+      launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
+      return info;
+    }
+
+    if (abiString.includes('unruggable')) {
+      const info: StarknetLaunchpadInfo = {
+        launchpad: 'unruggable',
+        name: 'Unruggable Meme',
+        venue: 'unruggable',
+        isBonded,
+        bondingPhase: isBonded ? 'bonded' : 'bonding_curve',
+      };
+      launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
+      return info;
+    }
+
+    if (abiString.includes('ekubo')) {
+      const info: StarknetLaunchpadInfo = {
+        launchpad: 'ekubo',
+        name: 'Ekubo DEX',
+        venue: 'ekubo',
+        isBonded: true,
+        bondingPhase: 'bonded',
+      };
+      launchpadInfoCache.set(norm, { info, expiresAt: Date.now() + 600_000 });
+      return info;
+    }
+
+    const defaultInfo: StarknetLaunchpadInfo = {
+      launchpad: 'none',
+      name: 'AVNU Aggregator',
+      venue: 'avnu',
+      isBonded: true,
+      bondingPhase: 'bonded',
+    };
+    launchpadInfoCache.set(norm, { info: defaultInfo, expiresAt: Date.now() + 300_000 });
+    return defaultInfo;
+  } catch {
+    const fallbackInfo: StarknetLaunchpadInfo = {
+      launchpad: 'none',
+      name: 'AVNU Aggregator',
+      venue: 'avnu',
+      isBonded: true,
+      bondingPhase: 'bonded',
+    };
+    return fallbackInfo;
+  }
+}
+
+export interface LaunchyQuoteResult {
+  outputAmount: bigint;
+  minReceived: bigint;
+  platformFee: bigint;
+  netInput: bigint;
+}
+
+/**
+ * Direct on-chain quote from Launchy's EkuboFeeSwapperV3 swapper contract.
+ */
+export async function getLaunchyQuote(
+  tokenAddress: string,
+  tokenIn: string,
+  amountIn: bigint,
+  slippagePct: number = 2.0,
+  poolKeyOverride?: StarknetLaunchpadPoolKey,
+  routerAddressOverride?: string
+): Promise<LaunchyQuoteResult | null> {
+  try {
+    const provider = getStarknetProvider();
+    const router = routerAddressOverride || LAUNCHY_SWAPPER_V3;
+
+    let poolKey = poolKeyOverride;
+    if (!poolKey) {
+      const launchpadInfo = await detectStarknetLaunchpad(tokenAddress);
+      poolKey = launchpadInfo.poolKey;
+      if (!poolKey && launchpadInfo.factoryAddress) {
+        const pcRes = await provider.callContract({
+          contractAddress: launchpadInfo.factoryAddress,
+          entrypoint: 'pool_config',
+          calldata: [tokenAddress],
+        });
+        if (pcRes && pcRes.length >= 5) {
+          poolKey = {
+            token0: pcRes[0],
+            token1: pcRes[1],
+            fee: pcRes[2],
+            tick_spacing: pcRes[3],
+            extension: pcRes[4],
+          };
+        }
+      }
+    }
+
+    if (!poolKey) return null;
+
+    const amountInU256 = uint256.bnToUint256(amountIn);
+    const slippageBps = Math.floor(slippagePct * 100);
+
+    const calldata = [
+      poolKey.token0,
+      poolKey.token1,
+      poolKey.fee,
+      poolKey.tick_spacing,
+      poolKey.extension,
+      tokenIn,
+      amountInU256.low.toString(),
+      amountInU256.high.toString(),
+      slippageBps.toString(),
+    ];
+
+    const quoteRes = await provider.callContract({
+      contractAddress: router,
+      entrypoint: 'quote_exact_input',
+      calldata,
+    });
+
+    if (!quoteRes || quoteRes.length < 8) return null;
+
+    const outputAmount = uint256.uint256ToBN({ low: quoteRes[0], high: quoteRes[1] });
+    const minReceived = uint256.uint256ToBN({ low: quoteRes[2], high: quoteRes[3] });
+    const platformFee = uint256.uint256ToBN({ low: quoteRes[4], high: quoteRes[5] });
+    const netInput = uint256.uint256ToBN({ low: quoteRes[6], high: quoteRes[7] });
+
+    return {
+      outputAmount,
+      minReceived,
+      platformFee,
+      netInput,
+    };
+  } catch (err) {
+    console.warn('[STARKNET] getLaunchyQuote error:', (err as any)?.message || err);
+    return null;
+  }
+}
