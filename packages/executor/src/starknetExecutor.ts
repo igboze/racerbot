@@ -11,6 +11,7 @@ import {
   ETH_TOKEN_ADDRESS,
   OZ_ACCOUNT_CLASS_HASH,
   computeStarknetAccountAddress,
+  isSameStarknetAddress,
   getStarknetTreasuryAddress,
   invalidateStarknetBalanceCache,
   DEFAULT_STARKNET_TREASURY_ADDRESS,
@@ -24,6 +25,7 @@ import {
 import {
   getUserById,
   getActiveWallet,
+  updateUserStarknetWallet,
   createFill,
   getOpenPositions,
   createPosition,
@@ -85,7 +87,7 @@ export async function executeStarknetSwap(
   }
 
   const activeWallet = await getActiveWallet(user.id, 'starknet').catch(() => null);
-  const userAddress = activeWallet?.address || user.starknet_address;
+  let userAddress = activeWallet?.address || user.starknet_address;
   const userKeyEnc = activeWallet?.encrypted_private_key || user.starknet_private_key_enc;
 
   if (!userAddress || !userKeyEnc) {
@@ -93,6 +95,18 @@ export async function executeStarknetSwap(
   }
 
   const privateKeySecret = decrypt(userKeyEnc, MASTER_KEY);
+  const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+  const canonicalAddress = computeStarknetAccountAddress(publicKey);
+
+  // Guarantee that on-chain actions always execute with the canonical OZ account address
+  if (!isSameStarknetAddress(userAddress, canonicalAddress)) {
+    console.log(`[STARKNET_EXECUTOR] Migrating non-canonical user address ${userAddress} -> ${canonicalAddress} for user ${user.id}`);
+    userAddress = canonicalAddress;
+    await updateUserStarknetWallet(user.id, canonicalAddress, userKeyEnc).catch((err) =>
+      console.warn(`[STARKNET_EXECUTOR] Failed to update user_wallets to canonical address:`, err?.message)
+    );
+  }
+
   const provider = getStarknetProvider();
   const account = getStarknetAccount(privateKeySecret, userAddress, provider);
 
@@ -355,16 +369,10 @@ export async function executeStarknetSwap(
     const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
     const expectedAddress = computeStarknetAccountAddress(publicKey);
 
-    // Verify user address matches canonical OZ account address (modulo leading zeros)
-    try {
-      if (BigInt(expectedAddress) !== BigInt(userAddress)) {
-        throw new Error(
-          `Your Starknet wallet (${userAddress.slice(0, 10)}...) was created with a legacy format and cannot be deployed on-chain.\n` +
-          `Please run /newstarknet in the bot to switch to a fresh canonical Starknet wallet.`
-        );
-      }
-    } catch (e: any) {
-      if (e.message.includes('legacy format')) throw e;
+    if (!isSameStarknetAddress(userAddress, expectedAddress)) {
+      console.log(`[STARKNET_EXECUTOR] Correcting address to canonical ${expectedAddress}`);
+      userAddress = expectedAddress;
+      await updateUserStarknetWallet(user.id, expectedAddress, userKeyEnc).catch(() => {});
     }
 
     console.log(`[STARKNET_EXECUTOR] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
