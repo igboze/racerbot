@@ -66,6 +66,7 @@ import {
   unwrapUserWrapNear,
   withdrawFunds,
   withdrawSuiFunds,
+  withdrawStarknetFunds,
   withdrawTokenFunds,
   syncUserTokenDeposits,
   getNearUsdPrice,
@@ -111,6 +112,7 @@ import {
   checkTokenSafety,
   restoreSuiKeypairFromSecret,
   isValidSuiAddress,
+  isValidStarknetAddress,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -312,10 +314,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let totalUsdNum = 0;
 
   if (user) {
-    if (!user.starknet_address || !user.starknet_private_key_enc) {
-      const upgraded = await ensureUserAllWallets(user).catch(() => null);
-      if (upgraded) user = upgraded;
-    }
+    const upgraded = await ensureUserAllWallets(user).catch(() => null);
+    if (upgraded) user = upgraded;
     subaccount = user.subaccount_id;
     try {
       const b = await getUserBalances(telegramId, forceRefresh);
@@ -5685,11 +5685,12 @@ export function setupRoutes(bot: Telegraf): void {
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `💸 *Withdraw & Send Funds (NEAR, SUI & Tokens)*\n\n` +
+      `💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n` +
       `Reply with the recipient address, amount, and optional token, for example:\n` +
       `• *NEAR*: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
       `• *Token*: \`mywallet.near 100 LONK\` or \`mywallet.near all blackdragon.tkn.near\`\n` +
-      `• *SUI*: \`0x1234...abcd 1.0\` or \`0x1234...abcd all\`\n\n` +
+      `• *SUI*: \`0x1234...abcd 1.0 SUI\` or \`0x1234...abcd all SUI\`\n` +
+      `• *Starknet*: \`0x1234...abcd 10 STRK\` or \`0x1234...abcd all STRK\`\n\n` +
       `_Or tap below to choose a token from your bags to send:_`,
       {
         parse_mode: 'Markdown',
@@ -5814,16 +5815,17 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 180000,
       });
       await ctx.reply(
-        `💸 *Withdraw & Send Funds (NEAR, SUI & Tokens)*\n\n` +
+        `💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n` +
         `*Usage:*\n` +
         `• Native NEAR: \`/send <destination> <amount>\`\n` +
         `• Token: \`/send <destination> <amount> <token>\`\n` +
-        `• Native SUI: \`/send <sui_address> <amount>\`\n\n` +
+        `• Native SUI: \`/send <sui_address> <amount> SUI\`\n` +
+        `• Native STRK: \`/send <starknet_address> <amount> STRK\`\n\n` +
         `*Examples:*\n` +
         `• \`/send mywallet.near 1.5\`\n` +
         `• \`/send mywallet.near 500 LONK\`\n` +
-        `• \`/send mywallet.near all blackdragon.tkn.near\`\n` +
-        `• \`/send 0x1234...abcd 1.0\`\n\n` +
+        `• \`/send 0x1234...abcd 1.0 SUI\`\n` +
+        `• \`/send 0x1234...abcd 10 STRK\`\n\n` +
         `Or reply directly now with destination and amount!`,
         {
           parse_mode: 'Markdown',
@@ -5855,15 +5857,22 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${destination}\`...`, { parse_mode: 'Markdown' });
 
     try {
+      const isNearDest = destination.endsWith('.near') || (!destination.startsWith('0x') && isValidNearAccountId(destination));
       const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
-      const isExplicitToken = tokenArg && tokenArg.toLowerCase() !== 'near' && tokenArg.toLowerCase() !== 'sui';
+      const isStarknetDest = isValidStarknetAddress(destination) && !destination.endsWith('.near');
+      const normToken = (tokenArg || '').toLowerCase();
+      const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
+      const isExplicitToken = tokenArg && normToken !== 'near' && normToken !== 'sui' && !isStrkOrEth;
 
       if (isExplicitToken) {
         const result = await withdrawTokenFunds(telegramId, tokenArg, destination, amountNum);
-        const explorerUrl = result.chain === 'sui'
-          ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
-          : `https://nearblocks.io/txns/${result.txHash}`;
-        const explorerName = result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+        const explorerUrl =
+          result.chain === 'starknet'
+            ? `https://voyager.online/tx/${result.txHash}`
+            : result.chain === 'sui'
+            ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+            : `https://nearblocks.io/txns/${result.txHash}`;
+        const explorerName = result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
 
         await ctx.reply(
           `✅ *Token Transfer Successful!*\n\n` +
@@ -5873,7 +5882,16 @@ export function setupRoutes(bot: Telegraf): void {
           `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
           { parse_mode: 'Markdown' }
         );
-      } else if (isSuiDest) {
+      } else if (isStrkOrEth) {
+        const result = await withdrawStarknetFunds(telegramId, destination, amountNum, normToken);
+        await ctx.reply(
+          `✅ *Starknet Transfer Successful!*\n\n` +
+          `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+          `📬 Destination: \`${result.destination}\`\n\n` +
+          `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (normToken === 'sui') {
         const result = await withdrawSuiFunds(telegramId, destination, amountNum);
         await ctx.reply(
           `✅ *SUI Withdrawal Successful!*\n\n` +
@@ -5882,6 +5900,41 @@ export function setupRoutes(bot: Telegraf): void {
           `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
           { parse_mode: 'Markdown' }
         );
+      } else if (isStarknetDest && !isNearDest) {
+        // Resolve between SUI and Starknet by checking user balances
+        const user = await getUserByTelegramId(telegramId);
+        const [suiBal, strkBal] = await Promise.all([
+          user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
+          user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
+        ]);
+
+        if (strkBal.strk > 0n && suiBal.mist === 0n) {
+          const result = await withdrawStarknetFunds(telegramId, destination, amountNum, 'strk');
+          await ctx.reply(
+            `✅ *Starknet Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+            { parse_mode: 'Markdown' }
+          );
+        } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
+          const result = await withdrawSuiFunds(telegramId, destination, amountNum);
+          await ctx.reply(
+            `✅ *SUI Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          await ctx.reply(
+            `⚠️ Destination \`${destination}\` is a 0x hex address valid on both SUI and Starknet.\n` +
+            `Please specify the token to transfer, for example:\n` +
+            `• \`/send ${destination} ${amountNum} STRK\`\n` +
+            `• \`/send ${destination} ${amountNum} SUI\``,
+            { parse_mode: 'Markdown' }
+          );
+        }
       } else {
         const result = await withdrawFunds(telegramId, destination, amountNum);
         await ctx.reply(
@@ -8593,18 +8646,25 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        const isExplicitToken = tokenToUse && tokenToUse.toLowerCase() !== 'near' && tokenToUse.toLowerCase() !== 'sui';
-        const targetDesc = isExplicitToken ? `token \`${tokenToUse}\`` : 'funds';
+        const isNearDest = dest.endsWith('.near') || (!dest.startsWith('0x') && isValidNearAccountId(dest));
+        const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
+        const isStarknetDest = isValidStarknetAddress(dest) && !dest.endsWith('.near');
+        const normToken = (tokenToUse || '').toLowerCase();
+        const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
+        const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && !isStrkOrEth;
+        const targetDesc = isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
         await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${dest}\`...`, { parse_mode: 'Markdown' });
 
         try {
-          const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
           if (isExplicitToken) {
             const result = await withdrawTokenFunds(telegramId, tokenToUse, dest, amt);
-            const explorerUrl = result.chain === 'sui'
-              ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
-              : `https://nearblocks.io/txns/${result.txHash}`;
-            const explorerName = result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+            const explorerUrl =
+              result.chain === 'starknet'
+                ? `https://voyager.online/tx/${result.txHash}`
+                : result.chain === 'sui'
+                ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+                : `https://nearblocks.io/txns/${result.txHash}`;
+            const explorerName = result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
 
             await ctx.reply(
               `✅ *Token Transfer Successful!*\n\n` +
@@ -8614,7 +8674,16 @@ export function setupRoutes(bot: Telegraf): void {
               `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
               { parse_mode: 'Markdown' }
             );
-          } else if (isSuiDest) {
+          } else if (isStrkOrEth) {
+            const result = await withdrawStarknetFunds(telegramId, dest, amt, normToken);
+            await ctx.reply(
+              `✅ *Starknet Transfer Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else if (normToken === 'sui') {
             const result = await withdrawSuiFunds(telegramId, dest, amt);
             await ctx.reply(
               `✅ *SUI Withdrawal Successful!*\n\n` +
@@ -8623,6 +8692,38 @@ export function setupRoutes(bot: Telegraf): void {
               `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
               { parse_mode: 'Markdown' }
             );
+          } else if (isStarknetDest && !isNearDest) {
+            const user = await getUserByTelegramId(telegramId);
+            const [suiBal, strkBal] = await Promise.all([
+              user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
+              user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
+            ]);
+
+            if (strkBal.strk > 0n && suiBal.mist === 0n) {
+              const result = await withdrawStarknetFunds(telegramId, dest, amt, 'strk');
+              await ctx.reply(
+                `✅ *Starknet Withdrawal Successful!*\n\n` +
+                `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+                `📬 Destination: \`${result.destination}\`\n\n` +
+                `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+                { parse_mode: 'Markdown' }
+              );
+            } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
+              const result = await withdrawSuiFunds(telegramId, dest, amt);
+              await ctx.reply(
+                `✅ *SUI Withdrawal Successful!*\n\n` +
+                `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+                `📬 Destination: \`${result.destination}\`\n\n` +
+                `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+                { parse_mode: 'Markdown' }
+              );
+            } else {
+              await ctx.reply(
+                `⚠️ Destination \`${dest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
+                `Please specify the token, e.g. \`${dest} ${amt} STRK\` or \`${dest} ${amt} SUI\``,
+                { parse_mode: 'Markdown' }
+              );
+            }
           } else {
             const result = await withdrawFunds(telegramId, dest, amt);
             await ctx.reply(
@@ -8985,13 +9086,46 @@ export function setupRoutes(bot: Telegraf): void {
       const possibleAmtStr = withdrawParts[1].toLowerCase();
       const isNearDest = isValidNearAccountId(possibleDest);
       const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDest.endsWith('.near');
+      const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDest.endsWith('.near');
       const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
 
-      if ((isNearDest || isSuiDest) && isAmtValid) {
+      if ((isNearDest || isSuiDest || isStarknetDest) && isAmtValid) {
         const amt: number | 'all' = possibleAmtStr === 'all' ? 'all' : parseFloat(possibleAmtStr);
         await ctx.reply(`⏳ Processing withdrawal to \`${possibleDest}\`...`, { parse_mode: 'Markdown' });
         try {
-          if (isSuiDest) {
+          if (isStarknetDest && !isNearDest) {
+            const user = await getUserByTelegramId(telegramId);
+            const [suiBal, strkBal] = await Promise.all([
+              user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
+              user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
+            ]);
+
+            if (strkBal.strk > 0n && suiBal.mist === 0n) {
+              const result = await withdrawStarknetFunds(telegramId, possibleDest, amt, 'strk');
+              await ctx.reply(
+                `✅ *Starknet Withdrawal Successful!*\n\n` +
+                `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+                `📬 Destination: \`${result.destination}\`\n\n` +
+                `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+                { parse_mode: 'Markdown' }
+              );
+            } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
+              const result = await withdrawSuiFunds(telegramId, possibleDest, amt);
+              await ctx.reply(
+                `✅ *SUI Withdrawal Successful!*\n\n` +
+                `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+                `📬 Destination: \`${result.destination}\`\n\n` +
+                `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+                { parse_mode: 'Markdown' }
+              );
+            } else {
+              await ctx.reply(
+                `⚠️ Destination \`${possibleDest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
+                `Please specify the token, e.g. \`/send ${possibleDest} ${amt} STRK\` or \`/send ${possibleDest} ${amt} SUI\``,
+                { parse_mode: 'Markdown' }
+              );
+            }
+          } else if (isSuiDest) {
             const result = await withdrawSuiFunds(telegramId, possibleDest, amt);
             await ctx.reply(
               `✅ *SUI Withdrawal Successful!*\n\n` +

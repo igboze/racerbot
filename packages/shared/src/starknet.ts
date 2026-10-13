@@ -55,6 +55,25 @@ export function isSameStarknetAddress(a?: string | null, b?: string | null): boo
   return normalizeStarknetAddress(a) === normalizeStarknetAddress(b);
 }
 
+/**
+ * Validates whether a string is a well-formed Starknet field element address (felt252).
+ */
+export function isValidStarknetAddress(addr?: string | null): boolean {
+  if (!addr) return false;
+  const s = addr.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{1,66}$/.test(s)) return false;
+  try {
+    const val = BigInt(s);
+    // Valid Starknet felt252 must be non-zero and strictly less than Starknet prime
+    return (
+      val > 0n &&
+      val < BigInt('0x800000000000011000000000000000000000000000000000000000000000001')
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Standard OpenZeppelin Account v0.8.1 class hash (canonical declared Sierra contract on Starknet Mainnet)
 export const OZ_ACCOUNT_CLASS_HASH =
   process.env.STARKNET_ACCOUNT_CLASS_HASH ||
