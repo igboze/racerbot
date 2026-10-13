@@ -897,10 +897,22 @@ export async function startStarknetAlertsEngine(bot: Telegraf): Promise<void> {
     _isPolling = true;
 
     try {
-      const currentBlockNum = await provider.getBlockNumber().catch(async () => {
+      let currentBlockNum: number | null = null;
+      try {
+        currentBlockNum = await provider.getBlockNumber();
+      } catch {
         provider = rotateStarknetRpc();
-        return await provider.getBlockNumber();
-      });
+        try {
+          currentBlockNum = await provider.getBlockNumber();
+        } catch {
+          // Both primary and fallback failed (e.g. rate-limit or network outage)
+          return;
+        }
+      }
+
+      if (!currentBlockNum || isNaN(currentBlockNum) || currentBlockNum <= 0) {
+        return;
+      }
 
       if (!_lastCheckedBlock) {
         _lastCheckedBlock = currentBlockNum - 5;
@@ -919,7 +931,6 @@ export async function startStarknetAlertsEngine(bot: Telegraf): Promise<void> {
       }
     } catch (err: any) {
       console.warn('[STARKNET_ALERTS] On-chain RPC polling error (will retry next block):', err?.message);
-      provider = rotateStarknetRpc();
     } finally {
       _isPolling = false;
     }
