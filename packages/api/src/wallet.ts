@@ -1772,10 +1772,9 @@ export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRe
     try {
       const priv = decrypt(user.starknet_private_key_enc, MASTER_KEY);
       const pub = ec.starkCurve.getStarkKey(priv);
-      const typoAddr = computeStarknetAccountAddress(pub, TYPO_OZ_ACCOUNT_CLASS_HASH);
-      if (isSameStarknetAddress(user.starknet_address, typoAddr)) {
-        const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
-        console.log(`[STARKNET] Auto-migrating user ${user.id} address from typo hash to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
+      const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
+      if (!isSameStarknetAddress(user.starknet_address, canonicalAddr)) {
+        console.log(`[STARKNET] Auto-migrating user ${user.id} address to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
         await updateUserStarknetWallet(user.id, canonicalAddr, user.starknet_private_key_enc);
         user.starknet_address = canonicalAddr;
       }
@@ -2587,41 +2586,40 @@ export async function withdrawStarknetFunds(
 
   const provider = getStarknetProvider();
   const privateKeySecret = decrypt(user.starknet_private_key_enc, MASTER_KEY);
-  const userAddress = user.starknet_address;
-  const account = getStarknetAccount(privateKeySecret, userAddress, provider);
+  const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+  const canonicalAddress = computeStarknetAccountAddress(publicKey);
+
+  let activeUserAddress = user.starknet_address;
+  if (!isSameStarknetAddress(canonicalAddress, activeUserAddress)) {
+    console.log(`[STARKNET_WITHDRAW] Auto-migrating user ${user.id} to canonical deployable address ${canonicalAddress}`);
+    await updateUserStarknetWallet(user.id, canonicalAddress, user.starknet_private_key_enc);
+    activeUserAddress = canonicalAddress;
+  }
+
+  const activeAccount = getStarknetAccount(privateKeySecret, activeUserAddress, provider);
 
   // Check if account is deployed on-chain; auto-deploy if needed
   let isDeployed = false;
   try {
-    const classHash = await provider.getClassHashAt(userAddress);
+    const classHash = await provider.getClassHashAt(activeUserAddress);
     if (classHash) isDeployed = true;
   } catch {
     isDeployed = false;
   }
 
   if (!isDeployed) {
-    const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
-    const expectedAddress = computeStarknetAccountAddress(publicKey);
-
-    if (!isSameStarknetAddress(expectedAddress, userAddress)) {
-      throw new Error(
-        `Your Starknet wallet (${userAddress.slice(0, 10)}...) has a legacy address configuration that cannot be deployed on-chain.\n` +
-        `Please contact support or generate a fresh wallet with /newstarknet.`
-      );
-    }
-
-    console.log(`[STARKNET_WITHDRAW] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
-    const deployRes = await account.deployAccount({
+    console.log(`[STARKNET_WITHDRAW] Account ${activeUserAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
+    const deployRes = await activeAccount.deployAccount({
       classHash: OZ_ACCOUNT_CLASS_HASH,
       constructorCalldata: CallData.compile({ publicKey }),
       addressSalt: publicKey,
     });
     await provider.waitForTransaction(deployRes.transaction_hash, { retryInterval: 1500 });
-    console.log(`[STARKNET_WITHDRAW] Account ${userAddress} successfully deployed!`);
+    console.log(`[STARKNET_WITHDRAW] Account ${activeUserAddress} successfully deployed!`);
   }
 
   // Check token balance
-  const currentBal = await getStarknetTokenBalance(userAddress, canonicalToken);
+  const currentBal = await getStarknetTokenBalance(activeUserAddress, canonicalToken);
   if (currentBal <= 0n) {
     throw new Error(`You have 0 ${symbol} in your Starknet wallet.`);
   }
@@ -2655,7 +2653,7 @@ export async function withdrawStarknetFunds(
   }
 
   // Execute transfer
-  console.log(`[STARKNET_WITHDRAW] Transferring ${rawWithdrawAmount} units of ${symbol} from ${userAddress} to ${destination}...`);
+  console.log(`[STARKNET_WITHDRAW] Transferring ${rawWithdrawAmount} units of ${symbol} from ${activeUserAddress} to ${destination}...`);
   const transferCall = {
     contractAddress: canonicalToken,
     entrypoint: 'transfer',
@@ -2665,13 +2663,13 @@ export async function withdrawStarknetFunds(
     }),
   };
 
-  const txRes = await account.execute([transferCall]);
+  const txRes = await activeAccount.execute([transferCall]);
   await provider.waitForTransaction(txRes.transaction_hash, { retryInterval: 1500 }).catch((e) => {
     console.warn(`[STARKNET_WITHDRAW] waitForTransaction non-fatal warning:`, e?.message);
   });
 
   // Evict balance cache
-  invalidateStarknetBalanceCache(userAddress);
+  invalidateStarknetBalanceCache(activeUserAddress);
   invalidateStarknetBalanceCache(canonicalToken);
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
