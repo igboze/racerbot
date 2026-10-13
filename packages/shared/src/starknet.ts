@@ -284,21 +284,20 @@ export async function getStarknetTokenBalance(
     }
     return 0n;
   } catch (err) {
-    // If first endpoint fails, try rotate
-    try {
-      const fallbackProvider = rotateStarknetRpc();
-      const res = await fallbackProvider.callContract({
-        contractAddress: tokenAddress,
-        entrypoint: 'balanceOf',
-        calldata: CallData.compile({ account: ownerAddress }),
-      });
-      if (res && res.length >= 2) {
-        return uint256.uint256ToBN({ low: res[0], high: res[1] });
-      }
-      return 0n;
-    } catch {
-      return 0n;
+    // If first endpoint fails, try rotate once
+    const fallbackProvider = rotateStarknetRpc();
+    const res = await fallbackProvider.callContract({
+      contractAddress: tokenAddress,
+      entrypoint: 'balanceOf',
+      calldata: CallData.compile({ account: ownerAddress }),
+    });
+    if (res && res.length >= 2) {
+      return uint256.uint256ToBN({ low: res[0], high: res[1] });
     }
+    if (res && res.length === 1) {
+      return BigInt(res[0]);
+    }
+    return 0n;
   }
 }
 

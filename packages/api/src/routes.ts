@@ -106,9 +106,11 @@ import {
   resolveTokenAddressFromKey,
   getSuiBalance,
   getSuiTokenBalance,
+  getSuiTokenMetadata,
   getSuiUsdPrice,
   getStarknetBalance,
   getStarknetTokenBalance,
+  getStarknetTokenMetadata,
   checkTokenSafety,
   restoreSuiKeypairFromSecret,
   isValidSuiAddress,
@@ -3979,12 +3981,15 @@ export function setupRoutes(bot: Telegraf): void {
   // ── Helper: Build Holdings view (text + keyboard) ─────────────────────────
   // forceRefresh=false renders from cache (instant paint); forceRefresh=true
   // pulls live pool prices (background reconcile pass).
-  async function buildHoldingsView(user: UserRecord, forceRefresh: boolean) {
+  // ── Helper: Build Holdings view (text + keyboard) with Pagination ─────────
+  // forceRefresh=false renders from cache (instant paint); forceRefresh=true
+  // pulls live pool prices (background reconcile pass).
+  async function buildHoldingsView(user: UserRecord, forceRefresh: boolean, page = 0) {
     // Fetch all open positions (including previously synced wallet deposits)
     let positions: PositionRecord[] = await getOpenPositions(user.id).catch(() => []);
 
     const emptyKeyboard = Markup.inlineKeyboard([
-      [cb('🔄 Refresh', 'refresh_holdings', 'primary')],
+      [cb('🔄 Refresh', 'refresh_holdings:0', 'primary')],
       [cb('🔙 Back', 'menu_home', 'primary')],
       [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
       [
@@ -3995,8 +4000,8 @@ export function setupRoutes(bot: Telegraf): void {
     ]);
 
     // Live on-chain balance reconciliation:
-    // If a user sent out or sold tokens externally via another wallet, detect the 0 or dust balance,
-    // mark the position closed in DB immediately, and clear it from active holdings.
+    // Only update quantity_held if verified by a successful RPC call.
+    // NEVER close positions on timeout, error, or unverified zero!
     if (positions.length > 0) {
       const balanceChecks = await Promise.allSettled(
         positions.map(async (pos) => {
@@ -4044,11 +4049,8 @@ export function setupRoutes(bot: Telegraf): void {
               try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
               const isZero = rawBig === 0n;
               return { isZero, rawBal: clean, verified: true };
-            } catch (err: any) {
-              const msg = err?.message || '';
-              if (msg.includes('not registered') || msg.includes('does not exist')) {
-                return { isZero: true, rawBal: '0', verified: true };
-              }
+            } catch {
+              // Never assume zero on error/timeout!
               return { isZero: false, rawBal: pos.quantity_held, verified: false };
             }
           }
@@ -4061,14 +4063,15 @@ export function setupRoutes(bot: Telegraf): void {
         const pos = positions[i];
         if (check.status === 'fulfilled' && check.value.verified) {
           const { isZero, rawBal } = check.value;
-          if (isZero) {
+          // Only close if verified zero and quantity was already 0 or updated to 0
+          if (isZero && (!pos.quantity_held || pos.quantity_held === '0')) {
             await updatePosition({
               position_id: pos.id,
               status: 'closed',
               closed_at: new Date(),
             }).catch(() => {});
-            console.log(`[HOLDINGS] Cleared externally transferred/zero balance token ${pos.token_address} (user ${user.id})`);
-            continue; // Dropped from active holdings!
+            console.log(`[HOLDINGS] Cleared confirmed zero balance token ${pos.token_address} (user ${user.id})`);
+            continue;
           } else if (rawBal && rawBal !== pos.quantity_held) {
             pos.quantity_held = rawBal;
             updatePosition({
@@ -4113,202 +4116,189 @@ export function setupRoutes(bot: Telegraf): void {
       positions.map(pos => getFillsByPosition(pos.id).catch(() => []))
     );
 
-      let totalPortfolioValueUsd = 0;
-      const buttons: any[] = [];
+    // Calculate total portfolio USD across all positions
+    let totalPortfolioValueUsd = 0;
+    const computedPositions = positions.map((pos, idx) => {
+      const info = infoMap.get(pos.token_address);
+      const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
+      const displayLabel = sanitizeMd(rawSymbol);
+      const currentPrice = info ? parseFloat(info.price) : 0;
+      const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+      const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
+      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+      const nativeUsdRate = isStarknetPos
+        ? (info?.strk_usd || 0.12)
+        : isSuiPos
+        ? (info?.sui_usd || 2.0)
+        : (info?.near_usd || 4.3);
 
-      const MAX_DISPLAY_HOLDINGS = 20;
-      const displayedPositions = positions.slice(0, MAX_DISPLAY_HOLDINGS);
-      const remainingCount = positions.length - displayedPositions.length;
-
-      for (let idx = 0; idx < displayedPositions.length; idx++) {
-        const pos = displayedPositions[idx];
-        const info = infoMap.get(pos.token_address);
-        const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
-        const displayLabel = sanitizeMd(rawSymbol);
-        const currentPrice = info ? parseFloat(info.price) : 0;
-        const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-        const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
-        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
-        const nativeUsdRate = isStarknetPos
-          ? (info?.strk_usd || 0.12)
-          : isSuiPos
-          ? (info?.sui_usd || 2.0)
-          : (info?.near_usd || 4.3);
-
-        let humanQuantity = 0;
-        try {
-          const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-          if (isStarknetPos && (pos.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
-            humanQuantity = parseFloat(pos.quantity_held) || 0;
-          } else {
-            humanQuantity = Number(rawBig) / Math.pow(10, decimals);
-          }
-        } catch {
+      let humanQuantity = 0;
+      try {
+        const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
+        if (isStarknetPos && (pos.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
           humanQuantity = parseFloat(pos.quantity_held) || 0;
+        } else {
+          humanQuantity = Number(rawBig) / Math.pow(10, decimals);
+        }
+      } catch {
+        humanQuantity = parseFloat(pos.quantity_held) || 0;
+      }
+
+      const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
+      const tokenValueUsd = humanQuantity * tokenPriceUsd;
+      totalPortfolioValueUsd += tokenValueUsd;
+
+      const fillsResult = fillsResults[idx];
+      const fills = fillsResult && fillsResult.status === 'fulfilled' ? fillsResult.value : [];
+      const buys = fills.filter((f: any) => f.side === 'buy' && !f.tx_hash?.startsWith('deposit_'));
+
+      let totalBuyTokensHuman = 0;
+      let totalBuyCostNative = 0;
+
+      for (const buy of buys) {
+        const val = parseFloat(buy.amount || '0');
+        let amount = val;
+        const rawAmtStr = String(buy.amount || '');
+        if (isStarknetPos) {
+          amount = rawAmtStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
+        } else if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
+          amount = val / Math.pow(10, decimals);
+        } else if (isSuiPos && val > 1e6) {
+          amount = val / Math.pow(10, decimals);
         }
 
-        if (humanQuantity < 0.000001) {
-          await updatePosition({
-            position_id: pos.id,
-            status: 'closed',
-            closed_at: new Date(),
-          }).catch(() => {});
-          console.log(`[HOLDINGS] Cleared dust/zero token ${pos.token_address} (user ${user.id})`);
-          continue;
+        let cost = 0;
+        if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
+          cost = parseFloat(buy.input_amount);
+        } else {
+          const p = parseFloat(buy.price || '0');
+          let fee = parseFloat(buy.fee_paid || '0');
+          if (isSuiPos && fee > 1e6) fee = fee / 1e9;
+          else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
+          cost = amount * p + fee;
         }
 
-        const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
-        const tokenValueUsd = humanQuantity * tokenPriceUsd;
-        totalPortfolioValueUsd += tokenValueUsd;
-        const fillsResult = fillsResults[idx];
-        const fills = fillsResult && fillsResult.status === 'fulfilled' ? fillsResult.value : [];
-        const buys = fills.filter((f: any) => f.side === 'buy' && !f.tx_hash?.startsWith('deposit_'));
-
-        let totalBuyTokensHuman = 0;
-        let totalBuyCostNative = 0;
-
-        for (const buy of buys) {
-          const val = parseFloat(buy.amount || '0');
-          let amount = val;
-          const rawAmtStr = String(buy.amount || '');
-          if (isStarknetPos) {
-            amount = rawAmtStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
-          } else if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
-            amount = val / Math.pow(10, decimals);
-          } else if (isSuiPos && val > 1e6) {
-            amount = val / Math.pow(10, decimals);
-          }
-
-          let cost = 0;
-          if (buy.input_amount != null && parseFloat(buy.input_amount) > 0) {
-            cost = parseFloat(buy.input_amount);
-          } else {
-            const p = parseFloat(buy.price || '0');
-            let fee = parseFloat(buy.fee_paid || '0');
-            if (isSuiPos && fee > 1e6) fee = fee / 1e9;
-            else if (!isSuiPos && fee > 1e18) fee = fee / 1e24;
-            cost = amount * p + fee;
-          }
-
-          if (amount > 0 && cost > 0) {
-            totalBuyTokensHuman += amount;
-            totalBuyCostNative += cost;
-          }
+        if (amount > 0 && cost > 0) {
+          totalBuyTokensHuman += amount;
+          totalBuyCostNative += cost;
         }
+      }
 
-        let entryPrice = parseFloat(pos.avg_entry_price) || 0;
-
-        // Heal corrupted or uninitialized entry price from actual buy fills
-        if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
-          const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
-          if (
-            entryPrice <= 0 ||
-            entryPrice > 1e6 || // Corrupted atomic price
-            (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) ||
-            Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.5
-          ) {
-            entryPrice = fillAvgEntry;
-            pos.avg_entry_price = fillAvgEntry.toString();
-            updatePosition({
-              position_id: pos.id,
-              avg_entry_price: fillAvgEntry.toString(),
-            }).catch(() => {});
-          }
-        } else if ((entryPrice <= 0 || entryPrice > 1e6) && currentPrice > 0) {
-          entryPrice = currentPrice;
-          pos.avg_entry_price = currentPrice.toString();
+      let entryPrice = parseFloat(pos.avg_entry_price) || 0;
+      if (totalBuyTokensHuman > 0 && totalBuyCostNative > 0) {
+        const fillAvgEntry = totalBuyCostNative / totalBuyTokensHuman;
+        if (
+          entryPrice <= 0 ||
+          entryPrice > 1e6 ||
+          (currentPrice > 0 && entryPrice > currentPrice * 10 && fillAvgEntry <= currentPrice * 10) ||
+          Math.abs(entryPrice - fillAvgEntry) / fillAvgEntry > 0.5
+        ) {
+          entryPrice = fillAvgEntry;
+          pos.avg_entry_price = fillAvgEntry.toString();
           updatePosition({
             position_id: pos.id,
-            avg_entry_price: currentPrice.toString(),
+            avg_entry_price: fillAvgEntry.toString(),
           }).catch(() => {});
         }
+      } else if ((entryPrice <= 0 || entryPrice > 1e6) && currentPrice > 0) {
+        entryPrice = currentPrice;
+        pos.avg_entry_price = currentPrice.toString();
+        updatePosition({
+          position_id: pos.id,
+          avg_entry_price: currentPrice.toString(),
+        }).catch(() => {});
+      }
 
-        let pnlDisplay = '+0.0%';
-        let emoji = '⚪';
-        let pnlStyle: BtnStyle | undefined = undefined; // undefined = default grey button
+      let pnlDisplay = '+0.0%';
+      let emoji = '⚪';
+      let pnlStyle: BtnStyle | undefined = undefined;
 
-        if (currentPrice > 0 && entryPrice > 0) {
-          const pnlPctNum = ((currentPrice - entryPrice) / entryPrice) * 100;
-          // Profit tiers: 🔥 500%+, 🚀 100%+, 🟢 profit, 🔴 loss, ⚪ flat
-          if (pnlPctNum > 0) {
-            pnlStyle = 'success';
-            if (pnlPctNum >= 500) emoji = '🔥';
-            else if (pnlPctNum >= 100) emoji = '🚀';
-            else emoji = '🟢';
-          } else if (pnlPctNum < 0) {
-            pnlStyle = 'danger';
-            emoji = '🔴';
-          } else {
-            emoji = '⚪';
-          }
-          pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
-        } else if (currentPrice > 0 && entryPrice <= 0) {
-          pnlDisplay = '+0.0%';
-          emoji = '⚪';
+      if (currentPrice > 0 && entryPrice > 0) {
+        const pnlPctNum = ((currentPrice - entryPrice) / entryPrice) * 100;
+        if (pnlPctNum > 0) {
+          pnlStyle = 'success';
+          if (pnlPctNum >= 500) emoji = '🔥';
+          else if (pnlPctNum >= 100) emoji = '🚀';
+          else emoji = '🟢';
+        } else if (pnlPctNum < 0) {
+          pnlStyle = 'danger';
+          emoji = '🔴';
         } else {
-          pnlDisplay = 'N/A';
           emoji = '⚪';
         }
-
-        // Buttons-only list: per-token details render when the user taps the
-        // token button (token_detail:<id>) — keeps the holdings view scannable.
-        // Button color follows PNL: green profit, red loss, grey flat/unknown.
-        const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
-        const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
-        buttons.push([cb(cappedLabel, `token_detail:${pos.id}`, pnlStyle)]);
+        pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
+      } else if (currentPrice > 0 && entryPrice <= 0) {
+        pnlDisplay = '+0.0%';
+        emoji = '⚪';
+      } else {
+        pnlDisplay = 'N/A';
+        emoji = '⚪';
       }
 
-      // Add remaining positions value to total portfolio USD
-      for (const pos of positions.slice(MAX_DISPLAY_HOLDINGS)) {
-        const info = infoMap.get(pos.token_address);
-        const currentPrice = info ? parseFloat(info.price) : 0;
-        const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
-        const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
-        const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
-        const nativeUsdRate = isStarknetPos
-          ? (info?.strk_usd || 0.12)
-          : isSuiPos
-          ? (info?.sui_usd || 2.0)
-          : (info?.near_usd || 4.3);
-        const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
-        try {
-          const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-          totalPortfolioValueUsd += tokenPriceUsd * (Number(rawBig) / Math.pow(10, decimals));
-        } catch { /* no-op */ }
+      const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
+      const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
+
+      return {
+        pos,
+        cappedLabel,
+        pnlStyle,
+        tokenValueUsd,
+      };
+    });
+
+    // Pagination: 10 tokens per page
+    const PAGE_SIZE = 10;
+    const totalPositions = computedPositions.length;
+    const totalPages = Math.max(1, Math.ceil(totalPositions / PAGE_SIZE));
+    const currentPage = Math.min(Math.max(0, page), totalPages - 1);
+    const startIdx = currentPage * PAGE_SIZE;
+    const pageItems = computedPositions.slice(startIdx, startIdx + PAGE_SIZE);
+
+    const buttons: any[] = [];
+    for (const item of pageItems) {
+      buttons.push([cb(item.cappedLabel, `token_detail:${item.pos.id}`, item.pnlStyle)]);
+    }
+
+    // Pagination navigation row
+    if (totalPages > 1) {
+      const navRow: any[] = [];
+      if (currentPage > 0) {
+        navRow.push(Markup.button.callback('◀️ Prev', `holdings_page:${currentPage - 1}`));
       }
+      navRow.push(Markup.button.callback(`📄 ${currentPage + 1}/${totalPages}`, `holdings_page:${currentPage}`));
+      if (currentPage < totalPages - 1) {
+        navRow.push(Markup.button.callback('Next ▶️', `holdings_page:${currentPage + 1}`));
+      }
+      buttons.push(navRow);
+    }
 
-      const totalUsdDisplay = totalPortfolioValueUsd >= 1000 ? `$${(totalPortfolioValueUsd / 1000).toFixed(2)}K` : `$${totalPortfolioValueUsd.toFixed(2)}`;
+    const totalUsdDisplay = totalPortfolioValueUsd >= 1000
+      ? `$${(totalPortfolioValueUsd / 1000).toFixed(2)}K`
+      : `$${totalPortfolioValueUsd.toFixed(2)}`;
 
-      const overflowNote = remainingCount > 0
-        ? `_... and ${remainingCount} more token(s) held in your wallet._\n\n`
-        : '';
+    const pageHeader = totalPages > 1 ? ` (Page ${currentPage + 1}/${totalPages})` : '';
+    const msg =
+      `💼 *Holdings (${totalPositions})*${pageHeader}\n` +
+      `💰 Total: \`${totalUsdDisplay}\`\n\n` +
+      `_Tap a token below to view details & trade._`;
 
-      const msg =
-        `💼 *Holdings (${positions.length})*\n` +
-        `💰 Total: \`${totalUsdDisplay}\`\n\n` +
-        overflowNote +
-        `_Tap a token below to view details & trade._`;
+    buttons.push([
+      Markup.button.callback('🔄 Refresh', `refresh_holdings:${currentPage}`),
+      Markup.button.callback('🔙 Back', 'menu_home'),
+      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
+    ]);
+    buttons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+    ]);
 
-      buttons.push([
-        Markup.button.callback('🔄 Refresh', 'refresh_holdings'),
-        Markup.button.callback('🔙 Back', 'menu_home'),
-        Markup.button.callback('➕ Import Token', 'import_token_prompt'),
-      ]);
-      buttons.push([
-        Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
-        Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
-        Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-      ]);
-
-      const keyboard = Markup.inlineKeyboard(buttons);
-      return { msg, keyboard };
+    const keyboard = Markup.inlineKeyboard(buttons);
+    return { msg, keyboard };
   }
 
   // ── Helper: Render & Display Holdings — instant paint + background reconcile ─
-  // 1. Paint immediately from DB + cached prices (no waiting on wallet scan).
-  // 2. In the background, scan the wallet for deposits/sales, refresh prices,
-  //    and patch the painted message only if something actually changed.
-  async function handleHoldings(ctx: Context, isRefresh = false) {
+  async function handleHoldings(ctx: Context, isRefresh = false, page = 0) {
     const telegramId = ctx.from!.id;
     try {
       const user = await getUserByTelegramId(telegramId);
@@ -4325,15 +4315,7 @@ export function setupRoutes(bot: Telegraf): void {
         await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing & scanning wallet...' : '💼 Loading holdings...').catch(() => {});
       }
 
-      const fingerprintOf = (v: { msg: string; keyboard: any }) =>
-        v.msg + '|' + JSON.stringify(
-          (v.keyboard?.reply_markup?.inline_keyboard ?? []).map((row: any[]) => row.map((b: any) => b.text))
-        );
-
       if (isRefresh) {
-        if (typeof (ctx as any).answerCbQuery === 'function') {
-          await (ctx as any).answerCbQuery('🔄 Refreshing holdings...').catch(() => {});
-        }
         // Run live wallet deposit scan bounded to 4.5s so RPC latency never delays the user view
         await Promise.race([
           syncUserTokenDeposits(user.id, user.subaccount_id, true),
@@ -4344,8 +4326,8 @@ export function setupRoutes(bot: Telegraf): void {
 
         // Bounded view build (max 6s) with fallback to cached DB view
         const view = await Promise.race([
-          buildHoldingsView(user, true),
-          new Promise<any>((resolve) => setTimeout(() => resolve(buildHoldingsView(user, false)), 6000)),
+          buildHoldingsView(user, true, page),
+          new Promise<any>((resolve) => setTimeout(() => resolve(buildHoldingsView(user, false, page)), 6000)),
         ]);
 
         const canEditMsg = typeof (ctx as any).editMessageText === 'function';
@@ -4362,7 +4344,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // 1. Instant paint from DB + cached prices for initial view
-      const view = await buildHoldingsView(user, false);
+      const view = await buildHoldingsView(user, false, page);
       let paintedChatId: number | undefined;
       let paintedMessageId: number | undefined;
 
@@ -4408,16 +4390,36 @@ export function setupRoutes(bot: Telegraf): void {
   // ── menu_holdings — Token list with name/logo and % change ────────────────
   bot.action('menu_holdings', async (ctx) => {
     try {
-      await handleHoldings(ctx, false);
+      await handleHoldings(ctx, false, 0);
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
   });
 
-  bot.action(['refresh_holdings', 'menu_holdings_refresh'], async (ctx) => {
+  bot.action(/^holdings_page:(\d+)$/, async (ctx) => {
+    try {
+      const page = parseInt(ctx.match![1], 10) || 0;
+      await (ctx as any).answerCbQuery?.().catch(() => {});
+      await handleHoldings(ctx, false, page);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^refresh_holdings(?::(\d+))?$/, async (ctx) => {
+    try {
+      const page = ctx.match?.[1] ? parseInt(ctx.match[1], 10) : 0;
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await handleHoldings(ctx, true, page);
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action('menu_holdings_refresh', async (ctx) => {
     try {
       await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
-      await handleHoldings(ctx, true);
+      await handleHoldings(ctx, true, 0);
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -4425,7 +4427,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.command(['holdings', 'bags', 'positions'], async (ctx) => {
     try {
-      await handleHoldings(ctx, true);
+      await handleHoldings(ctx, true, 0);
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -4443,7 +4445,10 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         '📝 *Import Token*\n\n' +
         'Please paste the token contract address (CA) you want to import.\n\n' +
-        'Example: `token.near` or `nearfi-e29a8e.nearpadfamily.near`\n\n' +
+        'Supported chains:\n' +
+        '• *NEAR*: `token.near` or contract account ID\n' +
+        '• *SUI*: `0x...::coin::COIN`\n' +
+        '• *Starknet*: `0x0...`\n\n' +
         '_Send the address within 2 minutes to import it into your holdings._',
         { parse_mode: 'Markdown' }
       ).catch(() => {});
@@ -8748,9 +8753,181 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        const validatingMsg = await ctx.reply(`🔍 *Validating Token contract:* \`${tokenCA}\`...`, { parse_mode: 'Markdown' }).catch(() => null);
+        const validatingMsg = await ctx.reply(`🔍 *Validating Token:* \`${tokenCA}\`...`, { parse_mode: 'Markdown' }).catch(() => null);
 
-        // Step 1: Validate NEP-141 contract via ft_metadata
+        // Chain detection:
+        const isSuiTok = isSuiToken(tokenCA);
+        const isStarknetTok = isStarknetToken(tokenCA) || isValidStarknetAddress(tokenCA);
+
+        if (isSuiTok) {
+          if (!user.sui_address) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply('❌ No SUI wallet found. Please run /wallet first.');
+            return;
+          }
+          let metadata: any;
+          try {
+            metadata = await getSuiTokenMetadata(tokenCA);
+          } catch (err: any) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`❌ *Invalid SUI Token*\n\nCould not fetch metadata for \`${tokenCA}\`.`);
+            return;
+          }
+          let balanceRes: any;
+          try {
+            balanceRes = await getSuiTokenBalance(user.sui_address, tokenCA);
+          } catch (err: any) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`❌ *Balance Check Failed*\n\nCould not query SUI balance for \`${tokenCA}\`.`);
+            return;
+          }
+          if (balanceRes.raw <= 0n) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`⚠️ *Zero Balance*\n\nYour SUI wallet has a balance of *0 ${metadata.symbol || 'tokens'}* on-chain.`);
+            return;
+          }
+          let currentPrice = 0;
+          try {
+            const tokenInfo = await getTokenInfo(tokenCA);
+            currentPrice = tokenInfo?.price ? parseFloat(tokenInfo.price) : 0;
+          } catch {}
+          const decimals = metadata.decimals ?? 9;
+          const humanBal = (Number(balanceRes.raw) / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+          const existingPositions = await getOpenPositions(user.id).catch(() => []);
+          const existing = existingPositions.find(p => p.token_address === tokenCA && p.chain === 'sui');
+          if (existing) {
+            await updatePosition({
+              position_id: existing.id,
+              quantity_held: balanceRes.raw.toString(),
+            });
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(
+              `🔄 *Position Refreshed!*\n\n` +
+              `Token: *${metadata.name} (${metadata.symbol})*\n` +
+              `Address: \`${tokenCA}\`\n\n` +
+              `Balance refreshed to: *${humanBal} ${metadata.symbol}*`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+                  [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+                ]),
+              }
+            );
+            return;
+          }
+
+          await createPosition({
+            user_id: user.id,
+            chain: 'sui',
+            token_address: tokenCA,
+            quantity_held: balanceRes.raw.toString(),
+            avg_entry_price: currentPrice.toString(),
+          });
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `✅ *SUI Token Successfully Imported!*\n\n` +
+            `Token: *${metadata.name} (${metadata.symbol})*\n` +
+            `Address: \`${tokenCA}\`\n` +
+            `Balance: *${humanBal} ${metadata.symbol}*\n\n` +
+            `_Token is now tracked in your holdings._`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+                [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+              ]),
+            }
+          );
+          return;
+        }
+
+        if (isStarknetTok) {
+          if (!user.starknet_address) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply('❌ No Starknet wallet found. Please run /wallet first.');
+            return;
+          }
+          let metadata: any;
+          try {
+            metadata = await getStarknetTokenMetadata(tokenCA);
+          } catch (err: any) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`❌ *Invalid Starknet Token*\n\nCould not fetch metadata for \`${tokenCA}\`.`);
+            return;
+          }
+          let balanceRaw = 0n;
+          try {
+            balanceRaw = await getStarknetTokenBalance(user.starknet_address, tokenCA);
+          } catch (err: any) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`❌ *Balance Check Failed*\n\nCould not query Starknet balance for \`${tokenCA}\`.`);
+            return;
+          }
+          if (balanceRaw <= 0n) {
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(`⚠️ *Zero Balance*\n\nYour Starknet wallet has a balance of *0 ${metadata.symbol || 'tokens'}* on-chain.`);
+            return;
+          }
+          let currentPrice = 0;
+          try {
+            const tokenInfo = await getTokenInfo(tokenCA);
+            currentPrice = tokenInfo?.price ? parseFloat(tokenInfo.price) : 0;
+          } catch {}
+          const decimals = metadata.decimals ?? 18;
+          const humanBal = (Number(balanceRaw) / Math.pow(10, decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+          const existingPositions = await getOpenPositions(user.id).catch(() => []);
+          const existing = existingPositions.find(p => p.token_address === tokenCA && p.chain === 'starknet');
+          if (existing) {
+            await updatePosition({
+              position_id: existing.id,
+              quantity_held: balanceRaw.toString(),
+            });
+            if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+            await ctx.reply(
+              `🔄 *Position Refreshed!*\n\n` +
+              `Token: *${metadata.name} (${metadata.symbol})*\n` +
+              `Address: \`${tokenCA}\`\n\n` +
+              `Balance refreshed to: *${humanBal} ${metadata.symbol}*`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+                  [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+                ]),
+              }
+            );
+            return;
+          }
+
+          await createPosition({
+            user_id: user.id,
+            chain: 'starknet',
+            token_address: tokenCA,
+            quantity_held: balanceRaw.toString(),
+            avg_entry_price: currentPrice.toString(),
+          });
+          if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `✅ *Starknet Token Successfully Imported!*\n\n` +
+            `Token: *${metadata.name} (${metadata.symbol})*\n` +
+            `Address: \`${tokenCA}\`\n` +
+            `Balance: *${humanBal} ${metadata.symbol}*\n\n` +
+            `_Token is now tracked in your holdings._`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('📊 View Holdings', 'menu_holdings')],
+                [Markup.button.callback('💳 Open Wallet', 'menu_wallet')],
+              ]),
+            }
+          );
+          return;
+        }
+
+        // ── NEAR NEP-141 Fallback ───────────────────────────────────────────
         let metadata: any;
         try {
           metadata = await near.getTokenMetadata(tokenCA);
@@ -8761,15 +8938,13 @@ export function setupRoutes(bot: Telegraf): void {
           if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
           await ctx.reply(
             `❌ *Invalid Token Contract*\n\n` +
-            `Address \`${tokenCA}\` does not appear to be a valid NEP-141 contract.\n\n` +
+            `Address \`${tokenCA}\` does not appear to be a valid token contract.\n\n` +
             `_Details: ${sanitizeMd(err.message || 'Metadata query failed')}_`,
             { parse_mode: 'Markdown' }
           );
           return;
         }
 
-        // Step 2: Query user's real on-chain balance via ft_balance_of (pinned
-        // trade RPC — hedged read RPCs can lag a block and return stale balances)
         let balanceRaw = '0';
         try {
           balanceRaw = await near.getTokenBalanceOnTradeRpc(tokenCA, user.subaccount_id);
@@ -8794,27 +8969,22 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        // Step 3: Fetch current price for baseline cost basis
         let currentPrice = 0;
         let tokenInfo: any = null;
         try {
           tokenInfo = await getTokenInfo(tokenCA);
           currentPrice = tokenInfo?.price || 0;
-        } catch {
-          // If price lookup fails, currentPrice remains 0
-        }
+        } catch {}
 
         const decimals = metadata.decimals ?? 18;
         const humanBalance = (Number(balanceBigInt) / Math.pow(10, decimals)).toLocaleString(undefined, {
           maximumFractionDigits: 4,
         });
 
-        // Step 4: Check if position already exists for this user and token
         const existingPositions = await getOpenPositions(user.id).catch(() => []);
-        const existing = existingPositions.find(p => p.token_address === tokenCA);
+        const existing = existingPositions.find(p => p.token_address === tokenCA && (p.chain === 'near' || !p.chain));
 
         if (existing) {
-          // Update quantity_held without touching avg_entry_price
           await updatePosition({
             position_id: existing.id,
             quantity_held: balanceRaw,
@@ -8839,9 +9009,9 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        // Step 5: Create new position with quantity_held and current price baseline
         await createPosition({
           user_id: user.id,
+          chain: 'near',
           token_address: tokenCA,
           quantity_held: balanceRaw,
           avg_entry_price: currentPrice.toString(),
