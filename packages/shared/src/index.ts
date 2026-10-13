@@ -21,6 +21,7 @@ export {
   isValidNearAccountId,
   parseTokenUnits,
   formatTokenUnits,
+  withTimeout,
 } from './utils.js';
 
 // Structured logging

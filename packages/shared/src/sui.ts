@@ -5,6 +5,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { Aftermath } from 'aftermath-ts-sdk';
 import bs58 from 'bs58';
 import { encrypt, decrypt } from './crypto.js';
+import { withTimeout } from './utils.js';
 
 // ── Sui Constants ────────────────────────────────────────────────────────────
 
@@ -227,7 +228,7 @@ export async function getSuiBalance(address: string): Promise<SuiBalanceResult> 
 
   const client = getSuiClient();
   try {
-    const res = await client.getBalance({ owner: address });
+    const res = await withTimeout(client.getBalance({ owner: address }), 3500, 'Sui getBalance timeout');
     const mist = BigInt(res.totalBalance || '0');
     const sui = Number(mist) / 1e9;
     const result: SuiBalanceResult = {
@@ -241,7 +242,7 @@ export async function getSuiBalance(address: string): Promise<SuiBalanceResult> 
     // Retry once with rotated RPC on network failure
     try {
       const fallbackClient = rotateSuiRpc();
-      const res = await fallbackClient.getBalance({ owner: address });
+      const res = await withTimeout(fallbackClient.getBalance({ owner: address }), 3500, 'Sui fallback getBalance timeout');
       const mist = BigInt(res.totalBalance || '0');
       const sui = Number(mist) / 1e9;
       const result: SuiBalanceResult = { mist, sui, formatted: sui.toFixed(4) };
