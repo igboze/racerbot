@@ -115,6 +115,7 @@ import {
   restoreSuiKeypairFromSecret,
   isValidSuiAddress,
   isValidStarknetAddress,
+  withTimeout,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -667,10 +668,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // their user record exists, wallet subaccount is ready, and token share links can be generated
   if (!userRecord && telegramId) {
     try {
-      await onboardUser(telegramId);
+      await withTimeout(onboardUser(telegramId), 3000, 'auto-onboard timeout');
       userRecord = await getUserByTelegramId(telegramId).catch(() => null);
     } catch (err: any) {
-      console.warn('[buildTokenCard] Auto-onboard user failed:', err?.message);
+      console.warn('[buildTokenCard] Auto-onboard user failed or timed out:', err?.message);
     }
   }
 
@@ -9333,9 +9334,16 @@ export function setupRoutes(bot: Telegraf): void {
       const loadingMsg = await ctx.reply('🔍 Looking up token...').catch(() => null);
       let card;
       try {
-        card = await buildTokenCard(potentialCA.trim(), telegramId);
+        card = await withTimeout(
+          buildTokenCard(potentialCA.trim(), telegramId),
+          12000,
+          'The RPC request timed out — please try again'
+        );
+        prewarmTradePath(telegramId, potentialCA.trim()).catch(() => {});
+        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+        await sendTokenCard(ctx, card);
       } catch (err: any) {
-        console.warn(`[API] Token lookup failed for ${potentialCA}:`, err.message);
+        console.warn(`[API] Token lookup failed for ${potentialCA}:`, err?.message || err);
         if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
         await ctx.reply(
           `❌ Token not found: ${sanitizeMd(potentialCA)}\n\n` +
@@ -9343,17 +9351,9 @@ export function setupRoutes(bot: Telegraf): void {
           `• The contract address or URL is incorrect\n` +
           `• The token is on an unsupported chain or venue\n` +
           `• The RPC request timed out — please try again\n\n` +
-          `Error: ${sanitizeMd(err.message?.slice(0, 100) || 'Unknown error')}`
+          `Error: ${sanitizeMd(err?.message?.slice(0, 100) || 'Unknown error')}`
         );
-        return;
       }
-
-      // SPEED: prewarm the trade path (storage / Ref registration / pool-id
-      // caches) while the user reads the card. Never blocks the card.
-      prewarmTradePath(telegramId, potentialCA.trim()).catch(() => {});
-
-      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
-      await sendTokenCard(ctx, card);
       return;
     }
 

@@ -10,6 +10,7 @@ import {
 } from 'starknet';
 import { getQuotes, Quote } from '@avnu/avnu-sdk';
 import { encrypt, decrypt } from './crypto.js';
+import { withTimeout } from './utils.js';
 
 // ── Starknet Constants ───────────────────────────────────────────────────────
 
@@ -114,7 +115,7 @@ export function getStarknetRpcEndpoints(): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  return envList.length > 0 ? envList : FALLBACK_STARKNET_RPCS;
+  return Array.from(new Set([...envList, ...FALLBACK_STARKNET_RPCS]));
 }
 
 let activeRpcIndex = 0;
@@ -269,11 +270,15 @@ export async function getStarknetTokenBalance(
 ): Promise<bigint> {
   const provider = getStarknetProvider();
   try {
-    const res = await provider.callContract({
-      contractAddress: tokenAddress,
-      entrypoint: 'balanceOf',
-      calldata: CallData.compile({ account: ownerAddress }),
-    });
+    const res = await withTimeout(
+      provider.callContract({
+        contractAddress: tokenAddress,
+        entrypoint: 'balanceOf',
+        calldata: CallData.compile({ account: ownerAddress }),
+      }),
+      3500,
+      'Starknet balanceOf timeout'
+    );
 
     if (res && res.length >= 2) {
       // Cairo u256 is represented as { low: felt, high: felt }
@@ -285,17 +290,25 @@ export async function getStarknetTokenBalance(
     return 0n;
   } catch (err) {
     // If first endpoint fails, try rotate once
-    const fallbackProvider = rotateStarknetRpc();
-    const res = await fallbackProvider.callContract({
-      contractAddress: tokenAddress,
-      entrypoint: 'balanceOf',
-      calldata: CallData.compile({ account: ownerAddress }),
-    });
-    if (res && res.length >= 2) {
-      return uint256.uint256ToBN({ low: res[0], high: res[1] });
-    }
-    if (res && res.length === 1) {
-      return BigInt(res[0]);
+    try {
+      const fallbackProvider = rotateStarknetRpc();
+      const res = await withTimeout(
+        fallbackProvider.callContract({
+          contractAddress: tokenAddress,
+          entrypoint: 'balanceOf',
+          calldata: CallData.compile({ account: ownerAddress }),
+        }),
+        3500,
+        'Starknet fallback balanceOf timeout'
+      );
+      if (res && res.length >= 2) {
+        return uint256.uint256ToBN({ low: res[0], high: res[1] });
+      }
+      if (res && res.length === 1) {
+        return BigInt(res[0]);
+      }
+    } catch {
+      // Return 0n on fallback error
     }
     return 0n;
   }
