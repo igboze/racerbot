@@ -220,6 +220,7 @@ export {
   LAUNCHY_PROTECTION_WINDOW_SEC,
   normalizeStarknetAddress,
   isSameStarknetAddress,
+  isValidStarknetAddress,
   UNRUGGABLE_FACTORY_ADDRESS,
   USDC_TOKEN_ADDRESS,
   USDC_NATIVE_TOKEN_ADDRESS,

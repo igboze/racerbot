@@ -42,13 +42,16 @@ import {
   OZ_ACCOUNT_CLASS_HASH,
   TYPO_OZ_ACCOUNT_CLASS_HASH,
   invalidateStarknetBalanceCache,
+  isSameStarknetAddress,
+  isValidStarknetAddress,
+  computeStarknetAccountAddress,
   type GeneratedStarknetWallet,
   type VenueName,
   isTradableVenue,
 } from '@racerbot/shared';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
-import { CallData, uint256, ec } from 'starknet';
+import { CallData, uint256, ec, cairo } from 'starknet';
 import {
   getDb,
   createUser,
@@ -1766,6 +1769,19 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
  */
 export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRecord> {
   if (user.starknet_address && user.starknet_private_key_enc) {
+    try {
+      const priv = decrypt(user.starknet_private_key_enc, MASTER_KEY);
+      const pub = ec.starkCurve.getStarkKey(priv);
+      const typoAddr = computeStarknetAccountAddress(pub, TYPO_OZ_ACCOUNT_CLASS_HASH);
+      if (isSameStarknetAddress(user.starknet_address, typoAddr)) {
+        const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
+        console.log(`[STARKNET] Auto-migrating user ${user.id} address from typo hash to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
+        await updateUserStarknetWallet(user.id, canonicalAddr, user.starknet_private_key_enc);
+        user.starknet_address = canonicalAddr;
+      }
+    } catch {
+      // Key encryption mismatch or already valid
+    }
     return user;
   }
   const starknetWallet = generateStarknetWallet(MASTER_KEY);
@@ -2530,6 +2546,147 @@ export async function withdrawSuiFunds(
 }
 
 /**
+ * Withdraw native STRK, ETH, or any ERC-20 token on Starknet.
+ * Automatically deploys the OpenZeppelin account contract if not yet deployed on-chain,
+ * validates destination felt252 address, deducts gas reserve for native STRK/ETH,
+ * signs and executes the ERC-20 transfer, and invalidates balance caches.
+ */
+export async function withdrawStarknetFunds(
+  telegramId: number,
+  destination: string,
+  amount?: number | 'all',
+  tokenAddressInput: string = STRK_TOKEN_ADDRESS
+): Promise<{
+  txHash: string;
+  amountWithdrawn: string;
+  symbol: string;
+  destination: string;
+  tokenAddress: string;
+}> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user || !user.starknet_address || !user.starknet_private_key_enc) {
+    throw new Error('Starknet wallet not configured. Please initialize your wallet via /start.');
+  }
+
+  destination = destination.trim();
+  if (!isValidStarknetAddress(destination)) {
+    throw new Error('Invalid destination Starknet address. Must be a valid 0x... hex address.');
+  }
+  if (isSameStarknetAddress(destination, user.starknet_address)) {
+    throw new Error('Cannot withdraw to your own wallet address.');
+  }
+
+  const rawToken = tokenAddressInput.trim().toLowerCase();
+  const isStrk = rawToken === 'strk' || isSameStarknetAddress(rawToken, STRK_TOKEN_ADDRESS);
+  const isEth = rawToken === 'eth' || isSameStarknetAddress(rawToken, ETH_TOKEN_ADDRESS);
+  const canonicalToken = isStrk ? STRK_TOKEN_ADDRESS : (isEth ? ETH_TOKEN_ADDRESS : tokenAddressInput.trim());
+
+  const metadata = await getStarknetTokenMetadata(canonicalToken);
+  const decimals = metadata.decimals ?? 18;
+  const symbol = metadata.symbol || (isStrk ? 'STRK' : (isEth ? 'ETH' : 'TOKEN'));
+
+  const provider = getStarknetProvider();
+  const privateKeySecret = decrypt(user.starknet_private_key_enc, MASTER_KEY);
+  const userAddress = user.starknet_address;
+  const account = getStarknetAccount(privateKeySecret, userAddress, provider);
+
+  // Check if account is deployed on-chain; auto-deploy if needed
+  let isDeployed = false;
+  try {
+    const classHash = await provider.getClassHashAt(userAddress);
+    if (classHash) isDeployed = true;
+  } catch {
+    isDeployed = false;
+  }
+
+  if (!isDeployed) {
+    const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+    const expectedAddress = computeStarknetAccountAddress(publicKey);
+
+    if (!isSameStarknetAddress(expectedAddress, userAddress)) {
+      throw new Error(
+        `Your Starknet wallet (${userAddress.slice(0, 10)}...) has a legacy address configuration that cannot be deployed on-chain.\n` +
+        `Please contact support or generate a fresh wallet with /newstarknet.`
+      );
+    }
+
+    console.log(`[STARKNET_WITHDRAW] Account ${userAddress} is undeployed on-chain. Auto-deploying OpenZeppelin Account contract...`);
+    const deployRes = await account.deployAccount({
+      classHash: OZ_ACCOUNT_CLASS_HASH,
+      constructorCalldata: CallData.compile({ publicKey }),
+      addressSalt: publicKey,
+    });
+    await provider.waitForTransaction(deployRes.transaction_hash, { retryInterval: 1500 });
+    console.log(`[STARKNET_WITHDRAW] Account ${userAddress} successfully deployed!`);
+  }
+
+  // Check token balance
+  const currentBal = await getStarknetTokenBalance(userAddress, canonicalToken);
+  if (currentBal <= 0n) {
+    throw new Error(`You have 0 ${symbol} in your Starknet wallet.`);
+  }
+
+  // Reserve gas fee if withdrawing native STRK
+  const gasReserve = isStrk ? 50_000_000_000_000_000n : 0n; // 0.05 STRK
+  let rawWithdrawAmount: bigint;
+
+  if (!amount || amount === 'all') {
+    if (isStrk) {
+      if (currentBal <= gasReserve) {
+        throw new Error(`Insufficient STRK balance to withdraw. At least 0.05 STRK must remain for transaction gas.`);
+      }
+      rawWithdrawAmount = currentBal - gasReserve;
+    } else {
+      rawWithdrawAmount = currentBal;
+    }
+  } else {
+    rawWithdrawAmount = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+    if (isStrk && rawWithdrawAmount + gasReserve > currentBal) {
+      const maxWithdrawable = (Number(currentBal - gasReserve) / 1e18).toFixed(4);
+      throw new Error(`Amount exceeds maximum withdrawable balance (${maxWithdrawable} STRK after gas reserve).`);
+    } else if (!isStrk && rawWithdrawAmount > currentBal) {
+      const maxWithdrawable = (Number(currentBal) / Math.pow(10, decimals)).toFixed(4);
+      throw new Error(`Amount exceeds available balance (${maxWithdrawable} ${symbol}).`);
+    }
+  }
+
+  if (rawWithdrawAmount <= 0n) {
+    throw new Error('Withdrawal amount must be greater than 0.');
+  }
+
+  // Execute transfer
+  console.log(`[STARKNET_WITHDRAW] Transferring ${rawWithdrawAmount} units of ${symbol} from ${userAddress} to ${destination}...`);
+  const transferCall = {
+    contractAddress: canonicalToken,
+    entrypoint: 'transfer',
+    calldata: CallData.compile({
+      recipient: destination,
+      amount: cairo.uint256(rawWithdrawAmount),
+    }),
+  };
+
+  const txRes = await account.execute([transferCall]);
+  await provider.waitForTransaction(txRes.transaction_hash, { retryInterval: 1500 }).catch((e) => {
+    console.warn(`[STARKNET_WITHDRAW] waitForTransaction non-fatal warning:`, e?.message);
+  });
+
+  // Evict balance cache
+  invalidateStarknetBalanceCache(userAddress);
+  invalidateStarknetBalanceCache(canonicalToken);
+  balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
+
+  const formattedWithdrawn = formatTokenBalance(rawWithdrawAmount, decimals);
+  return {
+    txHash: txRes.transaction_hash,
+    amountWithdrawn: formattedWithdrawn,
+    symbol,
+    destination,
+    tokenAddress: canonicalToken,
+  };
+}
+
+/**
  * Withdraw / send NEP-141 or SUI token from user's wallet to an external destination address.
  * Automatically checks recipient storage registration (for NEAR NEP-141) and registers them if needed,
  * validates user balance, converts human amounts according to token decimals, and updates position quantities.
@@ -2545,7 +2702,7 @@ export async function withdrawTokenFunds(
   symbol: string;
   tokenAddress: string;
   destination: string;
-  chain: 'near' | 'sui';
+  chain: 'near' | 'sui' | 'starknet';
 }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -2586,6 +2743,33 @@ export async function withdrawTokenFunds(
 
   const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
   const isSuiTok = isSuiToken(resolvedAddress);
+
+  // Check Starknet
+  const isStarknetDest = isValidStarknetAddress(destination) && !destination.endsWith('.near');
+  const isStarknetTok =
+    matchingPos?.chain === 'starknet' ||
+    resolvedAddress.toLowerCase() === 'strk' ||
+    resolvedAddress.toLowerCase() === 'eth' ||
+    isSameStarknetAddress(resolvedAddress, STRK_TOKEN_ADDRESS) ||
+    isSameStarknetAddress(resolvedAddress, ETH_TOKEN_ADDRESS) ||
+    (resolvedAddress.startsWith('0x') && !resolvedAddress.includes('::') && !isSuiTok);
+
+  if (isStarknetTok || (isStarknetDest && !isSuiTok && !isSuiDest)) {
+    const starknetRes = await withdrawStarknetFunds(
+      telegramId,
+      destination,
+      amount as any,
+      resolvedAddress
+    );
+    return {
+      txHash: starknetRes.txHash,
+      amountWithdrawn: starknetRes.amountWithdrawn,
+      symbol: starknetRes.symbol,
+      tokenAddress: starknetRes.tokenAddress,
+      destination: starknetRes.destination,
+      chain: 'starknet',
+    };
+  }
 
   if (isSuiDest || isSuiTok) {
     // ── SUI Token Withdrawal ────────────────────────────────────────────────
