@@ -3400,6 +3400,28 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         console.warn(`[DEPOSIT] Sui syncUserTokenDeposits error: ${suiErr?.message}`);
       }
     }
+
+    // ── 5. Reconcile Starknet Token Holdings ──────────────────────────────────
+    if (user?.starknet_address) {
+      try {
+        const starknetPositions = existingPositions.filter(p => p.chain === 'starknet' || isStarknetToken(p.token_address));
+        for (const pos of starknetPositions) {
+          try {
+            const bal = await getStarknetTokenBalance(user.starknet_address, pos.token_address);
+            if (bal > 0n && bal.toString() !== pos.quantity_held) {
+              await updatePosition({
+                position_id: pos.id,
+                quantity_held: bal.toString(),
+              });
+            }
+          } catch {
+            // Ignore temporary RPC error
+          }
+        }
+      } catch (starkErr: any) {
+        console.warn(`[DEPOSIT] Starknet syncUserTokenDeposits error: ${starkErr?.message}`);
+      }
+    }
   } catch (err: any) {
     console.warn(`[DEPOSIT] syncUserTokenDeposits error: ${err.message}`);
   }
