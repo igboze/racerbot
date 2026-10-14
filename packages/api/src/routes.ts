@@ -138,6 +138,7 @@ import {
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
+import { checkUserDepositNow, markUserActiveForDeposit } from './depositWatcher.js';
 
 export function isGroupChat(ctx: { chat?: { type?: string } }): boolean {
   const type = ctx.chat?.type;
@@ -463,6 +464,8 @@ export function formatHoldingQuantity(quantityHeld: string, decimals = 18): stri
 
 // ── Helper: Build Wallet Menu ────────────────────────────────────────────────
 export async function buildWalletMenu(telegramId: number, forceRefresh = false) {
+  markUserActiveForDeposit(telegramId);
+  checkUserDepositNow(telegramId).catch(() => {});
   const b = await getUserBalances(telegramId, forceRefresh);
   const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);

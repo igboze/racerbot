@@ -419,8 +419,8 @@ export async function notifyDeposit(
 
   const dedupKey = `native:${telegramId}:${params.chain}:${params.amount}`;
   const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
-  if (Date.now() - lastSent < 300_000) {
-    return; // Suppress duplicate alert within 5 minutes
+  if (Date.now() - lastSent < 10_000) {
+    return; // Suppress duplicate alert within 10 seconds
   }
   recentDepositNotifyCache.set(dedupKey, Date.now());
 
@@ -475,8 +475,8 @@ export async function notifyTokenDeposit(
 
   const dedupKey = `token:${telegramId}:${params.chain || 'near'}:${params.tokenSymbol}:${params.amountFormatted}`;
   const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
-  if (Date.now() - lastSent < 300_000) {
-    return; // Suppress duplicate alert within 5 minutes
+  if (Date.now() - lastSent < 10_000) {
+    return; // Suppress duplicate alert within 10 seconds
   }
   recentDepositNotifyCache.set(dedupKey, Date.now());
 

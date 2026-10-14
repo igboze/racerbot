@@ -40,6 +40,10 @@ export interface UserRecord {
   username: string | null;
   /** Whether the user's net worth (investment / unrealized value) is shown on shared PNL cards by default. */
   show_net_worth_on_card: boolean;
+  last_near_balance?: number | null;
+  last_sui_balance?: number | null;
+  last_strk_balance?: number | null;
+  last_balance_check_at?: Date | null;
   created_at: Date;
 }
 
@@ -1609,8 +1613,37 @@ function rowToUser(row: any): UserRecord {
     referral_code: row.referral_code,
     username: row.username,
     show_net_worth_on_card: row.show_net_worth_on_card !== false, // defaults true
+    last_near_balance: row.last_near_balance != null ? parseFloat(row.last_near_balance) : null,
+    last_sui_balance: row.last_sui_balance != null ? parseFloat(row.last_sui_balance) : null,
+    last_strk_balance: row.last_strk_balance != null ? parseFloat(row.last_strk_balance) : null,
+    last_balance_check_at: row.last_balance_check_at ? new Date(row.last_balance_check_at) : null,
     created_at: row.created_at,
   };
+}
+
+export async function updateUserLastBalances(
+  userId: string,
+  balances: { near?: number | null; sui?: number | null; strk?: number | null }
+): Promise<void> {
+  const db = await getDb();
+  const sets: string[] = ['last_balance_check_at = NOW()'];
+  const vals: any[] = [userId];
+  if (balances.near !== undefined) {
+    vals.push(balances.near);
+    sets.push(`last_near_balance = $${vals.length}`);
+  }
+  if (balances.sui !== undefined) {
+    vals.push(balances.sui);
+    sets.push(`last_sui_balance = $${vals.length}`);
+  }
+  if (balances.strk !== undefined) {
+    vals.push(balances.strk);
+    sets.push(`last_strk_balance = $${vals.length}`);
+  }
+  await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, vals).catch((err: any) => {
+    console.warn('[DB] updateUserLastBalances error:', err?.message);
+  });
+  invalidateUserCache(userId);
 }
 
 // ── Volume stats (admin daily update) ───────────────────────────────────────
