@@ -1476,36 +1476,52 @@ function generateShortSlug(length = 8): string {
 export async function getOrCreateTokenShare(referrerId: string, tokenAddress: string): Promise<string> {
   const db = await getDb();
   const cleanToken = tokenAddress.trim().toLowerCase();
+  const encodedCa = cleanToken.replace(/\./g, '--');
+
+  // Fetch referrer user details to build deterministic, readable ref code
+  const userRes = await db.query('SELECT referral_code, username FROM users WHERE id = $1', [referrerId]);
+  const user = userRes.rows[0];
+  const refCode = user?.referral_code || user?.username || referrerId;
+  const targetCode = `ref_${refCode}_-${encodedCa}`;
+
   // Check if an existing share code already exists for this user and token
   const existing = await db.query(
     'SELECT code FROM token_shares WHERE referrer_id = $1 AND LOWER(token_address) = $2',
     [referrerId, cleanToken]
   );
   if (existing.rows.length > 0) {
-    return existing.rows[0].code;
-  }
-
-  // Create new unique code
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = `t_${generateShortSlug(8)}`;
+    const currentCode = existing.rows[0].code;
+    if (currentCode.startsWith('ref_')) {
+      return currentCode;
+    }
+    // Update old t_ code to the new readable format
     try {
-      const res = await db.query(
-        `INSERT INTO token_shares (id, code, token_address, referrer_id, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (referrer_id, token_address) DO UPDATE SET referrer_id = EXCLUDED.referrer_id
-         RETURNING code`,
-        [generateId(), code, cleanToken, referrerId]
+      await db.query(
+        'UPDATE token_shares SET code = $1 WHERE referrer_id = $2 AND LOWER(token_address) = $3',
+        [targetCode, referrerId, cleanToken]
       );
-      return res.rows[0].code;
-    } catch (err: any) {
-      // Code collision - retry with new random slug
-      if (err.code === '23505' && err.constraint === 'token_shares_code_key') {
-        continue;
-      }
-      throw err;
+      return targetCode;
+    } catch {
+      return currentCode;
     }
   }
-  throw new Error('Failed to generate unique token share code');
+
+  // Create new readable token share record
+  try {
+    const res = await db.query(
+      `INSERT INTO token_shares (id, code, token_address, referrer_id, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (referrer_id, token_address) DO UPDATE SET code = EXCLUDED.code
+       RETURNING code`,
+      [generateId(), targetCode, cleanToken, referrerId]
+    );
+    return res.rows[0].code;
+  } catch (err: any) {
+    if (err.code === '23505') {
+      return targetCode;
+    }
+    throw err;
+  }
 }
 
 export async function getTokenShareByCode(code: string): Promise<TokenShareRecord | null> {
