@@ -8,42 +8,66 @@
   <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
   <link rel="apple-touch-icon" href="/assets/logo.png">
   <meta property="og:title" content="RacerBot — On-Chain Trading Competitions & Snapshot Arena">
-  <meta property="og:description" content="Compete in live on-chain volume sprints, earn Racer Points for snapshot airdrops, and explore institutional trading tournaments on NEAR.">
+  <meta property="og:description" content="Sub-second execution, automated sniping, and on-chain snapshot leaderboard on NEAR Protocol.">
   <meta property="og:image" content="/assets/racerbot-banner.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;436;452;484;496;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
+    /* ── Adyen Design System Tokens ────────────────────────────────────────── */
     :root {
-      --color-canvas: #090d1a;
-      --color-surface: #0e1532;
-      --color-surface-hover: #141f45;
-      --color-surface-raised: #131b3e;
-      --color-surface-subtle: #0a0f24;
-      --color-hairline: rgba(106, 204, 220, 0.12);
-      --color-hairline-strong: rgba(106, 204, 220, 0.28);
-      
-      --color-cyan: #6accdc;
-      --color-cyan-glow: rgba(106, 204, 220, 0.25);
-      --color-purple: #7860a9;
-      --color-purple-light: #9d84d6;
-      --color-mint: #00d16a;
-      --color-mint-glow: rgba(0, 209, 106, 0.2);
+      /* Adyen Core Colors */
+      --color-primary: #00d16a;              /* Adyen single mint voltage (CTA, indicator dot, underline) */
+      --color-primary-hover: #00ba5e;
+      --color-canvas-dark: #001222;          /* Adyen signature navy-leaning near-black */
+      --color-canvas: #001222;               /* Base dark canvas */
+      --color-surface-1: #0d1e2e;            /* Gradient overlay & base card surface */
+      --color-surface-2: #1a2b3b;            /* Elevated card surface */
+      --color-surface-3: #2f3e4d;            /* Divider rules and structural borders */
+      --color-surface-light: #f4f5f6;        /* Light card surface */
+      --color-surface-sand: #e6e4e2;         /* Warm off-white card surface */
+
+      /* Typography & Ink Ladder */
+      --color-ink: #001222;                  /* Text on light canvas */
+      --color-ink-strong: #ffffff;           /* Text on dark canvas */
+      --color-ink-soft: #5c6874;             /* Secondary body text */
+      --color-ink-muted: #6c7782;            /* Sub-labels and muted lead text */
+      --color-ink-tertiary: #8c959d;         /* Captions and annotations */
+      --color-hairline: #2f3e4d;             /* Hairline border tone */
+      --color-hairline-light: #d1d5d8;
+      --color-shadow: #000000;
+
+      /* RacerBot Brand Accents */
+      --color-racer-cyan: #6accdc;           /* Logo top speed trails */
+      --color-racer-violet: #7860a9;         /* Logo bottom lightning bolt */
       --color-gold: #f59e0b;
       --color-silver: #94a3b8;
       --color-bronze: #d97706;
 
-      --color-ink-strong: #ffffff;
-      --color-ink: #c8d3e8;
-      --color-ink-subtle: #7a8ba8;
-      --color-ink-faint: #435474;
-
+      /* Single 6px Radius Scale (Adyen Specification) */
+      --radius-none: 0px;
+      --radius-sm: 5px;
+      --radius-md: 6px;
       --radius: 6px;
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+      /* Typography: Variable-Axis Weights */
+      --font-sans: 'Inter', Helvetica, Arial, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
-      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+      /* Spacing Scale on 24px Base */
+      --spacing-xs: 6px;
+      --spacing-sm: 8px;
+      --spacing-base: 12px;
+      --spacing-md: 16px;
+      --spacing-lg: 24px;
+      --spacing-xl: 48px;
+      --spacing-2xl: 72px;
+
+      /* Motion */
+      --ease-adyen: cubic-bezier(0.19, 1, 0.22, 1);
+      --dur-fast: 160ms;
     }
 
     * {
@@ -54,10 +78,11 @@
     }
 
     html, body {
-      background: var(--color-canvas);
-      color: var(--color-ink);
+      background-color: var(--color-canvas-dark);
+      color: var(--color-ink-strong);
       font-family: var(--font-sans);
-      font-size: 14px;
+      font-size: 16px;
+      font-weight: 484;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
@@ -67,40 +92,22 @@
       width: 100%;
     }
 
-    /* Background glow effect */
-    body::before {
-      content: '';
-      position: fixed;
-      top: -200px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 900px;
-      max-width: 100vw;
-      height: 450px;
-      background: radial-gradient(circle, rgba(120, 96, 169, 0.15) 0%, rgba(106, 204, 220, 0.08) 50%, transparent 80%);
-      pointer-events: none;
-      z-index: 0;
-    }
-
     a {
-      color: var(--color-cyan);
+      color: inherit;
       text-decoration: none;
-      transition: color 150ms var(--ease);
-    }
-    a:hover {
-      color: #9fe2ec;
+      transition: color var(--dur-fast) var(--ease-adyen);
     }
 
-    /* ── Header ───────────────────────────────────────────────────────────── */
+    /* ── Top Navigation (Adyen 60px, near-black #001222) ─────────────────── */
     .site-header {
       position: sticky;
       top: 0;
       z-index: 50;
-      height: 56px;
-      background: rgba(14, 21, 50, 0.88);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--color-hairline);
+      height: 60px;
+      background: rgba(0, 18, 34, 0.94);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--color-surface-3);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -111,17 +118,19 @@
     .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       text-decoration: none;
+      cursor: pointer;
       flex-shrink: 0;
     }
 
     .brand-logo {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      border: 1px solid var(--color-cyan);
-      box-shadow: 0 0 12px var(--color-cyan-glow);
+      width: 34px;
+      height: 34px;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--color-surface-3);
+      background: var(--color-surface-1);
       display: block;
       object-fit: cover;
       flex-shrink: 0;
@@ -133,188 +142,198 @@
     }
 
     .brand-title {
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 700;
-      letter-spacing: 0.06em;
-      color: var(--color-ink-strong);
-      font-family: var(--font-mono);
+      letter-spacing: 0.05em;
+      color: #ffffff;
       display: flex;
       align-items: center;
       gap: 6px;
       white-space: nowrap;
     }
 
-    .brand-badge {
-      font-size: 9px;
-      font-weight: 700;
+    .brand-subtitle {
+      font-family: var(--font-mono);
+      font-size: 10px;
       letter-spacing: 0.08em;
+      color: var(--color-racer-cyan);
       text-transform: uppercase;
-      padding: 2px 5px;
-      background: rgba(106, 204, 220, 0.14);
-      color: var(--color-cyan);
-      border-radius: var(--radius);
-      border: 1px solid rgba(106, 204, 220, 0.3);
+      font-weight: 500;
+      line-height: 1;
+      margin-top: 2px;
     }
 
     .header-nav {
       display: flex;
       align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    /* Adyen Buttons (strictly 6px radius, Mint #00d16a voltage) */
+    .btn-adyen-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       gap: 8px;
-      flex-shrink: 0;
-    }
-
-    .btn-header {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      height: 32px;
-      padding: 0 12px;
-      border-radius: var(--radius);
-      font-size: 12px;
+      height: 48px;
+      padding: 0 20px;
+      background-color: var(--color-primary);
+      color: var(--color-canvas-dark);
+      font-family: var(--font-sans);
+      font-size: 15px;
       font-weight: 600;
+      letter-spacing: 0;
+      border-radius: var(--radius-md);
+      border: none;
       cursor: pointer;
-      border: 1px solid var(--color-hairline);
-      background: var(--color-surface);
-      color: var(--color-ink-strong);
-      transition: all 160ms var(--ease);
-      font-family: var(--font-mono);
       white-space: nowrap;
+      transition: opacity var(--dur-fast) var(--ease-adyen), transform var(--dur-fast) var(--ease-adyen);
     }
-    .btn-header:hover {
-      background: var(--color-surface-hover);
-      border-color: var(--color-cyan);
+    .btn-adyen-primary:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
     }
-    .btn-header.primary {
-      background: var(--color-cyan);
-      color: #090d1a;
-      border-color: var(--color-cyan);
-      box-shadow: 0 0 14px var(--color-cyan-glow);
-    }
-    .btn-header.primary:hover {
-      background: #7be1f0;
-      box-shadow: 0 0 20px rgba(106, 204, 220, 0.4);
+    .btn-adyen-primary:active {
+      transform: translateY(0);
     }
 
-    .live-beacon {
+    .btn-adyen-secondary {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      font-family: var(--font-mono);
-      font-weight: 600;
-      color: var(--color-mint);
-      padding: 4px 10px;
-      background: rgba(0, 209, 106, 0.1);
-      border: 1px solid rgba(0, 209, 106, 0.25);
-      border-radius: var(--radius);
+      justify-content: center;
+      gap: 8px;
+      height: 48px;
+      padding: 0 18px;
+      background-color: transparent;
+      color: #ffffff;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      font-weight: 484;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-surface-3);
+      cursor: pointer;
       white-space: nowrap;
+      transition: all var(--dur-fast) var(--ease-adyen);
     }
-    .live-beacon .dot {
-      width: 6px;
-      height: 6px;
-      background: var(--color-mint);
-      border-radius: 50%;
-      box-shadow: 0 0 8px var(--color-mint);
-      animation: pulse 1.8s infinite;
-      flex-shrink: 0;
+    .btn-adyen-secondary:hover {
+      background-color: var(--color-surface-2);
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.85); }
+    .btn-header-cta {
+      height: 38px;
+      padding: 0 16px;
+      font-size: 13.5px;
+      font-weight: 600;
+    }
+    .btn-header-sub {
+      height: 38px;
+      padding: 0 14px;
+      font-size: 13px;
     }
 
-    /* ── Main Layout ──────────────────────────────────────────────────────── */
+    /* ── Main Container ───────────────────────────────────────────────────── */
     .container {
       max-width: 1240px;
       margin: 0 auto;
-      padding: 28px 24px 80px;
+      padding: 40px 24px 80px;
       position: relative;
       z-index: 1;
       width: 100%;
     }
 
-    /* ── Hero Section ─────────────────────────────────────────────────────── */
-    .hero-eyebrow {
+    /* ── Adyen Signature Monospace Eyebrow Strip + Square Indicator Dot ──── */
+    .mono-eyebrow-strip {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--color-cyan);
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
-    .hero-eyebrow::before {
-      content: '';
+
+    .indicator-dot {
       width: 8px;
       height: 8px;
-      background: var(--color-cyan);
-      border-radius: 2px;
-      display: inline-block;
+      background-color: var(--color-primary);
+      border-radius: var(--radius-none); /* 8px sharp square strictly required */
       flex-shrink: 0;
     }
 
-    .hero-title {
-      font-size: 32px;
-      font-weight: 700;
-      color: var(--color-ink-strong);
-      letter-spacing: -0.02em;
-      line-height: 1.2;
-      margin-bottom: 10px;
-    }
-    .hero-title span {
-      background: linear-gradient(135deg, #6accdc 0%, #9d84d6 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+    .mono-eyebrow-text {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 13.44px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: #ffffff;
     }
 
-    .hero-subtitle {
-      font-size: 15px;
-      color: var(--color-ink-subtle);
-      max-width: 780px;
-      margin-bottom: 24px;
+    /* Hero Typography */
+    .hero-h1 {
+      font-size: clamp(28px, 4vw, 54px);
+      font-weight: 452; /* Adyen variable-axis display weight */
+      line-height: 1.12;
+      letter-spacing: 0;
+      color: #ffffff;
+      margin-bottom: 16px;
+      max-width: 880px;
     }
 
-    /* ── Privacy Callout ──────────────────────────────────────────────────── */
+    .brand-underline {
+      border-bottom: 2.5px solid var(--color-primary);
+      padding-bottom: 2px;
+      color: #ffffff;
+    }
+
+    .hero-lead {
+      font-size: clamp(15px, 1.8vw, 19px);
+      font-weight: 496; /* Adyen heading-md weight */
+      line-height: 27px;
+      letter-spacing: 0;
+      color: var(--color-ink-muted);
+      max-width: 760px;
+      margin-bottom: 32px;
+    }
+
+    /* ── Privacy Callout (Navy Surface-1, 6px radius) ─────────────────────── */
     .privacy-notice {
       display: flex;
       align-items: center;
       gap: 12px;
-      background: rgba(14, 21, 50, 0.7);
-      border: 1px solid rgba(120, 96, 169, 0.35);
-      border-radius: var(--radius);
-      padding: 12px 18px;
-      margin-bottom: 24px;
-      box-shadow: inset 0 0 20px rgba(120, 96, 169, 0.08);
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 14px 20px;
+      margin-bottom: 32px;
     }
     .privacy-icon {
-      font-size: 18px;
+      font-size: 16px;
       flex-shrink: 0;
-      color: var(--color-purple-light);
+      color: var(--color-racer-cyan);
       display: flex;
       align-items: center;
     }
     .privacy-text {
-      font-size: 12px;
-      color: var(--color-ink);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--color-ink-soft);
     }
     .privacy-text strong {
-      color: var(--color-cyan);
+      color: #ffffff;
       font-weight: 600;
     }
 
-    /* ── Navigation Tabs ──────────────────────────────────────────────────── */
+    /* ── Segment Navigation Tabs (6px radius) ─────────────────────────────── */
     .tabs-strip {
       display: flex;
       align-items: center;
       gap: 8px;
-      border-bottom: 1px solid var(--color-hairline);
-      margin-bottom: 28px;
+      border-bottom: 1px solid var(--color-surface-3);
+      margin-bottom: 32px;
       overflow-x: auto;
-      padding-bottom: 1px;
+      padding-bottom: 2px;
       -webkit-overflow-scrolling: touch;
     }
 
@@ -322,39 +341,40 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 16px;
+      padding: 10px 18px;
       font-family: var(--font-mono);
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--color-ink-subtle);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--color-ink-muted);
       background: transparent;
       border: none;
       border-bottom: 2px solid transparent;
       cursor: pointer;
       white-space: nowrap;
-      transition: all 160ms var(--ease);
+      transition: all var(--dur-fast) var(--ease-adyen);
       flex-shrink: 0;
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
     }
     .tab-btn:hover {
-      color: var(--color-ink-strong);
+      color: #ffffff;
     }
     .tab-btn.active {
-      color: var(--color-cyan);
-      border-bottom-color: var(--color-cyan);
-      background: rgba(106, 204, 220, 0.05);
-      border-top-left-radius: var(--radius);
-      border-top-right-radius: var(--radius);
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      background: rgba(0, 209, 106, 0.05);
     }
     .tab-btn .tab-badge {
-      font-size: 9px;
-      padding: 1px 6px;
-      border-radius: var(--radius);
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--color-ink);
+      font-size: 9.5px;
+      padding: 2px 6px;
+      border-radius: var(--radius-md);
+      background: var(--color-surface-2);
+      color: #ffffff;
+      border: 1px solid var(--color-surface-3);
     }
     .tab-btn.active .tab-badge {
-      background: rgba(106, 204, 220, 0.2);
-      color: var(--color-cyan);
+      background: rgba(0, 209, 106, 0.15);
+      color: var(--color-primary);
+      border-color: rgba(0, 209, 106, 0.3);
     }
 
     /* ── Tab Panes ────────────────────────────────────────────────────────── */
@@ -363,7 +383,7 @@
     }
     .tab-pane.active {
       display: block;
-      animation: fadeIn 200ms var(--ease);
+      animation: fadeIn 220ms var(--ease-adyen);
     }
 
     @keyframes fadeIn {
@@ -371,35 +391,24 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* ── Stat Card Grid ───────────────────────────────────────────────────── */
+    /* ── Stat Card Grid (Adyen Surface-1, 6px radius, #2f3e4d border) ─────── */
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 16px;
-      margin-bottom: 28px;
+      margin-bottom: 32px;
     }
 
     .stat-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      padding: 18px 20px;
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 20px 22px;
       position: relative;
-      overflow: hidden;
-      transition: border-color 160ms var(--ease);
+      transition: border-color var(--dur-fast) var(--ease-adyen);
     }
     .stat-card:hover {
-      border-color: var(--color-hairline-strong);
-    }
-    .stat-card::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, var(--color-cyan), transparent);
-      opacity: 0.6;
+      border-color: rgba(255, 255, 255, 0.25);
     }
 
     .stat-label {
@@ -408,8 +417,8 @@
       font-weight: 500;
       letter-spacing: 0.05em;
       text-transform: uppercase;
-      color: var(--color-ink-subtle);
-      margin-bottom: 6px;
+      color: var(--color-ink-muted);
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -417,28 +426,28 @@
 
     .stat-value {
       font-family: var(--font-mono);
-      font-size: 24px;
+      font-size: 26px;
       font-weight: 700;
-      color: var(--color-ink-strong);
+      color: #ffffff;
       letter-spacing: -0.02em;
     }
-    .stat-value.cyan { color: var(--color-cyan); }
-    .stat-value.mint { color: var(--color-mint); }
+    .stat-value.mint { color: var(--color-primary); }
+    .stat-value.cyan { color: var(--color-racer-cyan); }
     .stat-value.gold { color: var(--color-gold); }
 
     .stat-sub {
-      font-size: 11px;
-      color: var(--color-ink-subtle);
-      margin-top: 4px;
+      font-size: 12px;
+      color: var(--color-ink-soft);
+      margin-top: 6px;
     }
 
-    /* ── Content Card ─────────────────────────────────────────────────────── */
+    /* ── Section Cards (Adyen Surface-1, 6px radius) ──────────────────────── */
     .card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      padding: 24px;
-      margin-bottom: 24px;
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 28px;
+      margin-bottom: 28px;
       width: 100%;
     }
 
@@ -446,26 +455,18 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 14px;
     }
 
     .card-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--color-ink-strong);
+      font-size: 18px;
+      font-weight: 600;
+      color: #ffffff;
       display: flex;
       align-items: center;
       gap: 8px;
-      font-family: var(--font-mono);
-    }
-    .card-title .dot {
-      width: 8px;
-      height: 8px;
-      background: var(--color-cyan);
-      border-radius: 2px;
-      flex-shrink: 0;
     }
 
     .card-actions {
@@ -474,42 +475,41 @@
       gap: 10px;
     }
 
-    /* ── Search Input ─────────────────────────────────────────────────────── */
+    /* Search Input (Strict 6px radius) */
     .search-box {
       position: relative;
       display: flex;
       align-items: center;
     }
     .search-input {
-      background: var(--color-surface-subtle);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      padding: 7px 12px 7px 32px;
-      font-size: 12px;
+      background: var(--color-canvas-dark);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 9px 14px 9px 34px;
+      font-size: 13px;
       font-family: var(--font-mono);
-      color: var(--color-ink-strong);
-      width: 260px;
-      transition: all 150ms var(--ease);
+      color: #ffffff;
+      width: 280px;
+      outline: none;
+      transition: border-color var(--dur-fast) var(--ease-adyen);
     }
     .search-input:focus {
-      outline: none;
-      border-color: var(--color-cyan);
-      box-shadow: 0 0 10px var(--color-cyan-glow);
+      border-color: var(--color-primary);
     }
     .search-icon {
       position: absolute;
-      left: 10px;
+      left: 11px;
       font-size: 13px;
-      color: var(--color-ink-subtle);
+      color: var(--color-ink-muted);
       pointer-events: none;
     }
 
     /* ── Table Styles (Desktop) ───────────────────────────────────────────── */
     .table-container {
       overflow-x: auto;
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      background: var(--color-surface-subtle);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      background: var(--color-canvas-dark);
       width: 100%;
       -webkit-overflow-scrolling: touch;
     }
@@ -518,26 +518,26 @@
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      font-size: 13px;
+      font-size: 13.5px;
     }
 
     table.data-table th {
       font-family: var(--font-mono);
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       letter-spacing: 0.05em;
       text-transform: uppercase;
-      color: var(--color-ink-subtle);
-      background: var(--color-surface);
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--color-hairline);
+      color: var(--color-ink-muted);
+      background: var(--color-surface-1);
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--color-surface-3);
       white-space: nowrap;
     }
 
     table.data-table td {
-      padding: 14px 16px;
-      border-bottom: 1px solid rgba(106, 204, 220, 0.06);
-      color: var(--color-ink);
+      padding: 15px 18px;
+      border-bottom: 1px solid rgba(47, 62, 77, 0.4);
+      color: var(--color-ink-soft);
       vertical-align: middle;
       white-space: nowrap;
     }
@@ -547,7 +547,8 @@
     }
 
     table.data-table tr:hover td {
-      background: var(--color-surface-hover);
+      background: rgba(26, 43, 59, 0.4);
+      color: #ffffff;
     }
 
     .rank-cell {
@@ -559,9 +560,9 @@
       gap: 6px;
     }
     .rank-medal {
-      width: 22px;
-      height: 22px;
-      border-radius: var(--radius);
+      width: 24px;
+      height: 24px;
+      border-radius: var(--radius-md);
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -576,20 +577,20 @@
     .wallet-cell {
       font-family: var(--font-mono);
       font-weight: 500;
-      color: var(--color-ink-strong);
+      color: #ffffff;
       display: flex;
       align-items: center;
       gap: 8px;
     }
     .wallet-link {
-      color: var(--color-ink-strong);
+      color: #ffffff;
       text-decoration: none;
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 6px;
     }
     .wallet-link:hover {
-      color: var(--color-cyan);
+      color: var(--color-primary);
     }
     .wallet-addr-text {
       white-space: nowrap;
@@ -598,35 +599,27 @@
     }
 
     .copy-btn {
-      background: transparent;
-      border: none;
-      color: var(--color-ink-subtle);
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-surface-3);
+      color: var(--color-ink-muted);
       cursor: pointer;
-      padding: 4px 6px;
-      border-radius: 4px;
-      font-size: 12px;
+      padding: 3px 6px;
+      border-radius: var(--radius-md);
+      font-size: 11px;
       line-height: 1;
-      transition: all 120ms var(--ease);
+      transition: all var(--dur-fast) var(--ease-adyen);
       flex-shrink: 0;
-      min-width: 24px;
-      min-height: 24px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
     }
     .copy-btn:hover {
-      color: var(--color-cyan);
-      background: rgba(106, 204, 220, 0.12);
-    }
-    .copy-btn:active {
-      transform: scale(0.92);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.3);
     }
 
     .points-cell {
       font-family: var(--font-mono);
       font-weight: 700;
-      font-size: 14px;
-      color: var(--color-cyan);
+      font-size: 15px;
+      color: var(--color-primary);
     }
 
     .badge-tier {
@@ -635,10 +628,10 @@
       gap: 4px;
       font-size: 10px;
       font-family: var(--font-mono);
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
-      padding: 2px 7px;
-      border-radius: var(--radius);
+      padding: 3px 8px;
+      border-radius: var(--radius-md);
       letter-spacing: 0.04em;
       white-space: nowrap;
     }
@@ -649,39 +642,38 @@
     }
     .badge-tier.diamond {
       background: rgba(106, 204, 220, 0.15);
-      color: var(--color-cyan);
+      color: var(--color-racer-cyan);
       border: 1px solid rgba(106, 204, 220, 0.3);
     }
     .badge-tier.pro {
-      background: rgba(157, 132, 214, 0.15);
-      color: var(--color-purple-light);
-      border: 1px solid rgba(157, 132, 214, 0.3);
+      background: rgba(120, 96, 169, 0.15);
+      color: #bfa5eb;
+      border: 1px solid rgba(120, 96, 169, 0.3);
     }
     .badge-tier.active {
-      background: rgba(255, 255, 255, 0.07);
-      color: var(--color-ink-subtle);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: var(--color-surface-2);
+      color: var(--color-ink-soft);
+      border: 1px solid var(--color-surface-3);
     }
 
-    /* ── Progress Bar ─────────────────────────────────────────────────────── */
+    /* Progress Bar */
     .progress-bar-wrap {
       width: 100%;
-      height: 10px;
-      background: rgba(255, 255, 255, 0.06);
-      border-radius: var(--radius);
+      height: 8px;
+      background: var(--color-surface-3);
+      border-radius: var(--radius-md);
       overflow: hidden;
-      margin: 12px 0 8px;
+      margin: 14px 0 8px;
       position: relative;
     }
     .progress-bar-fill {
       height: 100%;
-      background: linear-gradient(90deg, var(--color-purple) 0%, var(--color-cyan) 100%);
-      border-radius: var(--radius);
-      transition: width 400ms var(--ease);
-      box-shadow: 0 0 12px var(--color-cyan-glow);
+      background: var(--color-primary);
+      border-radius: var(--radius-md);
+      transition: width 400ms var(--ease-adyen);
     }
 
-    /* ── Competition Formats Grid ─────────────────────────────────────────── */
+    /* ── Competition Formats Grid (Adyen Card Style) ───────────────────────── */
     .formats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -689,87 +681,77 @@
     }
 
     .format-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      padding: 24px;
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 26px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       position: relative;
-      transition: all 180ms var(--ease);
+      transition: all var(--dur-fast) var(--ease-adyen);
     }
     .format-card:hover {
-      border-color: var(--color-cyan);
+      border-color: rgba(255, 255, 255, 0.3);
       transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    }
-
-    .format-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: 12px;
     }
 
     .format-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: var(--radius);
-      background: rgba(106, 204, 220, 0.1);
-      border: 1px solid rgba(106, 204, 220, 0.25);
+      width: 42px;
+      height: 42px;
+      border-radius: var(--radius-md);
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-surface-3);
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 20px;
-      color: var(--color-cyan);
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
 
     .format-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--color-ink-strong);
-      margin-bottom: 6px;
-      font-family: var(--font-mono);
+      font-size: 17px;
+      font-weight: 600;
+      color: #ffffff;
+      margin-bottom: 8px;
     }
 
     .format-desc {
-      font-size: 13px;
-      color: var(--color-ink-subtle);
+      font-size: 13.5px;
+      color: var(--color-ink-soft);
       line-height: 1.6;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
 
     .format-tags {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
 
     .format-tag {
       font-size: 11px;
       font-family: var(--font-mono);
-      padding: 2px 8px;
-      border-radius: var(--radius);
-      background: var(--color-surface-subtle);
-      border: 1px solid var(--color-hairline);
-      color: var(--color-ink);
+      padding: 3px 8px;
+      border-radius: var(--radius-md);
+      background: var(--color-canvas-dark);
+      border: 1px solid var(--color-surface-3);
+      color: var(--color-ink-muted);
     }
 
     .format-footer {
-      border-top: 1px solid var(--color-hairline);
-      padding-top: 14px;
+      border-top: 1px solid var(--color-surface-3);
+      padding-top: 16px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 11.5px;
       gap: 8px;
     }
 
-    /* ── How to Earn Points Section ───────────────────────────────────────── */
+    /* ── How to Earn Points Section (Adyen Card Ladder) ───────────────────── */
     .rules-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -778,100 +760,63 @@
     }
 
     .rule-box {
-      background: var(--color-surface-subtle);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius);
-      padding: 16px 18px;
+      background: var(--color-canvas-dark);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
     }
     .rule-pts {
       font-family: var(--font-mono);
       font-size: 18px;
       font-weight: 700;
-      color: var(--color-mint);
-      margin-bottom: 4px;
+      color: var(--color-primary);
+      margin-bottom: 6px;
     }
     .rule-title {
       font-weight: 600;
-      color: var(--color-ink-strong);
+      color: #ffffff;
       margin-bottom: 4px;
-      font-size: 13px;
+      font-size: 14px;
     }
     .rule-desc {
-      font-size: 12px;
-      color: var(--color-ink-subtle);
+      font-size: 12.5px;
+      color: var(--color-ink-soft);
       line-height: 1.5;
     }
 
-    /* ── Host a Competition CTA ───────────────────────────────────────────── */
+    /* ── Host a Competition Banner (Adyen Promo Band) ──────────────────────── */
     .host-banner {
-      background: linear-gradient(135deg, rgba(14, 21, 50, 0.95) 0%, rgba(19, 27, 62, 0.95) 100%);
-      border: 1px solid var(--color-hairline-strong);
-      border-radius: var(--radius);
-      padding: 32px;
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-surface-3);
+      border-radius: var(--radius-md);
+      padding: 36px 32px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 24px;
       flex-wrap: wrap;
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
     }
 
     .host-content {
-      max-width: 640px;
-    }
-    .host-eyebrow {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--color-cyan);
-      margin-bottom: 6px;
+      max-width: 660px;
     }
     .host-title {
-      font-size: 22px;
-      font-weight: 700;
-      color: var(--color-ink-strong);
-      margin-bottom: 8px;
+      font-size: 24px;
+      font-weight: 484; /* Adyen display weight */
+      color: #ffffff;
+      margin-bottom: 10px;
     }
     .host-desc {
-      font-size: 13px;
-      color: var(--color-ink-subtle);
+      font-size: 14px;
+      color: var(--color-ink-muted);
       line-height: 1.6;
     }
 
-    .host-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      height: 42px;
-      padding: 0 24px;
-      background: var(--color-cyan);
-      color: #090d1a;
-      border: 1px solid var(--color-cyan);
-      border-radius: var(--radius);
-      font-size: 13px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      cursor: pointer;
-      box-shadow: 0 0 20px var(--color-cyan-glow);
-      transition: all 160ms var(--ease);
-      white-space: nowrap;
-    }
-    .host-btn:hover {
-      background: #7fe4f2;
-      box-shadow: 0 0 28px rgba(106, 204, 220, 0.5);
-      transform: translateY(-1px);
-    }
-    .host-btn:active {
-      transform: scale(0.98);
-    }
-
-    /* ── Empty & Loading States ───────────────────────────────────────────── */
+    /* ── Empty State ──────────────────────────────────────────────────────── */
     .empty-state {
       text-align: center;
       padding: 40px 20px;
-      color: var(--color-ink-subtle);
+      color: var(--color-ink-muted);
       font-family: var(--font-mono);
       font-size: 13px;
       width: 100%;
@@ -883,69 +828,59 @@
     @media (max-width: 768px) {
       .site-header {
         height: auto;
-        min-height: 52px;
-        padding: max(6px, env(safe-area-inset-top, 0px)) 12px 6px;
+        min-height: 54px;
+        padding: max(6px, env(safe-area-inset-top, 0px)) 14px 6px;
         gap: 8px;
       }
       .brand {
         gap: 8px;
       }
       .brand-logo {
-        width: 28px;
-        height: 28px;
+        width: 30px;
+        height: 30px;
       }
       .brand-title {
-        font-size: 13px;
-        letter-spacing: 0.04em;
+        font-size: 13.5px;
       }
-      .brand-badge {
+      .brand-subtitle {
         display: none;
       }
-      .live-beacon {
-        padding: 4px 6px;
+      .btn-header-cta {
+        height: 34px;
+        padding: 0 12px;
+        font-size: 12px;
       }
-      .live-beacon .beacon-text {
-        display: none;
-      }
-      .btn-header {
-        padding: 0 8px;
-        height: 32px;
-        font-size: 11px;
-        gap: 4px;
+      .btn-header-sub {
+        height: 34px;
+        padding: 0 10px;
+        font-size: 12px;
       }
       .container {
-        padding: 16px 12px calc(48px + env(safe-area-inset-bottom, 0px));
+        padding: 20px 14px calc(48px + env(safe-area-inset-bottom, 0px));
       }
-      .hero-eyebrow {
-        font-size: 10px;
-        margin-bottom: 8px;
+      .hero-h1 {
+        font-size: clamp(22px, 6.5vw, 32px);
+        margin-bottom: 12px;
       }
-      .hero-title {
-        font-size: clamp(20px, 6vw, 26px);
-        margin-bottom: 8px;
-      }
-      .hero-subtitle {
-        font-size: 13px;
-        line-height: 1.5;
-        margin-bottom: 16px;
+      .hero-lead {
+        font-size: 14px;
+        line-height: 22px;
+        margin-bottom: 20px;
       }
       .privacy-notice {
-        padding: 10px 12px;
-        gap: 8px;
-        margin-bottom: 18px;
-      }
-      .privacy-icon {
-        font-size: 16px;
+        padding: 12px 14px;
+        gap: 10px;
+        margin-bottom: 20px;
       }
       .privacy-text {
-        font-size: 11px;
-        line-height: 1.4;
+        font-size: 11.5px;
+        line-height: 1.45;
       }
 
       /* Tabs Strip: Mobile Kinetic Scrolling */
       .tabs-strip {
-        margin: 0 -12px 18px -12px;
-        padding: 0 12px 2px 12px;
+        margin: 0 -14px 20px -14px;
+        padding: 0 14px 2px 14px;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
@@ -960,31 +895,27 @@
         font-size: 11.5px;
         flex-shrink: 0;
       }
-      .tab-btn .tab-badge {
-        font-size: 8.5px;
-        padding: 1px 4px;
-      }
 
       /* 2x2 Mobile Stat Dashboard */
       .stat-grid {
         grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-        margin-bottom: 18px;
+        gap: 10px;
+        margin-bottom: 20px;
       }
       .stat-card {
-        padding: 12px 10px;
+        padding: 14px 12px;
       }
       .stat-label {
-        font-size: 9px;
+        font-size: 9.5px;
         margin-bottom: 4px;
       }
       .stat-value {
-        font-size: 16px;
+        font-size: 18px;
         line-height: 1.2;
       }
       .stat-sub {
-        font-size: 9.5px;
-        margin-top: 2px;
+        font-size: 10px;
+        margin-top: 3px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -992,17 +923,17 @@
 
       /* Card Content & Search on Mobile */
       .card {
-        padding: 16px 12px;
-        margin-bottom: 16px;
+        padding: 18px 14px;
+        margin-bottom: 18px;
       }
       .card-header {
         flex-direction: column;
         align-items: flex-start;
-        gap: 10px;
-        margin-bottom: 14px;
+        gap: 12px;
+        margin-bottom: 16px;
       }
       .card-title {
-        font-size: 14px;
+        font-size: 15px;
       }
       .card-actions {
         width: 100%;
@@ -1012,8 +943,8 @@
       }
       .search-input {
         width: 100%;
-        height: 38px;
-        font-size: 16px; /* 16px prevents iOS Safari unwanted auto-zoom */
+        height: 42px;
+        font-size: 16px; /* Prevents iOS auto-zoom on input focus */
       }
 
       /* ── Native Mobile Card Transformation for Leaderboard Tables ── */
@@ -1040,16 +971,12 @@
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        background: var(--color-surface);
-        border: 1px solid var(--color-hairline);
-        border-radius: var(--radius);
-        padding: 10px 12px;
+        background: var(--color-surface-1);
+        border: 1px solid var(--color-surface-3);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
         gap: 6px 8px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         transition: transform 140ms ease;
-      }
-      table.data-table tr:active {
-        transform: scale(0.99);
       }
       table.data-table tr:hover td {
         background: transparent;
@@ -1066,11 +993,11 @@
       .col-wallet {
         order: 2;
         flex: 1;
-        min-width: 110px;
+        min-width: 120px;
       }
       .wallet-addr-text {
-        max-width: 130px;
-        font-size: 11.5px;
+        max-width: 135px;
+        font-size: 12px;
         display: inline-block;
       }
       .col-points {
@@ -1079,7 +1006,7 @@
         text-align: right !important;
       }
       .col-points .points-cell {
-        font-size: 14px;
+        font-size: 15px;
       }
       .col-tier {
         order: 4;
@@ -1087,114 +1014,116 @@
       }
       .col-events {
         order: 5;
-        font-size: 10.5px !important;
+        font-size: 11px !important;
       }
       .col-share {
         order: 6;
         margin-left: auto;
-        font-size: 10.5px !important;
+        font-size: 11px !important;
+        color: var(--color-primary) !important;
       }
 
       /* Competition Formats & Rules */
       .formats-grid {
         grid-template-columns: 1fr;
-        gap: 12px;
+        gap: 14px;
       }
       .format-card {
-        padding: 16px 14px;
+        padding: 18px 16px;
       }
       .rules-grid {
         grid-template-columns: 1fr;
         gap: 10px;
       }
       .rule-box {
-        padding: 12px 14px;
+        padding: 14px 16px;
       }
 
       /* Host Banner */
       .host-banner {
-        padding: 20px 14px;
+        padding: 22px 16px;
         gap: 16px;
       }
       .host-title {
-        font-size: 18px;
+        font-size: 20px;
       }
       .host-btn {
         width: 100%;
         justify-content: center;
-        height: 42px;
+        height: 46px;
       }
     }
 
     /* Smallest Mobile Devices (< 380px: iPhone SE, Galaxy Fold outer screen) */
     @media (max-width: 380px) {
-      .btn-header .btn-text {
+      .btn-header-sub .btn-text {
         display: none;
       }
-      .btn-header {
-        padding: 0 6px;
-        width: 32px;
+      .btn-header-sub {
+        padding: 0 8px;
+        width: 34px;
         justify-content: center;
       }
       .wallet-addr-text {
         max-width: 95px;
       }
       .stat-value {
-        font-size: 14px;
-      }
-      .stat-grid {
-        gap: 6px;
+        font-size: 15px;
       }
     }
   </style>
 </head>
 <body>
 
-  <!-- Top Navigation Header -->
+  <!-- Top Navigation Header (Adyen 60px Specification) -->
   <header class="site-header">
     <a href="/" class="brand">
       <img src="/assets/logo.png" alt="RacerBot" class="brand-logo" onerror="this.style.display='none'">
       <div class="brand-text">
-        <span class="brand-title">RACERBOT <span class="brand-badge">NEAR</span></span>
+        <span class="brand-title">RACERBOT</span>
+        <span class="brand-subtitle">NEAR TRADING ENGINE</span>
       </div>
     </a>
 
     <div class="header-nav">
-      <div class="live-beacon">
-        <span class="dot"></span>
-        <span class="beacon-text">LIVE</span>
-      </div>
-      <a href="/bubblemap" class="btn-header" title="Bubble Map">
+      <a href="/bubblemap" class="btn-adyen-secondary btn-header-sub" title="Bubble Map">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/></svg>
         <span class="btn-text">Bubble Map</span>
       </a>
-      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary" title="Open Telegram Bot">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.19-.08-.05-.19-.02-.27 0-.12.03-1.99 1.27-5.63 3.72-.53.36-1.01.54-1.44.53-.47-.01-1.38-.27-2.06-.49-.83-.27-1.49-.42-1.43-.88.03-.24.38-.49 1.04-.75 4.07-1.77 6.79-2.94 8.16-3.51 3.89-1.62 4.7-.19 4.7 1.07z"/></svg>
-        <span class="btn-text">Trade Bot</span>
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-adyen-primary btn-header-cta" title="Talk to our bot">
+        <span>Talk to our bot</span>
       </a>
     </div>
   </header>
 
   <div class="container">
     
-    <!-- Hero Header -->
-    <div class="hero-eyebrow">On-Chain Competitions & Snapshot Epochs</div>
-    <h1 class="hero-title">RacerBot <span>Competition Arena</span></h1>
-    <p class="hero-subtitle">
-      Explore live on-chain trading competitions, participate in verified point snapshot epochs, and win protocol prizes on NEAR.
+    <!-- Adyen Signature Monospace Eyebrow with 8px Square Indicator Dot -->
+    <div class="mono-eyebrow-strip">
+      <span class="indicator-dot"></span>
+      <span class="mono-eyebrow-text">INTELLIGENT MONEY MOVEMENT</span>
+    </div>
+
+    <!-- Hero Heading (Adyen 452 Weight + Mint Underline + Editorial Period) -->
+    <h1 class="hero-h1">
+      On-chain competition you can <span class="brand-underline">bank on</span>.
+    </h1>
+
+    <p class="hero-lead">
+      Participate in verified point snapshot epochs, compete in live on-chain volume sprints, and win non-custodial protocol bounties across NEAR Protocol.
     </p>
 
-    <!-- Privacy Callout -->
+    <!-- Privacy Callout (Navy Surface-1, Strict Wallet + Points Only) -->
     <div class="privacy-notice">
       <div class="privacy-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       </div>
       <div class="privacy-text">
-        <strong>Privacy-Preserving Leaderboard:</strong> Telegram usernames are strictly confidential and omitted. Rankings and snapshot rewards are matched solely against verified NEAR on-chain wallet addresses and earned points.
+        <strong>Privacy-Preserving Architecture:</strong> Telegram usernames are strictly omitted. Rankings and prize snapshot allocations are tied solely to verified NEAR on-chain wallet addresses and recorded points.
       </div>
     </div>
 
-    <!-- Navigation Tabs (Touch-friendly kinetic ribbon) -->
+    <!-- Navigation Tabs (6px Radius) -->
     <div class="tabs-strip">
       <button class="tab-btn active" onclick="switchTab('snapshot')">
         <span>Snapshot Arena</span>
@@ -1223,10 +1152,10 @@
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-label">
-            <span>Snapshot</span>
-            <span>Epoch 01</span>
+            <span>Snapshot Epoch</span>
+            <span>01</span>
           </div>
-          <div class="stat-value cyan">Season 1</div>
+          <div class="stat-value">Season 1</div>
           <div class="stat-sub">Automated snapshots on NEAR</div>
         </div>
 
@@ -1236,12 +1165,12 @@
             <span>All-Time</span>
           </div>
           <div class="stat-value mint" id="stat-total-points">—</div>
-          <div class="stat-sub">Trading, snipes & activity</div>
+          <div class="stat-sub">Trading volume & sniper executions</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">
-            <span>Active Racers</span>
+            <span>Active Point Racers</span>
             <span>On-Chain</span>
           </div>
           <div class="stat-value" id="stat-active-racers">—</div>
@@ -1250,7 +1179,7 @@
 
         <div class="stat-card">
           <div class="stat-label">
-            <span>Top Racer</span>
+            <span>Top Score</span>
             <span>#1 Leader</span>
           </div>
           <div class="stat-value gold" id="stat-top-score">—</div>
@@ -1262,13 +1191,13 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">
-            <span class="dot"></span>
+            <span class="indicator-dot"></span>
             <span>Verified Snapshot Points Leaderboard</span>
           </div>
           <div class="card-actions">
             <div class="search-box">
               <span class="search-icon">🔍</span>
-              <input type="text" id="snapshot-search" class="search-input" placeholder="Filter wallet (e.g. .near)..." oninput="filterSnapshotTable()">
+              <input type="text" id="snapshot-search" class="search-input" placeholder="Filter wallet address (e.g. .near)..." oninput="filterSnapshotTable()">
             </div>
           </div>
         </div>
@@ -1294,16 +1223,16 @@
         </div>
       </div>
 
-      <!-- How Snapshot Points Are Earned -->
+      <!-- How Snapshot Points Are Earned (Adyen Card Ladder) -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
-            <span class="dot" style="background: var(--color-mint);"></span>
-            <span>How to Earn Snapshot Points & Airdrop Multipliers</span>
+            <span class="indicator-dot"></span>
+            <span>How to Earn Snapshot Points & Airdrop Multipliers.</span>
           </div>
         </div>
-        <p style="color: var(--color-ink-subtle); font-size: 13px; margin-bottom: 14px;">
-          Every transaction executed through RacerBot on NEAR Protocol is recorded to the immutable points ledger. Top ranked wallets at the snapshot cutoff qualify for token airdrops, revenue share dividends, and whitelist tiers.
+        <p style="color: var(--color-ink-soft); font-size: 14px; margin-bottom: 16px;">
+          Every transaction executed through RacerBot on NEAR Protocol is recorded to the immutable points ledger. Top ranked wallets at the snapshot epoch cutoff qualify for token airdrops, revenue share dividends, and whitelist tiers.
         </p>
 
         <div class="rules-grid">
@@ -1340,7 +1269,7 @@
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-label">Featured Sprint</div>
-          <div class="stat-value cyan" id="sprint-token-symbol">KOOKDOG</div>
+          <div class="stat-value" id="sprint-token-symbol">KOOKDOG</div>
           <div class="stat-sub" id="sprint-token-name">Kook Dog Launchpad Race</div>
         </div>
         <div class="stat-card">
@@ -1364,18 +1293,18 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">
-            <span class="dot"></span>
-            <span>Market Cap Acceleration Goal</span>
+            <span class="indicator-dot"></span>
+            <span>Market Cap Acceleration Goal.</span>
           </div>
           <div class="card-actions">
-            <span style="font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--color-cyan);" id="sprint-pct">0.0%</span>
+            <span style="font-family: var(--font-mono); font-size: 13.5px; font-weight: 600; color: var(--color-primary);" id="sprint-pct">0.0%</span>
           </div>
         </div>
 
         <div class="progress-bar-wrap">
           <div class="progress-bar-fill" id="sprint-bar-fill" style="width: 0%;"></div>
         </div>
-        <div style="display: flex; justify-content: space-between; font-size: 11px; font-family: var(--font-mono); color: var(--color-ink-subtle);">
+        <div style="display: flex; justify-content: space-between; font-size: 12px; font-family: var(--font-mono); color: var(--color-ink-muted);">
           <span id="sprint-bar-current">$0</span>
           <span id="sprint-bar-target">Target: $29,000 USD</span>
         </div>
@@ -1385,11 +1314,11 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">
-            <span class="dot"></span>
+            <span class="indicator-dot"></span>
             <span>Live Trading Volume Standings</span>
           </div>
           <div class="card-actions">
-            <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary" style="width: 100%; justify-content: center;">Trade KOOKDOG Now</a>
+            <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-adyen-primary btn-header-cta" style="width: 100%; justify-content: center;">Trade KOOKDOG Now</a>
           </div>
         </div>
 
@@ -1420,12 +1349,16 @@
     <!-- ════════════════════════════════════════════════════════════════════════ -->
     <div id="tab-formats" class="tab-pane">
       
-      <div style="margin-bottom: 20px;">
-        <h2 style="font-size: 20px; font-weight: 700; color: var(--color-ink-strong); margin-bottom: 6px;">
-          Available Competition Formats
+      <div style="margin-bottom: 24px;">
+        <div class="mono-eyebrow-strip">
+          <span class="indicator-dot"></span>
+          <span class="mono-eyebrow-text">ENTERPRISE TOURNAMENT SUITE</span>
+        </div>
+        <h2 style="font-size: 26px; font-weight: 484; color: #ffffff; margin-bottom: 8px;">
+          Available Competition Formats.
         </h2>
-        <p style="color: var(--color-ink-subtle); font-size: 13px;">
-          RacerBot's institutional competition engine supports a wide range of on-chain trading tournaments, community sprints, and token bounty races on NEAR Protocol.
+        <p style="color: var(--color-ink-soft); font-size: 14px; max-width: 740px;">
+          RacerBot's institutional competition engine supports on-chain trading tournaments, community volume sprints, and custom project bounty challenges on NEAR Protocol.
         </p>
       </div>
 
@@ -1446,8 +1379,8 @@
             </div>
           </div>
           <div class="format-footer">
-            <span style="color: var(--color-mint);">● Live & Ongoing</span>
-            <button class="btn-header" onclick="switchTab('snapshot')">View Leaderboard</button>
+            <span style="color: var(--color-primary);">● Live & Ongoing</span>
+            <button class="btn-adyen-secondary btn-header-sub" onclick="switchTab('snapshot')">View Leaderboard</button>
           </div>
         </div>
 
@@ -1467,7 +1400,7 @@
           </div>
           <div class="format-footer">
             <span style="color: var(--color-gold);">● Active for KOOKDOG</span>
-            <button class="btn-header" onclick="switchTab('sprint')">View Sprint</button>
+            <button class="btn-adyen-secondary btn-header-sub" onclick="switchTab('sprint')">View Sprint</button>
           </div>
         </div>
 
@@ -1486,8 +1419,8 @@
             </div>
           </div>
           <div class="format-footer">
-            <span style="color: var(--color-ink-subtle);">● Scheduled on Launch</span>
-            <a href="https://t.me/racertradingbot" target="_blank" class="btn-header">Set Snipe</a>
+            <span style="color: var(--color-ink-muted);">● Scheduled on Launch</span>
+            <a href="https://t.me/racertradingbot" target="_blank" class="btn-adyen-secondary btn-header-sub">Set Snipe</a>
           </div>
         </div>
 
@@ -1506,8 +1439,8 @@
             </div>
           </div>
           <div class="format-footer">
-            <span style="color: var(--color-mint);">● Available via Bot</span>
-            <a href="https://t.me/racertradingbot" target="_blank" class="btn-header">Get Link</a>
+            <span style="color: var(--color-primary);">● Available via Bot</span>
+            <a href="https://t.me/racertradingbot" target="_blank" class="btn-adyen-secondary btn-header-sub">Get Link</a>
           </div>
         </div>
 
@@ -1526,8 +1459,8 @@
             </div>
           </div>
           <div class="format-footer">
-            <span style="color: var(--color-cyan);">● Self-Serve & Managed</span>
-            <button class="btn-header" onclick="switchTab('host')">Host Competition</button>
+            <span style="color: var(--color-racer-cyan);">● Self-Serve & Managed</span>
+            <button class="btn-adyen-secondary btn-header-sub" onclick="switchTab('host')">Host Competition</button>
           </div>
         </div>
 
@@ -1546,8 +1479,8 @@
             </div>
           </div>
           <div class="format-footer">
-            <span style="color: var(--color-ink-subtle);">● Available for Projects</span>
-            <button class="btn-header" onclick="switchTab('host')">Learn More</button>
+            <span style="color: var(--color-ink-muted);">● Available for Projects</span>
+            <button class="btn-adyen-secondary btn-header-sub" onclick="switchTab('host')">Learn More</button>
           </div>
         </div>
 
@@ -1562,39 +1495,42 @@
       
       <div class="host-banner">
         <div class="host-content">
-          <div class="host-eyebrow">Project Partnerships & Bounties</div>
-          <h2 class="host-title">Host a Trading Competition for Your NEAR Token</h2>
+          <div class="mono-eyebrow-strip">
+            <span class="indicator-dot"></span>
+            <span class="mono-eyebrow-text">PARTNERSHIPS & BOUNTIES</span>
+          </div>
+          <h2 class="host-title">Host a Trading Competition for Your Token.</h2>
           <p class="host-desc">
-            Boost token liquidity, onboard hundreds of active on-chain racers, and get dedicated real-time leaderboard infrastructure with live SSE streaming on your custom subdomain.
+            Boost token liquidity, onboard active on-chain racers, and get dedicated real-time leaderboard infrastructure with live SSE streaming on your custom subdomain.
           </p>
         </div>
-        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="host-btn">
-          <span>Launch on Telegram</span>
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-adyen-primary host-btn">
+          <span>Talk to our team</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
         </a>
       </div>
 
-      <div style="margin-top: 24px;" class="card">
+      <div style="margin-top: 28px;" class="card">
         <div class="card-header">
           <div class="card-title">
-            <span class="dot"></span>
-            <span>How to Launch in 3 Simple Steps</span>
+            <span class="indicator-dot"></span>
+            <span>How to Launch in 3 Simple Steps.</span>
           </div>
         </div>
 
         <div class="rules-grid">
           <div class="rule-box">
-            <div class="rule-pts" style="color: var(--color-cyan);">01</div>
+            <div class="rule-pts" style="color: var(--color-primary);">01</div>
             <div class="rule-title">Configure Rules & Prize Pool</div>
             <div class="rule-desc">Choose your tournament format (Volume sprint, Net accumulation, or Snapshot hold challenge) and fund the bounty pool in NEAR, USDT, or your native token.</div>
           </div>
           <div class="rule-box">
-            <div class="rule-pts" style="color: var(--color-purple-light);">02</div>
+            <div class="rule-pts" style="color: var(--color-racer-cyan);">02</div>
             <div class="rule-title">Get Custom Subdomain & Live HUD</div>
             <div class="rule-desc">Your tournament gets an official dedicated web interface (e.g. <code>yourtoken.racerbotbubblemap.buzz/competition</code>) with interactive cluster bubble map integration.</div>
           </div>
           <div class="rule-box">
-            <div class="rule-pts" style="color: var(--color-mint);">03</div>
+            <div class="rule-pts" style="color: var(--color-primary);">03</div>
             <div class="rule-title">Automated On-Chain Payouts</div>
             <div class="rule-desc">When the competition concludes, RacerBot's smart settlement scripts calculate exact rankings and disburse rewards directly to winner wallets without counterparty risk.</div>
           </div>
@@ -1698,7 +1634,7 @@
         const share = totalPoints > 0 ? ((pts / totalPoints) * 100).toFixed(1) + '%' : '—';
         const tier = item.tier ? `<span class="badge-tier ${item.tier.toLowerCase().includes('grand') || item.tier.toLowerCase().includes('whale') ? 'elite' : item.tier.toLowerCase().includes('diamond') ? 'diamond' : item.tier.toLowerCase().includes('gold') ? 'pro' : 'active'}">${escapeHtml(item.tier)}</span>` : getTierBadge(pts, rank);
 
-        let medalHtml = `<span style="color: var(--color-ink-subtle);">${rank}</span>`;
+        let medalHtml = `<span style="color: var(--color-ink-muted);">${rank}</span>`;
         if (rank === 1) medalHtml = `<span class="rank-medal medal-1">1</span>`;
         else if (rank === 2) medalHtml = `<span class="rank-medal medal-2">2</span>`;
         else if (rank === 3) medalHtml = `<span class="rank-medal medal-3">3</span>`;
@@ -1720,9 +1656,9 @@
               </div>
             </td>
             <td class="col-tier">${tier}</td>
-            <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-ink-subtle);">${fmt(events)} events</td>
+            <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-ink-soft);">${fmt(events)} events</td>
             <td class="col-points" style="text-align: right;"><span class="points-cell">${fmt(pts)} PTS</span></td>
-            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-mint);">${share}</td>
+            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-primary);">${share}</td>
           </tr>
         `;
       });
@@ -1788,7 +1724,7 @@
       let html = '';
       vList.forEach((row, idx) => {
         const rank = idx + 1;
-        let medalHtml = `<span style="color: var(--color-ink-subtle);">${rank}</span>`;
+        let medalHtml = `<span style="color: var(--color-ink-muted);">${rank}</span>`;
         if (rank === 1) medalHtml = `<span class="rank-medal medal-1">1</span>`;
         else if (rank === 2) medalHtml = `<span class="rank-medal medal-2">2</span>`;
         else if (rank === 3) medalHtml = `<span class="rank-medal medal-3">3</span>`;
@@ -1807,8 +1743,8 @@
               </div>
             </td>
             <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px;">${fmt(row.trades_count || 1)} trades</td>
-            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-cyan);">${fmt(row.total_volume_near)} NEAR</td>
-            <td class="col-points" style="text-align: right; font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--color-mint);">${fmtUsd(row.total_volume_usd)}</td>
+            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-racer-cyan);">${fmt(row.total_volume_near)} NEAR</td>
+            <td class="col-points" style="text-align: right; font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--color-primary);">${fmtUsd(row.total_volume_usd)}</td>
           </tr>
         `;
       });
