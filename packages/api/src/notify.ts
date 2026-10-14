@@ -408,7 +408,7 @@ const recentDepositNotifyCache = new Map<string, number>();
 export async function notifyDeposit(
   telegramId: number,
   params: {
-    chain: 'near' | 'sui';
+    chain: 'near' | 'sui' | 'starknet';
     amount: string;
     symbol?: string;
     address: string;
@@ -426,12 +426,12 @@ export async function notifyDeposit(
 
   const chain = params.chain;
   const amount = params.amount;
-  const symbol = params.symbol || (chain === 'sui' ? 'SUI' : 'NEAR');
+  const symbol = params.symbol || (chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
   const address = params.address;
   const usdValue = params.usdValue || '';
-  const icon = chain === 'sui' ? '🔷' : '⬛';
-  const tokenIcon = chain === 'sui' ? '💧' : 'Ⓝ';
-  const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+  const icon = chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
+  const tokenIcon = chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
+  const chainLabel = chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
 
   const msg =
     `💰 <b>Deposit Confirmed!</b>\n\n` +
