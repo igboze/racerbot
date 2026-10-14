@@ -53,6 +53,52 @@ export function serveBubbleMapHtml(res: import('express').Response): void {
   res.sendFile(htmlFile);
 }
 
+export async function getSnapshotLeaderboard(limit = 30) {
+  try {
+    const { getDb } = await import('@racerbot/db');
+    const db = await getDb();
+    const res = await db.query(`
+      SELECT 
+        COALESCE(u.subaccount_id, 'racer-' || SUBSTRING(u.id::text, 1, 8) || '.near') as wallet,
+        SUM(p.points::numeric) as total_points,
+        COUNT(p.id) as point_events,
+        MAX(p.created_at) as last_activity
+      FROM points_ledger p
+      JOIN users u ON p.user_id = u.id
+      GROUP BY u.subaccount_id, u.id
+      ORDER BY total_points DESC
+      LIMIT $1
+    `, [limit]);
+
+    return res.rows.map((r: any, idx: number) => {
+      let wallet = String(r.wallet || '');
+      // Strict privacy protection: NEVER expose Telegram username
+      if (wallet.endsWith('.tg')) {
+        wallet = 'tg-' + wallet.slice(0, 3) + '***.near';
+      }
+      const pts = Math.round(parseFloat(r.total_points || '0'));
+      let tier = 'Bronze';
+      if (idx === 0) tier = 'Grandmaster';
+      else if (idx < 3) tier = 'Master Whale';
+      else if (idx < 10) tier = 'Diamond Elite';
+      else if (pts >= 1000) tier = 'Gold Trader';
+      else if (pts >= 500) tier = 'Silver';
+
+      return {
+        rank: idx + 1,
+        wallet,
+        points: pts,
+        events: parseInt(r.point_events || '0', 10),
+        last_activity: r.last_activity ? new Date(r.last_activity) : null,
+        tier,
+      };
+    });
+  } catch (err: any) {
+    logger.warn('Failed to query snapshot points leaderboard', { error: err?.message });
+    return [];
+  }
+}
+
 export async function serveCompetitionHtml(res: import('express').Response, compIdParam = 'kookdog'): Promise<void> {
   const htmlPaths = [
     path.resolve(__dirname, 'competition.html'),
@@ -75,9 +121,10 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
       ? 'kookdog-42db38.launchpad.justhoot.near'
       : compId;
 
-    const [tokenInfo, comp] = await Promise.all([
+    const [tokenInfo, comp, snapshotLeaderboard] = await Promise.all([
       getTokenInfo(tokenAddress, true).catch(() => null),
       getCompetition('kookdog').catch(() => null),
+      getSnapshotLeaderboard(30).catch(() => []),
     ]);
 
     const nearUsd = tokenInfo?.near_usd || 4.82;
@@ -109,6 +156,7 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
       near_usd: nearUsd,
       started_at: comp?.started_at ?? null,
       leaderboard,
+      snapshot_leaderboard: snapshotLeaderboard,
     };
 
     html = html.replace(
@@ -146,9 +194,10 @@ async function fetchCompetitionSnapshot(rawId = 'kookdog') {
     ? 'kookdog-42db38.launchpad.justhoot.near'
     : compId;
 
-  const [tokenInfo, compFromDb] = await Promise.all([
+  const [tokenInfo, compFromDb, snapshotLeaderboard] = await Promise.all([
     getTokenInfo(tokenAddress, true).catch(() => null),
     getCompetition('kookdog').catch(() => null),
+    getSnapshotLeaderboard(30).catch(() => []),
   ]);
 
   const nearUsd = tokenInfo?.near_usd || 4.82;
@@ -203,8 +252,19 @@ async function fetchCompetitionSnapshot(rawId = 'kookdog') {
     near_usd: nearUsd,
     started_at: comp?.started_at ?? null,
     leaderboard,
+    snapshot_leaderboard: snapshotLeaderboard,
   };
 }
+
+// ── Snapshot Leaderboard standalone REST API ─────────────────────────────────
+router.get(['/competition-snapshots', '/competition/snapshot-leaderboard', '/competition/snapshots'], async (_req, res) => {
+  try {
+    const list = await getSnapshotLeaderboard(50);
+    res.json({ snapshot_leaderboard: list });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Real-Time SSE Stream for Competition Leaderboard ──────────────────────────
 router.get(['/competition-stream', '/competition/:id/stream', '/competition/stream'], async (req, res) => {
