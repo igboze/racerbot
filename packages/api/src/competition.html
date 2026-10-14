@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RacerBot — Competition Arena & On-Chain Snapshot Leaderboard</title>
   <link rel="icon" type="image/png" href="/assets/logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
@@ -62,7 +62,9 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       min-height: 100vh;
+      min-height: 100dvh;
       overflow-x: hidden;
+      width: 100%;
     }
 
     /* Background glow effect */
@@ -73,6 +75,7 @@
       left: 50%;
       transform: translateX(-50%);
       width: 900px;
+      max-width: 100vw;
       height: 450px;
       background: radial-gradient(circle, rgba(120, 96, 169, 0.15) 0%, rgba(106, 204, 220, 0.08) 50%, transparent 80%);
       pointer-events: none;
@@ -94,7 +97,7 @@
       top: 0;
       z-index: 50;
       height: 56px;
-      background: rgba(14, 21, 50, 0.85);
+      background: rgba(14, 21, 50, 0.88);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--color-hairline);
@@ -102,13 +105,15 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 24px;
+      width: 100%;
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       text-decoration: none;
+      flex-shrink: 0;
     }
 
     .brand-logo {
@@ -119,6 +124,7 @@
       box-shadow: 0 0 12px var(--color-cyan-glow);
       display: block;
       object-fit: cover;
+      flex-shrink: 0;
     }
 
     .brand-text {
@@ -135,6 +141,7 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
     }
 
     .brand-badge {
@@ -152,7 +159,8 @@
     .header-nav {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      flex-shrink: 0;
     }
 
     .btn-header {
@@ -170,6 +178,7 @@
       color: var(--color-ink-strong);
       transition: all 160ms var(--ease);
       font-family: var(--font-mono);
+      white-space: nowrap;
     }
     .btn-header:hover {
       background: var(--color-surface-hover);
@@ -198,6 +207,7 @@
       background: rgba(0, 209, 106, 0.1);
       border: 1px solid rgba(0, 209, 106, 0.25);
       border-radius: var(--radius);
+      white-space: nowrap;
     }
     .live-beacon .dot {
       width: 6px;
@@ -206,6 +216,7 @@
       border-radius: 50%;
       box-shadow: 0 0 8px var(--color-mint);
       animation: pulse 1.8s infinite;
+      flex-shrink: 0;
     }
 
     @keyframes pulse {
@@ -220,6 +231,7 @@
       padding: 28px 24px 80px;
       position: relative;
       z-index: 1;
+      width: 100%;
     }
 
     /* ── Hero Section ─────────────────────────────────────────────────────── */
@@ -242,6 +254,7 @@
       background: var(--color-cyan);
       border-radius: 2px;
       display: inline-block;
+      flex-shrink: 0;
     }
 
     .hero-title {
@@ -281,6 +294,8 @@
       font-size: 18px;
       flex-shrink: 0;
       color: var(--color-purple-light);
+      display: flex;
+      align-items: center;
     }
     .privacy-text {
       font-size: 12px;
@@ -300,6 +315,7 @@
       margin-bottom: 28px;
       overflow-x: auto;
       padding-bottom: 1px;
+      -webkit-overflow-scrolling: touch;
     }
 
     .tab-btn {
@@ -317,6 +333,7 @@
       cursor: pointer;
       white-space: nowrap;
       transition: all 160ms var(--ease);
+      flex-shrink: 0;
     }
     .tab-btn:hover {
       color: var(--color-ink-strong);
@@ -422,6 +439,7 @@
       border-radius: var(--radius);
       padding: 24px;
       margin-bottom: 24px;
+      width: 100%;
     }
 
     .card-header {
@@ -447,6 +465,7 @@
       height: 8px;
       background: var(--color-cyan);
       border-radius: 2px;
+      flex-shrink: 0;
     }
 
     .card-actions {
@@ -485,12 +504,14 @@
       pointer-events: none;
     }
 
-    /* ── Table Styles ─────────────────────────────────────────────────────── */
+    /* ── Table Styles (Desktop) ───────────────────────────────────────────── */
     .table-container {
       overflow-x: auto;
       border: 1px solid var(--color-hairline);
       border-radius: var(--radius);
       background: var(--color-surface-subtle);
+      width: 100%;
+      -webkit-overflow-scrolling: touch;
     }
 
     table.data-table {
@@ -546,6 +567,7 @@
       justify-content: center;
       font-size: 11px;
       font-weight: 700;
+      flex-shrink: 0;
     }
     .medal-1 { background: rgba(245, 158, 11, 0.2); color: var(--color-gold); border: 1px solid rgba(245, 158, 11, 0.4); }
     .medal-2 { background: rgba(148, 163, 184, 0.2); color: var(--color-silver); border: 1px solid rgba(148, 163, 184, 0.4); }
@@ -569,21 +591,35 @@
     .wallet-link:hover {
       color: var(--color-cyan);
     }
+    .wallet-addr-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .copy-btn {
       background: transparent;
       border: none;
       color: var(--color-ink-subtle);
       cursor: pointer;
-      padding: 2px 4px;
-      border-radius: 3px;
-      font-size: 11px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 12px;
       line-height: 1;
       transition: all 120ms var(--ease);
+      flex-shrink: 0;
+      min-width: 24px;
+      min-height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .copy-btn:hover {
       color: var(--color-cyan);
       background: rgba(106, 204, 220, 0.12);
+    }
+    .copy-btn:active {
+      transform: scale(0.92);
     }
 
     .points-cell {
@@ -604,6 +640,7 @@
       padding: 2px 7px;
       border-radius: var(--radius);
       letter-spacing: 0.04em;
+      white-space: nowrap;
     }
     .badge-tier.elite {
       background: rgba(245, 158, 11, 0.15);
@@ -729,6 +766,7 @@
       justify-content: space-between;
       font-family: var(--font-mono);
       font-size: 11px;
+      gap: 8px;
     }
 
     /* ── How to Earn Points Section ───────────────────────────────────────── */
@@ -825,6 +863,9 @@
       box-shadow: 0 0 28px rgba(106, 204, 220, 0.5);
       transform: translateY(-1px);
     }
+    .host-btn:active {
+      transform: scale(0.98);
+    }
 
     /* ── Empty & Loading States ───────────────────────────────────────────── */
     .empty-state {
@@ -833,17 +874,277 @@
       color: var(--color-ink-subtle);
       font-family: var(--font-mono);
       font-size: 13px;
+      width: 100%;
     }
 
-    /* ── Responsive ───────────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════════
+       MOBILE FIRST RESPONSIVE ARCHITECTURE (iPhone SE to S24 Ultra & Tablets)
+       ═══════════════════════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
-      .site-header { padding: 0 14px; }
-      .container { padding: 18px 14px 60px; }
-      .hero-title { font-size: 24px; }
-      .search-input { width: 100%; }
-      .search-box { width: 100%; margin-top: 10px; }
-      .card-header { flex-direction: column; align-items: flex-start; }
-      .card-actions { width: 100%; }
+      .site-header {
+        height: auto;
+        min-height: 52px;
+        padding: max(6px, env(safe-area-inset-top, 0px)) 12px 6px;
+        gap: 8px;
+      }
+      .brand {
+        gap: 8px;
+      }
+      .brand-logo {
+        width: 28px;
+        height: 28px;
+      }
+      .brand-title {
+        font-size: 13px;
+        letter-spacing: 0.04em;
+      }
+      .brand-badge {
+        display: none;
+      }
+      .live-beacon {
+        padding: 4px 6px;
+      }
+      .live-beacon .beacon-text {
+        display: none;
+      }
+      .btn-header {
+        padding: 0 8px;
+        height: 32px;
+        font-size: 11px;
+        gap: 4px;
+      }
+      .container {
+        padding: 16px 12px calc(48px + env(safe-area-inset-bottom, 0px));
+      }
+      .hero-eyebrow {
+        font-size: 10px;
+        margin-bottom: 8px;
+      }
+      .hero-title {
+        font-size: clamp(20px, 6vw, 26px);
+        margin-bottom: 8px;
+      }
+      .hero-subtitle {
+        font-size: 13px;
+        line-height: 1.5;
+        margin-bottom: 16px;
+      }
+      .privacy-notice {
+        padding: 10px 12px;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+      .privacy-icon {
+        font-size: 16px;
+      }
+      .privacy-text {
+        font-size: 11px;
+        line-height: 1.4;
+      }
+
+      /* Tabs Strip: Mobile Kinetic Scrolling */
+      .tabs-strip {
+        margin: 0 -12px 18px -12px;
+        padding: 0 12px 2px 12px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-wrap: nowrap;
+        gap: 4px;
+      }
+      .tabs-strip::-webkit-scrollbar {
+        display: none;
+      }
+      .tab-btn {
+        padding: 8px 12px;
+        font-size: 11.5px;
+        flex-shrink: 0;
+      }
+      .tab-btn .tab-badge {
+        font-size: 8.5px;
+        padding: 1px 4px;
+      }
+
+      /* 2x2 Mobile Stat Dashboard */
+      .stat-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+      .stat-card {
+        padding: 12px 10px;
+      }
+      .stat-label {
+        font-size: 9px;
+        margin-bottom: 4px;
+      }
+      .stat-value {
+        font-size: 16px;
+        line-height: 1.2;
+      }
+      .stat-sub {
+        font-size: 9.5px;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Card Content & Search on Mobile */
+      .card {
+        padding: 16px 12px;
+        margin-bottom: 16px;
+      }
+      .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .card-title {
+        font-size: 14px;
+      }
+      .card-actions {
+        width: 100%;
+      }
+      .search-box {
+        width: 100%;
+      }
+      .search-input {
+        width: 100%;
+        height: 38px;
+        font-size: 16px; /* 16px prevents iOS Safari unwanted auto-zoom */
+      }
+
+      /* ── Native Mobile Card Transformation for Leaderboard Tables ── */
+      .table-container {
+        border: none;
+        background: transparent;
+        overflow: visible;
+      }
+      table.data-table {
+        display: block;
+        width: 100%;
+      }
+      table.data-table thead {
+        display: none;
+      }
+      table.data-table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: 100%;
+      }
+      table.data-table tr {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--color-surface);
+        border: 1px solid var(--color-hairline);
+        border-radius: var(--radius);
+        padding: 10px 12px;
+        gap: 6px 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        transition: transform 140ms ease;
+      }
+      table.data-table tr:active {
+        transform: scale(0.99);
+      }
+      table.data-table tr:hover td {
+        background: transparent;
+      }
+      table.data-table td {
+        padding: 0;
+        border: none;
+      }
+
+      .col-rank {
+        order: 1;
+        flex-shrink: 0;
+      }
+      .col-wallet {
+        order: 2;
+        flex: 1;
+        min-width: 110px;
+      }
+      .wallet-addr-text {
+        max-width: 130px;
+        font-size: 11.5px;
+        display: inline-block;
+      }
+      .col-points {
+        order: 3;
+        flex-shrink: 0;
+        text-align: right !important;
+      }
+      .col-points .points-cell {
+        font-size: 14px;
+      }
+      .col-tier {
+        order: 4;
+        flex-shrink: 0;
+      }
+      .col-events {
+        order: 5;
+        font-size: 10.5px !important;
+      }
+      .col-share {
+        order: 6;
+        margin-left: auto;
+        font-size: 10.5px !important;
+      }
+
+      /* Competition Formats & Rules */
+      .formats-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .format-card {
+        padding: 16px 14px;
+      }
+      .rules-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+      .rule-box {
+        padding: 12px 14px;
+      }
+
+      /* Host Banner */
+      .host-banner {
+        padding: 20px 14px;
+        gap: 16px;
+      }
+      .host-title {
+        font-size: 18px;
+      }
+      .host-btn {
+        width: 100%;
+        justify-content: center;
+        height: 42px;
+      }
+    }
+
+    /* Smallest Mobile Devices (< 380px: iPhone SE, Galaxy Fold outer screen) */
+    @media (max-width: 380px) {
+      .btn-header .btn-text {
+        display: none;
+      }
+      .btn-header {
+        padding: 0 6px;
+        width: 32px;
+        justify-content: center;
+      }
+      .wallet-addr-text {
+        max-width: 95px;
+      }
+      .stat-value {
+        font-size: 14px;
+      }
+      .stat-grid {
+        gap: 6px;
+      }
     }
   </style>
 </head>
@@ -861,15 +1162,15 @@
     <div class="header-nav">
       <div class="live-beacon">
         <span class="dot"></span>
-        <span>ENGINE LIVE</span>
+        <span class="beacon-text">LIVE</span>
       </div>
-      <a href="/bubblemap" class="btn-header">
+      <a href="/bubblemap" class="btn-header" title="Bubble Map">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/></svg>
-        <span>Bubble Map</span>
+        <span class="btn-text">Bubble Map</span>
       </a>
-      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary">
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary" title="Open Telegram Bot">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.19-.08-.05-.19-.02-.27 0-.12.03-1.99 1.27-5.63 3.72-.53.36-1.01.54-1.44.53-.47-.01-1.38-.27-2.06-.49-.83-.27-1.49-.42-1.43-.88.03-.24.38-.49 1.04-.75 4.07-1.77 6.79-2.94 8.16-3.51 3.89-1.62 4.7-.19 4.7 1.07z"/></svg>
-        <span>Trade Bot</span>
+        <span class="btn-text">Trade Bot</span>
       </a>
     </div>
   </header>
@@ -886,14 +1187,14 @@
     <!-- Privacy Callout -->
     <div class="privacy-notice">
       <div class="privacy-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       </div>
       <div class="privacy-text">
         <strong>Privacy-Preserving Leaderboard:</strong> Telegram usernames are strictly confidential and omitted. Rankings and snapshot rewards are matched solely against verified NEAR on-chain wallet addresses and earned points.
       </div>
     </div>
 
-    <!-- Navigation Tabs -->
+    <!-- Navigation Tabs (Touch-friendly kinetic ribbon) -->
     <div class="tabs-strip">
       <button class="tab-btn active" onclick="switchTab('snapshot')">
         <span>Snapshot Arena</span>
@@ -918,38 +1219,38 @@
     <!-- ════════════════════════════════════════════════════════════════════════ -->
     <div id="tab-snapshot" class="tab-pane active">
       
-      <!-- Key Stats Bar -->
+      <!-- Key Stats Bar (2x2 Dashboard on Mobile) -->
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-label">
-            <span>Snapshot Season</span>
+            <span>Snapshot</span>
             <span>Epoch 01</span>
           </div>
-          <div class="stat-value cyan">Season 1 Alpha</div>
-          <div class="stat-sub">Automated rolling snapshots on NEAR</div>
+          <div class="stat-value cyan">Season 1</div>
+          <div class="stat-sub">Automated snapshots on NEAR</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">
-            <span>Total Points Distributed</span>
+            <span>Total Points</span>
             <span>All-Time</span>
           </div>
           <div class="stat-value mint" id="stat-total-points">—</div>
-          <div class="stat-sub">Earned via trading, snipes & activity</div>
+          <div class="stat-sub">Trading, snipes & activity</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">
-            <span>Active Point Racers</span>
+            <span>Active Racers</span>
             <span>On-Chain</span>
           </div>
           <div class="stat-value" id="stat-active-racers">—</div>
-          <div class="stat-sub">Wallets participating in snapshot</div>
+          <div class="stat-sub">Snapshot qualifying wallets</div>
         </div>
 
         <div class="stat-card">
           <div class="stat-label">
-            <span>Top Racer Score</span>
+            <span>Top Racer</span>
             <span>#1 Leader</span>
           </div>
           <div class="stat-value gold" id="stat-top-score">—</div>
@@ -967,7 +1268,7 @@
           <div class="card-actions">
             <div class="search-box">
               <span class="search-icon">🔍</span>
-              <input type="text" id="snapshot-search" class="search-input" placeholder="Filter by wallet (e.g. .near)..." oninput="filterSnapshotTable()">
+              <input type="text" id="snapshot-search" class="search-input" placeholder="Filter wallet (e.g. .near)..." oninput="filterSnapshotTable()">
             </div>
           </div>
         </div>
@@ -1055,7 +1356,7 @@
         <div class="stat-card">
           <div class="stat-label">Sprint Status</div>
           <div class="stat-value mint" id="sprint-status-text">Pending Target</div>
-          <div class="stat-sub">Unlocks when $29K is achieved</div>
+          <div class="stat-sub">Unlocks at $29K threshold</div>
         </div>
       </div>
 
@@ -1088,7 +1389,7 @@
             <span>Live Trading Volume Standings</span>
           </div>
           <div class="card-actions">
-            <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary">Trade KOOKDOG Now</a>
+            <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary" style="width: 100%; justify-content: center;">Trade KOOKDOG Now</a>
           </div>
         </div>
 
@@ -1119,7 +1420,7 @@
     <!-- ════════════════════════════════════════════════════════════════════════ -->
     <div id="tab-formats" class="tab-pane">
       
-      <div style="margin-bottom: 24px;">
+      <div style="margin-bottom: 20px;">
         <h2 style="font-size: 20px; font-weight: 700; color: var(--color-ink-strong); margin-bottom: 6px;">
           Available Competition Formats
         </h2>
@@ -1273,7 +1574,7 @@
         </a>
       </div>
 
-      <div style="margin-top: 32px;" class="card">
+      <div style="margin-top: 24px;" class="card">
         <div class="card-header">
           <div class="card-title">
             <span class="dot"></span>
@@ -1327,7 +1628,7 @@
     function copyText(txt, btn) {
       navigator.clipboard.writeText(txt).then(() => {
         const orig = btn.innerText;
-        btn.innerText = 'Copied!';
+        btn.innerText = '✓';
         btn.style.color = '#00d16a';
         setTimeout(() => {
           btn.innerText = orig;
@@ -1406,22 +1707,22 @@
 
         html += `
           <tr>
-            <td>
+            <td class="col-rank">
               <div class="rank-cell">${medalHtml}</div>
             </td>
-            <td>
+            <td class="col-wallet">
               <div class="wallet-cell">
                 <a href="${explorerUrl}" target="_blank" rel="noopener" class="wallet-link" title="View on NEAR Explorer">
-                  <span>${escapeHtml(wallet)}</span>
+                  <span class="wallet-addr-text">${escapeHtml(wallet)}</span>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </a>
                 <button class="copy-btn" onclick="copyText('${escapeHtml(wallet)}', this)" title="Copy wallet address">📋</button>
               </div>
             </td>
-            <td>${tier}</td>
-            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-ink-subtle);">${fmt(events)}</td>
-            <td style="text-align: right;" class="points-cell">${fmt(pts)}</td>
-            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-mint);">${share}</td>
+            <td class="col-tier">${tier}</td>
+            <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-ink-subtle);">${fmt(events)} events</td>
+            <td class="col-points" style="text-align: right;"><span class="points-cell">${fmt(pts)} PTS</span></td>
+            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-mint);">${share}</td>
           </tr>
         `;
       });
@@ -1496,17 +1797,18 @@
 
         html += `
           <tr>
-            <td><div class="rank-cell">${medalHtml}</div></td>
-            <td>
+            <td class="col-rank"><div class="rank-cell">${medalHtml}</div></td>
+            <td class="col-wallet">
               <div class="wallet-cell">
                 <a href="${explorerUrl}" target="_blank" rel="noopener" class="wallet-link">
-                  <span>${escapeHtml(row.account_id)}</span>
+                  <span class="wallet-addr-text">${escapeHtml(row.account_id)}</span>
                 </a>
+                <button class="copy-btn" onclick="copyText('${escapeHtml(row.account_id)}', this)" title="Copy wallet address">📋</button>
               </div>
             </td>
-            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px;">${fmt(row.trades_count || 1)}</td>
-            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-cyan);">${fmt(row.total_volume_near)} NEAR</td>
-            <td style="text-align: right; font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--color-mint);">${fmtUsd(row.total_volume_usd)}</td>
+            <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px;">${fmt(row.trades_count || 1)} trades</td>
+            <td class="col-share" style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-cyan);">${fmt(row.total_volume_near)} NEAR</td>
+            <td class="col-points" style="text-align: right; font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--color-mint);">${fmtUsd(row.total_volume_usd)}</td>
           </tr>
         `;
       });
@@ -1525,7 +1827,6 @@
 
     // ── Real-Time Streaming & Fallback Polling ──────────────────────────────
     function initLiveConnection() {
-      // Connect to SSE stream
       try {
         const evtSource = new EventSource('/api/competition-stream?id=kookdog');
         evtSource.onmessage = (event) => {
@@ -1541,7 +1842,6 @@
           } catch {}
         };
         evtSource.onerror = () => {
-          // If SSE drops, fallback to REST polling every 6 seconds
           evtSource.close();
           setInterval(pollRestData, 6000);
         };
