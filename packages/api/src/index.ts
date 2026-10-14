@@ -230,8 +230,13 @@ async function main(): Promise<void> {
       }
     }
 
-    // Only serve competition UI when explicitly requesting /competition or /leaderboard
-    if (req.path === '/competition' || req.path === '/leaderboard') {
+    // If competition subdomain is used (competition.racerbotbubblemap.buzz)
+    if (tokenSubdomain === 'competition' || tokenSubdomain === 'competitions') {
+      return serveCompetitionHtml(res, 'kookdog');
+    }
+
+    // Only serve competition UI when explicitly requesting /competition, /competitions or /leaderboard
+    if (req.path === '/competition' || req.path === '/competitions' || req.path === '/leaderboard') {
       return serveCompetitionHtml(res, tokenSubdomain || 'kookdog');
     }
 
@@ -254,7 +259,7 @@ async function main(): Promise<void> {
   });
 
   // Serve Trading Competition page directly at `/competition` and `/leaderboard`
-  app.get(['/competition', '/competition/:id', '/leaderboard', '/leaderboard/:id', '/:token/competition', '/:token/leaderboard'], (req, res) => {
+  app.get(['/competition', '/competitions', '/competition/:id', '/leaderboard', '/leaderboard/:id', '/:token/competition', '/:token/leaderboard'], (req, res) => {
     const compId = (req.params as any)?.id || (req.params as any)?.token || 'kookdog';
     serveCompetitionHtml(res, compId);
   });
