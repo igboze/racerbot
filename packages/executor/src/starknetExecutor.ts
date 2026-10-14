@@ -158,134 +158,129 @@ export async function executeStarknetSwap(
   const targetTokenMetadata = await getStarknetTokenMetadata(targetTokenCanonical);
   const launchpadInfo = await detectStarknetLaunchpad(targetTokenCanonical).catch(() => null);
 
-  let selectedQuoteBuyAmount: bigint;
-  let nativeFeeAmount: bigint;
+  let selectedQuoteBuyAmount: bigint = 0n;
+  let nativeFeeAmount: bigint = 0n;
   let callsToExecute: any[] = [];
 
   const isLaunchy = launchpadInfo?.launchpad === 'launchy' && !!launchpadInfo.poolKey;
+  let routedViaLaunchy = false;
 
   if (isLaunchy && launchpadInfo.poolKey) {
     onProgress?.('routing_launchpad');
     const routerAddress = launchpadInfo.routerAddress || LAUNCHY_SWAPPER_V3;
     const poolKey = launchpadInfo.poolKey;
 
-    if (isBuy) {
-      nativeFeeAmount = buyFeeAmount;
+    try {
       const launchyQuote = await getLaunchyQuote(
         targetTokenCanonical,
         tokenInCanonical,
-        sellAmountForQuote,
+        isBuy ? sellAmountForQuote : amountInBigInt,
         slippage_pct || 2,
         poolKey,
         routerAddress
       );
 
-      if (!launchyQuote || launchyQuote.outputAmount <= 0n) {
-        throw new Error('Launchy pool has insufficient liquidity or trade amount is too small.');
+      if (launchyQuote && launchyQuote.outputAmount > 0n) {
+        selectedQuoteBuyAmount = launchyQuote.outputAmount;
+        const minAmountOut = launchyQuote.minReceived;
+
+        if (isBuy) {
+          nativeFeeAmount = buyFeeAmount;
+
+          const feeTransferCall = {
+            contractAddress: tokenInCanonical,
+            entrypoint: 'transfer',
+            calldata: CallData.compile({
+              recipient: getStarknetTreasuryAddress(),
+              amount: uint256.bnToUint256(nativeFeeAmount),
+            }),
+          };
+
+          const approveCall = {
+            contractAddress: tokenInCanonical,
+            entrypoint: 'approve',
+            calldata: CallData.compile({
+              spender: routerAddress,
+              amount: uint256.bnToUint256(sellAmountForQuote),
+            }),
+          };
+
+          const swapCall = {
+            contractAddress: routerAddress,
+            entrypoint: 'swap_exact_input',
+            calldata: [
+              poolKey.token0,
+              poolKey.token1,
+              poolKey.fee,
+              poolKey.tick_spacing,
+              poolKey.extension,
+              tokenInCanonical,
+              uint256.bnToUint256(sellAmountForQuote).low.toString(),
+              uint256.bnToUint256(sellAmountForQuote).high.toString(),
+              uint256.bnToUint256(minAmountOut).low.toString(),
+              uint256.bnToUint256(minAmountOut).high.toString(),
+              userAddress,
+            ],
+          };
+
+          callsToExecute = [feeTransferCall, approveCall, swapCall];
+        } else {
+          // SELL: swap meme tokens for STRK, then transfer platform fee in STRK
+          const proceedsNative = Number(selectedQuoteBuyAmount) / 1e18;
+          const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.40;
+          const proceedsUsd = proceedsNative * unitPrice;
+          const feeBps = proceedsUsd > 200 ? 200n : STARKNET_FEE_BPS;
+          nativeFeeAmount = (selectedQuoteBuyAmount * feeBps) / STARKNET_BPS_DENOMINATOR;
+
+          const approveCall = {
+            contractAddress: tokenInCanonical,
+            entrypoint: 'approve',
+            calldata: CallData.compile({
+              spender: routerAddress,
+              amount: uint256.bnToUint256(amountInBigInt),
+            }),
+          };
+
+          const swapCall = {
+            contractAddress: routerAddress,
+            entrypoint: 'swap_exact_input',
+            calldata: [
+              poolKey.token0,
+              poolKey.token1,
+              poolKey.fee,
+              poolKey.tick_spacing,
+              poolKey.extension,
+              tokenInCanonical,
+              uint256.bnToUint256(amountInBigInt).low.toString(),
+              uint256.bnToUint256(amountInBigInt).high.toString(),
+              uint256.bnToUint256(minAmountOut).low.toString(),
+              uint256.bnToUint256(minAmountOut).high.toString(),
+              userAddress,
+            ],
+          };
+
+          const feeTransferCall = {
+            contractAddress: tokenOutCanonical,
+            entrypoint: 'transfer',
+            calldata: CallData.compile({
+              recipient: getStarknetTreasuryAddress(),
+              amount: uint256.bnToUint256(nativeFeeAmount),
+            }),
+          };
+
+          callsToExecute = [approveCall, swapCall, feeTransferCall];
+        }
+        routedViaLaunchy = true;
+      } else {
+        console.log(`[STARKNET_EXECUTOR] Launchy returned 0 output. Falling back to AVNU aggregator...`);
       }
-
-      selectedQuoteBuyAmount = launchyQuote.outputAmount;
-      const minAmountOut = launchyQuote.minReceived;
-
-      const feeTransferCall = {
-        contractAddress: tokenInCanonical,
-        entrypoint: 'transfer',
-        calldata: CallData.compile({
-          recipient: getStarknetTreasuryAddress(),
-          amount: uint256.bnToUint256(nativeFeeAmount),
-        }),
-      };
-
-      const approveCall = {
-        contractAddress: tokenInCanonical,
-        entrypoint: 'approve',
-        calldata: CallData.compile({
-          spender: routerAddress,
-          amount: uint256.bnToUint256(sellAmountForQuote),
-        }),
-      };
-
-      const swapCall = {
-        contractAddress: routerAddress,
-        entrypoint: 'swap_exact_input',
-        calldata: [
-          poolKey.token0,
-          poolKey.token1,
-          poolKey.fee,
-          poolKey.tick_spacing,
-          poolKey.extension,
-          tokenInCanonical,
-          uint256.bnToUint256(sellAmountForQuote).low.toString(),
-          uint256.bnToUint256(sellAmountForQuote).high.toString(),
-          uint256.bnToUint256(minAmountOut).low.toString(),
-          uint256.bnToUint256(minAmountOut).high.toString(),
-          userAddress,
-        ],
-      };
-
-      callsToExecute = [feeTransferCall, approveCall, swapCall];
-    } else {
-      // SELL: swap meme tokens for STRK, then transfer platform fee in STRK
-      const launchyQuote = await getLaunchyQuote(
-        targetTokenCanonical,
-        tokenInCanonical,
-        amountInBigInt,
-        slippage_pct || 2,
-        poolKey,
-        routerAddress
-      );
-
-      if (!launchyQuote || launchyQuote.outputAmount <= 0n) {
-        throw new Error('Launchy pool has insufficient liquidity to execute this sell order.');
-      }
-
-      selectedQuoteBuyAmount = launchyQuote.outputAmount;
-      const minAmountOut = launchyQuote.minReceived;
-      const proceedsNative = Number(selectedQuoteBuyAmount) / 1e18;
-      const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.12;
-      const proceedsUsd = proceedsNative * unitPrice;
-      const feeBps = proceedsUsd > 200 ? 200n : STARKNET_FEE_BPS;
-      nativeFeeAmount = (selectedQuoteBuyAmount * feeBps) / STARKNET_BPS_DENOMINATOR;
-
-      const approveCall = {
-        contractAddress: tokenInCanonical,
-        entrypoint: 'approve',
-        calldata: CallData.compile({
-          spender: routerAddress,
-          amount: uint256.bnToUint256(amountInBigInt),
-        }),
-      };
-
-      const swapCall = {
-        contractAddress: routerAddress,
-        entrypoint: 'swap_exact_input',
-        calldata: [
-          poolKey.token0,
-          poolKey.token1,
-          poolKey.fee,
-          poolKey.tick_spacing,
-          poolKey.extension,
-          tokenInCanonical,
-          uint256.bnToUint256(amountInBigInt).low.toString(),
-          uint256.bnToUint256(amountInBigInt).high.toString(),
-          uint256.bnToUint256(minAmountOut).low.toString(),
-          uint256.bnToUint256(minAmountOut).high.toString(),
-          userAddress,
-        ],
-      };
-
-      const feeTransferCall = {
-        contractAddress: tokenOutCanonical,
-        entrypoint: 'transfer',
-        calldata: CallData.compile({
-          recipient: getStarknetTreasuryAddress(),
-          amount: uint256.bnToUint256(nativeFeeAmount),
-        }),
-      };
-
-      callsToExecute = [approveCall, swapCall, feeTransferCall];
+    } catch (launchyErr: any) {
+      console.warn(`[STARKNET_EXECUTOR] Launchy route error: ${launchyErr?.message}. Falling back to AVNU aggregator...`);
     }
-  } else {
+  }
+
+  if (!routedViaLaunchy) {
+    onProgress?.('routing_avnu');
     // 4. Fetch quote from AVNU (Ekubo, JediSwap, Nostra, 10KSwap)
     const quotes = await getQuotes({
       sellTokenAddress: tokenInCanonical,
@@ -316,7 +311,7 @@ export async function executeStarknetSwap(
       feeTokenAddress = tokenInCanonical;
     } else {
       const proceedsNative = Number(selectedQuoteBuyAmount) / 1e18;
-      const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.12;
+      const unitPrice = gasTokenUsed === 'ETH' ? 2600.0 : 0.40;
       const proceedsUsd = proceedsNative * unitPrice;
       const feeBps = proceedsUsd > 200 ? 200n : STARKNET_FEE_BPS;
       nativeFeeAmount = (selectedQuoteBuyAmount * feeBps) / STARKNET_BPS_DENOMINATOR;
@@ -334,7 +329,7 @@ export async function executeStarknetSwap(
 
     const { calls: avnuCalls } = await quoteToCalls({
       quoteId: selectedQuote.quoteId,
-      slippage: (slippage_pct || 2) / 100,
+      slippage: Math.min(0.5, (slippage_pct || 2) / 100),
       takerAddress: userAddress,
     });
 
