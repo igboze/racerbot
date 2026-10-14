@@ -351,7 +351,7 @@ export function parseTokenUnits(amountStr: string, decimals: number): bigint {
   }
   const [whole, frac = ''] = trimmed.split('.');
   const truncatedFrac = frac.slice(0, decimals).padEnd(decimals, '0');
-  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(truncatedFrac);
+  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(truncatedFrac || '0');
 }
 
 export function formatTokenUnits(amountRaw: bigint, decimals: number, maxDecimals = 6): string {

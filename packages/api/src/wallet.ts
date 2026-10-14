@@ -1496,26 +1496,40 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
         }
       } catch { /* no-op */ }
+    } else if (tokenAddress.endsWith('.qlyphs.near')) {
+      try {
+        const qlyphsState = await near.findRheaPoolForToken(tokenAddress);
+        if (qlyphsState && qlyphsState.price > 0) {
+          venue = 'qlyphs';
+          price = qlyphsState.price;
+          liquidity = qlyphsState.liquidityNear;
+          bondingPhase = 'bonded';
+          bondingProgressPct = 100;
+          dclPoolId = String(qlyphsState.poolId);
+          pairedSymbol = 'QTC';
+        }
+      } catch { /* no-op */ }
     }
   }
 
-  let rheaCandidate: { venue: 'rhea'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
+  let rheaCandidate: { venue: 'rhea' | 'qlyphs'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
   // Step 2: Only probe Rhea if price is still unknown or pool ID is not yet resolved
   if ((venue === 'unknown' || bondingPhase === 'bonded') && (price <= 0 || (!rheaPoolId && !dclPoolId))) {
     try {
       const rhea = await near.findRheaPoolForToken(tokenAddress);
       if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+        const isQlyphs = tokenAddress.endsWith('.qlyphs.near');
         rheaCandidate = {
-          venue: 'rhea',
+          venue: isQlyphs ? 'qlyphs' : 'rhea',
           price: rhea.price,
           liquidity: rhea.liquidityNear,
           rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
-          dclPoolId: rhea.isDcl && (rhea.pairedToken === 'wrap.near' || rhea.pairedToken === 'near') ? String(rhea.poolId) : null,
+          dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
           poolFee: rhea.fee,
         };
         // Prefer Rhea if it has deeper liquidity or if venue was unknown
         if (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded') {
-          venue = 'rhea';
+          venue = rheaCandidate.venue;
           price = rheaCandidate.price;
           liquidity = rheaCandidate.liquidity;
           rheaPoolId = rheaCandidate.rheaPoolId;
