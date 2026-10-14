@@ -34,6 +34,7 @@ export type VenueName =
   | 'shoremarkets'
   | 'kelytra'
   | 'nearpumpfun'
+  | 'qlyphs'
   | 'suipump'
   | 'cetus'
   | 'turbos'
@@ -64,6 +65,7 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'shoremarkets',
   'kelytra',
   'nearpumpfun',
+  'qlyphs',
   'suipump',
   'cetus',
   'turbos',

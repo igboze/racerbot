@@ -1378,7 +1378,19 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
       return { rateInNear: 0.23, decimals: 6 };
     }
-    // General fallback: check if pairedToken has a wNEAR pool on Ref
+    if (pairedToken === 'qtc.omft.near') {
+      try {
+        const dclId = await this.findDclPoolId('wrap.near', 'qtc.omft.near').catch(() => null);
+        if (dclId) {
+          const st = await this.getDclPoolState(dclId, 'wrap.near');
+          if (st.price > 0) {
+            return { rateInNear: st.price, decimals: 12 };
+          }
+        }
+      } catch { /* no-op */ }
+      return { rateInNear: 24.8122, decimals: 12 };
+    }
+    // General fallback: check if pairedToken has a wNEAR pool on Ref (simple pool or DCL)
     try {
       const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
       if (pId !== null) {
@@ -1389,6 +1401,14 @@ export class MultiRpcNear {
         const pairedRes = parseFloat(rh.reserveOut) / Math.pow(10, pDec);
         if (nearRes > 0 && pairedRes > 0) {
           return { rateInNear: nearRes / pairedRes, poolId: pId, decimals: pDec };
+        }
+      }
+      const dclId = await this.findDclPoolId('wrap.near', pairedToken).catch(() => null);
+      if (dclId) {
+        const st = await this.getDclPoolState(dclId, 'wrap.near');
+        if (st.price > 0) {
+          const pMeta = await this.getTokenMetadata(pairedToken).catch(() => ({ decimals: 18 }));
+          return { rateInNear: st.price, decimals: pMeta?.decimals ?? 18 };
         }
       }
     } catch { /* no-op */ }
@@ -1438,6 +1458,7 @@ export class MultiRpcNear {
 
     const pairedTokensForDcl = [
       'wrap.near',
+      'qtc.omft.near',
       '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
       'usdc.near',
       'usdt.tether-token.near',
@@ -1477,8 +1498,15 @@ export class MultiRpcNear {
           if (dclPoolId) {
             const st = await this.getDclPoolState(dclPoolId, paired);
             if (st.price > 0 && st.liquidityNear > 0) {
+              let compositePoolId = dclPoolId;
+              if (paired !== 'wrap.near') {
+                const hop1Dcl = await this.findDclPoolId('wrap.near', paired).catch(() => null);
+                if (hop1Dcl) {
+                  compositePoolId = `${hop1Dcl}>${dclPoolId}`;
+                }
+              }
               return {
-                poolId: dclPoolId,
+                poolId: compositePoolId,
                 pairedToken: paired,
                 intermediateToken: paired !== 'wrap.near' ? paired : undefined,
                 isDcl: true,
@@ -3326,7 +3354,7 @@ export class MultiRpcNear {
    * Never uses cached reserves older than the call itself.
    */
   async computeMinAmountOut(
-    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun',
+    venue: 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'memecooking' | 'onetokenhub' | 'gaypad' | 'nearpad' | 'shoremarkets' | 'kelytra' | 'nearpumpfun' | 'qlyphs',
     tokenIn: string,
     tokenOut: string,
     amountIn: string,
@@ -3523,18 +3551,20 @@ export class MultiRpcNear {
       const expected = calculateExpectedOutput(amountIn, reserveIn, reserveOut, 100);
       const minOut = calculateMinAmountOut(expected, slippagePct);
       return { expectedOutput: expected.toString(), minAmountOut: minOut };
-    } else if (venue === 'rhea' || venue === 'ref') {
+    } else if (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs') {
       const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
       const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
 
       if (dclPoolId) {
-        const poolTokens = dclPoolId.split('|').slice(0, 2);
-        const hasTokens = (poolTokens.includes(inToken) || (inToken === 'wrap.near' && poolTokens.includes('wrap.near'))) &&
-                          poolTokens.includes(outToken);
-        if (hasTokens) {
+        const isMultiDcl = dclPoolId.includes('>') || dclPoolId.includes(',');
+        if (isMultiDcl) {
+          const isBuy = inToken === 'wrap.near';
+          const poolIds = isBuy
+            ? (dclPoolId.includes('>') ? dclPoolId.split('>') : dclPoolId.split(','))
+            : (dclPoolId.includes('>') ? dclPoolId.split('>').reverse() : dclPoolId.split(',').reverse());
           try {
             const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-              pool_ids: [dclPoolId],
+              pool_ids: poolIds,
               input_token: inToken,
               output_token: outToken,
               input_amount: amountIn,
@@ -3545,7 +3575,28 @@ export class MultiRpcNear {
               return { expectedOutput: expected.toString(), minAmountOut: minOut };
             }
           } catch {
-            // fallback to simple pool if quote view fails
+            // fallback to discovery below
+          }
+        } else {
+          const poolTokens = dclPoolId.split('|').slice(0, 2);
+          const hasTokens = (poolTokens.includes(inToken) || (inToken === 'wrap.near' && poolTokens.includes('wrap.near'))) &&
+                            poolTokens.includes(outToken);
+          if (hasTokens) {
+            try {
+              const quote = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+                pool_ids: [dclPoolId],
+                input_token: inToken,
+                output_token: outToken,
+                input_amount: amountIn,
+              });
+              const expected = BigInt(quote?.amount || '0');
+              if (expected > 0n) {
+                const minOut = calculateMinAmountOut(expected, slippagePct);
+                return { expectedOutput: expected.toString(), minAmountOut: minOut };
+              }
+            } catch {
+              // fallback to simple pool if quote view fails
+            }
           }
         }
       }
@@ -3593,7 +3644,28 @@ export class MultiRpcNear {
         const interPoolId = rheaState.intermediatePoolId;
 
         const isBuy = inToken === 'wrap.near';
-        if (!interToken || rheaState.pairedToken === 'wrap.near') {
+        const isMultiDcl = dclId.includes('>') || dclId.includes(',');
+        if (isMultiDcl) {
+          const poolIds = isBuy
+            ? (dclId.includes('>') ? dclId.split('>') : dclId.split(','))
+            : (dclId.includes('>') ? dclId.split('>').reverse() : dclId.split(',').reverse());
+          try {
+            const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
+              pool_ids: poolIds,
+              input_token: inToken,
+              output_token: outToken,
+              input_amount: amountIn,
+            });
+            const expected = BigInt(quoteRes?.amount || '0');
+            if (expected > 0n) {
+              const minOut = calculateMinAmountOut(expected, slippagePct);
+              return { expectedOutput: expected.toString(), minAmountOut: minOut };
+            }
+          } catch (err: any) {
+            console.warn(`[computeMinAmountOut] Multi-DCL quote error for pool ${dclId}:`, err?.message || err);
+          }
+          throw new Error(`Insufficient liquidity in Ref DCL route (${dclId}) — pool has zero active liquidity or has been drained.`);
+        } else if (!interToken || rheaState.pairedToken === 'wrap.near') {
           try {
             const quoteRes = await this.view<any>('dclv2.ref-labs.near', 'quote', {
               pool_ids: [dclId],
