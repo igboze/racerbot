@@ -38,7 +38,7 @@ near deploy \
 
 echo ""
 echo "✅ Contract deployed!"
-TREASURY_ACCOUNT="${TREASURY_ACCOUNT_ID:-treasury.racerbot.near}"
+TREASURY_ACCOUNT="${TREASURY_ACCOUNT_ID:-wild-falcon-5130.racerbot.near}"
 echo "📋 Next: Initialize contract (run once after fresh deploy with 1.5% BUY/SELL fees)"
 echo "  near call $ROUTER_CONTRACT new '{\"owner_id\":\"$ROUTER_CONTRACT\",\"treasury_id\":\"$TREASURY_ACCOUNT\",\"buy_fee_bps\":150,\"sell_fee_bps\":150,\"snipe_fee_bps\":150}' --accountId $ROUTER_CONTRACT"
 
