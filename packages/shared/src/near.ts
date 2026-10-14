@@ -323,42 +323,46 @@ export class MultiRpcNear {
     const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
     const rawQn = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
     const qnUrl = rawQn.startsWith('${') ? '' : rawQn;
-    const initialUrls = [...rpcUrls].filter(u => u && !u.startsWith('${'));
-    if (qnUrl && !initialUrls.includes(qnUrl)) {
+    const brokenDefaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
+    const initialUrls = [...rpcUrls].filter(u => u && !u.startsWith('${') && u !== brokenDefaultQn);
+    if (qnUrl && qnUrl !== brokenDefaultQn && !initialUrls.includes(qnUrl)) {
       initialUrls.push(qnUrl);
     }
 
     // Allow FastNEAR, community validator nodes (Shitzu, Intear), and QuickNode endpoints
     const allowedUrls = initialUrls.filter(url => {
-      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
-      const isFn = url.includes('fastnear.com') && !url.includes('free.rpc.fastnear.com'); // exclude rate-limited free endpoint from trade/read list
+      const isQn = (url.includes('quiknode.pro') || url.includes('quicknode')) && url !== brokenDefaultQn;
+      const isFn = url.includes('fastnear.com');
       const isShitzu = url.includes('shitzuapes.xyz');
       const isIntear = url.includes('intea.rs');
       return isQn || isFn || isShitzu || isIntear;
     });
 
-    const defaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
+    const fallbackUrls = ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', 'https://free.rpc.fastnear.com'];
     const sanitizedUrls = allowedUrls.length > 0
       ? Array.from(new Set(allowedUrls))
-      : ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', qnUrl || defaultQn];
+      : fallbackUrls;
 
-    // Read URLs: FastNEAR first (primary dedicated RPC), Shitzu, Intear, then QuickNode fallback
-    const readUrls = [
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
+    // Read URLs: FastNEAR first (primary dedicated RPC), QuickNode, then validator and backup nodes
+    const readUrls = Array.from(new Set([
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-    ];
+      ...sanitizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+    ]));
 
-    // Trade URLs: FastNEAR first (primary RPC), Shitzu, Intear validator nodes, then QuickNode fallback.
+    // Trade URLs: FastNEAR first (primary RPC), QuickNode (if configured), Shitzu, Intear validator nodes, then Free FastNEAR backup.
     // Shitzu and Intear connect directly to block producers with zero rate limiting on broadcasts,
     // ensuring broadcasted transactions are instantly relayed to the consensus mempool.
-    const tradeUrls = [
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com')),
-      ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
-      ...sanitizedUrls.filter(u => u.includes('intea.rs')),
+    // Even if caller provided limited URLs, always include validator nodes in trade providers for reliable broadcast.
+    const tradeUrls = Array.from(new Set([
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-    ];
+      'https://rpc.shitzuapes.xyz',
+      'https://rpc.intea.rs',
+      'https://free.rpc.fastnear.com',
+    ]));
 
     this.readProviders = readUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
@@ -4533,8 +4537,8 @@ export class MultiRpcNear {
 
       const broadcastMs = Date.now() - tStart;
       const seen = { everSeen: false };
-      // Phase 1: Fan-out poll across all trade providers (QuickNode + FastNEAR)
-      const firstWindow = Math.min(8_000, Math.max(4_000, waitForMs - 15_000));
+      // Phase 1: Fan-out poll across all trade providers (FastNEAR + validator nodes)
+      const firstWindow = Math.min(16_000, Math.max(8_000, waitForMs - 15_000));
       let outcome: any;
       try {
         outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
@@ -5268,12 +5272,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR, Shitzu, Intear, QuickNode). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR, Shitzu, Intear, Free FastNEAR). */
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
   'https://rpc.shitzuapes.xyz',
   'https://rpc.intea.rs',
-  process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/',
+  'https://free.rpc.fastnear.com',
 ];
 
 let _nearInstance: MultiRpcNear | null = null;
