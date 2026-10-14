@@ -27,7 +27,7 @@
         },
         {
           "variable": "TREASURY_ACCOUNT_ID",
-          "value": "treasury.racerbot.near"
+          "value": "wild-falcon-5130.racerbot.near"
         },
         {
           "variable": "DATABASE_URL",
