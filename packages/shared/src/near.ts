@@ -1054,7 +1054,7 @@ export class MultiRpcNear {
           method: 'query',
           params: { request_type: 'view_account', account_id: accountId, finality },
         }),
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(3000),
       });
       const data: any = await res.json();
       if (data?.result?.amount) return data.result.amount as string;
@@ -5279,10 +5279,17 @@ export const DEFAULT_RPC_URLS = [
 let _nearInstance: MultiRpcNear | null = null;
 let _freeNearInstance: MultiRpcNear | null = null;
 
+export const FREE_RPC_URLS = [
+  'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.fastnear.com',
+  'https://rpc.shitzuapes.xyz',
+  'https://rpc.intea.rs',
+];
+
 export function getFreeNear(): MultiRpcNear {
   if (!_freeNearInstance) {
-    // Uses FastNEAR free public endpoint — no paid API key attached
-    _freeNearInstance = new MultiRpcNear(['https://free.rpc.fastnear.com']);
+    // Uses free public RPC endpoints with automatic failover — no paid API key attached
+    _freeNearInstance = new MultiRpcNear(FREE_RPC_URLS);
   }
   return _freeNearInstance;
 }
