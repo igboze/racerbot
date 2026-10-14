@@ -14,6 +14,7 @@ export {
   updateUserScopedKey,
   updateUserSuiWallet,
   updateUserStarknetWallet,
+  updateUserLastBalances,
   updateUserDefaults,
   updateUserSettings,
   createPosition,

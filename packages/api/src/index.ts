@@ -374,8 +374,8 @@ async function main(): Promise<void> {
   
   logger.info('Background external deposit sync started', { intervalMs: SYNC_INTERVAL_MS });
 
-  // ── Real-time NEAR & SUI native deposit watcher ───────────────────────────
-  startDepositWatcher(12_000); // Check every 12s for fast real-time deposit alerts
+  // ── Real-time NEAR, SUI & Starknet native deposit watcher ─────────────────
+  startDepositWatcher(6_000); // Check every 6s for high-cadence real-time deposit alerts
 
   // ── Start background worker processes (detector, executor, triggers) ──────
   startBackgroundWorkers();
