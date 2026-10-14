@@ -903,7 +903,7 @@ export class SwapExecutor {
     await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
-    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun') && !dclPoolId) {
+    if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun' || venue === 'qlyphs') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
@@ -1440,7 +1440,7 @@ export class SwapExecutor {
           }
         }
       }
-    } else if (venue === 'rhea' || venue === 'ref') {
+    } else if (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs') {
         const isBuyTarget = token_in === 'wrap.near' || token_in === 'near';
         const targetTokenQ = isBuyTarget ? token_out : token_in;
         const pinnedSimplePool = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
@@ -1470,9 +1470,14 @@ export class SwapExecutor {
             const quoteAmount = (isBuyTarget ? swapAmount : amountInBigInt).toString();
             const inTok = isBuyTarget ? 'wrap.near' : token_in;
             const outTok = isBuyTarget ? token_out : 'wrap.near';
+            const quotePoolIds = dclPoolId.includes('>')
+              ? (isBuyTarget ? dclPoolId.split('>') : dclPoolId.split('>').reverse())
+              : (dclPoolId.includes(',')
+                ? (isBuyTarget ? dclPoolId.split(',') : dclPoolId.split(',').reverse())
+                : [dclPoolId]);
             const [dclOut, simpleOut] = await Promise.all([
               near.view<any>('dclv2.ref-labs.near', 'quote', {
-                pool_ids: [dclPoolId],
+                pool_ids: quotePoolIds,
                 input_token: inTok,
                 output_token: outTok,
                 input_amount: quoteAmount,
@@ -1607,6 +1612,9 @@ export class SwapExecutor {
             result = await signAndSend(interToken, tx2Actions);
           } else if (isBuy) {
             // Direct DCL buy
+            const buyPoolIds = dclPoolId.includes('>')
+              ? dclPoolId.split('>')
+              : (dclPoolId.includes(',') ? dclPoolId.split(',') : [dclPoolId]);
             const [, actions] = await Promise.all([
               ensureStorage(token_out),
               this.buildWrapNearBuyActions(
@@ -1617,7 +1625,7 @@ export class SwapExecutor {
                 'dclv2.ref-labs.near',
                 JSON.stringify({
                   Swap: {
-                    pool_ids: [dclPoolId],
+                    pool_ids: buyPoolIds,
                     output_token: token_out,
                     min_output_amount: minOutAdj,
                     swap_out_recipient: subaccountId,
@@ -1631,6 +1639,9 @@ export class SwapExecutor {
             result = await signAndSend('wrap.near', actions);
           } else {
             // Direct DCL sell
+            const sellPoolIds = dclPoolId.includes('>')
+              ? dclPoolId.split('>').reverse()
+              : (dclPoolId.includes(',') ? dclPoolId.split(',').reverse() : [dclPoolId]);
             await Promise.all([
               ensureStorage(token_in),
               ensureStorage('wrap.near'),
@@ -1644,7 +1655,7 @@ export class SwapExecutor {
                   amount: amountInBigInt.toString(),
                   msg: JSON.stringify({
                     Swap: {
-                      pool_ids: [dclPoolId],
+                      pool_ids: sellPoolIds,
                       output_token: 'wrap.near',
                       min_output_amount: min_amount_out,
                       swap_out_recipient: subaccountId,
