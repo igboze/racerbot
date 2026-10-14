@@ -2455,9 +2455,23 @@ export function setupRoutes(bot: Telegraf): void {
         return param.replace(/_/g, '.');
       };
 
+      // ── Helper to decode token CA parameters back to contract address ──
+      const decodeTokenCaParam = (param: string): string => {
+        if (!param) return '';
+        let cleaned = param.trim();
+        cleaned = cleaned.replace(/^[-_]+/, '');
+        if (cleaned.includes('--')) {
+          cleaned = cleaned.replace(/--/g, '.');
+        } else if (!cleaned.startsWith('0x') && (cleaned.endsWith('_near') || cleaned.endsWith('_tg') || cleaned.endsWith('_testnet'))) {
+          cleaned = decodeTelegramAccountId(cleaned);
+        }
+        return cleaned;
+      };
+
       // ── Deep links: Token share (/start t_XXXX), Copy Trade (/start copy_wallet), or Quick Buy (/start buy_token_amount) ──
       let rawPayload = payload || '';
       let refCode: string | undefined = undefined;
+      let customTokenAddress: string | undefined = undefined;
 
       // Handle RaceDrop claim deep link (/start drop_<drop_id>)
       if (rawPayload.startsWith('drop_')) {
@@ -2482,7 +2496,27 @@ export function setupRoutes(bot: Telegraf): void {
         rawPayload = parts[0];
         refCode = parts[1];
       } else if (rawPayload.startsWith('ref_')) {
-        refCode = rawPayload.slice(4);
+        const rest = rawPayload.slice(4);
+        if (rest.includes('_-')) {
+          const idx = rest.indexOf('_-');
+          refCode = rest.slice(0, idx);
+          customTokenAddress = decodeTokenCaParam(rest.slice(idx + 2));
+        } else if (rest.includes('_--')) {
+          const idx = rest.indexOf('_--');
+          refCode = rest.slice(0, idx);
+          customTokenAddress = decodeTokenCaParam(rest.slice(idx + 3));
+        } else if (rest.includes('--') && !rest.startsWith('0x')) {
+          const firstDashDash = rest.indexOf('--');
+          const lastUnderscoreBeforeDash = rest.lastIndexOf('_', firstDashDash);
+          if (lastUnderscoreBeforeDash !== -1) {
+            refCode = rest.slice(0, lastUnderscoreBeforeDash);
+            customTokenAddress = decodeTokenCaParam(rest.slice(lastUnderscoreBeforeDash + 1));
+          } else {
+            refCode = rest;
+          }
+        } else {
+          refCode = rest;
+        }
       }
 
       const isTokenShare = rawPayload.startsWith('t_');
@@ -2495,9 +2529,32 @@ export function setupRoutes(bot: Telegraf): void {
 
       // For standard referral codes we pass the code to onboardUser; for token-share or copy-share
       // codes we pass undefined unless refCode was explicitly passed.
-      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg || isGroupSetup || isSetMedia) ? undefined : (rawPayload || undefined));
+      const accountReferralCode = refCode || ((isTokenShare || isCopyShare || isBuyParam || isTokenParam || isBuyAlertCfg || isGroupSetup || isSetMedia || customTokenAddress) ? undefined : (rawPayload || undefined));
 
       const result = await onboardUser(telegramId, accountReferralCode, username);
+
+      // Custom Token Referral Deep Link (/start ref_{refCode}_-{CA})
+      if (customTokenAddress && (isValidNearAccountId(customTokenAddress) || customTokenAddress.startsWith('0x'))) {
+        if (refCode) {
+          const referrer = await getUserByReferralCode(refCode).catch(() => null);
+          if (referrer && referrer.id !== result.userId) {
+            try {
+              await recordTokenReferral(result.userId, customTokenAddress, referrer.id);
+            } catch (e) {
+              console.warn('[/start] recordTokenReferral failed (non-fatal):', e);
+            }
+          }
+        }
+
+        try {
+          const card = await buildTokenCard(customTokenAddress, telegramId);
+          prewarmTradePath(telegramId, customTokenAddress).catch(() => {});
+          await sendTokenCard(ctx, card);
+          return;
+        } catch (cardErr: any) {
+          console.warn('[/start] Custom token ref card failed:', cardErr?.message);
+        }
+      }
 
       // 0a. Group Buy Alert Setup in DM (/start setup_group_<chat_id> or /start setup_<chat_id>)
       if (isGroupSetup && rawPayload) {

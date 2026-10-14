@@ -1349,9 +1349,33 @@ export async function generateReferralCode(userId: string, username: string): Pr
 
 export async function getUserByReferralCode(referralCode: string): Promise<UserRecord | null> {
   const db = await getDb();
-  const result = await db.query('SELECT * FROM users WHERE referral_code = $1', [referralCode]);
-  if (result.rows.length === 0) return null;
-  return rowToUser(result.rows[0]);
+  const trimmed = referralCode.trim();
+  if (!trimmed) return null;
+
+  // 1. Exact match on referral_code
+  let result = await db.query('SELECT * FROM users WHERE referral_code = $1', [trimmed]);
+  if (result.rows.length > 0) return rowToUser(result.rows[0]);
+
+  // 2. Case-insensitive match on referral_code
+  result = await db.query('SELECT * FROM users WHERE LOWER(referral_code) = LOWER($1)', [trimmed]);
+  if (result.rows.length > 0) return rowToUser(result.rows[0]);
+
+  // 3. Match on Telegram username
+  result = await db.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [trimmed]);
+  if (result.rows.length > 0) return rowToUser(result.rows[0]);
+
+  // 4. Prefix match (e.g. 'nearscan' matches 'nearscandev' or 'nearscandev-KEL9Q')
+  result = await db.query(
+    `SELECT * FROM users 
+     WHERE LOWER(referral_code) LIKE LOWER($1) || '%' 
+        OR LOWER(username) LIKE LOWER($1) || '%' 
+     ORDER BY CASE WHEN LOWER(username) = LOWER($1) THEN 0 ELSE 1 END, created_at ASC 
+     LIMIT 1`,
+    [trimmed]
+  );
+  if (result.rows.length > 0) return rowToUser(result.rows[0]);
+
+  return null;
 }
 
 export async function createReferral(referrerId: string, referredUserId: string): Promise<ReferralRecord> {
