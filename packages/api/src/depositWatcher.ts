@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { getFreeNear, getSuiBalance, getSuiUsdPrice, createLogger } from '@racerbot/shared';
+import { getFreeNear, getSuiBalance, getSuiUsdPrice, getStarknetBalance, createLogger } from '@racerbot/shared';
 import { getDb, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
 import { getNearUsdPrice, ensureUserSuiWallet } from './wallet.js';
 import { notifyDeposit, notifyTokenDeposit } from './notify.js';
@@ -9,6 +9,7 @@ const logger = createLogger('deposit-watcher');
 interface UserBalanceState {
   totalNear: number;
   totalSui: number;
+  totalStrk: number;
   initialized: boolean;
 }
 
@@ -75,7 +76,7 @@ export async function pollUserDeposits(): Promise<void> {
   try {
     const db = await getDb();
     const result = await db.query<UserRecord>(
-      'SELECT id, telegram_id, subaccount_id, sui_address, scoped_key_encrypted, sui_private_key_enc FROM users'
+      'SELECT id, telegram_id, subaccount_id, sui_address, starknet_address, scoped_key_encrypted, sui_private_key_enc FROM users'
     );
 
     const allUsers = result.rows;
@@ -98,8 +99,8 @@ export async function pollUserDeposits(): Promise<void> {
       }
     }
 
-    // Always poll all active users + a staggered batch of up to 10 idle users
-    const MAX_IDLE_PER_TICK = 10;
+    // Always poll all active users + a staggered batch of up to 40 idle users
+    const MAX_IDLE_PER_TICK = 40;
     const idleBatch: UserRecord[] = [];
     if (idleUsers.length > 0) {
       const start = idleUserIndex % idleUsers.length;
@@ -119,6 +120,7 @@ export async function pollUserDeposits(): Promise<void> {
       getNearUsdPrice().catch(() => 5.16),
       getSuiUsdPrice().catch(() => 2.0),
     ]);
+    const strkUsd = 0.40;
 
     // Process target users in parallel batches of 10
     const BATCH_SIZE = 10;
@@ -131,44 +133,54 @@ export async function pollUserDeposits(): Promise<void> {
           const telegramId = user.telegram_id;
           const subaccount = user.subaccount_id;
           const suiAddr = user.sui_address;
+          const starknetAddr = user.starknet_address;
 
           try {
-            // 1. Fetch NEAR native + wrap balances with strict error handling.
-            // If RPC errors out or times out, DO NOT assume 0 (which causes false deposit loops on next poll)!
-            let nativeNearYocto: string | null = null;
-            let wrapNearYocto: string | null = null;
-
+            // 1. Fetch NEAR native + wrap balances with isolated error handling.
+            let currentTotalNear: number | null = null;
             if (subaccount) {
-              const [resNative, resWrap] = await Promise.allSettled([
-                near.getNearBalance(subaccount),
-                near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccount }),
-              ]);
-              if (resNative.status === 'fulfilled') nativeNearYocto = resNative.value;
-              if (resWrap.status === 'fulfilled') wrapNearYocto = resWrap.value;
+              try {
+                const [resNative, resWrap] = await Promise.allSettled([
+                  near.getNearBalance(subaccount),
+                  near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccount }),
+                ]);
 
-              // If either failed, skip this user this cycle to prevent phantom deposit spikes
-              if (nativeNearYocto === null || wrapNearYocto === null) {
-                return;
+                if (resNative.status === 'fulfilled' && resNative.value) {
+                  const nativeNear = Number(BigInt(resNative.value) / 1000000000000000000n) / 1e6;
+                  let wrapNear = 0;
+                  if (resWrap.status === 'fulfilled' && resWrap.value) {
+                    wrapNear = Number(BigInt(resWrap.value) / 1000000000000000000n) / 1e6;
+                  }
+                  currentTotalNear = nativeNear + wrapNear;
+                }
+              } catch {
+                // Ignore transient NEAR RPC error
               }
             }
 
-            const nativeNear = nativeNearYocto
-              ? Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6
-              : 0;
-            const wrapNear = wrapNearYocto
-              ? Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6
-              : 0;
-            const currentTotalNear = nativeNear + wrapNear;
-
-            // 2. Fetch SUI balance if SUI address exists
+            // 2. Fetch SUI balance if SUI address exists (isolated error handling)
             let currentSui: number | null = null;
             if (suiAddr) {
-              const suiBal = await getSuiBalance(suiAddr).catch(() => null);
-              if (suiBal) {
-                currentSui = suiBal.sui;
-              } else {
-                // SUI query failed, skip this cycle to prevent phantom deposit alerts
-                return;
+              try {
+                const suiBal = await getSuiBalance(suiAddr).catch(() => null);
+                if (suiBal) {
+                  currentSui = suiBal.sui;
+                }
+              } catch {
+                // Ignore transient SUI RPC error
+              }
+            }
+
+            // 3. Fetch Starknet STRK balance if Starknet address exists (isolated error handling)
+            let currentStrk: number | null = null;
+            if (starknetAddr) {
+              try {
+                const starkBal = await getStarknetBalance(starknetAddr).catch(() => null);
+                if (starkBal) {
+                  currentStrk = Number(starkBal.strk) / 1e18;
+                }
+              } catch {
+                // Ignore transient Starknet RPC error
               }
             }
 
@@ -178,15 +190,16 @@ export async function pollUserDeposits(): Promise<void> {
             if (!prev || !prev.initialized) {
               // Initialize baseline balance without firing notification
               userBalanceState.set(stateKey, {
-                totalNear: currentTotalNear,
+                totalNear: currentTotalNear ?? 0,
                 totalSui: currentSui ?? 0,
+                totalStrk: currentStrk ?? 0,
                 initialized: true,
               });
               return;
             }
 
             // Check trade cooldowns across in-memory map AND recent DB fills.
-            // When tokens are sold on DEX, NEAR/SUI proceeds increase wallet balance.
+            // When tokens are sold on DEX, proceeds increase wallet balance.
             // We must NEVER treat trade proceeds as incoming external deposits!
             let inCooldown = isUserInTradeCooldown(userId, telegramId);
             if (!inCooldown) {
@@ -202,23 +215,25 @@ export async function pollUserDeposits(): Promise<void> {
             }
 
             // ── Check NEAR Deposit ──────────────────────────────────────────
-            const nearDelta = currentTotalNear - prev.totalNear;
-            // Threshold: deposit of at least 0.01 NEAR (filters gas change dust)
-            if (nearDelta >= 0.01 && !inCooldown) {
-              const usdVal = formatUSD(nearDelta * nearUsd);
-              logger.info('NEAR deposit detected', {
-                telegramId,
-                amount: nearDelta.toFixed(4),
-                usdVal,
-              });
+            if (currentTotalNear !== null && subaccount) {
+              const nearDelta = currentTotalNear - prev.totalNear;
+              // Threshold: deposit of at least 0.01 NEAR (filters gas change dust)
+              if (nearDelta >= 0.01 && !inCooldown) {
+                const usdVal = formatUSD(nearDelta * nearUsd);
+                logger.info('NEAR deposit detected', {
+                  telegramId,
+                  amount: nearDelta.toFixed(4),
+                  usdVal,
+                });
 
-              await notifyDeposit(telegramId, {
-                chain: 'near',
-                amount: nearDelta.toFixed(4),
-                symbol: 'NEAR',
-                address: subaccount,
-                usdValue: usdVal,
-              }).catch((err) => logger.warn('Failed to send NEAR deposit notify', { error: err.message }));
+                await notifyDeposit(telegramId, {
+                  chain: 'near',
+                  amount: nearDelta.toFixed(4),
+                  symbol: 'NEAR',
+                  address: subaccount,
+                  usdValue: usdVal,
+                }).catch((err) => logger.warn('Failed to send NEAR deposit notify', { error: err.message }));
+              }
             }
 
             // ── Check SUI Deposit ───────────────────────────────────────────
@@ -243,10 +258,33 @@ export async function pollUserDeposits(): Promise<void> {
               }
             }
 
-            // Update stored baseline
+            // ── Check Starknet Deposit ──────────────────────────────────────
+            if (currentStrk !== null && starknetAddr) {
+              const strkDelta = currentStrk - prev.totalStrk;
+              // Threshold: deposit of at least 0.1 STRK
+              if (strkDelta >= 0.1 && !inCooldown) {
+                const usdVal = formatUSD(strkDelta * strkUsd);
+                logger.info('Starknet STRK deposit detected', {
+                  telegramId,
+                  amount: strkDelta.toFixed(4),
+                  usdVal,
+                });
+
+                await notifyDeposit(telegramId, {
+                  chain: 'starknet',
+                  amount: strkDelta.toFixed(4),
+                  symbol: 'STRK',
+                  address: starknetAddr,
+                  usdValue: usdVal,
+                }).catch((err) => logger.warn('Failed to send Starknet deposit notify', { error: err.message }));
+              }
+            }
+
+            // Update stored baseline (preserve previous balance if current query failed)
             userBalanceState.set(stateKey, {
-              totalNear: currentTotalNear,
+              totalNear: currentTotalNear ?? prev.totalNear,
               totalSui: currentSui ?? prev.totalSui,
+              totalStrk: currentStrk ?? prev.totalStrk,
               initialized: true,
             });
           } catch (err: any) {
