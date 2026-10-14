@@ -51,7 +51,7 @@ import {
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError } from '@racerbot/shared';
-import { TREASURY_ACCOUNT_ID } from './config.js';
+import { PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
@@ -266,7 +266,31 @@ export async function ensureRefStorage(accountId?: string): Promise<void> {
   // result is an Error
   console.error(`[EXECUTOR] Ref storage_deposit failed for ${accountId}:`, (result as Error).message);
   throw new Error(`Could not register your wallet on Ref Finance. Add at least ${depositNear} NEAR and retry.`);
+}
 
+/**
+ * Ensure TREASURY_ACCOUNT_ID is registered with storage deposit on wrap.near
+ * so fee transfers in buy orders never revert with "account is not registered".
+ */
+export async function ensureTreasuryStorage(): Promise<void> {
+  if (!TREASURY_ACCOUNT_ID) return;
+  try {
+    const isRegistered = await near.checkStorageRegistered(TREASURY_ACCOUNT_ID, 'wrap.near').catch(() => false);
+    if (!isRegistered) {
+      console.log(`[EXECUTOR] Treasury ${TREASURY_ACCOUNT_ID} not registered on wrap.near. Registering via ${PARENT_ACCOUNT}...`);
+      await near.signAndSendTransactionAll(PARENT_ACCOUNT, 'wrap.near', [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: TREASURY_ACCOUNT_ID, registration_only: true },
+          BigInt('30000000000000'),
+          BigInt('1250000000000000000000') // 0.00125 NEAR
+        )
+      ], 30_000);
+      console.log(`[EXECUTOR] Successfully registered treasury ${TREASURY_ACCOUNT_ID} on wrap.near`);
+    }
+  } catch (err: any) {
+    console.warn(`[EXECUTOR] Failed to ensure treasury storage: ${err?.message}`);
+  }
 }
 
 /**
