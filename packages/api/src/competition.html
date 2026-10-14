@@ -1,621 +1,524 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RacerBot — Trading Competition</title>
-  <link rel="icon" type="image/png" href="/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>RacerBot — Competition Arena & On-Chain Snapshot Leaderboard</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
+  <link rel="apple-touch-icon" href="/assets/logo.png">
+  <meta property="og:title" content="RacerBot — On-Chain Trading Competitions & Snapshot Arena">
+  <meta property="og:description" content="Compete in live on-chain volume sprints, earn Racer Points for snapshot airdrops, and explore institutional trading tournaments on NEAR.">
+  <meta property="og:image" content="/assets/racerbot-banner.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    /* ── 71UI Tokens ──────────────────────────────────────────────────────── */
     :root {
-      color-scheme: light;
-      --color-canvas: #FFFFFF;
-      --color-surface: #FAFAFA;
-      --color-surface-2: #F4F4F5;
-      --color-hairline: #EBEBEB;
-      --color-hairline-strong: #D4D4D8;
-      --color-control-border: #8A8A8A;
-      --color-ink-strong: #111111;
-      --color-ink: #333333;
-      --color-ink-subtle: #6B6B6B;
-      --color-primary: #0070E0;
-      --color-primary-hover: #005FC2;
-      --color-on-primary: #FFFFFF;
-      --color-link: #0070E0;
-      --color-inverse: #111111;
-      --color-inverse-hover: #2B2B2B;
-      --color-on-inverse: #FFFFFF;
+      --color-canvas: #090d1a;
+      --color-surface: #0e1532;
+      --color-surface-hover: #141f45;
+      --color-surface-raised: #131b3e;
+      --color-surface-subtle: #0a0f24;
+      --color-hairline: rgba(106, 204, 220, 0.12);
+      --color-hairline-strong: rgba(106, 204, 220, 0.28);
       
-      --color-success: #15B042;
-      --color-success-fill: #CAFACE;
-      --color-on-success: #0E7A2F;
-      
-      --color-warning: #D97706;
-      --color-warning-fill: #FFF1D6;
-      --color-on-warning: #8A4B00;
-      
-      --color-danger: #D92D20;
-      --color-danger-fill: #FFE8E6;
-      --color-on-danger: #B42318;
-      
-      --color-info-fill: #E6F0FF;
-      --color-on-info: #0058B0;
+      --color-cyan: #6accdc;
+      --color-cyan-glow: rgba(106, 204, 220, 0.25);
+      --color-purple: #7860a9;
+      --color-purple-light: #9d84d6;
+      --color-mint: #00d16a;
+      --color-mint-glow: rgba(0, 209, 106, 0.2);
+      --color-gold: #f59e0b;
+      --color-silver: #94a3b8;
+      --color-bronze: #d97706;
 
-      --shadow-ring: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 2px 4px 0 rgb(0 0 0 / 0.04);
-      --shadow-sm: 0 2px 3px -1px rgb(0 0 0 / 0.08), 0 1px 0 0 rgb(25 28 33 / 0.02), 0 0 0 1px rgb(25 28 33 / 0.06);
-      --shadow-md: 0 0 0 1px rgb(0 0 0 / 0.06), 0 1px 1px -0.5px rgb(0 0 0 / 0.06), 0 3px 3px -1.5px rgb(0 0 0 / 0.06), 0 6px 6px -3px rgb(0 0 0 / 0.06);
-      
-      --radius-xs: 4px;
-      --radius-sm: 6px;
-      --radius-md: 8px;
-      --radius-control: 10px;
-      --radius-lg: 12px;
-      --radius-xl: 16px;
-      --radius-2xl: 24px;
-      --radius-full: 9999px;
+      --color-ink-strong: #ffffff;
+      --color-ink: #c8d3e8;
+      --color-ink-subtle: #7a8ba8;
+      --color-ink-faint: #435474;
 
-      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-mono: "Geist Mono", "SF Mono", Menlo, Consolas, monospace;
-
-      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-      --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+      --radius: 6px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    [data-theme="dark"] {
-      color-scheme: dark;
-      --color-canvas: #0A0A0B;
-      --color-surface: #111113;
-      --color-surface-2: #1A1A1D;
-      --color-hairline: rgb(255 255 255 / 0.08);
-      --color-hairline-strong: rgb(255 255 255 / 0.14);
-      --color-control-border: rgb(255 255 255 / 0.40);
-      --color-ink-strong: #F4F4F2;
-      --color-ink: #D6D6D3;
-      --color-ink-subtle: #8F8F8A;
-      --color-primary: #0070E0;
-      --color-primary-hover: #005FC2;
-      --color-on-primary: #FFFFFF;
-      --color-link: #4193F5;
-      --color-inverse: #F4F4F2;
-      --color-inverse-hover: #DADAD6;
-      --color-on-inverse: #0A0A0B;
-      
-      --color-success: #15B042;
-      --color-success-fill: #0F2A19;
-      --color-on-success: #5FD68A;
-      
-      --color-warning: #F5B94A;
-      --color-warning-fill: #2E2210;
-      --color-on-warning: #F5B94A;
-      
-      --color-danger: #F97066;
-      --color-danger-fill: #3A1512;
-      --color-on-danger: #F97066;
-      
-      --color-info-fill: #0E2440;
-      --color-on-info: #6AAEFF;
-
-      --shadow-ring: 0 0 0 1px rgb(255 255 255 / 0.08);
-      --shadow-sm: 0 2px 3px -1px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.08);
-      --shadow-md: 0 0 0 1px rgb(255 255 255 / 0.08), 0 4px 12px -2px rgb(0 0 0 / 0.5);
-    }
-
-    /* ── Base Reset ───────────────────────────────────────────────────────── */
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
+      -webkit-tap-highlight-color: transparent;
     }
 
-    body {
-      background-color: var(--color-canvas);
+    html, body {
+      background: var(--color-canvas);
       color: var(--color-ink);
       font-family: var(--font-sans);
       font-size: 14px;
-      line-height: 20px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
       min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Background glow effect */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 450px;
+      background: radial-gradient(circle, rgba(120, 96, 169, 0.15) 0%, rgba(106, 204, 220, 0.08) 50%, transparent 80%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    a {
+      color: var(--color-cyan);
+      text-decoration: none;
+      transition: color 150ms var(--ease);
+    }
+    a:hover {
+      color: #9fe2ec;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────────────── */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 56px;
+      background: rgba(14, 21, 50, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--color-hairline);
       display: flex;
-      flex-direction: column;
-    }
-
-    .tabular {
-      font-variant-numeric: tabular-nums;
-      font-feature-settings: "tnum" 1;
-    }
-
-    .mono {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      letter-spacing: 0em;
-    }
-
-    /* ── Layout & Container ───────────────────────────────────────────────── */
-    .container {
-      width: 100%;
-      max-width: 1040px;
-      margin: 0 auto;
+      align-items: center;
+      justify-content: space-between;
       padding: 0 24px;
     }
 
-    /* ── Header Bar ───────────────────────────────────────────────────────── */
-    header.nav-header {
-      background-color: var(--color-canvas);
-      border-bottom: 1px solid var(--color-hairline);
-      position: sticky;
-      top: 0;
-      z-index: 20;
-    }
-
-    .nav-inner {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      height: 56px;
-    }
-
-    .brand-link {
+    .brand {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       text-decoration: none;
-      color: var(--color-ink-strong);
-      font-weight: 500;
-      font-size: 15px;
-      letter-spacing: -0.01em;
     }
 
     .brand-logo {
-      width: 28px;
-      height: 28px;
-      border-radius: var(--radius-sm);
-      object-fit: cover;
-      border: 1px solid var(--color-hairline);
-    }
-
-    .nav-actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    /* ── Buttons (71UI standard: 32px height, 10px radius) ────────────────── */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      font-family: var(--font-sans);
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 16px;
-      height: 32px;
-      padding: 0 12px;
-      border-radius: var(--radius-control);
-      text-decoration: none;
-      border: 1px solid transparent;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background-color 150ms var(--ease-standard), border-color 150ms var(--ease-standard), transform 160ms var(--ease-out);
-    }
-
-    .btn:active {
-      transform: scale(0.97);
-    }
-
-    .btn:focus-visible {
-      outline: 2px solid var(--color-primary);
-      outline-offset: 2px;
-    }
-
-    .btn-primary {
-      background-color: var(--color-primary);
-      color: var(--color-on-primary);
-    }
-
-    .btn-primary:hover {
-      background-color: var(--color-primary-hover);
-    }
-
-    .btn-secondary {
-      background-color: var(--color-canvas);
-      color: var(--color-ink-strong);
-      border-color: var(--color-hairline-strong);
-    }
-
-    .btn-secondary:hover {
-      background-color: var(--color-surface-2);
-    }
-
-    .btn-ghost {
-      background-color: transparent;
-      color: var(--color-ink-subtle);
-    }
-
-    .btn-ghost:hover {
-      background-color: var(--color-surface-2);
-      color: var(--color-ink-strong);
-    }
-
-    .btn-icon {
       width: 32px;
       height: 32px;
-      padding: 0;
-    }
-
-    /* ── Badges (71UI standard: 20px height, 6px radius, 8px padding) ─────── */
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      height: 20px;
-      padding: 0 8px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      font-weight: 500;
-      line-height: 16px;
-      letter-spacing: 0;
-    }
-
-    .badge-success {
-      background-color: var(--color-success-fill);
-      color: var(--color-on-success);
-    }
-
-    .badge-warning {
-      background-color: var(--color-warning-fill);
-      color: var(--color-on-warning);
-    }
-
-    .badge-neutral {
-      background-color: var(--color-surface-2);
-      color: var(--color-ink);
-    }
-
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: var(--radius-full);
-      background-color: currentColor;
-    }
-
-    .pulse {
-      animation: statusPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-
-    @keyframes statusPulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.35; transform: scale(0.85); }
-    }
-
-    /* ── Cards & Structure ────────────────────────────────────────────────── */
-    .card {
-      background-color: var(--color-canvas);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-lg);
-      padding: 20px;
-    }
-
-    /* ── Page Header Section ──────────────────────────────────────────────── */
-    .hero-section {
-      padding: 32px 0 24px;
-      border-bottom: 1px solid var(--color-hairline);
-      margin-bottom: 24px;
-    }
-
-    .hero-top-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      flex-wrap: wrap;
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-
-    .token-identity {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    .token-avatar-frame {
-      width: 48px;
-      height: 48px;
-      border-radius: var(--radius-control);
-      border: 1px solid var(--color-hairline);
-      background-color: var(--color-surface);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      flex-shrink: 0;
-    }
-
-    .token-avatar-frame img {
-      width: 100%;
-      height: 100%;
+      border-radius: 50%;
+      border: 1px solid var(--color-cyan);
+      box-shadow: 0 0 12px var(--color-cyan-glow);
+      display: block;
       object-fit: cover;
     }
 
-    .token-title-group h1 {
-      font-size: 24px;
-      font-weight: 500;
-      line-height: 28px;
-      letter-spacing: -0.02em;
-      color: var(--color-ink-strong);
-    }
-
-    .token-ca-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 4px;
-    }
-
-    .token-ca-code {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--color-ink-subtle);
-    }
-
-    .btn-copy {
-      font-size: 11px;
-      height: 22px;
-      padding: 0 6px;
-      border-radius: var(--radius-xs);
-      background-color: var(--color-surface-2);
-      border: 1px solid var(--color-hairline);
-      color: var(--color-ink);
-      cursor: pointer;
-      font-family: var(--font-sans);
-    }
-
-    .btn-copy:hover {
-      background-color: var(--color-hairline-strong);
-    }
-
-    /* ── Market Cap Progress Card (Clean 71UI Well) ───────────────────────── */
-    .mcap-card {
-      background-color: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-control);
-      padding: 16px 20px;
-      margin-bottom: 20px;
-    }
-
-    .mcap-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      margin-bottom: 10px;
-    }
-
-    .mcap-heading {
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--color-ink-subtle);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .mcap-numbers {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-    }
-
-    .mcap-cur-val {
-      font-size: 24px;
-      font-weight: 500;
-      letter-spacing: -0.02em;
-      color: var(--color-ink-strong);
-    }
-
-    .mcap-target-val {
-      font-size: 14px;
-      color: var(--color-ink-subtle);
-    }
-
-    .progress-track {
-      height: 8px;
-      background-color: var(--color-surface-2);
-      border-radius: var(--radius-full);
-      overflow: hidden;
-      border: 1px solid var(--color-hairline);
-    }
-
-    .progress-fill {
-      height: 100%;
-      background-color: var(--color-primary);
-      border-radius: var(--radius-full);
-      transition: width 0.4s var(--ease-out);
-      width: 0%;
-    }
-
-    .mcap-card-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--color-ink-subtle);
-    }
-
-    /* ── Metrics Grid (71UI Stat Values) ──────────────────────────────────── */
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-    }
-
-    .metric-cell {
-      background-color: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-md);
-      padding: 14px 16px;
-    }
-
-    .metric-label {
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--color-ink-subtle);
-      margin-bottom: 4px;
-    }
-
-    .metric-value {
-      font-size: 20px;
-      font-weight: 500;
-      letter-spacing: -0.015em;
-      color: var(--color-ink-strong);
-    }
-
-    /* ── Podium (Top 3 Grid) ──────────────────────────────────────────────── */
-    .section-title-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin: 28px 0 16px;
-    }
-
-    .section-title {
-      font-size: 16px;
-      font-weight: 500;
-      letter-spacing: -0.01em;
-      color: var(--color-ink-strong);
-    }
-
-    .podium-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-
-    .podium-card {
-      background-color: var(--color-canvas);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-lg);
-      padding: 18px 16px;
-      position: relative;
+    .brand-text {
       display: flex;
       flex-direction: column;
     }
 
-    .podium-card.rank-1 {
-      border-color: #F59E0B;
-      background: linear-gradient(180deg, rgba(245, 158, 11, 0.04) 0%, var(--color-canvas) 100%);
-    }
-
-    .podium-header {
+    .brand-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--color-ink-strong);
+      font-family: var(--font-mono);
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      gap: 6px;
     }
 
-    .podium-rank-tag {
+    .brand-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      background: rgba(106, 204, 220, 0.14);
+      color: var(--color-cyan);
+      border-radius: var(--radius);
+      border: 1px solid rgba(106, 204, 220, 0.3);
+    }
+
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--color-hairline);
+      background: var(--color-surface);
+      color: var(--color-ink-strong);
+      transition: all 160ms var(--ease);
+      font-family: var(--font-mono);
+    }
+    .btn-header:hover {
+      background: var(--color-surface-hover);
+      border-color: var(--color-cyan);
+    }
+    .btn-header.primary {
+      background: var(--color-cyan);
+      color: #090d1a;
+      border-color: var(--color-cyan);
+      box-shadow: 0 0 14px var(--color-cyan-glow);
+    }
+    .btn-header.primary:hover {
+      background: #7be1f0;
+      box-shadow: 0 0 20px rgba(106, 204, 220, 0.4);
+    }
+
+    .live-beacon {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--color-mint);
+      padding: 4px 10px;
+      background: rgba(0, 209, 106, 0.1);
+      border: 1px solid rgba(0, 209, 106, 0.25);
+      border-radius: var(--radius);
+    }
+    .live-beacon .dot {
+      width: 6px;
+      height: 6px;
+      background: var(--color-mint);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--color-mint);
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* ── Main Layout ──────────────────────────────────────────────────────── */
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 80px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Hero Section ─────────────────────────────────────────────────────── */
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
       font-size: 11px;
       font-weight: 600;
-      padding: 2px 6px;
-      border-radius: var(--radius-xs);
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      color: var(--color-cyan);
+      margin-bottom: 12px;
+    }
+    .hero-eyebrow::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--color-cyan);
+      border-radius: 2px;
+      display: inline-block;
     }
 
-    .rank-1 .podium-rank-tag { background: #FEF3C7; color: #92400E; }
-    .rank-2 .podium-rank-tag { background: var(--color-surface-2); color: var(--color-ink); }
-    .rank-3 .podium-rank-tag { background: var(--color-surface-2); color: var(--color-ink); }
-
-    .podium-medal {
-      font-size: 18px;
+    .hero-title {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--color-ink-strong);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+    .hero-title span {
+      background: linear-gradient(135deg, #6accdc 0%, #9d84d6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
-    .podium-trader-name {
+    .hero-subtitle {
       font-size: 15px;
-      font-weight: 500;
-      color: var(--color-ink-strong);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      margin-bottom: 2px;
-    }
-
-    .podium-trader-sub {
-      font-size: 11px;
       color: var(--color-ink-subtle);
-      font-family: var(--font-mono);
-      margin-bottom: 14px;
-    }
-
-    .podium-volume-box {
-      margin-top: auto;
-      padding-top: 10px;
-      border-top: 1px solid var(--color-hairline);
-    }
-
-    .podium-vol-usd {
-      font-size: 18px;
-      font-weight: 500;
-      letter-spacing: -0.015em;
-      color: var(--color-ink-strong);
-    }
-
-    .podium-vol-near {
-      font-size: 11px;
-      color: var(--color-ink-subtle);
-      margin-top: 2px;
-    }
-
-    /* ── Leaderboard Table (71UI: 40px rows, #EBEBEB hairlines) ───────────── */
-    .table-container {
-      background-color: var(--color-canvas);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
+      max-width: 780px;
       margin-bottom: 24px;
     }
 
-    .table-toolbar {
+    /* ── Privacy Callout ──────────────────────────────────────────────────── */
+    .privacy-notice {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--color-hairline);
-      background-color: var(--color-surface);
+      gap: 12px;
+      background: rgba(14, 21, 50, 0.7);
+      border: 1px solid rgba(120, 96, 169, 0.35);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      margin-bottom: 24px;
+      box-shadow: inset 0 0 20px rgba(120, 96, 169, 0.08);
+    }
+    .privacy-icon {
+      font-size: 18px;
+      flex-shrink: 0;
+      color: var(--color-purple-light);
+    }
+    .privacy-text {
+      font-size: 12px;
+      color: var(--color-ink);
+    }
+    .privacy-text strong {
+      color: var(--color-cyan);
+      font-weight: 600;
     }
 
-    .table-toolbar h2 {
-      font-size: 14px;
-      font-weight: 500;
+    /* ── Navigation Tabs ──────────────────────────────────────────────────── */
+    .tabs-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--color-hairline);
+      margin-bottom: 28px;
+      overflow-x: auto;
+      padding-bottom: 1px;
+    }
+
+    .tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--color-ink-subtle);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 160ms var(--ease);
+    }
+    .tab-btn:hover {
       color: var(--color-ink-strong);
+    }
+    .tab-btn.active {
+      color: var(--color-cyan);
+      border-bottom-color: var(--color-cyan);
+      background: rgba(106, 204, 220, 0.05);
+      border-top-left-radius: var(--radius);
+      border-top-right-radius: var(--radius);
+    }
+    .tab-btn .tab-badge {
+      font-size: 9px;
+      padding: 1px 6px;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--color-ink);
+    }
+    .tab-btn.active .tab-badge {
+      background: rgba(106, 204, 220, 0.2);
+      color: var(--color-cyan);
+    }
+
+    /* ── Tab Panes ────────────────────────────────────────────────────────── */
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+      animation: fadeIn 200ms var(--ease);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Stat Card Grid ───────────────────────────────────────────────────── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .stat-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 160ms var(--ease);
+    }
+    .stat-card:hover {
+      border-color: var(--color-hairline-strong);
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--color-cyan), transparent);
+      opacity: 0.6;
+    }
+
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--color-ink-subtle);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .stat-value {
+      font-family: var(--font-mono);
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--color-ink-strong);
+      letter-spacing: -0.02em;
+    }
+    .stat-value.cyan { color: var(--color-cyan); }
+    .stat-value.mint { color: var(--color-mint); }
+    .stat-value.gold { color: var(--color-gold); }
+
+    .stat-sub {
+      font-size: 11px;
+      color: var(--color-ink-subtle);
+      margin-top: 4px;
+    }
+
+    /* ── Content Card ─────────────────────────────────────────────────────── */
+    .card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--color-ink-strong);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+    }
+    .card-title .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--color-cyan);
+      border-radius: 2px;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* ── Search Input ─────────────────────────────────────────────────────── */
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-input {
+      background: var(--color-surface-subtle);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius);
+      padding: 7px 12px 7px 32px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--color-ink-strong);
+      width: 260px;
+      transition: all 150ms var(--ease);
+    }
+    .search-input:focus {
+      outline: none;
+      border-color: var(--color-cyan);
+      box-shadow: 0 0 10px var(--color-cyan-glow);
+    }
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      font-size: 13px;
+      color: var(--color-ink-subtle);
+      pointer-events: none;
+    }
+
+    /* ── Table Styles ─────────────────────────────────────────────────────── */
+    .table-container {
+      overflow-x: auto;
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius);
+      background: var(--color-surface-subtle);
     }
 
     table.data-table {
       width: 100%;
       border-collapse: collapse;
       text-align: left;
+      font-size: 13px;
     }
 
     table.data-table th {
-      height: 36px;
-      padding: 0 12px;
-      font-size: 12px;
-      font-weight: 500;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
       color: var(--color-ink-subtle);
+      background: var(--color-surface);
+      padding: 12px 16px;
       border-bottom: 1px solid var(--color-hairline);
-      background-color: var(--color-surface);
+      white-space: nowrap;
     }
 
     table.data-table td {
-      height: 40px;
-      padding: 0 12px;
-      border-bottom: 1px solid var(--color-hairline);
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(106, 204, 220, 0.06);
       color: var(--color-ink);
-      font-size: 13px;
+      vertical-align: middle;
+      white-space: nowrap;
     }
 
     table.data-table tr:last-child td {
@@ -623,564 +526,1053 @@
     }
 
     table.data-table tr:hover td {
-      background-color: var(--color-surface);
+      background: var(--color-surface-hover);
     }
 
-    .th-right, .td-right {
-      text-align: right;
+    .rank-cell {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-
-    .rank-num {
-      font-weight: 500;
-      color: var(--color-ink-subtle);
-      width: 44px;
+    .rank-medal {
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
     }
+    .medal-1 { background: rgba(245, 158, 11, 0.2); color: var(--color-gold); border: 1px solid rgba(245, 158, 11, 0.4); }
+    .medal-2 { background: rgba(148, 163, 184, 0.2); color: var(--color-silver); border: 1px solid rgba(148, 163, 184, 0.4); }
+    .medal-3 { background: rgba(217, 119, 6, 0.2); color: var(--color-bronze); border: 1px solid rgba(217, 119, 6, 0.4); }
 
-    .trader-title {
+    .wallet-cell {
+      font-family: var(--font-mono);
       font-weight: 500;
       color: var(--color-ink-strong);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wallet-link {
+      color: var(--color-ink-strong);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .wallet-link:hover {
+      color: var(--color-cyan);
     }
 
-    .trader-sub-label {
-      font-size: 11px;
+    .copy-btn {
+      background: transparent;
+      border: none;
       color: var(--color-ink-subtle);
-      font-family: var(--font-mono);
-      margin-left: 6px;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+      line-height: 1;
+      transition: all 120ms var(--ease);
+    }
+    .copy-btn:hover {
+      color: var(--color-cyan);
+      background: rgba(106, 204, 220, 0.12);
     }
 
-    .trades-tag {
+    .points-cell {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--color-cyan);
+    }
+
+    .badge-tier {
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: var(--radius);
+      letter-spacing: 0.04em;
+    }
+    .badge-tier.elite {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--color-gold);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .badge-tier.diamond {
+      background: rgba(106, 204, 220, 0.15);
+      color: var(--color-cyan);
+      border: 1px solid rgba(106, 204, 220, 0.3);
+    }
+    .badge-tier.pro {
+      background: rgba(157, 132, 214, 0.15);
+      color: var(--color-purple-light);
+      border: 1px solid rgba(157, 132, 214, 0.3);
+    }
+    .badge-tier.active {
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--color-ink-subtle);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    /* ── Progress Bar ─────────────────────────────────────────────────────── */
+    .progress-bar-wrap {
+      width: 100%;
+      height: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 12px 0 8px;
+      position: relative;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--color-purple) 0%, var(--color-cyan) 100%);
+      border-radius: var(--radius);
+      transition: width 400ms var(--ease);
+      box-shadow: 0 0 12px var(--color-cyan-glow);
+    }
+
+    /* ── Competition Formats Grid ─────────────────────────────────────────── */
+    .formats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+    }
+
+    .format-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-hairline);
+      border-radius: var(--radius);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      transition: all 180ms var(--ease);
+    }
+    .format-card:hover {
+      border-color: var(--color-cyan);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .format-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .format-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius);
+      background: rgba(106, 204, 220, 0.1);
+      border: 1px solid rgba(106, 204, 220, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: var(--color-cyan);
+      margin-bottom: 14px;
+    }
+
+    .format-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--color-ink-strong);
+      margin-bottom: 6px;
+      font-family: var(--font-mono);
+    }
+
+    .format-desc {
+      font-size: 13px;
+      color: var(--color-ink-subtle);
+      line-height: 1.6;
+      margin-bottom: 18px;
+    }
+
+    .format-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .format-tag {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 2px 8px;
+      border-radius: var(--radius);
+      background: var(--color-surface-subtle);
+      border: 1px solid var(--color-hairline);
+      color: var(--color-ink);
+    }
+
+    .format-footer {
+      border-top: 1px solid var(--color-hairline);
+      padding-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       font-family: var(--font-mono);
       font-size: 11px;
-      color: var(--color-ink-subtle);
     }
 
-    .empty-row td {
-      height: 120px;
-      text-align: center;
-      color: var(--color-ink-subtle);
-      font-size: 13px;
+    /* ── How to Earn Points Section ───────────────────────────────────────── */
+    .rules-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
     }
 
-    /* ── Info Box ─────────────────────────────────────────────────────────── */
-    .info-card {
-      background-color: var(--color-surface);
+    .rule-box {
+      background: var(--color-surface-subtle);
       border: 1px solid var(--color-hairline);
-      border-radius: var(--radius-md);
-      padding: 16px 20px;
-      font-size: 13px;
-      line-height: 20px;
-      color: var(--color-ink-subtle);
-      margin-bottom: 40px;
+      border-radius: var(--radius);
+      padding: 16px 18px;
     }
-
-    .info-card strong {
+    .rule-pts {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--color-mint);
+      margin-bottom: 4px;
+    }
+    .rule-title {
+      font-weight: 600;
       color: var(--color-ink-strong);
-      font-weight: 500;
+      margin-bottom: 4px;
+      font-size: 13px;
     }
-
-    /* ── Footer ───────────────────────────────────────────────────────────── */
-    footer.app-footer {
-      margin-top: auto;
-      border-top: 1px solid var(--color-hairline);
-      padding: 24px 0;
+    .rule-desc {
       font-size: 12px;
       color: var(--color-ink-subtle);
+      line-height: 1.5;
     }
 
-    .footer-inner {
+    /* ── Host a Competition CTA ───────────────────────────────────────────── */
+    .host-banner {
+      background: linear-gradient(135deg, rgba(14, 21, 50, 0.95) 0%, rgba(19, 27, 62, 0.95) 100%);
+      border: 1px solid var(--color-hairline-strong);
+      border-radius: var(--radius);
+      padding: 32px;
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      flex-wrap: wrap;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
     }
 
-    .footer-links {
-      display: flex;
-      gap: 16px;
+    .host-content {
+      max-width: 640px;
     }
-
-    .footer-links a {
-      color: var(--color-ink-subtle);
-      text-decoration: none;
+    .host-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--color-cyan);
+      margin-bottom: 6px;
     }
-
-    .footer-links a:hover {
+    .host-title {
+      font-size: 22px;
+      font-weight: 700;
       color: var(--color-ink-strong);
+      margin-bottom: 8px;
+    }
+    .host-desc {
+      font-size: 13px;
+      color: var(--color-ink-subtle);
+      line-height: 1.6;
+    }
+
+    .host-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 42px;
+      padding: 0 24px;
+      background: var(--color-cyan);
+      color: #090d1a;
+      border: 1px solid var(--color-cyan);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      box-shadow: 0 0 20px var(--color-cyan-glow);
+      transition: all 160ms var(--ease);
+      white-space: nowrap;
+    }
+    .host-btn:hover {
+      background: #7fe4f2;
+      box-shadow: 0 0 28px rgba(106, 204, 220, 0.5);
+      transform: translateY(-1px);
+    }
+
+    /* ── Empty & Loading States ───────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--color-ink-subtle);
+      font-family: var(--font-mono);
+      font-size: 13px;
     }
 
     /* ── Responsive ───────────────────────────────────────────────────────── */
     @media (max-width: 768px) {
-      .metrics-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .podium-grid {
-        grid-template-columns: 1fr;
-      }
-      .hero-top-row {
-        flex-direction: column;
-      }
+      .site-header { padding: 0 14px; }
+      .container { padding: 18px 14px 60px; }
+      .hero-title { font-size: 24px; }
+      .search-input { width: 100%; }
+      .search-box { width: 100%; margin-top: 10px; }
+      .card-header { flex-direction: column; align-items: flex-start; }
+      .card-actions { width: 100%; }
     }
   </style>
 </head>
 <body>
 
   <!-- Top Navigation Header -->
-  <header class="nav-header">
-    <div class="container nav-inner">
-      <a href="https://t.me/racertradingbot" class="brand-link" target="_blank" rel="noopener">
-        <img src="/favicon.ico" alt="RacerBot" class="brand-logo" onerror="this.style.display='none'">
-        <span>RacerBot Trading Competition</span>
-      </a>
-
-      <div class="nav-actions">
-        <!-- Theme Toggle -->
-        <button id="themeToggle" class="btn btn-secondary btn-icon" title="Toggle color theme" aria-label="Toggle theme">
-          <svg id="themeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line>
-            <line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-          </svg>
-        </button>
-
-        <!-- Main Action: Open in Bot -->
-        <a id="btnTradeAction" href="https://t.me/racertradingbot?start=kookdog-42db38_launchpad_justhoot_near" target="_blank" rel="noopener" class="btn btn-primary">
-          Trade on RacerBot
-        </a>
+  <header class="site-header">
+    <a href="/" class="brand">
+      <img src="/assets/logo.png" alt="RacerBot" class="brand-logo" onerror="this.style.display='none'">
+      <div class="brand-text">
+        <span class="brand-title">RACERBOT <span class="brand-badge">NEAR</span></span>
       </div>
+    </a>
+
+    <div class="header-nav">
+      <div class="live-beacon">
+        <span class="dot"></span>
+        <span>ENGINE LIVE</span>
+      </div>
+      <a href="/bubblemap" class="btn-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/></svg>
+        <span>Bubble Map</span>
+      </a>
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.19-.08-.05-.19-.02-.27 0-.12.03-1.99 1.27-5.63 3.72-.53.36-1.01.54-1.44.53-.47-.01-1.38-.27-2.06-.49-.83-.27-1.49-.42-1.43-.88.03-.24.38-.49 1.04-.75 4.07-1.77 6.79-2.94 8.16-3.51 3.89-1.62 4.7-.19 4.7 1.07z"/></svg>
+        <span>Trade Bot</span>
+      </a>
     </div>
   </header>
 
-  <!-- Main Content Body -->
-  <main class="container">
-
+  <div class="container">
+    
     <!-- Hero Header -->
-    <section class="hero-section">
-      <div class="hero-top-row">
-        <div class="token-identity">
-          <div class="token-avatar-frame">
-            <img id="tokenImg" src="/favicon.ico" alt="Token" onerror="this.src='/favicon.ico'">
+    <div class="hero-eyebrow">On-Chain Competitions & Snapshot Epochs</div>
+    <h1 class="hero-title">RacerBot <span>Competition Arena</span></h1>
+    <p class="hero-subtitle">
+      Explore live on-chain trading competitions, participate in verified point snapshot epochs, and win protocol prizes on NEAR.
+    </p>
+
+    <!-- Privacy Callout -->
+    <div class="privacy-notice">
+      <div class="privacy-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </div>
+      <div class="privacy-text">
+        <strong>Privacy-Preserving Leaderboard:</strong> Telegram usernames are strictly confidential and omitted. Rankings and snapshot rewards are matched solely against verified NEAR on-chain wallet addresses and earned points.
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="tabs-strip">
+      <button class="tab-btn active" onclick="switchTab('snapshot')">
+        <span>Snapshot Arena</span>
+        <span class="tab-badge" id="snapshot-count-badge">30 Racers</span>
+      </button>
+      <button class="tab-btn" onclick="switchTab('sprint')">
+        <span>Volume Sprints</span>
+        <span class="tab-badge">Active</span>
+      </button>
+      <button class="tab-btn" onclick="switchTab('formats')">
+        <span>Competition Types</span>
+        <span class="tab-badge">5 Formats</span>
+      </button>
+      <button class="tab-btn" onclick="switchTab('host')">
+        <span>Host a Competition</span>
+        <span class="tab-badge">For Founders</span>
+      </button>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: SNAPSHOT ARENA                                                   -->
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-snapshot" class="tab-pane active">
+      
+      <!-- Key Stats Bar -->
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">
+            <span>Snapshot Season</span>
+            <span>Epoch 01</span>
           </div>
-          <div class="token-title-group">
-            <h1 id="tokenNameDisplay">Kook Dog ($KOOKDOG)</h1>
-            <div class="token-ca-row">
-              <span id="tokenAddressDisplay" class="token-ca-code">kookdog-42db38.launchpad.justhoot.near</span>
-              <button class="btn-copy" onclick="copyAddress()">Copy CA</button>
+          <div class="stat-value cyan">Season 1 Alpha</div>
+          <div class="stat-sub">Automated rolling snapshots on NEAR</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">
+            <span>Total Points Distributed</span>
+            <span>All-Time</span>
+          </div>
+          <div class="stat-value mint" id="stat-total-points">—</div>
+          <div class="stat-sub">Earned via trading, snipes & activity</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">
+            <span>Active Point Racers</span>
+            <span>On-Chain</span>
+          </div>
+          <div class="stat-value" id="stat-active-racers">—</div>
+          <div class="stat-sub">Wallets participating in snapshot</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-label">
+            <span>Top Racer Score</span>
+            <span>#1 Leader</span>
+          </div>
+          <div class="stat-value gold" id="stat-top-score">—</div>
+          <div class="stat-sub" id="stat-top-wallet">Leading the season</div>
+        </div>
+      </div>
+
+      <!-- Main Snapshot Table Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="dot"></span>
+            <span>Verified Snapshot Points Leaderboard</span>
+          </div>
+          <div class="card-actions">
+            <div class="search-box">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="snapshot-search" class="search-input" placeholder="Filter by wallet (e.g. .near)..." oninput="filterSnapshotTable()">
             </div>
           </div>
         </div>
 
-        <div id="statusBadge" class="badge badge-warning">
-          <span class="status-dot pulse"></span>
-          <span id="statusLabel">Starts at $30K Market Cap</span>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 80px;">Rank</th>
+                <th>Wallet Account (On-Chain)</th>
+                <th>Tier</th>
+                <th style="text-align: right;">Activity Count</th>
+                <th style="text-align: right;">Snapshot Points</th>
+                <th style="text-align: right;">Share</th>
+              </tr>
+            </thead>
+            <tbody id="snapshot-tbody">
+              <tr>
+                <td colspan="6" class="empty-state">Loading verified snapshot points...</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <!-- Market Cap Progression Card -->
-      <div class="mcap-card">
-        <div class="mcap-card-header">
-          <span class="mcap-heading">Market Cap Goal Tracker</span>
-          <div class="mcap-numbers">
-            <span id="curMcapDisplay" class="mcap-cur-val tabular">$0.00</span>
-            <span class="mcap-target-val tabular">/ $30,000</span>
+      <!-- How Snapshot Points Are Earned -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="dot" style="background: var(--color-mint);"></span>
+            <span>How to Earn Snapshot Points & Airdrop Multipliers</span>
           </div>
         </div>
-        <div class="progress-track">
-          <div id="mcapProgressBar" class="progress-fill"></div>
-        </div>
-        <div class="mcap-card-footer">
-          <span id="progressText" class="tabular">0.0% reached</span>
-          <span id="spotPriceText" class="mono">Spot Price: 0.0000 NEAR ($0.00)</span>
+        <p style="color: var(--color-ink-subtle); font-size: 13px; margin-bottom: 14px;">
+          Every transaction executed through RacerBot on NEAR Protocol is recorded to the immutable points ledger. Top ranked wallets at the snapshot cutoff qualify for token airdrops, revenue share dividends, and whitelist tiers.
+        </p>
+
+        <div class="rules-grid">
+          <div class="rule-box">
+            <div class="rule-pts">+100 Pts / NEAR</div>
+            <div class="rule-title">Trading Volume</div>
+            <div class="rule-desc">Earn points dynamically for every 1 NEAR traded on Ref Finance, DCL pools, or JustHoot.</div>
+          </div>
+          <div class="rule-box">
+            <div class="rule-pts">+500 Pts</div>
+            <div class="rule-title">First Trade Welcome</div>
+            <div class="rule-desc">Instant bonus awarded upon executing your first buy or sell order on RacerBot.</div>
+          </div>
+          <div class="rule-box">
+            <div class="rule-pts">+250 Pts</div>
+            <div class="rule-title">Sniper Execution</div>
+            <div class="rule-desc">Trigger automated limit orders, auto-buys, or token snipers during liquidity launches.</div>
+          </div>
+          <div class="rule-box">
+            <div class="rule-pts">+1,000 Pts + 20%</div>
+            <div class="rule-title">Referral Syndicate</div>
+            <div class="rule-desc">Invite new traders via your personal link; earn 1,000 pts per signup plus 20% matching on all their earned points.</div>
+          </div>
         </div>
       </div>
 
-      <!-- Key Metrics -->
-      <div class="metrics-grid">
-        <div class="metric-cell">
-          <div class="metric-label">Total Competition Volume</div>
-          <div id="metricTotalVol" class="metric-value tabular">$0.00</div>
-        </div>
-        <div class="metric-cell">
-          <div class="metric-label">Executed Trades</div>
-          <div id="metricTotalTrades" class="metric-value tabular">0</div>
-        </div>
-        <div class="metric-cell">
-          <div class="metric-label">Active Competitors</div>
-          <div id="metricTraders" class="metric-value tabular">0</div>
-        </div>
-        <div class="metric-cell">
-          <div class="metric-label">NEAR / USD</div>
-          <div id="metricNearUsd" class="metric-value tabular">$0.00</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Top 3 Podium -->
-    <div id="podiumSection" style="display: none;">
-      <div class="section-title-row">
-        <h2 class="section-title">Top 3 Standings</h2>
-      </div>
-      <div class="podium-grid">
-        <!-- 2nd Place -->
-        <div class="podium-card rank-2" id="podiumCard2">
-          <div class="podium-header">
-            <span class="podium-rank-tag">2nd Place</span>
-            <span class="podium-medal">🥈</span>
-          </div>
-          <div class="podium-trader-name" id="p2Name">—</div>
-          <div class="podium-trader-sub" id="p2Sub">—</div>
-          <div class="podium-volume-box">
-            <div class="podium-vol-usd tabular" id="p2VolUsd">$0.00</div>
-            <div class="podium-vol-near tabular" id="p2VolNear">0.00 NEAR</div>
-          </div>
-        </div>
-
-        <!-- 1st Place -->
-        <div class="podium-card rank-1" id="podiumCard1">
-          <div class="podium-header">
-            <span class="podium-rank-tag">1st Place • Lead</span>
-            <span class="podium-medal">🥇</span>
-          </div>
-          <div class="podium-trader-name" id="p1Name">—</div>
-          <div class="podium-trader-sub" id="p1Sub">—</div>
-          <div class="podium-volume-box">
-            <div class="podium-vol-usd tabular" id="p1VolUsd">$0.00</div>
-            <div class="podium-vol-near tabular" id="p1VolNear">0.00 NEAR</div>
-          </div>
-        </div>
-
-        <!-- 3rd Place -->
-        <div class="podium-card rank-3" id="podiumCard3">
-          <div class="podium-header">
-            <span class="podium-rank-tag">3rd Place</span>
-            <span class="podium-medal">🥉</span>
-          </div>
-          <div class="podium-trader-name" id="p3Name">—</div>
-          <div class="podium-trader-sub" id="p3Sub">—</div>
-          <div class="podium-volume-box">
-            <div class="podium-vol-usd tabular" id="p3VolUsd">$0.00</div>
-            <div class="podium-vol-near tabular" id="p3VolNear">0.00 NEAR</div>
-          </div>
-        </div>
-      </div>
     </div>
 
-    <!-- Leaderboard Table -->
-    <div class="table-container">
-      <div class="table-toolbar">
-        <h2>Leaderboard (Positions 1 – 10)</h2>
-        <span class="badge badge-neutral">
-          <span class="status-dot" style="background-color: var(--color-primary);"></span>
-          Live sync
-        </span>
-      </div>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th style="width: 50px;">#</th>
-            <th>Trader</th>
-            <th class="th-right">Volume (USD)</th>
-            <th class="th-right">Volume (NEAR)</th>
-            <th class="th-right">Trades</th>
-            <th class="th-right">Last Trade</th>
-          </tr>
-        </thead>
-        <tbody id="leaderboardTbody">
-          <tr class="empty-row">
-            <td colspan="6">Loading trading activity...</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Rules & Information Card -->
-    <div class="info-card">
-      <p><strong>Competition Information:</strong> This leaderboard tracks verified buy and sell volume executed exclusively through <strong>@racertradingbot</strong>. The competition starts counting volume from the moment the token hits <strong>$30,000 Market Cap</strong> on-chain. Rankings refresh automatically in real time.</p>
-    </div>
-
-  </main>
-
-  <!-- Footer -->
-  <footer class="app-footer">
-    <div class="container footer-inner">
-      <span>&copy; RacerBot Trading Engine &bull; Built on NEAR Protocol</span>
-      <div class="footer-links">
-        <a href="/bubblemap">Bubble Map</a>
-        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener">Telegram Bot</a>
-      </div>
-    </div>
-  </footer>
-
-  <!-- App Script -->
-  <script>
-    // ── Determine active token / competition ID from Subdomain or URL ─────────
-    function getActiveTokenId() {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('token')) return urlParams.get('token');
-      if (urlParams.get('id')) return urlParams.get('id');
-
-      const pathParts = window.location.pathname.split('/').filter(Boolean);
-      if (pathParts[0] === 'competition' && pathParts[1]) return pathParts[1];
-      if (pathParts[0] === 'leaderboard' && pathParts[1]) return pathParts[1];
-      if (pathParts[1] === 'competition' && pathParts[0]) return pathParts[0];
-
-      // Extract from hostname subdomain (e.g. kookdog.racerbotbubblemap.buzz or kookdog.localhost)
-      const host = window.location.hostname.toLowerCase();
-      const parts = host.split('.');
-      const baseDomains = ['racerbotbubblemap.buzz', 'racerbot.trade', 'railway.app', 'up.railway.app'];
-      for (const base of baseDomains) {
-        if (host.endsWith(base) && host !== base) {
-          const sub = host.slice(0, host.length - base.length - 1);
-          if (sub && !sub.includes('.')) return sub;
-        }
-      }
-
-      if (parts.length >= 2) {
-        const first = parts[0];
-        const ignored = new Set(['www', 'api', 'bot', 'admin', 'bubblemap', 'racerbotbubblemap', 'localhost', '127', 'railway', 'racerbot-production', 'app', 'racerbot']);
-        if (!ignored.has(first)) {
-          return first;
-        }
-      }
-
-      return 'kookdog';
-    }
-
-    const COMP_ID = getActiveTokenId();
-    let currentTokenAddress = 'kookdog-42db38.launchpad.justhoot.near';
-
-    // ── Formatting Utilities ──────────────────────────────────────────────────
-    function formatUsd(val) {
-      if (!val || isNaN(val)) return '$0.00';
-      const num = Number(val);
-      if (num >= 1000000) return '$' + (num / 1000000).toFixed(2) + 'M';
-      if (num >= 1000) return '$' + (num / 1000).toFixed(2) + 'K';
-      return '$' + num.toFixed(2);
-    }
-
-    function formatNear(val) {
-      if (!val || isNaN(val)) return '0.00 NEAR';
-      return Number(val).toFixed(2) + ' NEAR';
-    }
-
-    function timeAgo(dateStr) {
-      if (!dateStr) return '—';
-      const sec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-      if (sec < 60) return `${sec}s ago`;
-      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-      if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-      return `${Math.floor(sec / 86400)}d ago`;
-    }
-
-    function copyAddress() {
-      navigator.clipboard.writeText(currentTokenAddress).then(() => {
-        const btn = document.querySelector('.btn-copy');
-        if (btn) {
-          btn.innerText = 'Copied!';
-          setTimeout(() => btn.innerText = 'Copy CA', 1500);
-        }
-      }).catch(() => {});
-    }
-
-    // ── Theme Switcher ────────────────────────────────────────────────────────
-    const themeToggle = document.getElementById('themeToggle');
-    function initTheme() {
-      const saved = localStorage.getItem('racer_theme') || 'light';
-      document.documentElement.setAttribute('data-theme', saved);
-    }
-    themeToggle.addEventListener('click', () => {
-      const cur = document.documentElement.getAttribute('data-theme') || 'light';
-      const next = cur === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('racer_theme', next);
-    });
-    initTheme();
-
-    // ── Data Fetching & UI Rendering ──────────────────────────────────────────
-    async function updateCompetition() {
-      try {
-        let res = await fetch(`/api/competition/${encodeURIComponent(COMP_ID)}`).catch(() => null);
-        if (!res || !res.ok) {
-          res = await fetch(`/api/competition?token=${encodeURIComponent(COMP_ID)}`).catch(() => null);
-        }
-        if (!res || !res.ok) {
-          res = await fetch(`/api/competition/kookdog`).catch(() => null);
-        }
-        if (!res || !res.ok) return;
-        const data = await res.json();
-        render(data);
-      } catch (err) {
-        console.warn('Competition polling failed:', err);
-      }
-    }
-
-    function render(d) {
-      if (!d) return;
-      currentTokenAddress = d.token_address || currentTokenAddress;
-
-      // 1. Header Identity
-      document.getElementById('tokenNameDisplay').innerText = `${d.token_name} ($${d.token_symbol})`;
-      document.getElementById('tokenAddressDisplay').innerText = d.token_address;
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: VOLUME SPRINTS                                                   -->
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-sprint" class="tab-pane">
       
-      const cleanTokenStart = d.token_address.replace(/\./g, '_');
-      document.getElementById('btnTradeAction').href = `https://t.me/racertradingbot?start=${cleanTokenStart}`;
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Featured Sprint</div>
+          <div class="stat-value cyan" id="sprint-token-symbol">KOOKDOG</div>
+          <div class="stat-sub" id="sprint-token-name">Kook Dog Launchpad Race</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Target Market Cap</div>
+          <div class="stat-value gold" id="sprint-target-mcap">$29,000</div>
+          <div class="stat-sub">Activation Threshold</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Current Market Cap</div>
+          <div class="stat-value" id="sprint-current-mcap">—</div>
+          <div class="stat-sub" id="sprint-mcap-near">— NEAR</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Sprint Status</div>
+          <div class="stat-value mint" id="sprint-status-text">Pending Target</div>
+          <div class="stat-sub">Unlocks when $29K is achieved</div>
+        </div>
+      </div>
 
-      // 2. Status & Market Cap Goal
-      const targetMcap = Number(d.target_market_cap_usd || 29000);
-      const mcapUsd = Number(d.current_market_cap_usd || 0);
-      const isLive = d.status === 'active' || mcapUsd >= targetMcap;
-      const statusBadge = document.getElementById('statusBadge');
-      const statusLabel = document.getElementById('statusLabel');
+      <!-- Sprint Progress Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="dot"></span>
+            <span>Market Cap Acceleration Goal</span>
+          </div>
+          <div class="card-actions">
+            <span style="font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--color-cyan);" id="sprint-pct">0.0%</span>
+          </div>
+        </div>
 
-      if (isLive) {
-        statusBadge.className = 'badge badge-success';
-        statusLabel.innerText = 'Competition Live';
-      } else {
-        statusBadge.className = 'badge badge-warning';
-        statusLabel.innerText = `Starts at ${formatUsd(targetMcap)} Market Cap`;
-      }
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="sprint-bar-fill" style="width: 0%;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; font-family: var(--font-mono); color: var(--color-ink-subtle);">
+          <span id="sprint-bar-current">$0</span>
+          <span id="sprint-bar-target">Target: $29,000 USD</span>
+        </div>
+      </div>
 
-      document.getElementById('curMcapDisplay').innerText = formatUsd(mcapUsd);
-      const targetDisplayElem = document.querySelector('.mcap-target-val');
-      if (targetDisplayElem) targetDisplayElem.innerText = `/ ${formatUsd(targetMcap)}`;
+      <!-- Live Volume Leaderboard Card -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="dot"></span>
+            <span>Live Trading Volume Standings</span>
+          </div>
+          <div class="card-actions">
+            <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-header primary">Trade KOOKDOG Now</a>
+          </div>
+        </div>
 
-      const progressPct = Math.min(100, Math.max(0, (mcapUsd / targetMcap) * 100));
-      document.getElementById('mcapProgressBar').style.width = progressPct.toFixed(1) + '%';
-      document.getElementById('progressText').innerText = isLive ? `Goal Achieved (${formatUsd(targetMcap)})` : `${progressPct.toFixed(1)}% reached`;
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 80px;">Rank</th>
+                <th>Trader Account</th>
+                <th style="text-align: right;">Total Trades</th>
+                <th style="text-align: right;">Volume (NEAR)</th>
+                <th style="text-align: right;">Volume (USD)</th>
+              </tr>
+            </thead>
+            <tbody id="sprint-tbody">
+              <tr>
+                <td colspan="5" class="empty-state">No volume recorded for this sprint yet. Be the first to trade!</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      const priceNear = Number(d.current_price_near || 0);
-      const priceUsd = Number(d.current_price_usd || 0);
-      document.getElementById('spotPriceText').innerText = `Spot: ${priceNear.toFixed(6)} NEAR (${formatUsd(priceUsd)})`;
+    </div>
 
-      // 3. Stats
-      const list = d.leaderboard || [];
-      let totalVolUsd = 0;
-      let totalTrades = 0;
-      list.forEach(item => {
-        totalVolUsd += (item.total_volume_usd || 0);
-        totalTrades += (item.total_trades || 0);
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 3: COMPETITION TYPES & DIRECTORY                                    -->
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-formats" class="tab-pane">
+      
+      <div style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; font-weight: 700; color: var(--color-ink-strong); margin-bottom: 6px;">
+          Available Competition Formats
+        </h2>
+        <p style="color: var(--color-ink-subtle); font-size: 13px;">
+          RacerBot's institutional competition engine supports a wide range of on-chain trading tournaments, community sprints, and token bounty races on NEAR Protocol.
+        </p>
+      </div>
+
+      <div class="formats-grid">
+        
+        <!-- Format 1: Snapshot Points Epoch -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">📸</div>
+            <div class="format-title">1. Snapshot Points Epoch</div>
+            <div class="format-desc">
+              Longitudinal competition recording on-chain trading activity, DCA orders, sniper runs, and loyalty streaks. At the unannounced snapshot epoch cutoff, top wallets receive protocol dividends, exclusive NFT badges, and token airdrops.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Rolling Snapshots</span>
+              <span class="format-tag">Privacy-Safe</span>
+              <span class="format-tag">Sybil-Resistant</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-mint);">● Live & Ongoing</span>
+            <button class="btn-header" onclick="switchTab('snapshot')">View Leaderboard</button>
+          </div>
+        </div>
+
+        <!-- Format 2: Market Cap Velocity Sprint -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">🚀</div>
+            <div class="format-title">2. Market Cap Velocity Sprint</div>
+            <div class="format-desc">
+              A sprint triggered automatically the moment a newly launched token crosses a target market cap (e.g. $25K, $30K, $50K). Traders have 24-48 hours to rack up the highest volume and net buys to win the community prize pool.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Milestone Trigger</span>
+              <span class="format-tag">24h – 48h Sprint</span>
+              <span class="format-tag">Real-Time SSE</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-gold);">● Active for KOOKDOG</span>
+            <button class="btn-header" onclick="switchTab('sprint')">View Sprint</button>
+          </div>
+        </div>
+
+        <!-- Format 3: Launchpad Sniper Showdown -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">🎯</div>
+            <div class="format-title">3. Launchpad Sniper Showdown</div>
+            <div class="format-desc">
+              Speed & precision tournament for new token graduations on JustHoot or Pumppoly. Racers who configure automated limit snipers on the first 100 blocks of Ref Finance pool seeding receive bonus bounty multipliers.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Sub-Second Execution</span>
+              <span class="format-tag">JustHoot / Ref DCL</span>
+              <span class="format-tag">Gas Priority</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-ink-subtle);">● Scheduled on Launch</span>
+            <a href="https://t.me/racertradingbot" target="_blank" class="btn-header">Set Snipe</a>
+          </div>
+        </div>
+
+        <!-- Format 4: Syndicate & Referral League -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">👥</div>
+            <div class="format-title">4. Syndicate & Referral League</div>
+            <div class="format-desc">
+              Community and team competition where alpha callers, Telegram group owners, and crypto communities form syndicates. Squad points are aggregated, rewarding the most active trading groups with shared USDC/NEAR pools.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Squad Stacking</span>
+              <span class="format-tag">20% Point Match</span>
+              <span class="format-tag">Tiered Commissions</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-mint);">● Available via Bot</span>
+            <a href="https://t.me/racertradingbot" target="_blank" class="btn-header">Get Link</a>
+          </div>
+        </div>
+
+        <!-- Format 5: Custom Sponsored Token Cup -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">🏆</div>
+            <div class="format-title">5. Sponsored Project Cup</div>
+            <div class="format-desc">
+              Bespoke trading competitions funded by token teams. Can include "Diamond Hand" hold snapshots (rewarding addresses that never sold during the race), highest single buy, or random lucky draw allocations per 10 NEAR traded.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Custom Prize Pool</span>
+              <span class="format-tag">Hold Snapshots</span>
+              <span class="format-tag">Dedicated URL</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-cyan);">● Self-Serve & Managed</span>
+            <button class="btn-header" onclick="switchTab('host')">Host Competition</button>
+          </div>
+        </div>
+
+        <!-- Format 6: Net Accumulation Challenge -->
+        <div class="format-card">
+          <div>
+            <div class="format-icon">💎</div>
+            <div class="format-title">6. Net Accumulator Challenge</div>
+            <div class="format-desc">
+              Discourages wash trading by scoring participants purely on Net Buy Volume (Total Buys minus Total Sells) during a 7-day period. Top accumulators win the majority of the token liquidity bounty.
+            </div>
+            <div class="format-tags">
+              <span class="format-tag">Anti-Wash Trading</span>
+              <span class="format-tag">Net Volume Only</span>
+              <span class="format-tag">Holder Friendly</span>
+            </div>
+          </div>
+          <div class="format-footer">
+            <span style="color: var(--color-ink-subtle);">● Available for Projects</span>
+            <button class="btn-header" onclick="switchTab('host')">Learn More</button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 4: HOST A COMPETITION                                               -->
+    <!-- ════════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-host" class="tab-pane">
+      
+      <div class="host-banner">
+        <div class="host-content">
+          <div class="host-eyebrow">Project Partnerships & Bounties</div>
+          <h2 class="host-title">Host a Trading Competition for Your NEAR Token</h2>
+          <p class="host-desc">
+            Boost token liquidity, onboard hundreds of active on-chain racers, and get dedicated real-time leaderboard infrastructure with live SSE streaming on your custom subdomain.
+          </p>
+        </div>
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="host-btn">
+          <span>Launch on Telegram</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+        </a>
+      </div>
+
+      <div style="margin-top: 32px;" class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="dot"></span>
+            <span>How to Launch in 3 Simple Steps</span>
+          </div>
+        </div>
+
+        <div class="rules-grid">
+          <div class="rule-box">
+            <div class="rule-pts" style="color: var(--color-cyan);">01</div>
+            <div class="rule-title">Configure Rules & Prize Pool</div>
+            <div class="rule-desc">Choose your tournament format (Volume sprint, Net accumulation, or Snapshot hold challenge) and fund the bounty pool in NEAR, USDT, or your native token.</div>
+          </div>
+          <div class="rule-box">
+            <div class="rule-pts" style="color: var(--color-purple-light);">02</div>
+            <div class="rule-title">Get Custom Subdomain & Live HUD</div>
+            <div class="rule-desc">Your tournament gets an official dedicated web interface (e.g. <code>yourtoken.racerbotbubblemap.buzz/competition</code>) with interactive cluster bubble map integration.</div>
+          </div>
+          <div class="rule-box">
+            <div class="rule-pts" style="color: var(--color-mint);">03</div>
+            <div class="rule-title">Automated On-Chain Payouts</div>
+            <div class="rule-desc">When the competition concludes, RacerBot's smart settlement scripts calculate exact rankings and disburse rewards directly to winner wallets without counterparty risk.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Client JavaScript -->
+  <script>
+    // ── Global State & Initial SSR Data ─────────────────────────────────────
+    let compData = window.__INITIAL_COMPETITION_DATA__ || {};
+    let snapshotList = compData.snapshot_leaderboard || [];
+    let volumeList = compData.leaderboard || [];
+
+    // Helper: format numbers with commas
+    function fmt(n) {
+      if (n === null || n === undefined || isNaN(n)) return '0';
+      return Number(n).toLocaleString('en-US');
+    }
+
+    // Helper: format currency
+    function fmtUsd(n) {
+      if (!n || isNaN(n)) return '$0';
+      return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    }
+
+    // Helper: copy to clipboard
+    function copyText(txt, btn) {
+      navigator.clipboard.writeText(txt).then(() => {
+        const orig = btn.innerText;
+        btn.innerText = 'Copied!';
+        btn.style.color = '#00d16a';
+        setTimeout(() => {
+          btn.innerText = orig;
+          btn.style.color = '';
+        }, 1500);
       });
+    }
 
-      document.getElementById('metricTotalVol').innerText = formatUsd(totalVolUsd);
-      document.getElementById('metricTotalTrades').innerText = totalTrades.toString();
-      document.getElementById('metricTraders').innerText = list.length.toString();
-      document.getElementById('metricNearUsd').innerText = formatUsd(d.near_usd || 4.82);
+    // Tab Switcher
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
 
-      // 4. Podium Area (Wallet addresses & clear volumes)
-      const podiumSection = document.getElementById('podiumSection');
-      if (list.length > 0) {
-        podiumSection.style.display = 'block';
+      const targetPane = document.getElementById('tab-' + tabId);
+      if (targetPane) targetPane.classList.add('active');
 
-        // 1st
-        const p1 = list[0];
-        document.getElementById('p1Name').innerText = p1.subaccount_id || 'racerbot.near';
-        document.getElementById('p1Sub').innerText = `${p1.total_trades || 0} Trades (${p1.buy_trades || 0}B / ${p1.sell_trades || 0}S)`;
-        document.getElementById('p1VolUsd').innerText = formatUsd(p1.total_volume_usd);
-        document.getElementById('p1VolNear').innerText = formatNear(p1.total_volume_near);
+      const clickedBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick')?.includes(tabId));
+      if (clickedBtn) clickedBtn.classList.add('active');
+    }
 
-        // 2nd
-        if (list.length >= 2) {
-          const p2 = list[1];
-          document.getElementById('p2Name').innerText = p2.subaccount_id || 'racerbot.near';
-          document.getElementById('p2Sub').innerText = `${p2.total_trades || 0} Trades (${p2.buy_trades || 0}B / ${p2.sell_trades || 0}S)`;
-          document.getElementById('p2VolUsd').innerText = formatUsd(p2.total_volume_usd);
-          document.getElementById('p2VolNear').innerText = formatNear(p2.total_volume_near);
-          document.getElementById('podiumCard2').style.opacity = '1';
-        } else {
-          document.getElementById('p2Name').innerText = '—';
-          document.getElementById('p2Sub').innerText = '—';
-          document.getElementById('p2VolUsd').innerText = '$0.00';
-          document.getElementById('p2VolNear').innerText = '0.00 NEAR';
-          document.getElementById('podiumCard2').style.opacity = '0.4';
-        }
+    // Assign Tier based on points
+    function getTierBadge(points, rank) {
+      if (rank === 1) return '<span class="badge-tier elite">★ Champion</span>';
+      if (rank <= 3) return '<span class="badge-tier elite">Top 3 Elite</span>';
+      if (points >= 5000) return '<span class="badge-tier diamond">Diamond Racer</span>';
+      if (points >= 2000) return '<span class="badge-tier pro">Pro Racer</span>';
+      return '<span class="badge-tier active">Active</span>';
+    }
 
-        // 3rd
-        if (list.length >= 3) {
-          const p3 = list[2];
-          document.getElementById('p3Name').innerText = p3.subaccount_id || 'racerbot.near';
-          document.getElementById('p3Sub').innerText = `${p3.total_trades || 0} Trades (${p3.buy_trades || 0}B / ${p3.sell_trades || 0}S)`;
-          document.getElementById('p3VolUsd').innerText = formatUsd(p3.total_volume_usd);
-          document.getElementById('p3VolNear').innerText = formatNear(p3.total_volume_near);
-          document.getElementById('podiumCard3').style.opacity = '1';
-        } else {
-          document.getElementById('p3Name').innerText = '—';
-          document.getElementById('p3Sub').innerText = '—';
-          document.getElementById('p3VolUsd').innerText = '$0.00';
-          document.getElementById('p3VolNear').innerText = '0.00 NEAR';
-          document.getElementById('podiumCard3').style.opacity = '0.4';
-        }
-      } else {
-        podiumSection.style.display = 'none';
+    // ── Render Snapshot Table (Strict Privacy: Wallets & Points ONLY) ────────
+    function renderSnapshotTable(list) {
+      const tbody = document.getElementById('snapshot-tbody');
+      if (!tbody) return;
+
+      if (!list || list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No points snapshot recorded yet. Start trading to enter!</td></tr>';
+        return;
       }
 
-      // 5. Leaderboard Table Rows (Wallet addresses + volumes)
-      const tbody = document.getElementById('leaderboardTbody');
-      if (list.length === 0) {
-        tbody.innerHTML = `
-          <tr class="empty-row">
-            <td colspan="6">
-              ${isLive ? 'No qualifying trades recorded yet. Start trading to take the #1 spot!' : `Trading competition begins once $KOOKDOG reaches ${formatUsd(targetMcap)} Market Cap.`}
+      // Calculate total points for percentage shares
+      const totalPoints = list.reduce((acc, row) => acc + (row.points ?? row.total_points ?? 0), 0);
+
+      // Update Summary Cards
+      const totalPtsEl = document.getElementById('stat-total-points');
+      if (totalPtsEl) totalPtsEl.innerText = fmt(totalPoints) + ' PTS';
+
+      const activeRacersEl = document.getElementById('stat-active-racers');
+      if (activeRacersEl) activeRacersEl.innerText = fmt(list.length);
+
+      const badgeCountEl = document.getElementById('snapshot-count-badge');
+      if (badgeCountEl) badgeCountEl.innerText = `${list.length} Racers`;
+
+      if (list[0]) {
+        const topScoreEl = document.getElementById('stat-top-score');
+        const topPts = list[0].points ?? list[0].total_points ?? 0;
+        if (topScoreEl) topScoreEl.innerText = fmt(topPts) + ' PTS';
+        const topWalletEl = document.getElementById('stat-top-wallet');
+        if (topWalletEl) topWalletEl.innerText = list[0].wallet || list[0].account_id;
+      }
+
+      let html = '';
+      list.forEach((item, idx) => {
+        const rank = item.rank || (idx + 1);
+        const wallet = item.wallet || item.account_id || 'anonymous.near';
+        const pts = item.points ?? item.total_points ?? 0;
+        const events = item.events ?? item.event_count ?? 1;
+        const share = totalPoints > 0 ? ((pts / totalPoints) * 100).toFixed(1) + '%' : '—';
+        const tier = item.tier ? `<span class="badge-tier ${item.tier.toLowerCase().includes('grand') || item.tier.toLowerCase().includes('whale') ? 'elite' : item.tier.toLowerCase().includes('diamond') ? 'diamond' : item.tier.toLowerCase().includes('gold') ? 'pro' : 'active'}">${escapeHtml(item.tier)}</span>` : getTierBadge(pts, rank);
+
+        let medalHtml = `<span style="color: var(--color-ink-subtle);">${rank}</span>`;
+        if (rank === 1) medalHtml = `<span class="rank-medal medal-1">1</span>`;
+        else if (rank === 2) medalHtml = `<span class="rank-medal medal-2">2</span>`;
+        else if (rank === 3) medalHtml = `<span class="rank-medal medal-3">3</span>`;
+
+        const explorerUrl = `https://nearblocks.io/address/${encodeURIComponent(wallet)}`;
+
+        html += `
+          <tr>
+            <td>
+              <div class="rank-cell">${medalHtml}</div>
             </td>
+            <td>
+              <div class="wallet-cell">
+                <a href="${explorerUrl}" target="_blank" rel="noopener" class="wallet-link" title="View on NEAR Explorer">
+                  <span>${escapeHtml(wallet)}</span>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </a>
+                <button class="copy-btn" onclick="copyText('${escapeHtml(wallet)}', this)" title="Copy wallet address">📋</button>
+              </div>
+            </td>
+            <td>${tier}</td>
+            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-ink-subtle);">${fmt(events)}</td>
+            <td style="text-align: right;" class="points-cell">${fmt(pts)}</td>
+            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-mint);">${share}</td>
           </tr>
         `;
-      } else {
-        tbody.innerHTML = list.slice(0, 10).map((row, idx) => {
-          const walletAddr = row.subaccount_id || `Trader #${idx + 1}`;
-          const buys = row.buy_trades || 0;
-          const sells = row.sell_trades || 0;
+      });
 
-          return `
-            <tr>
-              <td class="rank-num">${idx + 1}</td>
-              <td>
-                <span class="trader-title mono">${walletAddr}</span>
-              </td>
-              <td class="td-right tabular" style="font-weight: 600; color: var(--color-ink-strong);">${formatUsd(row.total_volume_usd)}</td>
-              <td class="td-right tabular mono" style="color: var(--color-ink);">${formatNear(row.total_volume_near)}</td>
-              <td class="td-right trades-tag">${buys}B / ${sells}S</td>
-              <td class="td-right mono" style="color: var(--color-ink-subtle);">${timeAgo(row.last_trade_at)}</td>
-            </tr>
-          `;
-        }).join('');
+      tbody.innerHTML = html;
+    }
+
+    // Filter snapshot table by search query
+    function filterSnapshotTable() {
+      const q = (document.getElementById('snapshot-search')?.value || '').toLowerCase().trim();
+      if (!q) {
+        renderSnapshotTable(snapshotList);
+        return;
       }
+      const filtered = snapshotList.filter(item => (item.wallet || item.account_id || '').toLowerCase().includes(q));
+      renderSnapshotTable(filtered);
     }
 
-    // ── Instant Initial Render, SSE Real-Time Stream & Fallback Polling ─────
-    if (window.__INITIAL_COMPETITION_DATA__) {
-      render(window.__INITIAL_COMPETITION_DATA__);
+    // ── Render Volume Sprint ────────────────────────────────────────────────
+    function renderVolumeSprint(data) {
+      if (!data) return;
+
+      const targetMcap = data.target_market_cap_usd || 29000;
+      const currentMcap = data.current_market_cap_usd || 0;
+      const pct = Math.min(100, Math.max(0, (currentMcap / targetMcap) * 100));
+
+      const pctEl = document.getElementById('sprint-pct');
+      if (pctEl) pctEl.innerText = pct.toFixed(1) + '%';
+
+      const barFill = document.getElementById('sprint-bar-fill');
+      if (barFill) barFill.style.width = pct + '%';
+
+      const barCurrent = document.getElementById('sprint-bar-current');
+      if (barCurrent) barCurrent.innerText = fmtUsd(currentMcap);
+
+      const curMcapEl = document.getElementById('sprint-current-mcap');
+      if (curMcapEl) curMcapEl.innerText = fmtUsd(currentMcap);
+
+      const mcapNearEl = document.getElementById('sprint-mcap-near');
+      if (mcapNearEl) mcapNearEl.innerText = fmt(data.current_market_cap_near || 0) + ' NEAR';
+
+      const statusEl = document.getElementById('sprint-status-text');
+      if (statusEl) {
+        if (data.status === 'active' || currentMcap >= targetMcap) {
+          statusEl.innerText = 'Active Sprint';
+          statusEl.style.color = '#00d16a';
+        } else {
+          statusEl.innerText = 'Pending Target ($29K)';
+          statusEl.style.color = '#f59e0b';
+        }
+      }
+
+      // Render volume table
+      const tbody = document.getElementById('sprint-tbody');
+      if (!tbody) return;
+
+      const vList = data.leaderboard || [];
+      if (vList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No volume recorded for this sprint yet. Be the first to trade!</td></tr>';
+        return;
+      }
+
+      let html = '';
+      vList.forEach((row, idx) => {
+        const rank = idx + 1;
+        let medalHtml = `<span style="color: var(--color-ink-subtle);">${rank}</span>`;
+        if (rank === 1) medalHtml = `<span class="rank-medal medal-1">1</span>`;
+        else if (rank === 2) medalHtml = `<span class="rank-medal medal-2">2</span>`;
+        else if (rank === 3) medalHtml = `<span class="rank-medal medal-3">3</span>`;
+
+        const explorerUrl = `https://nearblocks.io/address/${encodeURIComponent(row.account_id)}`;
+
+        html += `
+          <tr>
+            <td><div class="rank-cell">${medalHtml}</div></td>
+            <td>
+              <div class="wallet-cell">
+                <a href="${explorerUrl}" target="_blank" rel="noopener" class="wallet-link">
+                  <span>${escapeHtml(row.account_id)}</span>
+                </a>
+              </div>
+            </td>
+            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px;">${fmt(row.trades_count || 1)}</td>
+            <td style="text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--color-cyan);">${fmt(row.total_volume_near)} NEAR</td>
+            <td style="text-align: right; font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--color-mint);">${fmtUsd(row.total_volume_usd)}</td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = html;
     }
 
-    // Connect to Server-Sent Events (SSE) live stream for instant on-chain updates
-    function connectLiveStream() {
+    // Security: basic HTML escape
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ── Real-Time Streaming & Fallback Polling ──────────────────────────────
+    function initLiveConnection() {
+      // Connect to SSE stream
       try {
-        const streamUrl = `/api/competition/${encodeURIComponent(COMP_ID)}/stream`;
-        const es = new EventSource(streamUrl);
-        es.onmessage = (event) => {
+        const evtSource = new EventSource('/api/competition-stream?id=kookdog');
+        evtSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            render(data);
-          } catch (e) {}
+            if (data) {
+              if (data.snapshot_leaderboard && Array.isArray(data.snapshot_leaderboard)) {
+                snapshotList = data.snapshot_leaderboard;
+                filterSnapshotTable();
+              }
+              renderVolumeSprint(data);
+            }
+          } catch {}
         };
-        es.onerror = () => {
-          // If SSE connection drops, fallback to REST polling
-          es.close();
-          setTimeout(connectLiveStream, 5000);
+        evtSource.onerror = () => {
+          // If SSE drops, fallback to REST polling every 6 seconds
+          evtSource.close();
+          setInterval(pollRestData, 6000);
         };
-      } catch (e) {
-        console.warn('SSE stream init error:', e);
+      } catch {
+        setInterval(pollRestData, 6000);
       }
     }
 
-    connectLiveStream();
-    updateCompetition();
-    setInterval(updateCompetition, 2500);
+    async function pollRestData() {
+      try {
+        const [compRes, snapRes] = await Promise.all([
+          fetch('/api/competition/kookdog').then(r => r.json()).catch(() => null),
+          fetch('/api/competition-snapshots').then(r => r.json()).catch(() => null)
+        ]);
+
+        if (snapRes && snapRes.snapshot_leaderboard) {
+          snapshotList = snapRes.snapshot_leaderboard;
+          filterSnapshotTable();
+        }
+        if (compRes) {
+          renderVolumeSprint(compRes);
+        }
+      } catch {}
+    }
+
+    // Initial render
+    document.addEventListener('DOMContentLoaded', () => {
+      renderSnapshotTable(snapshotList);
+      renderVolumeSprint(compData);
+      initLiveConnection();
+    });
   </script>
 </body>
 </html>
