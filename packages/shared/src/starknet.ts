@@ -848,7 +848,10 @@ export async function getLaunchyQuote(
     if (!poolKey) return null;
 
     const amountInU256 = uint256.bnToUint256(amountIn);
-    const slippageBps = Math.floor(slippagePct * 100);
+    // Launchy on-chain swapper contract strictly enforces slippage_bps <= 5000 (50%).
+    // Clamp to 5000 so the contract call never reverts with 'slippage too high'.
+    const userSlippageBps = Math.floor(slippagePct * 100);
+    const contractSlippageBps = Math.min(5000, Math.max(0, userSlippageBps));
 
     const calldata = [
       poolKey.token0,
@@ -859,7 +862,7 @@ export async function getLaunchyQuote(
       tokenIn,
       amountInU256.low.toString(),
       amountInU256.high.toString(),
-      slippageBps.toString(),
+      contractSlippageBps.toString(),
     ];
 
     const quoteRes = await provider.callContract({
@@ -871,7 +874,12 @@ export async function getLaunchyQuote(
     if (!quoteRes || quoteRes.length < 8) return null;
 
     const outputAmount = uint256.uint256ToBN({ low: quoteRes[0], high: quoteRes[1] });
-    const minReceived = uint256.uint256ToBN({ low: quoteRes[2], high: quoteRes[3] });
+    let minReceived = uint256.uint256ToBN({ low: quoteRes[2], high: quoteRes[3] });
+    if (userSlippageBps > 5000) {
+      // User desired wider slippage than Launchy's contract cap of 50%.
+      // Calculate minReceived according to user's desired slippage.
+      minReceived = (outputAmount * BigInt(Math.max(1, 10000 - userSlippageBps))) / 10000n;
+    }
     const platformFee = uint256.uint256ToBN({ low: quoteRes[4], high: quoteRes[5] });
     const netInput = uint256.uint256ToBN({ low: quoteRes[6], high: quoteRes[7] });
 
