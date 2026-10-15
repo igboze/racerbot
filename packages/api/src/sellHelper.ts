@@ -76,8 +76,8 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     return { success: false, reason: 'venue_unknown' };
   }
   let venue = info.venue as 'rhea' | 'ref' | 'shardsmarket' | 'nearlytrade' | 'intear' | 'onetokenhub' | 'nearpad' | 'gaypad' | 'memecooking' | 'shoremarkets' | 'kelytra' | 'nearpumpfun';
-  let effectiveDclPoolId = info.dcl_pool_id ?? undefined;
-  let effectiveRheaPoolId = info.rhea_pool_id ?? undefined;
+  let effectiveDclPoolId = (info.dcl_pool_id && (info.dcl_pool_id.includes('|') || info.dcl_pool_id.includes('>'))) ? info.dcl_pool_id : undefined;
+  let effectiveRheaPoolId = info.rhea_pool_id ?? (info.dcl_pool_id && !info.dcl_pool_id.includes('|') ? parseInt(info.dcl_pool_id, 10) : undefined);
 
   const near = getNear();
 
@@ -94,7 +94,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
 
   // Best execution check: if both a Rhea pool and a launchpad pool (DCL or launchpad AMM) exist,
   // compare quotes in parallel to guarantee the user gets the maximum possible NEAR output!
-  if (effectiveRheaPoolId && (venue !== 'rhea' || effectiveDclPoolId)) {
+  if (venue !== 'intear' && effectiveRheaPoolId && (venue !== 'rhea' || effectiveDclPoolId)) {
     const launchpadVenue = venue !== 'rhea'
       ? venue
       : (position.token_address.endsWith('.nearlytrade.near')
