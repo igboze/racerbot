@@ -1715,6 +1715,13 @@ export interface VolumeStats {
   volumeTotalSui: number;
   feesTotalSui: number;
   tradesTotalSui: number;
+  // Starknet chain
+  volume24hStarknet: number;
+  fees24hStarknet: number;
+  trades24hStarknet: number;
+  volumeTotalStarknet: number;
+  feesTotalStarknet: number;
+  tradesTotalStarknet: number;
   // Combined
   usersTotal: number;
   newUsers24h: number;
@@ -1722,7 +1729,7 @@ export interface VolumeStats {
 
 /**
  * Trading volume derived from fee_paid (the platform fee is exactly 1.5% of
- * NEAR volume and is always recorded in NEAR units, unlike fill amounts whose
+ * volume and is always recorded in native units, unlike fill amounts whose
  * raw/human units vary across legacy rows).
  */
 export async function getVolumeStats(): Promise<VolumeStats> {
@@ -1734,9 +1741,6 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
        COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
-       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'buy')::int AS buys24,
-       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'sell')::int AS sells24,
-       COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS traders24,
        COUNT(*)::int AS trades_total
      FROM fills
      WHERE chain = 'near'
@@ -1759,6 +1763,32 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
+  // Starknet fills (fee_paid stored in human STRK units)
+  const starknet = await db.query(
+    `SELECT
+       COALESCE(SUM(fee_paid::numeric) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
+       COALESCE(SUM(fee_paid::numeric), 0)::float AS fees_total,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
+       COUNT(*)::int AS trades_total
+     FROM fills
+     WHERE chain = 'starknet'
+       AND side IN ('buy', 'sell')
+       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
+  );
+
+  // Overall 24h trade activity across all chains
+  const activity = await db.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'buy')::int AS buys24,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'sell')::int AS sells24,
+       COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS traders24
+     FROM fills
+     WHERE side IN ('buy', 'sell')
+       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
+  );
+
   const u = await db.query(`
     SELECT
       COUNT(*)::int AS total,
@@ -1768,29 +1798,38 @@ export async function getVolumeStats(): Promise<VolumeStats> {
 
   const nr = near.rows[0];
   const sr = sui.rows[0];
+  const strkr = starknet.rows[0];
+  const act = activity.rows[0];
   const ur = u.rows[0];
 
   return {
     // NEAR
-    volume24hNear:    nr.fees24 / 0.015,
-    fees24hNear:      nr.fees24,
-    trades24h:        nr.trades24,
-    buys24h:          nr.buys24,
-    sells24h:         nr.sells24,
-    activeTraders24h: nr.traders24,
-    volumeTotalNear:  nr.fees_total / 0.015,
-    feesTotalNear:    nr.fees_total,
-    tradesTotal:      nr.trades_total,
+    volume24hNear:       nr.fees24 / 0.015,
+    fees24hNear:         nr.fees24,
+    trades24h:           nr.trades24,
+    buys24h:             act.buys24,
+    sells24h:            act.sells24,
+    activeTraders24h:    act.traders24,
+    volumeTotalNear:     nr.fees_total / 0.015,
+    feesTotalNear:       nr.fees_total,
+    tradesTotal:         nr.trades_total,
     // SUI
-    volume24hSui:     sr.fees24 / 0.015,
-    fees24hSui:       sr.fees24,
-    trades24hSui:     sr.trades24,
-    volumeTotalSui:   sr.fees_total / 0.015,
-    feesTotalSui:     sr.fees_total,
-    tradesTotalSui:   sr.trades_total,
+    volume24hSui:        sr.fees24 / 0.015,
+    fees24hSui:          sr.fees24,
+    trades24hSui:        sr.trades24,
+    volumeTotalSui:      sr.fees_total / 0.015,
+    feesTotalSui:        sr.fees_total,
+    tradesTotalSui:      sr.trades_total,
+    // Starknet
+    volume24hStarknet:   strkr.fees24 / 0.015,
+    fees24hStarknet:     strkr.fees24,
+    trades24hStarknet:   strkr.trades24,
+    volumeTotalStarknet: strkr.fees_total / 0.015,
+    feesTotalStarknet:   strkr.fees_total,
+    tradesTotalStarknet: strkr.trades_total,
     // Users
-    usersTotal:       ur.total,
-    newUsers24h:      ur.new24h,
+    usersTotal:          ur.total,
+    newUsers24h:         ur.new24h,
   };
 }
 

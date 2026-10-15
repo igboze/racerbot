@@ -9,7 +9,7 @@ import {
   type VolumeStats,
 } from '@racerbot/db';
 import { getNearUsdPrice } from './wallet.js';
-import { getSuiUsdPrice } from '@racerbot/shared';
+import { getSuiUsdPrice, getStrkUsdPrice } from '@racerbot/shared';
 import {
   ADMIN_USERNAMES,
   ADMIN_TELEGRAM_ID,
@@ -158,16 +158,19 @@ function summaryReport(summary: AttemptSummary, windowMinutes: number): string {
 
 // ── Daily volume update ─────────────────────────────────────────────────────
 
-export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 0): string {
+export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 0, strkUsd = 0): string {
   const nearFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const nearUsdFmt = (nearAmt: number) =>
     nearUsd > 0 ? ` (~$${(nearAmt * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
   const suiFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const suiUsdFmt = (suiAmt: number) =>
     suiUsd > 0 ? ` (~$${(suiAmt * suiUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+  const strkFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const strkUsdFmt = (strkAmt: number) =>
+    strkUsd > 0 ? ` (~$${(strkAmt * strkUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
 
-  const total24hTrades = s.trades24h + s.trades24hSui;
-  const totalTrades = s.tradesTotal + s.tradesTotalSui;
+  const total24hTrades = s.trades24h + s.trades24hSui + (s.trades24hStarknet || 0);
+  const totalTrades = s.tradesTotal + s.tradesTotalSui + (s.tradesTotalStarknet || 0);
 
   return (
     `📊 *RacerBot Daily Report*\n\n` +
@@ -177,7 +180,7 @@ export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 
     `• New today: \`${s.newUsers24h}\`\n\n` +
 
     `🔥 *Last 24h*\n` +
-    `• Total trades: \`${total24hTrades}\` (${s.buys24h + s.trades24hSui} buys / ${s.sells24h} sells)\n` +
+    `• Total trades: \`${total24hTrades}\` (${s.buys24h} buys / ${s.sells24h} sells)\n` +
     `• Active traders: \`${s.activeTraders24h}\`\n\n` +
 
     `〽️ *NEAR — 24h*\n` +
@@ -188,9 +191,14 @@ export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 
     `• Volume: \`${suiFmt(s.volume24hSui)} SUI\`${suiUsdFmt(s.volume24hSui)}\n` +
     `• Trades: \`${s.trades24hSui}\`\n\n` +
 
+    `⚡ *Starknet — 24h*\n` +
+    `• Volume: \`${strkFmt(s.volume24hStarknet || 0)} STRK\`${strkUsdFmt(s.volume24hStarknet || 0)}\n` +
+    `• Trades: \`${s.trades24hStarknet || 0}\`\n\n` +
+
     `📈 *All Time*\n` +
     `• NEAR volume: \`${nearFmt(s.volumeTotalNear)} NEAR\`${nearUsdFmt(s.volumeTotalNear)}\n` +
     `• SUI volume: \`${suiFmt(s.volumeTotalSui)} SUI\`${suiUsdFmt(s.volumeTotalSui)}\n` +
+    `• Starknet volume: \`${strkFmt(s.volumeTotalStarknet || 0)} STRK\`${strkUsdFmt(s.volumeTotalStarknet || 0)}\n` +
     `• Total trades: \`${totalTrades.toLocaleString('en-US')}\``
   );
 }
@@ -205,11 +213,12 @@ async function maybeSendDailyVolumeUpdate(bot: Telegraf): Promise<void> {
   if (Number.isFinite(last) && Date.now() - last < VOLUME_UPDATE_INTERVAL_MS) return;
 
   const stats = await getVolumeStats();
-  const [nearUsd, suiUsd] = await Promise.all([
+  const [nearUsd, suiUsd, strkUsd] = await Promise.all([
     getNearUsdPrice().catch(() => 0),
     getSuiUsdPrice().catch(() => 0),
+    getStrkUsdPrice().catch(() => 0),
   ]);
-  await sendAdminAlert(bot, buildVolumeUpdateText(stats, nearUsd, suiUsd));
+  await sendAdminAlert(bot, buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd));
   await setBotSetting(VOLUME_LAST_SENT_KEY, String(Date.now())).catch((err: any) => {
     logger.warn('Failed to persist volume-update timestamp', { error: err.message });
   });
@@ -299,11 +308,12 @@ export function setupMonitor(bot: Telegraf): void {
     if (!isAdmin(ctx)) return;
     try {
       const stats = await getVolumeStats();
-      const [nearUsd, suiUsd] = await Promise.all([
+      const [nearUsd, suiUsd, strkUsd] = await Promise.all([
         getNearUsdPrice().catch(() => 0),
         getSuiUsdPrice().catch(() => 0),
+        getStrkUsdPrice().catch(() => 0),
       ]);
-      await ctx.replyWithMarkdown(buildVolumeUpdateText(stats, nearUsd, suiUsd));
+      await ctx.replyWithMarkdown(buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd));
     } catch (err: any) {
       await ctx.reply('Volume query failed — check logs.').catch(() => {});
       logger.error('/volume failed', err);
