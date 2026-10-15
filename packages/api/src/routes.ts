@@ -1770,6 +1770,16 @@ export function getUserFriendlyError(error: Error | string): string {
   if (r.includes('unauthorized') || r.includes('forbidden'))
     return 'Authentication required. Please run /start.';
 
+  // ── RaceDrop Duplicate Claim ──────────────────────────────────────────────
+  if (
+    r.includes('uq_drop_claim_user') ||
+    r.includes('uq drop claim user') ||
+    r.includes('you have already claimed this racedrop') ||
+    (r.includes('duplicate key') && r.includes('race_drop'))
+  ) {
+    return '⚠️ You have already claimed this RaceDrop! Your tokens are already in your wallet.';
+  }
+
   // ── Auth & Trading Key ───────────────────────────────────────────────────
   if (
     r.includes('unsupported state') ||

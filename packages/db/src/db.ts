@@ -3070,6 +3070,14 @@ export async function recordRaceDropClaim(params: {
       throw new Error('All drops have already been claimed.');
     }
 
+    const existingClaim = await client.query(
+      'SELECT id FROM race_drop_claims WHERE drop_id = $1 AND user_id = $2 LIMIT 1',
+      [params.dropId, params.userId]
+    );
+    if (existingClaim.rows.length > 0) {
+      throw new Error('You have already claimed this RaceDrop!');
+    }
+
     const claimRes = await client.query(
       `INSERT INTO race_drop_claims (drop_id, user_id, telegram_id, claimant_name, claim_amount, is_new_user, tx_hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -3103,8 +3111,11 @@ export async function recordRaceDropClaim(params: {
       claim: rowToRaceDropClaim(claimRes.rows[0]),
       drop: rowToRaceDrop(updatedDropRes.rows[0]),
     };
-  } catch (err) {
+  } catch (err: any) {
     await client.query('ROLLBACK');
+    if (err?.code === '23505' || String(err?.message).includes('uq_drop_claim_user')) {
+      throw new Error('You have already claimed this RaceDrop!');
+    }
     throw err;
   } finally {
     client.release();
