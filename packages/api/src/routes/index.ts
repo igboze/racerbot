@@ -900,6 +900,13 @@ router.get('/bubblemap-data/:token', async (req, res) => {
 router.get('/account-balance/:token/:account', async (req, res) => {
   try {
     const { token, account } = req.params;
+    const cacheKey = `acct-bal:${token}:${account}`;
+    const cached = getCached<{ account: string; token: string; balance: string }>(cacheKey);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
     const fastNearKey = process.env.FASTNEAR_API_KEY || '';
     if (fastNearKey) {
       try {
@@ -909,7 +916,9 @@ router.get('/account-balance/:token/:account', async (req, res) => {
         if (r.ok) {
           const d: any = await r.json();
           const match = (d.tokens || []).find((t: any) => t.contract_id === token);
-          res.json({ account, token, balance: match?.balance || '0' });
+          const result = { account, token, balance: match?.balance || '0' };
+          setCached(cacheKey, result, 30_000);
+          res.json(result);
           return;
         }
       } catch (e: any) {
