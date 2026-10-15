@@ -289,11 +289,16 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       break;
     }
 
-    case 'copy_trade_filled' as any: {
+    case 'copy_trade_filled' as any:
+    case 'wallet_tracker_alert' as any: {
       // Pre-formatted message is composed by the copy-trade detector
       const msg = (data as any).message as string | undefined;
+      const markup = (data as any).reply_markup;
       if (msg) {
-        await _bot.telegram.sendMessage(telegramId, msg, { parse_mode: 'Markdown' });
+        await _bot.telegram.sendMessage(telegramId, msg, {
+          parse_mode: 'Markdown',
+          ...(markup ? { reply_markup: markup } : {}),
+        });
       }
       break;
     }
