@@ -29,6 +29,7 @@ import {
   isSuiToken,
 } from './wallet.js';
 import { getUserFriendlyError } from './routes.js';
+import { tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import {
   getNear,
   getSuiBalance,
@@ -549,6 +550,13 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     }
   };
 
+  // 1. Guard against concurrent duplicate claim requests (e.g. rapid double-tapping Claim button)
+  const claimLockKey = `inflight:racedrop_claim:${dropId}:${telegramId}`;
+  if (!(await tryAcquireInFlight(claimLockKey))) {
+    await sendErrorFeedback('🏎️ Your claim is already being processed! Please wait a moment.');
+    return;
+  }
+
   try {
     const drop = await getRaceDropById(dropId);
     if (!drop) {
@@ -694,15 +702,27 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     if (pendingMsg) ctx.deleteMessage(pendingMsg.message_id).catch(() => {});
 
     // Record Claim in DB
-    const { claim, drop: updatedDrop } = await recordRaceDropClaim({
-      dropId: drop.id,
-      userId: user.id,
-      telegramId,
-      claimantName,
-      claimAmount: claimAmountNum.toString(),
-      isNewUser,
-      txHash,
-    });
+    let claimResult: { claim: RaceDropClaimRecord; drop: RaceDropRecord };
+    try {
+      claimResult = await recordRaceDropClaim({
+        dropId: drop.id,
+        userId: user.id,
+        telegramId,
+        claimantName,
+        claimAmount: claimAmountNum.toString(),
+        isNewUser,
+        txHash,
+      });
+    } catch (claimErr: any) {
+      const errStr = String(claimErr?.message || claimErr).toLowerCase();
+      if (errStr.includes('uq_drop_claim_user') || errStr.includes('uq drop claim user') || claimErr?.code === '23505' || errStr.includes('already claimed')) {
+        await sendErrorFeedback('⚠️ You have already claimed this RaceDrop! Your tokens are already in your wallet.');
+        return;
+      }
+      throw claimErr;
+    }
+
+    const { claim, drop: updatedDrop } = claimResult;
 
     if (user.subaccount_id) {
       syncUserTokenDeposits(user.id, user.subaccount_id, true).catch(() => {});
@@ -817,7 +837,14 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
     }
   } catch (err: any) {
     console.error('[RACEDROP] Claim execution error:', err);
-    await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    const errStr = String(err?.message || err).toLowerCase();
+    if (errStr.includes('uq_drop_claim_user') || errStr.includes('uq drop claim user') || err?.code === '23505' || errStr.includes('already claimed')) {
+      await sendErrorFeedback('⚠️ You have already claimed this RaceDrop! Your tokens are already in your wallet.');
+    } else {
+      await sendErrorFeedback(`❌ ${getUserFriendlyError(err)}`);
+    }
+  } finally {
+    await releaseInFlight(claimLockKey);
   }
 }
 
