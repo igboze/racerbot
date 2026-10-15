@@ -316,11 +316,14 @@ export class MultiRpcNear {
   private inflightViews = new Map<string, Promise<any>>();
   // Short-TTL result cache for display-path reads only (see viewCached)
   private viewResultCache = new Map<string, { at: number; value: any }>();
+  // Coalescing and short TTL cache for account NEAR balances to minimize paid RPC calls
+  private inflightNearBalances = new Map<string, Promise<string>>();
+  private nearBalanceCache = new Map<string, { at: number; value: string }>();
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
     const rawApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
     const apiKey = rawApiKey.startsWith('${') ? '' : rawApiKey;
-    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+    const hasValidKey = Boolean(apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me'));
     const rawQn = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
     const qnUrl = rawQn.startsWith('${') ? '' : rawQn;
     const brokenDefaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/';
@@ -338,18 +341,20 @@ export class MultiRpcNear {
       return isQn || isFn || isShitzu || isIntear;
     });
 
-    const fallbackUrls = ['https://rpc.mainnet.fastnear.com', 'https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', 'https://free.rpc.fastnear.com'];
+    const fallbackUrls = ['https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', 'https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
     const sanitizedUrls = allowedUrls.length > 0
       ? Array.from(new Set(allowedUrls))
       : fallbackUrls;
 
-    // Read URLs: FastNEAR first (primary dedicated RPC), QuickNode, then validator and backup nodes
+    // Read URLs: Free validator nodes first (zero credit consumption: Shitzu, Intear, Free FastNEAR),
+    // then paid FastNEAR (primary dedicated RPC), QuickNode, and others
     const readUrls = Array.from(new Set([
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
       ...sanitizedUrls.filter(u => u.includes('intea.rs')),
       ...sanitizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...sanitizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea')),
     ]));
 
     // Trade URLs: FastNEAR first (primary RPC), QuickNode (if configured), Shitzu, Intear validator nodes, then Free FastNEAR backup.
@@ -366,8 +371,9 @@ export class MultiRpcNear {
 
     this.readProviders = readUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
+      const isPaidFn = Boolean(url.includes('rpc.mainnet.fastnear.com') && hasValidKey);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+      if (isPaidFn) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
       const name = isQn
@@ -379,13 +385,14 @@ export class MultiRpcNear {
         : url.includes('near.org')
         ? `pagoda-read-${i}`
         : `fastnear-read-${i}`;
-      return createProvider(url, name, isQn, headers);
+      return createProvider(url, name, isQn, headers, isPaidFn);
     });
 
     this.tradeProviders = tradeUrls.map((url, i) => {
       const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
+      const isPaidFn = Boolean(url.includes('rpc.mainnet.fastnear.com') && hasValidKey);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (url.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+      if (isPaidFn) {
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
       const name = isQn
@@ -397,7 +404,7 @@ export class MultiRpcNear {
         : url.includes('near.org')
         ? `pagoda-trade-${i}`
         : `trade-rpc-${i}`;
-      return createProvider(url, name, isQn, headers);
+      return createProvider(url, name, isQn, headers, isPaidFn);
     });
 
     this.keyStore = new keyStores.InMemoryKeyStore();
@@ -675,24 +682,30 @@ export class MultiRpcNear {
 
   private async viewOnce<T>(contractId: string, methodName: string, args: object): Promise<T> {
     const eligible = (list: RPCProvider[]) => list.filter(p => p.healthy && !p.circuitBreakerOpen);
+    const isCommunityFree = (p: RPCProvider) =>
+      p.url.includes('shitzu') ||
+      p.url.includes('intea') ||
+      p.url.includes('free.rpc.fastnear.com') ||
+      p.url.includes('near.org') ||
+      p.url.includes('drpc.org');
 
-    const fastnear = this.readProviders.filter(p => !p.isQuickNode);
+    const communityFree = this.readProviders.filter(isCommunityFree);
+    const fastnear = this.readProviders.filter(p => !p.isQuickNode && !isCommunityFree(p));
     const quicknode = this.readProviders.filter(p => p.isQuickNode);
 
     const HEDGE_MS = MultiRpcNear.HEDGE_MS;
     const VIEW_TIMEOUT_MS = MultiRpcNear.VIEW_TIMEOUT_MS;
 
-    // Pick best candidates per group (fall back to all in group if none eligible).
+    const freeTargets = eligible(communityFree).length > 0 ? eligible(communityFree) : communityFree;
     const fnTargets = eligible(fastnear).length > 0 ? eligible(fastnear) : fastnear;
     const qnTargets = eligible(quicknode).length > 0 ? eligible(quicknode) : quicknode;
 
-    if (fnTargets.length === 0 && qnTargets.length === 0) {
+    if (freeTargets.length === 0 && fnTargets.length === 0 && qnTargets.length === 0) {
       throw new Error('No NEAR RPC providers configured');
     }
 
-    // Controllers for each group's HTTP requests.
-    const fnCtrl = new AbortController();
-    const qnCtrl = new AbortController();
+    const primaryCtrl = new AbortController();
+    const hedgeCtrl = new AbortController();
 
     let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
     let capTimer: ReturnType<typeof setTimeout> | null = null;
@@ -733,8 +746,8 @@ export class MultiRpcNear {
       const cleanup = () => {
         if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null; }
         if (capTimer) { clearTimeout(capTimer); capTimer = null; }
-        fnCtrl.abort();
-        qnCtrl.abort();
+        primaryCtrl.abort();
+        hedgeCtrl.abort();
       };
 
       // Called each time a provider attempt settles.
@@ -753,11 +766,11 @@ export class MultiRpcNear {
           return;
         }
 
-        // Network error on FastNEAR before HEDGE_MS → launch QuickNode early.
-        if (!settled && qnTargets.length > 0 && hedgeTimer !== null) {
+        // Network error on primary before HEDGE_MS → launch hedge early.
+        if (!settled && hedgeTimer !== null) {
           clearTimeout(hedgeTimer);
           hedgeTimer = null;
-          launchQuickNode();
+          launchHedge();
         }
 
         // If all started attempts have failed, reject.
@@ -766,21 +779,54 @@ export class MultiRpcNear {
         }
       };
 
-      const launchFastNear = () => {
-        for (const p of fnTargets) {
-          started++;
-          const attempt = tryProvider(p, fnCtrl.signal);
-          allAttempts.push(attempt);
-          attempt.then(onAttemptDone);
+      const hasFree = freeTargets.length > 0;
+
+      const launchPrimary = () => {
+        if (hasFree) {
+          // Free community validator nodes first: race up to 2
+          for (const p of freeTargets.slice(0, 2)) {
+            started++;
+            const attempt = tryProvider(p, primaryCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
+        } else if (fnTargets.length > 0) {
+          // No free community nodes: launch FastNEAR
+          for (const p of fnTargets) {
+            started++;
+            const attempt = tryProvider(p, primaryCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
+        } else {
+          // Only QuickNode configured
+          for (const p of qnTargets) {
+            started++;
+            const attempt = tryProvider(p, primaryCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
         }
       };
 
-      const launchQuickNode = () => {
-        for (const p of qnTargets) {
-          started++;
-          const attempt = tryProvider(p, qnCtrl.signal);
-          allAttempts.push(attempt);
-          attempt.then(onAttemptDone);
+      const launchHedge = () => {
+        if (hasFree) {
+          // Hedge to FastNEAR, or QuickNode if FastNEAR not available
+          const hedgeList = fnTargets.length > 0 ? fnTargets : qnTargets;
+          for (const p of hedgeList) {
+            started++;
+            const attempt = tryProvider(p, hedgeCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
+        } else if (fnTargets.length > 0 && qnTargets.length > 0) {
+          // FastNEAR failed or slow -> hedge to QuickNode
+          for (const p of qnTargets) {
+            started++;
+            const attempt = tryProvider(p, hedgeCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
         }
       };
 
@@ -789,18 +835,17 @@ export class MultiRpcNear {
         fail(new Error('NEAR RPC view hard cap exceeded (3000 ms)'));
       }, VIEW_TIMEOUT_MS);
 
-      if (fnTargets.length > 0) {
-        launchFastNear();
-        // Hedge: after HEDGE_MS with no response from FastNEAR, also send to QuickNode fallback.
-        if (qnTargets.length > 0) {
-          hedgeTimer = setTimeout(() => {
-            hedgeTimer = null;
-            if (!settled) launchQuickNode();
-          }, HEDGE_MS);
-        }
-      } else {
-        // FastNEAR not configured — go straight to QuickNode.
-        launchQuickNode();
+      launchPrimary();
+
+      const canHedge = hasFree
+        ? (fnTargets.length > 0 || qnTargets.length > 0)
+        : (fnTargets.length > 0 && qnTargets.length > 0);
+
+      if (canHedge) {
+        hedgeTimer = setTimeout(() => {
+          hedgeTimer = null;
+          if (!settled) launchHedge();
+        }, HEDGE_MS);
       }
     });
   }
@@ -1042,13 +1087,54 @@ export class MultiRpcNear {
         this.highestUsedNonce.delete(key);
       }
     }
+    this.nearBalanceCache.delete(accountId);
+  }
+
+  clearNearBalanceCache(accountId?: string): void {
+    if (accountId) {
+      this.nearBalanceCache.delete(accountId);
+    } else {
+      this.nearBalanceCache.clear();
+    }
   }
 
   /**
-   * Get account NEAR balance from trade RPC providers (hedged optimistic/final view_account).
+   * Get account NEAR balance with deduplication, short-lived cache (2s TTL),
+   * and free-validator-first resolution to reduce FastNEAR RPC consumption.
    */
-  async getNearBalance(accountId: string): Promise<string> {
-    const fetchBalanceFromProvider = async (provider: typeof this.tradeProviders[0], finality = 'optimistic') => {
+  async getNearBalance(accountId: string, maxAgeMs = 2000): Promise<string> {
+    if (!accountId) return '0';
+    if (maxAgeMs > 0) {
+      const cached = this.nearBalanceCache.get(accountId);
+      if (cached && Date.now() - cached.at < maxAgeMs) {
+        return cached.value;
+      }
+    }
+
+    const inflight = this.inflightNearBalances.get(accountId);
+    if (inflight) return inflight;
+
+    const promise = this.fetchNearBalance(accountId)
+      .then((val) => {
+        this.nearBalanceCache.set(accountId, { at: Date.now(), value: val });
+        if (this.nearBalanceCache.size > 1000) {
+          const cutoff = Date.now() - 30_000;
+          for (const [k, v] of this.nearBalanceCache) {
+            if (v.at < cutoff) this.nearBalanceCache.delete(k);
+          }
+        }
+        return val;
+      })
+      .finally(() => {
+        this.inflightNearBalances.delete(accountId);
+      });
+
+    this.inflightNearBalances.set(accountId, promise);
+    return promise;
+  }
+
+  private async fetchNearBalance(accountId: string): Promise<string> {
+    const fetchBalanceFromProvider = async (provider: RPCProvider, finality = 'optimistic') => {
       const res = await fetch(provider.url, {
         method: 'POST',
         headers: provider.headers ?? { 'Content-Type': 'application/json' },
@@ -1065,6 +1151,31 @@ export class MultiRpcNear {
       throw new Error('No balance in response');
     };
 
+    // 1. Free community validator nodes first (zero paid credit burn)
+    const isCommunityFree = (p: RPCProvider) =>
+      p.url.includes('shitzu') ||
+      p.url.includes('intea') ||
+      p.url.includes('free.rpc.fastnear.com') ||
+      p.url.includes('near.org') ||
+      p.url.includes('drpc.org');
+
+    const freeProviders = this.readProviders.filter(
+      p => isCommunityFree(p) && p.healthy && !p.circuitBreakerOpen
+    );
+    if (freeProviders.length > 0) {
+      const freeToTry = freeProviders.slice(0, 2);
+      try {
+        return await Promise.any(freeToTry.map(p => fetchBalanceFromProvider(p, 'optimistic')));
+      } catch {
+        try {
+          return await Promise.any(freeToTry.map(p => fetchBalanceFromProvider(p, 'final')));
+        } catch {
+          // Free providers failed, fall back to trade providers (FastNEAR)
+        }
+      }
+    }
+
+    // 2. Fallback to trade providers (FastNEAR)
     try {
       return await Promise.any(this.tradeProviders.map(p => fetchBalanceFromProvider(p, 'optimistic')));
     } catch {
@@ -5387,22 +5498,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (FastNEAR, Shitzu, Intear, Free FastNEAR). */
+/** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (Free validator nodes first, then FastNEAR). */
 export const DEFAULT_RPC_URLS = [
-  'https://rpc.mainnet.fastnear.com',
   'https://rpc.shitzuapes.xyz',
   'https://rpc.intea.rs',
   'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.fastnear.com',
 ];
 
 let _nearInstance: MultiRpcNear | null = null;
 let _freeNearInstance: MultiRpcNear | null = null;
 
 export const FREE_RPC_URLS = [
-  'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.fastnear.com',
   'https://rpc.shitzuapes.xyz',
   'https://rpc.intea.rs',
+  'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.near.org',
 ];
 
 export function getFreeNear(): MultiRpcNear {
@@ -5437,22 +5548,69 @@ export function clearAccessKeyCache(accountId: string): void {
 }
 
 /**
- * FastNEAR Indexer REST API helpers (https://api.fastnear.com)
+ * FastNEAR Indexer REST API helpers (https://api.fastnear.com) with in-memory caching
+ * and single-flight request coalescing to minimize credit consumption.
  */
+const fastnearTokensCache = new Map<string, { at: number; data: { account_id: string; contract_ids: string[] } }>();
+const inflightFastnearTokens = new Map<string, Promise<{ account_id: string; contract_ids: string[] }>>();
+
 export async function getFastnearAccountTokens(
   accountId: string,
-  apiUrl = process.env.FASTNEAR_API_URL || 'https://api.fastnear.com'
+  apiUrl = process.env.FASTNEAR_API_URL || 'https://api.fastnear.com',
+  ttlMs = 30_000
 ): Promise<{ account_id: string; contract_ids: string[] }> {
-  const res = await fetch(`${apiUrl}/v1/account/${accountId}/ft`);
-  if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
-  return res.json() as Promise<{ account_id: string; contract_ids: string[] }>;
+  const cacheKey = `${apiUrl}:${accountId}`;
+  if (ttlMs > 0) {
+    const cached = fastnearTokensCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < ttlMs) {
+      return cached.data;
+    }
+  }
+  const inflight = inflightFastnearTokens.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const res = await fetch(`${apiUrl}/v1/account/${accountId}/ft`);
+    if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
+    const data = (await res.json()) as { account_id: string; contract_ids: string[] };
+    fastnearTokensCache.set(cacheKey, { at: Date.now(), data });
+    return data;
+  })().finally(() => {
+    inflightFastnearTokens.delete(cacheKey);
+  });
+
+  inflightFastnearTokens.set(cacheKey, promise);
+  return promise;
 }
+
+const fastnearPkCache = new Map<string, { at: number; data: { public_key: string; account_ids: string[] } }>();
+const inflightFastnearPk = new Map<string, Promise<{ public_key: string; account_ids: string[] }>>();
 
 export async function getFastnearPublicKeyAccounts(
   publicKey: string,
-  apiUrl = process.env.FASTNEAR_API_URL || 'https://api.fastnear.com'
+  apiUrl = process.env.FASTNEAR_API_URL || 'https://api.fastnear.com',
+  ttlMs = 60_000
 ): Promise<{ public_key: string; account_ids: string[] }> {
-  const res = await fetch(`${apiUrl}/v0/public_key/${publicKey}/all`);
-  if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
-  return res.json() as Promise<{ public_key: string; account_ids: string[] }>;
+  const cacheKey = `${apiUrl}:${publicKey}`;
+  if (ttlMs > 0) {
+    const cached = fastnearPkCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < ttlMs) {
+      return cached.data;
+    }
+  }
+  const inflight = inflightFastnearPk.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const res = await fetch(`${apiUrl}/v0/public_key/${publicKey}/all`);
+    if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
+    const data = (await res.json()) as { public_key: string; account_ids: string[] };
+    fastnearPkCache.set(cacheKey, { at: Date.now(), data });
+    return data;
+  })().finally(() => {
+    inflightFastnearPk.delete(cacheKey);
+  });
+
+  inflightFastnearPk.set(cacheKey, promise);
+  return promise;
 }

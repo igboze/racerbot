@@ -6,6 +6,7 @@ export interface RPCProvider {
   errorCount: number;
   successCount: number;
   isQuickNode?: boolean;
+  isPaidFastNear?: boolean;
   headers?: Record<string, string>;
   circuitBreakerOpen: boolean;
   circuitBreakerUntil: number;
@@ -44,7 +45,13 @@ const CIRCUIT_BREAKER_COOLDOWN_MS = 60000; // 1 minute cooldown
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5; // Open after 5 consecutive failures
 const CIRCUIT_BREAKER_LATENCY_THRESHOLD_MS = 5000; // Open if consistently slow (>5s)
 
-export function createProvider(url: string, name: string, isQuickNode: boolean = false, headers?: Record<string, string>): RPCProvider {
+export function createProvider(
+  url: string,
+  name: string,
+  isQuickNode: boolean = false,
+  headers?: Record<string, string>,
+  isPaidFastNear: boolean = false
+): RPCProvider {
   return {
     url,
     name,
@@ -53,6 +60,7 @@ export function createProvider(url: string, name: string, isQuickNode: boolean =
     errorCount: 0,
     successCount: 0,
     isQuickNode,
+    isPaidFastNear,
     headers,
     circuitBreakerOpen: false,
     circuitBreakerUntil: 0,

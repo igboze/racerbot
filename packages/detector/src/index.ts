@@ -258,17 +258,26 @@ async function main() {
 function getDetectorRpcHeaders(url: string): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
-  if (fastnearKey && (url.includes('fastnear.com') || url.includes('neardata.xyz'))) {
+  if (fastnearKey && url.includes('rpc.mainnet.fastnear.com') && !url.includes('free.rpc.fastnear.com')) {
     headers['Authorization'] = `Bearer ${fastnearKey}`;
   }
   return headers;
 }
 
-/** Fetch current block height directly from NEAR RPC JSON-RPC */
+/** Fetch current block height directly from NEAR RPC JSON-RPC (free validator nodes first) */
 async function fetchBlockHeight(): Promise<number> {
-  // Try providers in random order with a hard timeout each — a hung RPC
-  // used to stall the entire watcher (no timeout, single random pick).
-  const urls = [...RPC_URLS].sort(() => Math.random() - 0.5);
+  // Try free community / public validator nodes first to avoid burning paid FastNEAR RPC credits
+  const isCommunityFree = (u: string) =>
+    u.includes('shitzu') ||
+    u.includes('intea') ||
+    u.includes('free.rpc.fastnear.com') ||
+    u.includes('near.org') ||
+    u.includes('drpc.org');
+
+  const freeUrls = RPC_URLS.filter(isCommunityFree).sort(() => Math.random() - 0.5);
+  const fallbackUrls = RPC_URLS.filter(u => !isCommunityFree(u));
+  const urls = [...freeUrls, ...fallbackUrls];
+
   for (const url of urls) {
     try {
       const response = await fetch(url, {
@@ -280,7 +289,7 @@ async function fetchBlockHeight(): Promise<number> {
           method: 'block',
           params: { finality: 'final' },
         }),
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(3000),
       });
       const data = (await response.json()) as any;
       const height = data?.result?.header?.height ?? 0;
@@ -349,7 +358,11 @@ async function processBlock(height: number): Promise<void> {
 
   // 2. Fallback path: standard NEAR JSON-RPC chunk transactions inspection
   try {
-    const rpcUrl = RPC_URLS[Math.floor(Math.random() * RPC_URLS.length)];
+    const isFree = (u: string) => u.includes('shitzu') || u.includes('intea') || u.includes('free.rpc.fastnear.com') || u.includes('near.org');
+    const freePool = RPC_URLS.filter(isFree);
+    const rpcUrl = freePool.length > 0
+      ? freePool[Math.floor(Math.random() * freePool.length)]
+      : RPC_URLS[Math.floor(Math.random() * RPC_URLS.length)];
     const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: getDetectorRpcHeaders(rpcUrl),
