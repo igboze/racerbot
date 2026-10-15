@@ -42,9 +42,9 @@ function resolveFont(name: string): string | null {
 let cachedOrbitronMedium: Buffer | null = null;
 let cachedOrbitronBold: Buffer | null = null;
 let cachedOrbitronBlack: Buffer | null = null;
-let cachedLogoB64: string | null = null;
-let cachedRobotLossB64: string | null = null;
-let cachedRobotProfitB64: string | null = null;
+let cachedLogoB64: string = '';
+let cachedRobotLossB64: string = '';
+let cachedRobotProfitB64: string = '';
 let assetsInitialized = false;
 
 function initAssets(): void {
@@ -124,19 +124,27 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       color: { dark: '#0a1129', light: '#ffffff' },
     });
 
+    // Mascot dimensions (explicit pixel sizing for Satori layout engine)
     const mascotSrc = isProfit ? cachedRobotProfitB64 : cachedRobotLossB64;
     const mascotLeft = isProfit ? 48 : 24;
     const mascotHeight = isProfit ? 228 : 276;
+    const mascotWidth = isProfit ? 289 : 323;
+
+    // Logo dimensions
+    const logoSrc = cachedLogoB64;
+    const logoWidth = 332;
+    const logoHeight = 62;
+
     const ticker = data.tokenSymbol || 'TOKEN';
 
     const cardHtml = html`
       <div style="display: flex; position: relative; width: 1200px; height: 630px; overflow: hidden; background: linear-gradient(180deg, #0a1129 0%, #0b1c40 45%, #0b3270 100%); font-family: Orbitron; color: #ffffff;">
         
         <!-- Star particles (radial star points) -->
-        <div style="display: flex; position: absolute; left: 8%; top: 30%; width: 2px; height: 2px; background: rgba(255,255,255,0.8); border-radius: 50%;"></div>
+        <div style="display: flex; position: absolute; left: 8%; top: 30%; width: 3px; height: 3px; background: rgba(255,255,255,0.8); border-radius: 50%;"></div>
         <div style="display: flex; position: absolute; left: 22%; top: 12%; width: 2px; height: 2px; background: rgba(255,255,255,0.6); border-radius: 50%;"></div>
         <div style="display: flex; position: absolute; left: 15%; top: 55%; width: 2px; height: 2px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 33%; top: 38%; width: 2px; height: 2px; background: rgba(255,255,255,0.6); border-radius: 50%;"></div>
+        <div style="display: flex; position: absolute; left: 33%; top: 38%; width: 3px; height: 3px; background: rgba(255,255,255,0.6); border-radius: 50%;"></div>
         <div style="display: flex; position: absolute; left: 28%; top: 70%; width: 2px; height: 2px; background: rgba(255,255,255,0.4); border-radius: 50%;"></div>
         <div style="display: flex; position: absolute; left: 5%; top: 80%; width: 2px; height: 2px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
 
@@ -150,15 +158,9 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         </div>
 
         <!-- Logo -->
-        ${cachedLogoB64 ? html`
-          <div style="display: flex; position: absolute; left: 31px; top: 38px;">
-            <img src="${cachedLogoB64}" style="height: 62px; width: auto;" />
-          </div>
-        ` : html`
-          <div style="display: flex; position: absolute; left: 31px; top: 38px; font-size: 28px; font-weight: 900; color: #3aa0ff;">
-            RACERBOT
-          </div>
-        `}
+        <div style="display: flex; position: absolute; left: 31px; top: 38px;">
+          <img src="${logoSrc}" style="width: ${logoWidth}px; height: ${logoHeight}px;" />
+        </div>
 
         <!-- Handle -->
         <div style="display: flex; position: absolute; right: 36px; top: 53px; font-size: 18px; font-weight: 500; opacity: 0.95; letter-spacing: 0.5px;">
@@ -191,12 +193,10 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
           </div>
         </div>
 
-        <!-- Mascot -->
-        ${mascotSrc ? html`
-          <div style="display: flex; position: absolute; left: ${mascotLeft}px; bottom: 6px;">
-            <img src="${mascotSrc}" style="height: ${mascotHeight}px; width: auto;" />
-          </div>
-        ` : ''}
+        <!-- Mascot (Heavy Walking Robot for Loss, Fast Running Robot for Profit) -->
+        <div style="display: flex; position: absolute; left: ${mascotLeft}px; bottom: 6px;">
+          <img src="${mascotSrc}" style="width: ${mascotWidth}px; height: ${mascotHeight}px;" />
+        </div>
 
         <!-- CTA & Referral QR Code -->
         <div style="display: flex; position: absolute; right: 36px; bottom: 19px; align-items: flex-end; gap: 12px; text-align: right;">
