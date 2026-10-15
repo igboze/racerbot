@@ -1005,12 +1005,29 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // If user holds the token, add holdings info
   if (holdsToken && userPosition) {
-    const entryPrice = parseFloat(userPosition.avg_entry_price) || 0;
-    const pnlPct = priceNum > 0 && entryPrice > 0
-      ? ((priceNum - entryPrice) / entryPrice * 100).toFixed(1)
+    let entryPrice = parseFloat(userPosition.avg_entry_price) || 0;
+    let pnlPct = priceNum > 0 && entryPrice > 0
+      ? ((priceNum - entryPrice) / entryPrice * 100).toFixed(2)
       : 'N/A';
-    const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
-    const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+    let emoji = pnlPct !== 'N/A' && parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+    let pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
+
+    try {
+      const pnlCard = await generatePNLCard(userPosition.id);
+      if (pnlCard?.data) {
+        entryPrice = pnlCard.data.entryPrice;
+        emoji = pnlCard.data.isProfit ? '🟢' : '🔴';
+        const pSign = pnlCard.data.isProfit ? '+' : '';
+        pnlDisplay = `${pSign}${Math.abs(pnlCard.data.pnlPercent).toFixed(2)}%`;
+      }
+      if (pnlCard?.image) {
+        pnlCardImage = pnlCard.image;
+      } else if (pnlCard?.text) {
+        text += `${pnlCard.text}\n\n`;
+      }
+    } catch (err: any) {
+      console.error('Failed to generate PNL card:', err);
+    }
 
     const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
     text += `💼 *Your Position*:\n` +
@@ -1019,19 +1036,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       `Entry Px : ${entryPrice.toFixed(8)} ${nativeUnit}\n` +
       `PNL      : ${emoji} ${pnlDisplay}\n` +
       '```\n\n';
-
-    try {
-        const pnlCard = await generatePNLCard(userPosition.id);
-        if (pnlCard.image) {
-          pnlCardImage = pnlCard.image;
-        } else {
-          text += `${pnlCard.text}\n\n`;
-        }
-      } catch (err: any) {
-        console.error('Failed to generate PNL card:', err);
-      }
   }
-
   // ── Buttons ──
   let shareButtonRow: any[] = [];
   if (userRecord) {
@@ -4751,7 +4756,7 @@ export function setupRoutes(bot: Telegraf): void {
       const tpDisplay = tpTrigger ? `+${tpTrigger.target_value}%` : 'None';
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
-      const currentPrice = info ? parseFloat(info.price) : 0;
+      let currentPrice = info ? parseFloat(info.price) : 0;
       const nativeUnit = isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR';
       const liveNativeUsd = isStarknetPos
         ? (info?.strk_usd || 0.12)
@@ -4872,16 +4877,42 @@ export function setupRoutes(bot: Telegraf): void {
         initialInvestment = humanQuantity * entryPrice;
       }
 
-      const pnlPct = currentPrice > 0 && entryPrice > 0
-        ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(1)
-        : 'N/A';
-      const emoji = parseFloat(pnlPct) >= 0 ? '🟢' : '🔴';
+      // Generate PNL card first so text caption & card image share the exact same financial data
+      let pnlCardImage: Buffer | null = null;
+      let pnlCardText: string | null = null;
+      let cardData: any = null;
+      try {
+        const pnlCard = await generatePNLCard(positionId, showNetWorth);
+        if (pnlCard) {
+          cardData = pnlCard.data;
+          pnlCardImage = pnlCard.image;
+          pnlCardText = pnlCard.text;
+        }
+      } catch (err: any) {
+        console.error('Failed to generate PNL card:', err);
+      }
+
+      // Sync financial metrics with canonical PNL card data
+      if (cardData) {
+        entryPrice = cardData.entryPrice;
+        currentPrice = cardData.currentPrice;
+        initialInvestment = cardData.initialInvestment;
+      }
+
+      const pnlPct = cardData
+        ? cardData.pnlPercent.toFixed(2)
+        : (currentPrice > 0 && entryPrice > 0
+          ? ((currentPrice - entryPrice) / entryPrice * 100).toFixed(2)
+          : 'N/A');
+      const emoji = cardData
+        ? (cardData.isProfit ? '🟢' : '🔴')
+        : (parseFloat(pnlPct) >= 0 ? '🟢' : '🔴');
       const pnlDisplay = pnlPct === 'N/A' ? 'N/A' : `${parseFloat(pnlPct) >= 0 ? '+' : ''}${pnlPct}%`;
 
-      const holdingValueNative = humanQuantity * currentPrice;
+      const holdingValueNative = cardData ? cardData.unrealizedValue : (humanQuantity * currentPrice);
       const holdingValueUsd = holdingValueNative * usdRate;
       const initialInvestedUsd = initialInvestment * usdRate;
-      const pnlUsd = holdingValueUsd - initialInvestedUsd;
+      const pnlUsd = cardData ? (cardData.totalPnl * usdRate) : (holdingValueUsd - initialInvestedUsd);
       const pnlUsdStr = Math.abs(pnlUsd) >= 0.01 ? `${pnlUsd >= 0 ? '+$' : '-$'}${Math.abs(pnlUsd).toFixed(2)}` : '';
 
       const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
@@ -5027,17 +5058,8 @@ export function setupRoutes(bot: Telegraf): void {
         cb('🏠 Menu', 'menu_home', 'primary'),
       ]);
 
-      // Generate PNL card with image for all chains (NEAR + SUI)
-      let pnlCardImage: Buffer | null = null;
-      try {
-        const pnlCard = await generatePNLCard(positionId, showNetWorth);
-        if (pnlCard.image) {
-          pnlCardImage = pnlCard.image;
-        } else {
-          msg += `\n${pnlCard.text}`;
-        }
-      } catch (err: any) {
-        console.error('Failed to generate PNL card:', err);
+      if (!pnlCardImage && pnlCardText) {
+        msg += `\n${pnlCardText}`;
       }
 
       // If image was generated, send it as a new message with caption and keyboard
