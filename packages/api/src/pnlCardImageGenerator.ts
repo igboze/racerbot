@@ -93,7 +93,8 @@ function formatMcapVal(val: number): string {
 }
 
 /**
- * Generate 1024x1024 square PNL Card Image matching the official RacerBot Ultra-Quality Design.
+ * Generate 1200x630 landscape PNL Card Image matching the official RacerBot Ultra-Quality Design.
+ * - Aspect ratio: ~1.91:1 Landscape (compact on mobile Telegram, does not dominate the screen)
  * - Loss: Red banner #ff334c, Red REF, heavy round walking robot with glowing red eyes
  * - Profit: Green banner #0abb33, Green REF, high-speed roller-skating robot with cyan trails
  * - Dynamic space background with galactic stars, horizontal electric speed flares,
@@ -158,66 +159,66 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     // Generate crisp QR code for referral link
     const qrDataUrl = await QRCode.toDataURL(refLink, {
       margin: 1,
-      width: 94,
+      width: 72,
       color: { dark: '#0a1129', light: '#ffffff' },
     });
 
     const ticker = data.tokenSymbol || 'TOKEN';
 
     // Dynamically scale font size for long tickers
-    const tickerFontSize = ticker.length > 7 ? 50 : ticker.length > 5 ? 60 : 72;
+    const tickerFontSize = ticker.length > 7 ? 48 : ticker.length > 5 ? 56 : 64;
 
     // Dynamically scale font size for large percentage values
-    const pctFontSize = pctStr.length > 7 ? 96 : pctStr.length > 6 ? 112 : 128;
+    const pctFontSize = pctStr.length > 7 ? 80 : pctStr.length > 6 ? 92 : 102;
 
     const cardHtml = html`
-      <div style="display: flex; position: relative; width: 1024px; height: 1024px; font-family: Orbitron;">
-        <!-- High-fidelity background template (starfield, mascot, logo, handle, lighting beams) -->
-        <img src="${bgTemplateB64}" style="position: absolute; left: 0; top: 0; width: 1024px; height: 1024px;" />
+      <div style="display: flex; position: relative; width: 1200px; height: 630px; font-family: Orbitron;">
+        <!-- High-fidelity landscape background template (starfield, mascot, logo, handle, lighting beams) -->
+        <img src="${bgTemplateB64}" style="position: absolute; left: 0; top: 0; width: 1200px; height: 630px;" />
 
-        <!-- Token Ticker -->
-        <div style="display: flex; position: absolute; left: 683px; top: 234px; font-size: ${tickerFontSize}px; font-weight: 700; color: #ffffff; letter-spacing: 1.5px; line-height: 1;">
+        <!-- Token Ticker (Right aligned above banner) -->
+        <div style="display: flex; position: absolute; right: 48px; top: 105px; font-size: ${tickerFontSize}px; font-weight: 700; color: #ffffff; letter-spacing: 2px; line-height: 1;">
           ${ticker}
         </div>
 
-        <!-- PNL Banner -->
-        <div style="display: flex; position: absolute; left: 477px; top: 310px; width: 547px; height: 128px; background: ${bannerBg}; padding-left: 31px; padding-top: 14px;">
+        <!-- PNL Banner (Extending to the right edge) -->
+        <div style="display: flex; position: absolute; left: 560px; right: 0; top: 185px; height: 118px; background: ${bannerBg}; align-items: center; justify-content: flex-end; padding-right: 48px;">
           <span style="font-size: ${pctFontSize}px; font-weight: 900; color: #1f2c4c; line-height: 1; letter-spacing: -1px;">
             ${pctStr}
           </span>
         </div>
 
         <!-- 3 Stats Columns -->
-        <div style="display: flex; position: absolute; left: 477px; top: 446px; width: 547px; justify-content: space-around; text-align: center;">
-          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+        <div style="display: flex; position: absolute; left: 560px; right: 48px; top: 325px; justify-content: space-between; text-align: center;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 180px;">
             <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">${stat1Label}</div>
             <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${stat1Value}</div>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 180px;">
             <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">${stat2Label}</div>
             <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${stat2Value}</div>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 180px;">
             <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">Hold Time</div>
             <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${holdTimeStr}</div>
           </div>
         </div>
 
         <!-- Referral Code Text -->
-        <div style="display: flex; position: absolute; right: 114px; top: 1004px; font-size: 14px; font-weight: 700; color: ${refColor}; letter-spacing: 0.5px;">
+        <div style="display: flex; position: absolute; right: 135px; top: 588px; font-size: 13px; font-weight: 700; color: ${refColor}; letter-spacing: 0.5px;">
           REF: ${refCode}
         </div>
 
         <!-- Referral QR Code -->
-        <div style="display: flex; position: absolute; left: 922px; top: 926px; width: 94px; height: 94px; border-radius: 4px; overflow: hidden;">
-          <img src="${qrDataUrl}" style="width: 94px; height: 94px;" />
+        <div style="display: flex; position: absolute; right: 48px; top: 524px; width: 72px; height: 72px; border-radius: 4px; overflow: hidden;">
+          <img src="${qrDataUrl}" style="width: 72px; height: 72px;" />
         </div>
       </div>
     `;
 
     const svg = await satori(cardHtml, {
-      width: 1024,
-      height: 1024,
+      width: 1200,
+      height: 630,
       fonts: [
         { name: 'Orbitron', data: cachedOrbitronMedium, weight: 500, style: 'normal' },
         { name: 'Orbitron', data: cachedOrbitronBold, weight: 700, style: 'normal' },
@@ -225,7 +226,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       ],
     });
 
-    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 1024 } });
+    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } });
     const pngBuffer = resvg.render().asPng();
     return Buffer.from(pngBuffer);
   } catch (err: any) {
