@@ -1977,10 +1977,11 @@ export class MultiRpcNear {
       { token_id: tokenAddress }
     ).catch(() => null);
 
-    const dclPoolId = launch?.pool_id || (await this.findDclPoolId('wrap.near', tokenAddress).catch(() => null));
-    if (!launch && !dclPoolId) {
+    if (!launch) {
       throw new Error(`Token ${tokenAddress} not found on NEARpad launchpad`);
     }
+
+    const dclPoolId = launch?.pool_id || (await this.findDclPoolId('wrap.near', tokenAddress).catch(() => null));
 
     let pairedToken = launch?.pair_asset || 'wrap.near';
     if (dclPoolId) {
@@ -2943,9 +2944,10 @@ export class MultiRpcNear {
     pairedAsset: string = 'near'
   ): Promise<{ amountIn: string; amountOut: string } | null> {
     if (pairedAsset === 'token.intear.near') {
-      const pool216Buf = Buffer.alloc(4);
-      pool216Buf.writeUInt32LE(216, 0);
-      const pool216Msg = pool216Buf.toString('base64');
+      const intearNearPoolId = (await this.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
+      const intearNearBuf = Buffer.alloc(4);
+      intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
+      const intearNearMsg = intearNearBuf.toString('base64');
 
       const targetPoolBuf = Buffer.alloc(4);
       targetPoolBuf.writeUInt32LE(poolId, 0);
@@ -2953,10 +2955,10 @@ export class MultiRpcNear {
 
       try {
         if (isBuy) {
-          // Hop 1: near -> token.intear.near on Pool 216
+          // Hop 1: near -> token.intear.near on active pool
           const hop1 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
             dex_id: 'slimedragon.near/xyk',
-            message: pool216Msg,
+            message: intearNearMsg,
             asset_in: 'near',
             asset_out: 'nep141:token.intear.near',
             amount: { ExactIn: amountIn.toString() },
@@ -2992,10 +2994,10 @@ export class MultiRpcNear {
           if (!Array.isArray(hop1) || hop1.length < 2) return null;
           const tearOut = String(hop1[1]);
 
-          // Hop 2: token.intear.near -> near on Pool 216
+          // Hop 2: token.intear.near -> near on active pool
           const hop2 = await this.view<any>('dex.intear.near', 'simulate_swap_simple', {
             dex_id: 'slimedragon.near/xyk',
-            message: pool216Msg,
+            message: intearNearMsg,
             asset_in: 'nep141:token.intear.near',
             asset_out: 'near',
             amount: { ExactIn: tearOut },
@@ -3046,12 +3048,6 @@ export class MultiRpcNear {
    * Find pool ID on dex.intear.near (slimedragon.near/xyk) for a token
    */
   async findIntearPoolId(tokenAddress: string): Promise<number> {
-    // Canonical pool for the platform token itself: pool 216 (token.intear.near <-> near)
-    if (tokenAddress === 'token.intear.near') {
-      intearPoolCache.set('token.intear.near', 216);
-      return 216;
-    }
-
     if (intearPoolCache.has(tokenAddress)) {
       return intearPoolCache.get(tokenAddress)!;
     }
@@ -3059,11 +3055,11 @@ export class MultiRpcNear {
     // Check DB cache first
     try {
       const dbCached = await getTokenCache(tokenAddress);
-      if (dbCached && dbCached.venue === 'intear' && dbCached.dcl_pool_id) {
-        const id = parseInt(dbCached.dcl_pool_id, 10);
-        if (!isNaN(id) && id >= 0) {
-          intearPoolCache.set(tokenAddress, id);
-          return id;
+      if (dbCached && dbCached.venue === 'intear') {
+        const rawId = dbCached.rhea_pool_id ?? (dbCached.dcl_pool_id && !dbCached.dcl_pool_id.includes('|') ? parseInt(dbCached.dcl_pool_id, 10) : null);
+        if (rawId !== null && !isNaN(rawId) && rawId >= 0) {
+          intearPoolCache.set(tokenAddress, rawId);
+          return rawId;
         }
       }
     } catch {}
@@ -3108,31 +3104,47 @@ export class MultiRpcNear {
       const results = await Promise.all(promises);
       for (const r of results) {
         if (r && r.data) {
-          // Never cache token.intear.near as a launch token when it's the quote token
-          if (r.data.asset1 && r.data.asset1 !== 'near' && r.data.asset1 !== 'wrap.near' && r.data.asset1 !== 'token.intear.near' && r.data.asset1.includes('.near')) {
-            intearPoolCache.set(r.data.asset1, r.id);
-          }
-          if (r.data.asset2 && r.data.asset2 !== 'near' && r.data.asset2 !== 'wrap.near' && r.data.asset2 !== 'token.intear.near' && r.data.asset2.includes('.near')) {
-            intearPoolCache.set(r.data.asset2, r.id);
-          }
+          const isTokenIntear = tokenAddress === 'token.intear.near';
+          const r1 = BigInt(r.data.reserve1 || '0');
+          const r2 = BigInt(r.data.reserve2 || '0');
+
           if (r.data.asset1 === tokenAddress || r.data.asset2 === tokenAddress) {
             const paired = r.data.asset1 === tokenAddress ? r.data.asset2 : r.data.asset1;
             // Only accept pools paired with NEAR, wNEAR, or token.intear.near (for launch tokens)
             if (paired === 'near' || paired === 'wrap.near' || paired === 'token.intear.near') {
+              // Ensure pool has liquidity if searching for token.intear.near
+              if (isTokenIntear && (r1 === 0n || r2 === 0n)) {
+                continue;
+              }
               intearPoolCache.set(tokenAddress, r.id);
               setImmediate(() => {
                 upsertTokenCache({
                   token_address: tokenAddress,
                   venue: 'intear',
-                  dcl_pool_id: String(r.id),
+                  rhea_pool_id: r.id,
+                  dcl_pool_id: null,
                   updated_at: new Date(),
                 }).catch(() => {});
               });
               return r.id;
             }
           }
+
+          // Cache other launch tokens encountered along the way
+          if (r.data.asset1 && r.data.asset1 !== 'near' && r.data.asset1 !== 'wrap.near' && r.data.asset1 !== 'token.intear.near' && r.data.asset1.includes('.near')) {
+            intearPoolCache.set(r.data.asset1, r.id);
+          }
+          if (r.data.asset2 && r.data.asset2 !== 'near' && r.data.asset2 !== 'wrap.near' && r.data.asset2 !== 'token.intear.near' && r.data.asset2.includes('.near')) {
+            intearPoolCache.set(r.data.asset2, r.id);
+          }
         }
       }
+    }
+
+    if (tokenAddress === 'token.intear.near') {
+      // Fallback to active pool 274 if scan didn't find one
+      intearPoolCache.set('token.intear.near', 274);
+      return 274;
     }
 
     throw new Error(`Intear pool for ${tokenAddress} not found on dex.intear.near`);
@@ -3209,20 +3221,26 @@ export class MultiRpcNear {
     if (pairedAsset === 'near' || pairedAsset === 'wrap.near') {
       nearAmt = Number(rawReservePaired) / 1e24;
     } else if (pairedAsset === 'token.intear.near') {
-      // If paired with token.intear.near, resolve INTEAR's live price in NEAR from pool 216
-      let intearPriceNear = 0.002426;
+      // If paired with token.intear.near, resolve INTEAR's live price in NEAR from active pool
+      let intearPriceNear = 0.00515;
       try {
+        const intearPoolId = (await this.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
         const intearBuf = Buffer.alloc(4);
-        intearBuf.writeUInt32LE(216, 0);
+        intearBuf.writeUInt32LE(intearPoolId, 0);
         const intearRaw = await this.view<string>('dex.intear.near', 'dex_view', {
           dex_id: 'slimedragon.near/xyk',
           method: 'get_pool',
           args: intearBuf.toString('base64'),
         });
         if (intearRaw) {
-          const intearP = parseIntearPool(Buffer.from(intearRaw, 'base64'));
-          if (intearP && BigInt(intearP.reserve1) > 0n) {
-            intearPriceNear = Number(BigInt(intearP.reserve2)) / Number(BigInt(intearP.reserve1));
+          const intearP = parseIntearPool(Buffer.from(typeof intearRaw === 'string' ? intearRaw : JSON.stringify(intearRaw), 'base64'));
+          if (intearP && BigInt(intearP.reserve1) > 0n && BigInt(intearP.reserve2) > 0n) {
+            const isTear1 = intearP.asset1 === 'token.intear.near';
+            const tearRes = BigInt(isTear1 ? intearP.reserve1 : intearP.reserve2);
+            const nearRes = BigInt(isTear1 ? intearP.reserve2 : intearP.reserve1);
+            if (tearRes > 0n) {
+              intearPriceNear = Number(nearRes) / Number(tearRes);
+            }
           }
         }
       } catch {}
@@ -4012,6 +4030,31 @@ export class MultiRpcNear {
     } else if (venue === 'intear') {
       const targetToken = (tokenIn === 'wrap.near' || tokenIn === 'near') ? tokenOut : tokenIn;
       const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
+
+      // Priority 0: Intear Router API quote (fast, official aggregator quote)
+      try {
+        const routerIn = isBuy ? 'near' : `nep141:${targetToken}`;
+        const routerOut = isBuy ? `nep141:${targetToken}` : 'near';
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(
+          `https://router.intear.tech/route?token_in=${encodeURIComponent(routerIn)}&token_out=${encodeURIComponent(routerOut)}&amount_in=${amountIn}&slippage=${slippagePct}&max_wait_ms=2000&slippage_type=Fixed`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data: any = await res.json();
+          if (data && data.estimated_amount && data.worst_case_amount && BigInt(data.worst_case_amount) > 0n) {
+            return {
+              expectedOutput: String(data.estimated_amount),
+              minAmountOut: String(data.worst_case_amount),
+            };
+          }
+        }
+      } catch {
+        // Fall back to RPC simulation
+      }
+
       let state: any;
       try {
         state = await this.getIntearTokenState(targetToken);
