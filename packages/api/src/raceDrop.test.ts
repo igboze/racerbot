@@ -156,18 +156,19 @@ describe('RaceDrop formatting and card generators', () => {
     expect(buttons[0][1].text).toContain('Post to Group');
   });
 
-  it('builds creator share card with 1-click Share to Group (With Claim Button) and Add Bot buttons', () => {
+  it('builds creator share card with Post to Group, Share Inline, and Share Link buttons', () => {
     const card = buildRaceDropCreatorShareCard(mockDropWithName, 'racertradingbot');
     expect(card.text).toContain('RaceDrop Created Successfully!');
     expect(card.text).toContain('Satoshi Nakamoto');
     expect(card.text).toContain('10k BLACKDRAGON');
     expect(card.text).toContain('100k BLACKDRAGON');
-    expect(card.text).toContain('Share to Group (With Claim Button)');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons[0][0].text).toContain('Share to Group (With Claim Button)');
-    expect((buttons[0][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
-    expect(buttons[1][0].text).toContain('Add Bot to Group & Post');
-    expect((buttons[1][0] as any).url).toContain('https://t.me/racertradingbot?startgroup=drop_');
+    expect(buttons[0][0].text).toContain('Post to Group');
+    expect((buttons[0][0] as any).url).toContain('https://t.me/racertradingbot?startgroup=drop_');
+    expect(buttons[1][0].text).toContain('Share Inline');
+    expect((buttons[1][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(buttons[1][1].text).toContain('Share Link');
+    expect((buttons[1][1] as any).url).toContain('https://t.me/share/url');
   });
 });
