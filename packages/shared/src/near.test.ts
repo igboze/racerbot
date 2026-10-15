@@ -576,3 +576,119 @@ describe('near: nearpumpfun bonding-curve state', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('near: FastNEAR credit reduction (free validator prioritized)', () => {
+  const FREE_RPC = 'https://rpc.shitzuapes.xyz';
+  const PAID_FN = 'https://rpc.mainnet.fastnear.com';
+
+  function rpcViewResponse(value: any): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { result: Array.from(Buffer.from(JSON.stringify(value))), logs: [] },
+      }),
+      text: async () => '',
+    } as unknown as Response;
+  }
+
+  it('view() queries free validator node and never calls paid FastNEAR when free node responds', async () => {
+    const near = new MultiRpcNear([PAID_FN, FREE_RPC]);
+    const attempted: string[] = [];
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      attempted.push(url);
+      return rpcViewResponse({ ok: true, source: 'free-shitzu' });
+    }));
+
+    const result = await near.view('token.near', 'ft_metadata', {});
+    expect(result).toEqual({ ok: true, source: 'free-shitzu' });
+    expect(attempted.length).toBe(1);
+    expect(attempted[0]).toBe(FREE_RPC);
+    expect(attempted.some(u => u.includes('fastnear.com'))).toBe(false);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('view() hedges to FastNEAR when free validator node fails with network error', async () => {
+    const near = new MultiRpcNear([PAID_FN, FREE_RPC]);
+    const attempted: string[] = [];
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      attempted.push(url);
+      if (url === FREE_RPC) {
+        throw new Error('fetch failed: ETIMEDOUT');
+      }
+      return rpcViewResponse({ ok: true, source: 'fastnear' });
+    }));
+
+    const result = await near.view('token.near', 'ft_metadata', {});
+    expect(result).toEqual({ ok: true, source: 'fastnear' });
+    expect(attempted).toContain(FREE_RPC);
+    expect(attempted.some(u => u.includes('fastnear.com'))).toBe(true);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('getNearBalance() serves repeat calls within TTL from cache without hitting RPC', async () => {
+    const near = new MultiRpcNear([FREE_RPC]);
+    let fetchCount = 0;
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      fetchCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 'racerbot-bal',
+          result: { amount: '5000000000000000000000000' },
+        }),
+      } as unknown as Response;
+    }));
+
+    const bal1 = await near.getNearBalance('alice.near', 2000);
+    const bal2 = await near.getNearBalance('alice.near', 2000);
+
+    expect(bal1).toBe('5000000000000000000000000');
+    expect(bal2).toBe('5000000000000000000000000');
+    expect(fetchCount).toBe(1); // Cached!
+
+    vi.unstubAllGlobals();
+  });
+
+  it('getNearBalance() coalesces concurrent requests into one RPC call', async () => {
+    const near = new MultiRpcNear([FREE_RPC]);
+    let fetchCount = 0;
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      fetchCount++;
+      await new Promise(r => setTimeout(r, 20));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 'racerbot-bal',
+          result: { amount: '8000000000000000000000000' },
+        }),
+      } as unknown as Response;
+    }));
+
+    const [b1, b2, b3] = await Promise.all([
+      near.getNearBalance('bob.near', 0),
+      near.getNearBalance('bob.near', 0),
+      near.getNearBalance('bob.near', 0),
+    ]);
+
+    expect(b1).toBe('8000000000000000000000000');
+    expect(b2).toBe('8000000000000000000000000');
+    expect(b3).toBe('8000000000000000000000000');
+    expect(fetchCount).toBe(1); // Coalesced in-flight!
+
+    vi.unstubAllGlobals();
+  });
+});
+

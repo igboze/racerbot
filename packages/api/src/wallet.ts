@@ -106,19 +106,22 @@ const configuredRpcList = (process.env.RPC_PROVIDERS || '')
 
 const qnUrl = formatNearRpcUrl((process.env.QUICKNODE_ENDPOINT_URL || '').trim());
 
-const fastnearPrimaryUrls = [
-  formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
-  ...configuredRpcList.filter(u => u.includes('fastnear.com')),
+const freeValidatorUrls = [
+  'https://rpc.shitzuapes.xyz',
+  'https://rpc.intea.rs',
+  'https://free.rpc.fastnear.com',
+  ...configuredRpcList.filter(u => !u.includes('rpc.mainnet.fastnear.com')),
 ];
 
-const fallbackUrls = [
-  ...configuredRpcList.filter(u => !u.includes('fastnear.com')),
+const paidUrls = [
+  formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
+  ...configuredRpcList.filter(u => u.includes('rpc.mainnet.fastnear.com')),
   ...(qnUrl ? [qnUrl] : []),
   'https://rpc.mainnet.near.org',
   'https://near.drpc.org',
 ];
 
-const RPC_URLS = Array.from(new Set([...fastnearPrimaryUrls, ...fallbackUrls])).filter(Boolean);
+const RPC_URLS = Array.from(new Set([...freeValidatorUrls, ...paidUrls])).filter(Boolean);
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
@@ -134,6 +137,12 @@ const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals:
 
 // ── User token deposit sync debounce map (10s TTL) ───────────────────────────
 const lastSyncDepositsMap = new Map<string, number>();
+
+// ── FastNEAR REST API caches to cut credit consumption (30s & 60s TTL) ───────
+const fastnearFtCache = new Map<string, { at: number; data: any }>();
+const inflightFastnearFt = new Map<string, Promise<any>>();
+const fastnearPkCache = new Map<string, { at: number; data: string[] }>();
+const inflightFastnearPk = new Map<string, Promise<string[]>>();
 
 // ── NEAR/USD price cache — refresh every 2 minutes ───────────────────────────
 let nearUsdPrice = 0;
@@ -3045,14 +3054,37 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     // 1. Fetch FT holdings across FastNEAR and NearBlocks in parallel
     const fastnearPromise = (async () => {
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
-        const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
-        const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (res.ok) {
-          const data = (await res.json()) as any;
+        const cacheKey = subaccountId;
+        let data: any = null;
+        if (!forceRefresh) {
+          const cached = fastnearFtCache.get(cacheKey);
+          if (cached && Date.now() - cached.at < 30_000) {
+            data = cached.data;
+          }
+        }
+        if (!data) {
+          let reqPromise = inflightFastnearFt.get(cacheKey);
+          if (!reqPromise) {
+            reqPromise = (async () => {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
+              const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+              const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
+              const res = await fetch(url, { signal: controller.signal });
+              clearTimeout(timeout);
+              if (res.ok) {
+                const parsed = (await res.json()) as any;
+                fastnearFtCache.set(cacheKey, { at: Date.now(), data: parsed });
+                return parsed;
+              }
+              return null;
+            })().finally(() => inflightFastnearFt.delete(cacheKey));
+            inflightFastnearFt.set(cacheKey, reqPromise);
+          }
+          data = await reqPromise;
+        }
+
+        if (data) {
           if (Array.isArray(data.tokens)) {
             for (const t of data.tokens) {
               const cid = t?.contract_id || t;
@@ -3489,23 +3521,42 @@ export function validateAndParseNearKey(keyInput: string): KeyPair {
 export async function findAccountsForNearPublicKey(publicKey: string): Promise<string[]> {
   const accounts = new Set<string>();
 
-  // 1. Try FastNEAR public key API
+  // 1. Try FastNEAR public key API (cached 60s with single-flight coalescing)
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
-    const url = `https://api.fastnear.com/v1/public_key/${encodeURIComponent(publicKey)}${apiKey ? `?api_key=${apiKey}` : ''}`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const data = (await res.json()) as any;
-      if (Array.isArray(data.account_ids)) {
-        for (const acc of data.account_ids) {
-          if (typeof acc === 'string' && acc.trim()) {
-            accounts.add(acc.trim().toLowerCase());
+    const cacheKey = publicKey;
+    let accList: string[] | null = null;
+    const cached = fastnearPkCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 60_000) {
+      accList = cached.data;
+    }
+    if (!accList) {
+      let reqPromise = inflightFastnearPk.get(cacheKey);
+      if (!reqPromise) {
+        reqPromise = (async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+          const url = `https://api.fastnear.com/v1/public_key/${encodeURIComponent(publicKey)}${apiKey ? `?api_key=${apiKey}` : ''}`;
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeout);
+          if (res.ok) {
+            const data = (await res.json()) as any;
+            if (Array.isArray(data.account_ids)) {
+              const accs = data.account_ids
+                .filter((acc: any) => typeof acc === 'string' && acc.trim())
+                .map((acc: string) => acc.trim().toLowerCase());
+              fastnearPkCache.set(cacheKey, { at: Date.now(), data: accs });
+              return accs;
+            }
           }
-        }
+          return [];
+        })().finally(() => inflightFastnearPk.delete(cacheKey));
+        inflightFastnearPk.set(cacheKey, reqPromise);
       }
+      accList = await reqPromise;
+    }
+    if (accList && accList.length > 0) {
+      for (const a of accList) accounts.add(a);
     }
   } catch {
     // FastNEAR fallback continues
