@@ -406,7 +406,10 @@ export function buildRaceDropCreatorShareCard(
   const perUserFormatted = drop.amount_per_user
     ? `${formatDropAmount(drop.amount_per_user)} ${drop.token_symbol}`
     : `${formatDropAmount(parseFloat(drop.total_amount) / drop.total_claims)} ${drop.token_symbol}`;
+  const claimUrl = `https://t.me/${botUsername}?start=drop_${drop.id}`;
   const startGroupUrl = `https://t.me/${botUsername}?startgroup=drop_${drop.id}`;
+  const shareText = `🏎️ ${creatorDisplay} created a RaceDrop! Claim ${perUserFormatted} directly into your RacerBot wallet:`;
+  const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(claimUrl)}&text=${encodeURIComponent(shareText)}`;
 
   const text =
     `🏎️ <b>RaceDrop Created Successfully!</b> 🏁\n\n` +
@@ -417,14 +420,18 @@ export function buildRaceDropCreatorShareCard(
     `💰 <b>Total Pool:</b> <code>${totalFormatted}</code>\n` +
     (drop.message_text ? `💬 <b>Message:</b> "${escapeHtml(drop.message_text)}"\n` : '') +
     `🆔 <b>Drop ID:</b> <code>drop_${drop.id}</code>\n\n` +
-    `👇 <b>How to share with your group:</b>\n` +
-    `• Tap <b>"🚀 Share to Group (With Claim Button)"</b> below to send the official RaceDrop message with an interactive 1-click Claim button to any group or chat — no links to click!\n` +
-    `• Or tap <b>"📢 Add Bot to Group & Post"</b> to invite @${botUsername} to your group and post the Claim card automatically.\n\n` +
+    `👇 <b>Choose how to share with your group:</b>\n` +
+    `• <b>📢 Post to Group:</b> Automatically post the card with the Claim button into your group via the bot.\n` +
+    `• <b>🚀 Share Inline:</b> Send via inline bot to chats that allow inline bot messages.\n` +
+    `• <b>↗️ Share Link:</b> Share the direct claim link to any channel or chat.\n\n` +
     `⚠️ <i>Important: Keep your ${drop.token_symbol} and NEAR in your RacerBot wallet so on-chain claim transfers can process successfully!</i>`;
 
   const buttons = [
-    [Markup.button.switchToChat('🚀 Share to Group (With Claim Button)', `drop_${drop.id}`)],
-    [Markup.button.url('📢 Add Bot to Group & Post', startGroupUrl)],
+    [Markup.button.url('📢 Post to Group', startGroupUrl)],
+    [
+      Markup.button.switchToChat('🚀 Share Inline', `drop_${drop.id}`),
+      Markup.button.url('↗️ Share Link', tgShareUrl),
+    ],
     [
       Markup.button.callback('🎒 View Wallet', 'wallet_refresh'),
       Markup.button.callback('🏁 Main Menu', 'menu_home'),
@@ -1172,6 +1179,7 @@ export function setupRaceDropRoutes(
             input_message_content: {
               message_text: groupCard.text,
               parse_mode: 'HTML' as const,
+              link_preview_options: { is_disabled: true },
             },
             reply_markup: groupCard.keyboard.reply_markup,
           };
