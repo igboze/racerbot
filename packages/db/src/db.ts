@@ -40,6 +40,8 @@ export interface UserRecord {
   username: string | null;
   /** Whether the user's net worth (investment / unrealized value) is shown on shared PNL cards by default. */
   show_net_worth_on_card: boolean;
+  /** Customizable quick buy amounts (e.g. '1, 5, 10' or '0.5, 2, 5') */
+  custom_buy_amounts?: string | null;
   last_near_balance?: number | null;
   last_sui_balance?: number | null;
   last_strk_balance?: number | null;
@@ -864,6 +866,7 @@ export interface UpdateUserSettingsParams {
   default_sell_pct?: number;
   /** Whether to show the user's personal net worth (investment / value) on PNL card images by default. */
   show_net_worth_on_card?: boolean;
+  custom_buy_amounts?: string;
 }
 
 export async function updateUserSettings(userId: string, params: UpdateUserSettingsParams): Promise<UserRecord> {
@@ -903,6 +906,10 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
   if (params.show_net_worth_on_card !== undefined) {
     setParts.push(`show_net_worth_on_card = $${idx++}`);
     values.push(params.show_net_worth_on_card);
+  }
+  if (params.custom_buy_amounts !== undefined) {
+    setParts.push(`custom_buy_amounts = $${idx++}`);
+    values.push(params.custom_buy_amounts);
   }
 
   if (setParts.length === 0) {
