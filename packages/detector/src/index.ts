@@ -204,13 +204,14 @@ async function main() {
             for (const item of outcomes) {
               const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
               const receiverId: string = item?.receipt?.receiver_id ?? '';
-              const signerId: string = item?.receipt?.predecessor_id ?? '';
-              const txHash: string = item?.execution_outcome?.id ?? '';
+              const realSigner: string = item?.receipt?.receipt?.Action?.signer_id ?? '';
+              const predecessorId: string = item?.receipt?.predecessor_id ?? '';
+              const txHash: string = item?.tx_hash ?? item?.execution_outcome?.id ?? '';
               for (const log of logs) {
                 eventPairs.push({ log, receiverId, txHash });
               }
-              // Copy-trade detection: check if signer is a tracked wallet
-              if (signerId && txHash) {
+              // Copy-trade detection: check if signer or predecessor is a tracked wallet
+              if (txHash && (realSigner || predecessorId)) {
                 const receiptActions = (item?.receipt?.receipt?.Action?.actions ?? []) as any[];
                 const parsedActions = receiptActions.map((a: any) => {
                   const fn = a?.FunctionCall;
@@ -223,7 +224,12 @@ async function main() {
                   } catch { return null; }
                 }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
                 if (parsedActions.length > 0) {
-                  checkCopyTradeReceipt(signerId, receiverId, txHash, parsedActions).catch(() => {});
+                  if (realSigner) {
+                    checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions).catch(() => {});
+                  }
+                  if (predecessorId && predecessorId !== realSigner) {
+                    checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions).catch(() => {});
+                  }
                 }
               }
             }
@@ -303,9 +309,32 @@ async function processBlock(height: number): Promise<void> {
         for (const item of outcomes) {
           const logs: string[] = item?.execution_outcome?.outcome?.logs ?? [];
           const receiverId: string = item?.receipt?.receiver_id ?? '';
+          const realSigner: string = item?.receipt?.receipt?.Action?.signer_id ?? '';
+          const predecessorId: string = item?.receipt?.predecessor_id ?? '';
           const txHash: string = item?.tx_hash ?? item?.execution_outcome?.id ?? '';
           for (const log of logs) {
             eventPairs.push({ log, receiverId, txHash });
+          }
+          if (txHash && (realSigner || predecessorId)) {
+            const receiptActions = (item?.receipt?.receipt?.Action?.actions ?? []) as any[];
+            const parsedActions = receiptActions.map((a: any) => {
+              const fn = a?.FunctionCall;
+              if (!fn) return null;
+              try {
+                return {
+                  methodName: fn.method_name as string,
+                  args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
+                };
+              } catch { return null; }
+            }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+            if (parsedActions.length > 0) {
+              if (realSigner) {
+                checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions).catch(() => {});
+              }
+              if (predecessorId && predecessorId !== realSigner) {
+                checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions).catch(() => {});
+              }
+            }
           }
         }
       }

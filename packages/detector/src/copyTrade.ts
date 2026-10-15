@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Copy Trading & Wallet Tracker Detector
  *
  * Watches the block stream for swap transactions made by any wallet
@@ -101,6 +101,14 @@ const WALLET_REFRESH_MS = 60_000;
 export async function initCopyTradeDetector(): Promise<void> {
   await refreshTrackedWallets();
   setInterval(refreshTrackedWallets, WALLET_REFRESH_MS);
+  try {
+    const subRedis = createRedis(REDIS_URL);
+    await subRedis.subscribe('racerbot:refresh_tracked_wallets', async () => {
+      await refreshTrackedWallets().catch(() => {});
+    });
+  } catch (err) {
+    logger.warn('Failed to subscribe to tracked wallet refresh channel (fallback to 60s interval)', err as Error);
+  }
   logger.info('Copy-trade detector initialized', { watching: trackedWallets.size });
 }
 
@@ -238,12 +246,16 @@ async function handleTrackerAlert(
 
   await updateCopyTradeFillResult(fill.id, 'filled', { amount_near: 0 });
 
+  const followerUser = await getUserById(target.user_id).catch(() => null);
+  const telegramId = followerUser?.telegram_id ?? 0;
+
   await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
     type: 'notify_user',
-    telegram_id: 0,
+    telegram_id: telegramId,
     event: 'wallet_tracker_alert',
     data: {
       user_id: target.user_id,
+      telegram_id: telegramId,
       copy_target_id: target.id,
       leader_wallet: leaderWallet,
       token_address: swap.tokenAddress,
