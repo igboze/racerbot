@@ -57,7 +57,7 @@ export async function generatePNLCardData(
     const position = await getPositionById(positionId);
     if (!position) return null;
 
-    let showNetWorth = true;
+    let showNetWorth = false;
     let referralCode: string | null = null;
     let referralLink: string | null = null;
 
@@ -66,8 +66,8 @@ export async function generatePNLCardData(
       if (user) {
         if (showNetWorthOverride !== undefined) {
           showNetWorth = showNetWorthOverride;
-        } else if (user.show_net_worth_on_card === false) {
-          showNetWorth = false;
+        } else {
+          showNetWorth = user.show_net_worth_on_card === true;
         }
 
         referralCode = user.referral_code || null;
@@ -286,6 +286,12 @@ export async function generatePNLCardData(
       entryMarketCap = (avgEntryPrice / displayPrice) * currentMarketCap;
     }
 
+    if (entryMarketCap <= 0 && currentMarketCap > 0 && (1 + pnlPercent / 100) > 0) {
+      entryMarketCap = currentMarketCap / (1 + pnlPercent / 100);
+    } else if (currentMarketCap <= 0 && entryMarketCap > 0) {
+      currentMarketCap = entryMarketCap * (1 + pnlPercent / 100);
+    }
+
     // ── Venue name ───────────────────────────────────────────────────────────
     const venueMap: Record<string, string> = {
       rhea:         'Rhea Finance',
@@ -410,24 +416,23 @@ export function generatePNLCardMessage(data: PNLCardData): string {
     const pnlLine = `${pnlSign}${formatNative(data.totalPnl)} (${pnlSign}${data.pnlPercent.toFixed(2)}%)`;
     block += `PNL     : ${pnlLine}\n`;
     block += `USD PNL : ${pnlSign}${formatUSD(data.totalPnl)}\n`;
-    block += `Invested: ${formatNative(data.initialInvestment)} (${formatUSD(data.initialInvestment)})\n`;
+    block += `Entry   : ${formatNative(data.initialInvestment)} (${formatUSD(data.initialInvestment)})\n`;
     if (isClosed) {
       const netProceeds = data.initialInvestment + data.totalPnl;
-      block += `Received: ${formatNative(netProceeds)} (${formatUSD(netProceeds)})\n`;
+      block += `Present : ${formatNative(netProceeds)} (${formatUSD(netProceeds)})\n`;
     } else {
       block += `Holding : ${data.quantityHeld.toFixed(4)} ${safeSymbol}\n`;
-      block += `Value   : ${formatNative(data.unrealizedValue)} (${formatUSD(data.unrealizedValue)})\n`;
+      block += `Present : ${formatNative(data.unrealizedValue)} (${formatUSD(data.unrealizedValue)})\n`;
       if (data.realizedPnl && Math.abs(data.realizedPnl) >= 0.0001) {
         const rSign = data.realizedPnl >= 0 ? '+' : '';
         block += `Banked  : ${rSign}${formatNative(data.realizedPnl)} (${rSign}${formatUSD(data.realizedPnl)})\n`;
       }
     }
+    block += `Entry Px: ${data.entryPrice.toFixed(8)} ${nativeUnit}\n`;
+    block += `${currentOrExitLabel} Px : ${data.currentPrice.toFixed(8)} ${nativeUnit}\n`;
   } else {
     block += `PNL     : ${pnlSign}${data.pnlPercent.toFixed(2)}%\n`;
   }
-
-  block += `Entry Px: ${data.entryPrice.toFixed(8)} ${nativeUnit}\n`;
-  block += `${currentOrExitLabel} Px : ${data.currentPrice.toFixed(8)} ${nativeUnit}\n`;
 
   if (data.entryMarketCap > 0 || data.currentMarketCap > 0) {
     block += `Entry MC: ${formatMcap(data.entryMarketCap)}\n`;

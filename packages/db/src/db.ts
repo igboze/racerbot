@@ -1661,7 +1661,7 @@ function rowToUser(row: any): UserRecord {
     referred_by: row.referred_by,
     referral_code: row.referral_code,
     username: row.username,
-    show_net_worth_on_card: row.show_net_worth_on_card !== false, // defaults true
+    show_net_worth_on_card: row.show_net_worth_on_card === true, // defaults false
     last_near_balance: row.last_near_balance != null ? parseFloat(row.last_near_balance) : null,
     last_sui_balance: row.last_sui_balance != null ? parseFloat(row.last_sui_balance) : null,
     last_strk_balance: row.last_strk_balance != null ? parseFloat(row.last_strk_balance) : null,

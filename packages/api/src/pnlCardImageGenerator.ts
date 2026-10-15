@@ -76,11 +76,20 @@ function initAssets(): void {
 
 function formatUSDVal(val: number): string {
   const abs = Math.abs(val);
-  if (abs >= 1_000_000_000) return `$${(val / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`;
-  if (abs >= 10_000) return `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (abs >= 1) return `$${val.toFixed(2)}`;
-  return `$${val.toFixed(4)}`;
+  if (abs >= 1_000_000_000) return '$' + (val / 1_000_000_000).toFixed(2) + 'B';
+  if (abs >= 1_000_000) return '$' + (val / 1_000_000).toFixed(2) + 'M';
+  if (abs >= 10_000) return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (abs >= 1) return '$' + val.toFixed(2);
+  return '$' + val.toFixed(4);
+}
+
+function formatMcapVal(val: number): string {
+  const abs = Math.abs(val);
+  if (abs >= 1_000_000_000) return '$' + (val / 1_000_000_000).toFixed(2) + 'B';
+  if (abs >= 1_000_000) return '$' + (val / 1_000_000).toFixed(2) + 'M';
+  if (abs >= 1_000) return '$' + (val / 1_000).toFixed(2) + 'K';
+  if (abs > 0) return '$' + val.toFixed(2);
+  return 'N/A';
 }
 
 /**
@@ -111,8 +120,26 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       ? (data.initialInvestment + data.totalPnl) * nr
       : data.unrealizedValue * nr;
 
-    const investedStr = data.showNetWorth === false ? '$***' : formatUSDVal(investedUsd);
-    const currentValStr = data.showNetWorth === false ? '$***' : formatUSDVal(currentValUsd);
+    const isClosed = data.positionStatus === 'closed';
+    const currentOrExitLabel = isClosed ? 'Exit' : 'Present';
+
+    let stat1Label: string;
+    let stat1Value: string;
+    let stat2Label: string;
+    let stat2Value: string;
+
+    if (data.showNetWorth) {
+      stat1Label = 'Entry Amount';
+      stat1Value = formatUSDVal(investedUsd);
+      stat2Label = isClosed ? 'Exit Amount' : 'Present Amount';
+      stat2Value = formatUSDVal(currentValUsd);
+    } else {
+      stat1Label = 'Entry MC';
+      stat1Value = formatMcapVal(data.entryMarketCap * nr);
+      stat2Label = currentOrExitLabel + ' MC';
+      stat2Value = formatMcapVal(data.currentMarketCap * nr);
+    }
+
     const holdTimeStr = data.holdDuration || '1m';
     const refCode = data.referralCode || 'racerbot';
     const refLink = data.referralLink || `https://t.me/racertradingbot?start=${encodeURIComponent(refCode)}`;
@@ -180,12 +207,12 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         <!-- Stats -->
         <div style="display: flex; position: absolute; right: 36px; top: 338px; gap: 38px; text-align: center;">
           <div style="display: flex; flex-direction: column; align-items: center;">
-            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">Invested</div>
-            <div style="font-size: 23px; font-weight: 700;">${investedStr}</div>
+            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">${stat1Label}</div>
+            <div style="font-size: 23px; font-weight: 700;">${stat1Value}</div>
           </div>
           <div style="display: flex; flex-direction: column; align-items: center;">
-            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">Current Value</div>
-            <div style="font-size: 23px; font-weight: 700;">${currentValStr}</div>
+            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">${stat2Label}</div>
+            <div style="font-size: 23px; font-weight: 700;">${stat2Value}</div>
           </div>
           <div style="display: flex; flex-direction: column; align-items: center;">
             <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">Hold Time</div>
