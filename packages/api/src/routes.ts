@@ -170,6 +170,15 @@ export async function replyGroupDmRedirect(
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
 
+export function parseBuyAmounts(raw?: string | null): number[] {
+  if (!raw) return [1, 5, 10];
+  const parsed = raw
+    .split(/[,;\s]+/)
+    .map(s => parseFloat(s.trim()))
+    .filter(n => !isNaN(n) && n > 0);
+  return parsed.length > 0 ? parsed.slice(0, 4) : [1, 5, 10];
+}
+
 // ── Colored inline buttons (Bot API 9.4) ─────────────────────────────────────
 // InlineKeyboardButton.style: 'success' (green), 'danger' (red), 'primary'
 // (blue). Telegraf's Markup builder doesn't expose the field yet, but the
@@ -191,7 +200,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: 'buy_custom_near' | 'custom_slippage' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
+  action: 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
     | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
     | 'sell_custom_tokens'
     // Stop Loss & Take Profit custom input
@@ -1113,11 +1122,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
-        [
-          cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
-          cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
-          cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
-        ],
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         // Buy % of balance (green)
@@ -1157,11 +1162,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
-        [
-          cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
-          cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
-          cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
-        ],
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1463,12 +1464,15 @@ export function buildSettingsDashboard(user: UserRecord) {
   const buyPct = user.default_buy_pct ? Number(user.default_buy_pct) : 10;
   const sellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
   const showNetWorth = user.show_net_worth_on_card !== false;
+  const buyAmounts = parseBuyAmounts(user.custom_buy_amounts);
+  const buyAmountsStr = buyAmounts.join(', ');
 
   const text =
     `⚙️ *Trading Settings*\n\n` +
     `• *Slippage*: \`${slip}%\`\n` +
     `• *Default Buy*: \`${buyPct}%\`\n` +
     `• *Default Sell*: \`${sellPct}%\`\n` +
+    `• *Quick Buy Buttons*: \`${buyAmountsStr}\`\n` +
     `• *Net Worth on PnL*: ${showNetWorth ? '🟢 Shown' : '🔴 Hidden'}`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -1497,6 +1501,12 @@ export function buildSettingsDashboard(user: UserRecord) {
       cb(`${sellPct === 100 ? '✓ ' : ''}100%`, 'set:sell_pct:100', 'danger'),
     ],
     [
+      cb(`${buyAmountsStr === '0.5, 1, 2' ? '✓ ' : ''}0.5, 1, 2`, 'set:buy_amounts:0.5,1,2', 'primary'),
+      cb(`${buyAmountsStr === '1, 5, 10' ? '✓ ' : ''}1, 5, 10`, 'set:buy_amounts:1,5,10', 'primary'),
+      cb(`${buyAmountsStr === '10, 25, 50' ? '✓ ' : ''}10, 25, 50`, 'set:buy_amounts:10,25,50', 'primary'),
+    ],
+    [
+      cb('💰 Custom Buy Buttons', 'prompt:custom_buy_amounts', 'success'),
       cb('✏️ Custom Slippage', 'prompt:custom_slippage', 'primary'),
     ],
     [
@@ -4987,11 +4997,8 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
 
       // Buy buttons (Green 🟢)
-      buttons.push([
-        cb(`1 ${unitBtn}`, `buy_fixed:${shortKey}:1`, 'success'),
-        cb(`5 ${unitBtn}`, `buy_fixed:${shortKey}:5`, 'success'),
-        cb(`10 ${unitBtn}`, `buy_fixed:${shortKey}:10`, 'success'),
-      ]);
+      const detailBuyAmounts = parseBuyAmounts(user?.custom_buy_amounts);
+      buttons.push(detailBuyAmounts.map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')));
       buttons.push([cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')]);
 
       // Sell Custom & Initial buttons
@@ -6283,6 +6290,46 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery(`Default sell set to ${pct}%`).catch(() => {});
       const dash = buildSettingsDashboard(updated);
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^set:buy_amounts:(.+)$/, async (ctx) => {
+    try {
+      const telegramId = ctx.from!.id;
+      const rawAmounts = ctx.match![1];
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const cleanAmounts = parseBuyAmounts(rawAmounts).join(', ');
+      const updated = await updateUserSettings(user.id, { custom_buy_amounts: cleanAmounts });
+      await ctx.answerCbQuery(`Buy buttons set to ${cleanAmounts}`).catch(() => {});
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action('prompt:custom_buy_amounts', async (ctx) => {
+    try {
+      const telegramId = ctx.from!.id;
+      userPendingActions.set(telegramId, {
+        action: 'custom_buy_amounts',
+        expiresAt: Date.now() + 120000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        '💰 *Customize Quick Buy Buttons*\n\n' +
+        'Reply with your preferred buy amounts separated by commas or spaces.\n\n' +
+        '*Presets & Examples*:\n' +
+        '• Micro: `0.2, 0.5, 1`\n' +
+        '• Standard: `1, 5, 10`\n' +
+        '• Pro: `10, 25, 50`\n' +
+        '• Whale: `100, 250, 500`\n\n' +
+        '_These amounts will immediately appear as your 1-tap buy buttons on all token trade cards._',
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -8579,6 +8626,30 @@ export function setupRoutes(bot: Telegraf): void {
           await releaseInFlight(guardKey);
           console.error('[SELL_CUSTOM] Unhandled detached error:', err?.message || err);
         });
+        return;
+      }
+
+      if (pending.action === 'custom_buy_amounts') {
+        const parts = rawText
+          .split(/[,;\s]+/)
+          .map(s => parseFloat(s.trim()))
+          .filter(n => !isNaN(n) && n > 0);
+
+        if (parts.length === 0) {
+          await ctx.reply('❌ Invalid buy amounts. Please enter positive numbers separated by commas (e.g. `0.5, 2, 5` or `10, 25, 50`).');
+          return;
+        }
+
+        const cleanAmounts = parts.slice(0, 4);
+        const amountsStr = cleanAmounts.join(', ');
+
+        const user = await getUserByTelegramId(telegramId);
+        if (user) {
+          const updated = await updateUserSettings(user.id, { custom_buy_amounts: amountsStr });
+          await ctx.reply(`✅ Quick Buy buttons updated to: \`${amountsStr}\`!`, { parse_mode: 'Markdown' });
+          const dash = buildSettingsDashboard(updated);
+          await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+        }
         return;
       }
 
