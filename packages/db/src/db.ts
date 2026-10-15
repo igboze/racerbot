@@ -163,6 +163,7 @@ export interface CopyTradeTargetRecord {
   copy_sells: boolean;
   max_slippage_pct: number;
   max_daily_budget_near: number | null;
+  track_only: boolean;
   status: 'active' | 'paused' | 'stopped';
   created_at: Date;
   updated_at: Date;
@@ -322,10 +323,11 @@ export interface CreateCopyTradeTargetParams {
   user_id: string;
   target_wallet: string;
   referrer_id?: string | null;
-  buy_amount_near: number;
+  buy_amount_near?: number;
   copy_sells?: boolean;
   max_slippage_pct?: number;
   max_daily_budget_near?: number | null;
+  track_only?: boolean;
 }
 
 export interface CreateDcaOrderParams {
@@ -2094,6 +2096,7 @@ function rowToCopyTarget(row: any): CopyTradeTargetRecord {
     copy_sells: row.copy_sells,
     max_slippage_pct: parseFloat(row.max_slippage_pct),
     max_daily_budget_near: row.max_daily_budget_near != null ? parseFloat(row.max_daily_budget_near) : null,
+    track_only: Boolean(row.track_only),
     status: row.status,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -2113,6 +2116,7 @@ export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams)
          copy_sells            = EXCLUDED.copy_sells,
          max_slippage_pct      = EXCLUDED.max_slippage_pct,
          max_daily_budget_near = EXCLUDED.max_daily_budget_near,
+         track_only            = EXCLUDED.track_only,
          status                = 'active',
          updated_at            = NOW()
      RETURNING *`,
@@ -2121,10 +2125,11 @@ export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams)
       params.user_id,
       params.target_wallet,
       params.referrer_id ?? null,
-      params.buy_amount_near,
+      params.buy_amount_near ?? 1.0,
       params.copy_sells ?? true,
       params.max_slippage_pct ?? 5.0,
       params.max_daily_budget_near ?? null,
+      params.track_only ?? false,
     ]
   );
   return rowToCopyTarget(res.rows[0]);
@@ -2173,7 +2178,7 @@ export async function updateCopyTradeTargetStatus(
 
 export async function updateCopyTradeTarget(
   id: string,
-  params: Partial<Pick<CopyTradeTargetRecord, 'buy_amount_near' | 'copy_sells' | 'max_slippage_pct' | 'max_daily_budget_near'>>
+  params: Partial<Pick<CopyTradeTargetRecord, 'buy_amount_near' | 'copy_sells' | 'max_slippage_pct' | 'max_daily_budget_near' | 'track_only'>>
 ): Promise<void> {
   const db = await getDb();
   const sets: string[] = ['updated_at = NOW()'];

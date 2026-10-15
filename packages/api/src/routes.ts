@@ -38,6 +38,7 @@ import {
   createCopyTradeTarget,
   getCopyTradeTargetsByUser,
   updateCopyTradeTargetStatus,
+  updateCopyTradeTarget,
   // DCA Orders
   createDcaOrder,
   getDcaOrdersByUser,
@@ -1629,16 +1630,22 @@ export function formatDcaInterval(seconds: number): string {
   return `${Math.round(seconds / 86400)} day${seconds >= 172800 ? 's' : ''}`;
 }
 
+export const MAX_COPY_TARGETS_PER_USER = 25;
+
 // ── Helper: Build Copy Trading Dashboard ─────────────────────────────────────
 export async function buildCopyTradingDashboard(user: UserRecord) {
   const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
   const activeTargets = targets.filter(t => t.status === 'active');
   const pausedTargets = targets.filter(t => t.status === 'paused');
+  const trackOnlyCount = targets.filter(t => t.track_only).length;
+  const autoCopyCount = targets.filter(t => !t.track_only).length;
 
   let text =
-    `👥 *Copy Trading*\n\n` +
-    `Mirror any wallet's trades in real-time.\n\n` +
-    `• *Active*: ${activeTargets.length} | *Paused*: ${pausedTargets.length}\n\n`;
+    `👥 *Copy Trading & Wallet Tracker*\n\n` +
+    `Mirror trades automatically or track wallet activities in real-time.\n\n` +
+    `• *Active*: ${activeTargets.length} | *Paused*: ${pausedTargets.length}\n` +
+    `• *Auto-Copy*: ${autoCopyCount} | *Tracker Only*: ${trackOnlyCount}\n` +
+    `• *Capacity*: ${activeTargets.length}/${MAX_COPY_TARGETS_PER_USER} wallets\n\n`;
 
   if (targets.length === 0) {
     text +=
@@ -1647,15 +1654,17 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
       `🏆 *Season 1*: +25 pts per fill\n` +
       `+ 1.5 pts per NEAR volume copied!`;
   } else {
-    text += `*Your Target Wallets:*\n`;
-    for (const t of targets.slice(0, 10)) {
+    text += `*Your Tracked & Copied Wallets:*\n`;
+    for (const t of targets.slice(0, 15)) {
       const statusIcon = t.status === 'active' ? '🟢' : t.status === 'paused' ? '⏸️' : '⏹️';
+      const modeTag = t.track_only ? '[👀 TRACKER]' : `[⚡ ${t.buy_amount_near}N COPY]`;
       const budgetText = t.max_daily_budget_near ? ` | Cap: ${t.max_daily_budget_near}N/day` : '';
-      text += `\n${statusIcon} \`${t.target_wallet}\`\n`;
-      text += `   💰 ${t.buy_amount_near} NEAR per buy | Sells: ${t.copy_sells ? '✅' : '❌'}${budgetText}\n`;
+      const sellText = t.track_only ? '' : ` | Sells: ${t.copy_sells ? '✅' : '❌'}`;
+      text += `\n${statusIcon} \`${t.target_wallet}\` \`${modeTag}\`\n`;
+      text += `   ${t.track_only ? '🔔 Alerts only (No auto-buy)' : `💰 ${t.buy_amount_near} NEAR per buy${sellText}${budgetText}`}\n`;
     }
-    if (targets.length > 10) {
-      text += `\n_...and ${targets.length - 10} more targets_\n`;
+    if (targets.length > 15) {
+      text += `\n_...and ${targets.length - 15} more targets_\n`;
     }
     text += `\n🏆 *Season 1*: +25 pts per fill + 1.5 pts per volume copied!`;
   }
@@ -1663,17 +1672,19 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
   const buttons: any[] = [];
   buttons.push([cb('➕ Add Target Wallet', 'copy_add', 'success')]);
 
-  for (const t of targets.slice(0, 5)) {
+  for (const t of targets.slice(0, 10)) {
     const isPaused = t.status === 'paused';
-    const shortWallet = t.target_wallet.length > 16 ? t.target_wallet.slice(0, 14) + '…' : t.target_wallet;
+    const shortWallet = t.target_wallet.length > 14 ? t.target_wallet.slice(0, 12) + '…' : t.target_wallet;
+    const modeSwitchLabel = t.track_only ? '⚡ Auto-Copy' : '👀 Track';
     buttons.push([
       cb(
-        `${isPaused ? '▶️ Resume' : '⏸ Pause'} ${shortWallet}`,
+        `${isPaused ? '▶️' : '⏸️'} ${shortWallet}`,
         `copy_toggle:${t.id}`,
         isPaused ? 'success' : 'primary'
       ),
-      cb('🗑 Stop', `copy_stop:${t.id}`, 'danger'),
-      cb('📤 Share', `copy_share:${t.id}`, 'primary'),
+      cb(modeSwitchLabel, `copy_mode_toggle:${t.id}`, 'primary'),
+      cb('🗑️', `copy_stop:${t.id}`, 'danger'),
+      cb('📤', `copy_share:${t.id}`, 'primary'),
     ]);
   }
 
@@ -2766,19 +2777,25 @@ export function setupRoutes(bot: Telegraf): void {
         const targetWallet = decodeTelegramAccountId(rawTarget);
 
         if (targetWallet && isValidNearAccountId(targetWallet)) {
-          userPendingActions.set(telegramId, {
-            action: 'copy_amount',
-            copyWallet: targetWallet,
-            expiresAt: Date.now() + 5 * 60_000,
-          });
+          const targets = await getCopyTradeTargetsByUser(result.userId).catch(() => []);
+          const activeTargets = targets.filter(t => t.status !== 'stopped');
+          if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
+            await ctx.reply(`⚠️ Maximum limit of ${MAX_COPY_TARGETS_PER_USER} targets reached. Stop an existing target before adding a new one.`);
+            return;
+          }
           await ctx.reply(
-            `👥 *Copy Trading Invitation*\n\n` +
-            `You opened an invitation to mirror trades from:\n🎯 \`${targetWallet}\`\n\n` +
-            `💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
-            `Reply with a number (e.g. \`1\` or \`2.5\` NEAR per swap):`,
+            `👥 *Copy Trading & Wallet Tracker Invitation*\n\n` +
+            `Target wallet: \`${targetWallet}\`\n\n` +
+            `Choose how you would like to follow this wallet:\n\n` +
+            `• *⚡ Auto-Copy*: Mirror swaps automatically on DEXes with your configured NEAR budget.\n` +
+            `• *👀 Wallet Tracker*: Get real-time alerts whenever this wallet trades, with 1-click manual buy/sell buttons without auto-buying.`,
             {
               parse_mode: 'Markdown',
-              ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_copy', 'primary')]]),
+              ...Markup.inlineKeyboard([
+                [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${targetWallet}`, 'success')],
+                [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${targetWallet}`, 'primary')],
+                [cb('🔙 Menu', 'menu_copy', 'primary')],
+              ]),
             }
           );
           return;
@@ -2983,22 +3000,116 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Please run /start first.').catch(() => {});
       return;
     }
+    const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
+    const activeTargets = targets.filter(t => t.status !== 'stopped');
+    if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        `⚠️ *Maximum Targets Reached*\n\n` +
+        `You are currently monitoring *${activeTargets.length}/${MAX_COPY_TARGETS_PER_USER}* wallets.\n` +
+        `Please stop an existing target before adding a new one.`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
     userPendingActions.set(telegramId, {
       action: 'copy_wallet',
       expiresAt: Date.now() + 5 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `👥 *Add Copy Trading Target*\n\n` +
-      `Enter the NEAR wallet address to copy:\n` +
+      `👥 *Add Target Wallet*\n\n` +
+      `Enter the NEAR wallet address to copy or track:\n` +
       `_e.g. \`trader.near\` or a 64-char hex_\n\n` +
-      `RacerBot will mirror all buys/sells\n` +
-      `from this wallet on Rhea, Ref & Shards.`,
+      `In the next step, you can choose *⚡ Auto-Copy* or *👀 Wallet Tracker* mode.`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_copy', 'primary')]]),
       }
     );
+  });
+
+  bot.action(/^copy_mode:(copy|track):([^:]+)(?::([^:]+))?$/, async (ctx) => {
+    const mode = ctx.match![1];
+    const wallet = ctx.match![2];
+    const referrerId = ctx.match![3] || null;
+    const telegramId = ctx.from!.id;
+
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+
+      const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
+      const activeTargets = targets.filter(t => t.status !== 'stopped');
+      if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
+        await ctx.answerCbQuery().catch(() => {});
+        await ctx.reply(`⚠️ Maximum limit of ${MAX_COPY_TARGETS_PER_USER} targets reached.`);
+        return;
+      }
+
+      if (mode === 'track') {
+        const target = await createCopyTradeTarget({
+          user_id: user.id,
+          target_wallet: wallet,
+          referrer_id: referrerId,
+          buy_amount_near: 0,
+          copy_sells: true,
+          track_only: true,
+          max_slippage_pct: 5.0,
+          max_daily_budget_near: null,
+        });
+        await ctx.answerCbQuery('👀 Wallet Tracker Activated!').catch(() => {});
+        await ctx.reply(
+          `👀 *Wallet Tracker Activated!*\n\n` +
+          `🎯 *Target Wallet*: \`${target.target_wallet}\`\n` +
+          `🔔 *Mode*: Wallet Tracker (Alerts Only — No Auto-Buy)\n\n` +
+          `RacerBot will monitor all DEX buys and sells from this wallet in real time and send you instant notifications with 1-click manual buy/sell buttons.`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('👥 View Copy & Tracker List', 'menu_copy', 'primary')],
+              [cb('🔙 Menu', 'menu_home', 'primary')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      // Auto-copy mode: prompt for buy amount
+      userPendingActions.set(telegramId, {
+        action: 'copy_amount',
+        copyWallet: wallet,
+        copyReferrerId: referrerId ?? undefined,
+        expiresAt: Date.now() + 5 * 60_000,
+      });
+      await ctx.answerCbQuery().catch(() => {});
+      await ctx.reply(
+        `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
+        `Reply with a number (e.g. \`2\`):\n_Allowed range: 0.1 – 10,000 NEAR_`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^copy_mode_toggle:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const targetId = (ctx as any).match[1];
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      const targets = await getCopyTradeTargetsByUser(user.id);
+      const target = targets.find(t => t.id === targetId);
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      const nextTrackOnly = !target.track_only;
+      await updateCopyTradeTarget(targetId, { track_only: nextTrackOnly });
+      await ctx.answerCbQuery(`Switched to ${nextTrackOnly ? '👀 Wallet Tracker mode' : '⚡ Auto-Copy mode'}`).catch(() => {});
+      const dash = await buildCopyTradingDashboard(user);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
   });
 
   bot.action(/^copy_toggle:(.+)$/, async (ctx) => {
@@ -9125,16 +9236,21 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply('❌ Invalid NEAR account ID. Please enter a valid wallet like `trader.near` or a 64-char hex address.', { parse_mode: 'Markdown' });
           return;
         }
-        userPendingActions.set(telegramId, {
-          action: 'copy_amount',
-          copyWallet: wallet,
-          copyReferrerId: pending.copyReferrerId,
-          expiresAt: Date.now() + 5 * 60_000,
-        });
+        const refIdParam = pending.copyReferrerId ? `:${pending.copyReferrerId}` : '';
+        userPendingActions.delete(telegramId);
         await ctx.reply(
-          `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
-          `Reply with a number (e.g. \`2\`):`,
-          { parse_mode: 'Markdown' }
+          `🎯 *Target Wallet*: \`${wallet}\`\n\n` +
+          `Choose how you would like to follow this wallet:\n\n` +
+          `• *⚡ Auto-Copy*: Mirror swaps automatically on DEXes with your configured NEAR budget.\n` +
+          `• *👀 Wallet Tracker*: Get real-time alerts whenever this wallet trades, with 1-click manual buy/sell buttons without auto-buying.`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${wallet}${refIdParam}`, 'success')],
+              [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${wallet}${refIdParam}`, 'primary')],
+              [cb('🔙 Cancel', 'menu_copy', 'primary')],
+            ]),
+          }
         );
         return;
       }
