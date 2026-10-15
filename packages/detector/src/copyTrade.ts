@@ -19,6 +19,8 @@ import {
   createLogger,
   getNear,
   isTradableVenue,
+  getVenueInfo,
+  isLaunchpadVenue,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -39,6 +41,55 @@ import {
 } from '@racerbot/db';
 
 const logger = createLogger('copy-detector');
+
+export const LAUNCHPAD_CONTRACTS = new Set<string>([
+  'nearlytrade.near',
+  'meme-cooking.near',
+  'launch.intear.near',
+  'launch-v2.intear.near',
+  'dex.intear.near',
+  'pad.onetokenhub.near',
+  'nearpadfamily.near',
+  'nearpumpfun.near',
+  'factory.shardsmarket.near',
+  'gaypad.j1-racing.near',
+  'launch.shoremarkets.near',
+  'exchange.kelytradevs.near',
+  'qlyphs.near',
+]);
+
+export function inferVenueFromToken(tokenAddress: string, defaultVenue = 'rhea'): string {
+  const lower = tokenAddress.toLowerCase().trim();
+  if (lower.endsWith('.nearlytrade.near')) return 'nearlytrade';
+  if (lower.endsWith('.meme-cooking.near')) return 'memecooking';
+  if (lower.includes('intear.near')) return 'intear';
+  if (lower.endsWith('.pad.onetokenhub.near')) return 'onetokenhub';
+  if (lower.endsWith('.nearpadfamily.near')) return 'nearpad';
+  if (lower.endsWith('.nearpumpfun.near')) return 'nearpumpfun';
+  if (lower.endsWith('.shardsmarket.near')) return 'shardsmarket';
+  if (lower.endsWith('.launch.shoremarkets.near')) return 'shoremarkets';
+  if (lower.endsWith('.gaypad.j1-racing.near')) return 'gaypad';
+  if (lower.endsWith('.kelytra.near')) return 'kelytra';
+  return defaultVenue;
+}
+
+export function extractTokenFromLaunchpadArgs(receiverId: string, args: Record<string, unknown>): string | null {
+  if (receiverId === 'meme-cooking.near') {
+    const memeId = (args as any)?.meme_id ?? (args as any)?.id ?? (args as any)?.Deposit?.meme_id;
+    if (memeId !== undefined && memeId !== null) {
+      return `${memeId}.meme-cooking.near`;
+    }
+  }
+  const cand =
+    (args as any)?.token_id ??
+    (args as any)?.token ??
+    (args as any)?.token_address ??
+    (args as any)?.account_id ??
+    (args as any)?.token_account_id;
+  if (typeof cand === 'string' && cand.length > 0) return cand;
+  return null;
+}
+
 const REDIS_URL = process.env.REDIS_URL!;
 const redis = createRedis(REDIS_URL);
 
@@ -144,7 +195,13 @@ async function handleTrackerAlert(
   if (!fill) return; // duplicate - already handled
 
   const tokenCache = await getTokenCache(swap.tokenAddress).catch(() => null);
-  const tokenSymbol = tokenCache?.symbol || swap.tokenAddress.slice(0, 12);
+  const venue = tokenCache?.venue || inferVenueFromToken(swap.tokenAddress);
+  const venueInfo = getVenueInfo(venue);
+  const venueLabel = venueInfo?.label || (isLaunchpadVenue(venue) ? venue : 'DEX');
+  const isLaunchpad = isLaunchpadVenue(venue) || (venue !== 'rhea' && venue !== 'ref');
+  const venueBadge = isLaunchpad ? `\n🏪 *Launchpad*: ${venueLabel} (Unbonded Curve)` : `\n🏛 *Venue*: ${venueLabel}`;
+
+  const tokenSymbol = tokenCache?.symbol || (swap.tokenAddress.split('.')[0] || swap.tokenAddress).toUpperCase();
   const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
 
   const isBuy = swap.side === 'buy';
@@ -152,9 +209,10 @@ async function handleTrackerAlert(
   const actionText = isBuy ? 'BOUGHT' : 'SOLD';
 
   const notifyMsg =
-    `👀 *Wallet Tracker Alert*\n\n` +
-    `🎯 *Tracked Wallet*: \`${leaderWallet}\`\n` +
-    `${actionEmoji} *Action*: ${actionText} *${tokenSymbol}*\n` +
+    `🎯 *Wallet Tracker Alert*\n\n` +
+    `👤 *Tracked Wallet*: \`${leaderWallet}\`\n` +
+    `${actionEmoji} *Action*: ${actionText} *${tokenSymbol}*` +
+    `${venueBadge}\n` +
     `🪙 *Token Address*: \`${swap.tokenAddress}\`\n` +
     `🔗 [View Tx on NearBlocks](${nearBlocks})\n\n` +
     `_Tap below to take action or view the token:_\n`;
@@ -228,15 +286,15 @@ async function executeCopyBuy(
       }
     }
 
-    // 3. Check token is tradeable
+    // 3. Check token is tradeable (supports bonded DEXes and unbonded launchpad tokens)
     const tokenCache = await getTokenCache(tokenAddress).catch(() => null);
-    if (!tokenCache || !isTradableVenue(tokenCache.venue)) {
+    const venue = tokenCache?.venue || inferVenueFromToken(tokenAddress);
+    if (!isTradableVenue(venue)) {
       await updateCopyTradeFillResult(fill.id, 'skipped', {
-        skip_reason: 'Token not tradeable on any supported venue',
+        skip_reason: `Token venue '${venue}' is not tradeable`,
       });
       return;
     }
-    const venue = tokenCache.venue!;
 
     // 4. Fetch user + slippage preference
     const user = await getUserById(target.user_id).catch(() => null);
@@ -248,7 +306,7 @@ async function executeCopyBuy(
 
     // 5. Build swap
     let swapEvent: any;
-    if (tokenCache.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
+    if (tokenCache?.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
       const amountInMist = BigInt(Math.floor(target.buy_amount_near * 1e9)).toString();
       swapEvent = {
         type: 'execute_swap',
@@ -266,15 +324,27 @@ async function executeCopyBuy(
     } else {
       const near = getNear();
       const amountInYocto = BigInt(Math.floor(target.buy_amount_near * 1e24)).toString();
-      const { minAmountOut } = await near.computeMinAmountOut(
-        venue as any,
-        'wrap.near',
-        tokenAddress,
-        amountInYocto,
-        slippagePct,
-        tokenCache.rhea_pool_id ?? undefined,
-        tokenCache.dcl_pool_id ?? undefined
-      );
+      let minAmountOut = '1';
+      try {
+        const quote = await near.computeMinAmountOut(
+          venue as any,
+          'wrap.near',
+          tokenAddress,
+          amountInYocto,
+          slippagePct,
+          tokenCache?.rhea_pool_id ?? undefined,
+          tokenCache?.dcl_pool_id ?? undefined
+        );
+        if (quote?.minAmountOut) {
+          minAmountOut = quote.minAmountOut;
+        }
+      } catch (quoteErr) {
+        logger.warn('computeMinAmountOut fallback to 1 for unbonded launchpad token', {
+          token: tokenAddress,
+          venue,
+          err: (quoteErr as Error).message,
+        });
+      }
 
       swapEvent = {
         type: 'execute_swap',
@@ -286,8 +356,8 @@ async function executeCopyBuy(
         venue,
         timestamp: Date.now(),
         notify_user: false,
-        ...(tokenCache.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
-        ...(tokenCache.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
+        ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
+        ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
       } as SwapEvent;
     }
 
@@ -323,7 +393,7 @@ async function executeCopyBuy(
     }
 
     // 9. Notify copier
-    const tokenSymbol = tokenCache.symbol || tokenAddress.slice(0, 12);
+    const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
     const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
     const notifyMsg =
       `🏎️ *Copy Trade Executed (BUY)!*\n\n` +
@@ -392,19 +462,19 @@ async function executeCopySell(
       return;
     }
 
-    // 3. Check token is tradeable
+    // 3. Check token is tradeable (supports bonded DEXes and unbonded launchpad tokens)
     const tokenCache = await getTokenCache(tokenAddress).catch(() => null);
-    if (!tokenCache || !isTradableVenue(tokenCache.venue)) {
+    const venue = tokenCache?.venue || inferVenueFromToken(tokenAddress);
+    if (!isTradableVenue(venue)) {
       await updateCopyTradeFillResult(fill.id, 'skipped', {
-        skip_reason: 'Token not tradeable on any supported venue',
+        skip_reason: `Token venue '${venue}' is not tradeable`,
       });
       return;
     }
-    const venue = tokenCache.venue!;
 
     // 4. Build swap event to sell copier's holding
     let swapEvent: any;
-    if (tokenCache.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
+    if (tokenCache?.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
       swapEvent = {
         type: 'execute_swap',
         chain: 'sui',
@@ -430,8 +500,8 @@ async function executeCopySell(
         slippage_pct: target.max_slippage_pct,
         timestamp: Date.now(),
         notify_user: false,
-        ...(tokenCache.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
-        ...(tokenCache.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
+        ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
+        ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
       } as SwapEvent;
     }
 
@@ -439,7 +509,7 @@ async function executeCopySell(
 
     await updateCopyTradeFillResult(fill.id, 'filled', { amount_near: 0 });
 
-    const tokenSymbol = tokenCache.symbol || tokenAddress.slice(0, 12);
+    const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
     const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
     const notifyMsg =
       `🏎️ *Copy Trade Executed (SELL)!*\n\n` +
@@ -485,14 +555,88 @@ export function extractSwapDetails(
   for (const action of actions) {
     const args = action.args as any;
 
-    // Ref Finance, Rhea, JumpDeFi: ft_transfer_call
+    // ── A. Direct Launchpad Contract Actions (NearlyTrade, Meme.Cooking, Intear, OneTokenHub, NEARpad, etc.) ──
+    if (LAUNCHPAD_CONTRACTS.has(receiverId)) {
+      const buyMethods = new Set(['buy', 'buy_token', 'launch_buy', 'deposit_and_buy', 'deposit']);
+      const sellMethods = new Set(['sell', 'sell_token', 'withdraw', 'claim']);
+
+      if (buyMethods.has(action.methodName)) {
+        const token = extractTokenFromLaunchpadArgs(receiverId, args);
+        if (token) {
+          return {
+            side: 'buy',
+            tokenAddress: token,
+            tokenIn: 'wrap.near',
+            tokenOut: token,
+            amountIn: args?.amount as string | undefined,
+          };
+        }
+      }
+
+      if (sellMethods.has(action.methodName)) {
+        const token = extractTokenFromLaunchpadArgs(receiverId, args);
+        if (token) {
+          return {
+            side: 'sell',
+            tokenAddress: token,
+            tokenIn: token,
+            tokenOut: 'wrap.near',
+            amountIn: args?.amount as string | undefined,
+          };
+        }
+      }
+    }
+
+    // ── B. NEP-141 Token Transfers: ft_transfer_call ──
     if (action.methodName === 'ft_transfer_call') {
       const tokenTransferred = receiverId;
+      const targetReceiver = (args?.receiver_id as string) ?? '';
       const msg = args?.msg;
       let tokenIn = tokenTransferred;
       let tokenOut: string | null = null;
       let amountIn = args?.amount as string | undefined;
 
+      // 1. Target receiver is a Launchpad contract (NearlyTrade, Meme.Cooking, Intear, etc.)
+      if (LAUNCHPAD_CONTRACTS.has(targetReceiver)) {
+        if (isWrapNear(tokenTransferred)) {
+          // BUYing unbonded launchpad token with wrap.near
+          let launchpadToken: string | null = null;
+          if (typeof msg === 'string') {
+            try {
+              const parsed = JSON.parse(msg);
+              launchpadToken =
+                extractTokenFromLaunchpadArgs(targetReceiver, parsed) ??
+                extractTokenFromLaunchpadArgs(targetReceiver, parsed?.Deposit ?? parsed?.buy ?? parsed?.swap ?? {});
+            } catch {
+              if (targetReceiver === 'meme-cooking.near' && /^\d+$/.test(msg.trim())) {
+                launchpadToken = `${msg.trim()}.meme-cooking.near`;
+              } else if (msg.includes('.near')) {
+                launchpadToken = msg.trim();
+              }
+            }
+          }
+          if (launchpadToken) {
+            return {
+              side: 'buy',
+              tokenAddress: launchpadToken,
+              tokenIn: 'wrap.near',
+              tokenOut: launchpadToken,
+              amountIn,
+            };
+          }
+        } else {
+          // SELLING unbonded launchpad token into the launchpad contract
+          return {
+            side: 'sell',
+            tokenAddress: tokenTransferred,
+            tokenIn: tokenTransferred,
+            tokenOut: 'wrap.near',
+            amountIn,
+          };
+        }
+      }
+
+      // 2. Standard AMM / DEX parsed messages (Ref Finance, Rhea DEX, JumpDeFi)
       if (typeof msg === 'string') {
         try {
           const parsed = JSON.parse(msg);
@@ -511,7 +655,7 @@ export function extractSwapDetails(
         } catch { /* ignore JSON parse error */ }
       }
 
-      // 1. BUY: wrap.near -> Token
+      // 3. BUY: wrap.near -> Token
       if (isWrapNear(tokenIn) && tokenOut && !isWrapNear(tokenOut)) {
         return {
           side: 'buy',
@@ -522,7 +666,7 @@ export function extractSwapDetails(
         };
       }
 
-      // 2. SELL: Token -> wrap.near
+      // 4. SELL: Token -> wrap.near
       if (!isWrapNear(tokenIn) && tokenOut && isWrapNear(tokenOut)) {
         return {
           side: 'sell',
@@ -533,7 +677,7 @@ export function extractSwapDetails(
         };
       }
 
-      // 3. Transferred non-wrap.near token with swap message leading to wrap.near
+      // 5. Transferred non-wrap.near token with swap message leading to wrap.near
       if (!isWrapNear(tokenTransferred) && (isWrapNear(tokenOut) || (typeof msg === 'string' && msg.includes('wrap.near')))) {
         return {
           side: 'sell',
@@ -544,7 +688,7 @@ export function extractSwapDetails(
         };
       }
 
-      // 4. Transferred wrap.near with token_out specified
+      // 6. Transferred wrap.near with token_out specified
       if (isWrapNear(tokenTransferred) && tokenOut && !isWrapNear(tokenOut)) {
         return {
           side: 'buy',
@@ -556,7 +700,7 @@ export function extractSwapDetails(
       }
     }
 
-    // Direct swap function (Shardsmarket, NearlyTrade, Rhea, Intear)
+    // ── C. Direct Swap Function (ShardsMarket, NearlyTrade, Rhea, Intear) ──
     if (action.methodName === 'swap') {
       const tokenIn = args?.token_in ?? args?.input_token ?? null;
       const tokenOut = args?.token_out ?? args?.output_token ?? null;
