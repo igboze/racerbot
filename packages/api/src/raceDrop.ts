@@ -194,11 +194,17 @@ export function buildRaceDropGroupCard(
     }
   }
 
+  const claimUrl = `https://t.me/${botUsername}?start=drop_${drop.id}`;
+
   const actionLine = isCompleted
     ? `\n🏁 <b>All spots have been claimed!</b>`
     : isExpired
     ? `\n⌛ <b>This RaceDrop has expired.</b>`
     : `\nTap below to claim tokens into your wallet! 🏁`;
+
+  const claimLinkLine = (!isCompleted && !isExpired && drop.status === 'active')
+    ? `\n👉 <a href="${claimUrl}"><b>[🎁 Tap Here to Claim ${perUserFormatted}]</b></a>\n`
+    : '';
 
   const text =
     `🏎️ <b>${escapeHtml(creatorDisplay)} created a RaceDrop!</b> 🏎️\n\n` +
@@ -209,6 +215,7 @@ export function buildRaceDropGroupCard(
     `🚦 <b>Status:</b> ${statusBadge}\n` +
     noteSection +
     claimersSection +
+    claimLinkLine +
     actionLine +
     `\n🆔 <code>drop_${drop.id}</code>`;
 
@@ -216,6 +223,9 @@ export function buildRaceDropGroupCard(
   if (!isCompleted && !isExpired && drop.status === 'active') {
     buttons.push([
       Markup.button.callback(`🏎️ Claim ${perUserFormatted} Now!`, `racedrop_claim_exec:${drop.id}`),
+    ]);
+    buttons.push([
+      Markup.button.switchToChat('↗️ Forward with Button', `drop_${drop.id}`),
     ]);
   } else {
     buttons.push([
@@ -321,6 +331,9 @@ export function buildRaceDropClaimMenuCard(
       Markup.button.callback(`🏎️ Claim ${perUserFormatted} Now!`, `racedrop_claim_exec:${drop.id}`),
     ]);
     buttons.push([
+      Markup.button.switchToChat('↗️ Forward with Button', `drop_${drop.id}`),
+    ]);
+    buttons.push([
       Markup.button.callback('🎒 View Wallet', 'wallet_refresh'),
       Markup.button.callback('🏁 Main Menu', 'menu_home'),
     ]);
@@ -379,6 +392,9 @@ export function buildRaceDropClaimSuccessCard(
     `Your wallet balance has been updated. You can trade, transfer, or hold!`;
 
   const buttons: any[] = [
+    [
+      Markup.button.switchToChat('↗️ Forward Drop with Button', `drop_${drop.id}`),
+    ],
     [
       Markup.button.callback(`🚀 Buy More ${drop.token_symbol}`, `token_${drop.token_address}`),
       Markup.button.callback('🎒 View Wallet', 'wallet_refresh'),
@@ -732,17 +748,17 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       }
     }
 
-    // ── 1. Notify Creator in DM ──────────────────────────────────────────────
+    const isCompleted = updatedDrop.claims_count >= updatedDrop.total_claims || parseFloat(updatedDrop.remaining_amount) <= 0;
+
+    // ── 1. Notify Creator in DM (ONLY WHEN ALL SPOTS HAVE BEEN CLAIMED) ───────
     try {
-      if (creatorUser.telegram_id !== telegramId) {
+      if (isCompleted && creatorUser.telegram_id !== telegramId) {
         const creatorNotice =
-          `🎉 <b>RaceDrop Claimed!</b> 🏎️💨\n\n` +
-          `👤 <b>Claimant:</b> ${escapeHtml(claimantName)}\n` +
-          `💸 <b>Amount Claimed:</b> <code>+${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</code>\n` +
-          `👥 <b>Progress:</b> <b>${updatedDrop.claims_count}</b> / <b>${updatedDrop.total_claims}</b> spots claimed\n` +
-          `💰 <b>Remaining in Drop:</b> <code>${formatDropAmount(updatedDrop.remaining_amount)} ${drop.token_symbol}</code>\n` +
-          (isNewUser ? `\n🎁 <i>New user automatically bound under your referral link!</i>\n` : '') +
-          (updatedDrop.claims_count >= updatedDrop.total_claims ? `\n🏁 <b>All spots have been claimed! Your RaceDrop is complete.</b>` : '');
+          `🏁 <b>RaceDrop Completed!</b> 🏎️💨\n\n` +
+          `All <b>${updatedDrop.total_claims}</b> spots in your <b>${drop.token_symbol}</b> RaceDrop have been claimed!\n` +
+          `💰 <b>Total Distributed:</b> <code>${formatDropAmount(updatedDrop.total_amount)} ${drop.token_symbol}</code>\n` +
+          `👤 <b>Final Claimant:</b> ${escapeHtml(claimantName)}\n\n` +
+          `Thank you for racing with RacerBot! 🏁`;
 
         await ctx.telegram.sendMessage(creatorUser.telegram_id, creatorNotice, { parse_mode: 'HTML' }).catch(() => {});
       }
@@ -750,7 +766,7 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
       console.warn('[RACEDROP] Failed to notify creator:', err?.message);
     }
 
-    // ── 2. Live Update Group Messages & Announce Claim in Groups ─────────────
+    // ── 2. Live Update Group Messages (Main Claim Card Only) ─────────────────
     try {
       const allClaims = await getRaceDropClaimsByDrop(drop.id).catch(() => [] as any[]);
       const groupMsgs: Array<{ chat_id: number; message_id: number }> =
@@ -790,13 +806,11 @@ export async function executeRaceDropClaim(ctx: Context, dropId: string): Promis
           )
           .catch(() => {});
 
-        // Announce in group so group members immediately see that they claimed
-        const remainingSpots = updatedDrop.total_claims - updatedDrop.claims_count;
-        const groupAnnouncement = remainingSpots > 0
-          ? `🏎️ <b>${escapeHtml(claimantName)}</b> just claimed <b>${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</b> from <b>${escapeHtml(creatorDisplay)}</b>'s RaceDrop! (${remainingSpots} spots left) 🏁`
-          : `🏁 <b>All spots filled!</b> <b>${escapeHtml(claimantName)}</b> claimed the final <b>${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</b> from <b>${escapeHtml(creatorDisplay)}</b>'s RaceDrop! 🎉`;
-
-        await ctx.telegram.sendMessage(gm.chat_id, groupAnnouncement, { parse_mode: 'HTML' }).catch(() => {});
+        // ONLY send a separate notification when the drop is fully completed!
+        if (isCompleted) {
+          const groupAnnouncement = `🏁 <b>All spots filled!</b> <b>${escapeHtml(claimantName)}</b> claimed the final <b>${formatDropAmount(claimAmountNum)} ${drop.token_symbol}</b> from <b>${escapeHtml(creatorDisplay)}</b>'s RaceDrop! (${updatedDrop.total_claims} spots claimed) 🎉`;
+          await ctx.telegram.sendMessage(gm.chat_id, groupAnnouncement, { parse_mode: 'HTML' }).catch(() => {});
+        }
       }
     } catch (err: any) {
       console.warn('[RACEDROP] Group live update error:', err?.message);

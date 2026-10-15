@@ -56,12 +56,15 @@ describe('RaceDrop formatting and card generators', () => {
     expect(card.text).toContain('RacerBot to the moon!');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons.length).toBeGreaterThanOrEqual(1);
+    expect(buttons.length).toBeGreaterThanOrEqual(2);
     const claimBtn = buttons[0][0];
     expect(claimBtn.text).toBe('🏎️ Claim 10k BLACKDRAGON Now!');
     expect((claimBtn as any).callback_data).toBe(
       'racedrop_claim_exec:11111111-2222-3333-4444-555555555555'
     );
+    expect(buttons[1][0].text).toBe('↗️ Forward with Button');
+    expect((buttons[1][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(card.text).toContain('Tap Here to Claim 10k BLACKDRAGON');
   });
 
   it('builds group card displaying recent claimers when claims exist', () => {
@@ -86,8 +89,10 @@ describe('RaceDrop formatting and card generators', () => {
     expect((buttons[0][0] as any).callback_data).toBe(
       'racedrop_claim_exec:11111111-2222-3333-4444-555555555555'
     );
-    expect(buttons[1][0].text).toBe('🎒 View Wallet');
-    expect(buttons[1][1].text).toBe('🏁 Main Menu');
+    expect(buttons[1][0].text).toBe('↗️ Forward with Button');
+    expect((buttons[1][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(buttons[2][0].text).toBe('🎒 View Wallet');
+    expect(buttons[2][1].text).toBe('🏁 Main Menu');
   });
 
   it('builds Claim MENU page showing already claimed for prior claimants', () => {
@@ -141,8 +146,10 @@ describe('RaceDrop formatting and card generators', () => {
     expect(card.text).toContain('https://nearblocks.io/txns/9xYAbc123TxHash');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons[0][0].text).toContain('Buy More BLACKDRAGON');
-    expect(buttons[0][1].text).toBe('🎒 View Wallet');
+    expect(buttons[0][0].text).toContain('Forward Drop with Button');
+    expect((buttons[0][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(buttons[1][0].text).toContain('Buy More BLACKDRAGON');
+    expect(buttons[1][1].text).toBe('🎒 View Wallet');
   });
 
   it('builds Claim MENU page showing creator controls when viewed by creator', () => {
