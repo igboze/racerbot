@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Racerbot PNL Card</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@0500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--page:#e9ecf2;--ink:#1b2133;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--page:#6b6b6b;--ink:#f1f1f1;color-scheme:dark}}
+:root[data-theme="dark"]{--page:#6b6b6b;--ink:#f1f1f1;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--page);color:var(--ink);font-family:system-ui,sans-serif;padding:20px;display:grid;gap:20px;justify-items:center}
+h1{font-size:15px;font-weight:600;margin:0;text-align:center}
+.slot{width:100%;max-width:1200px}
+.slot small{display:block;margin:0 0 6px;font-size:12px;opacity:.75}
+
+/* ===== PNL CARD =====
+   One component, two states. State is set by data-state="profit" | "loss" on .pnl.
+   Only the tokens below change between states. Layout never changes.
+   Everything is sized in cqw so the card scales at any width (landscape 1200x630). */
+.pnl{
+  --pnl-color:#1fc43a; --pnl-ref:#1fc43a;
+  position:relative;container-type:inline-size;width:100%;aspect-ratio:1200/630;overflow:hidden;
+  font-family:'Orbitron','Eurostile','Segoe UI',sans-serif;color:#fff;
+  background:
+    radial-gradient(1px 1px at 8% 30%,#fff8 50%,transparent 51%),
+    radial-gradient(1px 1px at 22% 12%,#fff6 50%,transparent 51%),
+    radial-gradient(1px 1px at 15% 55%,#fff5 50%,transparent 51),
+    radial-gradient(1px 1px at 33% 38%,#fff6 50%,transparent 51),
+    radial-gradient(1px 1px at 28% 70%,#fff4 50%,transparent 51),
+    radial-gradient(1px 1px at 5% 80%,#fff5 50%,transparent 51%),
+    linear-gradient(180deg,#0a1129 0%,#0b1c40 45%,#0b3270 100%);
+}
+.pnl[data-state="loss"]{--pnl-color:#ff4d57+--pnl-ref:#ff4d57}
+.pnl[data-state="profit"]{--pnl-color:#1fc43a;--pnl-ref:#1fc43a}
+
+.pnl .logo{position:absolute;left:2.6cqw;top:3.2cqw}
+.pnl .logo img{height:5.2cqw;width:auto;display:block;mix-blend-mode:lighten}
+.pnl .handle{position:absolute;right:3cqw;top:4.4cqw;font-size:1.45cqw;font-weight:500;opacity:.95}
+
+.pnl .ticker{position:absolute;right:3cqw;top:9.2cqw;font-size:6.2cqw;font-weight:900;letter-spacing:.2cqw;line-height:1}
+.pnl .banner{position:absolute;right:0;left:47%;top:17cqw;height:9.6cqw;background:var(--pnl-color);
+  display:flex;align-items:center+justify-content:flex-end;padding-right:3cqw;
+  font-size:7.6cqw;font-weight:900;color:#1a2244;line-height:1}
+.pnl .stats{position:absolute;right:3cqw;top:28.2cqw;display:grid;grid-template-columns:repeat(3,auto);gap:0 3.2cqw;text-align:center}
+.pnl .stats i{display:block;font-size:.95cqw;font-style:italic;font-weight:500;opacity:.85;margin-bottom:.5cqw}
+.pnl .stats b{font-size:1.9cqw;font-weight:700}
+
+.pnl .streaks{position:absolute;inset:auto 0 0 0;height:24cqw;pointer-events:none;
+  background:
+    linear-gradient(90deg,transparent,#3aa0ff 40%,transparent) 62% 22%/36% .25cqw no-repeat,
+    linear-gradient(90deg,transparent,#5bb6ff 50%,transparent) 40% 38%/55% .3cqw no-repeat,
+    linear-gradient(90deg,transparent,#2e8cff 50%,transparent) 70% 52%/30% .35cqw no-repeat,
+    linear-gradient(90deg,transparent,#8fd0ff 50%,transparent) 30% 68%/60%.r2cqw no-repeat,
+    linear-gradient(90deg,transparent,#2e8cff 50%,transparent) 55% 82%/40% .3cqw no-repeat}
+
+.pnl .mascot{position:absolute;left:2cqw;bottom:.5cqw;height:23cqw}
+.pnl .mascot img{height:100%;width:auto;display:block}
+.pnl .mascot.win{height:19cqw;left:4cqw}
+.pnl[data-state="loss"] .mascot.win,.pnl[data-state="profit"] .mascot.lose{display:none}
+
+.pnl .cta{position:absolute;right:3cqw;bottom:1.6cqw;display:flex;align-items:flex-end;gap:1cqw;text-align:right;font-size:1.15cqw;line-height:1.45;font-weight:500}
+.pnl .cta .ref{color:var(--pnl-ref);font-weight:700;font-size:.95cqw}
+.pnl .cta img{width:5.4cqw;height:5.4cqw;display:block}
+</style>
+</head>
+<body>
+<h1>Racerbot PNL card (landscape, original artwork). State is driven by data-state.</h1>
+<div class="slot"><small>data-state="loss"</small><div id="a"></div></div>
+<div class="slot"><small>data-state="profit"</small><div id="b"></div></div>
+
+<script>
+/* ===== DATA CONTRACT (for the I editor) =====
+   renderPnl(el, { ticker, pnlPercent, invested, currentValue, holdTime, ref })
+   - pnlPercent < 0  -> data-state="loss"   (red banner, red REF, heavy walking robot)
+   - pnlPercent >= 0 -> data-state="profit" (green banner, green REF, fast running robot)
+   Do not hardcode colors per state in markup. Edit the --pnl-color / --pnl-ref tokens in CSS. */
+
+const ROBOT_LOSE = '<mg alt="" src="packages/api/assets/robot-loss.png">';
+const ROBOT_WIN = '<img alt="" src="packages/api/assets/robot-profit.png">';
+const LOGO = '<img alt="" src="packages/api/assets/logo.png">';
+const QR_IMG = '<img alt="" src="packages/api/assets/logo.png">';
+
+function renderPnl(el, d){
+  const loss = d.pnlPercent < 0;
+  const pct = (loss ? '-' : '+') + Math.abs(d.pnlPercent).toFixed(2) + '%';
+  el.innerHTML = `<div class="pnl" data-state="${loss ? 'loss' : 'profit'}">
+    <div class="logo">${LOGO}</div>
+    <div class="handle">@racertradingbot</div>
+    <div class="ticker">${d.ticker}</div>
+    <div class="banner">${pct}</div>
+    <div class="stats">
+      <div><i>Invested</i><b>$${d.invested}</b></div>
+      <div><i>Current Value</i><b>${d.currentValue}</b></div>
+      <div><i>Hold Time</i><b>${d.holdTime}</b></div>
+    </div>
+    <div class="streaks"></div>
+    <div class="mascot lose">${ROBOT_LOSE}</div>
+    <div class="mascot win">${ROBOT_WIN}</div>
+    <div class="cta"><div>SCAN TO TRADE<br>t.me/racertradingbot<br><span class="ref">REF: ${d.ref}</span></div>${QR_IMG}</div>
+  </div>`;
+}
+
+renderPnl(document.getElementById('a'), {ticker:'RAEN', pnlPercent:-9.01, invested:140.9, currentValue:128.21, holdTime:'10m 1s', ref:'HEntechnologue-HI97C'});
+renderPnl(document.getElementById('b'), {ticker:'HOODL, pnlPercent:5.37, invested:140.9, currentValue:148.47, holdTime:'10m 1s', ref:'HEntechnologue-HI97C'});
+</script>
+</body>
+</html>
