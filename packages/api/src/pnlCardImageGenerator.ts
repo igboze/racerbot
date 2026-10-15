@@ -38,13 +38,12 @@ function resolveFont(name: string): string | null {
   return null;
 }
 
-// ── Pre-cached Fonts & Static Assets in Memory ──────────────────────────────
+// ── Pre-cached Fonts & Static Templates in Memory ───────────────────────────
 let cachedOrbitronMedium: Buffer | null = null;
 let cachedOrbitronBold: Buffer | null = null;
 let cachedOrbitronBlack: Buffer | null = null;
-let cachedLogoB64: string = '';
-let cachedRobotLossB64: string = '';
-let cachedRobotProfitB64: string = '';
+let cachedTemplateProfitB64: string = '';
+let cachedTemplateLossB64: string = '';
 let assetsInitialized = false;
 
 function initAssets(): void {
@@ -61,14 +60,15 @@ function initAssets(): void {
     const fBlack = resolveFont('Orbitron-Black.ttf') || fBold;
     if (fBlack) cachedOrbitronBlack = fs.readFileSync(fBlack);
 
-    const pLogo = resolveAsset('logo.png') || resolveAsset('racerbot-logo.png');
-    if (pLogo) cachedLogoB64 = `data:image/png;base64,${fs.readFileSync(pLogo).toString('base64')}`;
+    const pProfit = resolveAsset('pnl-template-profit.png');
+    if (pProfit) {
+      cachedTemplateProfitB64 = `data:image/png;base64,${fs.readFileSync(pProfit).toString('base64')}`;
+    }
 
-    const pLoss = resolveAsset('robot-loss-transparent.png') || resolveAsset('robot-loss.png');
-    if (pLoss) cachedRobotLossB64 = `data:image/png;base64,${fs.readFileSync(pLoss).toString('base64')}`;
-
-    const pProfit = resolveAsset('robot-profit-transparent.png') || resolveAsset('robot-profit.png');
-    if (pProfit) cachedRobotProfitB64 = `data:image/png;base64,${fs.readFileSync(pProfit).toString('base64')}`;
+    const pLoss = resolveAsset('pnl-template-loss.png');
+    if (pLoss) {
+      cachedTemplateLossB64 = `data:image/png;base64,${fs.readFileSync(pLoss).toString('base64')}`;
+    }
   } catch (err) {
     console.warn('[PNL_CARD_IMAGE] Asset initialization warning:', err);
   }
@@ -93,9 +93,11 @@ function formatMcapVal(val: number): string {
 }
 
 /**
- * Generate 1200x630 landscape PNL Card Image matching the official RacerBot Design Contract.
- * - Loss: data-state="loss" (Red banner #ff4d57, Red REF, heavy walking robot mascot)
- * - Profit: data-state="profit" (Green banner #1fc43a, Green REF, fast running robot mascot)
+ * Generate 1024x1024 square PNL Card Image matching the official RacerBot Ultra-Quality Design.
+ * - Loss: Red banner #ff334c, Red REF, heavy round walking robot with glowing red eyes
+ * - Profit: Green banner #0abb33, Green REF, high-speed roller-skating robot with cyan trails
+ * - Dynamic space background with galactic stars, horizontal electric speed flares,
+ *   crisp RacerBot logo, @racertradingbot, 3-column stats, and referral QR code.
  */
 export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | null> {
   initAssets();
@@ -105,14 +107,22 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     return null;
   }
 
+  if (!cachedTemplateProfitB64 || !cachedTemplateLossB64) {
+    console.warn('[PNL_CARD_IMAGE] Master PNL templates not found, aborting image generation.');
+    return null;
+  }
+
   try {
     const p = Number(data.pnlPercent) || 0;
     const isProfit = p >= 0;
 
-    // Tokens
-    const pnlColor = isProfit ? '#1fc43a' : '#ff4d57';
-    const pnlSign = isProfit ? '+' : '-';
-    const pctStr = `${pnlSign}${Math.abs(p).toFixed(2)}%`;
+    const bgTemplateB64 = isProfit ? cachedTemplateProfitB64 : cachedTemplateLossB64;
+    const bannerBg = isProfit ? '#0abb33' : '#ff334c';
+    const refColor = isProfit ? '#0abb33' : '#ff334c';
+
+    // Sign and percentage format: matching reference design (positive: '5.37%', negative: '-9.01%')
+    const sign = isProfit ? '' : '-';
+    const pctStr = `${sign}${Math.abs(p).toFixed(2)}%`;
 
     const nr = data.nearUsd || 1;
     const investedUsd = data.initialInvestment * nr;
@@ -121,7 +131,8 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       : data.unrealizedValue * nr;
 
     const isClosed = data.positionStatus === 'closed';
-    const currentOrExitLabel = isClosed ? 'Exit' : 'Present';
+    const currentOrExitLabel = isClosed ? 'Exit Value' : 'Current Value';
+    const currentOrExitMcLabel = isClosed ? 'Exit MC' : 'Current MC';
 
     let stat1Label: string;
     let stat1Value: string;
@@ -129,14 +140,14 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     let stat2Value: string;
 
     if (data.showNetWorth) {
-      stat1Label = 'Entry Amount';
+      stat1Label = 'Invested';
       stat1Value = formatUSDVal(investedUsd);
-      stat2Label = isClosed ? 'Exit Amount' : 'Present Amount';
+      stat2Label = currentOrExitLabel;
       stat2Value = formatUSDVal(currentValUsd);
     } else {
       stat1Label = 'Entry MC';
       stat1Value = formatMcapVal(data.entryMarketCap * nr);
-      stat2Label = currentOrExitLabel + ' MC';
+      stat2Label = currentOrExitMcLabel;
       stat2Value = formatMcapVal(data.currentMarketCap * nr);
     }
 
@@ -144,103 +155,69 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
     const refCode = data.referralCode || 'racerbot';
     const refLink = data.referralLink || `https://t.me/racertradingbot?start=${encodeURIComponent(refCode)}`;
 
-    // Generate QR code for referral link
+    // Generate crisp QR code for referral link
     const qrDataUrl = await QRCode.toDataURL(refLink, {
       margin: 1,
-      width: 65,
+      width: 94,
       color: { dark: '#0a1129', light: '#ffffff' },
     });
 
-    // Mascot dimensions (explicit pixel sizing for Satori layout engine)
-    const mascotSrc = isProfit ? cachedRobotProfitB64 : cachedRobotLossB64;
-    const mascotLeft = isProfit ? 48 : 24;
-    const mascotHeight = isProfit ? 228 : 276;
-    const mascotWidth = isProfit ? 289 : 323;
-
-    // Logo dimensions
-    const logoSrc = cachedLogoB64;
-    const logoWidth = 332;
-    const logoHeight = 62;
-
     const ticker = data.tokenSymbol || 'TOKEN';
 
+    // Dynamically scale font size for long tickers
+    const tickerFontSize = ticker.length > 7 ? 50 : ticker.length > 5 ? 60 : 72;
+
+    // Dynamically scale font size for large percentage values
+    const pctFontSize = pctStr.length > 7 ? 96 : pctStr.length > 6 ? 112 : 128;
+
     const cardHtml = html`
-      <div style="display: flex; position: relative; width: 1200px; height: 630px; overflow: hidden; background: linear-gradient(180deg, #0a1129 0%, #0b1c40 45%, #0b3270 100%); font-family: Orbitron; color: #ffffff;">
-        
-        <!-- Star particles (radial star points) -->
-        <div style="display: flex; position: absolute; left: 8%; top: 30%; width: 3px; height: 3px; background: rgba(255,255,255,0.8); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 22%; top: 12%; width: 2px; height: 2px; background: rgba(255,255,255,0.6); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 15%; top: 55%; width: 2px; height: 2px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 33%; top: 38%; width: 3px; height: 3px; background: rgba(255,255,255,0.6); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 28%; top: 70%; width: 2px; height: 2px; background: rgba(255,255,255,0.4); border-radius: 50%;"></div>
-        <div style="display: flex; position: absolute; left: 5%; top: 80%; width: 2px; height: 2px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
+      <div style="display: flex; position: relative; width: 1024px; height: 1024px; font-family: Orbitron;">
+        <!-- High-fidelity background template (starfield, mascot, logo, handle, lighting beams) -->
+        <img src="${bgTemplateB64}" style="position: absolute; left: 0; top: 0; width: 1024px; height: 1024px;" />
 
-        <!-- Glowing speed streaks -->
-        <div style="display: flex; position: absolute; left: 0; right: 0; bottom: 0; height: 288px; opacity: 0.75;">
-          <div style="position: absolute; left: 62%; top: 22%; width: 36%; height: 3px; background: linear-gradient(90deg, transparent, #3aa0ff 40%, transparent);"></div>
-          <div style="position: absolute; left: 40%; top: 38%; width: 55%; height: 4px; background: linear-gradient(90deg, transparent, #5bb6ff 50%, transparent);"></div>
-          <div style="position: absolute; left: 70%; top: 52%; width: 30%; height: 4px; background: linear-gradient(90deg, transparent, #2e8cff 50%, transparent);"></div>
-          <div style="position: absolute; left: 30%; top: 68%; width: 60%; height: 2px; background: linear-gradient(90deg, transparent, #8fd0ff 50%, transparent);"></div>
-          <div style="position: absolute; left: 55%; top: 82%; width: 40%; height: 4px; background: linear-gradient(90deg, transparent, #2e8cff 50%, transparent);"></div>
-        </div>
-
-        <!-- Logo -->
-        <div style="display: flex; position: absolute; left: 31px; top: 38px;">
-          <img src="${logoSrc}" style="width: ${logoWidth}px; height: ${logoHeight}px;" />
-        </div>
-
-        <!-- Handle -->
-        <div style="display: flex; position: absolute; right: 36px; top: 53px; font-size: 18px; font-weight: 500; opacity: 0.95; letter-spacing: 0.5px;">
-          @racertradingbot
-        </div>
-
-        <!-- Ticker -->
-        <div style="display: flex; position: absolute; right: 36px; top: 110px; font-size: 74px; font-weight: 900; letter-spacing: 2.4px; line-height: 1;">
+        <!-- Token Ticker -->
+        <div style="display: flex; position: absolute; left: 683px; top: 234px; font-size: ${tickerFontSize}px; font-weight: 700; color: #ffffff; letter-spacing: 1.5px; line-height: 1;">
           ${ticker}
         </div>
 
         <!-- PNL Banner -->
-        <div style="display: flex; position: absolute; right: 0; left: 564px; top: 204px; height: 115px; background: ${pnlColor}; align-items: center; justify-content: flex-end; padding-right: 36px; font-size: 91px; font-weight: 900; color: #1a2244; line-height: 1;">
-          ${pctStr}
+        <div style="display: flex; position: absolute; left: 477px; top: 310px; width: 547px; height: 128px; background: ${bannerBg}; padding-left: 31px; padding-top: 14px;">
+          <span style="font-size: ${pctFontSize}px; font-weight: 900; color: #1f2c4c; line-height: 1; letter-spacing: -1px;">
+            ${pctStr}
+          </span>
         </div>
 
-        <!-- Stats -->
-        <div style="display: flex; position: absolute; right: 36px; top: 338px; gap: 38px; text-align: center;">
-          <div style="display: flex; flex-direction: column; align-items: center;">
-            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">${stat1Label}</div>
-            <div style="font-size: 23px; font-weight: 700;">${stat1Value}</div>
+        <!-- 3 Stats Columns -->
+        <div style="display: flex; position: absolute; left: 477px; top: 446px; width: 547px; justify-content: space-around; text-align: center;">
+          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+            <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">${stat1Label}</div>
+            <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${stat1Value}</div>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: center;">
-            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">${stat2Label}</div>
-            <div style="font-size: 23px; font-weight: 700;">${stat2Value}</div>
+          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+            <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">${stat2Label}</div>
+            <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${stat2Value}</div>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: center;">
-            <div style="font-size: 12px; font-style: italic; font-weight: 500; opacity: 0.85; margin-bottom: 6px;">Hold Time</div>
-            <div style="font-size: 23px; font-weight: 700;">${holdTimeStr}</div>
+          <div style="display: flex; flex-direction: column; align-items: center; width: 170px;">
+            <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">Hold Time</div>
+            <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${holdTimeStr}</div>
           </div>
         </div>
 
-        <!-- Mascot (Heavy Walking Robot for Loss, Fast Running Robot for Profit) -->
-        <div style="display: flex; position: absolute; left: ${mascotLeft}px; bottom: 6px;">
-          <img src="${mascotSrc}" style="width: ${mascotWidth}px; height: ${mascotHeight}px;" />
+        <!-- Referral Code Text -->
+        <div style="display: flex; position: absolute; right: 114px; top: 1004px; font-size: 14px; font-weight: 700; color: ${refColor}; letter-spacing: 0.5px;">
+          REF: ${refCode}
         </div>
 
-        <!-- CTA & Referral QR Code -->
-        <div style="display: flex; position: absolute; right: 36px; bottom: 19px; align-items: flex-end; gap: 12px; text-align: right;">
-          <div style="display: flex; flex-direction: column; align-items: flex-end; font-size: 14px; line-height: 1.45; font-weight: 500;">
-            <div>SCAN TO TRADE</div>
-            <div>t.me/racertradingbot</div>
-            <div style="color: ${pnlColor}; font-weight: 700; font-size: 12px;">REF: ${refCode}</div>
-          </div>
-          <img src="${qrDataUrl}" style="width: 65px; height: 65px; border-radius: 4px;" />
+        <!-- Referral QR Code -->
+        <div style="display: flex; position: absolute; left: 922px; top: 926px; width: 94px; height: 94px; border-radius: 4px; overflow: hidden;">
+          <img src="${qrDataUrl}" style="width: 94px; height: 94px;" />
         </div>
-
       </div>
     `;
 
     const svg = await satori(cardHtml, {
-      width: 1200,
-      height: 630,
+      width: 1024,
+      height: 1024,
       fonts: [
         { name: 'Orbitron', data: cachedOrbitronMedium, weight: 500, style: 'normal' },
         { name: 'Orbitron', data: cachedOrbitronBold, weight: 700, style: 'normal' },
@@ -248,7 +225,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       ],
     });
 
-    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 1200 } });
+    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 1024 } });
     const pngBuffer = resvg.render().asPng();
     return Buffer.from(pngBuffer);
   } catch (err: any) {
