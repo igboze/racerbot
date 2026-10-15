@@ -173,11 +173,16 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
 
     const cardHtml = html`
       <div style="display: flex; position: relative; width: 1200px; height: 630px; font-family: Orbitron;">
-        <!-- High-fidelity landscape background template (starfield, mascot, logo, handle, lighting beams) -->
+        <!-- High-fidelity landscape background template (starfield, mascot, logo, lighting beams) -->
         <img src="${bgTemplateB64}" style="position: absolute; left: 0; top: 0; width: 1200px; height: 630px;" />
 
+        <!-- Handle @racertradingbot (Top Right) -->
+        <div style="display: flex; position: absolute; right: 48px; top: 48px; font-size: 18px; font-weight: 500; font-style: italic; color: #ffffff; opacity: 0.95; letter-spacing: 0.5px;">
+          @racertradingbot
+        </div>
+
         <!-- Token Ticker (Right aligned above banner) -->
-        <div style="display: flex; position: absolute; right: 48px; top: 105px; font-size: ${tickerFontSize}px; font-weight: 700; color: #ffffff; letter-spacing: 2px; line-height: 1;">
+        <div style="display: flex; position: absolute; right: 48px; top: 104px; font-size: ${tickerFontSize}px; font-weight: 700; color: #ffffff; letter-spacing: 2px; line-height: 1;">
           ${ticker}
         </div>
 
@@ -189,7 +194,7 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
         </div>
 
         <!-- 3 Stats Columns -->
-        <div style="display: flex; position: absolute; left: 560px; right: 48px; top: 325px; justify-content: space-between; text-align: center;">
+        <div style="display: flex; position: absolute; left: 560px; width: 592px; top: 328px; justify-content: space-between; text-align: center;">
           <div style="display: flex; flex-direction: column; align-items: center; width: 180px;">
             <div style="font-size: 15px; font-style: italic; font-weight: 500; color: #8fa2be; margin-bottom: 6px;">${stat1Label}</div>
             <div style="font-size: 26px; font-weight: 700; color: #ffffff;">${stat1Value}</div>
@@ -204,14 +209,14 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
           </div>
         </div>
 
-        <!-- Referral Code Text -->
-        <div style="display: flex; position: absolute; right: 135px; top: 588px; font-size: 13px; font-weight: 700; color: ${refColor}; letter-spacing: 0.5px;">
-          REF: ${refCode}
-        </div>
-
-        <!-- Referral QR Code -->
-        <div style="display: flex; position: absolute; right: 48px; top: 524px; width: 72px; height: 72px; border-radius: 4px; overflow: hidden;">
-          <img src="${qrDataUrl}" style="width: 72px; height: 72px;" />
+        <!-- Bottom Right Callout & Referral Section -->
+        <div style="display: flex; position: absolute; right: 48px; bottom: 20px; align-items: flex-end; gap: 14px; text-align: right;">
+          <div style="display: flex; flex-direction: column; align-items: flex-end; line-height: 1.45;">
+            <div style="color: #ffffff; font-weight: 700; letter-spacing: 0.8px; font-size: 14px;">SCAN TO TRADE</div>
+            <div style="color: #9cb3ce; font-size: 13px; font-weight: 500;">t.me/racertradingbot</div>
+            <div style="color: ${refColor}; font-weight: 700; font-size: 13px; letter-spacing: 0.5px;">REF: ${refCode}</div>
+          </div>
+          <img src="${qrDataUrl}" style="width: 72px; height: 72px; border-radius: 4px; overflow: hidden;" />
         </div>
       </div>
     `;
