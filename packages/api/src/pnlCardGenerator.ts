@@ -238,14 +238,28 @@ export async function generatePNLCardData(
     const displayPrice = isClosed && avgExitPrice > 0 ? avgExitPrice : currentPrice;
 
     const unrealizedValue = quantityHeld * currentPrice;
-    const totalValue      = unrealizedValue + totalRealizedValue;
-    const unrealizedPnl   = unrealizedValue - quantityHeld * avgEntryPrice;
-    const totalPnl        = totalValue - totalInitialInvestment;
+    const activeHoldingCost = quantityHeld * avgEntryPrice;
+    const unrealizedPnl   = unrealizedValue - activeHoldingCost;
 
-    // ── PnL % for the hero display (Token price change relative to entry) ─────
+    // Position-level return & values
+    // For OPEN positions: the active holding cost basis and unrealized PnL of currently held tokens
+    // For CLOSED positions: total capital invested vs total realized return from fills
+    const effectiveInvested = isClosed
+      ? totalInitialInvestment
+      : (activeHoldingCost > 0 ? activeHoldingCost : totalInitialInvestment);
+
+    const effectivePnl = isClosed
+      ? (totalRealizedValue - totalInitialInvestment)
+      : unrealizedPnl;
+
     const pnlPercent = isClosed
-      ? (avgEntryPrice > 0 && avgExitPrice > 0 ? ((avgExitPrice - avgEntryPrice) / avgEntryPrice) * 100 : (totalInitialInvestment > 0 ? (totalPnl / totalInitialInvestment) * 100 : 0))
-      : (avgEntryPrice > 0 && displayPrice > 0 ? ((displayPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0);
+      ? (totalInitialInvestment > 0
+          ? ((totalRealizedValue - totalInitialInvestment) / totalInitialInvestment) * 100
+          : (avgEntryPrice > 0 && avgExitPrice > 0 ? ((avgExitPrice - avgEntryPrice) / avgEntryPrice) * 100 : 0))
+      : (avgEntryPrice > 0 && displayPrice > 0
+          ? ((displayPrice - avgEntryPrice) / avgEntryPrice) * 100
+          : (effectiveInvested > 0 ? (effectivePnl / effectiveInvested) * 100 : 0));
+
     const isProfit = pnlPercent >= 0;
 
     // ── Hold duration ────────────────────────────────────────────────────────
@@ -305,11 +319,11 @@ export async function generatePNLCardData(
       entryPrice:     avgEntryPrice,
       currentPrice:   displayPrice,
       quantityHeld,
-      initialInvestment: totalInitialInvestment,
+      initialInvestment: effectiveInvested,
       unrealizedValue,
       realizedPnl:    totalRealizedPnl,
       unrealizedPnl,
-      totalPnl,
+      totalPnl:       effectivePnl,
       pnlPercent,
       isProfit,
       holdDuration,
@@ -403,6 +417,10 @@ export function generatePNLCardMessage(data: PNLCardData): string {
     } else {
       block += `Holding : ${data.quantityHeld.toFixed(4)} ${safeSymbol}\n`;
       block += `Value   : ${formatNative(data.unrealizedValue)} (${formatUSD(data.unrealizedValue)})\n`;
+      if (data.realizedPnl && Math.abs(data.realizedPnl) >= 0.0001) {
+        const rSign = data.realizedPnl >= 0 ? '+' : '';
+        block += `Banked  : ${rSign}${formatNative(data.realizedPnl)} (${rSign}${formatUSD(data.realizedPnl)})\n`;
+      }
     }
   } else {
     block += `PNL     : ${pnlSign}${data.pnlPercent.toFixed(2)}%\n`;
@@ -438,15 +456,15 @@ export function generatePNLCardMessage(data: PNLCardData): string {
 export async function generatePNLCard(
   positionId: string,
   showNetWorth?: boolean
-): Promise<{ image: Buffer | null; text: string }> {
+): Promise<{ image: Buffer | null; text: string; data?: PNLCardData | null }> {
   try {
     const data = await generatePNLCardData(positionId, showNetWorth);
-    if (!data) return { image: null, text: '' };
+    if (!data) return { image: null, text: '', data: null };
 
     const text  = generatePNLCardMessage(data);
     const image = await generatePNLCardImage(data).catch(() => null);
-    return { image, text };
+    return { image, text, data };
   } catch {
-    return { image: null, text: '' };
+    return { image: null, text: '', data: null };
   }
 }

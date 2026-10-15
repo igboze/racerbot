@@ -111,8 +111,8 @@ export async function generatePNLCardImage(data: PNLCardData): Promise<Buffer | 
       ? (data.initialInvestment + data.totalPnl) * nr
       : data.unrealizedValue * nr;
 
-    const investedStr = formatUSDVal(investedUsd);
-    const currentValStr = formatUSDVal(currentValUsd);
+    const investedStr = data.showNetWorth === false ? '$***' : formatUSDVal(investedUsd);
+    const currentValStr = data.showNetWorth === false ? '$***' : formatUSDVal(currentValUsd);
     const holdTimeStr = data.holdDuration || '1m';
     const refCode = data.referralCode || 'racerbot';
     const refLink = data.referralLink || `https://t.me/racertradingbot?start=${encodeURIComponent(refCode)}`;
