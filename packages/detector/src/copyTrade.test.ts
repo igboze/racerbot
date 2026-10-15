@@ -118,6 +118,76 @@ describe('Copy Trading & Wallet Tracker', () => {
       expect(res?.side).toBe('sell');
       expect(res?.tokenAddress).toBe('moon.near');
     });
+
+    // ── Unbonded Launchpad Tests ──
+    it('detects NearlyTrade direct buy method (unbonded launchpad token)', () => {
+      const actions = [
+        {
+          methodName: 'buy',
+          args: {
+            token_id: 'pepe.nearlytrade.near',
+            amount: '1000000000000000000000000',
+          },
+        },
+      ];
+
+      const res = extractSwapDetails('nearlytrade.near', actions);
+      expect(res).not.toBeNull();
+      expect(res?.side).toBe('buy');
+      expect(res?.tokenAddress).toBe('pepe.nearlytrade.near');
+    });
+
+    it('detects Meme.Cooking ft_transfer_call deposit BUY (unbonded launchpad token)', () => {
+      const actions = [
+        {
+          methodName: 'ft_transfer_call',
+          args: {
+            receiver_id: 'meme-cooking.near',
+            amount: '2000000000000000000000000',
+            msg: JSON.stringify({ Deposit: { meme_id: 88 } }),
+          },
+        },
+      ];
+
+      const res = extractSwapDetails('wrap.near', actions);
+      expect(res).not.toBeNull();
+      expect(res?.side).toBe('buy');
+      expect(res?.tokenAddress).toBe('88.meme-cooking.near');
+    });
+
+    it('detects unbonded launchpad token ft_transfer_call SELL into launchpad contract', () => {
+      const actions = [
+        {
+          methodName: 'ft_transfer_call',
+          args: {
+            receiver_id: 'nearlytrade.near',
+            amount: '500000000000',
+            msg: 'sell',
+          },
+        },
+      ];
+
+      const res = extractSwapDetails('doge.nearlytrade.near', actions);
+      expect(res).not.toBeNull();
+      expect(res?.side).toBe('sell');
+      expect(res?.tokenAddress).toBe('doge.nearlytrade.near');
+    });
+
+    it('detects Intear launch_buy method for unbonded tokens', () => {
+      const actions = [
+        {
+          methodName: 'launch_buy',
+          args: {
+            token: 'cat.launch.intear.near',
+          },
+        },
+      ];
+
+      const res = extractSwapDetails('launch.intear.near', actions);
+      expect(res).not.toBeNull();
+      expect(res?.side).toBe('buy');
+      expect(res?.tokenAddress).toBe('cat.launch.intear.near');
+    });
   });
 
   describe('checkCopyTradeReceipt routing', () => {
@@ -178,6 +248,57 @@ describe('Copy Trading & Wallet Tracker', () => {
       expect(publishedPayload.data.reply_markup.inline_keyboard.length).toBeGreaterThan(0);
     });
 
+    it('routes to Wallet Tracker alert for unbonded launchpad token with Launchpad badge', async () => {
+      vi.spyOn(db, 'getAllActiveCopyTargetWallets').mockResolvedValue([leaderWallet]);
+      vi.spyOn(db, 'recordCopyTradeFill').mockResolvedValue({ id: 'fill-launchpad' } as any);
+      vi.spyOn(db, 'updateCopyTradeFillResult').mockResolvedValue(undefined as any);
+      vi.spyOn(db, 'getTokenCache').mockResolvedValue(null); // unbonded, not yet cached in DB
+
+      const targetRecord = {
+        id: 'target-tracker-nt',
+        user_id: 'user-tracker-2',
+        target_wallet: leaderWallet,
+        referrer_id: null,
+        buy_amount_near: 0,
+        copy_sells: true,
+        max_slippage_pct: 5.0,
+        max_daily_budget_near: null,
+        track_only: true,
+        status: 'active' as const,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      vi.spyOn(db, 'getCopyTargetFollowersByWallet').mockResolvedValue([targetRecord as unknown as db.CopyTradeTargetRecord]);
+
+      let publishedChannel: string | null = null;
+      let publishedPayload: any = null;
+
+      mockRedis.publish.mockImplementation(async (ch: string, msg: string) => {
+        publishedChannel = ch;
+        publishedPayload = JSON.parse(msg);
+        return 1;
+      });
+
+      const actions = [
+        {
+          methodName: 'buy',
+          args: { token_id: 'turbo.nearlytrade.near' },
+        },
+      ];
+
+      await checkCopyTradeReceipt(leaderWallet, 'nearlytrade.near', 'tx_nt_123', actions);
+
+      expect(publishedChannel).toBe(shared.CHANNELS.NOTIFY_USER);
+      expect(publishedPayload).not.toBeNull();
+      expect(publishedPayload.event).toBe('wallet_tracker_alert');
+      expect(publishedPayload.data.leader_wallet).toBe(leaderWallet);
+      expect(publishedPayload.data.token_symbol).toBe('TURBO');
+      expect(publishedPayload.data.token_address).toBe('turbo.nearlytrade.near');
+      expect(publishedPayload.data.message).toContain('NearlyTrade');
+      expect(publishedPayload.data.message).toContain('Unbonded Curve');
+    });
+
     it('triggers automated BUY when target is in Auto-Copy mode', async () => {
       vi.spyOn(db, 'recordCopyTradeFill').mockResolvedValue({ id: 'fill-2' } as any);
       vi.spyOn(db, 'updateCopyTradeFillResult').mockResolvedValue(undefined as any);
@@ -234,6 +355,62 @@ describe('Copy Trading & Wallet Tracker', () => {
       expect(swapEvent.token_in).toBe('wrap.near');
       expect(swapEvent.token_out).toBe('dragon.tkn.near');
       expect(swapEvent.user_id).toBe('user-copy-1');
+    });
+
+    it('triggers automated BUY for unbonded launchpad token', async () => {
+      vi.spyOn(db, 'recordCopyTradeFill').mockResolvedValue({ id: 'fill-nt-buy' } as any);
+      vi.spyOn(db, 'updateCopyTradeFillResult').mockResolvedValue(undefined as any);
+      vi.spyOn(db, 'getCopyTradeDailySpend').mockResolvedValue(0);
+      vi.spyOn(db, 'getTokenCache').mockResolvedValue(null);
+      vi.spyOn(db, 'getUserById').mockResolvedValue({ id: 'user-copy-nt' } as any);
+      vi.spyOn(db, 'getUserBySubaccount').mockResolvedValue(null);
+      vi.spyOn(db, 'getTokenReferral').mockResolvedValue(null);
+      vi.spyOn(db, 'awardPointsForCopyTrade').mockResolvedValue(undefined as any);
+
+      const targetRecord = {
+        id: 'target-nt',
+        user_id: 'user-copy-nt',
+        target_wallet: leaderWallet,
+        referrer_id: null,
+        buy_amount_near: 1.5,
+        copy_sells: true,
+        max_slippage_pct: 10.0,
+        max_daily_budget_near: null,
+        track_only: false,
+        status: 'active' as const,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      vi.spyOn(db, 'getCopyTargetFollowersByWallet').mockResolvedValue([targetRecord as unknown as db.CopyTradeTargetRecord]);
+
+      const publishedChannels: string[] = [];
+      const publishedEvents: any[] = [];
+      mockRedis.publish.mockImplementation(async (ch: string, msg: string) => {
+        publishedChannels.push(ch);
+        publishedEvents.push(JSON.parse(msg));
+        return 1;
+      });
+
+      const nearMock = shared.getNear();
+      vi.spyOn(nearMock, 'computeMinAmountOut').mockResolvedValue({ expectedOutput: '50000', minAmountOut: '45000' } as any);
+
+      const actions = [
+        {
+          methodName: 'buy',
+          args: { token_id: 'turbo.nearlytrade.near' },
+        },
+      ];
+
+      await checkCopyTradeReceipt(leaderWallet, 'nearlytrade.near', 'tx_nt_auto', actions);
+
+      expect(publishedChannels).toContain(shared.CHANNELS.EXECUTE_SWAP);
+      const swapEvent = publishedEvents.find(e => e.type === 'execute_swap');
+      expect(swapEvent).toBeDefined();
+      expect(swapEvent.token_in).toBe('wrap.near');
+      expect(swapEvent.token_out).toBe('turbo.nearlytrade.near');
+      expect(swapEvent.venue).toBe('nearlytrade');
+      expect(swapEvent.user_id).toBe('user-copy-nt');
     });
 
     it('triggers automated SELL when leader sells and copier has position', async () => {
