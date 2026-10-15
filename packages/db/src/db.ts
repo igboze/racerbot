@@ -2114,8 +2114,8 @@ export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams)
   const db = await getDb();
   const res = await db.query(
     `INSERT INTO copy_trade_targets
-       (id, user_id, target_wallet, referrer_id, buy_amount_near, copy_sells, max_slippage_pct, max_daily_budget_near)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (id, user_id, target_wallet, referrer_id, buy_amount_near, copy_sells, max_slippage_pct, max_daily_budget_near, track_only)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (user_id, target_wallet)
        DO UPDATE SET
          referrer_id           = COALESCE(EXCLUDED.referrer_id, copy_trade_targets.referrer_id),

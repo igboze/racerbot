@@ -58,9 +58,9 @@ describe('RaceDrop formatting and card generators', () => {
     const buttons = card.keyboard.reply_markup.inline_keyboard;
     expect(buttons.length).toBeGreaterThanOrEqual(1);
     const claimBtn = buttons[0][0];
-    expect(claimBtn.text).toBe('🏎️ Claim RaceDrop!');
-    expect((claimBtn as any).url).toBe(
-      'https://t.me/racertradingbot?start=drop_11111111-2222-3333-4444-555555555555'
+    expect(claimBtn.text).toBe('🏎️ Claim 10k BLACKDRAGON Now!');
+    expect((claimBtn as any).callback_data).toBe(
+      'racedrop_claim_exec:11111111-2222-3333-4444-555555555555'
     );
   });
 
@@ -145,18 +145,29 @@ describe('RaceDrop formatting and card generators', () => {
     expect(buttons[0][1].text).toBe('🎒 View Wallet');
   });
 
-  it('builds creator share card with Post to Group and Share Link buttons', () => {
+  it('builds Claim MENU page showing creator controls when viewed by creator', () => {
+    const card = buildRaceDropClaimMenuCard(mockDropWithName, false, 'satoshi', 'racertradingbot', [], true);
+    expect(card.text).toContain('You created this RaceDrop!');
+    expect(card.text).toContain('Share this drop to your groups');
+
+    const buttons = card.keyboard.reply_markup.inline_keyboard;
+    expect(buttons[0][0].text).toContain('Share to Group (With Claim Button)');
+    expect((buttons[0][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(buttons[0][1].text).toContain('Post to Group');
+  });
+
+  it('builds creator share card with 1-click Share to Group (With Claim Button) and Add Bot buttons', () => {
     const card = buildRaceDropCreatorShareCard(mockDropWithName, 'racertradingbot');
-    expect(card.text).toContain('RaceDrop Ready to Share!');
+    expect(card.text).toContain('RaceDrop Created Successfully!');
     expect(card.text).toContain('Satoshi Nakamoto');
     expect(card.text).toContain('10k BLACKDRAGON');
     expect(card.text).toContain('100k BLACKDRAGON');
+    expect(card.text).toContain('Share to Group (With Claim Button)');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
-    expect(buttons[0][0].text).toContain('Post to Group');
-    expect((buttons[0][0] as any).url).toContain('https://t.me/racertradingbot?startgroup=drop_');
-    expect(buttons[1][0].text).toContain('Share Link');
-    expect((buttons[1][0] as any).url).toContain('https://t.me/share/url');
-    expect(buttons[1][1].text).toContain('Preview Claim Page');
+    expect(buttons[0][0].text).toContain('Share to Group (With Claim Button)');
+    expect((buttons[0][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
+    expect(buttons[1][0].text).toContain('Add Bot to Group & Post');
+    expect((buttons[1][0] as any).url).toContain('https://t.me/racertradingbot?startgroup=drop_');
   });
 });
