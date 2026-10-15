@@ -903,10 +903,16 @@ export class SwapExecutor {
     await this.nearClient.getAccount(subaccountId);
 
     let dclPoolId = (event as any).dcl_pool_id ?? null;
+    if (dclPoolId && (!dclPoolId.includes('|') && !dclPoolId.includes('>'))) {
+      dclPoolId = null;
+    }
     if ((venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun' || venue === 'qlyphs') && !dclPoolId) {
       const tokenTarget = token_in === 'wrap.near' ? token_out : token_in;
       const dbCache = await getTokenCache(tokenTarget).catch(() => null);
       dclPoolId = dbCache?.dcl_pool_id ?? null;
+      if (dclPoolId && (!dclPoolId.includes('|') && !dclPoolId.includes('>'))) {
+        dclPoolId = null;
+      }
       if (!dclPoolId) {
         if (venue === 'nearlytrade') {
           const ntState = await near.getNearlytradeTokenState(tokenTarget).catch(() => null);
@@ -1843,9 +1849,10 @@ export class SwapExecutor {
 
         let operations: any[];
         if (isPairedWithIntear) {
-          const pool216Buf = Buffer.alloc(4);
-          pool216Buf.writeUInt32LE(216, 0);
-          const intearPoolMsg = pool216Buf.toString('base64');
+          const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
+          const intearNearBuf = Buffer.alloc(4);
+          intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
+          const intearPoolMsg = intearNearBuf.toString('base64');
 
           operations = [
             {
@@ -1872,8 +1879,8 @@ export class SwapExecutor {
               Withdraw: {
                 asset_id: `nep141:${token_out}`,
                 amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                to: subaccountId,
-                rescue_address: subaccountId,
+                to: null,
+                rescue_address: null,
               },
             },
           ];
@@ -1893,8 +1900,8 @@ export class SwapExecutor {
               Withdraw: {
                 asset_id: `nep141:${token_out}`,
                 amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                to: subaccountId,
-                rescue_address: subaccountId,
+                to: null,
+                rescue_address: null,
               },
             },
           ];
@@ -1959,9 +1966,10 @@ export class SwapExecutor {
         await near.ensureIntearAssetRegistered(subaccountId, 'near');
         let operations: any[];
         if (isPairedWithIntear) {
-          const pool216Buf = Buffer.alloc(4);
-          pool216Buf.writeUInt32LE(216, 0);
-          const intearPoolMsg = pool216Buf.toString('base64');
+          const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
+          const intearNearBuf = Buffer.alloc(4);
+          intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
+          const intearPoolMsg = intearNearBuf.toString('base64');
 
           operations = [
             {
@@ -1988,8 +1996,8 @@ export class SwapExecutor {
               Withdraw: {
                 asset_id: 'near',
                 amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                to: subaccountId,
-                rescue_address: subaccountId,
+                to: null,
+                rescue_address: null,
               },
             },
           ];
@@ -2009,8 +2017,8 @@ export class SwapExecutor {
               Withdraw: {
                 asset_id: 'near',
                 amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                to: subaccountId,
-                rescue_address: subaccountId,
+                to: null,
+                rescue_address: null,
               },
             },
           ];

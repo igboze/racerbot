@@ -590,7 +590,7 @@ export async function getDexTax(info: DexTaxOptions): Promise<{ buyTaxPct: numbe
   }
 
   // 2. Ref DCL: dynamic fee tier from pool ID (e.g. wrap.near|token|2000 => 0.20%, wrap.near|token|400 => 0.04%)
-  if (info.dcl_pool_id) {
+  if (info.dcl_pool_id && (info.dcl_pool_id.includes('|') || info.dcl_pool_id.includes('>'))) {
     const parts = info.dcl_pool_id.split('|');
     const feeTier = parts.length >= 3 ? parseInt(parts[2], 10) : 2000;
     const pct = feeTier > 0 ? feeTier / 10000 : 0.2;
@@ -755,13 +755,13 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
       near_usd: isSui ? 0 : nativeUsd,
       sui_usd: isSui ? nativeUsd : 0,
       venue: dbCache.venue as any,
-      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? Number(dbCache.dcl_pool_id) : null),
       bonding_phase: (dbCache.bonding_phase as any) ?? null,
       bonding_progress_pct:
         dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined
           ? Number(dbCache.bonding_progress_pct)
           : null,
-      dcl_pool_id: dbCache.dcl_pool_id ?? null,
+      dcl_pool_id: (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null,
       tradeable: true,
       sui_coin_type: isSui ? tokenAddress : undefined,
       buy_tax_pct: tax.buyTaxPct,
@@ -1177,13 +1177,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
       near_usd: nearUsd,
       venue: (dbCache.venue as any) ?? 'unknown',
-      rhea_pool_id: dbCache.rhea_pool_id,
+      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? Number(dbCache.dcl_pool_id) : null),
       bonding_phase: (dbCache.bonding_phase as any) ?? null,
       bonding_progress_pct:
         dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined
           ? Number(dbCache.bonding_progress_pct)
           : null,
-      dcl_pool_id: dbCache.dcl_pool_id ?? null,
+      dcl_pool_id: (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null,
       tradeable: isTradableVenue(dbCache.venue),
       holders_count: holdersData?.count ?? null,
       buys_count: dexData?.buys24h ?? null,
@@ -1284,7 +1284,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   let pairedSymbol: string | undefined;
   let priceInPaired: string | undefined;
   let liquidityInPaired: string | undefined;
-  if (dbCache?.dcl_pool_id) {
+  if (dbCache?.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
     const parts = dbCache.dcl_pool_id.split('|');
     const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
     if (paired === 'wrap.near' || paired === 'near') {
@@ -1294,7 +1294,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
   if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
-    if (dbCache.dcl_pool_id) {
+    if (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
       try {
         const parts = dbCache.dcl_pool_id.split('|');
         const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
@@ -1351,7 +1351,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           price = intearState.price;
           liquidity = intearState.liquidityNear;
           if (intearState.poolId != null) {
-            dclPoolId = String(intearState.poolId);
+            rheaPoolId = intearState.poolId;
+            dclPoolId = null;
           }
           if (intearState.feeBps != null) {
             intearPoolFee = intearState.feeBps;
@@ -1608,8 +1609,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     price = Number(dbCache.last_price);
     liquidity = Number(dbCache.last_liquidity || 0);
     venue = (dbCache.venue as any) ?? venue;
-    rheaPoolId = rheaPoolId ?? dbCache.rhea_pool_id ?? null;
-    dclPoolId = dclPoolId ?? dbCache.dcl_pool_id ?? null;
+    rheaPoolId = rheaPoolId ?? dbCache.rhea_pool_id ?? (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? parseInt(dbCache.dcl_pool_id, 10) : null);
+    dclPoolId = dclPoolId ?? ((dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null);
     bondingPhase = bondingPhase ?? (dbCache.bonding_phase as any) ?? null;
     if (bondingProgressPct === null && dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined) {
       bondingProgressPct = Number(dbCache.bonding_progress_pct);

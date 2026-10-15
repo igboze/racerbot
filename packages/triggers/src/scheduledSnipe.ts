@@ -118,7 +118,7 @@ export async function runScheduledSnipeEngine(): Promise<void> {
               const dbCache = await getTokenCache(tokenAddress).catch(() => null);
               if (dbCache && dbCache.venue) {
                 if (dbCache.venue === 'intear') {
-                  const intearPoolId = dbCache.dcl_pool_id ? parseInt(dbCache.dcl_pool_id, 10) : await near.findIntearPoolId(tokenAddress).catch(() => null);
+                  const intearPoolId = (dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? parseInt(dbCache.dcl_pool_id, 10) : null)) ?? await near.findIntearPoolId(tokenAddress).catch(() => null);
                   if (typeof intearPoolId === 'number' && intearPoolId >= 0) {
                     const st = await near.getIntearTokenState(tokenAddress).catch(() => null);
                     if (st && (st.liquidityNear > 0 || (st.price > 0 && BigInt(st.reserveNear) > 0n))) {
