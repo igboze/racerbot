@@ -25,9 +25,17 @@ import {
   withdrawSuiFunds,
   withdrawTokenFunds,
   syncUserTokenDeposits,
+  getTokenInfo,
+  isSuiToken,
 } from './wallet.js';
 import { getUserFriendlyError } from './routes.js';
-import { getNear, getSuiBalance, createRedis } from '@racerbot/shared';
+import {
+  getNear,
+  getSuiBalance,
+  getSuiTokenBalance,
+  formatTokenUnits,
+  createRedis,
+} from '@racerbot/shared';
 import { REDIS_URL } from './config.js';
 
 let _raceDropRedis: ReturnType<typeof createRedis> | null = null;
@@ -820,17 +828,50 @@ export async function getUserAvailableBalance(
     return { balance: suiBal, symbol: 'SUI', decimals: 9 };
   }
 
-  const positions = await getOpenPositions(user.id).catch(() => []);
-  const pos = positions.find(
-    (p) => p.token_address.toLowerCase() === tokenAddress.toLowerCase()
-  );
-  if (pos) {
-    const qty = parseFloat(pos.quantity_held || '0');
-    const symbol = pos.token_address.split('.')[0].toUpperCase();
-    return { balance: qty, symbol, decimals: 18 };
+  // Token: fetch metadata to get actual decimals and symbol
+  const isSuiTok = chain === 'sui' || isSuiToken(tokenAddress);
+  const info = await getTokenInfo(tokenAddress).catch(() => null);
+  const decimals = info?.decimals ?? (isSuiTok ? 9 : 18);
+  const symbol = info?.symbol || tokenAddress.split('.')[0].toUpperCase();
+
+  // 1. Check live on-chain balance first
+  let rawBalance = '0';
+  if (isSuiTok && user.sui_address) {
+    const suiBal = await getSuiTokenBalance(user.sui_address, tokenAddress).catch(() => null);
+    if (suiBal) {
+      rawBalance = suiBal.raw.toString();
+    }
+  } else if (user.subaccount_id) {
+    const near = getNear();
+    rawBalance = await near.getTokenBalance(tokenAddress, user.subaccount_id).catch(() => '0');
   }
 
-  return { balance: 0, symbol: tokenAddress.split('.')[0].toUpperCase(), decimals: 18 };
+  // 2. Fallback to position record in DB if on-chain returned 0 / failed
+  if ((!rawBalance || rawBalance === '0') && user.id) {
+    const positions = await getOpenPositions(user.id).catch(() => []);
+    const pos = positions.find(
+      (p) => p.token_address.toLowerCase() === tokenAddress.toLowerCase()
+    );
+    if (pos && pos.quantity_held) {
+      rawBalance = pos.quantity_held;
+    }
+  }
+
+  // 3. Convert raw atomic units to human units using actual token decimals
+  let humanBal = 0;
+  try {
+    const rawClean = rawBalance.split('.')[0] || '0';
+    const rawBig = BigInt(rawClean);
+    if (rawBig > 0n) {
+      const formatted = formatTokenUnits(rawBig, decimals);
+      humanBal = parseFloat(formatted) || 0;
+    }
+  } catch {
+    const num = parseFloat(rawBalance || '0');
+    humanBal = decimals > 0 && num > 1e6 ? num / Math.pow(10, decimals) : num;
+  }
+
+  return { balance: humanBal, symbol, decimals };
 }
 
 /**
@@ -1020,12 +1061,16 @@ export async function startRaceDropWizard(ctx: Context): Promise<void> {
   }
 
   for (const pos of positions) {
-    const qty = parseFloat(pos.quantity_held || '0');
-    if (qty > 0) {
-      const sym = pos.token_address.split('.')[0].toUpperCase();
+    const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+    const { balance: humanQty, symbol } = await getUserAvailableBalance(
+      telegramId,
+      pos.token_address,
+      isSuiPos ? 'sui' : 'near'
+    );
+    if (humanQty > 0) {
       buttons.push([
         Markup.button.callback(
-          `🎒 ${sym} (${formatDropAmount(qty)})`,
+          `🎒 ${symbol} (${formatDropAmount(humanQty)} available)`,
           `racedrop_pick:${pos.token_address}`
         ),
       ]);
