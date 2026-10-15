@@ -110,3 +110,47 @@ describe('formatReasons', () => {
     expect(formatReasons([])).toBe('none');
   });
 });
+
+describe('buildVolumeUpdateText', () => {
+  it('formats report with NEAR, SUI, and Starknet volumes and USD estimates', async () => {
+    const { buildVolumeUpdateText } = await import('./monitor.js');
+    const stats = {
+      volume24hNear: 1000,
+      fees24hNear: 15,
+      trades24h: 20,
+      buys24h: 25,
+      sells24h: 5,
+      activeTraders24h: 12,
+      volumeTotalNear: 50000,
+      feesTotalNear: 750,
+      tradesTotal: 1000,
+      volume24hSui: 500,
+      fees24hSui: 7.5,
+      trades24hSui: 10,
+      volumeTotalSui: 20000,
+      feesTotalSui: 300,
+      tradesTotalSui: 400,
+      volume24hStarknet: 800,
+      fees24hStarknet: 12,
+      trades24hStarknet: 15,
+      volumeTotalStarknet: 1839.73,
+      feesTotalStarknet: 27.596,
+      tradesTotalStarknet: 14,
+      usersTotal: 250,
+      newUsers24h: 5,
+    };
+
+    const text = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4);
+    expect(text).toContain('📊 *RacerBot Daily Report*');
+    expect(text).toContain('• Total trades: `45` (25 buys / 5 sells)');
+    expect(text).toContain('〽️ *NEAR — 24h*');
+    expect(text).toContain('• Volume: `1,000 NEAR` (~$2,500)');
+    expect(text).toContain('🔵 *SUI — 24h*');
+    expect(text).toContain('• Volume: `500 SUI` (~$900)');
+    expect(text).toContain('⚡ *Starknet — 24h*');
+    expect(text).toContain('• Volume: `800 STRK` (~$320)');
+    expect(text).toContain('• Trades: `15`');
+    expect(text).toContain('• Starknet volume: `1,839.73 STRK` (~$736)');
+    expect(text).toContain('• Total trades: `1,414`');
+  });
+});
