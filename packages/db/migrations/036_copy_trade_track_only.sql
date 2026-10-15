@@ -1,4 +1,4 @@
-﻿-- Migration 036: Add track_only mode to copy_trade_targets
+-- Migration 036: Add track_only mode to copy_trade_targets
 ALTER TABLE copy_trade_targets
     ADD COLUMN IF NOT EXISTS track_only BOOLEAN NOT NULL DEFAULT false;
 
