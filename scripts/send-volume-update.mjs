@@ -34,20 +34,62 @@ for (const url of [
   } catch { /* try next */ }
 }
 
-const fmtNear = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-const usd = (n) => nearUsd > 0 ? ` (~$${(n * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+let suiUsd = 0;
+for (const url of [
+  'https://api.binance.com/api/v3/ticker/price?symbol=SUIUSDT',
+  'https://api.coinbase.com/v2/prices/SUI-USD/spot',
+]) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    const p = parseFloat(data?.price ?? data?.data?.amount ?? '0');
+    if (p > 0) { suiUsd = p; break; }
+  } catch { /* try next */ }
+}
+
+let strkUsd = 0;
+for (const url of [
+  'https://api.binance.com/api/v3/ticker/price?symbol=STRKUSDT',
+  'https://api.coingecko.com/api/v3/simple/price?ids=starknet&vs_currencies=usd',
+]) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    const p = parseFloat(data?.price ?? data?.starknet?.usd ?? '0');
+    if (p > 0) { strkUsd = p; break; }
+  } catch { /* try next */ }
+}
+
+const fmt = (n) => (n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+const nearUsdFmt = (n) => nearUsd > 0 ? ` (~$${(n * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+const suiUsdFmt = (n) => suiUsd > 0 ? ` (~$${(n * suiUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+const strkUsdFmt = (n) => strkUsd > 0 ? ` (~$${(n * strkUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+
+const total24hTrades = stats.trades24h + stats.trades24hSui + (stats.trades24hStarknet || 0);
+const totalTrades = stats.tradesTotal + stats.tradesTotalSui + (stats.tradesTotalStarknet || 0);
+
 const text =
-  `📊 *RacerBot Volume — Daily Update*\n\n` +
+  `📊 *RacerBot Daily Report*\n\n` +
+  `👥 *Users*\n` +
+  `• Total: \`${stats.usersTotal.toLocaleString('en-US')}\`\n` +
+  `• New today: \`${stats.newUsers24h}\`\n\n` +
   `🔥 *Last 24h*\n` +
-  `• Volume: \`${fmtNear(stats.volume24hNear)} NEAR\`${usd(stats.volume24hNear)}\n` +
-  `• Trades: \`${stats.trades24h}\` (${stats.buys24h} buys / ${stats.sells24h} sells)\n` +
-  `• Active traders: \`${stats.activeTraders24h}\`\n` +
-  `• Fees earned: \`${stats.fees24hNear.toFixed(4)} NEAR\`${usd(stats.fees24hNear)}\n\n` +
-  `📈 *All time*\n` +
-  `• Volume: \`${fmtNear(stats.volumeTotalNear)} NEAR\`${usd(stats.volumeTotalNear)}\n` +
-  `• Trades: \`${stats.tradesTotal.toLocaleString('en-US')}\`\n` +
-  `• Fees earned: \`${stats.feesTotalNear.toFixed(4)} NEAR\`\n` +
-  `• Users: \`${stats.usersTotal.toLocaleString('en-US')}\``;
+  `• Total trades: \`${total24hTrades}\` (${stats.buys24h} buys / ${stats.sells24h} sells)\n` +
+  `• Active traders: \`${stats.activeTraders24h}\`\n\n` +
+  `〽️ *NEAR — 24h*\n` +
+  `• Volume: \`${fmt(stats.volume24hNear)} NEAR\`${nearUsdFmt(stats.volume24hNear)}\n` +
+  `• Trades: \`${stats.trades24h}\`\n\n` +
+  `🔵 *SUI — 24h*\n` +
+  `• Volume: \`${fmt(stats.volume24hSui)} SUI\`${suiUsdFmt(stats.volume24hSui)}\n` +
+  `• Trades: \`${stats.trades24hSui}\`\n\n` +
+  `⚡ *Starknet — 24h*\n` +
+  `• Volume: \`${fmt(stats.volume24hStarknet)} STRK\`${strkUsdFmt(stats.volume24hStarknet)}\n` +
+  `• Trades: \`${stats.trades24hStarknet || 0}\`\n\n` +
+  `📈 *All Time*\n` +
+  `• NEAR volume: \`${fmt(stats.volumeTotalNear)} NEAR\`${nearUsdFmt(stats.volumeTotalNear)}\n` +
+  `• SUI volume: \`${fmt(stats.volumeTotalSui)} SUI\`${suiUsdFmt(stats.volumeTotalSui)}\n` +
+  `• Starknet volume: \`${fmt(stats.volumeTotalStarknet)} STRK\`${strkUsdFmt(stats.volumeTotalStarknet)}\n` +
+  `• Total trades: \`${totalTrades.toLocaleString('en-US')}\``;
 
 // Resolve the admin chat: persisted admin_chat_id first, then username lookup.
 const db = await getDb();

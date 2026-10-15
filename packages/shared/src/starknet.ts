@@ -894,3 +894,39 @@ export async function getLaunchyQuote(
     return null;
   }
 }
+
+let cachedStrkUsdPrice = 0.40;
+let lastStrkUsdFetch = 0;
+
+export async function getStrkUsdPrice(): Promise<number> {
+  if (Date.now() - lastStrkUsdFetch < 60_000 && cachedStrkUsdPrice > 0) {
+    return cachedStrkUsdPrice;
+  }
+  const sources = [
+    fetch('https://api.binance.com/api/v3/ticker/price?symbol=STRKUSDT', { signal: AbortSignal.timeout(2000) })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const p = parseFloat(d?.price);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+    fetch('https://api.coingecko.com/api/v3/simple/price?ids=starknet&vs_currencies=usd', { signal: AbortSignal.timeout(2000) })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const p = Number(d?.starknet?.usd);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+  ];
+
+  try {
+    const fastest = await Promise.any(sources);
+    if (fastest > 0) {
+      cachedStrkUsdPrice = fastest;
+      lastStrkUsdFetch = Date.now();
+      return cachedStrkUsdPrice;
+    }
+  } catch {}
+
+  return cachedStrkUsdPrice || 0.40;
+}

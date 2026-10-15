@@ -227,6 +227,7 @@ export {
   USDC_NATIVE_TOKEN_ADDRESS,
   USDC_BRIDGED_TOKEN_ADDRESS,
   USDT_TOKEN_ADDRESS,
+  getStrkUsdPrice,
 } from './starknet.js';
 
 export type {
