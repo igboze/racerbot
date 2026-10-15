@@ -55,7 +55,8 @@ export async function runMigrations() {
       if (applied.has(file)) continue;
 
       const filePath = path.join(migrationsDir, file);
-      const sql = fs.readFileSync(filePath, 'utf-8');
+      const rawSql = fs.readFileSync(filePath, 'utf-8');
+      const sql = rawSql.replace(/^\uFEFF/, '').trim();
 
       console.log(`[MIGRATE] Applying ${file}...`);
       // Each migration is atomic: SQL + bookkeeping commit together.
