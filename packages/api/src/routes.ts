@@ -1377,7 +1377,7 @@ export async function sendPnlCardMessage(
     const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
     const showNetWorth = showNetWorthOverride !== undefined
       ? showNetWorthOverride
-      : (user ? user.show_net_worth_on_card !== false : true);
+      : Boolean(user?.show_net_worth_on_card);
 
     const pnlCard = await generatePNLCard(positionId, showNetWorth);
     let fullText = pnlCard.text;
@@ -1463,7 +1463,7 @@ export function buildSettingsDashboard(user: UserRecord) {
   const slip = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
   const buyPct = user.default_buy_pct ? Number(user.default_buy_pct) : 10;
   const sellPct = user.default_sell_pct ? Number(user.default_sell_pct) : 100;
-  const showNetWorth = user.show_net_worth_on_card !== false;
+  const showNetWorth = Boolean(user.show_net_worth_on_card);
   const buyAmounts = parseBuyAmounts(user.custom_buy_amounts);
   const buyAmountsStr = buyAmounts.join(', ');
 
@@ -4658,7 +4658,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       const showNetWorth = nwParam !== undefined
         ? nwParam === '1'
-        : (user.show_net_worth_on_card !== false);
+        : Boolean(user.show_net_worth_on_card);
 
       await ctx.answerCbQuery().catch(() => {});
       const positions = await getOpenPositions(user.id).catch(() => []);
@@ -6198,7 +6198,7 @@ export function setupRoutes(bot: Telegraf): void {
       const telegramId = ctx.from!.id;
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
-      const current = user.show_net_worth_on_card !== false;
+      const current = Boolean(user.show_net_worth_on_card);
       const updated = await updateUserSettings(user.id, { show_net_worth_on_card: !current });
       await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => {});
       const dash = buildSettingsDashboard(updated);
