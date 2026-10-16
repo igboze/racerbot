@@ -3735,16 +3735,12 @@ export async function findAccountsForNearPublicKey(publicKey: string): Promise<s
     }
   }
 
-  // 3. If no named accounts were found, check if it's an implicit account (64 hex characters)
+  // 3. If no named accounts were found, add implicit account (64 hex characters)
   if (accounts.size === 0) {
     try {
       const rawHex = nearUtils.PublicKey.fromString(publicKey).data;
       const implicitAccount = Buffer.from(rawHex).toString('hex').toLowerCase();
-      // Check if this implicit account exists on-chain
-      const bal = await near.getNearBalance(implicitAccount).catch(() => '0');
-      if (bal !== '0') {
-        accounts.add(implicitAccount);
-      }
+      accounts.add(implicitAccount);
     } catch {
       // ignore
     }
@@ -3757,6 +3753,17 @@ export async function findAccountsForNearPublicKey(publicKey: string): Promise<s
  * Validates on-chain that the key has access to the specified NEAR account.
  */
 export async function verifyNearAccountAccess(accountId: string, publicKey: string): Promise<{ exists: boolean; isFullAccess: boolean }> {
+  try {
+    const rawHex = nearUtils.PublicKey.fromString(publicKey).data;
+    const implicitAccount = Buffer.from(rawHex).toString('hex').toLowerCase();
+    if (accountId.toLowerCase() === implicitAccount) {
+      // By NEAR protocol definition, the private key of an implicit account is always the FullAccess owner
+      return { exists: true, isFullAccess: true };
+    }
+  } catch {
+    // continue
+  }
+
   try {
     const keyInfo = await near.viewAccessKey(accountId, publicKey);
     if (!keyInfo) {
