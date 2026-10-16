@@ -205,6 +205,102 @@ export async function warmTokenInfoCache(): Promise<void> {
   }
 }
 
+export function getCachedTokenInfo(tokenAddress: string): TokenInfoResult | null {
+  const entry = tokenInfoCache.get(tokenAddress);
+  if (entry && entry.expiresAt > Date.now()) {
+    return entry.data;
+  }
+  return entry ? entry.data : null;
+}
+
+export async function getBatchTokenInfo(
+  tokenAddresses: string[],
+  forceRefresh = false
+): Promise<Map<string, TokenInfoResult>> {
+  const result = new Map<string, TokenInfoResult>();
+  if (!tokenAddresses || tokenAddresses.length === 0) return result;
+
+  const missing: string[] = [];
+  for (const addr of tokenAddresses) {
+    if (!forceRefresh) {
+      const cached = getCachedTokenInfo(addr);
+      if (cached) {
+        result.set(addr, cached);
+        continue;
+      }
+    }
+    missing.push(addr);
+  }
+
+  if (missing.length === 0) return result;
+
+  // Batch query token_cache in DB for all missing tokens
+  try {
+    const db = await getDb();
+    const rows = await db.query(
+      `SELECT token_address, symbol, name, decimals, total_supply, last_price, last_liquidity, venue, chain, dcl_pool_id, rhea_pool_id, bonding_phase, bonding_progress_pct, buy_tax_pct, sell_tax_pct
+       FROM token_cache
+       WHERE token_address = ANY($1)`,
+      [missing]
+    ).then((r: any) => r.rows);
+
+    const nearUsd = await getNearUsdPrice().catch(() => 0);
+
+    for (const row of rows) {
+      const lastPrice = parseFloat(row.last_price || '0');
+      const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
+      const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+      const tokenData: TokenInfoResult = {
+        address: row.token_address,
+        chain: (row.chain as any) || 'near',
+        name: row.name ?? '',
+        symbol: row.symbol ?? '',
+        decimals: row.decimals ?? 18,
+        total_supply: row.total_supply ?? '0',
+        price: lastPrice.toFixed(12),
+        price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+        liquidity: row.last_liquidity?.toString() ?? '0',
+        liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
+        market_cap: mcap,
+        market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
+        near_usd: nearUsd,
+        venue: (row.venue as any) ?? 'unknown',
+        rhea_pool_id: row.rhea_pool_id != null ? Number(row.rhea_pool_id) : null,
+        bonding_phase: (row.bonding_phase as any) ?? null,
+        bonding_progress_pct: row.bonding_progress_pct != null ? Number(row.bonding_progress_pct) : null,
+        dcl_pool_id: row.dcl_pool_id ?? null,
+        tradeable: isTradableVenue(row.venue),
+        buy_tax_pct: row.buy_tax_pct != null ? Number(row.buy_tax_pct) : undefined,
+        sell_tax_pct: row.sell_tax_pct != null ? Number(row.sell_tax_pct) : undefined,
+      };
+      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 30_000 });
+      result.set(row.token_address, tokenData);
+    }
+  } catch (err: any) {
+    console.warn('[API] getBatchTokenInfo DB query failed:', err.message);
+  }
+
+  // Any tokens still missing from DB cache can be fetched with a short bounded timeout
+  const stillMissing = missing.filter((addr) => !result.has(addr));
+  if (stillMissing.length > 0) {
+    await Promise.allSettled(
+      stillMissing.slice(0, 10).map(async (addr) => {
+        try {
+          const info = await Promise.race([
+            getTokenInfo(addr, false),
+            new Promise<TokenInfoResult | null>((_, reject) =>
+              setTimeout(() => reject(new Error('timeout')), 1500)
+            ),
+          ]);
+          if (info) result.set(addr, info);
+        } catch {}
+      })
+    );
+  }
+
+  return result;
+}
+
 // ── Helper to detect Sui token addresses & SuiPump curve IDs ─────────────────
 export function isSuiToken(rawTokenAddress: string): boolean {
   if (!rawTokenAddress || typeof rawTokenAddress !== 'string') return false;
@@ -296,28 +392,48 @@ async function fetchNearUsdPrice(): Promise<number> {
   return 0;
 }
 
+let inflightNearUsdPromise: Promise<number> | null = null;
+
 export async function getNearUsdPrice(): Promise<number> {
   const now = Date.now();
   if (nearUsdPrice > 0) {
-    if (now - nearUsdLastFetch >= 15_000) {
-      fetchNearUsdPrice()
+    if (now - nearUsdLastFetch >= 30_000 && !inflightNearUsdPromise) {
+      inflightNearUsdPromise = fetchNearUsdPrice()
         .then((p) => {
           if (p > 0) {
             nearUsdPrice = p;
             nearUsdLastFetch = Date.now();
           }
+          return p;
         })
-        .catch(() => {});
+        .catch(() => 0)
+        .finally(() => {
+          inflightNearUsdPromise = null;
+        });
     }
     return nearUsdPrice;
   }
 
-  const p = await fetchNearUsdPrice();
-  if (p > 0) {
-    nearUsdPrice = p;
-    nearUsdLastFetch = now;
+  if (inflightNearUsdPromise) {
+    const p = await inflightNearUsdPromise;
+    return p > 0 ? p : (nearUsdPrice || 5.16);
   }
-  return nearUsdPrice || 5.16;
+
+  inflightNearUsdPromise = fetchNearUsdPrice()
+    .then((p) => {
+      if (p > 0) {
+        nearUsdPrice = p;
+        nearUsdLastFetch = Date.now();
+      }
+      return p;
+    })
+    .catch(() => 0)
+    .finally(() => {
+      inflightNearUsdPromise = null;
+    });
+
+  const p = await inflightNearUsdPromise;
+  return nearUsdPrice || (p > 0 ? p : 5.16);
 }
 
 export interface DexScreenerData {
@@ -3165,35 +3281,35 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
 
     // 3. Fetch NEAR token balances and metadata in batches of 8 to stay well under QuickNode rate limits
     if (allTokensToCheck.length > 0) {
+      const allInfoMap = await getBatchTokenInfo(allTokensToCheck, false).catch(() => new Map());
       const balanceResults: PromiseSettledResult<{ value: string; trusted: boolean }>[] = [];
       const infoResults: PromiseSettledResult<TokenInfoResult | null>[] = [];
       const BATCH_SIZE = 8;
 
       for (let i = 0; i < allTokensToCheck.length; i += BATCH_SIZE) {
         const batch = allTokensToCheck.slice(i, i + BATCH_SIZE);
-        const [batchBalances, batchInfos] = await Promise.all([
-          Promise.allSettled(
-            batch.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
-              try {
-                const value = await Promise.race([
-                  near.getTokenBalance(tokenAddress, subaccountId),
-                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3500)),
-                ]);
-                return { value: value || '0', trusted: true };
-              } catch (err: any) {
-                const msg = err?.message || '';
-                if (msg.includes('not registered') || msg.includes('does not exist')) {
-                  return { value: '0', trusted: true };
-                }
-                const idx = indexerBalances.get(tokenAddress);
-                return idx !== undefined ? { value: idx, trusted: false } : { value: '0', trusted: false };
+        const batchBalances = await Promise.allSettled(
+          batch.map(async (tokenAddress): Promise<{ value: string; trusted: boolean }> => {
+            try {
+              const value = await Promise.race([
+                near.getTokenBalance(tokenAddress, subaccountId),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+              ]);
+              return { value: value || '0', trusted: true };
+            } catch (err: any) {
+              const msg = err?.message || '';
+              if (msg.includes('not registered') || msg.includes('does not exist')) {
+                return { value: '0', trusted: true };
               }
-            })
-          ),
-          Promise.allSettled(
-            batch.map(tokenAddress => getTokenInfo(tokenAddress, false).catch(() => null))
-          ),
-        ]);
+              const idx = indexerBalances.get(tokenAddress);
+              return idx !== undefined ? { value: idx, trusted: false } : { value: '0', trusted: false };
+            }
+          })
+        );
+        const batchInfos: PromiseSettledResult<TokenInfoResult | null>[] = batch.map(t => ({
+          status: 'fulfilled' as const,
+          value: allInfoMap.get(t) || null,
+        }));
         balanceResults.push(...batchBalances);
         infoResults.push(...batchInfos);
       }
