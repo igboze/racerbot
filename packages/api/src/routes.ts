@@ -6450,12 +6450,20 @@ export function setupRoutes(bot: Telegraf): void {
       if (canEdit && ctx.callbackQuery) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+          console.warn('[handleWallets] editMessageText failed, retrying with reply:', err?.message);
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (replyErr: any) => {
+            console.error('[handleWallets] HTML reply failed, falling back to plain text:', replyErr?.message);
+            await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => {});
+          });
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (replyErr: any) => {
+          console.error('[handleWallets] HTML reply failed, falling back to plain text:', replyErr?.message);
+          await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => {});
+        });
       }
     } catch (err: any) {
+      console.error('[handleWallets] Critical failure:', err);
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   };
@@ -9162,8 +9170,13 @@ export function setupRoutes(bot: Telegraf): void {
         let keyString = rawText;
 
         if (parts.length >= 2) {
-          explicitAccount = parts[0].toLowerCase();
-          keyString = parts[1];
+          if (parts[0].startsWith('ed25519:') || parts[0].length >= 45) {
+            keyString = parts[0];
+            explicitAccount = parts[1].toLowerCase();
+          } else {
+            explicitAccount = parts[0].toLowerCase();
+            keyString = parts[1];
+          }
         }
 
         try {
