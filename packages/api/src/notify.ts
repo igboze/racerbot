@@ -98,8 +98,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         const text =
           `🔴 *Stop Loss Triggered!*\n\n` +
           `*${sym}* hit your -${targetVal}% stop loss target${partialNote}.\n` +
-          `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
-          `💸 Loss: \`-${lossDisplay} ${unit}\` (-${targetVal}%)`;
+          `Executing market exit: \`${qtyDisplay} ${sym}\` → estimated \`~${soldForNative.toFixed(4)} ${unit}\`\n` +
+          `Target loss: \`-${lossDisplay} ${unit}\` (-${targetVal}%)`;
 
         await _bot.telegram.sendMessage(telegramId, text, { parse_mode: 'Markdown' });
       } else if (triggerType === 'take_profit') {
@@ -108,8 +108,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         const text =
           `🟢 *Take Profit Hit!* 🎉\n\n` +
           `*${sym}* hit your +${targetVal}% take profit target${partialNote}.\n` +
-          `📦 Sold: \`${qtyDisplay} ${sym}\` → \`${soldForNative.toFixed(4)} ${unit}\`\n` +
-          `💰 Profit: \`+${profitDisplay} ${unit}\` (+${targetVal}%)`;
+          `Executing market sell: \`${qtyDisplay} ${sym}\` → estimated \`~${soldForNative.toFixed(4)} ${unit}\`\n` +
+          `Target profit: \`+${profitDisplay} ${unit}\` (+${targetVal}%)`;
 
         await _bot.telegram.sendMessage(telegramId, text, { parse_mode: 'Markdown' });
       } else {
@@ -201,7 +201,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const txHash = data.txHash as string ?? 'unknown';
       const rawReason = (data.reason as string) ?? 'transaction failed or slippage breach';
       const token = data.token as string ?? '';
-      const tokenLine = token ? `🪙 Token: \`${sanitize(token)}\`\n` : '';
+      let sym = token;
+      try {
+        const { getCachedTokenInfo } = await import('./wallet.js');
+        const info = getCachedTokenInfo(token);
+        if (info?.symbol) sym = info.symbol;
+      } catch {}
+      const tokenLine = sym ? `🪙 Token: \`${sanitize(sym)}\`\n` : '';
 
       // Map raw NEAR / RPC errors to user-friendly language
       const friendlyReason = (() => {
@@ -225,17 +231,19 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         return sanitize(rawReason.slice(0, 200));
       })();
 
-      const isSell = Boolean(token && token !== 'wrap.near' && token !== 'near');
+      const isSell = data.is_sell === true || Boolean(token && token !== 'wrap.near' && token !== 'near' && token !== 'sui' && token !== '0x0');
       const refundNote = isSell
-        ? 'No funds were lost on a failed swap — your tokens were returned to your wallet. Use /wallet to check.'
+        ? 'No funds were lost on a failed swap — your tokens remain in your wallet. Use /wallet to check.'
         : 'No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check.';
+      const retryNote = data.trigger_id ? '\n\n🔄 _Stop loss trigger remains active and will retry on the next price tick._' : '';
 
       await _bot.telegram.sendMessage(telegramId,
         `❌ *Trade Failed*\n\n` +
         tokenLine +
         `📋 *Reason*:\n_${friendlyReason}_\n` +
         (txHash !== 'none' ? `\n🧾 TX: \`${sanitize(txHash)}\`\n` : '') +
-        `\n💡 _${refundNote}_`,
+        `\n💡 _${refundNote}_` +
+        retryNote,
         { parse_mode: 'Markdown' }
       );
       break;

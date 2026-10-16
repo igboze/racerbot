@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, type SwapEvent } from '@racerbot/shared';
-import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, type PositionRecord } from '@racerbot/db';
+import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, getUserById, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
 const redis = createRedis(REDIS_URL);
@@ -236,7 +236,9 @@ export class TriggerEngine {
 
     // Sui Chain Trigger Route
     if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {
-      const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
+      const user = await getUserById(position.user_id).catch(() => null);
+      const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
+      const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 2.0);
       const swapEvent = {
         type: 'execute_swap',
         chain: 'sui',
@@ -247,7 +249,10 @@ export class TriggerEngine {
         min_amount_out: '1',
         venue: 'suipump',
         slippage_pct: slippagePct,
+        quoted_at: Date.now(),
         timestamp: Date.now(),
+        trigger_id: trigger.id,
+        trigger_type: trigger.type,
       };
 
       await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
@@ -283,8 +288,10 @@ export class TriggerEngine {
     }
     const venue = venueRaw;
 
-    // Stop-loss default slippage tolerance of 5% to prioritize exit execution; take-profit uses 2%
-    const slippagePct = trigger.type === 'stop_loss' ? 5.0 : 2.0;
+    // Stop-loss default slippage tolerance of 5% to prioritize exit execution; respect user setting if higher
+    const user = await getUserById(position.user_id).catch(() => null);
+    const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
+    const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 2.0);
     const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
       venue as any,
@@ -305,7 +312,11 @@ export class TriggerEngine {
       amount_in: amountIn,
       min_amount_out: minAmountOut,
       venue,
+      slippage_pct: slippagePct,
+      quoted_at: Date.now(),
       timestamp: Date.now(),
+      trigger_id: trigger.id,
+      trigger_type: trigger.type,
       ...(tokenRow?.dcl_pool_id ? { dcl_pool_id: tokenRow.dcl_pool_id } : {}),
     } as any;
 
