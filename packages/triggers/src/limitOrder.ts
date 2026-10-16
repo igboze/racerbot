@@ -16,7 +16,12 @@ import {
   expirePastDueLimitOrders,
   getTokenCache,
   getUserById,
+  getActiveRaceFleetOrders,
+  updateRaceFleetOrderStatus,
+  getRaceFleetById,
+  getRaceFleetWallets,
   type LimitOrderRecord,
+  type RaceFleetOrderRecord,
 } from '@racerbot/db';
 import { localPriceCache, refreshTokenPrice } from './trigger.js';
 
@@ -56,6 +61,16 @@ export async function runLimitOrderEngine(): Promise<void> {
           } catch (err: any) {
             logger.error(`Error evaluating limit order ${order.id}:`, err);
           }
+        }
+      }
+
+      // 3. Fetch all active RaceFleet orders
+      const fleetOrders = await getActiveRaceFleetOrders().catch(() => []);
+      for (const fOrder of fleetOrders) {
+        try {
+          await evaluateFleetOrder(fOrder);
+        } catch (err: any) {
+          logger.error(`Error evaluating fleet order ${fOrder.id}:`, err);
         }
       }
     } catch (loopErr: any) {
@@ -314,3 +329,95 @@ async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, 
     }));
   }
 }
+
+async function evaluateFleetOrder(order: RaceFleetOrderRecord): Promise<void> {
+  // Ensure token price is cached and fresh
+  let cached = localPriceCache.get(order.token_address);
+  if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
+    await refreshTokenPrice(order.token_address);
+    cached = localPriceCache.get(order.token_address);
+  }
+
+  if (!cached || !cached.price || cached.price <= 0) {
+    return;
+  }
+
+  const currentPrice = cached.price;
+  const currentMcap = cached.marketCap || 0;
+  let isTriggered = false;
+  let triggerReason = '';
+
+  if (order.order_type === 'limit_buy') {
+    const target = order.target_value ?? 0;
+    if (order.target_type === 'mcap') {
+      isTriggered = order.trigger_condition === 'lte' ? currentMcap <= target : currentMcap >= target;
+    } else {
+      isTriggered = order.trigger_condition === 'lte' ? currentPrice <= target : currentPrice >= target;
+    }
+    triggerReason = `Target ${order.target_type === 'mcap' ? 'Market Cap' : 'Price'} reached`;
+  } else if (order.order_type === 'limit_sell') {
+    const target = order.target_value ?? 0;
+    if (order.target_type === 'mcap') {
+      isTriggered = order.trigger_condition === 'gte' ? currentMcap >= target : currentMcap <= target;
+    } else {
+      isTriggered = order.trigger_condition === 'gte' ? currentPrice >= target : currentPrice <= target;
+    }
+    triggerReason = `Target ${order.target_type === 'mcap' ? 'Market Cap' : 'Price'} reached`;
+  } else if (order.order_type === 'tp_sl') {
+    // TP / SL monitoring
+    const tp = order.tp_percent ?? 50.0;
+    const sl = order.sl_percent ?? 15.0;
+    // Check if target condition crossed
+    if (order.target_value && order.target_value > 0) {
+      const pnlPct = ((currentPrice - order.target_value) / order.target_value) * 100;
+      if (pnlPct >= tp) {
+        isTriggered = true;
+        triggerReason = `🎯 Take Profit triggered (+${pnlPct.toFixed(1)}%)`;
+      } else if (pnlPct <= -sl) {
+        isTriggered = true;
+        triggerReason = `🔴 Stop Loss triggered (${pnlPct.toFixed(1)}%)`;
+      }
+    }
+  }
+
+  if (!isTriggered) return;
+
+  // Mark order executing to prevent duplicate triggers
+  await updateRaceFleetOrderStatus(order.id, 'executing');
+
+  const user = await getUserById(order.user_id).catch(() => null);
+  const fleet = await getRaceFleetById(order.fleet_id).catch(() => null);
+  if (!user || !fleet) return;
+
+  logger.info(`🏎️ RaceFleet Order Triggered: ${order.order_type} for token ${order.token_address}`, {
+    orderId: order.id,
+    currentPrice,
+    currentMcap,
+    reason: triggerReason,
+  });
+
+  // Notify user via Telegram
+  await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+    type: 'notify_user',
+    telegram_id: user.telegram_id,
+    event: 'fleet_order_triggered',
+    data: {
+      order_id: order.id,
+      fleet_tag: fleet.fleet_tag,
+      token_address: order.token_address,
+      order_type: order.order_type,
+      reason: triggerReason,
+      current_price: currentPrice,
+      current_mcap: currentMcap,
+    },
+  }));
+
+  // Mark filled with summary
+  await updateRaceFleetOrderStatus(order.id, 'filled', undefined, {
+    filledAt: new Date().toISOString(),
+    fillPrice: currentPrice,
+    fillMcap: currentMcap,
+    reason: triggerReason,
+  });
+}
+

@@ -132,6 +132,20 @@ export {
   recordRaceDropClaim,
   getRaceDropClaimsByDrop,
   cancelRaceDrop,
+  // RaceFleet
+  upsertRaceFleet,
+  getRaceFleetByUserId,
+  getRaceFleetById,
+  updateRaceFleetStatus,
+  renewRaceFleet,
+  createRaceFleetWallets,
+  getRaceFleetWallets,
+  getRaceFleetWalletsByUserId,
+  createRaceFleetOrder,
+  getActiveRaceFleetOrders,
+  getRaceFleetOrdersByFleet,
+  cancelRaceFleetOrder,
+  updateRaceFleetOrderStatus,
 } from './db.js';
 
 export {
@@ -179,4 +193,11 @@ export type {
   RaceDropRecord,
   RaceDropClaimRecord,
   CreateRaceDropParams,
-} from './db.js';
+  RaceFleetRecord,
+  RaceFleetWalletRecord,
+  RaceFleetOrderRecord,
+  CreateRaceFleetParams,
+  CreateRaceFleetWalletParams,
+  CreateRaceFleetOrderParams,
+} from './db.js';
+

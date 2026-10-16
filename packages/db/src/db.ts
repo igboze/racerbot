@@ -3179,4 +3179,331 @@ export async function cancelRaceDrop(id: string, userId: string): Promise<RaceDr
   if (!res.rows[0]) return null;
   return rowToRaceDrop(res.rows[0]);
 }
+
+// ── RaceFleet (Multi-Wallet Engine) ─────────────────────────────────────────
+
+export interface RaceFleetRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  fleet_tag: string;
+  status: 'active' | 'expired' | 'paused';
+  wallet_count: number;
+  monthly_fee_near: string;
+  starts_at: Date;
+  expires_at: Date;
+  auto_renew: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface RaceFleetWalletRecord {
+  id: string;
+  fleet_id: string;
+  user_id: string;
+  account_id: string;
+  wallet_index: number;
+  encrypted_private_key: string;
+  is_active: boolean;
+  created_at: Date;
+}
+
+export interface RaceFleetOrderRecord {
+  id: string;
+  fleet_id: string;
+  user_id: string;
+  token_address: string;
+  order_type: 'limit_buy' | 'limit_sell' | 'tp_sl' | 'volume_maker' | 'pre_snipe';
+  status: 'active' | 'executing' | 'filled' | 'cancelled' | 'failed' | 'paused';
+  amount_per_wallet: number;
+  sell_pct?: number;
+  target_type?: 'mcap' | 'price' | 'percent_offset';
+  trigger_condition?: 'lte' | 'gte';
+  target_value?: number;
+  sl_percent?: number;
+  tp_percent?: number;
+  max_slippage_pct: number;
+  volume_interval_sec?: number;
+  last_executed_at?: Date;
+  expires_at?: Date;
+  fill_summary?: any;
+  failure_reason?: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreateRaceFleetParams {
+  user_id: string;
+  name?: string;
+  fleet_tag: string;
+  wallet_count: number;
+  monthly_fee_near?: number;
+  duration_days?: number;
+  auto_renew?: boolean;
+}
+
+export interface CreateRaceFleetWalletParams {
+  fleet_id: string;
+  user_id: string;
+  account_id: string;
+  wallet_index: number;
+  encrypted_private_key: string;
+}
+
+export interface CreateRaceFleetOrderParams {
+  fleet_id: string;
+  user_id: string;
+  token_address: string;
+  order_type: 'limit_buy' | 'limit_sell' | 'tp_sl' | 'volume_maker' | 'pre_snipe';
+  amount_per_wallet?: number;
+  sell_pct?: number;
+  target_type?: 'mcap' | 'price' | 'percent_offset';
+  trigger_condition?: 'lte' | 'gte';
+  target_value?: number;
+  sl_percent?: number;
+  tp_percent?: number;
+  max_slippage_pct?: number;
+  volume_interval_sec?: number;
+  expires_at?: Date | null;
+}
+
+function rowToRaceFleet(row: any): RaceFleetRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    name: row.name,
+    fleet_tag: row.fleet_tag,
+    status: row.status,
+    wallet_count: Number(row.wallet_count),
+    monthly_fee_near: row.monthly_fee_near,
+    starts_at: new Date(row.starts_at),
+    expires_at: new Date(row.expires_at),
+    auto_renew: Boolean(row.auto_renew),
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
+function rowToRaceFleetWallet(row: any): RaceFleetWalletRecord {
+  return {
+    id: row.id,
+    fleet_id: row.fleet_id,
+    user_id: row.user_id,
+    account_id: row.account_id,
+    wallet_index: Number(row.wallet_index),
+    encrypted_private_key: row.encrypted_private_key,
+    is_active: Boolean(row.is_active),
+    created_at: new Date(row.created_at),
+  };
+}
+
+function rowToRaceFleetOrder(row: any): RaceFleetOrderRecord {
+  return {
+    id: row.id,
+    fleet_id: row.fleet_id,
+    user_id: row.user_id,
+    token_address: row.token_address,
+    order_type: row.order_type,
+    status: row.status,
+    amount_per_wallet: parseFloat(row.amount_per_wallet) || 0,
+    sell_pct: row.sell_pct != null ? parseFloat(row.sell_pct) : undefined,
+    target_type: row.target_type,
+    trigger_condition: row.trigger_condition,
+    target_value: row.target_value != null ? parseFloat(row.target_value) : undefined,
+    sl_percent: row.sl_percent != null ? parseFloat(row.sl_percent) : undefined,
+    tp_percent: row.tp_percent != null ? parseFloat(row.tp_percent) : undefined,
+    max_slippage_pct: parseFloat(row.max_slippage_pct) || 3.0,
+    volume_interval_sec: row.volume_interval_sec != null ? Number(row.volume_interval_sec) : undefined,
+    last_executed_at: row.last_executed_at ? new Date(row.last_executed_at) : undefined,
+    expires_at: row.expires_at ? new Date(row.expires_at) : undefined,
+    fill_summary: row.fill_summary,
+    failure_reason: row.failure_reason,
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
+export async function upsertRaceFleet(params: CreateRaceFleetParams): Promise<RaceFleetRecord> {
+  const db = await getDb();
+  const durationDays = params.duration_days ?? 30;
+  const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+  const feeNear = params.monthly_fee_near ?? 2.0;
+
+  const res = await db.query(
+    `INSERT INTO race_fleets (
+      user_id, name, fleet_tag, status, wallet_count, monthly_fee_near, starts_at, expires_at, auto_renew
+    ) VALUES ($1, $2, $3, 'active', $4, $5, NOW(), $6, $7)
+    ON CONFLICT (user_id) DO UPDATE SET
+      name = EXCLUDED.name,
+      fleet_tag = EXCLUDED.fleet_tag,
+      status = 'active',
+      wallet_count = EXCLUDED.wallet_count,
+      expires_at = EXCLUDED.expires_at,
+      auto_renew = EXCLUDED.auto_renew,
+      updated_at = NOW()
+    RETURNING *`,
+    [
+      params.user_id,
+      params.name || 'Alpha Fleet',
+      params.fleet_tag,
+      params.wallet_count,
+      feeNear.toString(),
+      expiresAt,
+      params.auto_renew ?? true,
+    ]
+  );
+  return rowToRaceFleet(res.rows[0]);
+}
+
+export async function getRaceFleetByUserId(userId: string): Promise<RaceFleetRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM race_fleets WHERE user_id = $1', [userId]);
+  if (!res.rows[0]) return null;
+  return rowToRaceFleet(res.rows[0]);
+}
+
+export async function getRaceFleetById(fleetId: string): Promise<RaceFleetRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM race_fleets WHERE id = $1', [fleetId]);
+  if (!res.rows[0]) return null;
+  return rowToRaceFleet(res.rows[0]);
+}
+
+export async function updateRaceFleetStatus(fleetId: string, status: 'active' | 'expired' | 'paused'): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE race_fleets SET status = $2, updated_at = NOW() WHERE id = $1', [fleetId, status]);
+}
+
+export async function renewRaceFleet(fleetId: string, additionalDays = 30): Promise<RaceFleetRecord> {
+  const db = await getDb();
+  const fleet = await getRaceFleetById(fleetId);
+  if (!fleet) throw new Error('Fleet not found');
+
+  const baseTime = fleet.expires_at.getTime() > Date.now() ? fleet.expires_at.getTime() : Date.now();
+  const newExpiresAt = new Date(baseTime + additionalDays * 24 * 60 * 60 * 1000);
+
+  const res = await db.query(
+    `UPDATE race_fleets
+     SET expires_at = $2, status = 'active', updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [fleetId, newExpiresAt]
+  );
+  return rowToRaceFleet(res.rows[0]);
+}
+
+export async function createRaceFleetWallets(wallets: CreateRaceFleetWalletParams[]): Promise<RaceFleetWalletRecord[]> {
+  if (wallets.length === 0) return [];
+  const db = await getDb();
+  const results: RaceFleetWalletRecord[] = [];
+
+  for (const w of wallets) {
+    const res = await db.query(
+      `INSERT INTO race_fleet_wallets (
+        fleet_id, user_id, account_id, wallet_index, encrypted_private_key, is_active
+      ) VALUES ($1, $2, $3, $4, $5, TRUE)
+      ON CONFLICT (account_id) DO UPDATE SET
+        encrypted_private_key = EXCLUDED.encrypted_private_key,
+        is_active = TRUE
+      RETURNING *`,
+      [w.fleet_id, w.user_id, w.account_id, w.wallet_index, w.encrypted_private_key]
+    );
+    results.push(rowToRaceFleetWallet(res.rows[0]));
+  }
+  return results;
+}
+
+export async function getRaceFleetWallets(fleetId: string): Promise<RaceFleetWalletRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM race_fleet_wallets WHERE fleet_id = $1 AND is_active = TRUE ORDER BY wallet_index ASC',
+    [fleetId]
+  );
+  return res.rows.map(rowToRaceFleetWallet);
+}
+
+export async function getRaceFleetWalletsByUserId(userId: string): Promise<RaceFleetWalletRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM race_fleet_wallets WHERE user_id = $1 AND is_active = TRUE ORDER BY wallet_index ASC',
+    [userId]
+  );
+  return res.rows.map(rowToRaceFleetWallet);
+}
+
+export async function createRaceFleetOrder(params: CreateRaceFleetOrderParams): Promise<RaceFleetOrderRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO race_fleet_orders (
+      fleet_id, user_id, token_address, order_type, status, amount_per_wallet, sell_pct,
+      target_type, trigger_condition, target_value, sl_percent, tp_percent, max_slippage_pct,
+      volume_interval_sec, expires_at
+    ) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING *`,
+    [
+      params.fleet_id,
+      params.user_id,
+      params.token_address,
+      params.order_type,
+      params.amount_per_wallet ?? 0,
+      params.sell_pct ?? null,
+      params.target_type ?? null,
+      params.trigger_condition ?? null,
+      params.target_value ?? null,
+      params.sl_percent ?? null,
+      params.tp_percent ?? null,
+      params.max_slippage_pct ?? 3.0,
+      params.volume_interval_sec ?? 30,
+      params.expires_at ?? null,
+    ]
+  );
+  return rowToRaceFleetOrder(res.rows[0]);
+}
+
+export async function getActiveRaceFleetOrders(orderType?: string): Promise<RaceFleetOrderRecord[]> {
+  const db = await getDb();
+  let query = "SELECT * FROM race_fleet_orders WHERE status = 'active'";
+  const values: any[] = [];
+  if (orderType) {
+    query += ' AND order_type = $1';
+    values.push(orderType);
+  }
+  query += ' ORDER BY created_at ASC';
+  const res = await db.query(query, values);
+  return res.rows.map(rowToRaceFleetOrder);
+}
+
+export async function getRaceFleetOrdersByFleet(fleetId: string): Promise<RaceFleetOrderRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM race_fleet_orders WHERE fleet_id = $1 ORDER BY created_at DESC LIMIT 50',
+    [fleetId]
+  );
+  return res.rows.map(rowToRaceFleetOrder);
+}
+
+export async function cancelRaceFleetOrder(orderId: string, userId: string): Promise<boolean> {
+  const db = await getDb();
+  const res = await db.query(
+    "UPDATE race_fleet_orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND user_id = $2 AND status = 'active' RETURNING id",
+    [orderId, userId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export async function updateRaceFleetOrderStatus(
+  orderId: string,
+  status: string,
+  failureReason?: string,
+  fillSummary?: any
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE race_fleet_orders
+     SET status = $2, failure_reason = $3, fill_summary = $4, updated_at = NOW()
+     WHERE id = $1`,
+    [orderId, status, failureReason || null, fillSummary ? JSON.stringify(fillSummary) : null]
+  );
+}
+
 

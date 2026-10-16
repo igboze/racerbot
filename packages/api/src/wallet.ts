@@ -2076,7 +2076,7 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
  * Executes an account-based NEAR transaction with automatic RPC failover across all configured endpoints.
  * Prevents 429 rate limit errors from crashing user operations.
  */
-async function connectWithNearRpcFailover<T>(
+export async function connectWithNearRpcFailover<T>(
   accountId: string,
   keyPair: KeyPair,
   fn: (account: any) => Promise<T>
