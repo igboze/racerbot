@@ -47,6 +47,7 @@ import {
   createLimitOrder,
   getLimitOrdersByUser,
   cancelLimitOrder,
+  createUserWallet,
   getUserWallets,
   getActiveWallet,
   type UserRecord,
@@ -509,6 +510,16 @@ export function formatHoldingQuantity(quantityHeld: string, decimals = 18): stri
 export async function buildWalletMenu(telegramId: number, forceRefresh = false) {
   markUserActiveForDeposit(telegramId);
   checkUserDepositNow(telegramId).catch(() => {});
+  let user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    try {
+      await onboardUser(telegramId);
+      user = await getUserByTelegramId(telegramId);
+    } catch (err: any) {
+      console.warn('[buildWalletMenu] auto-onboard failed:', err?.message);
+    }
+  }
+
   const b = await getUserBalances(telegramId, forceRefresh);
   const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
@@ -517,7 +528,6 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
-  const user = await getUserByTelegramId(telegramId);
   const [nearWallets, suiWallets] = user
     ? await Promise.all([
         getUserWallets(user.id, 'near').catch(() => []),
@@ -542,6 +552,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
   buttons.push([
     cb(`💳 Wallets (${walletsCount})`, 'wallets_menu', 'primary'),
+    cb('📥 Import Wallet', 'wallets_menu', 'primary'),
     cb('🎒 Your Bags', 'menu_holdings', 'primary'),
   ]);
 
@@ -560,29 +571,161 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   ]);
 
   const text =
-    `<b>${walletDisplayName}</b> 💼 ⭐\n\n` +
+    `<b>${escapeHtml(walletDisplayName)}</b> 💼 ⭐\n\n` +
     `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
     `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n\n` +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n\n` +
     `✨ Starknet: <b>${b.strkBalanceFormatted || '0.0000'}</b> STRK | <b>${b.ethBalanceFormatted || '0.0000'}</b> ETH\n\n` +
     `Total: <b>${totalUsdStr}</b>\n\n` +
-    `<u>NEAR</u>: <code>${b.subaccountId}</code>\n` +
-    (b.suiAddress ? `<u>SUI</u>: <code>${b.suiAddress}</code>\n` : '') +
-    (b.starknetAddress ? `<u>Starknet</u>: <code>${b.starknetAddress}</code>` : '');
+    `<u>NEAR</u>: <code>${escapeHtml(b.subaccountId)}</code>\n` +
+    (b.suiAddress ? `<u>SUI</u>: <code>${escapeHtml(b.suiAddress)}</code>\n` : '') +
+    (b.starknetAddress ? `<u>Starknet</u>: <code>${escapeHtml(b.starknetAddress)}</code>` : '');
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
 // ── Helper: Build Wallets Management Menu ────────────────────────────────────
 export async function buildWalletsManagementMenu(telegramId: number) {
-  const user = await getUserByTelegramId(telegramId);
+  let user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    try {
+      await onboardUser(telegramId);
+      user = await getUserByTelegramId(telegramId);
+    } catch (err: any) {
+      console.warn('[buildWalletsManagementMenu] auto-onboard failed:', err?.message);
+    }
+  }
   if (!user) throw new Error('User not found. Run /start first.');
 
-  const [nearWallets, suiWallets, starknetWallets] = await Promise.all([
-    getUserWallets(user.id, 'near').catch(() => []),
-    getUserWallets(user.id, 'sui').catch(() => []),
-    getUserWallets(user.id, 'starknet').catch(() => []),
-  ]);
+  const nearWallets: UserWalletRecord[] = await getUserWallets(user.id, 'near').catch(() => []);
+  const suiWallets: UserWalletRecord[] = await getUserWallets(user.id, 'sui').catch(() => []);
+  const starknetWallets: UserWalletRecord[] = await getUserWallets(user.id, 'starknet').catch(() => []);
+
+  // Self-heal: ensure default active NEAR wallet is in nearWallets if missing
+  if (nearWallets.length === 0 && user.subaccount_id) {
+    if (user.scoped_key_encrypted) {
+      try {
+        const created = await createUserWallet({
+          userId: user.id,
+          chain: 'near',
+          address: user.subaccount_id,
+          name: 'Wallet 1',
+          encryptedPrivateKey: user.scoped_key_encrypted,
+          isImported: false,
+          isActive: true,
+        });
+        nearWallets.push(created);
+      } catch {
+        nearWallets.push({
+          id: 'default_near',
+          user_id: user.id,
+          chain: 'near',
+          address: user.subaccount_id,
+          name: 'Wallet 1',
+          encrypted_private_key: user.scoped_key_encrypted,
+          is_imported: false,
+          is_active: true,
+          created_at: new Date(),
+        });
+      }
+    } else {
+      nearWallets.push({
+        id: 'default_near',
+        user_id: user.id,
+        chain: 'near',
+        address: user.subaccount_id,
+        name: 'Wallet 1',
+        encrypted_private_key: '',
+        is_imported: false,
+        is_active: true,
+        created_at: new Date(),
+      });
+    }
+  }
+
+  // Self-heal: ensure default active SUI wallet is in suiWallets if missing
+  if (suiWallets.length === 0 && user.sui_address) {
+    if (user.sui_private_key_enc) {
+      try {
+        const created = await createUserWallet({
+          userId: user.id,
+          chain: 'sui',
+          address: user.sui_address,
+          name: 'Wallet 1',
+          encryptedPrivateKey: user.sui_private_key_enc,
+          isImported: false,
+          isActive: true,
+        });
+        suiWallets.push(created);
+      } catch {
+        suiWallets.push({
+          id: 'default_sui',
+          user_id: user.id,
+          chain: 'sui',
+          address: user.sui_address,
+          name: 'Wallet 1',
+          encrypted_private_key: user.sui_private_key_enc,
+          is_imported: false,
+          is_active: true,
+          created_at: new Date(),
+        });
+      }
+    } else {
+      suiWallets.push({
+        id: 'default_sui',
+        user_id: user.id,
+        chain: 'sui',
+        address: user.sui_address,
+        name: 'Wallet 1',
+        encrypted_private_key: '',
+        is_imported: false,
+        is_active: true,
+        created_at: new Date(),
+      });
+    }
+  }
+
+  // Self-heal: ensure default active Starknet wallet is in starknetWallets if missing
+  if (starknetWallets.length === 0 && user.starknet_address) {
+    if (user.starknet_private_key_enc) {
+      try {
+        const created = await createUserWallet({
+          userId: user.id,
+          chain: 'starknet',
+          address: user.starknet_address,
+          name: 'Wallet 1',
+          encryptedPrivateKey: user.starknet_private_key_enc,
+          isImported: false,
+          isActive: true,
+        });
+        starknetWallets.push(created);
+      } catch {
+        starknetWallets.push({
+          id: 'default_starknet',
+          user_id: user.id,
+          chain: 'starknet',
+          address: user.starknet_address,
+          name: 'Wallet 1',
+          encrypted_private_key: user.starknet_private_key_enc,
+          is_imported: false,
+          is_active: true,
+          created_at: new Date(),
+        });
+      }
+    } else {
+      starknetWallets.push({
+        id: 'default_starknet',
+        user_id: user.id,
+        chain: 'starknet',
+        address: user.starknet_address,
+        name: 'Wallet 1',
+        encrypted_private_key: '',
+        is_imported: false,
+        is_active: true,
+        created_at: new Date(),
+      });
+    }
+  }
 
   let text = `💼 <b>Multi-Chain Wallets</b>\n\n`;
   text += `Switch active wallet per chain,\nor import an existing private key:\n\n`;
@@ -598,15 +741,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     const activeLabel = isActive ? ' <b>[Active]</b>' : '';
     const importedLabel = w.is_imported ? ' 📥' : '';
 
-    text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
-    text += `   <code>${w.address}</code>\n\n`;
+    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
     const row: any[] = [];
-    if (!isActive) {
+    if (!isActive && w.id && !w.id.startsWith('default_')) {
       row.push(cb(`⚡ Use ${w.name}`, `wallet_switch:${w.id}`, 'primary'));
     }
-    row.push(cb(`✏️ Rename`, `wallet_rename_prompt:${w.id}`, 'primary'));
-    if (w.is_imported && !isActive) {
+    if (w.id && !w.id.startsWith('default_')) {
+      row.push(cb(`✏️ Rename`, `wallet_rename_prompt:${w.id}`, 'primary'));
+    }
+    if (w.is_imported && !isActive && w.id && !w.id.startsWith('default_')) {
       row.push(cb(`🗑️ Delete`, `wallet_delete_confirm:${w.id}`, 'primary'));
     }
     if (row.length > 0) {
@@ -623,15 +768,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     const activeLabel = isActive ? ' <b>[Active]</b>' : '';
     const importedLabel = w.is_imported ? ' 📥' : '';
 
-    text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
-    text += `   <code>${w.address}</code>\n\n`;
+    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
     const row: any[] = [];
-    if (!isActive) {
+    if (!isActive && w.id && !w.id.startsWith('default_')) {
       row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_sui:${w.id}`, 'primary'));
     }
-    row.push(cb(`✏️ Rename`, `wallet_rename_sui_prompt:${w.id}`, 'primary'));
-    if (w.is_imported && !isActive) {
+    if (w.id && !w.id.startsWith('default_')) {
+      row.push(cb(`✏️ Rename`, `wallet_rename_sui_prompt:${w.id}`, 'primary'));
+    }
+    if (w.is_imported && !isActive && w.id && !w.id.startsWith('default_')) {
       row.push(cb(`🗑️ Delete`, `wallet_delete_sui_confirm:${w.id}`, 'primary'));
     }
     if (row.length > 0) {
@@ -641,30 +788,25 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 
   // 3. Starknet Wallets Section
   text += `⚡ <b>Starknet Wallets</b>\n`;
-  if (starknetWallets.length === 0 && user.starknet_address) {
-    text += `1. 🟢 <b>Wallet 1</b> <b>[Active]</b>\n`;
-    text += `   <code>${user.starknet_address}</code>\n\n`;
-  } else if (starknetWallets.length === 0) {
-    text += `<i>No Starknet wallet found. Tap below to generate.</i>\n\n`;
-  } else {
-    for (let i = 0; i < starknetWallets.length; i++) {
-      const w = starknetWallets[i];
-      const isActive = w.is_active;
-      const statusIcon = isActive ? '🟢' : '⚪';
-      const activeLabel = isActive ? ' <b>[Active]</b>' : '';
-      const importedLabel = w.is_imported ? ' 📥' : '';
+  for (let i = 0; i < starknetWallets.length; i++) {
+    const w = starknetWallets[i];
+    const isActive = w.is_active;
+    const statusIcon = isActive ? '🟢' : '⚪';
+    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const importedLabel = w.is_imported ? ' 📥' : '';
 
-      text += `${i + 1}. ${statusIcon} <b>${w.name}</b>${importedLabel}${activeLabel}\n`;
-      text += `   <code>${w.address}</code>\n\n`;
+    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
-      const row: any[] = [];
-      if (!isActive) {
-        row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_starknet:${w.id}`, 'primary'));
-      }
+    const row: any[] = [];
+    if (!isActive && w.id && !w.id.startsWith('default_')) {
+      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_starknet:${w.id}`, 'primary'));
+    }
+    if (w.id && !w.id.startsWith('default_')) {
       row.push(cb(`✏️ Rename`, `wallet_rename_starknet_prompt:${w.id}`, 'primary'));
-      if (row.length > 0) {
-        buttons.push(row);
-      }
+    }
+    if (row.length > 0) {
+      buttons.push(row);
     }
   }
 
@@ -3091,14 +3233,22 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.action('menu_wallet', async (ctx) => {
+  bot.action(['menu_wallet', 'wallet', 'open_wallet'], async (ctx) => {
     const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
     try {
       const wallet = await buildWalletMenu(telegramId);
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.editMessageText(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+      const canEdit = typeof (ctx as any).editMessageText === 'function';
+      if (canEdit && ctx.callbackQuery) {
+        await (ctx as any).editMessageText(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(async (err: any) => {
+          if (err?.message?.includes('message is not modified')) return;
+          await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+        });
+      } else {
+        await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+      }
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -6310,13 +6460,14 @@ export function setupRoutes(bot: Telegraf): void {
     }
   };
 
-  bot.command('wallets', handleWallets);
-  bot.action('wallets_menu', async (ctx) => {
+  bot.command(['wallets', 'importwallet', 'import'], handleWallets);
+  bot.action(['wallets_menu', 'import_wallet', 'import_wallet_menu', 'wallet_modal', 'wallets'], async (ctx) => {
     try {
       await ctx.answerCbQuery().catch(() => {});
       await handleWallets(ctx);
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
   });
 
@@ -6342,6 +6493,10 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('wallet_import_prompt', async (ctx) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Import NEAR wallet');
+      return;
+    }
     const telegramId = ctx.from!.id;
     userPendingActions.set(telegramId, {
       action: 'import_near_key',
@@ -6354,7 +6509,7 @@ export function setupRoutes(bot: Telegraf): void {
       `<i>Tip: You can also specify an account ID alongside the key:</i>\n` +
       `<code>myaccount.near ed25519:...</code>\n\n` +
       `🔒 <i>Your message containing the key will be deleted automatically for security.</i>\n\n` +
-      `_Send /cancel to abort._`,
+      `<i>Send /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
   });
@@ -6417,6 +6572,10 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('wallet_import_sui_prompt', async (ctx) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Import SUI wallet');
+      return;
+    }
     const telegramId = ctx.from!.id;
     userPendingActions.set(telegramId, {
       action: 'import_sui_key',
@@ -6431,7 +6590,7 @@ export function setupRoutes(bot: Telegraf): void {
       `• 32-byte or 64-byte Hex (with or without <code>0x</code>)\n` +
       `• Base64 or Base58\n\n` +
       `🔒 <i>Your message containing the key will be deleted automatically for security.</i>\n\n` +
-      `_Send /cancel to abort._`,
+      `<i>Send /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
   });
