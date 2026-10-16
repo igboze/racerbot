@@ -7,7 +7,7 @@ import {
   MAX_FLEET_WALLETS,
 } from './raceFleet.js';
 import { KeyPair } from 'near-api-js';
-import { encrypt, decrypt } from '@racerbot/shared';
+import { encrypt, decrypt, generateRandomAccountPrefix } from '@racerbot/shared';
 
 describe('RaceFleet Suite', () => {
   it('generates compliant, privacy-preserving randomized fleet tags', () => {
@@ -54,5 +54,19 @@ describe('RaceFleet Suite', () => {
 
     const restoredKeyPair = KeyPair.fromString(decrypted as any);
     expect(restoredKeyPair.getPublicKey().toString()).toBe(keyPair.getPublicKey().toString());
+  });
+
+  it('produces diverse, organic account names without coordinated index sequences', () => {
+    const parent = 'racerbot.near';
+    const names = new Set<string>();
+    for (let i = 0; i < 5; i++) {
+      const accountId = `${generateRandomAccountPrefix()}.${parent}`;
+      expect(accountId).toMatch(/^[a-z]+-[a-z]+-\d{4}\.racerbot\.near$/);
+      // Ensure no coordinated sequence patterns like "-01", "-02"
+      expect(accountId).not.toMatch(/-0[1-5]\.racerbot\.near$/);
+      names.add(accountId);
+    }
+    // High entropy: generated names must be distinct
+    expect(names.size).toBe(5);
   });
 });
