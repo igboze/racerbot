@@ -385,6 +385,36 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       break;
     }
 
+    case 'fleet_order_triggered' as any: {
+      const fleetTag = (data.fleet_tag as string) || 'Fleet';
+      const orderType = (data.order_type as string) || 'Order';
+      const reason = (data.reason as string) || 'Trigger condition met';
+      const tokenAddress = (data.token_address as string) || '';
+      const currentPrice = Number(data.current_price || 0);
+
+      const msg =
+        `🏎️ <b>RaceFleet Order Triggered!</b>\n\n` +
+        `🏷 <b>Fleet:</b> <code>${fleetTag}</code>\n` +
+        `🪙 <b>Token:</b> <code>${tokenAddress}</code>\n` +
+        `📊 <b>Type:</b> ${orderType.toUpperCase()}\n` +
+        `🎯 <b>Trigger:</b> ${reason}\n` +
+        `💵 <b>Price:</b> $${currentPrice.toFixed(6)}\n\n` +
+        `<i>Coordinated bundle execution initiated across your fleet.</i>`;
+
+      await _bot.telegram.sendMessage(telegramId, msg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🏎️ Fleet Dashboard', callback_data: 'racefleet_menu' },
+              { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+            ],
+          ],
+        },
+      }).catch(() => {});
+      break;
+    }
+
     case 'limit_order_failed': {
       const symbol = (data.symbol as string) || 'TOKEN';
       const side = (data.side as string) || 'buy';
