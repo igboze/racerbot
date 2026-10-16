@@ -85,8 +85,20 @@ async function main(): Promise<void> {
     await logger.time('Swap executed', async () => {
       await executor.execute(event).catch(async (err: Error) => {
         logger.error('Swap failed', err, { correlationId, userId: event.user_id });
+        if ((event as any).trigger_id) {
+          try {
+            const db = await getDb();
+            await db.query("UPDATE triggers SET status = 'active' WHERE id = $1", [(event as any).trigger_id]);
+            logger.info('Re-armed failed trigger so it can retry', { triggerId: (event as any).trigger_id });
+          } catch (rearmErr: any) {
+            logger.warn('Failed to re-arm trigger:', { error: rearmErr.message });
+          }
+        }
         // Notify the user via Telegram — notify.ts resolves telegram_id from data.user_id
         try {
+          const rawToken = event.token_out !== 'near' && event.token_out !== 'wrap.near' && event.token_out !== 'sui' && event.token_out !== '0x0'
+            ? event.token_out
+            : event.token_in;
           await redis.publish(
             CHANNELS.NOTIFY_USER,
             JSON.stringify({
@@ -97,7 +109,9 @@ async function main(): Promise<void> {
                 user_id: event.user_id,
                 txHash: 'none',
                 reason: err.message ?? 'Unknown executor error',
-                token: event.token_out,
+                token: rawToken,
+                is_sell: event.token_in !== 'near' && event.token_in !== 'wrap.near' && event.token_in !== 'sui',
+                trigger_id: (event as any).trigger_id,
               },
             })
           );

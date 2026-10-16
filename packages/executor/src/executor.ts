@@ -963,7 +963,7 @@ export class SwapExecutor {
     // pool gives. Sell paths must NOT be rescaled: the fee there is taken from
     // the OUTPUT after the swap, so rescaling would silently lower the user's
     // price floor by 1.5%.
-    const minOutAdj = isBuyPath ? calculateMinOutAdj(min_amount_out, amountInBigInt) : min_amount_out;
+    let minOutAdj = isBuyPath ? calculateMinOutAdj(min_amount_out, amountInBigInt) : min_amount_out;
 
     // FIX 3: fire the output-token balance read NOW so it overlaps with the
     // pre-flight quote — it adds no wall-clock time, and the awaited snapshot
@@ -1006,11 +1006,16 @@ export class SwapExecutor {
           (event as any).pool_id ?? null,
           dclPoolId
         ).catch(() => null);
-    if (freshQuote && BigInt(freshQuote.minAmountOut) < BigInt(minOutAdj)) {
-      throw new Error(
-        'Price moved beyond your slippage setting before execution. No transaction was sent — no funds spent. ' +
-        'Retry now for a fresh quote, or increase slippage in Settings.'
-      );
+    if (freshQuote && BigInt(freshQuote.expectedOutput) < BigInt(minOutAdj)) {
+      if ((event as any).trigger_type === 'stop_loss') {
+        console.log(`[EXECUTOR] Stop-loss price slipped below initial quote; updating min_amount_out to fresh quote ${freshQuote.minAmountOut} to prioritize exit`);
+        minOutAdj = freshQuote.minAmountOut;
+      } else {
+        throw new Error(
+          'Price moved beyond your slippage setting before execution. No transaction was sent — no funds spent. ' +
+          'Retry now for a fresh quote, or increase slippage in Settings.'
+        );
+      }
     }
 
     // Pre-broadcast budget: all view calls (quote + storage checks + pool lookup)
@@ -3018,7 +3023,7 @@ export class SwapExecutor {
       // Slippage-breach retry: re-quote with +2pp slippage and try once more.
       // The failed transaction reverted on-chain, so no funds moved; this only
       // rescues trades caught by fast price movement between quote and execution.
-      const isSlippageBreach = failReason.startsWith('Slippage too high') || failReason.includes('refunded your input');
+      const isSlippageBreach = failReason.startsWith('Slippage too high') || failReason.includes('refunded your input') || failReason.includes('Price moved beyond your slippage setting');
       if (isSlippageBreach && !(event as any).__slippage_retry) {
         const bumpedSlippage = userSlippage + 2;
         const bumpedQuote = await near.computeMinAmountOut(
@@ -3046,11 +3051,23 @@ export class SwapExecutor {
         }
       }
 
+      if ((event as any).trigger_id) {
+        try {
+          const db = await getDb();
+          await db.query("UPDATE triggers SET status = 'active' WHERE id = $1", [(event as any).trigger_id]);
+          console.log(`[EXECUTOR] Re-armed failed trigger ${(event as any).trigger_id} so it can retry`);
+        } catch (rearmErr: any) {
+          console.warn('[EXECUTOR] Failed to re-arm trigger:', rearmErr.message);
+        }
+      }
+
       console.warn(`[EXECUTOR] Trade failed: txHash=${txHash} reason=${failReason}`);
       await this.notifyUser(user_id, 'trade_failed' as any, {
         txHash,
         reason: failReason,
         token: token_out !== 'near' && token_out !== 'wrap.near' ? token_out : token_in,
+        is_sell: token_in !== 'near' && token_in !== 'wrap.near',
+        trigger_id: (event as any).trigger_id,
       });
       return { txHash, success: false, reason: failReason };
     }
