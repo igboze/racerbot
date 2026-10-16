@@ -150,6 +150,8 @@ import {
   executeFleetBundleSell,
   exportFleetKeys,
   getFleetBalances,
+  getFleetTokenPosition,
+  type FleetTokenPosition,
   RACEFLEET_MONTHLY_FEE_NEAR,
 } from './raceFleet.js';
 import {
@@ -740,6 +742,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const nativeUnit = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
   const unitBtn = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'N');
 
+  // Check if user has an active RaceFleet and whether it holds this target token
+  let fleet: any = null;
+  let fleetPosition: FleetTokenPosition | null = null;
+  if (userRecord && !isSui && !isStarknet) {
+    try {
+      fleet = await getRaceFleetByUserId(userRecord.id).catch(() => null);
+      if (fleet && fleet.status === 'active') {
+        fleetPosition = await getFleetTokenPosition(fleet.id, tokenAddress).catch(() => null);
+      }
+    } catch (err: any) {
+      console.warn('[buildTokenCard] fleet lookup failed:', err?.message);
+    }
+  }
+  const fleetHoldsToken = Boolean(fleetPosition && fleetPosition.totalBalanceHuman > 0.000001);
+
   const balanceText = isStarknet
     ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
     : (isSui
@@ -1070,11 +1087,23 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
 
     const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
-    text += `💼 *Your Position*:\n` +
+    text += `💼 *Personal Position*:\n` +
       '```\n' +
       `Holding  : ${formattedQty} ${safeSymbol}\n` +
       `Entry Px : ${entryPrice.toFixed(8)} ${nativeUnit}\n` +
       `PNL      : ${emoji} ${pnlDisplay}\n` +
+      '```\n\n';
+  }
+
+  // If user holds the token across their RaceFleet, add RaceFleet holdings info with independent PnL
+  if (fleetHoldsToken && fleetPosition) {
+    const fleetFormattedQty = formatHoldingQuantity(fleetPosition.totalBalanceRaw.toString(), tokenInfo.decimals);
+    const entryPxStr = fleetPosition.avgEntryPriceNear > 0 ? `${fleetPosition.avgEntryPriceNear.toFixed(8)} NEAR` : 'LIVE';
+    text += `🏎️ *RaceFleet Position* (${fleetPosition.walletsHoldingCount}/${fleetPosition.walletCount} Wallets):\n` +
+      '```\n' +
+      `Holding  : ${fleetFormattedQty} ${safeSymbol} (~$${fleetPosition.totalValueUsd.toFixed(2)})\n` +
+      `Entry Px : ${entryPxStr}\n` +
+      `Fleet PnL: ${fleetPosition.emoji} ${fleetPosition.pnlDisplay}\n` +
       '```\n\n';
   }
   // ── Buttons ──
@@ -1101,6 +1130,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       safety?.isDrained ? '🚨 Buy Blocked (Drained Liquidity)' : '🚨 Buy Blocked (Honeypot Backdoor)',
       safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
     )];
+    const fleetExitRow = (!isSui && !isStarknet && fleetHoldsToken)
+      ? [
+          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
+          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
+        ]
+      : [];
     if (holdsToken && userPosition) {
       text += `⚡ *Exit Position* (Sell Only):\n`;
       keyboard = Markup.inlineKeyboard([
@@ -1114,6 +1149,24 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           cb('🔴 Sell X Tokens', `sell_custom_prompt:${userPosition.id}`, 'danger'),
           cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger'),
         ],
+        ...(fleetExitRow.length > 0 ? [fleetExitRow] : []),
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else if (fleetHoldsToken) {
+      text += `⚡ *Exit Fleet Position* (Sell Only):\n`;
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        ...(fleetExitRow.length > 0 ? [fleetExitRow] : []),
         ...linkRows,
         ...shareButtonRow,
         [
@@ -1146,20 +1199,38 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     const unlockedRiskRow = safety?.isUnlockedRheaPool
       ? [[Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]]
       : [];
-    const fleetButtonRow = (!isSui && !isStarknet)
-      ? [[cb('🏎️ Buy with RaceFleet (Beta)', `fleet_cockpit:${shortKey}`, 'success')]]
-      : [];
+
+    const fleetActionRows: any[] = [];
+    if (!isSui && !isStarknet) {
+      if (fleetHoldsToken && fleetPosition) {
+        fleetActionRows.push([
+          cb(`🏎️ RaceFleet Cockpit (${fleetPosition.emoji} ${fleetPosition.pnlDisplay})`, `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+        fleetActionRows.push([
+          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
+          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
+        ]);
+        fleetActionRows.push([
+          cb('🏎️ Buy More with Fleet', `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+      } else {
+        fleetActionRows.push([
+          cb('🏎️ Buy with RaceFleet (Beta)', `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+      }
+    }
+
+    const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
 
     if (holdsToken && userPosition) {
-      text += `⚡ *Manage Position* (Buy More or Sell):\n`;
-      const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
+      text += `⚡ *Manage Position* (Personal & Fleet):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
         parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
-        ...fleetButtonRow,
+        ...fleetActionRows,
         // Buy % of balance (green)
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1192,14 +1263,42 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
         ],
       ]);
+    } else if (fleetHoldsToken && fleetPosition) {
+      text += `⚡ *Manage RaceFleet Position*:\n`;
+      keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
+        ...fleetActionRows,
+        // Quick-buy fixed amounts for personal account
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        [
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
+        ],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
     } else {
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
-      const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
-        ...fleetButtonRow,
+        ...fleetActionRows,
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
           cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
@@ -1235,6 +1334,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         `🎯 *Set a Snipe to buy automatically the moment liquidity is added!*\n\n`;
       keyboard = Markup.inlineKeyboard([
         [cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success')],
+        ...(!isSui && !isStarknet ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
         ...linkRows,
         ...shareButtonRow,
         [

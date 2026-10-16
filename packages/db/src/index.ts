@@ -146,6 +146,8 @@ export {
   getRaceFleetOrdersByFleet,
   cancelRaceFleetOrder,
   updateRaceFleetOrderStatus,
+  recordRaceFleetFill,
+  getRaceFleetFills,
 } from './db.js';
 
 export {
@@ -196,8 +198,10 @@ export type {
   RaceFleetRecord,
   RaceFleetWalletRecord,
   RaceFleetOrderRecord,
+  RaceFleetFillRecord,
   CreateRaceFleetParams,
   CreateRaceFleetWalletParams,
   CreateRaceFleetOrderParams,
+  CreateRaceFleetFillParams,
 } from './db.js';
 
