@@ -403,9 +403,12 @@ async function evaluateFleetOrder(order: RaceFleetOrderRecord): Promise<void> {
     event: 'fleet_order_triggered',
     data: {
       order_id: order.id,
+      fleet_id: order.fleet_id,
       fleet_tag: fleet.fleet_tag,
       token_address: order.token_address,
       order_type: order.order_type,
+      amount_per_wallet: order.amount_per_wallet,
+      sell_pct: order.sell_pct,
       reason: triggerReason,
       current_price: currentPrice,
       current_mcap: currentMcap,

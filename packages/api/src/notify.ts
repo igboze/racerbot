@@ -2,6 +2,7 @@ import type { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, type NotifyUserEvent } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
 import { PUBLIC_URL } from './config.js';
+import { executeFleetBundleBuy, executeFleetBundleSell } from './raceFleet.js';
 
 let _bot: Telegraf | null = null;
 
@@ -386,6 +387,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
     }
 
     case 'fleet_order_triggered' as any: {
+      const fleetId = data.fleet_id as string;
       const fleetTag = (data.fleet_tag as string) || 'Fleet';
       const orderType = (data.order_type as string) || 'Order';
       const reason = (data.reason as string) || 'Trigger condition met';
@@ -393,13 +395,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const currentPrice = Number(data.current_price || 0);
 
       const msg =
-        `🏎️ <b>RaceFleet Order Triggered!</b>\n\n` +
+        `🏎️ <b>RaceFleet [Beta] Order Triggered!</b>\n\n` +
         `🏷 <b>Fleet:</b> <code>${fleetTag}</code>\n` +
         `🪙 <b>Token:</b> <code>${tokenAddress}</code>\n` +
         `📊 <b>Type:</b> ${orderType.toUpperCase()}\n` +
         `🎯 <b>Trigger:</b> ${reason}\n` +
         `💵 <b>Price:</b> $${currentPrice.toFixed(6)}\n\n` +
-        `<i>Coordinated bundle execution initiated across your fleet.</i>`;
+        `<i>Coordinated bundle execution initiated across your fleet...</i>`;
 
       await _bot.telegram.sendMessage(telegramId, msg, {
         parse_mode: 'HTML',
@@ -412,6 +414,66 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
           ],
         },
       }).catch(() => {});
+
+      // Automatically execute fleet bundle if fleetId and tokenAddress exist
+      if (fleetId && tokenAddress) {
+        if (orderType === 'limit_buy') {
+          const buyAmt = Number(data.amount_per_wallet) || 1.0;
+          executeFleetBundleBuy(fleetId, tokenAddress, buyAmt, 3.0)
+            .then((res) => {
+              if (res.success) {
+                _bot!.telegram.sendMessage(
+                  telegramId,
+                  `✅ <b>Fleet Limit Buy Executed!</b>\n\n` +
+                  `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+                  `📦 <b>Swaps</b>: ${res.successCount} wallets\n` +
+                  `💰 <b>Spent</b>: ${res.totalSpentNear} NEAR`,
+                  { parse_mode: 'HTML' }
+                ).catch(() => {});
+              } else {
+                _bot!.telegram.sendMessage(
+                  telegramId,
+                  `❌ <b>Fleet Limit Buy Failed:</b> ${res.errors[0] || 'Unknown error'}`,
+                  { parse_mode: 'HTML' }
+                ).catch(() => {});
+              }
+            })
+            .catch((err) => {
+              _bot!.telegram.sendMessage(
+                telegramId,
+                `❌ <b>Fleet Order Execution Error:</b> ${err?.message || err}`,
+                { parse_mode: 'HTML' }
+              ).catch(() => {});
+            });
+        } else if (orderType === 'limit_sell' || orderType === 'tp_sl') {
+          const sellPct = Number(data.sell_pct) || 100;
+          executeFleetBundleSell(fleetId, tokenAddress, sellPct, 3.0)
+            .then((res) => {
+              if (res.success) {
+                _bot!.telegram.sendMessage(
+                  telegramId,
+                  `✅ <b>Fleet ${orderType === 'tp_sl' ? 'Take Profit / Stop Loss' : 'Limit Sell'} Executed!</b>\n\n` +
+                  `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+                  `📦 <b>Wallets Executed</b>: ${res.successCount} wallets`,
+                  { parse_mode: 'HTML' }
+                ).catch(() => {});
+              } else {
+                _bot!.telegram.sendMessage(
+                  telegramId,
+                  `❌ <b>Fleet Sell Failed:</b> ${res.errors[0] || 'Unknown error'}`,
+                  { parse_mode: 'HTML' }
+                ).catch(() => {});
+              }
+            })
+            .catch((err) => {
+              _bot!.telegram.sendMessage(
+                telegramId,
+                `❌ <b>Fleet Order Execution Error:</b> ${err?.message || err}`,
+                { parse_mode: 'HTML' }
+              ).catch(() => {});
+            });
+        }
+      }
       break;
     }
 
