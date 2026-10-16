@@ -2107,17 +2107,21 @@ export class MultiRpcNear {
     let reserveNear = '0';
     let reserveToken = '0';
 
-    if (dclPoolId) {
-      try {
-        const dcl = await this.getDclPoolState(dclPoolId, pairedToken);
-        price = dcl.price;
-        liquidityNear = dcl.liquidityNear;
-        reserveNear = dcl.reserveNear;
-        reserveToken = dcl.reserveToken;
-      } catch {
-        // Pool may be creating or empty
-      }
+    const [dclPoolState, supplyOnChain] = await Promise.all([
+      dclPoolId ? this.getDclPoolState(dclPoolId, pairedToken).catch(() => null) : Promise.resolve(null),
+      this.view<string>(tokenAddress, 'ft_total_supply', {}).catch(() => '0'),
+    ]);
+
+    if (dclPoolState) {
+      price = dclPoolState.price;
+      liquidityNear = dclPoolState.liquidityNear;
+      reserveNear = dclPoolState.reserveNear;
+      reserveToken = dclPoolState.reserveToken;
     }
+
+    const totalSupply = (supplyOnChain && supplyOnChain !== '0')
+      ? supplyOnChain
+      : (launch?.total_supply || '0');
 
     return {
       token: tokenAddress,
@@ -2128,7 +2132,7 @@ export class MultiRpcNear {
       liquidityNear,
       reserveNear,
       reserveToken,
-      totalSupply: '0',
+      totalSupply,
     };
   }
 

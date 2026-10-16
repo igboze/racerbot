@@ -772,7 +772,7 @@ export function isIntearToken(tokenAddress: string): boolean {
 /**
  * Fetch meme.cooking token state from on-chain.
  */
-async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string; progress: number }> {
+async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string; progress: number; totalSupply?: string }> {
   const memeId = parseMemeCookingId(tokenAddress);
   if (memeId === null) {
     return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
@@ -786,14 +786,14 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
       const tokensToDistribute = parseFloat(meme.amount_to_be_distributed || meme.total_supply || '0') / Math.pow(10, meme.decimals || 18);
       const price = tokensToDistribute > 0 ? totalStaked / tokensToDistribute : 0;
       const progress = hardCap > 0 ? Math.min(100, (totalStaked / hardCap) * 100) : 0;
-      return { price, liquidity: totalStaked, phase: 'prebonded', progress };
+      return { price, liquidity: totalStaked, phase: 'prebonded', progress, totalSupply: meme.total_supply };
     }
   } catch { /* no-op */ }
 
   try {
     const fin = await near.view<any>('meme-cooking.near', 'get_finalized_meme', { meme_id: memeId }).catch(() => null);
     if (fin) {
-      return { price: 0, liquidity: 0, phase: 'bonded', progress: 100 };
+      return { price: 0, liquidity: 0, phase: 'bonded', progress: 100, totalSupply: fin.total_supply };
     }
   } catch { /* no-op */ }
 
@@ -1022,9 +1022,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ? geckoAttr.total_supply.split('.')[0]
       : (meta.totalSupply || '1000000000000000000000000000');
     const supplyHuman = parseFloat(rawTotalSupply) / Math.pow(10, meta.decimals);
-    const mcapUsdNum = parseFloat(geckoAttr?.fdv_usd || topPoolAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0') ||
-      (priceUsdNum > 0 && supplyHuman > 0 ? priceUsdNum * supplyHuman : 0);
-    const mcapNativeNum = strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : (priceNativeNum > 0 ? priceNativeNum * supplyHuman : 0);
+    const mcapUsdNum = (priceUsdNum > 0 && supplyHuman > 0)
+      ? priceUsdNum * supplyHuman
+      : parseFloat(geckoAttr?.fdv_usd || topPoolAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0');
+    const mcapNativeNum = (priceNativeNum > 0 && supplyHuman > 0)
+      ? priceNativeNum * supplyHuman
+      : (strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : 0);
 
     const tokenName =
       geckoAttr?.name ||
@@ -1138,8 +1141,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         }
 
         const supplyHuman = parseFloat(totalSupply) / Math.pow(10, decimals);
-        const mcapUsd = dexData?.marketCapUsd || (dexData?.fdvUsd) || (priceUsd > 0 ? priceUsd * supplyHuman : 0);
-        const mcapSui = suiUsd > 0 && mcapUsd > 0 ? mcapUsd / suiUsd : (priceSui > 0 ? priceSui * supplyHuman : 0);
+        const mcapUsd = (priceUsd > 0 && supplyHuman > 0)
+          ? priceUsd * supplyHuman
+          : (dexData?.marketCapUsd || dexData?.fdvUsd || 0);
+        const mcapSui = (priceSui > 0 && supplyHuman > 0)
+          ? priceSui * supplyHuman
+          : (suiUsd > 0 && mcapUsd > 0 ? mcapUsd / suiUsd : 0);
 
         const result: TokenInfoResult = {
           address: tokenAddress,
@@ -1263,7 +1270,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     dbCache &&
     dbCache.updated_at &&
     Date.now() - dbCache.updated_at.getTime() < TOKEN_INFO_DB_MAX_AGE_MS &&
-    Number(dbCache.last_price || 0) > 0
+    Number(dbCache.last_price || 0) > 0 &&
+    dbCache.total_supply &&
+    dbCache.total_supply !== '0'
   ) {
     const lastPrice = Number(dbCache.last_price || 0);
     const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
@@ -1459,13 +1468,25 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   if (price <= 0) {
     if (isMemooCookingToken(tokenAddress)) {
       try {
-        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0 }));
-        if (mcInfo.price > 0 || mcInfo.liquidity > 0) {
+        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0, totalSupply: '0' }));
+        if (mcInfo.price > 0 || mcInfo.liquidity > 0 || mcInfo.phase === 'bonded') {
           venue = 'memecooking';
           price = mcInfo.price;
           liquidity = mcInfo.liquidity;
           bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
           bondingProgressPct = mcInfo.progress;
+          if (mcInfo.totalSupply && mcInfo.totalSupply !== '0') {
+            totalSupply = mcInfo.totalSupply;
+          }
+          if (mcInfo.phase === 'bonded') {
+            const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+            if (rheaPool && rheaPool.price > 0) {
+              price = rheaPool.price;
+              liquidity = rheaPool.liquidityNear;
+              rheaPoolId = !rheaPool.isDcl && typeof rheaPool.poolId === 'number' ? rheaPool.poolId : null;
+              dclPoolId = rheaPool.isDcl ? String(rheaPool.poolId) : null;
+            }
+          }
         }
       } catch { /* no-op */ }
     } else if (isIntearToken(tokenAddress) || (dbCache && dbCache.venue === 'intear')) {
@@ -1527,7 +1548,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
         }
       } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.pad.onetokenhub.near')) {
+    } else if (tokenAddress.endsWith('.pad.onetokenhub.near') || tokenAddress.endsWith('.onetokenhub.near')) {
       try {
         const hubState = await near.getOneTokenHubState(tokenAddress);
         if (hubState && hubState.price > 0) {
@@ -1540,7 +1561,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
         }
       } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.nearpadfamily.near')) {
+    } else if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
       try {
         const padState = await near.getNEARpadState(tokenAddress);
         if (padState && padState.price > 0) {
@@ -1553,7 +1574,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
         }
       } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.gaypad.j1-racing.near')) {
+    } else if (tokenAddress.endsWith('.gaypad.j1-racing.near') || tokenAddress.endsWith('.gaypad.near')) {
       try {
         const gpState = await near.getGaypadTokenState(tokenAddress);
         if (gpState && gpState.price > 0) {
@@ -1569,7 +1590,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       } catch { /* no-op */ }
     } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
       try {
-        const dclId = `${tokenAddress}|wrap.near|10000`;
+        const dclId = (await near.findDclPoolId(tokenAddress, 'wrap.near').catch(() => null)) || `${tokenAddress}|wrap.near|10000`;
         const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
         if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
           venue = 'rhea';
@@ -1578,7 +1599,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           dclPoolId = dclId;
         }
       } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.launch.shoremarkets.near')) {
+    } else if (tokenAddress.endsWith('.launch.shoremarkets.near') || tokenAddress.endsWith('.shoremarkets.near')) {
       try {
         const smState = await near.getShoremarketsTokenState(tokenAddress);
         if (smState && smState.price > 0) {
@@ -1667,12 +1688,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)
   if (venue === 'unknown' && price <= 0) {
-    const [ntRes, hubRes, padRes, smRes, ktRes] = await Promise.allSettled([
+    const [ntRes, hubRes, padRes, smRes, ktRes, intearRes] = await Promise.allSettled([
       near.getNearlytradeTokenState(tokenAddress),
       near.getOneTokenHubState(tokenAddress),
       near.getNEARpadState(tokenAddress),
       near.getShoremarketsTokenState(tokenAddress),
       near.getKelytraTokenState(tokenAddress),
+      near.getIntearTokenState(tokenAddress),
     ]);
 
     if (ntRes.status === 'fulfilled' && ntRes.value && ntRes.value.price > 0) {
@@ -1726,6 +1748,21 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       if (ktState.totalSupply && ktState.totalSupply !== '0') {
         totalSupply = ktState.totalSupply;
       }
+    } else if (intearRes.status === 'fulfilled' && intearRes.value && (intearRes.value.price > 0 || intearRes.value.poolId != null)) {
+      const intearState = intearRes.value;
+      venue = 'intear';
+      price = intearState.price;
+      liquidity = intearState.liquidityNear;
+      if (intearState.poolId != null) {
+        rheaPoolId = intearState.poolId;
+        dclPoolId = null;
+      }
+      if (intearState.feeBps != null) {
+        intearPoolFee = intearState.feeBps;
+      }
+      if (intearState.totalSupply && intearState.totalSupply !== '0') {
+        totalSupply = intearState.totalSupply;
+      }
     }
   }
 
@@ -1750,13 +1787,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   ]);
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
+  const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
 
   // Fallback to DexScreener price ONLY if on-chain price was not discovered (price <= 0)
   if (price <= 0 && dexData) {
     if (dexData.priceNative > 0) {
       price = dexData.priceNative;
-    } else if (dexData.priceUsd > 0 && nearUsd > 0) {
-      price = dexData.priceUsd / nearUsd;
+    } else if (dexData.priceUsd > 0 && effectiveNearUsd > 0) {
+      price = dexData.priceUsd / effectiveNearUsd;
     }
     if (venue === 'unknown') {
       venue = 'rhea';
@@ -1764,20 +1802,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   // Calculate Market Cap (authoritative on-chain math: price * supply)
-  let marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  let marketCapUsd = marketCap > 0 && nearUsd > 0 ? marketCap * nearUsd : 0;
-
-  // Fallback to DexScreener ONLY when on-chain pool market cap couldn't be calculated
-  if ((marketCap <= 0 || marketCapUsd <= 0) && dexData && (dexData.marketCapUsd > 0 || dexData.fdvUsd > 0)) {
-    marketCapUsd = dexData.marketCapUsd || dexData.fdvUsd;
-    if (nearUsd > 0) {
-      marketCap = marketCapUsd / nearUsd;
-    }
-  }
+  const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
+  const marketCapUsd = marketCap > 0 && effectiveNearUsd > 0 ? marketCap * effectiveNearUsd : 0;
 
   let finalPriceUsd = '0';
-  if (price > 0 && nearUsd > 0) {
-    const usdVal = price * nearUsd;
+  if (price > 0 && effectiveNearUsd > 0) {
+    const usdVal = price * effectiveNearUsd;
     finalPriceUsd = usdVal < 0.000001 ? usdVal.toExponential(4) : usdVal.toFixed(8);
   } else if (dexData && dexData.priceUsd > 0) {
     finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
