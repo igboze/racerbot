@@ -3740,6 +3740,7 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('racefleet_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from!.id;
     try {
       const dashboard = await buildRaceFleetDashboard(telegramId);
@@ -3758,10 +3759,11 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action(['fleet_holdings', 'fleet_holdings_refresh'], async (ctx) => {
+    const isRefresh = (ctx as any).callbackQuery?.data === 'fleet_holdings_refresh';
+    await ctx.answerCbQuery(isRefresh ? 'Refreshing Fleet Holdings & PnL...' : undefined).catch(() => {});
     const telegramId = ctx.from!.id;
     try {
-      await ctx.answerCbQuery('Loading Fleet Holdings & PnL...').catch(() => {});
-      const view = await buildFleetHoldingsView(telegramId);
+      const view = await buildFleetHoldingsView(telegramId, isRefresh);
       await ctx.editMessageText(view.text, {
         parse_mode: 'HTML',
         ...view.keyboard,
@@ -3824,12 +3826,12 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action(/^fleet_cockpit:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
     const shortKey = (ctx as any).match[1];
     const tokenAddress = resolveTokenAddressFromKey(shortKey);
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token address not found').catch(() => {});
       return;
     }
 
@@ -4102,13 +4104,13 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('fleet_wallets_list', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) return;
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) return;
 
-    await ctx.answerCbQuery('Loading fleet balances...').catch(() => {});
     const balances = await getFleetBalances(fleet.id);
 
     let listText = `💳 <b>RaceFleet Subaccounts (${fleet.wallet_count} Wallets)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
