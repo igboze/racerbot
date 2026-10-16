@@ -1275,6 +1275,9 @@ export async function buildFleetHoldingsView(telegramId: number, forceRefresh = 
       const totalValueNear = totalBalanceHuman * currentPriceNear;
       const totalValueUsd = totalValueNear * nearUsdRate;
 
+      // Filter dust: if price is known and total fleet value is < 1 cent ($0.01) and quantity is negligible, treat as sold dust
+      if (currentPriceNear > 0 && totalValueUsd < 0.01 && totalBalanceHuman < 1) return null;
+
       // Calculate entry price & PNL strictly from race_fleet_fills (independent from personal account)
       let avgEntryPriceNear = 0;
       try {

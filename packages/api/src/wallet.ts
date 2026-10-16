@@ -3365,10 +3365,12 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
           rawBalBigInt = 0n;
         }
         const humanBalance = Number(rawBalBigInt) / Math.pow(10, decimals);
-        const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001;
+        const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
+        const nearUsdRate = info?.near_usd || 5.16;
+        const valUsd = humanBalance * currentPrice * nearUsdRate;
+        const isDustOrZero = rawBalBigInt === 0n || humanBalance < 0.000001 || (currentPrice > 0 && valUsd < 0.01 && humanBalance < 1);
 
         const existing = posMap.get(tokenAddress);
-        const currentPrice = info?.price && parseFloat(info.price) > 0 ? parseFloat(info.price) : 0;
 
         if (existing) {
           if (!bal.trusted) {
@@ -3378,6 +3380,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
               position_id: existing.id,
               status: 'closed',
               closed_at: new Date(),
+              quantity_held: '0',
             });
             console.log(`[DEPOSIT] Closed phantom/sold position for ${tokenAddress} (user ${userId})`);
           } else {

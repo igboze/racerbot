@@ -5033,7 +5033,7 @@ export function setupRoutes(bot: Telegraf): void {
               const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
               let rawBig = 0n;
               try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
-              const isZero = rawBig === 0n;
+              const isZero = rawBig === 0n || clean === '0' || rawBig < 1000000n;
               return { isZero, rawBal: clean, verified: true };
             } catch {
               // Never assume zero on error/timeout!
@@ -5049,12 +5049,13 @@ export function setupRoutes(bot: Telegraf): void {
         const pos = positions[i];
         if (check.status === 'fulfilled' && check.value.verified) {
           const { isZero, rawBal } = check.value;
-          // Only close if verified zero and quantity was already 0 or updated to 0
-          if (isZero && (!pos.quantity_held || pos.quantity_held === '0')) {
+          // If verified zero or dust on-chain, CLOSE the position completely!
+          if (isZero) {
             await updatePosition({
               position_id: pos.id,
               status: 'closed',
               closed_at: new Date(),
+              quantity_held: '0',
             }).catch(() => {});
             console.log(`[HOLDINGS] Cleared confirmed zero balance token ${pos.token_address} (user ${user.id})`);
             continue;
@@ -5126,6 +5127,23 @@ export function setupRoutes(bot: Telegraf): void {
 
       const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
       const tokenValueUsd = humanQuantity * tokenPriceUsd;
+
+      // Dust filter:
+      // If quantity is negligible (< 0.000001) or value is < $0.01 while quantity is < 1,
+      // this is sold dust. Auto-close position in background and omit from holdings list!
+      let rawBigCheck = 0n;
+      try { rawBigCheck = BigInt((pos.quantity_held || '0').split('.')[0]); } catch {}
+      const isDust = rawBigCheck <= 0n || humanQuantity < 0.000001 || (currentPrice > 0 && tokenValueUsd < 0.01 && humanQuantity < 1);
+      if (isDust) {
+        updatePosition({
+          position_id: pos.id,
+          status: 'closed',
+          closed_at: new Date(),
+          quantity_held: '0',
+        }).catch(() => {});
+        return null;
+      }
+
       totalPortfolioValueUsd += tokenValueUsd;
 
       const fills = fillsMap.get(pos.id) || [];
@@ -5225,13 +5243,24 @@ export function setupRoutes(bot: Telegraf): void {
       };
     });
 
+    const filteredPositions = computedPositions.filter((item): item is NonNullable<typeof item> => item !== null);
+
+    if (filteredPositions.length === 0) {
+      const emptyMsg =
+        '💼 *Holdings (0)*\n' +
+        '💰 Total: `$0.00`\n\n' +
+        '📭 You currently have no token holdings in your wallet.\n\n' +
+        'Deposit tokens to your wallet address or paste a token CA into chat to start trading!';
+      return { msg: emptyMsg, keyboard: emptyKeyboard };
+    }
+
     // Pagination: 10 tokens per page
     const PAGE_SIZE = 10;
-    const totalPositions = computedPositions.length;
+    const totalPositions = filteredPositions.length;
     const totalPages = Math.max(1, Math.ceil(totalPositions / PAGE_SIZE));
     const currentPage = Math.min(Math.max(0, page), totalPages - 1);
     const startIdx = currentPage * PAGE_SIZE;
-    const pageItems = computedPositions.slice(startIdx, startIdx + PAGE_SIZE);
+    const pageItems = filteredPositions.slice(startIdx, startIdx + PAGE_SIZE);
 
     const buttons: any[] = [];
     for (const item of pageItems) {
@@ -5424,7 +5453,7 @@ export function setupRoutes(bot: Telegraf): void {
               getStarknetTokenBalance(user.starknet_address, position.token_address),
               new Promise<bigint>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
             ]);
-            if (bal === 0n) {
+            if (bal === 0n || bal < 1000n) {
               onChainZero = true;
             } else {
               liveRawBal = bal.toString();
@@ -5455,7 +5484,7 @@ export function setupRoutes(bot: Telegraf): void {
             const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
             let rawBig = 0n;
             try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
-            if (rawBig === 0n) {
+            if (rawBig === 0n || clean === '0' || rawBig < 1000000n) {
               onChainZero = true;
             } else {
               liveRawBal = clean;
@@ -5474,6 +5503,7 @@ export function setupRoutes(bot: Telegraf): void {
           position_id: position.id,
           status: 'closed',
           closed_at: new Date(),
+          quantity_held: '0',
         }).catch(() => {});
         const sym = position.token_address.length > 14 ? position.token_address.slice(0, 12) + '...' : position.token_address;
         await ctx.reply(
@@ -7544,6 +7574,14 @@ export function setupRoutes(bot: Telegraf): void {
         }
 
         if (result.success) {
+          if (pct >= 99) {
+            await updatePosition({
+              position_id: positionId,
+              status: 'closed',
+              closed_at: new Date(),
+              quantity_held: '0',
+            }).catch(() => {});
+          }
           await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`).catch(() => {});
         } else {
           await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
