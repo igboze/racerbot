@@ -1,5 +1,5 @@
 import { getNear } from '@racerbot/shared';
-import { getPositionById, getUserById } from '@racerbot/db';
+import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
 /**
@@ -47,6 +47,14 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Starknet sell failed on-chain.' };
     }
+    if (percentage >= 99) {
+      await updatePosition({
+        position_id: positionId,
+        status: 'closed',
+        closed_at: new Date(),
+        quantity_held: '0',
+      }).catch(() => {});
+    }
     return { success: true };
   }
 
@@ -68,6 +76,14 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     const swapResult = await publishSwap(swapEvent, onProgress);
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Sui sell failed on-chain.' };
+    }
+    if (percentage >= 99) {
+      await updatePosition({
+        position_id: positionId,
+        status: 'closed',
+        closed_at: new Date(),
+        quantity_held: '0',
+      }).catch(() => {});
     }
     return { success: true };
   }
@@ -168,6 +184,15 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     // Pass the executor's distilled on-chain reason through so users learn
     // WHY the sell failed (slippage / no pool / contract error), not a generic message.
     return { success: false, reason: swapResult.reason || 'Swap failed on-chain. Please verify liquidity and retry.' };
+  }
+
+  if (percentage >= 99) {
+    await updatePosition({
+      position_id: positionId,
+      status: 'closed',
+      closed_at: new Date(),
+      quantity_held: '0',
+    }).catch(() => {});
   }
 
   return { success: true };
