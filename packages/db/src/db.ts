@@ -3506,4 +3506,97 @@ export async function updateRaceFleetOrderStatus(
   );
 }
 
+// ── RaceFleet Fills & PnL ───────────────────────────────────────────────────
+
+export interface RaceFleetFillRecord {
+  id: string;
+  fleet_id: string;
+  user_id: string;
+  wallet_account_id: string | null;
+  side: 'buy' | 'sell';
+  token_address: string;
+  amount: string;
+  price: string;
+  fee_paid: string;
+  venue: string;
+  tx_hash: string;
+  created_at: Date;
+}
+
+export interface CreateRaceFleetFillParams {
+  fleet_id: string;
+  user_id: string;
+  wallet_account_id?: string;
+  side: 'buy' | 'sell';
+  token_address: string;
+  amount: number | string;
+  price: number | string;
+  fee_paid?: number | string;
+  venue?: string;
+  tx_hash: string;
+}
+
+export async function recordRaceFleetFill(params: CreateRaceFleetFillParams): Promise<RaceFleetFillRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO race_fleet_fills (
+      fleet_id, user_id, wallet_account_id, side, token_address, amount, price, fee_paid, venue, tx_hash
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *`,
+    [
+      params.fleet_id,
+      params.user_id,
+      params.wallet_account_id || null,
+      params.side,
+      params.token_address,
+      params.amount.toString(),
+      params.price.toString(),
+      (params.fee_paid ?? 0).toString(),
+      params.venue || 'ref',
+      params.tx_hash,
+    ]
+  );
+  const row = res.rows[0];
+  return {
+    id: row.id,
+    fleet_id: row.fleet_id,
+    user_id: row.user_id,
+    wallet_account_id: row.wallet_account_id,
+    side: row.side,
+    token_address: row.token_address,
+    amount: row.amount,
+    price: row.price,
+    fee_paid: row.fee_paid,
+    venue: row.venue,
+    tx_hash: row.tx_hash,
+    created_at: new Date(row.created_at),
+  };
+}
+
+export async function getRaceFleetFills(fleetId: string, tokenAddress?: string): Promise<RaceFleetFillRecord[]> {
+  const db = await getDb();
+  let query = 'SELECT * FROM race_fleet_fills WHERE fleet_id = $1';
+  const params: any[] = [fleetId];
+  if (tokenAddress) {
+    query += ' AND token_address = $2';
+    params.push(tokenAddress);
+  }
+  query += ' ORDER BY created_at DESC';
+  const res = await db.query(query, params);
+  return res.rows.map(row => ({
+    id: row.id,
+    fleet_id: row.fleet_id,
+    user_id: row.user_id,
+    wallet_account_id: row.wallet_account_id,
+    side: row.side,
+    token_address: row.token_address,
+    amount: row.amount,
+    price: row.price,
+    fee_paid: row.fee_paid,
+    venue: row.venue,
+    tx_hash: row.tx_hash,
+    created_at: new Date(row.created_at),
+  }));
+}
+
 
