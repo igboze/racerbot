@@ -6,6 +6,8 @@ import {
   encrypt,
   decrypt,
   formatTokenUnits,
+  generateRandomAccountPrefix,
+  getFastnearAccountTokens,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -22,6 +24,7 @@ import {
   cancelRaceFleetOrder,
   updateRaceFleetOrderStatus,
   renewRaceFleet,
+  getDb,
   type RaceFleetRecord,
   type RaceFleetWalletRecord,
   type RaceFleetOrderRecord,
@@ -137,8 +140,8 @@ export async function deployRaceFleet(
   }[] = [];
 
   for (let i = 1; i <= clampedCount; i++) {
-    const idxStr = i < 10 ? `0${i}` : `${i}`;
-    const accountId = `${fleetTag}-${idxStr}.${parentAccountName}`;
+    const prefix = generateRandomAccountPrefix();
+    const accountId = `${prefix}.${parentAccountName}`;
     const keyPair = generateFleetKeyPair();
     const encryptedKey = encrypt(keyPair.toString(), MASTER_KEY);
     walletKeys.push({
@@ -250,8 +253,13 @@ export async function getFleetBalances(
 
   const walletResults = await Promise.all(
     wallets.map(async (w) => {
-      const balanceYocto = await near.getNearBalance(w.account_id).catch(() => '0');
-      const balanceNear = Number(BigInt(balanceYocto || '0') / 10n ** 20n) / 10_000;
+      const [balanceYocto, wNearYocto] = await Promise.all([
+        near.getNearBalance(w.account_id).catch(() => '0'),
+        near.getTokenBalance('wrap.near', w.account_id).catch(() => '0'),
+      ]);
+      const nativeNear = Number(BigInt(balanceYocto || '0') / 10n ** 20n) / 10_000;
+      const wNear = Number(BigInt(wNearYocto || '0') / 10n ** 20n) / 10_000;
+      const combinedNear = nativeNear + wNear;
 
       let tokenBal = '0';
       if (tokenAddress) {
@@ -261,8 +269,9 @@ export async function getFleetBalances(
       return {
         accountId: w.account_id,
         walletIndex: w.wallet_index,
-        balanceNear,
+        balanceNear: combinedNear,
         balanceYocto,
+        wNearYocto,
         tokenBalance: tokenBal,
       };
     })
@@ -378,25 +387,38 @@ export async function sweepFleetFunds(telegramId: number): Promise<{
   await Promise.all(
     wallets.map(async (w) => {
       try {
-        const balYocto = await near.getNearBalance(w.account_id);
-        const balNear = Number(BigInt(balYocto || '0') / 10n ** 20n) / 10_000;
-
-        // Leave 0.005 NEAR reserve for gas/storage
-        const sweepAmt = balNear - 0.005;
-        if (sweepAmt <= 0.01) {
-          return; // Skip empty wallet
-        }
-
         const rawPrivateKey = decrypt(w.encrypted_private_key, MASTER_KEY);
         const keyPair = KeyPair.fromString(rawPrivateKey as any);
 
         await connectWithNearRpcFailover(w.account_id, keyPair, async (account) => {
+          // 1. Unwrap any leftover wrap.near back into native NEAR
+          const wNearYocto = await near.getTokenBalance('wrap.near', w.account_id).catch(() => '0');
+          const wNearBigInt = BigInt(wNearYocto || '0');
+          if (wNearBigInt > 0n) {
+            await account.functionCall({
+              contractId: 'wrap.near',
+              methodName: 'near_withdraw',
+              args: { amount: wNearBigInt.toString() },
+              gas: BigInt('30000000000000'), // 30 TGas
+              attachedDeposit: 1n,
+            }).catch((e: any) => logger.warn(`Failed unwrapping wNEAR during sweep for ${w.account_id}:`, e?.message));
+          }
+
+          // 2. Re-read native NEAR balance and sweep all
+          const balYocto = await near.getNearBalance(w.account_id);
+          const balNear = Number(BigInt(balYocto || '0') / 10n ** 20n) / 10_000;
+
+          // Leave 0.005 NEAR reserve for gas/storage
+          const sweepAmt = balNear - 0.005;
+          if (sweepAmt <= 0.01) {
+            return; // Skip empty wallet
+          }
+
           const yoctoToSend = nearUtils.format.parseNearAmount(sweepAmt.toFixed(4))!;
           await account.sendMoney(user.subaccount_id, BigInt(yoctoToSend));
+          totalSweptNear += sweepAmt;
+          successCount++;
         });
-
-        totalSweptNear += sweepAmt;
-        successCount++;
       } catch (err: any) {
         logger.warn(`Sweep failed for wallet ${w.account_id}:`, err?.message);
         failCount++;
@@ -453,18 +475,29 @@ export async function executeFleetBundleBuy(
   // Execute across all fleet wallets in parallel with Promise.allSettled
   const executions = await Promise.allSettled(
     wallets.map(async (w) => {
-      // 1. Check wallet balance
-      const balYocto = await near.getNearBalance(w.account_id);
-      const balNear = Number(BigInt(balYocto || '0') / 10n ** 20n) / 10_000;
-      if (balNear < amountNearPerWallet + 0.01) {
-        throw new Error(`Wallet ${w.wallet_index} low balance (${balNear.toFixed(2)} N)`);
+      // 1. Check wallet balance (native NEAR + existing wNEAR)
+      const [balYocto, wNearBalYocto] = await Promise.all([
+        near.getNearBalance(w.account_id).catch(() => '0'),
+        near.getTokenBalance('wrap.near', w.account_id).catch(() => '0'),
+      ]);
+
+      const balBigInt = BigInt(balYocto || '0');
+      const wNearBigInt = BigInt(wNearBalYocto || '0');
+      const targetAmountYoctoBigInt = BigInt(amountYocto);
+
+      // Check total purchasing power: native + wNEAR
+      const totalPurchasingPowerBigInt = balBigInt + wNearBigInt;
+      const minRequiredBuffer = 10_000_000_000_000_000_000_000n; // 0.01 NEAR for gas
+      if (totalPurchasingPowerBigInt < targetAmountYoctoBigInt + minRequiredBuffer) {
+        const totalNear = Number(totalPurchasingPowerBigInt / 10n ** 20n) / 10_000;
+        throw new Error(`Wallet ${w.wallet_index} low balance (${totalNear.toFixed(2)} N)`);
       }
 
       const rawPrivateKey = decrypt(w.encrypted_private_key, MASTER_KEY);
       const keyPair = KeyPair.fromString(rawPrivateKey as any);
 
       return connectWithNearRpcFailover(w.account_id, keyPair, async (account) => {
-        // 2. Ensure NEP-141 storage deposit is registered
+        // 2. Ensure NEP-141 storage deposit is registered for output token
         const isRegistered = await near.checkStorageRegistered(w.account_id, tokenAddress).catch(() => false);
         if (!isRegistered) {
           const storageDepositYocto = nearUtils.format.parseNearAmount('0.00125')!;
@@ -477,14 +510,32 @@ export async function executeFleetBundleBuy(
           }).catch(() => { /* may be already registered */ });
         }
 
-        // 3. Deposit wrap.near
-        await account.functionCall({
-          contractId: 'wrap.near',
-          methodName: 'near_deposit',
-          args: {},
-          gas: BigInt('30000000000000'), // 30 TGas
-          attachedDeposit: BigInt(amountYocto),
-        });
+        // 3. Deposit wrap.near ONLY for the shortfall if wNEAR balance < target
+        if (wNearBigInt < targetAmountYoctoBigInt) {
+          let shortfallYocto = targetAmountYoctoBigInt - wNearBigInt;
+
+          // Check if registered on wrap.near; if not, wrap.near takes 0.00125 NEAR storage fee
+          const isWrapRegistered = await near.checkStorageRegistered(w.account_id, 'wrap.near').catch(() => false);
+          if (!isWrapRegistered) {
+            shortfallYocto += 1_250_000_000_000_000_000_000n; // +0.00125 NEAR for storage registration
+          }
+
+          // Ensure we don't try to deposit more native NEAR than available (leaving 0.015 NEAR for gas)
+          const maxAttachable = balBigInt > 15_000_000_000_000_000_000_000n
+            ? balBigInt - 15_000_000_000_000_000_000_000n
+            : 0n;
+          const depositToWrap = shortfallYocto > maxAttachable ? maxAttachable : shortfallYocto;
+
+          if (depositToWrap > 0n) {
+            await account.functionCall({
+              contractId: 'wrap.near',
+              methodName: 'near_deposit',
+              args: {},
+              gas: BigInt('30000000000000'), // 30 TGas
+              attachedDeposit: depositToWrap,
+            });
+          }
+        }
 
         // 4. Ensure Ref Finance storage if trading on AMM
         if (!info.dcl_pool_id && info.rhea_pool_id !== undefined && info.rhea_pool_id !== null) {
@@ -501,18 +552,29 @@ export async function executeFleetBundleBuy(
           }
         }
 
-        // 5. Compute min amount out
+        // 5. Re-check actual available wNEAR and clamp swap amount
+        const actualWNearStr = await near.getTokenBalance('wrap.near', w.account_id).catch(() => '0');
+        const actualWNearBigInt = BigInt(actualWNearStr || '0');
+        if (actualWNearBigInt <= 0n) {
+          throw new Error(`Wallet ${w.wallet_index} failed to obtain wNEAR`);
+        }
+
+        // Swap amount is target or available wNEAR (whichever is smaller)
+        const swapAmountBigInt = actualWNearBigInt < targetAmountYoctoBigInt ? actualWNearBigInt : targetAmountYoctoBigInt;
+        const swapAmountYocto = swapAmountBigInt.toString();
+
+        // 6. Compute min amount out
         const { minAmountOut } = await near.computeMinAmountOut(
           venue as any,
           'wrap.near',
           tokenAddress,
-          amountYocto,
+          swapAmountYocto,
           slippagePct,
           info.rhea_pool_id ?? undefined,
           info.dcl_pool_id ?? undefined
         );
 
-        // 6. Execute Buy Swap via ft_transfer_call
+        // 7. Execute Buy Swap via ft_transfer_call
         let res: any;
         if (info.dcl_pool_id) {
           res = await account.functionCall({
@@ -520,7 +582,7 @@ export async function executeFleetBundleBuy(
             methodName: 'ft_transfer_call',
             args: {
               receiver_id: 'dclv2.ref-labs.near',
-              amount: amountYocto,
+              amount: swapAmountYocto,
               msg: JSON.stringify({
                 Swap: {
                   pool_ids: [info.dcl_pool_id],
@@ -541,14 +603,14 @@ export async function executeFleetBundleBuy(
             methodName: 'ft_transfer_call',
             args: {
               receiver_id: 'v2.ref-finance.near',
-              amount: amountYocto,
+              amount: swapAmountYocto,
               msg: JSON.stringify({
                 actions: [
                   {
                     pool_id: poolId,
                     token_in: 'wrap.near',
                     token_out: tokenAddress,
-                    amount_in: amountYocto,
+                    amount_in: swapAmountYocto,
                     min_amount_out: minAmountOut,
                     min_output_amount: minAmountOut,
                   },
@@ -561,7 +623,8 @@ export async function executeFleetBundleBuy(
         }
 
         const txHash = res?.transaction?.hash || 'confirmed';
-        return { txHash, spentNear: amountNearPerWallet };
+        const spentNear = Number(swapAmountBigInt / 10n ** 20n) / 10_000;
+        return { txHash, spentNear };
       });
     })
   );
@@ -572,6 +635,31 @@ export async function executeFleetBundleBuy(
       totalSpentNear += exec.value.spentNear;
     } else {
       errors.push(exec.reason?.message || 'Execution error');
+    }
+  }
+
+  // Record fill for the fleet buy so user PnL reflects it accurately
+  if (txHashes.length > 0) {
+    try {
+      const fleet = await getRaceFleetById(fleetId);
+      if (fleet) {
+        const db = await getDb();
+        const currentPriceNear = info.price ? parseFloat(String(info.price)) : 0;
+        await db.query(`
+          INSERT INTO fills (user_id, side, token_address, amount, price, fee_paid, venue, tx_hash)
+          VALUES ($1, 'buy', $2, $3, $4, $5, $6, $7)
+        `, [
+          fleet.user_id,
+          tokenAddress,
+          totalSpentNear > 0 && currentPriceNear > 0 ? (totalSpentNear / currentPriceNear).toString() : '0',
+          currentPriceNear,
+          0,
+          venue || 'ref',
+          txHashes[0] || 'fleet_bundle',
+        ]);
+      }
+    } catch (fillErr) {
+      logger.warn('Failed to record fleet fill', { error: String(fillErr) });
     }
   }
 
@@ -871,16 +959,19 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
 
   const keyboard = Markup.inlineKeyboard([
     [
+      Markup.button.callback('📊 Fleet Holdings & PnL', 'fleet_holdings'),
+      Markup.button.callback('💳 View All Wallets', 'fleet_wallets_list'),
+    ],
+    [
       Markup.button.callback('📥 Distribute from Main', 'fleet_fund_prompt'),
       Markup.button.callback('📤 Sweep to Main', 'fleet_sweep_prompt'),
     ],
     [
-      Markup.button.callback('💳 View All Fleet Wallets', 'fleet_wallets_list'),
-      Markup.button.callback('📊 Active Orders', 'fleet_orders_list'),
+      Markup.button.callback('📋 Active Orders', 'fleet_orders_list'),
+      Markup.button.callback('🔑 Export Fleet Keys', 'fleet_export_keys'),
     ],
     [
       Markup.button.callback('🔄 Renew Subscription (2 NEAR)', 'fleet_renew_prompt'),
-      Markup.button.callback('🔑 Export Fleet Keys', 'fleet_export_keys'),
     ],
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
@@ -888,6 +979,220 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
   ]);
 
   return { text, keyboard };
+}
+
+// ── Telegram UI: RaceFleet Holdings & PnL View ──────────────────────────────
+export async function buildFleetHoldingsView(telegramId: number): Promise<{ text: string; keyboard: any }> {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) throw new Error('User not found');
+
+  const fleet = await getRaceFleetByUserId(user.id);
+  if (!fleet) {
+    return buildFleetPromoCard();
+  }
+
+  const wallets = await getRaceFleetWallets(fleet.id);
+  const near = getNear();
+
+  // Discover all tokens across all fleet wallets via FastNEAR indexer
+  const discoveredTokenContracts = new Set<string>();
+  await Promise.allSettled(
+    wallets.map(async (w) => {
+      try {
+        const res = await getFastnearAccountTokens(w.account_id);
+        const tokens = res?.contract_ids || [];
+        for (const t of tokens) {
+          if (t && t !== 'wrap.near' && t !== 'near' && t !== 'aurora') {
+            discoveredTokenContracts.add(t);
+          }
+        }
+      } catch { /* graceful fallback */ }
+    })
+  );
+
+  // Also query past fills from database for this user to discover traded tokens
+  try {
+    const db = await getDb();
+    const pastFillsRes = await db.query(
+      `SELECT DISTINCT token_address FROM fills WHERE user_id = $1`,
+      [user.id]
+    );
+    for (const row of pastFillsRes.rows) {
+      if (row.token_address && !row.token_address.includes('::') && !row.token_address.startsWith('0x')) {
+        discoveredTokenContracts.add(row.token_address);
+      }
+    }
+  } catch { /* ignore */ }
+
+  const nearBalances = await getFleetBalances(fleet.id);
+  const tokenList = Array.from(discoveredTokenContracts);
+
+  const tokenHoldings: {
+    tokenAddress: string;
+    symbol: string;
+    totalBalanceHuman: number;
+    currentPriceNear: number;
+    currentPriceUsd: number;
+    totalValueNear: number;
+    totalValueUsd: number;
+    avgEntryPriceNear: number;
+    pnlPct: number;
+    pnlDisplay: string;
+    emoji: string;
+    walletsHoldingCount: number;
+  }[] = [];
+
+  for (const tokenAddr of tokenList) {
+    try {
+      const info = await getTokenInfo(tokenAddr, false);
+      const decimals = info?.decimals ?? 18;
+      const currentPriceNear = info?.price ? parseFloat(String(info.price)) : 0;
+      const nearUsdRate = info?.near_usd || 5.16;
+      const currentPriceUsd = currentPriceNear * nearUsdRate;
+
+      // Query balance across all fleet wallets
+      let totalRawBigInt = 0n;
+      let walletsHoldingCount = 0;
+
+      const balances = await Promise.allSettled(
+        wallets.map(w => near.getTokenBalance(tokenAddr, w.account_id))
+      );
+
+      for (const b of balances) {
+        if (b.status === 'fulfilled' && b.value) {
+          try {
+            const raw = BigInt(b.value);
+            if (raw > 0n) {
+              totalRawBigInt += raw;
+              walletsHoldingCount++;
+            }
+          } catch {}
+        }
+      }
+
+      if (totalRawBigInt <= 0n) continue;
+
+      const totalBalanceHuman = Number(totalRawBigInt) / Math.pow(10, decimals);
+      if (totalBalanceHuman < 0.000001) continue;
+
+      const totalValueNear = totalBalanceHuman * currentPriceNear;
+      const totalValueUsd = totalValueNear * nearUsdRate;
+
+      // Calculate entry price & PNL from fills
+      let avgEntryPriceNear = 0;
+      try {
+        const db = await getDb();
+        const fillRes = await db.query(
+          `SELECT amount, price, fee_paid FROM fills WHERE user_id = $1 AND token_address = $2 AND side = 'buy' ORDER BY created_at DESC LIMIT 10`,
+          [user.id, tokenAddr]
+        );
+
+        let totalBuyQty = 0;
+        let totalBuyCost = 0;
+        for (const row of fillRes.rows) {
+          const qty = parseFloat(row.amount || '0');
+          const price = parseFloat(row.price || '0');
+          if (qty > 0 && price > 0) {
+            totalBuyQty += qty;
+            totalBuyCost += qty * price;
+          }
+        }
+
+        if (totalBuyQty > 0 && totalBuyCost > 0) {
+          avgEntryPriceNear = totalBuyCost / totalBuyQty;
+        }
+      } catch {}
+
+      let pnlPct = 0;
+      let pnlDisplay = 'N/A';
+      let emoji = '⚪';
+
+      if (currentPriceNear > 0 && avgEntryPriceNear > 0) {
+        pnlPct = ((currentPriceNear - avgEntryPriceNear) / avgEntryPriceNear) * 100;
+        if (pnlPct > 0) {
+          emoji = pnlPct >= 100 ? '🚀' : '🟢';
+        } else if (pnlPct < 0) {
+          emoji = '🔴';
+        }
+        pnlDisplay = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+      } else if (currentPriceNear > 0) {
+        pnlDisplay = 'LIVE';
+        emoji = '🟢';
+      }
+
+      tokenHoldings.push({
+        tokenAddress: tokenAddr,
+        symbol: info?.symbol || tokenAddr.split('.')[0].toUpperCase(),
+        totalBalanceHuman,
+        currentPriceNear,
+        currentPriceUsd,
+        totalValueNear,
+        totalValueUsd,
+        avgEntryPriceNear,
+        pnlPct,
+        pnlDisplay,
+        emoji,
+        walletsHoldingCount,
+      });
+    } catch (err) {
+      logger.warn('Error scanning token for fleet', { tokenAddr, error: String(err) });
+    }
+  }
+
+  // Calculate total portfolio value across all fleet wallets
+  const totalTokensValueNear = tokenHoldings.reduce((sum, t) => sum + t.totalValueNear, 0);
+  const totalTokensValueUsd = tokenHoldings.reduce((sum, t) => sum + t.totalValueUsd, 0);
+  const totalPortfolioNear = nearBalances.totalNear + totalTokensValueNear;
+  const totalPortfolioUsd = parseFloat((nearBalances.totalNear * 5.16).toFixed(2)) + totalTokensValueUsd;
+
+  let text =
+    `📊 <b>RACEFLEET HOLDINGS & PNL</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🏷 <b>Fleet Tag</b>: <code>${fleet.fleet_tag}</code> (${fleet.wallet_count} Wallets)\n` +
+    `💼 <b>Total Portfolio Value</b>: <b>${totalPortfolioNear.toFixed(3)} NEAR</b> ($${totalPortfolioUsd.toFixed(2)})\n` +
+    `💰 <b>Liquid Cash</b>: <b>${nearBalances.totalNearFormatted} NEAR</b> (${nearBalances.totalNearUsd})\n\n`;
+
+  if (tokenHoldings.length === 0) {
+    text +=
+      `ℹ️ <i>No token holdings found across your ${fleet.wallet_count} fleet wallets yet.</i>\n\n` +
+      `💡 <i>When you execute a bundle buy on any token CA, the combined holdings, live valuations, and PnL will display here.</i>`;
+  } else {
+    text += `🪙 <b>Fleet Token Positions:</b>\n\n`;
+    for (const t of tokenHoldings) {
+      const balanceStr = t.totalBalanceHuman >= 1e6
+        ? `${(t.totalBalanceHuman / 1e6).toFixed(2)}M`
+        : t.totalBalanceHuman >= 1e3
+        ? `${(t.totalBalanceHuman / 1e3).toFixed(2)}K`
+        : t.totalBalanceHuman.toFixed(2);
+
+      text +=
+        `${t.emoji} <b>$${t.symbol}</b> (${t.pnlDisplay})\n` +
+        `• <b>Total Balance</b>: <code>${balanceStr} ${t.symbol}</code>\n` +
+        `• <b>Total Value</b>: <b>${t.totalValueNear.toFixed(3)} NEAR</b> ($${t.totalValueUsd.toFixed(2)})\n` +
+        `• <b>Wallets Holding</b>: ${t.walletsHoldingCount}/${fleet.wallet_count}\n` +
+        (t.avgEntryPriceNear > 0 ? `• <b>Avg Entry</b>: ${t.avgEntryPriceNear.toFixed(6)} N | <b>Current</b>: ${t.currentPriceNear.toFixed(6)} N\n` : '') +
+        `\n`;
+    }
+  }
+
+  const keyboardButtons: any[] = [];
+  for (const t of tokenHoldings) {
+    const shortKey = getShortTokenKey(t.tokenAddress);
+    keyboardButtons.push([
+      Markup.button.callback(`🏎️ ${t.symbol} Cockpit`, `fleet_cockpit:${shortKey}`),
+      Markup.button.callback(`🔴 Dump 100%`, `fleet_sell:${shortKey}:100`),
+    ]);
+  }
+
+  keyboardButtons.push([
+    Markup.button.callback('🔄 Refresh Holdings & PnL', 'fleet_holdings_refresh'),
+    Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu'),
+  ]);
+  keyboardButtons.push([
+    Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+  ]);
+
+  return { text, keyboard: Markup.inlineKeyboard(keyboardButtons) };
 }
 
 // ── Telegram UI: RaceFleet Promo / Upgrade Card ─────────────────────────────

@@ -141,6 +141,7 @@ import {
   hasActiveRaceFleet,
   buildFleetCockpit,
   buildRaceFleetDashboard,
+  buildFleetHoldingsView,
   buildFleetPromoCard,
   deployRaceFleet,
   distributeFundsToFleet,
@@ -3656,6 +3657,38 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  bot.action(['fleet_holdings', 'fleet_holdings_refresh'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      await ctx.answerCbQuery('Loading Fleet Holdings & PnL...').catch(() => {});
+      const view = await buildFleetHoldingsView(telegramId);
+      await ctx.editMessageText(view.text, {
+        parse_mode: 'HTML',
+        ...view.keyboard,
+      } as any).catch(async () => {
+        await ctx.reply(view.text, {
+          parse_mode: 'HTML',
+          ...view.keyboard,
+        });
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.command('fleetholdings', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const view = await buildFleetHoldingsView(telegramId);
+      await ctx.reply(view.text, {
+        parse_mode: 'HTML',
+        ...view.keyboard,
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
   bot.action(/^fleet_deploy:(\d+)$/, async (ctx) => {
     const count = parseInt((ctx as any).match[1], 10) || 10;
     const telegramId = ctx.from!.id;
@@ -3751,9 +3784,9 @@ export function setupRoutes(bot: Telegraf): void {
           {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-              [Markup.button.callback('🏎️ Back to Cockpit', `fleet_cockpit:${shortKey}`)],
+              [Markup.button.callback('📊 Fleet Holdings & PnL', 'fleet_holdings'), Markup.button.callback('🏎️ Back to Cockpit', `fleet_cockpit:${shortKey}`)],
               [Markup.button.callback('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`), Markup.button.callback('🔴 Dump All (100%)', `fleet_sell:${shortKey}:100`)],
-              [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+              [Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu'), Markup.button.callback('🔙 Main Menu', 'menu_home')],
             ]),
           }
         );
