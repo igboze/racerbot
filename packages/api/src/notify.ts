@@ -522,10 +522,10 @@ export async function notifyDeposit(
 ): Promise<void> {
   if (!_bot || !telegramId) return;
 
-  const dedupKey = `native:${telegramId}:${params.chain}:${params.amount}`;
+  const dedupKey = `native:${telegramId}:${params.chain}:${params.address}:${params.amount}`;
   const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
-  if (Date.now() - lastSent < 10_000) {
-    return; // Suppress duplicate alert within 10 seconds
+  if (Date.now() - lastSent < 15 * 60 * 1000) {
+    return; // Suppress duplicate alert within 15 minutes
   }
   recentDepositNotifyCache.set(dedupKey, Date.now());
 
@@ -578,10 +578,10 @@ export async function notifyTokenDeposit(
 ): Promise<void> {
   if (!_bot || !telegramId) return;
 
-  const dedupKey = `token:${telegramId}:${params.chain || 'near'}:${params.tokenSymbol}:${params.amountFormatted}`;
+  const dedupKey = `token:${telegramId}:${params.chain || 'near'}:${params.address}:${params.tokenSymbol}:${params.amountFormatted}`;
   const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
-  if (Date.now() - lastSent < 10_000) {
-    return; // Suppress duplicate alert within 10 seconds
+  if (Date.now() - lastSent < 15 * 60 * 1000) {
+    return; // Suppress duplicate alert within 15 minutes
   }
   recentDepositNotifyCache.set(dedupKey, Date.now());
 

@@ -48,6 +48,7 @@ import {
   markSnipeTriggerFilled,
   markSnipeTriggerFailed,
   markSnipeOrderResult,
+  getActiveWallet,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError } from '@racerbot/shared';
@@ -683,9 +684,13 @@ export class SwapExecutor {
     const user = await getUserById(user_id);
     if (!user) throw new Error(`User ${user_id} not found`);
 
+    const activeWallet = await getActiveWallet(user_id, 'near').catch(() => null);
+    const subaccountToUse = activeWallet?.address || user.subaccount_id;
+    const keyEncToUse = activeWallet?.encrypted_private_key || user.scoped_key_encrypted;
+
     let warm = warmKeys.get(user_id);
-    if (!warm || warm.subaccountId !== user.subaccount_id) {
-      await addUserKey(user_id, user.subaccount_id, user.scoped_key_encrypted);
+    if (!warm || warm.subaccountId !== subaccountToUse) {
+      await addUserKey(user_id, subaccountToUse, keyEncToUse);
       warm = warmKeys.get(user_id);
       if (!warm) throw new Error(`Failed to load trading key for user ${user_id}`);
     }
@@ -1961,9 +1966,11 @@ export class SwapExecutor {
         near.markIntearAssetRegistered(subaccountId, token_out);
 
         if (feeAmount > 0n) {
-          signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true).catch((err: any) => {
+          try {
+            await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
+          } catch (err: any) {
             console.warn('[EXECUTOR] Intear fee transfer error:', err?.message);
-          });
+          }
         }
       } else {
         // Sell token on dex.intear.near
@@ -2771,6 +2778,13 @@ export class SwapExecutor {
             )
           ];
           result = await signAndSend(token_out, buyActions);
+          if (feeAmount > 0n) {
+            try {
+              await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
+            } catch (err: any) {
+              console.warn('[EXECUTOR] NearPumpFun fee transfer error:', err?.message);
+            }
+          }
         } else {
           const sellActions = [
             transactions.functionCall(
@@ -3096,23 +3110,51 @@ export class SwapExecutor {
       let feePaid = false;
 
       if (sellFeeNear > 0n) {
-        try {
-          // Check if the sell paid out native NEAR (e.g. DCL) vs wNEAR
-          let paidNativeNear = false;
-          if (capturedPreOutBalance !== null && postOutBalance !== null) {
-            const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
-            if (wNearDelta === 0n) {
-              paidNativeNear = true;
-            }
-          }
+        // Query current balances to determine whether to pay via native NEAR or wNEAR
+        const [currNativeBalStr, currWNearBalStr] = await Promise.all([
+          this.nearClient.getNearBalance?.(subaccountId).catch(() => '0') ?? '0',
+          this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+        ]);
+        const currNativeBal = BigInt(currNativeBalStr || '0');
+        const currWNearBal = BigInt(currWNearBalStr || '0');
 
-          if (paidNativeNear) {
-            // DCL/native sell: transfer native NEAR fee to treasury
+        let paidNativeNear = venue === 'nearpumpfun' || venue === 'intear' || venue === 'kelytra';
+        if (capturedPreOutBalance !== null && postOutBalance !== null) {
+          const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
+          if (wNearDelta === 0n) {
+            paidNativeNear = true;
+          }
+        }
+        if (currWNearBal < sellFeeNear && currNativeBal >= sellFeeNear) {
+          paidNativeNear = true;
+        }
+
+        if (paidNativeNear) {
+          try {
             await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
             feePaid = true;
             console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR sent to treasury for ${subaccountId}`);
-          } else {
-            // wNEAR sell: transfer wNEAR fee directly to treasury (saving a 2nd unwrap tx)
+          } catch (nativeErr: any) {
+            console.warn(`[EXECUTOR] Native sell fee failed for ${subaccountId}, attempting wNEAR fallback:`, nativeErr?.message);
+            if (currWNearBal >= sellFeeNear) {
+              try {
+                await signAndSend('wrap.near', [
+                  transactions.functionCall(
+                    'ft_transfer',
+                    { receiver_id: TREASURY_ACCOUNT_ID, amount: sellFeeNear.toString() },
+                    BigInt('20000000000000'),
+                    BigInt('1')
+                  ),
+                ], 10_000, true);
+                feePaid = true;
+                console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR fallback sent to treasury for ${subaccountId}`);
+              } catch (wNearErr: any) {
+                console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both native and wNEAR) for ${subaccountId}:`, wNearErr?.message);
+              }
+            }
+          }
+        } else {
+          try {
             await signAndSend('wrap.near', [
               transactions.functionCall(
                 'ft_transfer',
@@ -3123,9 +3165,16 @@ export class SwapExecutor {
             ], 10_000, true);
             feePaid = true;
             console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR sent to treasury for ${subaccountId}`);
+          } catch (wNearErr: any) {
+            console.warn(`[EXECUTOR] wNEAR sell fee failed for ${subaccountId}, attempting native NEAR fallback:`, wNearErr?.message);
+            try {
+              await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
+              feePaid = true;
+              console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR fallback sent to treasury for ${subaccountId}`);
+            } catch (nativeErr: any) {
+              console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both wNEAR and native) for ${subaccountId}:`, nativeErr?.message);
+            }
           }
-        } catch (err: any) {
-          console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED for ${subaccountId} amount=${sellFeeNear}:`, err.message);
         }
       }
       onChainFeeYocto = feePaid ? sellFeeNear.toString() : '0';
@@ -3237,7 +3286,9 @@ export class SwapExecutor {
     const userSlippage = user?.slippage_pct ?? 2;
     const slippagePct = snipeOrderId ? Math.max(userSlippage, 15) : userSlippage;
 
-    if (!user || !user.subaccount_id) {
+    const activeWallet = await getActiveWallet(user_id, 'near').catch(() => null);
+    const subaccountToCheck = activeWallet?.address || user?.subaccount_id;
+    if (!user || !subaccountToCheck) {
       await finalizeSnipe(false, { error: 'user_wallet_not_found', permanent: true });
       return { success: false, reason: 'user_wallet_not_found' };
     }
@@ -3275,8 +3326,8 @@ export class SwapExecutor {
 
     // Pre-flight balance check: Ensure user actually has spendable balance before executing
     const [nativeBalStr, wNearBalStr] = await Promise.all([
-      this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
-      this.nearClient.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+      this.nearClient.getNearBalance?.(subaccountToCheck).catch(() => '0') ?? '0',
+      this.nearClient.getTokenBalance('wrap.near', subaccountToCheck).catch(() => '0'),
     ]);
 
     const nativeBal = BigInt(nativeBalStr || '0');
