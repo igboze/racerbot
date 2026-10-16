@@ -216,11 +216,35 @@ export async function deployRaceFleet(
 
   logger.info(`Successfully deployed RaceFleet ${fleet.id} with ${wallets.length} wallets for user ${user.id}`);
 
+  invalidateFleetCache(fleet.id);
+
   return {
     success: true,
     fleet,
     wallets,
   };
+}
+
+// ── In-Memory Caches for High-Performance RaceFleet UI ────────────────────────
+const fleetBalancesCache = new Map<string, { at: number; data: FleetBalancesResult }>();
+const fleetHoldingsCache = new Map<string, { at: number; data: { text: string; keyboard: any } }>();
+const fleetPositionCache = new Map<string, { at: number; data: FleetTokenPosition | null }>();
+const FLEET_CACHE_TTL_MS = 15_000; // 15 seconds TTL
+
+export function invalidateFleetCache(fleetId?: string) {
+  if (!fleetId) {
+    fleetBalancesCache.clear();
+    fleetHoldingsCache.clear();
+    fleetPositionCache.clear();
+    return;
+  }
+  for (const key of fleetBalancesCache.keys()) {
+    if (key.startsWith(fleetId)) fleetBalancesCache.delete(key);
+  }
+  fleetHoldingsCache.delete(fleetId);
+  for (const key of fleetPositionCache.keys()) {
+    if (key.startsWith(fleetId)) fleetPositionCache.delete(key);
+  }
 }
 
 // ── Balance & Portfolio Aggregator ──────────────────────────────────────────
@@ -241,8 +265,17 @@ export interface FleetBalancesResult {
 
 export async function getFleetBalances(
   fleetId: string,
-  tokenAddress?: string
+  tokenAddress?: string,
+  forceRefresh = false
 ): Promise<FleetBalancesResult> {
+  const cacheKey = `${fleetId}:${tokenAddress || 'none'}`;
+  if (!forceRefresh) {
+    const cached = fleetBalancesCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < FLEET_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
   const wallets = await getRaceFleetWallets(fleetId);
   const near = getNear();
 
@@ -301,7 +334,7 @@ export async function getFleetBalances(
       : tokenHuman.toFixed(2);
   }
 
-  return {
+  const result: FleetBalancesResult = {
     totalNear,
     totalNearFormatted,
     totalNearUsd,
@@ -309,6 +342,9 @@ export async function getFleetBalances(
     tokenTotal: tokenTotalStr,
     tokenTotalFormatted,
   };
+
+  fleetBalancesCache.set(cacheKey, { at: Date.now(), data: result });
+  return result;
 }
 
 // ── 1-Click Distribute from Main Wallet ──────────────────────────────────────
@@ -356,6 +392,8 @@ export async function distributeFundsToFleet(
   if (successCount === 0) {
     return { success: false, reason: 'Failed to disburse funds to fleet wallets.' };
   }
+
+  invalidateFleetCache(fleet.id);
 
   return {
     success: true,
@@ -428,6 +466,8 @@ export async function sweepFleetFunds(telegramId: number): Promise<{
       }
     })
   );
+
+  invalidateFleetCache(fleet.id);
 
   return {
     success: successCount > 0,
@@ -665,6 +705,8 @@ export async function executeFleetBundleBuy(
     }
   }
 
+  invalidateFleetCache(fleetId);
+
   return {
     success: txHashes.length > 0,
     successCount: txHashes.length,
@@ -835,6 +877,8 @@ export async function executeFleetBundleSell(
     }
   }
 
+  invalidateFleetCache(fleetId);
+
   return {
     success: txHashes.length > 0,
     successCount: txHashes.length,
@@ -897,7 +941,15 @@ export interface FleetTokenPosition {
   emoji: string;
 }
 
-export async function getFleetTokenPosition(fleetId: string, tokenAddress: string): Promise<FleetTokenPosition | null> {
+export async function getFleetTokenPosition(fleetId: string, tokenAddress: string, forceRefresh = false): Promise<FleetTokenPosition | null> {
+  const cacheKey = `${fleetId}:${tokenAddress}`;
+  if (!forceRefresh) {
+    const cached = fleetPositionCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < FLEET_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
   const fleet = await getRaceFleetById(fleetId);
   if (!fleet) return null;
 
@@ -972,7 +1024,7 @@ export async function getFleetTokenPosition(fleetId: string, tokenAddress: strin
     emoji = '🟢';
   }
 
-  return {
+  const result: FleetTokenPosition = {
     fleetId,
     tokenAddress,
     symbol: info?.symbol || tokenAddress.split('.')[0].toUpperCase(),
@@ -989,6 +1041,9 @@ export async function getFleetTokenPosition(fleetId: string, tokenAddress: strin
     pnlDisplay,
     emoji,
   };
+
+  fleetPositionCache.set(cacheKey, { at: Date.now(), data: result });
+  return result;
 }
 
 // ── Telegram UI: RaceFleet Cockpit Card ─────────────────────────────────────
@@ -1132,7 +1187,7 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
 }
 
 // ── Telegram UI: RaceFleet Holdings & PnL View ──────────────────────────────
-export async function buildFleetHoldingsView(telegramId: number): Promise<{ text: string; keyboard: any }> {
+export async function buildFleetHoldingsView(telegramId: number, forceRefresh = false): Promise<{ text: string; keyboard: any }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('User not found');
 
@@ -1141,15 +1196,25 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
     return buildFleetPromoCard();
   }
 
+  if (!forceRefresh) {
+    const cached = fleetHoldingsCache.get(fleet.id);
+    if (cached && Date.now() - cached.at < FLEET_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
   const wallets = await getRaceFleetWallets(fleet.id);
   const near = getNear();
 
-  // Discover all tokens across all fleet wallets via FastNEAR indexer
+  // Discover all tokens across all fleet wallets via FastNEAR indexer with 1.5s timeout
   const discoveredTokenContracts = new Set<string>();
+  const fastnearTimeout = 1500;
   await Promise.allSettled(
     wallets.map(async (w) => {
       try {
-        const res = await getFastnearAccountTokens(w.account_id);
+        const fetchPromise = getFastnearAccountTokens(w.account_id);
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), fastnearTimeout));
+        const res = await Promise.race([fetchPromise, timeoutPromise]);
         const tokens = res?.contract_ids || [];
         for (const t of tokens) {
           if (t && t !== 'wrap.near' && t !== 'near' && t !== 'aurora') {
@@ -1160,47 +1225,29 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
     })
   );
 
-  // Also query past fills from database for this user to discover traded tokens
+  // Discover traded tokens strictly from race_fleet_fills for this fleet (independent from personal account)
   try {
-    const db = await getDb();
-    const pastFillsRes = await db.query(
-      `SELECT DISTINCT token_address FROM fills WHERE user_id = $1`,
-      [user.id]
-    );
-    for (const row of pastFillsRes.rows) {
-      if (row.token_address && !row.token_address.includes('::') && !row.token_address.startsWith('0x')) {
-        discoveredTokenContracts.add(row.token_address);
+    const fleetFills = await getRaceFleetFills(fleet.id);
+    for (const f of fleetFills) {
+      if (f.token_address && !f.token_address.includes('::') && !f.token_address.startsWith('0x')) {
+        discoveredTokenContracts.add(f.token_address);
       }
     }
   } catch { /* ignore */ }
 
-  const nearBalances = await getFleetBalances(fleet.id);
+  const nearBalances = await getFleetBalances(fleet.id, undefined, forceRefresh);
   const tokenList = Array.from(discoveredTokenContracts);
 
-  const tokenHoldings: {
-    tokenAddress: string;
-    symbol: string;
-    totalBalanceHuman: number;
-    currentPriceNear: number;
-    currentPriceUsd: number;
-    totalValueNear: number;
-    totalValueUsd: number;
-    avgEntryPriceNear: number;
-    pnlPct: number;
-    pnlDisplay: string;
-    emoji: string;
-    walletsHoldingCount: number;
-  }[] = [];
-
-  for (const tokenAddr of tokenList) {
-    try {
+  // Parallel token scanning across all discovered tokens
+  const tokenHoldingsResults = await Promise.allSettled(
+    tokenList.map(async (tokenAddr) => {
       const info = await getTokenInfo(tokenAddr, false);
       const decimals = info?.decimals ?? 18;
       const currentPriceNear = info?.price ? parseFloat(String(info.price)) : 0;
       const nearUsdRate = info?.near_usd || 5.16;
       const currentPriceUsd = currentPriceNear * nearUsdRate;
 
-      // Query balance across all fleet wallets
+      // Query balance across all fleet wallets in parallel
       let totalRawBigInt = 0n;
       let walletsHoldingCount = 0;
 
@@ -1220,15 +1267,15 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
         }
       }
 
-      if (totalRawBigInt <= 0n) continue;
+      if (totalRawBigInt <= 0n) return null;
 
       const totalBalanceHuman = Number(totalRawBigInt) / Math.pow(10, decimals);
-      if (totalBalanceHuman < 0.000001) continue;
+      if (totalBalanceHuman < 0.000001) return null;
 
       const totalValueNear = totalBalanceHuman * currentPriceNear;
       const totalValueUsd = totalValueNear * nearUsdRate;
 
-      // Calculate entry price & PNL strictly from race_fleet_fills (completely independent from personal account)
+      // Calculate entry price & PNL strictly from race_fleet_fills (independent from personal account)
       let avgEntryPriceNear = 0;
       try {
         const fills = await getRaceFleetFills(fleet.id, tokenAddr);
@@ -1267,7 +1314,7 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
         emoji = '🟢';
       }
 
-      tokenHoldings.push({
+      return {
         tokenAddress: tokenAddr,
         symbol: info?.symbol || tokenAddr.split('.')[0].toUpperCase(),
         totalBalanceHuman,
@@ -1280,9 +1327,28 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
         pnlDisplay,
         emoji,
         walletsHoldingCount,
-      });
-    } catch (err) {
-      logger.warn('Error scanning token for fleet', { tokenAddr, error: String(err) });
+      };
+    })
+  );
+
+  const tokenHoldings: {
+    tokenAddress: string;
+    symbol: string;
+    totalBalanceHuman: number;
+    currentPriceNear: number;
+    currentPriceUsd: number;
+    totalValueNear: number;
+    totalValueUsd: number;
+    avgEntryPriceNear: number;
+    pnlPct: number;
+    pnlDisplay: string;
+    emoji: string;
+    walletsHoldingCount: number;
+  }[] = [];
+
+  for (const r of tokenHoldingsResults) {
+    if (r.status === 'fulfilled' && r.value) {
+      tokenHoldings.push(r.value);
     }
   }
 
@@ -1339,7 +1405,9 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
     Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
   ]);
 
-  return { text, keyboard: Markup.inlineKeyboard(keyboardButtons) };
+  const viewResult = { text, keyboard: Markup.inlineKeyboard(keyboardButtons) };
+  fleetHoldingsCache.set(fleet.id, { at: Date.now(), data: viewResult });
+  return viewResult;
 }
 
 // ── Telegram UI: RaceFleet Promo / Upgrade Card ─────────────────────────────
