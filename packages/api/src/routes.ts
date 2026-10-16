@@ -56,6 +56,7 @@ import {
 } from '@racerbot/db';
 import {
   getTokenInfo,
+  getBatchTokenInfo,
   getFastTokenRoute,
   publishSwap,
   onboardUser,
@@ -4199,7 +4200,8 @@ export function setupRoutes(bot: Telegraf): void {
     // Live on-chain balance reconciliation:
     // Only update quantity_held if verified by a successful RPC call.
     // NEVER close positions on timeout, error, or unverified zero!
-    if (positions.length > 0) {
+    // ONLY run on-chain reconciliation when forceRefresh is true!
+    if (forceRefresh && positions.length > 0) {
       const balanceChecks = await Promise.allSettled(
         positions.map(async (pos) => {
           const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
@@ -4210,7 +4212,7 @@ export function setupRoutes(bot: Telegraf): void {
               const bal = await Promise.race([
                 getStarknetTokenBalance(user.starknet_address, pos.token_address),
                 new Promise<bigint>((_, reject) =>
-                  setTimeout(() => reject(new Error('timeout')), 3000)
+                  setTimeout(() => reject(new Error('timeout')), 2000)
                 ),
               ]);
               const isZero = bal === 0n;
@@ -4224,7 +4226,7 @@ export function setupRoutes(bot: Telegraf): void {
               const bal = await Promise.race([
                 getSuiTokenBalance(user.sui_address, pos.token_address),
                 new Promise<{ raw: bigint; uiAmount: number }>((_, reject) =>
-                  setTimeout(() => reject(new Error('timeout')), 3000)
+                  setTimeout(() => reject(new Error('timeout')), 2000)
                 ),
               ]);
               const isZero = bal.raw === 0n || bal.uiAmount < 0.000001;
@@ -4238,7 +4240,7 @@ export function setupRoutes(bot: Telegraf): void {
               const rawBal = await Promise.race([
                 near.getTokenBalance(pos.token_address, user.subaccount_id),
                 new Promise<string>((_, reject) =>
-                  setTimeout(() => reject(new Error('timeout')), 3000)
+                  setTimeout(() => reject(new Error('timeout')), 2000)
                 ),
               ]);
               const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
@@ -4291,27 +4293,21 @@ export function setupRoutes(bot: Telegraf): void {
       return { msg: emptyMsg, keyboard: emptyKeyboard };
     }
 
-    // Fetch all token info in parallel; forceRefresh pulls live pool prices with 5s fallback
-    const infoResults = await Promise.allSettled(
-      positions.map(pos =>
-        Promise.race([
-          getTokenInfo(pos.token_address, forceRefresh),
-          new Promise<TokenInfoResult | null>((resolve) =>
-            setTimeout(() => resolve(getTokenInfo(pos.token_address, false).catch(() => null)), 5000)
-          ),
-        ])
-      )
-    );
-    const infoMap = new Map<string, TokenInfoResult | null>();
-    positions.forEach((pos, i) => {
-      const r = infoResults[i];
-      infoMap.set(pos.token_address, r.status === 'fulfilled' ? r.value : null);
-    });
+    // High-speed batch load of all token info (in-memory cache + DB cache)
+    const tokenAddresses = Array.from(new Set(positions.map(p => p.token_address)));
+    const infoMap = await getBatchTokenInfo(tokenAddresses, forceRefresh);
 
-    // Fetch fills in parallel to calculate exact cost basis and heal entry prices
-    const fillsResults = await Promise.allSettled(
-      positions.map(pos => getFillsByPosition(pos.id).catch(() => []))
-    );
+    // Only query fills for positions that lack entry price (avg_entry_price <= 0)
+    const positionsNeedingFills = positions.filter(p => !p.avg_entry_price || parseFloat(p.avg_entry_price) <= 0);
+    const fillsMap = new Map<string, any[]>();
+    if (positionsNeedingFills.length > 0) {
+      await Promise.allSettled(
+        positionsNeedingFills.map(async (pos) => {
+          const fills = await getFillsByPosition(pos.id).catch(() => []);
+          fillsMap.set(pos.id, fills);
+        })
+      );
+    }
 
     // Calculate total portfolio USD across all positions
     let totalPortfolioValueUsd = 0;
@@ -4345,8 +4341,7 @@ export function setupRoutes(bot: Telegraf): void {
       const tokenValueUsd = humanQuantity * tokenPriceUsd;
       totalPortfolioValueUsd += tokenValueUsd;
 
-      const fillsResult = fillsResults[idx];
-      const fills = fillsResult && fillsResult.status === 'fulfilled' ? fillsResult.value : [];
+      const fills = fillsMap.get(pos.id) || [];
       const buys = fills.filter((f: any) => f.side === 'buy' && !f.tx_hash?.startsWith('deposit_'));
 
       let totalBuyTokensHuman = 0;
@@ -4509,76 +4504,27 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       if (typeof (ctx as any).answerCbQuery === 'function') {
-        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing & scanning wallet...' : '💼 Loading holdings...').catch(() => {});
+        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing...' : '💼 Loading holdings...').catch(() => {});
       }
 
-      if (isRefresh) {
-        // Run live wallet deposit scan bounded to 4.5s so RPC latency never delays the user view
-        await Promise.race([
-          syncUserTokenDeposits(user.id, user.subaccount_id, true),
-          new Promise((resolve) => setTimeout(resolve, 4500)),
-        ]).catch((err) => {
-          console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
-        });
-
-        // Bounded view build (max 6s) with fallback to cached DB view
-        const view = await Promise.race([
-          buildHoldingsView(user, true, page),
-          new Promise<any>((resolve) => setTimeout(() => resolve(buildHoldingsView(user, false, page)), 6000)),
-        ]);
-
-        const canEditMsg = typeof (ctx as any).editMessageText === 'function';
-        if (canEditMsg) {
-          await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
-            .catch(async (err: any) => {
-              if (err?.message?.includes('message is not modified')) return;
-              await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
-            });
-        } else {
-          await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
-        }
-        return;
-      }
-
-      // 1. Instant paint from DB + cached prices for initial view
-      const view = await buildHoldingsView(user, false, page);
-      let paintedChatId: number | undefined;
-      let paintedMessageId: number | undefined;
-
-      const replyPaint = async () => {
-        const sent = await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => null);
-        paintedChatId = (sent as any)?.chat?.id ?? (ctx.chat as any)?.id;
-        paintedMessageId = (sent as any)?.message_id;
-      };
+      // 1. Build holdings view immediately (fast paint without blocking on background scans)
+      const view = await buildHoldingsView(user, isRefresh, page);
 
       const canEditMsg = typeof (ctx as any).editMessageText === 'function';
-      const cbMsg = (ctx as any).callbackQuery?.message;
       if (canEditMsg) {
-        let edited = false;
         await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
-          .then(() => { edited = true; })
           .catch(async (err: any) => {
-            if (err?.message?.includes('message is not modified')) { edited = true; return; }
-            await replyPaint();
+            if (err?.message?.includes('message is not modified')) return;
+            await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
           });
-        if (edited && cbMsg) {
-          paintedChatId = cbMsg.chat?.id ?? cbMsg.chat_id ?? ctx.chat?.id;
-          paintedMessageId = cbMsg.message_id;
-        }
       } else {
-        await replyPaint();
+        await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
       }
 
-      // 2. Background wallet deposit sync (detached — does not trigger heavy token discovery scans)
-      (async () => {
-        try {
-          await syncUserTokenDeposits(user.id, user.subaccount_id).catch((err) => {
-            console.warn(`[HOLDINGS] Wallet scan error for ${user.subaccount_id}:`, err?.message || err);
-          });
-        } catch (err: any) {
-          console.warn('[HOLDINGS] Background deposit sync error:', err?.message || err);
-        }
-      })();
+      // 2. Background wallet deposit sync (detached — does not delay rendering)
+      syncUserTokenDeposits(user.id, user.subaccount_id, isRefresh).catch((err) => {
+        console.warn(`[HOLDINGS] Background deposit sync error for ${user.subaccount_id}:`, err?.message || err);
+      });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
@@ -4624,7 +4570,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.command(['holdings', 'bags', 'positions'], async (ctx) => {
     try {
-      await handleHoldings(ctx, true, 0);
+      await handleHoldings(ctx, false, 0);
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
     }
