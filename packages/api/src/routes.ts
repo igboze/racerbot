@@ -137,9 +137,30 @@ import {
   handleRaceDropClaimsInput,
   getBotUsername,
 } from './raceDrop.js';
+import {
+  hasActiveRaceFleet,
+  buildFleetCockpit,
+  buildRaceFleetDashboard,
+  buildFleetPromoCard,
+  deployRaceFleet,
+  distributeFundsToFleet,
+  sweepFleetFunds,
+  executeFleetBundleBuy,
+  executeFleetBundleSell,
+  exportFleetKeys,
+  getFleetBalances,
+  RACEFLEET_MONTHLY_FEE_NEAR,
+} from './raceFleet.js';
+import {
+  createRaceFleetOrder,
+  getRaceFleetByUserId,
+  getRaceFleetOrdersByFleet,
+  cancelRaceFleetOrder,
+  renewRaceFleet,
+} from '@racerbot/db';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
-import { MASTER_KEY, RPC_PROVIDERS } from './config.js';
+import { MASTER_KEY, RPC_PROVIDERS, TREASURY_ACCOUNT_ID } from './config.js';
 import { checkUserDepositNow, markUserActiveForDeposit } from './depositWatcher.js';
 
 export function isGroupChat(ctx: { chat?: { type?: string } }): boolean {
@@ -219,7 +240,9 @@ interface PendingAction {
     // Limit Order wizard
     | 'lo_amount' | 'lo_target_value'
     // RaceDrop wizard
-    | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode';
+    | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
+    // RaceFleet wizard
+    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -260,6 +283,11 @@ interface PendingAction {
   raceDropMode?: 'equal' | 'lucky';
   raceDropNote?: string;
   raceDropCreatorName?: string;
+  // RaceFleet wizard state
+  fleetTokenAddress?: string;
+  fleetSide?: 'buy' | 'sell';
+  fleetLoConditionType?: 'price' | 'market_cap';
+  fleetLoTargetValue?: number;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -386,10 +414,11 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('⚙️ Settings', 'menu_settings', 'primary'),
     ],
     [
-      cb('📢 Buy Alerts', 'menu_buyalerts', 'success'),
-      cb('🏎️ Create RaceDrop', 'racedrop_start', 'success'),
+      cb('🏎️ RaceFleet', 'racefleet_menu', 'success'),
+      cb('📢 Buy Alerts', 'menu_buyalerts', 'primary'),
     ],
     [
+      cb('🎁 Create RaceDrop', 'racedrop_start', 'primary'),
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
@@ -1116,6 +1145,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     const unlockedRiskRow = safety?.isUnlockedRheaPool
       ? [[Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]]
       : [];
+    const fleetButtonRow = (!isSui && !isStarknet)
+      ? [[cb('🏎️ Buy with RaceFleet', `fleet_cockpit:${shortKey}`, 'success')]]
+      : [];
 
     if (holdsToken && userPosition) {
       text += `⚡ *Manage Position* (Buy More or Sell):\n`;
@@ -1126,6 +1158,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        ...fleetButtonRow,
         // Buy % of balance (green)
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1165,6 +1198,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...unlockedRiskRow,
         parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        ...fleetButtonRow,
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
           cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
@@ -3589,9 +3623,558 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // ── RaceFleet (Multi-Wallet Engine) Routes ─────────────────────────────────
+
+  bot.command('fleet', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const dashboard = await buildRaceFleetDashboard(telegramId);
+      await ctx.reply(dashboard.text, {
+        parse_mode: 'HTML',
+        ...dashboard.keyboard,
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('racefleet_menu', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const dashboard = await buildRaceFleetDashboard(telegramId);
+      await ctx.editMessageText(dashboard.text, {
+        parse_mode: 'HTML',
+        ...dashboard.keyboard,
+      } as any).catch(async () => {
+        await ctx.reply(dashboard.text, {
+          parse_mode: 'HTML',
+          ...dashboard.keyboard,
+        });
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^fleet_deploy:(\d+)$/, async (ctx) => {
+    const count = parseInt((ctx as any).match[1], 10) || 10;
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery(`Deploying ${count} fleet wallets on NEAR...`).catch(() => {});
+    const loadingMsg = await ctx.reply(`⏳ <b>Deploying RaceFleet (${count} Wallets)...</b>\n\n• Deducting 2 NEAR subscription fee\n• Initializing named subaccounts on NEAR mainnet\n• Generating cryptographic access keys\n\n<i>This takes ~3–5 seconds...</i>`, { parse_mode: 'HTML' });
+
+    try {
+      const res = await deployRaceFleet(telegramId, count);
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+
+      if (res.success && res.fleet) {
+        await ctx.reply(
+          `🚀 <b>RaceFleet Successfully Deployed!</b>\n\n` +
+          `🏷 <b>Fleet Tag</b>: <code>${res.fleet.fleet_tag}</code>\n` +
+          `📦 <b>Fleet Size</b>: <b>${res.fleet.wallet_count} Named Wallets</b>\n` +
+          `📅 <b>Active Until</b>: ${new Date(res.fleet.expires_at).toLocaleDateString()}\n\n` +
+          `💡 <i>Next step: Tap <b>[📥 Distribute from Main]</b> to disburse NEAR into your fleet wallets so they can start bundle trading.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('📥 Distribute from Main', 'fleet_fund_prompt')],
+              [Markup.button.callback('🏎️ Open Fleet Dashboard', 'racefleet_menu')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ <b>Deployment Failed:</b>\n\n${res.reason || 'Unknown error'}`, { parse_mode: 'HTML' });
+      }
+    } catch (err: any) {
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Deployment error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^fleet_cockpit:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      return;
+    }
+
+    try {
+      const cockpit = await buildFleetCockpit(telegramId, tokenAddress);
+      await ctx.editMessageText(cockpit.text, {
+        parse_mode: 'HTML',
+        ...cockpit.keyboard,
+      } as any).catch(async () => {
+        await ctx.reply(cockpit.text, {
+          parse_mode: 'HTML',
+          ...cockpit.keyboard,
+        });
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
+  bot.action(/^fleet_buy_amt:(.+):(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const amtStr = (ctx as any).match[2];
+    const amt = parseFloat(amtStr);
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress || isNaN(amt) || amt <= 0) {
+      await ctx.answerCbQuery('Invalid buy parameters').catch(() => {});
+      return;
+    }
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) { await ctx.answerCbQuery('No active RaceFleet').catch(() => {}); return; }
+
+    await ctx.answerCbQuery(`Firing bundle buy across ${fleet.wallet_count} wallets...`).catch(() => {});
+    const executingMsg = await ctx.reply(`🏎️ <b>Firing Coordinated Bundle Buy...</b>\n\nSpending <b>${amt} NEAR per wallet</b> across ${fleet.wallet_count} fleet wallets.\n<i>Broadcasting parallel on-chain transactions...</i>`, { parse_mode: 'HTML' });
+
+    try {
+      const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
+      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => {});
+
+      if (res.success) {
+        await ctx.reply(
+          `✅ <b>RaceFleet Bundle Buy Executed!</b>\n\n` +
+          `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+          `📦 <b>Successful Swaps</b>: <b>${res.successCount}/${fleet.wallet_count} Wallets</b>\n` +
+          `💰 <b>Total Spent</b>: <b>${res.totalSpentNear} NEAR</b> (~${amt} N / wallet)\n` +
+          (res.failCount > 0 ? `⚠️ <b>Failed</b>: ${res.failCount} wallets (insufficient balance or slippage)\n\n` : '\n') +
+          `<i>All transactions signed with independent keys and broadcast in parallel.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🏎️ Back to Cockpit', `fleet_cockpit:${shortKey}`)],
+              [Markup.button.callback('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`), Markup.button.callback('🔴 Dump All (100%)', `fleet_sell:${shortKey}:100`)],
+              [Markup.button.callback('🔙 Main Menu', 'menu_home')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ <b>Bundle Buy Failed:</b>\n\n${res.errors[0] || 'Unknown error'}`, { parse_mode: 'HTML' });
+      }
+    } catch (err: any) {
+      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Execution error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^fleet_custom_buy:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      return;
+    }
+
+    userPendingActions.set(telegramId, {
+      action: 'fleet_custom_buy',
+      fleetTokenAddress: tokenAddress,
+      expiresAt: Date.now() + 180_000,
+    });
+
+    await ctx.reply(
+      `🏎️ <b>Custom Fleet Buy for</b> <code>${tokenAddress}</code>\n\n` +
+      `Reply with the amount in NEAR to spend <b>per wallet</b> (e.g. <code>0.75</code> or <code>3.5</code>):\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^fleet_split_buy:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      return;
+    }
+
+    userPendingActions.set(telegramId, {
+      action: 'fleet_split_buy',
+      fleetTokenAddress: tokenAddress,
+      expiresAt: Date.now() + 180_000,
+    });
+
+    await ctx.reply(
+      `➗ <b>Split Total Budget for</b> <code>${tokenAddress}</code>\n\n` +
+      `Reply with the <b>total NEAR</b> you want to spend across your entire fleet (e.g. <code>20</code>):\n` +
+      `<i>The bot will automatically divide it equally among all your active fleet wallets.</i>\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^fleet_snipe_protect:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token not found').catch(() => {});
+      return;
+    }
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.answerCbQuery('Executing Protected Fleet Snipe (1 N each + 50% TP / 15% SL)...').catch(() => {});
+    const loadingMsg = await ctx.reply(`🏎️ <b>Executing Protected Fleet Snipe...</b>\n\n1. Buying 1.0 NEAR per wallet across ${fleet.wallet_count} wallets\n2. Attaching automated +50% Take Profit\n3. Attaching automated -15% Stop Loss`, { parse_mode: 'HTML' });
+
+    try {
+      const buyRes = await executeFleetBundleBuy(fleet.id, tokenAddress, 1.0, 3.0);
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+
+      if (buyRes.success) {
+        // Automatically create TP/SL protection order in DB
+        await createRaceFleetOrder({
+          fleet_id: fleet.id,
+          user_id: user.id,
+          token_address: tokenAddress,
+          order_type: 'tp_sl',
+          sl_percent: 15.0,
+          tp_percent: 50.0,
+          sell_pct: 100,
+        }).catch((err) => console.warn('Failed to record fleet TP/SL order:', err?.message));
+
+        await ctx.reply(
+          `🛡️ <b>Protected Fleet Position Opened!</b>\n\n` +
+          `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+          `📦 <b>Filled</b>: <b>${buyRes.successCount}/${fleet.wallet_count} Wallets</b>\n` +
+          `💰 <b>Total Spent</b>: <b>${buyRes.totalSpentNear} NEAR</b>\n\n` +
+          `🎯 <b>Active Protection Guard:</b>\n` +
+          `• <b>Take Profit</b>: +50% (Sells 100% across fleet)\n` +
+          `• <b>Stop Loss</b>: -15% (Emergency exit across fleet)\n\n` +
+          `<i>RacerBot's real-time engine will trigger automatically on price crossing.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🏎️ Fleet Cockpit', `fleet_cockpit:${shortKey}`)],
+              [Markup.button.callback('🔙 Fleet Menu', 'racefleet_menu')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ Snipe failed: ${buyRes.errors[0] || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^fleet_sell:(.+):(\d+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const pct = parseInt((ctx as any).match[2], 10) || 100;
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      return;
+    }
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.answerCbQuery(`Selling ${pct}% across all ${fleet.wallet_count} fleet wallets...`).catch(() => {});
+    const statusMsg = await ctx.reply(`🔴 <b>Executing Coordinated Bundle Sell (${pct}%)...</b>\n\n<i>Swapping tokens back to NEAR in parallel...</i>`, { parse_mode: 'HTML' });
+
+    try {
+      const res = await executeFleetBundleSell(fleet.id, tokenAddress, pct, 3.0);
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+
+      if (res.success) {
+        await ctx.reply(
+          `✅ <b>RaceFleet Bundle Sell Complete!</b>\n\n` +
+          `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+          `📊 <b>Sold</b>: <b>${pct}%</b> across <b>${res.successCount}/${fleet.wallet_count} Wallets</b>\n\n` +
+          `All proceeds returned to their respective fleet wallets.`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('📤 Sweep Funds to Main Wallet', 'fleet_sweep_prompt')],
+              [Markup.button.callback('🏎️ Back to Fleet Cockpit', `fleet_cockpit:${shortKey}`)],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ Sell execution failed: ${res.errors[0] || 'No tokens available to sell'}`);
+      }
+    } catch (err: any) {
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Execution error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('fleet_fund_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'fleet_fund_amt',
+      expiresAt: Date.now() + 180_000,
+    });
+
+    await ctx.reply(
+      `📥 <b>Fund Your RaceFleet</b>\n\n` +
+      `Reply with the total amount of NEAR from your main wallet to distribute equally to your fleet (e.g. <code>25</code>):\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('fleet_sweep_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('Sweeping all fleet funds to main wallet...').catch(() => {});
+    const statusMsg = await ctx.reply('⏳ <b>Sweeping all fleet balances back to main wallet...</b>', { parse_mode: 'HTML' });
+
+    try {
+      const res = await sweepFleetFunds(telegramId);
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+
+      if (res.success) {
+        await ctx.reply(
+          `🧹 <b>RaceFleet Sweep Complete!</b>\n\n` +
+          `💰 <b>Total Swept</b>: <b>${res.totalSweptNear} NEAR</b>\n` +
+          `📦 <b>Wallets Swept</b>: <b>${res.successCount} wallets</b>\n\n` +
+          `All funds have been safely consolidated into your primary RacerBot wallet.`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Open Main Wallet', 'menu_wallet')],
+              [Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`⚠️ No funds to sweep (or fleet wallets already empty).`);
+      }
+    } catch (err: any) {
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Sweep failed: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('fleet_wallets_list', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.answerCbQuery('Loading fleet balances...').catch(() => {});
+    const balances = await getFleetBalances(fleet.id);
+
+    let listText = `💳 <b>RaceFleet Subaccounts (${fleet.wallet_count} Wallets)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    for (const w of balances.wallets) {
+      listText += `• <b>W${w.walletIndex}</b>: <code>${w.accountId}</code>\n  💰 <b>${w.balanceNear.toFixed(3)} NEAR</b>\n`;
+    }
+    listText += `\nTotal: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})`;
+
+    await ctx.reply(listText, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📥 Distribute from Main', 'fleet_fund_prompt'), Markup.button.callback('📤 Sweep to Main', 'fleet_sweep_prompt')],
+        [Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')],
+      ]),
+    });
+  });
+
+  bot.action('fleet_export_keys', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('Decrypting fleet private keys...').catch(() => {});
+
+    try {
+      const res = await exportFleetKeys(telegramId);
+      if (res.success && res.wallets) {
+        let exportText = `🔑 <b>RaceFleet Private Keys Export</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        exportText += `⚠️ <i>NEVER share these private keys with anyone. Anyone with these keys can withdraw from your fleet subaccounts.</i>\n\n`;
+
+        for (const w of res.wallets) {
+          exportText += `Account: <code>${w.accountId}</code>\nKey: <code>${w.privateKey}</code>\n\n`;
+        }
+
+        await ctx.reply(exportText, {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')],
+          ]),
+        });
+      } else {
+        await ctx.reply(`❌ Could not export keys: ${res.reason}`);
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Export error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action(/^fleet_lo_start:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) {
+      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      return;
+    }
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.reply(
+      `🎯 <b>Fleet Limit Order for</b> <code>${tokenAddress}</code>\n\n` +
+      `Fleet: <code>${fleet.fleet_tag}</code> (${fleet.wallet_count} Wallets)\n\n` +
+      `Choose order direction:`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🟢 Buy Dip (Price ≤ Target)', `fleet_lo_side:${shortKey}:buy`),
+            Markup.button.callback('🔴 Take Profit (Price ≥ Target)', `fleet_lo_side:${shortKey}:sell`),
+          ],
+          [Markup.button.callback('« Back to Cockpit', `fleet_cockpit:${shortKey}`)],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^fleet_lo_side:(.+):(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const side = (ctx as any).match[2] as 'buy' | 'sell';
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) return;
+
+    await ctx.reply(
+      `📐 <b>Select Target Metric for Fleet ${side === 'buy' ? 'Buy' : 'Sell'}:</b>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('💵 Target Price (USD)', `fleet_lo_cond:${shortKey}:${side}:price`),
+            Markup.button.callback('📊 Target Market Cap (USD)', `fleet_lo_cond:${shortKey}:${side}:market_cap`),
+          ],
+          [Markup.button.callback('« Cancel', `fleet_cockpit:${shortKey}`)],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^fleet_lo_cond:(.+):(.+):(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const side = (ctx as any).match[2] as 'buy' | 'sell';
+    const condType = (ctx as any).match[3] as 'price' | 'market_cap';
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+
+    if (!tokenAddress) return;
+
+    userPendingActions.set(telegramId, {
+      action: 'fleet_lo_target_value',
+      fleetTokenAddress: tokenAddress,
+      fleetSide: side,
+      fleetLoConditionType: condType,
+      expiresAt: Date.now() + 180_000,
+    });
+
+    const metric = condType === 'price' ? 'Price ($)' : 'Market Cap ($)';
+    await ctx.reply(
+      `🎯 <b>Enter Target ${metric}</b>\n\n` +
+      `Reply with the target value in USD (e.g. <code>${condType === 'price' ? '0.0045' : '150000'}</code>):\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('fleet_orders_list', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    const orders = await getRaceFleetOrdersByFleet(fleet.id);
+    if (orders.length === 0) {
+      await ctx.reply('📋 <b>Active RaceFleet Orders</b>\n\nNo active orders currently pending.', {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', 'racefleet_menu')]]),
+      });
+      return;
+    }
+
+    let text = `📋 <b>RaceFleet Active Orders (${orders.length})</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    for (const o of orders.slice(0, 10)) {
+      const typeLabel = o.order_type === 'limit_buy' ? '🟢 Limit Buy' : o.order_type === 'limit_sell' ? '🔴 Limit Sell' : '🛡️ TP/SL';
+      text += `• ${typeLabel} <code>${o.token_address}</code>\n  Trigger: <code>${o.trigger_condition || 'auto'} ${o.target_value || ''}</code> | Amt: ${o.amount_per_wallet} N/wallet\n`;
+    }
+
+    await ctx.reply(text, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')]]),
+    });
+  });
+
+  bot.action('fleet_renew_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.reply(
+      `🔄 <b>Renew RaceFleet Subscription</b>\n\n` +
+      `Fee: <b>${RACEFLEET_MONTHLY_FEE_NEAR} NEAR</b> for an additional 30 days.\n\n` +
+      `<i>The fee will be deducted directly from your main RacerBot wallet.</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Confirm & Pay 2 NEAR', 'fleet_renew_confirm')],
+          [Markup.button.callback('« Cancel', 'racefleet_menu')],
+        ]),
+      }
+    );
+  });
+
+  bot.action('fleet_renew_confirm', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.answerCbQuery('Processing renewal payment...').catch(() => {});
+    try {
+      await withdrawFunds(telegramId, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
+      const updated = await renewRaceFleet(fleet.id, 30);
+      await ctx.reply(
+        `🎉 <b>RaceFleet Successfully Renewed!</b>\n\n` +
+        `New Expiry Date: <b>${new Date(updated.expires_at).toLocaleDateString()}</b>\n\n` +
+        `All fleet operations remain fully active.`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[Markup.button.callback('🏎️ Open Fleet Dashboard', 'racefleet_menu')]]),
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Renewal error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
   // ── Targeted snipes: by token contract address / by deployer wallet ───────
 
   const snipeSetupCache = new Map<number, { tokenAddress: string; amt: number; expiresAt: number }>();
+
 
   function parseUtcTimeString(input: string): { date: Date | null; error?: string } {
     const raw = input.trim();
@@ -9471,6 +10054,192 @@ export function setupRoutes(bot: Telegraf): void {
             ]),
           }
         );
+        return;
+      }
+
+      if (pending.action === 'fleet_custom_buy') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR.');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const fleet = await getRaceFleetByUserId(user.id);
+        if (!fleet) { await ctx.reply('❌ No active RaceFleet found.'); return; }
+
+        const tokenAddress = pending.fleetTokenAddress!;
+        const statusMsg = await ctx.reply(`🏎️ Executing bundle buy: \`${amt} NEAR\` across ${fleet.wallet_count} fleet wallets...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
+          if (res.success) {
+            await ctx.reply(
+              `✅ *RaceFleet Bundle Buy Successful!*\n\n` +
+              `📦 Executed: \`${res.successCount}/${fleet.wallet_count} Wallets\`\n` +
+              `💰 Total Spent: \`${res.totalSpentNear} NEAR\` (~${amt} N / wallet)\n` +
+              (res.failCount > 0 ? `⚠️ Failed: \`${res.failCount} wallets\` (Low balance/slippage)\n\n` : '\n') +
+              `All swaps executed in parallel with independent nonces.`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [cb('🏎️ Fleet Cockpit', `fleet_cockpit:${getShortTokenKey(tokenAddress)}`, 'success')],
+                  [cb('🔙 Fleet Menu', 'racefleet_menu', 'primary')],
+                ]),
+              }
+            );
+          } else {
+            await ctx.reply(`❌ Fleet buy failed: ${res.errors[0] || 'Unknown error'}`);
+          }
+        } catch (err: any) {
+          await ctx.reply(`❌ Fleet execution failed: ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'fleet_split_buy') {
+        const totalBudget = parseFloat(rawText);
+        if (isNaN(totalBudget) || totalBudget <= 0) {
+          await ctx.reply('❌ Invalid budget. Must be a positive number in NEAR.');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const fleet = await getRaceFleetByUserId(user.id);
+        if (!fleet) { await ctx.reply('❌ No active RaceFleet found.'); return; }
+
+        const perWallet = parseFloat((totalBudget / fleet.wallet_count).toFixed(4));
+        const tokenAddress = pending.fleetTokenAddress!;
+        await ctx.reply(`🏎️ Splitting \`${totalBudget} NEAR\` (\`${perWallet} N\` / wallet) across ${fleet.wallet_count} wallets...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await executeFleetBundleBuy(fleet.id, tokenAddress, perWallet, 3.0);
+          if (res.success) {
+            await ctx.reply(
+              `✅ *RaceFleet Split Buy Successful!*\n\n` +
+              `📦 Executed: \`${res.successCount}/${fleet.wallet_count} Wallets\`\n` +
+              `💰 Total Spent: \`${res.totalSpentNear} NEAR\` (\`${perWallet} N / wallet\`)\n\n` +
+              `Coordinated parallel execution confirmed.`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [cb('🏎️ Fleet Cockpit', `fleet_cockpit:${getShortTokenKey(tokenAddress)}`, 'success')],
+                  [cb('🔙 Fleet Menu', 'racefleet_menu', 'primary')],
+                ]),
+              }
+            );
+          } else {
+            await ctx.reply(`❌ Fleet buy failed: ${res.errors[0] || 'Unknown error'}`);
+          }
+        } catch (err: any) {
+          await ctx.reply(`❌ Fleet execution failed: ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'fleet_fund_amt') {
+        const totalNear = parseFloat(rawText);
+        if (isNaN(totalNear) || totalNear <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR.');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        await ctx.reply(`⏳ Distributing \`${totalNear} NEAR\` equally across your fleet wallets...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await distributeFundsToFleet(telegramId, totalNear);
+          if (res.success) {
+            await ctx.reply(
+              `✅ *Fleet Funding Complete!*\n\n` +
+              `💰 Distributed: \`${totalNear} NEAR\`\n` +
+              `📦 Wallets Funded: \`${res.walletCount} wallets\` (\`${res.distributedPerWallet} N / wallet\`)\n\n` +
+              `Your fleet is ready to trade.`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [cb('🏎️ Fleet Dashboard', 'racefleet_menu', 'success')],
+                ]),
+              }
+            );
+          } else {
+            await ctx.reply(`❌ Failed to fund fleet: ${res.reason}`);
+          }
+        } catch (err: any) {
+          await ctx.reply(`❌ Error funding fleet: ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'fleet_lo_target_value') {
+        const val = parseFloat(rawText);
+        if (isNaN(val) || val <= 0) {
+          await ctx.reply('❌ Invalid target value. Must be a positive number.');
+          return;
+        }
+        userPendingActions.set(telegramId, {
+          ...pending,
+          action: 'fleet_lo_amount',
+          fleetLoTargetValue: val,
+          expiresAt: Date.now() + 5 * 60_000,
+        });
+        const condLabel = pending.fleetLoConditionType === 'price' ? 'Price' : 'Market Cap';
+        await ctx.reply(
+          `✅ Target ${condLabel}: \`${val}\`\n\n` +
+          `💰 *How much NEAR to spend per fleet wallet when triggered?*\n\n` +
+          `Reply with a number (e.g. \`1.5\` for 1.5 NEAR per wallet):`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (pending.action === 'fleet_lo_amount') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt < 0.01) {
+          await ctx.reply('❌ Invalid amount. Must be ≥ 0.01 NEAR.');
+          return;
+        }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const fleet = await getRaceFleetByUserId(user.id);
+        if (!fleet) { await ctx.reply('❌ No active RaceFleet found.'); return; }
+
+        userPendingActions.delete(telegramId);
+        const tokenAddress = pending.fleetTokenAddress!;
+        const side = pending.fleetSide || 'buy';
+        const targetType = pending.fleetLoConditionType === 'market_cap' ? 'mcap' : 'price';
+        const triggerCondition = side === 'buy' ? 'lte' : 'gte';
+
+        try {
+          const order = await createRaceFleetOrder({
+            fleet_id: fleet.id,
+            user_id: user.id,
+            token_address: tokenAddress,
+            order_type: side === 'buy' ? 'limit_buy' : 'limit_sell',
+            amount_per_wallet: amt,
+            target_type: targetType,
+            trigger_condition: triggerCondition,
+            target_value: pending.fleetLoTargetValue!,
+            max_slippage_pct: 3.0,
+          });
+
+          await ctx.reply(
+            `✅ *Fleet Limit Order Created!*\n\n` +
+            `🪙 *Token*: \`${order.token_address}\`\n` +
+            `🏎 *Fleet*: \`${fleet.fleet_tag}\` (${fleet.wallet_count} Wallets)\n` +
+            `📊 *Direction*: ${order.order_type === 'limit_buy' ? '🟢 Buy Dip' : '🔴 Take Profit'}\n` +
+            `📐 *Trigger*: ${targetType === 'mcap' ? 'Market Cap' : 'Price'} ${triggerCondition === 'lte' ? '≤' : '≥'} \`${order.target_value}\`\n` +
+            `💰 *Amount*: \`${order.amount_per_wallet} NEAR / wallet\` (Total: \`${(order.amount_per_wallet * fleet.wallet_count).toFixed(2)} NEAR\`)\n\n` +
+            `When triggered, all ${fleet.wallet_count} wallets will execute simultaneously.`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [cb('🏎️ Fleet Cockpit', `fleet_cockpit:${getShortTokenKey(tokenAddress)}`, 'success')],
+                [cb('🔙 Fleet Menu', 'racefleet_menu', 'primary')],
+              ]),
+            }
+          );
+        } catch (err: any) {
+          await ctx.reply(`❌ Failed to create fleet limit order: ${getUserFriendlyError(err)}`);
+        }
         return;
       }
     }
