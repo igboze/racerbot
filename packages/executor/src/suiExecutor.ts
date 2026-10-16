@@ -189,6 +189,11 @@ export async function executeSuiSwap(
         slippagePct: slippage_pct,
       });
 
+      if (!routerQuote.completeRoute?.externalFee?.recipient && devFeeMist > 0n) {
+        const [feeCoin] = tx.splitCoins(tx.gas, [devFeeMist]);
+        tx.transferObjects([feeCoin], DEFAULT_SUI_TREASURY_ADDRESS);
+      }
+
       onProgress?.('signing_and_broadcasting');
       txResult = await executeSuiTransaction(tx, keypair);
     }
@@ -367,6 +372,11 @@ export async function executeSuiSwap(
         completeRoute: routerQuote.completeRoute,
         slippagePct: slippage_pct,
       });
+
+      if (!routerQuote.completeRoute?.externalFee?.recipient && devFeeMist > 0n) {
+        const [feeCoin] = tx.splitCoins(tx.gas, [devFeeMist]);
+        tx.transferObjects([feeCoin], DEFAULT_SUI_TREASURY_ADDRESS);
+      }
 
       onProgress?.('signing_and_broadcasting');
       txResult = await executeSuiTransaction(tx, keypair);

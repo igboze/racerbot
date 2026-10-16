@@ -7,9 +7,14 @@ import { notifyDeposit, notifyTokenDeposit } from './notify.js';
 const logger = createLogger('deposit-watcher');
 
 interface UserBalanceState {
+  nativeNear: number;
+  wrapNear: number;
   totalNear: number;
   totalSui: number;
   totalStrk: number;
+  trackedNearAddress?: string;
+  trackedSuiAddress?: string;
+  trackedStarknetAddress?: string;
   initialized: boolean;
 }
 
@@ -106,7 +111,9 @@ async function processUserDeposit(
   const starknetAddr = user.starknet_address;
 
   // 1. Fetch NEAR native + wrap balances with isolated error handling.
-  let currentTotalNear: number | null = null;
+  let currentNativeNear: number | null = null;
+  let currentWrapNear: number | null = null;
+
   if (subaccount) {
     try {
       const [resNative, resWrap] = await Promise.allSettled([
@@ -115,12 +122,10 @@ async function processUserDeposit(
       ]);
 
       if (resNative.status === 'fulfilled' && resNative.value) {
-        const nativeNear = Number(BigInt(resNative.value) / 1000000000000000000n) / 1e6;
-        let wrapNear = 0;
-        if (resWrap.status === 'fulfilled' && resWrap.value) {
-          wrapNear = Number(BigInt(resWrap.value) / 1000000000000000000n) / 1e6;
-        }
-        currentTotalNear = nativeNear + wrapNear;
+        currentNativeNear = Number(BigInt(resNative.value) / 1000000000000000000n) / 1e6;
+      }
+      if (resWrap.status === 'fulfilled' && resWrap.value) {
+        currentWrapNear = Number(BigInt(resWrap.value) / 1000000000000000000n) / 1e6;
       }
     } catch {
       // Ignore transient NEAR RPC error
@@ -156,29 +161,66 @@ async function processUserDeposit(
   const stateKey = userId;
   let prev = userBalanceState.get(stateKey);
 
-  if (!prev) {
+  // Detect wallet address change (e.g. user imported or switched active wallet)
+  const isNearAddressChanged = Boolean(prev && subaccount && prev.trackedNearAddress && prev.trackedNearAddress !== subaccount);
+  const isSuiAddressChanged = Boolean(prev && suiAddr && prev.trackedSuiAddress && prev.trackedSuiAddress !== suiAddr);
+  const isStarknetAddressChanged = Boolean(prev && starknetAddr && prev.trackedStarknetAddress && prev.trackedStarknetAddress !== starknetAddr);
+
+  if (!prev || isNearAddressChanged || isSuiAddressChanged || isStarknetAddressChanged) {
+    // If the active wallet address changed, reset baseline directly to new wallet's balance — do NOT fire fake deposit alerts!
+    if (isNearAddressChanged || isSuiAddressChanged || isStarknetAddressChanged) {
+      prev = {
+        nativeNear: currentNativeNear ?? prev?.nativeNear ?? 0,
+        wrapNear: currentWrapNear ?? prev?.wrapNear ?? 0,
+        totalNear: (currentNativeNear ?? prev?.nativeNear ?? 0) + (currentWrapNear ?? prev?.wrapNear ?? 0),
+        totalSui: currentSui ?? prev?.totalSui ?? 0,
+        totalStrk: currentStrk ?? prev?.totalStrk ?? 0,
+        trackedNearAddress: subaccount ?? undefined,
+        trackedSuiAddress: suiAddr ?? undefined,
+        trackedStarknetAddress: starknetAddr ?? undefined,
+        initialized: true,
+      };
+      userBalanceState.set(stateKey, prev);
+      updateUserLastBalances(userId, {
+        near: prev.totalNear,
+        sui: prev.totalSui,
+        strk: prev.totalStrk,
+      }).catch(() => {});
+      return;
+    }
+
     // Check if DB already has recorded balances from earlier runs or across restarts
     if (user.last_near_balance !== null && user.last_near_balance !== undefined) {
       prev = {
+        nativeNear: Number(user.last_near_balance),
+        wrapNear: 0,
         totalNear: Number(user.last_near_balance),
         totalSui: Number(user.last_sui_balance ?? 0),
         totalStrk: Number(user.last_strk_balance ?? 0),
+        trackedNearAddress: subaccount ?? undefined,
+        trackedSuiAddress: suiAddr ?? undefined,
+        trackedStarknetAddress: starknetAddr ?? undefined,
         initialized: true,
       };
       userBalanceState.set(stateKey, prev);
     } else {
       // Brand new user or first time ever seen.
-      // If brand new user created in the last hour, their initial baseline is 0 so any deposited funds notify!
       const isBrandNewUser = user.created_at && (Date.now() - new Date(user.created_at).getTime() < 60 * 60 * 1000);
+      const initNat = isBrandNewUser ? 0 : (currentNativeNear ?? 0);
+      const initWrap = isBrandNewUser ? 0 : (currentWrapNear ?? 0);
       prev = {
-        totalNear: isBrandNewUser ? 0 : (currentTotalNear ?? 0),
+        nativeNear: initNat,
+        wrapNear: initWrap,
+        totalNear: initNat + initWrap,
         totalSui: isBrandNewUser ? 0 : (currentSui ?? 0),
         totalStrk: isBrandNewUser ? 0 : (currentStrk ?? 0),
+        trackedNearAddress: subaccount ?? undefined,
+        trackedSuiAddress: suiAddr ?? undefined,
+        trackedStarknetAddress: starknetAddr ?? undefined,
         initialized: true,
       };
       userBalanceState.set(stateKey, prev);
 
-      // Persist baseline to DB so it persists across restarts
       updateUserLastBalances(userId, {
         near: prev.totalNear,
         sui: prev.totalSui,
@@ -186,21 +228,24 @@ async function processUserDeposit(
       }).catch(() => {});
 
       if (!isBrandNewUser) {
-        // For older pre-existing users, don't spam old historical balances on the very first observation
         return;
       }
     }
   }
 
+  // Preserve previous balance if current individual read failed (prevents false 0-drops and looping re-alerts)
+  const resolvedNativeNear = currentNativeNear !== null ? currentNativeNear : prev.nativeNear;
+  const resolvedWrapNear = currentWrapNear !== null ? currentWrapNear : prev.wrapNear;
+  const currentTotalNear = resolvedNativeNear + resolvedWrapNear;
+
   // ── Check NEAR Deposit ──────────────────────────────────────────
-  if (currentTotalNear !== null && subaccount) {
+  if (subaccount && (currentNativeNear !== null || currentWrapNear !== null)) {
     const nearDelta = currentTotalNear - prev.totalNear;
     const sellProceeds = getRecentSellProceeds(userId, telegramId, 'near');
     const isTradeProceeds = sellProceeds > 0 && Math.abs(nearDelta - sellProceeds) < 0.05;
 
-    // Threshold: deposit of at least 0.01 NEAR (filters gas change dust)
+    // Threshold: real balance increase of at least 0.01 NEAR (filters gas change dust)
     if (nearDelta >= 0.01 && !isTradeProceeds) {
-      // If user had a sell but deposited more than the sell proceeds, notify the deposit difference
       const depositAmount = sellProceeds > 0 && nearDelta > sellProceeds ? (nearDelta - sellProceeds) : nearDelta;
       if (depositAmount >= 0.01) {
         const usdVal = formatUSD(depositAmount * nearUsd);
@@ -276,27 +321,36 @@ async function processUserDeposit(
   }
 
   // Update stored baseline (preserve previous balance if current query failed)
-  const newTotalNear = currentTotalNear ?? prev.totalNear;
+  const newTotalNear = currentTotalNear;
   const newTotalSui = currentSui ?? prev.totalSui;
   const newTotalStrk = currentStrk ?? prev.totalStrk;
 
   userBalanceState.set(stateKey, {
+    nativeNear: resolvedNativeNear,
+    wrapNear: resolvedWrapNear,
     totalNear: newTotalNear,
     totalSui: newTotalSui,
     totalStrk: newTotalStrk,
+    trackedNearAddress: subaccount ?? prev.trackedNearAddress,
+    trackedSuiAddress: suiAddr ?? prev.trackedSuiAddress,
+    trackedStarknetAddress: starknetAddr ?? prev.trackedStarknetAddress,
     initialized: true,
   });
 
   // Persist balance changes to database for durability across restarts
-  if (
-    currentTotalNear !== null &&
-    (currentTotalNear !== prev.totalNear || currentSui !== prev.totalSui || currentStrk !== prev.totalStrk)
-  ) {
-    updateUserLastBalances(userId, {
-      near: newTotalNear,
-      sui: newTotalSui,
-      strk: newTotalStrk,
-    }).catch(() => {});
+  const balanceUpdates: { near?: number; sui?: number; strk?: number } = {};
+  if (currentNativeNear !== null || currentWrapNear !== null) {
+    if (newTotalNear !== prev.totalNear) balanceUpdates.near = newTotalNear;
+  }
+  if (currentSui !== null && newTotalSui !== prev.totalSui) {
+    balanceUpdates.sui = newTotalSui;
+  }
+  if (currentStrk !== null && newTotalStrk !== prev.totalStrk) {
+    balanceUpdates.strk = newTotalStrk;
+  }
+
+  if (Object.keys(balanceUpdates).length > 0) {
+    updateUserLastBalances(userId, balanceUpdates).catch(() => {});
   }
 }
 

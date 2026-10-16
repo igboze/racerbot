@@ -746,13 +746,13 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 
     const row: any[] = [];
     if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch:${w.id}`, 'primary'));
+      row.push(cb(`⚡ Use ${w.name}`, `w_sw_near:${w.id}`, 'primary'));
     }
     if (w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`✏️ Rename`, `wallet_rename_prompt:${w.id}`, 'primary'));
+      row.push(cb(`✏️ Rename`, `w_ren_near:${w.id}`, 'primary'));
     }
     if (w.is_imported && !isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`🗑️ Delete`, `wallet_delete_confirm:${w.id}`, 'primary'));
+      row.push(cb(`🗑️ Delete`, `w_del_near:${w.id}`, 'primary'));
     }
     if (row.length > 0) {
       buttons.push(row);
@@ -773,13 +773,13 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 
     const row: any[] = [];
     if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_sui:${w.id}`, 'primary'));
+      row.push(cb(`⚡ Use ${w.name}`, `w_sw_sui:${w.id}`, 'primary'));
     }
     if (w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`✏️ Rename`, `wallet_rename_sui_prompt:${w.id}`, 'primary'));
+      row.push(cb(`✏️ Rename`, `w_ren_sui:${w.id}`, 'primary'));
     }
     if (w.is_imported && !isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`🗑️ Delete`, `wallet_delete_sui_confirm:${w.id}`, 'primary'));
+      row.push(cb(`🗑️ Delete`, `w_del_sui:${w.id}`, 'primary'));
     }
     if (row.length > 0) {
       buttons.push(row);
@@ -800,10 +800,10 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 
     const row: any[] = [];
     if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `wallet_switch_starknet:${w.id}`, 'primary'));
+      row.push(cb(`⚡ Use ${w.name}`, `w_sw_sn:${w.id}`, 'primary'));
     }
     if (w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`✏️ Rename`, `wallet_rename_starknet_prompt:${w.id}`, 'primary'));
+      row.push(cb(`✏️ Rename`, `w_ren_sn:${w.id}`, 'primary'));
     }
     if (row.length > 0) {
       buttons.push(row);
@@ -6471,7 +6471,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.action(/^wallet_switch:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_sw_near|wallet_switch):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
@@ -6514,7 +6514,7 @@ export function setupRoutes(bot: Telegraf): void {
     );
   });
 
-  bot.action(/^wallet_rename_prompt:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_ren_near|wallet_rename_prompt):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     userPendingActions.set(telegramId, {
@@ -6531,7 +6531,7 @@ export function setupRoutes(bot: Telegraf): void {
     );
   });
 
-  bot.action(/^wallet_delete_confirm:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_del_near|wallet_delete_confirm):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
@@ -6550,7 +6550,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.action(/^wallet_switch_sui:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_sw_sui|wallet_switch_sui):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
@@ -6595,7 +6595,7 @@ export function setupRoutes(bot: Telegraf): void {
     );
   });
 
-  bot.action(/^wallet_rename_sui_prompt:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_ren_sui|wallet_rename_sui_prompt):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     userPendingActions.set(telegramId, {
@@ -6612,7 +6612,7 @@ export function setupRoutes(bot: Telegraf): void {
     );
   });
 
-  bot.action(/^wallet_delete_sui_confirm:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_del_sui|wallet_delete_sui_confirm):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
@@ -6661,7 +6661,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.action(/^wallet_switch_starknet:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_sw_sn|wallet_switch_starknet):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
@@ -6682,7 +6682,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
-  bot.action(/^wallet_rename_starknet_prompt:(.+)$/, async (ctx) => {
+  bot.action(/^(?:w_ren_sn|wallet_rename_starknet_prompt):(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     userPendingActions.set(telegramId, {
