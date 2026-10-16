@@ -414,7 +414,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('⚙️ Settings', 'menu_settings', 'primary'),
     ],
     [
-      cb('🏎️ RaceFleet', 'racefleet_menu', 'success'),
+      cb('🏎️ RaceFleet (Beta)', 'racefleet_menu', 'success'),
       cb('📢 Buy Alerts', 'menu_buyalerts', 'primary'),
     ],
     [
@@ -1146,7 +1146,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ? [[Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]]
       : [];
     const fleetButtonRow = (!isSui && !isStarknet)
-      ? [[cb('🏎️ Buy with RaceFleet', `fleet_cockpit:${shortKey}`, 'success')]]
+      ? [[cb('🏎️ Buy with RaceFleet (Beta)', `fleet_cockpit:${shortKey}`, 'success')]]
       : [];
 
     if (holdsToken && userPosition) {
@@ -4100,6 +4100,75 @@ export function setupRoutes(bot: Telegraf): void {
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
+  });
+
+  bot.action(/^fleet_volume_prompt:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+    if (!tokenAddress) return;
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) {
+      await ctx.answerCbQuery('No active RaceFleet found').catch(() => {});
+      return;
+    }
+
+    await ctx.reply(
+      `🌊 <b>RaceFleet Volume Maker [BETA]</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `The Volume Maker conducts staggered micro-buys and micro-sells across your <b>${fleet.wallet_count} fleet wallets</b> to generate volume, increase transaction counts, and trend on DEX charts.\n\n` +
+      `⚡ <i>Ready to test a 1-click organic volume bump?</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('⚡ Run 1-Click Volume Bump (0.1 N each)', `fleet_volume_bump:${shortKey}`)],
+          [Markup.button.callback('« Back to Cockpit', `fleet_cockpit:${shortKey}`)],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^fleet_volume_bump:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+    if (!tokenAddress) return;
+
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user) return;
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) return;
+
+    await ctx.answerCbQuery('Generating volume bump...').catch(() => {});
+    const msg = await ctx.reply(`🌊 <b>Running Volume Bump across ${fleet.wallet_count} wallets...</b>\n\nBuying 0.1 NEAR per wallet to activate transaction count on-chain.`, { parse_mode: 'HTML' });
+
+    try {
+      const res = await executeFleetBundleBuy(fleet.id, tokenAddress, 0.1, 3.0);
+      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => {});
+      if (res.success) {
+        await ctx.reply(
+          `✅ <b>Volume Bump Complete!</b>\n\n` +
+          `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+          `📦 <b>Swaps Executed</b>: <b>${res.successCount}/${fleet.wallet_count} Wallets</b>\n` +
+          `💰 <b>Volume Generated</b>: <b>${res.totalSpentNear} NEAR</b>\n\n` +
+          `<i>Transactions are recorded on-chain, boosting pair activity!</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🏎️ Back to Cockpit', `fleet_cockpit:${shortKey}`)],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ Volume bump failed: ${res.errors[0] || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => {});
+      await ctx.reply(`❌ Error: ${getUserFriendlyError(err)}`);
+    }
   });
 
   bot.action('fleet_orders_list', async (ctx) => {

@@ -784,8 +784,13 @@ export async function buildFleetCockpit(
   const priceNearStr = priceNum ? `${priceNum.toFixed(6)} NEAR` : '0.00';
   const priceDisplay = priceUsdStr ? `${priceNearStr} (${priceUsdStr})` : priceNearStr;
 
+  const isFunded = balances.totalNear > 0.01;
+  const fundingTip = !isFunded
+    ? `⚠️ <i>Fleet balance is 0 NEAR. Disburse funds from your main wallet via [📥 Distribute NEAR] below to start bundle trading.</i>\n\n`
+    : '';
+
   const text =
-    `🏎 <b>RACEFLEET COCKPIT</b> — $${sym}\n` +
+    `🏎 <b>RACEFLEET COCKPIT [BETA]</b> — $${sym}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `🏷 <b>Fleet Tag</b>: <code>${fleet.fleet_tag}</code> (${fleet.wallet_count} Wallets)\n` +
     `💰 <b>Fleet Balance</b>: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n` +
@@ -794,6 +799,7 @@ export async function buildFleetCockpit(
       : '') +
     `🪙 <b>Target Token</b>: <code>${tokenAddress}</code>\n` +
     `📍 <b>Price</b>: ${priceDisplay}\n\n` +
+    fundingTip +
     `⚡ <i>Select 1-click execution mode across all ${fleet.wallet_count} wallets:</i>`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -853,8 +859,9 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
   });
 
   const text =
-    `🏎 <b>RACERBOT RACEFLEET</b>\n` +
+    `🏎 <b>RACERBOT RACEFLEET [BETA]</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `<i>🚀 Multi-Wallet Coordination Engine (Beta Launch)</i>\n\n` +
     `Status: ${statusEmoji} (Renews: ${expiresAtFormatted})\n` +
     `Fleet ID: <code>${fleet.fleet_tag}</code>\n` +
     `Active Fleet Size: <b>${fleet.wallet_count} Named Wallets</b>\n` +
@@ -886,8 +893,9 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
 // ── Telegram UI: RaceFleet Promo / Upgrade Card ─────────────────────────────
 export function buildFleetPromoCard(): { text: string; keyboard: any } {
   const text =
-    `🏎 <b>Unlock RacerBot RaceFleet</b>\n` +
+    `🏎 <b>Unlock RacerBot RaceFleet [BETA]</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `<i>🚀 Multi-Wallet Coordination Engine (Beta Launch)</i>\n\n` +
     `Deploy a coordinated fleet of up to <b>20 named RacerBot wallets</b> on NEAR mainnet.\n\n` +
     `⚡ <b>Key Advantages:</b>\n` +
     `• <b>1-Block Bundle Sniping</b>: Bypass per-wallet caps at token launch.\n` +

@@ -27,7 +27,7 @@ describe('RaceFleet Suite', () => {
 
   it('builds attractive promo card with correct pricing and deployment buttons', () => {
     const promo = buildFleetPromoCard();
-    expect(promo.text).toContain('🏎 <b>Unlock RacerBot RaceFleet</b>');
+    expect(promo.text).toContain('🏎 <b>Unlock RacerBot RaceFleet [BETA]</b>');
     expect(promo.text).toContain('2 NEAR / month');
     expect(promo.text).toContain('20 named RacerBot wallets');
     expect(promo.text).toContain('1-Block Bundle Sniping');
