@@ -25,9 +25,12 @@ import {
   updateRaceFleetOrderStatus,
   renewRaceFleet,
   getDb,
+  recordRaceFleetFill,
+  getRaceFleetFills,
   type RaceFleetRecord,
   type RaceFleetWalletRecord,
   type RaceFleetOrderRecord,
+  type RaceFleetFillRecord,
   type UserRecord,
 } from '@racerbot/db';
 import {
@@ -638,25 +641,24 @@ export async function executeFleetBundleBuy(
     }
   }
 
-  // Record fill for the fleet buy so user PnL reflects it accurately
+  // Record fill for the fleet buy so RaceFleet PnL reflects it accurately without touching personal fills
   if (txHashes.length > 0) {
     try {
       const fleet = await getRaceFleetById(fleetId);
       if (fleet) {
-        const db = await getDb();
         const currentPriceNear = info.price ? parseFloat(String(info.price)) : 0;
-        await db.query(`
-          INSERT INTO fills (user_id, side, token_address, amount, price, fee_paid, venue, tx_hash)
-          VALUES ($1, 'buy', $2, $3, $4, $5, $6, $7)
-        `, [
-          fleet.user_id,
-          tokenAddress,
-          totalSpentNear > 0 && currentPriceNear > 0 ? (totalSpentNear / currentPriceNear).toString() : '0',
-          currentPriceNear,
-          0,
-          venue || 'ref',
-          txHashes[0] || 'fleet_bundle',
-        ]);
+        const totalTokensBought = totalSpentNear > 0 && currentPriceNear > 0 ? (totalSpentNear / currentPriceNear).toString() : '0';
+        await recordRaceFleetFill({
+          fleet_id: fleet.id,
+          user_id: fleet.user_id,
+          side: 'buy',
+          token_address: tokenAddress,
+          amount: totalTokensBought,
+          price: currentPriceNear,
+          fee_paid: 0,
+          venue: venue || 'ref',
+          tx_hash: txHashes[0] || 'fleet_bundle',
+        });
       }
     } catch (fillErr) {
       logger.warn('Failed to record fleet fill', { error: String(fillErr) });
@@ -712,13 +714,13 @@ export async function executeFleetBundleSell(
       const tokenBalStr = await near.getTokenBalance(tokenAddress, w.account_id);
       const tokenBalBigInt = BigInt(tokenBalStr || '0');
       if (tokenBalBigInt <= 0n) {
-        return { txHash: 'skipped (no tokens)', sold: false };
+        return { txHash: 'skipped (no tokens)', sold: false, amountSoldBigInt: 0n };
       }
 
       const clampedSellPct = Math.max(1, Math.min(100, sellPct));
       const amountToSellBigInt = (tokenBalBigInt * BigInt(clampedSellPct)) / 100n;
       if (amountToSellBigInt <= 0n) {
-        return { txHash: 'skipped', sold: false };
+        return { txHash: 'skipped', sold: false, amountSoldBigInt: 0n };
       }
 
       const rawPrivateKey = decrypt(w.encrypted_private_key, MASTER_KEY);
@@ -791,16 +793,45 @@ export async function executeFleetBundleSell(
         }).catch(() => {});
 
         const txHash = res?.transaction?.hash || 'confirmed';
-        return { txHash, sold: true };
+        return { txHash, sold: true, amountSoldBigInt: amountToSellBigInt };
       });
     })
   );
 
+  let totalTokensSoldBigInt = 0n;
   for (const exec of executions) {
     if (exec.status === 'fulfilled' && exec.value.sold) {
       txHashes.push(exec.value.txHash);
+      if (exec.value.amountSoldBigInt) {
+        totalTokensSoldBigInt += exec.value.amountSoldBigInt;
+      }
     } else if (exec.status === 'rejected') {
       errors.push(exec.reason?.message || 'Sell error');
+    }
+  }
+
+  // Record fill for the fleet sell so RaceFleet PnL reflects exits accurately
+  if (txHashes.length > 0) {
+    try {
+      const fleet = await getRaceFleetById(fleetId);
+      if (fleet) {
+        const decimals = info.decimals ?? 18;
+        const totalTokensSoldHuman = Number(totalTokensSoldBigInt) / Math.pow(10, decimals);
+        const currentPriceNear = info.price ? parseFloat(String(info.price)) : 0;
+        await recordRaceFleetFill({
+          fleet_id: fleet.id,
+          user_id: fleet.user_id,
+          side: 'sell',
+          token_address: tokenAddress,
+          amount: totalTokensSoldHuman.toString(),
+          price: currentPriceNear,
+          fee_paid: 0,
+          venue: venue || 'ref',
+          tx_hash: txHashes[0] || 'fleet_bundle_sell',
+        });
+      }
+    } catch (fillErr) {
+      logger.warn('Failed to record fleet sell fill', { error: String(fillErr) });
     }
   }
 
@@ -847,6 +878,119 @@ export async function exportFleetKeys(telegramId: number): Promise<{
   };
 }
 
+// ── Fleet Token Position & PnL Helper ───────────────────────────────────────
+export interface FleetTokenPosition {
+  fleetId: string;
+  tokenAddress: string;
+  symbol: string;
+  totalBalanceRaw: bigint;
+  totalBalanceHuman: number;
+  walletsHoldingCount: number;
+  walletCount: number;
+  avgEntryPriceNear: number;
+  currentPriceNear: number;
+  currentPriceUsd: number;
+  totalValueNear: number;
+  totalValueUsd: number;
+  pnlPct: number;
+  pnlDisplay: string;
+  emoji: string;
+}
+
+export async function getFleetTokenPosition(fleetId: string, tokenAddress: string): Promise<FleetTokenPosition | null> {
+  const fleet = await getRaceFleetById(fleetId);
+  if (!fleet) return null;
+
+  const wallets = await getRaceFleetWallets(fleetId);
+  const near = getNear();
+  const info = await getTokenInfo(tokenAddress, false);
+  const decimals = info?.decimals ?? 18;
+  const currentPriceNear = info?.price ? parseFloat(String(info.price)) : 0;
+  const nearUsdRate = info?.near_usd || 5.16;
+  const currentPriceUsd = currentPriceNear * nearUsdRate;
+
+  let totalBalanceRaw = 0n;
+  let walletsHoldingCount = 0;
+
+  const balances = await Promise.allSettled(
+    wallets.map(w => near.getTokenBalance(tokenAddress, w.account_id))
+  );
+
+  for (const b of balances) {
+    if (b.status === 'fulfilled' && b.value) {
+      try {
+        const raw = BigInt(b.value);
+        if (raw > 0n) {
+          totalBalanceRaw += raw;
+          walletsHoldingCount++;
+        }
+      } catch {}
+    }
+  }
+
+  const totalBalanceHuman = Number(totalBalanceRaw) / Math.pow(10, decimals);
+  const totalValueNear = totalBalanceHuman * currentPriceNear;
+  const totalValueUsd = totalValueNear * nearUsdRate;
+
+  // Compute entry price strictly from race_fleet_fills (completely independent from personal account)
+  let avgEntryPriceNear = 0;
+  try {
+    const fills = await getRaceFleetFills(fleetId, tokenAddress);
+    let totalBuyQty = 0;
+    let totalBuyCost = 0;
+    for (const f of fills) {
+      if (f.side === 'buy') {
+        const qty = parseFloat(f.amount || '0');
+        const price = parseFloat(f.price || '0');
+        if (qty > 0 && price > 0) {
+          totalBuyQty += qty;
+          totalBuyCost += qty * price;
+        }
+      }
+    }
+    if (totalBuyQty > 0 && totalBuyCost > 0) {
+      avgEntryPriceNear = totalBuyCost / totalBuyQty;
+    }
+  } catch (err) {
+    logger.warn('Failed to query race_fleet_fills for position', { error: String(err) });
+  }
+
+  let pnlPct = 0;
+  let pnlDisplay = 'N/A';
+  let emoji = '⚪';
+
+  if (currentPriceNear > 0 && avgEntryPriceNear > 0) {
+    pnlPct = ((currentPriceNear - avgEntryPriceNear) / avgEntryPriceNear) * 100;
+    if (pnlPct > 0) {
+      emoji = pnlPct >= 100 ? '🚀' : '🟢';
+    } else if (pnlPct < 0) {
+      emoji = '🔴';
+    }
+    pnlDisplay = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+  } else if (currentPriceNear > 0) {
+    pnlDisplay = 'LIVE';
+    emoji = '🟢';
+  }
+
+  return {
+    fleetId,
+    tokenAddress,
+    symbol: info?.symbol || tokenAddress.split('.')[0].toUpperCase(),
+    totalBalanceRaw,
+    totalBalanceHuman,
+    walletsHoldingCount,
+    walletCount: fleet.wallet_count,
+    avgEntryPriceNear,
+    currentPriceNear,
+    currentPriceUsd,
+    totalValueNear,
+    totalValueUsd,
+    pnlPct,
+    pnlDisplay,
+    emoji,
+  };
+}
+
 // ── Telegram UI: RaceFleet Cockpit Card ─────────────────────────────────────
 export async function buildFleetCockpit(
   telegramId: number,
@@ -860,9 +1004,10 @@ export async function buildFleetCockpit(
     return buildFleetPromoCard();
   }
 
-  const [balances, info] = await Promise.all([
+  const [balances, info, fleetPos] = await Promise.all([
     getFleetBalances(fleet.id, tokenAddress),
     getTokenInfo(tokenAddress, false),
+    getFleetTokenPosition(fleet.id, tokenAddress),
   ]);
 
   const shortKey = getShortTokenKey(tokenAddress);
@@ -877,14 +1022,19 @@ export async function buildFleetCockpit(
     ? `⚠️ <i>Fleet balance is 0 NEAR. Disburse funds from your main wallet via [📥 Distribute NEAR] below to start bundle trading.</i>\n\n`
     : '';
 
+  const holdingsText = balances.tokenTotal && balances.tokenTotal !== '0'
+    ? `🎒 <b>Fleet Holdings</b>: <b>${balances.tokenTotalFormatted} ${sym}</b>\n` +
+      (fleetPos && fleetPos.avgEntryPriceNear > 0
+        ? `📈 <b>Fleet PnL</b>: ${fleetPos.emoji} <b>${fleetPos.pnlDisplay}</b> (Entry: <code>${fleetPos.avgEntryPriceNear.toFixed(8)} N</code>)\n`
+        : '')
+    : '';
+
   const text =
     `🏎 <b>RACEFLEET COCKPIT [BETA]</b> — $${sym}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `🏷 <b>Fleet Tag</b>: <code>${fleet.fleet_tag}</code> (${fleet.wallet_count} Wallets)\n` +
     `💰 <b>Fleet Balance</b>: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n` +
-    (balances.tokenTotal && balances.tokenTotal !== '0'
-      ? `🎒 <b>Fleet Holdings</b>: <b>${balances.tokenTotalFormatted} ${sym}</b>\n`
-      : '') +
+    holdingsText +
     `🪙 <b>Target Token</b>: <code>${tokenAddress}</code>\n` +
     `📍 <b>Price</b>: ${priceDisplay}\n\n` +
     fundingTip +
@@ -1078,23 +1228,20 @@ export async function buildFleetHoldingsView(telegramId: number): Promise<{ text
       const totalValueNear = totalBalanceHuman * currentPriceNear;
       const totalValueUsd = totalValueNear * nearUsdRate;
 
-      // Calculate entry price & PNL from fills
+      // Calculate entry price & PNL strictly from race_fleet_fills (completely independent from personal account)
       let avgEntryPriceNear = 0;
       try {
-        const db = await getDb();
-        const fillRes = await db.query(
-          `SELECT amount, price, fee_paid FROM fills WHERE user_id = $1 AND token_address = $2 AND side = 'buy' ORDER BY created_at DESC LIMIT 10`,
-          [user.id, tokenAddr]
-        );
-
+        const fills = await getRaceFleetFills(fleet.id, tokenAddr);
         let totalBuyQty = 0;
         let totalBuyCost = 0;
-        for (const row of fillRes.rows) {
-          const qty = parseFloat(row.amount || '0');
-          const price = parseFloat(row.price || '0');
-          if (qty > 0 && price > 0) {
-            totalBuyQty += qty;
-            totalBuyCost += qty * price;
+        for (const row of fills) {
+          if (row.side === 'buy') {
+            const qty = parseFloat(row.amount || '0');
+            const price = parseFloat(row.price || '0');
+            if (qty > 0 && price > 0) {
+              totalBuyQty += qty;
+              totalBuyCost += qty * price;
+            }
           }
         }
 
