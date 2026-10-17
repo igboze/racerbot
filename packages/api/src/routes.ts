@@ -416,8 +416,12 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const keyboard = Markup.inlineKeyboard([
     [
-      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
+    ],
+    [
+      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+      cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
       cb('🎯 Snipe', 'menu_snipe', 'primary'),
@@ -437,10 +441,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
     [
       cb('🎁 Create RaceDrop', 'racedrop_start', 'primary'),
-      cb('🔄 Refresh', 'menu_refresh', 'primary'),
+      cb('🔑 Export Key', 'export_prompt'),
     ],
     [
-      cb('🔑 Export Key', 'export_prompt'),
       cb('🔄 Rotate Key', 'rotate_prompt'),
     ],
     [
@@ -554,8 +557,11 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
   const buttons: any[] = [
     [
-      cb('🔄 Refresh', 'wallet_refresh', 'primary'),
+      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
       cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
+    ],
+    [
+      cb('🔄 Refresh', 'wallet_refresh', 'primary'),
       cb('🏎️ RaceDrop', 'racedrop_start', 'primary'),
     ],
   ];
