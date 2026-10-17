@@ -8,7 +8,7 @@ import {
   getUserByTelegramId,
   type RacerDepositRecord,
 } from '@racerbot/db';
-import { unwrapUserWrapNear } from './wallet.js';
+import { unwrapUserWrapNear, recoverIntentRefund } from './wallet.js';
 import { suppressDepositAlert } from './notify.js';
 import type { Telegraf } from 'telegraf';
 
@@ -496,9 +496,12 @@ export async function create1ClickDepositQuote(params: {
  * Check execution status of a deposit
  */
 export async function check1ClickDepositStatus(depositAddress: string): Promise<{
-  status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'EXPIRED';
+  status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'EXPIRED' | 'REFUNDED';
   txHash?: string;
   nearAmount?: number;
+  depositedFormatted?: string;
+  refundedFormatted?: string;
+  refundReason?: string;
 }> {
   try {
     const res = await fetch(`${NEAR_INTENTS_API_URL}/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`, {
@@ -522,6 +525,15 @@ export async function check1ClickDepositStatus(depositAddress: string): Promise<
       };
     } else if (rawStatus === 'PROCESSING' || rawStatus === 'DETECTED') {
       return { status: 'PROCESSING', txHash: data.txHash };
+    } else if (rawStatus === 'REFUNDED') {
+      const swapDetails = data.swapDetails || {};
+      return {
+        status: 'REFUNDED',
+        txHash: swapDetails.nearTxHashes?.[0] || swapDetails.originChainTxHashes?.[0]?.hash,
+        depositedFormatted: swapDetails.depositedAmountFormatted,
+        refundedFormatted: swapDetails.refundedAmountFormatted,
+        refundReason: swapDetails.refundReason,
+      };
     } else if (rawStatus === 'FAILED' || rawStatus === 'CANCELLED') {
       return { status: 'FAILED' };
     } else if (rawStatus === 'EXPIRED') {
@@ -613,6 +625,67 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
             }).catch((err) => {
               logger.warn(`Failed to notify user ${dep.telegram_id} of deposit completion: ${err.message}`);
             });
+          } else if (check.status === 'REFUNDED' && dep.status !== 'REFUNDED') {
+            notifiedMultichainDeposits.add(dep.deposit_id);
+            logger.info(`Deposit ${dep.deposit_id} REFUNDED by solver. Attempting automatic recovery...`);
+            await updateRacerDeposit(dep.deposit_id, {
+              status: 'REFUNDED',
+              tx_hash: check.txHash,
+              completed_at: new Date(),
+            });
+
+            // Attempt automatic recovery
+            const recovery = await recoverIntentRefund(dep.telegram_id, dep.source_asset);
+            const chainInfo = SUPPORTED_CHAINS[dep.source_chain.toLowerCase()];
+            const chainName = chainInfo ? `${chainInfo.icon} ${chainInfo.name}` : dep.source_chain.toUpperCase();
+            const sourceAmtStr = dep.source_amount ? `${dep.source_amount} ${dep.source_symbol || ''}` : '';
+
+            if (recovery.success && recovery.unwrappedAmount && recovery.unwrappedAmount !== '0') {
+              await updateRacerDeposit(dep.deposit_id, {
+                status: 'SUCCESS',
+                unwrapped: true,
+                unwrapped_amount: parseFloat(recovery.unwrappedAmount) || 0,
+              });
+
+              const recMsg =
+                `🎉 <b>Deposit Auto-Recovered &amp; Settled!</b>\n\n` +
+                `📥 <b>Source:</b> ${chainName} (${sourceAmtStr})\n` +
+                `💳 <b>Received:</b> <b>${recovery.unwrappedAmount} Ⓝ</b>\n` +
+                `🏎️ <b>Account:</b> <code>${dep.subaccount_id}</code>\n` +
+                `🔄 <b>Auto-Unwrap:</b> Converted to native NEAR\n\n` +
+                `<i>Your transfer was slightly below minimum due to wallet gas deductions, but our daemon auto-recovered and settled your NEAR!</i>`;
+
+              await bot.telegram.sendMessage(dep.telegram_id, recMsg, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '💳 View Wallet', callback_data: 'menu_wallet' },
+                      { text: '🏎️ Start Trading', callback_data: 'menu_holdings' },
+                    ],
+                  ],
+                },
+              }).catch(() => {});
+            } else {
+              const depositedStr = check.depositedFormatted ? `${check.depositedFormatted} ${dep.source_symbol}` : sourceAmtStr;
+              const refMsg =
+                `⚠️ <b>Deposit Under-funded &amp; Refunded</b>\n\n` +
+                `The solver received <b>${depositedStr}</b>, which was slightly below the required quote amount (${sourceAmtStr}) because external wallet network gas fees were subtracted from the transfer amount.\n\n` +
+                `🛡️ <b>Your funds were safely refunded</b> to your account on NEAR Intents.\n` +
+                `Tap below to view your wallet or start a new deposit:`;
+
+              await bot.telegram.sendMessage(dep.telegram_id, refMsg, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      { text: '🔄 Recover / Check Status', callback_data: `dep_check:${dep.deposit_id}` },
+                      { text: '📥 New Deposit', callback_data: 'menu_multichain_deposit' },
+                    ],
+                  ],
+                },
+              }).catch(() => {});
+            }
           } else if (check.status === 'EXPIRED' || check.status === 'FAILED') {
             await updateRacerDeposit(dep.deposit_id, { status: check.status });
           }
