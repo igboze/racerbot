@@ -65,6 +65,8 @@ import {
   generateQrBuffer,
   getTokensForChain,
   getTokenByKey,
+  getMinimumDeposit,
+  getAmountSuggestions,
   type SupportedChain,
   type OneClickToken,
 } from './multichainDeposit.js';
@@ -2808,25 +2810,19 @@ export function buildDepositAmountPickerMenu(tokenKey: string) {
   const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
   const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
   const priceStr = token.price ? ` (~${token.price < 1 ? token.price.toFixed(4) : token.price.toFixed(2)})` : '';
+  const minDeposit = getMinimumDeposit(token);
+  const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
 
   const text =
     `💰 <b>Deposit Amount: ${token.symbol}${priceStr}</b>\n\n` +
     `• Network: <b>${chainName}</b>\n` +
+    `• ⚡ <b>Lowest Deposit:</b> <code>${minDeposit.formatted}</code>${minUsdStr}\n` +
     `• <b>1% Platform Fee</b> (settled in NEAR to Treasury)\n` +
     `• Funds convert directly to <b>NEAR</b> in your subaccount\n` +
     `• <b>Dual Auto-Unwrap</b> to native NEAR immediately on arrival!\n\n` +
-    `<i>Choose an amount or enter a custom amount:</i>`;
+    `<i>Tap a preset amount below, tap <b>✍️ Enter Custom Amount</b>, or reply with your desired number:</i>`;
 
-  let suggestions = ['0.1', '0.5', '1.0', '2.5', '5.0', '10'];
-  if (token.price) {
-    if (token.price > 500) {
-      suggestions = ['0.01', '0.05', '0.1', '0.25', '0.5', '1.0'];
-    } else if (token.price >= 0.95 && token.price <= 1.05) {
-      suggestions = ['10', '25', '50', '100', '250', '500'];
-    } else if (token.price < 0.1) {
-      suggestions = ['100', '500', '1000', '5000', '10000', '50000'];
-    }
-  }
+  const suggestions = getAmountSuggestions(token, minDeposit.amount);
 
   const rows: any[] = [
     [
@@ -2840,7 +2836,7 @@ export function buildDepositAmountPickerMenu(tokenKey: string) {
       cb(`${suggestions[5]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[5]}`, 'primary'),
     ],
     [
-      cb('✍️ Custom Amount', `dep_custom_amt:${token.key}`, 'success'),
+      cb('✍️ Enter Custom Amount', `dep_custom_amt:${token.key}`, 'success'),
     ],
     [
       cb('🔙 Back to Tokens', `dep_chain:${token.blockchain}:0`, 'primary'),
@@ -3528,6 +3524,15 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^dep_tok:([a-zA-Z0-9_]+)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const tokenKey = (ctx as any).match[1];
+    const telegramId = ctx.from!.id;
+
+    // Set pending action immediately so user can either tap preset numbers OR reply directly with their amount
+    userPendingActions.set(telegramId, {
+      action: 'deposit_custom_amount',
+      depositTokenKey: tokenKey,
+      expiresAt: Date.now() + 10 * 60_000,
+    });
+
     const menu = buildDepositAmountPickerMenu(tokenKey);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_tok] editMessageText fallback:', err?.message);
@@ -3564,15 +3569,19 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const tokenKey = (ctx as any).match[1];
     const token = getTokenByKey(tokenKey);
+    const minDeposit = token ? getMinimumDeposit(token) : { amount: 0.01, formatted: '0.01', example: '1.0' };
+    const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
+
     userPendingActions.set(telegramId, {
       action: 'deposit_custom_amount',
       depositTokenKey: tokenKey,
-      expiresAt: Date.now() + 5 * 60_000,
+      expiresAt: Date.now() + 10 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `✍️ <b>Enter Custom Amount for ${token?.symbol || 'Token'}</b>\n\n` +
-      `Please reply with the exact number of ${token?.symbol || 'tokens'} you wish to deposit (e.g. 1.5 or 25):\n\n` +
+      `⚡ <b>Lowest Deposit Amount:</b> <code>${minDeposit.formatted}</code>${minUsdStr}\n\n` +
+      `Please reply with the number of ${token?.symbol || 'tokens'} you wish to deposit (e.g. <code>${minDeposit.example}</code>):\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -10852,12 +10861,28 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'deposit_custom_amount') {
         const amt = parseFloat(rawText);
+        const tokenKey = pending.depositTokenKey || '0';
+        const token = getTokenByKey(tokenKey);
+        const minDeposit = token ? getMinimumDeposit(token) : { amount: 0.000001, formatted: '0.000001', example: '1.0' };
+        const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
+
         if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. 25 or 0.5).');
+          await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. 10 or 0.5).');
           return;
         }
+
+        if (amt < minDeposit.amount) {
+          await ctx.reply(
+            `⚠️ <b>Deposit Amount Too Low</b>\n\n` +
+            `The lowest deposit amount for <b>${token?.symbol || 'this token'}</b> on NEAR Intents is <b>${minDeposit.formatted}</b>${minUsdStr}.\n\n` +
+            `Please reply with at least <code>${minDeposit.amount}</code> ${token?.symbol || ''} (or type /cancel to abort):`,
+            { parse_mode: 'HTML' }
+          );
+          // Keep pending action active so user can immediately re-enter their amount!
+          return;
+        }
+
         userPendingActions.delete(telegramId);
-        const tokenKey = pending.depositTokenKey || '0';
         await renderDepositQuoteCard(ctx, telegramId, tokenKey, amt);
         return;
       }
