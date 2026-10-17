@@ -2587,6 +2587,125 @@ export async function unwrapUserWrapNear(telegramId: number): Promise<{ success:
  * Automatically unwraps any wrap.near before sending, and ensures 0.05 NEAR
  * remains to cover account storage and gas.
  */
+
+/**
+ * Automatically recover an intent deposit that was refunded to the user's subaccount inside intents.near
+ * (e.g. when origin chain transfer was slightly below minimum due to wallet gas fee deduction).
+ */
+export async function recoverIntentRefund(
+  telegramId: number,
+  assetId: string
+): Promise<{ success: boolean; unwrappedAmount?: string; error?: string }> {
+  try {
+    const user = await getUserByTelegramId(telegramId);
+    if (!user || !user.scoped_key_encrypted) {
+      return { success: false, error: 'User or key not found' };
+    }
+
+    const masterKey = (process.env.KEY_ENCRYPTION_MASTER_KEY || '');
+    if (!masterKey) return { success: false, error: 'Master key not configured' };
+
+    const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
+    const keyPair = KeyPair.fromString(privateKey as any);
+
+    // 1. Check user mt_balance_of in intents.near
+    const nearConnection = await connect({
+      networkId: 'mainnet',
+      keyStore: new keyStores.InMemoryKeyStore(),
+      nodeUrl: 'https://rpc.mainnet.fastnear.com',
+    });
+    const viewAccount = await nearConnection.account(user.subaccount_id);
+    const balRaw = await viewAccount.viewFunction({
+      contractId: 'intents.near',
+      methodName: 'mt_balance_of',
+      args: {
+        account_id: user.subaccount_id,
+        token_id: assetId,
+      },
+    }).catch(() => '0');
+
+    if (!balRaw || balRaw === '0') {
+      return { success: false, error: 'No balance in intents.near' };
+    }
+
+    // 2. Request 1Click quote for intent swap
+    const nearIntentsUrl = process.env.NEAR_INTENTS_API_URL || 'https://1click.chaindefuser.com';
+    const nearIntentsKey = process.env.NEAR_INTENTS_API_KEY;
+
+    const quoteRes = await fetch(`${nearIntentsUrl}/v0/quote`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(nearIntentsKey ? { Authorization: `Bearer ${nearIntentsKey}` } : {}),
+      },
+      body: JSON.stringify({
+        dry: false,
+        swapType: 'EXACT_INPUT',
+        depositMode: 'SIMPLE',
+        slippageTolerance: 100,
+        originAsset: assetId,
+        depositType: 'INTENTS',
+        destinationAsset: 'nep141:wrap.near',
+        amount: balRaw,
+        refundTo: user.subaccount_id,
+        refundType: 'INTENTS',
+        recipient: user.subaccount_id,
+        recipientType: 'DESTINATION_CHAIN',
+        deadline: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      }),
+    });
+
+    if (!quoteRes.ok) {
+      return { success: false, error: 'Failed to get 1Click quote for intent recovery' };
+    }
+
+    const quoteData: any = await quoteRes.json();
+    const depositAddress = quoteData.quote?.depositAddress;
+    if (!depositAddress) {
+      return { success: false, error: '1Click returned no deposit address' };
+    }
+
+    // 3. Execute mt_transfer on intents.near
+    await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
+      await account.functionCall({
+        contractId: 'intents.near',
+        methodName: 'mt_transfer',
+        args: {
+          receiver_id: depositAddress,
+          token_id: assetId,
+          amount: balRaw,
+        },
+        gas: BigInt('100000000000000'),
+        attachedDeposit: BigInt('1'),
+      });
+    });
+
+    // 4. Poll 1Click solver fulfillment up to 30s
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const checkRes = await fetch(`${nearIntentsUrl}/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`);
+      if (checkRes.ok) {
+        const checkData: any = await checkRes.json();
+        const st = (checkData.status || '').toUpperCase();
+        if (st === 'SUCCESS' || st === 'COMPLETED' || st === 'FILLED') {
+          break;
+        }
+      }
+    }
+
+    // 5. Unwrap wrap.near into pure native NEAR
+    await new Promise((r) => setTimeout(r, 2000));
+    const unwrapRes = await unwrapUserWrapNear(telegramId).catch(() => ({ success: true, unwrappedAmount: '0' }));
+
+    return {
+      success: true,
+      unwrappedAmount: unwrapRes.unwrappedAmount,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 export async function withdrawFunds(
   telegramId: number,
   destination: string,

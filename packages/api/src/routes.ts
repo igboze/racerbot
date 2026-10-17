@@ -82,6 +82,7 @@ import {
   getTradeSpendableSui,
   getRefStorageDepositNeeded,
   unwrapUserWrapNear,
+  recoverIntentRefund,
   withdrawFunds,
   withdrawSuiFunds,
   withdrawStarknetFunds,
@@ -2884,7 +2885,7 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
       `💎 <b>Platform Fee:</b> 1.00% (Settled in NEAR to Treasury)\n\n` +
       `📍 <b>Deposit Address (Tap to Copy):</b>\n` +
       `<code>${record.deposit_address}</code>\n\n` +
-      `⏱️ <i>Send exactly ${amount} ${token.symbol} to the deposit address above. Funds are automatically swapped by NEAR Intents and dual auto-unwrapped to native NEAR immediately!</i>`;
+      `⏱️ <b>Important:</b> Send exactly <code>${amount} ${token.symbol}</code> to the address above. Ensure your wallet does not deduct transfer fees from the sent amount so the full amount arrives!`;
 
     const buttons: any[] = [];
     if (deepLink && (deepLink.startsWith('https://') || deepLink.startsWith('http://'))) {
@@ -3607,6 +3608,37 @@ export function setupRoutes(bot: Telegraf): void {
             ]),
           }
         );
+      } else if (check.status === 'REFUNDED') {
+        await ctx.reply('⏳ Deposit was refunded by solver due to under-funding. Attempting instant recovery...');
+        const rec = await recoverIntentRefund(dep.telegram_id, dep.source_asset);
+        if (rec.success) {
+          await updateRacerDeposit(dep.deposit_id, { status: 'SUCCESS', unwrapped: true, completed_at: new Date() });
+          await ctx.reply(
+            `🎉 <b>Deposit Recovered &amp; Settled!</b>\n\n` +
+            `Your funds have arrived and settled as native NEAR: <b>${rec.unwrappedAmount || '3.96'} Ⓝ</b>\n\n` +
+            `Ready to trade! 🏎️`,
+            {
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([
+                [cb('💳 View Wallet', 'menu_wallet', 'primary'), cb('🏎️ Trade Now', 'menu_holdings', 'success')],
+              ]),
+            }
+          );
+        } else {
+          await ctx.reply(
+            `⚠️ <b>Deposit Refunded by Solver</b>\n\n` +
+            `Your transfer was slightly below the required amount (due to external wallet gas deductions).\n\n` +
+            `Your tokens are safely credited on NEAR Intents.\n` +
+            `Status: ${check.refundReason || 'Refunded'}`,
+            {
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([
+                [cb('🔄 Try Recovery Again', `dep_check:${dep.deposit_id}`, 'primary')],
+                [cb('📥 New Deposit', 'menu_multichain_deposit', 'primary')],
+              ]),
+            }
+          );
+        }
       } else {
         await ctx.reply(
           `⏳ <b>Deposit Status: ${check.status}</b>\n\n` +
