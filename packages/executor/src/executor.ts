@@ -49,6 +49,7 @@ import {
   markSnipeTriggerFailed,
   markSnipeOrderResult,
   getActiveWallet,
+  syncUserActiveWallet,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError } from '@racerbot/shared';
@@ -685,8 +686,26 @@ export class SwapExecutor {
     if (!user) throw new Error(`User ${user_id} not found`);
 
     const activeWallet = await getActiveWallet(user_id, 'near').catch(() => null);
-    const subaccountToUse = activeWallet?.address || user.subaccount_id;
-    const keyEncToUse = activeWallet?.encrypted_private_key || user.scoped_key_encrypted;
+    let subaccountToUse = activeWallet?.address || user.subaccount_id;
+    let keyEncToUse = activeWallet?.encrypted_private_key || user.scoped_key_encrypted;
+
+    // Safety guard against orphaned/empty activeWallet desync:
+    // If activeWallet address is different from user.subaccount_id and activeWallet is not an imported wallet,
+    // verify which account has the funds before executing to avoid "Insufficient balance" when user has funds in subaccount_id.
+    if (activeWallet && !activeWallet.is_imported && user.subaccount_id && activeWallet.address !== user.subaccount_id) {
+      const [activeBalStr, subaccountBalStr] = await Promise.all([
+        this.nearClient.getNearBalance?.(activeWallet.address).catch(() => '0') ?? '0',
+        this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
+      ]);
+      const activeBal = BigInt(activeBalStr || '0');
+      const subaccountBal = BigInt(subaccountBalStr || '0');
+      if (subaccountBal > activeBal) {
+        console.warn(`[EXECUTOR] Wallet desync for user ${user_id}: activeWallet=${activeWallet.address} (${activeBalStr} yocto) vs subaccount_id=${user.subaccount_id} (${subaccountBalStr} yocto). Auto-switching to funded subaccount.`);
+        subaccountToUse = user.subaccount_id;
+        keyEncToUse = user.scoped_key_encrypted;
+        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => {});
+      }
+    }
 
     let warm = warmKeys.get(user_id);
     if (!warm || warm.subaccountId !== subaccountToUse) {
@@ -3287,7 +3306,17 @@ export class SwapExecutor {
     const slippagePct = snipeOrderId ? Math.max(userSlippage, 15) : userSlippage;
 
     const activeWallet = await getActiveWallet(user_id, 'near').catch(() => null);
-    const subaccountToCheck = activeWallet?.address || user?.subaccount_id;
+    let subaccountToCheck = activeWallet?.address || user?.subaccount_id;
+    if (activeWallet && !activeWallet.is_imported && user?.subaccount_id && activeWallet.address !== user.subaccount_id) {
+      const [activeBalStr, subaccountBalStr] = await Promise.all([
+        this.nearClient.getNearBalance?.(activeWallet.address).catch(() => '0') ?? '0',
+        this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
+      ]);
+      if (BigInt(subaccountBalStr || '0') > BigInt(activeBalStr || '0')) {
+        subaccountToCheck = user.subaccount_id;
+        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => {});
+      }
+    }
     if (!user || !subaccountToCheck) {
       await finalizeSnipe(false, { error: 'user_wallet_not_found', permanent: true });
       return { success: false, reason: 'user_wallet_not_found' };

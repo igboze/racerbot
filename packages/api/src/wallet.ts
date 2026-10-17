@@ -1975,6 +1975,15 @@ export async function resetUserStarknetWallet(userId: string): Promise<Generated
 export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord> {
   let updated = await ensureUserSuiWallet(user);
   updated = await ensureUserStarknetWallet(updated);
+  if (updated.subaccount_id) {
+    await getActiveWallet(updated.id, 'near').catch(() => null);
+  }
+  if (updated.sui_address) {
+    await getActiveWallet(updated.id, 'sui').catch(() => null);
+  }
+  if (updated.starknet_address) {
+    await getActiveWallet(updated.id, 'starknet').catch(() => null);
+  }
   return updated;
 }
 
@@ -3910,7 +3919,8 @@ export async function importNearWallet(
   telegramId: number,
   privateKeyInput: string,
   walletName: string,
-  targetAccountId?: string
+  targetAccountId?: string,
+  setAsActive = true
 ): Promise<{ wallet: UserWalletRecord; accountId: string; isFullAccess: boolean }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -3960,7 +3970,7 @@ export async function importNearWallet(
     cleanName = `Wallet ${existingWallets.length + 1}`;
   }
 
-  // 6. Encrypt key and insert (active by default upon import)
+  // 6. Encrypt key and insert
   const encryptedKey = encrypt(normalizedPrivateKey, MASTER_KEY);
 
   const wallet = await createUserWallet({
@@ -3970,7 +3980,7 @@ export async function importNearWallet(
     name: cleanName,
     encryptedPrivateKey: encryptedKey,
     isImported: true,
-    isActive: true,
+    isActive: setAsActive,
   });
 
   // Invalidate balance caches
@@ -4032,7 +4042,8 @@ export const MAX_SUI_WALLETS_PER_USER = 5;
 export async function importSuiWallet(
   telegramId: number,
   privateKeyInput: string,
-  walletName: string
+  walletName: string,
+  setAsActive = true
 ): Promise<{ wallet: UserWalletRecord; address: string }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -4059,7 +4070,7 @@ export async function importSuiWallet(
   const cleanName = walletName.trim() || `Wallet ${existingWallets.length + 1}`;
   const encryptedKey = encrypt(secretKey, MASTER_KEY);
 
-  // 4. Create in DB and set active
+  // 4. Create in DB
   const wallet = await createUserWallet({
     userId: user.id,
     chain: 'sui',
@@ -4067,7 +4078,7 @@ export async function importSuiWallet(
     name: cleanName,
     encryptedPrivateKey: encryptedKey,
     isImported: true,
-    isActive: true,
+    isActive: setAsActive,
   });
 
   // Invalidate balance caches
@@ -4139,4 +4150,4 @@ export async function renameUserStarknetWallet(telegramId: number, walletId: str
     throw new Error('Wallet name must be between 1 and 30 characters.');
   }
   return renameUserWallet(user.id, walletId, trimmed);
-}
+}
