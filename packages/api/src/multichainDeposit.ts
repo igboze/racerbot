@@ -9,6 +9,7 @@ import {
   type RacerDepositRecord,
 } from '@racerbot/db';
 import { unwrapUserWrapNear } from './wallet.js';
+import { suppressDepositAlert } from './notify.js';
 import type { Telegraf } from 'telegraf';
 
 const logger = createLogger('multichain-deposit');
@@ -534,6 +535,9 @@ export async function check1ClickDepositStatus(depositAddress: string): Promise<
   }
 }
 
+// Track notified deposits in-memory to prevent duplicate or looping messages
+const notifiedMultichainDeposits = new Set<string>();
+
 /**
  * Poller daemon to sweep active deposits, detect settlements, and trigger auto-unwraps
  */
@@ -547,10 +551,19 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
 
       for (const dep of active) {
         try {
+          // Anti-loop: skip if already notified or marked SUCCESS
+          if (notifiedMultichainDeposits.has(dep.deposit_id) || dep.status === 'SUCCESS') {
+            continue;
+          }
+
           const check = await check1ClickDepositStatus(dep.deposit_address);
 
           if (check.status === 'SUCCESS' && dep.status !== 'SUCCESS') {
+            notifiedMultichainDeposits.add(dep.deposit_id);
             logger.info(`Deposit ${dep.deposit_id} fulfilled! Triggering JIT auto-unwrap for user ${dep.telegram_id}`);
+
+            // Explicitly suppress duplicate native NEAR deposit alert in depositWatcher for 10 minutes
+            suppressDepositAlert(dep.telegram_id, 'near', 10 * 60 * 1000);
 
             await updateRacerDeposit(dep.deposit_id, {
               status: 'SUCCESS',
