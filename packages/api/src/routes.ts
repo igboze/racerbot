@@ -3514,7 +3514,7 @@ export function setupRoutes(bot: Telegraf): void {
     });
   });
 
-  bot.action(/^dep_chain:([a-zA-Z0-9_]+)(?::(d+))?$/, async (ctx) => {
+  bot.action(/^dep_chain:([a-zA-Z0-9_]+)(?::([0-9]+))?$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const chainId = (ctx as any).match[1];
     const page = (ctx as any).match[2] ? parseInt((ctx as any).match[2], 10) : 0;
