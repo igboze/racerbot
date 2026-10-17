@@ -148,6 +148,16 @@ export {
   updateRaceFleetOrderStatus,
   recordRaceFleetFill,
   getRaceFleetFills,
+  createRacerDeposit,
+  updateRacerDeposit,
+  getRacerDepositById,
+  getActiveRacerDeposits,
+  getUserRacerDeposits,
+  getRacerDepositStats,
+} from './db.js';
+export type {
+  RacerDepositRecord,
+  CreateRacerDepositParams,
 } from './db.js';
 
 export {

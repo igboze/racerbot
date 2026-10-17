@@ -48,6 +48,8 @@ import {
   getLimitOrdersByUser,
   cancelLimitOrder,
   createUserWallet,
+  getRacerDepositById,
+  updateRacerDeposit,
   getUserWallets,
   getActiveWallet,
   type UserRecord,
@@ -55,6 +57,14 @@ import {
   type LimitOrderRecord,
   type PositionRecord,
 } from '@racerbot/db';
+import {
+  SUPPORTED_CHAINS,
+  create1ClickDepositQuote,
+  check1ClickDepositStatus,
+  generateWalletDeepLink,
+  generateQrBuffer,
+  type SupportedChain,
+} from './multichainDeposit.js';
 import {
   getTokenInfo,
   getBatchTokenInfo,
@@ -246,7 +256,8 @@ interface PendingAction {
     // RaceDrop wizard
     | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
     // RaceFleet wizard
-    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount';
+    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount'
+    | 'deposit_custom_token' | 'deposit_custom_amount';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -292,6 +303,9 @@ interface PendingAction {
   fleetSide?: 'buy' | 'sell';
   fleetLoConditionType?: 'price' | 'market_cap';
   fleetLoTargetValue?: number;
+  depositChainId?: string;
+  depositAssetId?: string;
+  depositSymbol?: string;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -2671,6 +2685,181 @@ async function sendPostBuySlTpPrompt(ctx: Context, positionId?: string, tokenAdd
 }
 
 
+
+// ── Multichain Deposit UI Builders (NEAR Intents 1Click) ────────────────────
+export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 'other' | 'all' = 'popular') {
+  const chains = Object.values(SUPPORTED_CHAINS).filter(c => cat === 'all' || c.category === cat);
+
+  const text =
+    `📥 <b>Universal Multi-Chain Deposit (37 Chains)</b>\n\n` +
+    `Deposit crypto from <b>37 blockchains</b> directly into your RacerBot NEAR account.\n` +
+    `Powered by <b>NEAR Intents (1Click)</b> — funds settle in pure NEAR automatically!\n\n` +
+    `• <i>100 bps Platform Fee collected in NEAR (wild-falcon-5130.racerbot.near)</i>\n` +
+    `• <i>Automatic Dual-Unwrap to native NEAR</i>\n\n` +
+    `🪙 <b>Select Source Blockchain:</b>`;
+
+  const rows: any[] = [];
+
+  // Category filter chips
+  rows.push([
+    cb(cat === 'popular' ? '🔥 Popular ✨' : '🔥 Popular', 'dep_cat:popular', cat === 'popular' ? 'success' : 'primary'),
+    cb(cat === 'evm' ? '⚡ EVM / L2s ✨' : '⚡ EVM / L2s', 'dep_cat:evm', cat === 'evm' ? 'success' : 'primary'),
+  ]);
+  rows.push([
+    cb(cat === 'alt_l1' ? '🌐 Alt L1s ✨' : '🌐 Alt L1s', 'dep_cat:alt_l1', cat === 'alt_l1' ? 'success' : 'primary'),
+    cb(cat === 'all' ? '📋 All (37) ✨' : '📋 All (37)', 'dep_cat:all', cat === 'all' ? 'success' : 'primary'),
+  ]);
+
+  // Chains grid (2 per row)
+  for (let i = 0; i < chains.length; i += 2) {
+    const r: any[] = [];
+    const c1 = chains[i];
+    r.push(cb(`${c1.icon} ${c1.name}`, `dep_chain:${c1.id}`, 'primary'));
+    if (i + 1 < chains.length) {
+      const c2 = chains[i + 1];
+      r.push(cb(`${c2.icon} ${c2.name}`, `dep_chain:${c2.id}`, 'primary'));
+    }
+    rows.push(r);
+  }
+
+  // Navigation
+  rows.push([
+    cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
+    cb('🏠 Main Menu', 'menu_home', 'primary'),
+  ]);
+
+  return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
+
+export function buildDepositTokenPickerMenu(chainId: string) {
+  const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
+  if (!chain) return buildDepositChainPickerMenu('popular');
+
+  const text =
+    `📥 <b>Deposit from ${chain.icon} ${chain.name}</b>\n\n` +
+    `Select the asset you want to deposit into RacerBot:\n` +
+    `• Native Asset: <b>${chain.nativeSymbol}</b>\n` +
+    `• Chain Category: <code>${chain.category.toUpperCase()}</code>\n\n` +
+    `<i>Tap a token below or enter a custom contract:</i>`;
+
+  const rows: any[] = [];
+
+  // Popular tokens for this chain
+  for (const tok of chain.popularTokens) {
+    rows.push([
+      cb(`💎 ${tok.symbol} (${chain.name})`, `dep_tok:${chain.id}:${tok.assetId}:${tok.symbol}`, 'success'),
+    ]);
+  }
+
+  // Custom token button
+  rows.push([
+    cb('✍️ Enter Custom Token CA / Symbol', `dep_custom_tok:${chain.id}`, 'primary'),
+  ]);
+
+  // Back button
+  rows.push([
+    cb('🔙 Back to Chains', 'menu_multichain_deposit', 'primary'),
+  ]);
+
+  return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
+
+export function buildDepositAmountPickerMenu(chainId: string, assetId: string, symbol: string) {
+  const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
+  const chainName = chain ? `${chain.icon} ${chain.name}` : chainId.toUpperCase();
+
+  const text =
+    `💰 <b>Deposit Amount: ${symbol} (${chainName})</b>\n\n` +
+    `Choose an amount to deposit or enter a custom amount.\n\n` +
+    `• <b>1% Platform Fee</b> (settled in NEAR to Treasury)\n` +
+    `• Funds convert directly to <b>NEAR</b> in your subaccount\n` +
+    `• <b>Dual Auto-Unwrap</b> to native NEAR on arrival!`;
+
+  const rows: any[] = [
+    [
+      cb('0.1 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:0.1`, 'primary'),
+      cb('0.5 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:0.5`, 'primary'),
+      cb('1.0 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:1.0`, 'success'),
+    ],
+    [
+      cb('2.5 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:2.5`, 'primary'),
+      cb('5.0 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:5.0`, 'primary'),
+      cb('10 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:10`, 'primary'),
+    ],
+    [
+      cb('✍️ Custom Amount', `dep_custom_amt:${chainId}:${assetId}:${symbol}`, 'success'),
+    ],
+    [
+      cb('🔙 Back to Tokens', `dep_chain:${chainId}`, 'primary'),
+    ],
+  ];
+
+  return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
+
+export async function renderDepositQuoteCard(ctx: any, telegramId: number, chainId: string, assetId: string, symbol: string, amount: number) {
+  const user = await getUserByTelegramId(telegramId);
+  if (!user) {
+    await ctx.reply('❌ Please run /start first to create your wallet.');
+    return;
+  }
+
+  const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
+  const chainName = chain ? `${chain.icon} ${chain.name}` : chainId.toUpperCase();
+
+  const waitMsg = await ctx.reply(`⏳ Generating 1Click Solver deposit route for ${amount} ${symbol} from ${chainName}...`);
+
+  try {
+    const record = await create1ClickDepositQuote({
+      telegramId,
+      subaccountId: user.subaccount_id,
+      sourceChain: chainId,
+      sourceAssetId: assetId,
+      sourceSymbol: symbol,
+      amount,
+    });
+
+    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => {});
+
+    // Generate QR Code PNG
+    const qrBuffer = await generateQrBuffer(record.deposit_address);
+    const deepLink = generateWalletDeepLink(chainId, record.deposit_address, amount);
+
+    const estNear = record.min_destination_amount ? record.min_destination_amount.toFixed(4) : 'Auto';
+
+    const caption =
+      `📥 <b>Multi-Chain Deposit Order Created!</b>\n\n` +
+      `⚡ <b>Source:</b> ${chainName} (<code>${amount} ${symbol}</code>)\n` +
+      `🎯 <b>Recipient:</b> <code>${user.subaccount_id}</code>\n` +
+      `💰 <b>Expected Output:</b> ~<b>${estNear} NEAR</b>\n` +
+      `💎 <b>Platform Fee:</b> 1.00% (Settled in NEAR to Treasury)\n\n` +
+      `📍 <b>Deposit Address (Tap to Copy):</b>\n` +
+      `<code>${record.deposit_address}</code>\n\n` +
+      `⏱️ <i>Send exactly ${amount} ${symbol} to the deposit address above. Funds are automatically swapped by NEAR Intents and dual auto-unwrapped to native NEAR immediately!</i>`;
+
+    const buttons: any[] = [];
+    if (deepLink) {
+      buttons.push([Markup.button.url('📲 Open in Mobile Wallet', deepLink)]);
+    }
+    buttons.push([
+      cb('🔄 Check Status', `dep_check:${record.deposit_id}`, 'primary'),
+      cb('💳 View Wallet', 'menu_wallet', 'success'),
+    ]);
+    buttons.push([
+      cb('📥 New Deposit', 'menu_multichain_deposit', 'primary'),
+    ]);
+
+    await ctx.replyWithPhoto({ source: qrBuffer }, {
+      caption,
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+    });
+  } catch (err: any) {
+    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => {});
+    await ctx.reply(`❌ Failed to create deposit quote: ${getUserFriendlyError(err)}`);
+  }
+}
+
 export function setupRoutes(bot: Telegraf): void {
   // ── Register RaceDrop commands, actions, and wizards ───────────────────────
   setupRaceDropRoutes(bot, userPendingActions);
@@ -3230,6 +3419,140 @@ export function setupRoutes(bot: Telegraf): void {
       }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
+
+  
+  // ── Universal 37-chain deposit routes (NEAR Intents 1Click) ───────────────
+  const handleMultichainDeposit = async (ctx: Context) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Multi-chain deposits');
+      return;
+    }
+    const menu = buildDepositChainPickerMenu('popular');
+    const canEdit = typeof (ctx as any).editMessageText === 'function';
+    if (canEdit && ctx.callbackQuery) {
+      await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      });
+    } else {
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    }
+  };
+
+  bot.command(['deposit', 'multichain'], handleMultichainDeposit);
+  bot.action('menu_multichain_deposit', handleMultichainDeposit);
+
+  bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const cat = (ctx as any).match[1] as any;
+    const menu = buildDepositChainPickerMenu(cat);
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+  });
+
+  bot.action(/^dep_chain:([a-zA-Z0-9_]+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const chainId = (ctx as any).match[1];
+    const menu = buildDepositTokenPickerMenu(chainId);
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+  });
+
+  bot.action(/^dep_tok:([^:]+):([^:]+):([^:]+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const chainId = (ctx as any).match[1];
+    const assetId = (ctx as any).match[2];
+    const symbol = (ctx as any).match[3];
+    const menu = buildDepositAmountPickerMenu(chainId, assetId, symbol);
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+  });
+
+  bot.action(/^dep_custom_tok:([a-zA-Z0-9_]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const chainId = (ctx as any).match[1];
+    userPendingActions.set(telegramId, {
+      action: 'deposit_custom_token',
+      depositChainId: chainId,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✍️ <b>Enter Custom Token for ${chainId.toUpperCase()}</b>\n\n` +
+      `Please reply with the token contract address or symbol (e.g. 'USDC' or contract address):\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^dep_amt:([^:]+):([^:]+):([^:]+):([0-9.]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    const chainId = (ctx as any).match[1];
+    const assetId = (ctx as any).match[2];
+    const symbol = (ctx as any).match[3];
+    const amt = parseFloat((ctx as any).match[4]);
+    await renderDepositQuoteCard(ctx, telegramId, chainId, assetId, symbol, amt);
+  });
+
+  bot.action(/^dep_custom_amt:([^:]+):([^:]+):([^:]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const chainId = (ctx as any).match[1];
+    const assetId = (ctx as any).match[2];
+    const symbol = (ctx as any).match[3];
+    userPendingActions.set(telegramId, {
+      action: 'deposit_custom_amount',
+      depositChainId: chainId,
+      depositAssetId: assetId,
+      depositSymbol: symbol,
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    await ctx.answerCbQuery().catch(() => {});
+    await ctx.reply(
+      `✍️ <b>Enter Custom Amount for ${symbol}</b>\n\n` +
+      `Please reply with the exact number of ${symbol} you wish to deposit (e.g. 1.5 or 25):\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^dep_check:(.+)$/, async (ctx) => {
+    const depositId = (ctx as any).match[1];
+    await ctx.answerCbQuery('Checking deposit on-chain...').catch(() => {});
+    try {
+      const dep = await getRacerDepositById(depositId);
+      if (!dep) {
+        await ctx.reply('❌ Deposit record not found.');
+        return;
+      }
+      const check = await check1ClickDepositStatus(dep.deposit_address);
+      if (check.status === 'SUCCESS') {
+        await updateRacerDeposit(dep.deposit_id, { status: 'SUCCESS', tx_hash: check.txHash, completed_at: new Date() });
+        await unwrapUserWrapNear(dep.telegram_id).catch(() => {});
+        await ctx.reply(
+          `✅ <b>Deposit Confirmed &amp; Settled!</b>\n\n` +
+          `Your funds have arrived, settled in NEAR, and have been auto-unwrapped to native NEAR.\n\n` +
+          `Ready to trade immediately! 🏎️`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [cb('💳 View Wallet', 'menu_wallet', 'primary'), cb('🏎️ Trade Now', 'menu_holdings', 'success')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(
+          `⏳ <b>Deposit Status: ${check.status}</b>\n\n` +
+          `Address: <code>${dep.deposit_address}</code>\n\n` +
+          `<i>Waiting for payment confirmation on ${dep.source_chain.toUpperCase()} network... Please check again in a few moments.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [cb('🔄 Check Again', `dep_check:${dep.deposit_id}`, 'primary')],
+            ]),
+          }
+        );
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to check status: ${getUserFriendlyError(err)}`);
     }
   });
 
@@ -10444,6 +10767,36 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       // ── Limit Order wizard: amount input ─────────────────────────────────
+      
+      if (pending.action === 'deposit_custom_token') {
+        const input = rawText.trim();
+        userPendingActions.delete(telegramId);
+        const chainId = pending.depositChainId || 'sol';
+        const symbol = input.length <= 8 ? input.toUpperCase() : 'TOKEN';
+        const assetId = `${chainId}:${input}`;
+        const menu = buildDepositAmountPickerMenu(chainId, assetId, symbol);
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+        return;
+      }
+
+      if (pending.action === 'deposit_custom_amount') {
+        const amt = parseFloat(rawText);
+        if (isNaN(amt) || amt <= 0) {
+          await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. `25` or `0.5`).');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        await renderDepositQuoteCard(
+          ctx,
+          telegramId,
+          pending.depositChainId || 'sol',
+          pending.depositAssetId || 'solana:native',
+          pending.depositSymbol || 'SOL',
+          amt
+        );
+        return;
+      }
+
       if (pending.action === 'lo_amount') {
         const amt = parseFloat(rawText);
         if (isNaN(amt) || amt < 0.01) {
