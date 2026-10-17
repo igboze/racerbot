@@ -1,7 +1,7 @@
 import type { Telegraf } from 'telegraf';
 import { getFreeNear, getSuiBalance, getSuiUsdPrice, getStarknetBalance, createLogger } from '@racerbot/shared';
 import { getDb, getUserByTelegramId, getUserById, updateUserLastBalances, type UserRecord } from '@racerbot/db';
-import { getNearUsdPrice, ensureUserSuiWallet } from './wallet.js';
+import { getNearUsdPrice, ensureUserSuiWallet, unwrapUserWrapNear } from './wallet.js';
 import { notifyDeposit, notifyTokenDeposit } from './notify.js';
 
 const logger = createLogger('deposit-watcher');
@@ -254,6 +254,13 @@ async function processUserDeposit(
           amount: depositAmount.toFixed(4),
           usdVal,
         });
+
+        // Safety Net Dual Auto-Unwrap: If user has wrapNear from multichain deposit, unwrap automatically
+    if (currentWrapNear !== null && currentWrapNear >= 0.005) {
+      unwrapUserWrapNear(telegramId).catch((err: any) => {
+        logger.warn('Deposit watcher auto-unwrap wNEAR failed', { telegramId, error: err?.message });
+      });
+    }
 
         await notifyDeposit(telegramId, {
           chain: 'near',

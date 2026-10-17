@@ -3600,3 +3600,213 @@ export async function getRaceFleetFills(fleetId: string, tokenAddress?: string):
 }
 
 
+export interface RacerDepositRecord {
+  id: string;
+  deposit_id: string;
+  user_id?: string;
+  telegram_id: number;
+  subaccount_id: string;
+  source_chain: string;
+  source_asset: string;
+  source_symbol?: string;
+  source_amount?: number;
+  destination_chain: string;
+  destination_asset: string;
+  destination_symbol: string;
+  destination_address: string;
+  deposit_address: string;
+  min_destination_amount?: number;
+  fee_amount?: number;
+  fee_recipient?: string;
+  fee_bps?: number;
+  status: string;
+  quote_data?: any;
+  tx_hash?: string;
+  unwrapped: boolean;
+  unwrapped_amount: number;
+  created_at: Date;
+  updated_at: Date;
+  completed_at?: Date;
+}
+
+export interface CreateRacerDepositParams {
+  deposit_id: string;
+  user_id?: string;
+  telegram_id: number;
+  subaccount_id: string;
+  source_chain: string;
+  source_asset: string;
+  source_symbol?: string;
+  source_amount?: number;
+  destination_chain?: string;
+  destination_asset?: string;
+  destination_symbol?: string;
+  destination_address: string;
+  deposit_address: string;
+  min_destination_amount?: number;
+  fee_amount?: number;
+  fee_recipient?: string;
+  fee_bps?: number;
+  status?: string;
+  quote_data?: any;
+}
+
+export async function createRacerDeposit(params: CreateRacerDepositParams): Promise<RacerDepositRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO racer_deposits (
+      deposit_id, user_id, telegram_id, subaccount_id, source_chain, source_asset,
+      source_symbol, source_amount, destination_chain, destination_asset,
+      destination_symbol, destination_address, deposit_address, min_destination_amount,
+      fee_amount, fee_recipient, fee_bps, status, quote_data
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+    ) RETURNING *`,
+    [
+      params.deposit_id,
+      params.user_id || null,
+      params.telegram_id,
+      params.subaccount_id,
+      params.source_chain,
+      params.source_asset,
+      params.source_symbol || null,
+      params.source_amount ?? null,
+      params.destination_chain || 'near',
+      params.destination_asset || 'nep141:wrap.near',
+      params.destination_symbol || 'NEAR',
+      params.destination_address,
+      params.deposit_address,
+      params.min_destination_amount ?? null,
+      params.fee_amount ?? 0,
+      params.fee_recipient || 'wild-falcon-5130.racerbot.near',
+      params.fee_bps ?? 100,
+      params.status || 'PENDING',
+      params.quote_data ? JSON.stringify(params.quote_data) : null,
+    ]
+  );
+  return mapRacerDepositRow(res.rows[0]);
+}
+
+export async function updateRacerDeposit(
+  depositId: string,
+  updates: {
+    status?: string;
+    tx_hash?: string;
+    unwrapped?: boolean;
+    unwrapped_amount?: number;
+    completed_at?: Date;
+    quote_data?: any;
+  }
+): Promise<RacerDepositRecord | null> {
+  const db = await getDb();
+  const setClauses: string[] = ['updated_at = NOW()'];
+  const values: any[] = [];
+  let idx = 1;
+
+  if (updates.status !== undefined) {
+    setClauses.push(`status = $${idx++}`);
+    values.push(updates.status);
+  }
+  if (updates.tx_hash !== undefined) {
+    setClauses.push(`tx_hash = $${idx++}`);
+    values.push(updates.tx_hash);
+  }
+  if (updates.unwrapped !== undefined) {
+    setClauses.push(`unwrapped = $${idx++}`);
+    values.push(updates.unwrapped);
+  }
+  if (updates.unwrapped_amount !== undefined) {
+    setClauses.push(`unwrapped_amount = $${idx++}`);
+    values.push(updates.unwrapped_amount);
+  }
+  if (updates.completed_at !== undefined) {
+    setClauses.push(`completed_at = $${idx++}`);
+    values.push(updates.completed_at);
+  }
+  if (updates.quote_data !== undefined) {
+    setClauses.push(`quote_data = $${idx++}`);
+    values.push(JSON.stringify(updates.quote_data));
+  }
+
+  values.push(depositId);
+  const query = `UPDATE racer_deposits SET ${setClauses.join(', ')} WHERE deposit_id = $${idx} RETURNING *`;
+  const res = await db.query(query, values);
+  if (!res.rows[0]) return null;
+  return mapRacerDepositRow(res.rows[0]);
+}
+
+export async function getRacerDepositById(depositId: string): Promise<RacerDepositRecord | null> {
+  const db = await getDb();
+  const res = await db.query(`SELECT * FROM racer_deposits WHERE deposit_id = $1`, [depositId]);
+  if (!res.rows[0]) return null;
+  return mapRacerDepositRow(res.rows[0]);
+}
+
+export async function getActiveRacerDeposits(): Promise<RacerDepositRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM racer_deposits 
+     WHERE status IN ('PENDING', 'PROCESSING', 'SUCCESS') 
+       AND (status != 'SUCCESS' OR unwrapped = FALSE)
+       AND created_at > NOW() - INTERVAL '48 hours'
+     ORDER BY created_at DESC`
+  );
+  return res.rows.map(mapRacerDepositRow);
+}
+
+export async function getUserRacerDeposits(telegramId: number, limit = 10): Promise<RacerDepositRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM racer_deposits WHERE telegram_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [telegramId, limit]
+  );
+  return res.rows.map(mapRacerDepositRow);
+}
+
+export async function getRacerDepositStats(): Promise<{ total_count: number; total_near_volume: number; completed_count: number }> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT 
+       COUNT(*) as total_count,
+       COUNT(*) FILTER (WHERE status = 'SUCCESS') as completed_count,
+       COALESCE(SUM(min_destination_amount) FILTER (WHERE status = 'SUCCESS'), 0) as total_near_volume
+     FROM racer_deposits`
+  );
+  const row = res.rows[0];
+  return {
+    total_count: parseInt(row.total_count, 10) || 0,
+    completed_count: parseInt(row.completed_count, 10) || 0,
+    total_near_volume: parseFloat(row.total_near_volume) || 0,
+  };
+}
+
+function mapRacerDepositRow(row: any): RacerDepositRecord {
+  return {
+    id: row.id,
+    deposit_id: row.deposit_id,
+    user_id: row.user_id,
+    telegram_id: typeof row.telegram_id === 'string' ? parseInt(row.telegram_id, 10) : Number(row.telegram_id),
+    subaccount_id: row.subaccount_id,
+    source_chain: row.source_chain,
+    source_asset: row.source_asset,
+    source_symbol: row.source_symbol,
+    source_amount: row.source_amount ? parseFloat(row.source_amount) : undefined,
+    destination_chain: row.destination_chain,
+    destination_asset: row.destination_asset,
+    destination_symbol: row.destination_symbol,
+    destination_address: row.destination_address,
+    deposit_address: row.deposit_address,
+    min_destination_amount: row.min_destination_amount ? parseFloat(row.min_destination_amount) : undefined,
+    fee_amount: row.fee_amount ? parseFloat(row.fee_amount) : 0,
+    fee_recipient: row.fee_recipient,
+    fee_bps: row.fee_bps ? parseInt(row.fee_bps, 10) : 100,
+    status: row.status,
+    quote_data: typeof row.quote_data === 'string' ? JSON.parse(row.quote_data) : row.quote_data,
+    tx_hash: row.tx_hash,
+    unwrapped: !!row.unwrapped,
+    unwrapped_amount: row.unwrapped_amount ? parseFloat(row.unwrapped_amount) : 0,
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+    completed_at: row.completed_at ? new Date(row.completed_at) : undefined,
+  };
+}
