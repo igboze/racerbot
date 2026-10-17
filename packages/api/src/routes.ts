@@ -2809,14 +2809,12 @@ export function buildDepositAmountPickerMenu(tokenKey: string) {
 
   const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
   const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
-  const priceStr = token.price ? ` (~${token.price < 1 ? token.price.toFixed(4) : token.price.toFixed(2)})` : '';
   const minDeposit = getMinimumDeposit(token);
-  const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
 
   const text =
-    `💰 <b>Deposit Amount: ${token.symbol}${priceStr}</b>\n\n` +
+    `💰 <b>Deposit Amount: ${token.symbol}</b>\n\n` +
     `• Network: <b>${chainName}</b>\n` +
-    `• ⚡ <b>Lowest Deposit:</b> <code>${minDeposit.formatted}</code>${minUsdStr}\n` +
+    `• ⚡ <b>Lowest Deposit:</b> <code>${minDeposit.formatted}</code>\n` +
     `• <b>1% Platform Fee</b> (settled in NEAR to Treasury)\n` +
     `• Funds convert directly to <b>NEAR</b> in your subaccount\n` +
     `• <b>Dual Auto-Unwrap</b> to native NEAR immediately on arrival!\n\n` +
@@ -2891,8 +2889,9 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
       `⏱️ <i>Send exactly ${amount} ${token.symbol} to the deposit address above. Funds are automatically swapped by NEAR Intents and dual auto-unwrapped to native NEAR immediately!</i>`;
 
     const buttons: any[] = [];
-    if (deepLink) {
-      buttons.push([Markup.button.url('📲 Open in Mobile Wallet', deepLink)]);
+    if (deepLink && (deepLink.startsWith('https://') || deepLink.startsWith('http://'))) {
+      const walletLabel = token.blockchain === 'sol' ? '🟣 Open in Phantom Wallet' : '🦊 Open in Mobile Wallet';
+      buttons.push([Markup.button.url(walletLabel, deepLink)]);
     }
     buttons.push([
       cb('🔄 Check Status', `dep_check:${record.deposit_id}`, 'primary'),
@@ -3570,7 +3569,6 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenKey = (ctx as any).match[1];
     const token = getTokenByKey(tokenKey);
     const minDeposit = token ? getMinimumDeposit(token) : { amount: 0.01, formatted: '0.01', example: '1.0' };
-    const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
 
     userPendingActions.set(telegramId, {
       action: 'deposit_custom_amount',
@@ -3580,7 +3578,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `✍️ <b>Enter Custom Amount for ${token?.symbol || 'Token'}</b>\n\n` +
-      `⚡ <b>Lowest Deposit Amount:</b> <code>${minDeposit.formatted}</code>${minUsdStr}\n\n` +
+      `⚡ <b>Lowest Deposit Amount:</b> <code>${minDeposit.formatted}</code>\n\n` +
       `Please reply with the number of ${token?.symbol || 'tokens'} you wish to deposit (e.g. <code>${minDeposit.example}</code>):\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
@@ -10864,7 +10862,6 @@ export function setupRoutes(bot: Telegraf): void {
         const tokenKey = pending.depositTokenKey || '0';
         const token = getTokenByKey(tokenKey);
         const minDeposit = token ? getMinimumDeposit(token) : { amount: 0.000001, formatted: '0.000001', example: '1.0' };
-        const minUsdStr = minDeposit.usdEstimated ? ` (${minDeposit.usdEstimated})` : '';
 
         if (isNaN(amt) || amt <= 0) {
           await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. 10 or 0.5).');
@@ -10874,7 +10871,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (amt < minDeposit.amount) {
           await ctx.reply(
             `⚠️ <b>Deposit Amount Too Low</b>\n\n` +
-            `The lowest deposit amount for <b>${token?.symbol || 'this token'}</b> on NEAR Intents is <b>${minDeposit.formatted}</b>${minUsdStr}.\n\n` +
+            `The lowest deposit amount for <b>${token?.symbol || 'this token'}</b> on NEAR Intents is <b>${minDeposit.formatted}</b>.\n\n` +
             `Please reply with at least <code>${minDeposit.amount}</code> ${token?.symbol || ''} (or type /cancel to abort):`,
             { parse_mode: 'HTML' }
           );
