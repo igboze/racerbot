@@ -2762,17 +2762,15 @@ export function buildDepositTokenPickerMenu(chainId: string, page = 0) {
 
   const rows: any[] = [];
 
-  // 2 tokens per row
+  // 2 tokens per row (symbol only, no token prices)
   for (let i = 0; i < pageTokens.length; i += 2) {
     const r: any[] = [];
     const t1 = pageTokens[i];
-    const price1 = t1.price ? ` (${t1.price < 1 ? t1.price.toFixed(4) : t1.price.toFixed(2)})` : '';
-    r.push(cb(`💎 ${t1.symbol}${price1}`, `dep_tok:${t1.key}`, 'success'));
+    r.push(cb(`💎 ${t1.symbol}`, `dep_tok:${t1.key}`, 'success'));
 
     if (i + 1 < pageTokens.length) {
       const t2 = pageTokens[i + 1];
-      const price2 = t2.price ? ` (${t2.price < 1 ? t2.price.toFixed(4) : t2.price.toFixed(2)})` : '';
-      r.push(cb(`💎 ${t2.symbol}${price2}`, `dep_tok:${t2.key}`, 'success'));
+      r.push(cb(`💎 ${t2.symbol}`, `dep_tok:${t2.key}`, 'success'));
     }
     rows.push(r);
   }
