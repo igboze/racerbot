@@ -326,12 +326,15 @@ export function getTokensForChain(chainId: string): OneClickToken[] {
  */
 export function generateWalletDeepLink(chain: string, address: string, amount?: number | string): string {
   const c = SUPPORTED_CHAINS[chain.toLowerCase()];
-  if (!c) return '';
-  const amtStr = amount ? String(amount) : '';
+  if (!c || !address) return '';
+  const amtStr = amount ? String(amount).trim() : '';
 
+  // Telegram inline keyboard buttons STRICTLY require valid https:// or http:// URLs.
+  // Custom URI schemes like solana: or ethereum: cause Telegram 400 Bad Request: Wrong port number.
   switch (c.id) {
     case 'sol':
-      return amtStr ? `solana:${address}?amount=${amtStr}` : `solana:${address}`;
+      // Universal link for Phantom & Solflare on mobile (iOS / Android)
+      return `https://phantom.app/ul/v1/transfer?recipient=${encodeURIComponent(address)}${amtStr ? `&amount=${encodeURIComponent(amtStr)}` : ''}`;
     case 'eth':
     case 'base':
     case 'bsc':
@@ -343,11 +346,8 @@ export function generateWalletDeepLink(chain: string, address: string, amount?: 
     case 'gnosis':
     case 'monad':
     case 'bera':
-      return amtStr ? `ethereum:${address}?value=${amtStr}` : `ethereum:${address}`;
-    case 'btc':
-      return amtStr ? `bitcoin:${address}?amount=${amtStr}` : `bitcoin:${address}`;
-    case 'tron':
-      return `tron:${address}`;
+      // Universal link for MetaMask / Web3 mobile wallets
+      return `https://metamask.app.link/send/${encodeURIComponent(address)}${amtStr ? `?value=${encodeURIComponent(amtStr)}` : ''}`;
     default:
       return '';
   }
