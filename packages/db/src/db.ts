@@ -440,12 +440,12 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
     `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, sui_address, sui_private_key_enc, starknet_address, starknet_private_key_enc, default_buy_pct, default_sell_pct, fee_tier)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (telegram_id) DO UPDATE SET 
-       subaccount_id = EXCLUDED.subaccount_id, 
-       scoped_key_encrypted = EXCLUDED.scoped_key_encrypted,
-       sui_address = COALESCE(EXCLUDED.sui_address, users.sui_address),
-       sui_private_key_enc = COALESCE(EXCLUDED.sui_private_key_enc, users.sui_private_key_enc),
-       starknet_address = COALESCE(EXCLUDED.starknet_address, users.starknet_address),
-       starknet_private_key_enc = COALESCE(EXCLUDED.starknet_private_key_enc, users.starknet_private_key_enc)
+       subaccount_id = COALESCE(users.subaccount_id, EXCLUDED.subaccount_id), 
+       scoped_key_encrypted = COALESCE(users.scoped_key_encrypted, EXCLUDED.scoped_key_encrypted),
+       sui_address = COALESCE(users.sui_address, EXCLUDED.sui_address),
+       sui_private_key_enc = COALESCE(users.sui_private_key_enc, EXCLUDED.sui_private_key_enc),
+       starknet_address = COALESCE(users.starknet_address, EXCLUDED.starknet_address),
+       starknet_private_key_enc = COALESCE(users.starknet_private_key_enc, EXCLUDED.starknet_private_key_enc)
      RETURNING *`,
     [
       id,
@@ -463,34 +463,52 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
   );
   const createdUser = rowToUser(result.rows[0]);
 
-  // Ensure initial NEAR wallet is recorded in user_wallets
-  if (params.subaccount_id && params.scoped_key_encrypted) {
-    await db.query(
-      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
-       VALUES ($1, 'near', $2, 'Wallet 1', $3, FALSE, TRUE)
-       ON CONFLICT (user_id, chain, address) DO NOTHING`,
-      [createdUser.id, params.subaccount_id, params.scoped_key_encrypted]
-    ).catch((err: any) => console.warn('[DB] user_wallets near insert warning:', err?.message));
+  // Ensure initial NEAR wallet is recorded in user_wallets if no active near wallet exists
+  if (createdUser.subaccount_id && createdUser.scoped_key_encrypted) {
+    const existingActiveNear = await db.query(
+      "SELECT id FROM user_wallets WHERE user_id = $1 AND chain = 'near' AND is_active = TRUE LIMIT 1",
+      [createdUser.id]
+    ).catch(() => ({ rows: [] }));
+    if (existingActiveNear.rows.length === 0) {
+      await db.query(
+        `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES ($1, 'near', $2, 'Wallet 1', $3, FALSE, TRUE)
+         ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
+        [createdUser.id, createdUser.subaccount_id, createdUser.scoped_key_encrypted]
+      ).catch((err: any) => console.warn('[DB] user_wallets near insert warning:', err?.message));
+    }
   }
 
-  // Ensure initial SUI wallet is recorded in user_wallets
-  if (params.sui_address && params.sui_private_key_enc) {
-    await db.query(
-      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
-       VALUES ($1, 'sui', $2, 'Wallet 1', $3, FALSE, TRUE)
-       ON CONFLICT (user_id, chain, address) DO NOTHING`,
-      [createdUser.id, params.sui_address, params.sui_private_key_enc]
-    ).catch((err: any) => console.warn('[DB] user_wallets sui insert warning:', err?.message));
+  // Ensure initial SUI wallet is recorded in user_wallets if no active sui wallet exists
+  if (createdUser.sui_address && createdUser.sui_private_key_enc) {
+    const existingActiveSui = await db.query(
+      "SELECT id FROM user_wallets WHERE user_id = $1 AND chain = 'sui' AND is_active = TRUE LIMIT 1",
+      [createdUser.id]
+    ).catch(() => ({ rows: [] }));
+    if (existingActiveSui.rows.length === 0) {
+      await db.query(
+        `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES ($1, 'sui', $2, 'Wallet 1', $3, FALSE, TRUE)
+         ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
+        [createdUser.id, createdUser.sui_address, createdUser.sui_private_key_enc]
+      ).catch((err: any) => console.warn('[DB] user_wallets sui insert warning:', err?.message));
+    }
   }
 
-  // Ensure initial Starknet wallet is recorded in user_wallets
-  if (params.starknet_address && params.starknet_private_key_enc) {
-    await db.query(
-      `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
-       VALUES ($1, 'starknet', $2, 'Wallet 1', $3, FALSE, TRUE)
-       ON CONFLICT (user_id, chain, address) DO NOTHING`,
-      [createdUser.id, params.starknet_address, params.starknet_private_key_enc]
-    ).catch((err: any) => console.warn('[DB] user_wallets starknet insert warning:', err?.message));
+  // Ensure initial Starknet wallet is recorded in user_wallets if no active starknet wallet exists
+  if (createdUser.starknet_address && createdUser.starknet_private_key_enc) {
+    const existingActiveStrk = await db.query(
+      "SELECT id FROM user_wallets WHERE user_id = $1 AND chain = 'starknet' AND is_active = TRUE LIMIT 1",
+      [createdUser.id]
+    ).catch(() => ({ rows: [] }));
+    if (existingActiveStrk.rows.length === 0) {
+      await db.query(
+        `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES ($1, 'starknet', $2, 'Wallet 1', $3, FALSE, TRUE)
+         ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
+        [createdUser.id, createdUser.starknet_address, createdUser.starknet_private_key_enc]
+      ).catch((err: any) => console.warn('[DB] user_wallets starknet insert warning:', err?.message));
+    }
   }
 
   invalidateUserCache(undefined, params.telegram_id);
@@ -641,8 +659,84 @@ export async function getActiveWallet(userId: string, chain: 'near' | 'sui' | 's
     'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE LIMIT 1',
     [userId, chain]
   );
-  if (res.rows.length === 0) return null;
-  return rowToUserWallet(res.rows[0]);
+  if (res.rows.length > 0) {
+    return rowToUserWallet(res.rows[0]);
+  }
+
+  // Self-heal: If user has an address on this chain in users table, record and activate it in user_wallets
+  try {
+    const userRes = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (userRes.rows.length > 0) {
+      const u = userRes.rows[0];
+      let address: string | null = null;
+      let encKey: string | null = null;
+      if (chain === 'near') {
+        address = u.subaccount_id;
+        encKey = u.scoped_key_encrypted;
+      } else if (chain === 'sui') {
+        address = u.sui_address;
+        encKey = u.sui_private_key_enc;
+      } else if (chain === 'starknet') {
+        address = u.starknet_address;
+        encKey = u.starknet_private_key_enc;
+      }
+
+      if (address && encKey) {
+        await db.query('UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = $2', [userId, chain]).catch(() => {});
+        const insertRes = await db.query(
+          `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+           VALUES ($1, $2, $3, 'Wallet 1', $4, FALSE, TRUE)
+           ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE, encrypted_private_key = EXCLUDED.encrypted_private_key
+           RETURNING *`,
+          [userId, chain, address, encKey]
+        );
+        if (insertRes.rows.length > 0) {
+          return rowToUserWallet(insertRes.rows[0]);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[DB] getActiveWallet self-heal warning for user ${userId} chain ${chain}:`, err?.message);
+  }
+
+  return null;
+}
+
+export async function syncUserActiveWallet(
+  userId: string,
+  chain: 'near' | 'sui' | 'starknet',
+  address: string,
+  encryptedPrivateKey: string
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = $2',
+    [userId, chain]
+  ).catch(() => {});
+  await db.query(
+    `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+     VALUES ($1, $2, $3, 'Wallet 1', $4, FALSE, TRUE)
+     ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE, encrypted_private_key = EXCLUDED.encrypted_private_key`,
+    [userId, chain, address, encryptedPrivateKey]
+  ).catch((err: any) => console.warn('[DB] syncUserActiveWallet warning:', err?.message));
+
+  if (chain === 'near') {
+    await db.query(
+      'UPDATE users SET subaccount_id = $1, scoped_key_encrypted = $2 WHERE id = $3',
+      [address, encryptedPrivateKey, userId]
+    ).catch(() => {});
+  } else if (chain === 'sui') {
+    await db.query(
+      'UPDATE users SET sui_address = $1, sui_private_key_enc = $2 WHERE id = $3',
+      [address, encryptedPrivateKey, userId]
+    ).catch(() => {});
+  } else if (chain === 'starknet') {
+    await db.query(
+      'UPDATE users SET starknet_address = $1, starknet_private_key_enc = $2 WHERE id = $3',
+      [address, encryptedPrivateKey, userId]
+    ).catch(() => {});
+  }
+  invalidateUserCache(userId);
 }
 
 export async function getUserWalletById(walletId: string): Promise<UserWalletRecord | null> {

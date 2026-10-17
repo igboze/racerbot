@@ -100,6 +100,7 @@ export {
   getUserWalletById,
   createUserWallet,
   setActiveWallet,
+  syncUserActiveWallet,
   renameUserWallet,
   deleteUserWallet,
   // Telegram Group Buy Alerts
