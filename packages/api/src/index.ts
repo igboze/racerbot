@@ -281,9 +281,37 @@ async function main(): Promise<void> {
       secret_token: TELEGRAM_WEBHOOK_SECRET || undefined,
     });
     logger.info('Telegram bot launched with webhook', { webhookUrl });
+    // Set Telegram Bot Menu Commands
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: '🏎️ Start RacerBot / Main Menu' },
+    { command: 'deposit', description: '📥 Deposit Multi-Crypto (37 Chains)' },
+    { command: 'wallet', description: '💳 Wallet & Balances' },
+    { command: 'menu', description: '📊 Main Menu & Stats' },
+    { command: 'snipe', description: '🎯 Token Sniper' },
+    { command: 'copy', description: '👥 Copy Trading' },
+    { command: 'dca', description: '🔁 DCA Orders' },
+    { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
+    { command: 'settings', description: '⚙️ Settings' },
+  ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
+
+  
   } else {
     bot.launch({ dropPendingUpdates: true });
     logger.info('Telegram bot launched with long polling (PUBLIC_URL not set)');
+    // Set Telegram Bot Menu Commands
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: '🏎️ Start RacerBot / Main Menu' },
+    { command: 'deposit', description: '📥 Deposit Multi-Crypto (37 Chains)' },
+    { command: 'wallet', description: '💳 Wallet & Balances' },
+    { command: 'menu', description: '📊 Main Menu & Stats' },
+    { command: 'snipe', description: '🎯 Token Sniper' },
+    { command: 'copy', description: '👥 Copy Trading' },
+    { command: 'dca', description: '🔁 DCA Orders' },
+    { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
+    { command: 'settings', description: '⚙️ Settings' },
+  ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
+
+  
   }
 
   // ── Subscribe to detector's NEW_TOKENS to warm local name cache (async) ───
