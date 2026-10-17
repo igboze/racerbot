@@ -204,16 +204,15 @@ async function processUserDeposit(
       };
       userBalanceState.set(stateKey, prev);
     } else {
-      // Brand new user or first time ever seen.
-      const isBrandNewUser = user.created_at && (Date.now() - new Date(user.created_at).getTime() < 60 * 60 * 1000);
-      const initNat = isBrandNewUser ? 0 : (currentNativeNear ?? 0);
-      const initWrap = isBrandNewUser ? 0 : (currentWrapNear ?? 0);
+      // Initial baseline establishment: record current on-chain balance and NEVER fire an alert for existing funds
+      const initNat = currentNativeNear ?? 0;
+      const initWrap = currentWrapNear ?? 0;
       prev = {
         nativeNear: initNat,
         wrapNear: initWrap,
         totalNear: initNat + initWrap,
-        totalSui: isBrandNewUser ? 0 : (currentSui ?? 0),
-        totalStrk: isBrandNewUser ? 0 : (currentStrk ?? 0),
+        totalSui: currentSui ?? 0,
+        totalStrk: currentStrk ?? 0,
         trackedNearAddress: subaccount ?? undefined,
         trackedSuiAddress: suiAddr ?? undefined,
         trackedStarknetAddress: starknetAddr ?? undefined,
@@ -227,9 +226,8 @@ async function processUserDeposit(
         strk: prev.totalStrk,
       }).catch(() => {});
 
-      if (!isBrandNewUser) {
-        return;
-      }
+      // Baseline initialized: always return and await future deposits
+      return;
     }
   }
 
@@ -244,10 +242,10 @@ async function processUserDeposit(
     const sellProceeds = getRecentSellProceeds(userId, telegramId, 'near');
     const isTradeProceeds = sellProceeds > 0 && Math.abs(nearDelta - sellProceeds) < 0.05;
 
-    // Threshold: real balance increase of at least 0.01 NEAR (filters gas change dust)
-    if (nearDelta >= 0.01 && !isTradeProceeds) {
+    // Real balance increase threshold of at least 0.02 NEAR to filter gas refund/staking dust
+    if (nearDelta >= 0.02 && !isTradeProceeds) {
       const depositAmount = sellProceeds > 0 && nearDelta > sellProceeds ? (nearDelta - sellProceeds) : nearDelta;
-      if (depositAmount >= 0.01) {
+      if (depositAmount >= 0.02) {
         const usdVal = formatUSD(depositAmount * nearUsd);
         logger.info('NEAR deposit detected', {
           telegramId,
@@ -256,11 +254,13 @@ async function processUserDeposit(
         });
 
         // Safety Net Dual Auto-Unwrap: If user has wrapNear from multichain deposit, unwrap automatically
-    if (currentWrapNear !== null && currentWrapNear >= 0.005) {
-      unwrapUserWrapNear(telegramId).catch((err: any) => {
-        logger.warn('Deposit watcher auto-unwrap wNEAR failed', { telegramId, error: err?.message });
-      });
-    }
+        if (currentWrapNear !== null && currentWrapNear >= 0.005) {
+          // Record unwrap cooldown for 60 seconds so shifting from wNEAR to native NEAR doesn't trigger a secondary delta alert
+          recordUserTrade(userId, 'near', currentWrapNear);
+          unwrapUserWrapNear(telegramId).catch((err: any) => {
+            logger.warn('Deposit watcher auto-unwrap wNEAR failed', { telegramId, error: err?.message });
+          });
+        }
 
         await notifyDeposit(telegramId, {
           chain: 'near',
@@ -327,14 +327,18 @@ async function processUserDeposit(
     }
   }
 
-  // Update stored baseline (preserve previous balance if current query failed)
-  const newTotalNear = currentTotalNear;
+  // Protection against RPC zero-glitches: If balance dropped to 0 from > 0.05 without a trade/withdrawal,
+  // do NOT update the baseline down to 0, because the next poll will falsely interpret the real balance as a deposit!
+  const isLikelyRpcZeroGlitch = currentTotalNear === 0 && prev.totalNear >= 0.05 && getRecentSellProceeds(userId, telegramId, 'near') === 0;
+
+  // Update stored baseline (preserve previous balance if current query failed or returned a zero glitch)
+  const newTotalNear = isLikelyRpcZeroGlitch ? prev.totalNear : currentTotalNear;
   const newTotalSui = currentSui ?? prev.totalSui;
   const newTotalStrk = currentStrk ?? prev.totalStrk;
 
   userBalanceState.set(stateKey, {
-    nativeNear: resolvedNativeNear,
-    wrapNear: resolvedWrapNear,
+    nativeNear: isLikelyRpcZeroGlitch ? prev.nativeNear : resolvedNativeNear,
+    wrapNear: isLikelyRpcZeroGlitch ? prev.wrapNear : resolvedWrapNear,
     totalNear: newTotalNear,
     totalSui: newTotalSui,
     totalStrk: newTotalStrk,

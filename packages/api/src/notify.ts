@@ -504,11 +504,25 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
   }
 }
 
-// Deduplication cache to prevent alert loops for identical deposits (5-min cooldown)
-const recentDepositNotifyCache = new Map<string, number>();
+// Anti-loop deposit alert tracking: per user and chain
+interface DepositAlertRecord {
+  timestamp: number;
+  amount: number;
+}
+const lastDepositAlertByUser = new Map<string, DepositAlertRecord>();
+const depositSuppressionMap = new Map<string, number>();
 
 /**
- * Send an immediate deposit notification to a Telegram user.
+ * Explicitly suppress native deposit alerts for a user on a chain
+ * (e.g. when multichain deposit already notified the user of settled funds).
+ */
+export function suppressDepositAlert(telegramId: number, chain = 'near', durationMs = 10 * 60 * 1000): void {
+  const key = `${telegramId}:${chain}`;
+  depositSuppressionMap.set(key, Date.now() + durationMs);
+}
+
+/**
+ * Send an immediate deposit notification to a Telegram user with strict anti-loop deduplication.
  */
 export async function notifyDeposit(
   telegramId: number,
@@ -522,14 +536,40 @@ export async function notifyDeposit(
 ): Promise<void> {
   if (!_bot || !telegramId) return;
 
-  const dedupKey = `native:${telegramId}:${params.chain}:${params.address}:${params.amount}`;
-  const lastSent = recentDepositNotifyCache.get(dedupKey) || 0;
-  if (Date.now() - lastSent < 15 * 60 * 1000) {
-    return; // Suppress duplicate alert within 15 minutes
-  }
-  recentDepositNotifyCache.set(dedupKey, Date.now());
-
   const chain = params.chain;
+  const userChainKey = `${telegramId}:${chain}`;
+  const now = Date.now();
+  const amtNum = parseFloat(params.amount) || 0;
+
+  // 1. Check explicit suppression (e.g. multichain deposit poller already notified)
+  const suppressedUntil = depositSuppressionMap.get(userChainKey);
+  if (suppressedUntil && now < suppressedUntil) {
+    console.log(`[NOTIFY] Suppressed deposit alert for ${telegramId} on ${chain} (explicit suppression active)`);
+    return;
+  }
+
+  // 2. Anti-Loop: Strict per-user time cooldown (minimum 60s between ANY deposit alerts on this chain)
+  const lastAlert = lastDepositAlertByUser.get(userChainKey);
+  if (lastAlert) {
+    if (now - lastAlert.timestamp < 60_000) {
+      console.warn(`[NOTIFY] Suppressed looping deposit alert for ${telegramId} on ${chain} (${Math.round((now - lastAlert.timestamp) / 1000)}s < 60s cooldown)`);
+      return;
+    }
+
+    // 3. Duplicate/Flicker suppression within 15 minutes:
+    // If the amount is identical or within 5% / 0.05 units of the previous alert, suppress it!
+    if (now - lastAlert.timestamp < 15 * 60_000) {
+      const diff = Math.abs(amtNum - lastAlert.amount);
+      if (diff < 0.05 || (lastAlert.amount > 0 && (diff / lastAlert.amount) < 0.05)) {
+        console.warn(`[NOTIFY] Suppressed duplicate/flicker deposit alert for ${telegramId} on ${chain} (amt=${amtNum}, prev=${lastAlert.amount})`);
+        return;
+      }
+    }
+  }
+
+  // Record this alert to permanently prevent looping
+  lastDepositAlertByUser.set(userChainKey, { timestamp: now, amount: amtNum });
+
   const amount = params.amount;
   const symbol = params.symbol || (chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
   const address = params.address;
@@ -566,6 +606,8 @@ export async function notifyDeposit(
 /**
  * Send a token deposit notification when an external token/meme coin is detected.
  */
+const recentDepositNotifyCache = new Map<string, number>();
+
 export async function notifyTokenDeposit(
   telegramId: number,
   params: {
