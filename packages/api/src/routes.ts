@@ -63,7 +63,10 @@ import {
   check1ClickDepositStatus,
   generateWalletDeepLink,
   generateQrBuffer,
+  getTokensForChain,
+  getTokenByKey,
   type SupportedChain,
+  type OneClickToken,
 } from './multichainDeposit.js';
 import {
   getTokenInfo,
@@ -306,6 +309,7 @@ interface PendingAction {
   depositChainId?: string;
   depositAssetId?: string;
   depositSymbol?: string;
+  depositTokenKey?: string;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -2700,8 +2704,8 @@ export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 
     `📥 <b>Universal Multi-Chain Deposit (37 Chains)</b>\n\n` +
     `Deposit crypto from <b>37 blockchains</b> directly into your RacerBot NEAR account.\n` +
     `Powered by <b>NEAR Intents (1Click)</b> — funds settle in pure NEAR automatically!\n\n` +
-    `• <i>100 bps Platform Fee collected in NEAR (wild-falcon-5130.racerbot.near)</i>\n` +
-    `• <i>Automatic Dual-Unwrap to native NEAR</i>\n\n` +
+    `• <i>100 bps Platform Fee in NEAR to Treasury</i>\n` +
+    `• <i>Automatic Dual-Unwrap to native NEAR on arrival</i>\n\n` +
     `🪙 <b>Select Source Blockchain:</b>`;
 
   const rows: any[] = [];
@@ -2720,10 +2724,10 @@ export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 
   for (let i = 0; i < chains.length; i += 2) {
     const r: any[] = [];
     const c1 = chains[i];
-    r.push(cb(`${c1.icon} ${c1.name}`, `dep_chain:${c1.id}`, 'primary'));
+    r.push(cb(`${c1.icon} ${c1.name}`, `dep_chain:${c1.id}:0`, 'primary'));
     if (i + 1 < chains.length) {
       const c2 = chains[i + 1];
-      r.push(cb(`${c2.icon} ${c2.name}`, `dep_chain:${c2.id}`, 'primary'));
+      r.push(cb(`${c2.icon} ${c2.name}`, `dep_chain:${c2.id}:0`, 'primary'));
     }
     rows.push(r);
   }
@@ -2737,24 +2741,51 @@ export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
-export function buildDepositTokenPickerMenu(chainId: string) {
+export function buildDepositTokenPickerMenu(chainId: string, page = 0) {
   const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
   if (!chain) return buildDepositChainPickerMenu('popular');
+
+  const tokens = getTokensForChain(chain.id);
+  const pageSize = 6;
+  const totalPages = Math.max(1, Math.ceil(tokens.length / pageSize));
+  const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+  const pageTokens = tokens.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
   const text =
     `📥 <b>Deposit from ${chain.icon} ${chain.name}</b>\n\n` +
     `Select the asset you want to deposit into RacerBot:\n` +
-    `• Native Asset: <b>${chain.nativeSymbol}</b>\n` +
-    `• Chain Category: <code>${chain.category.toUpperCase()}</code>\n\n` +
-    `<i>Tap a token below or enter a custom contract:</i>`;
+    `• Network: <b>${chain.name}</b> (<code>${chain.id.toUpperCase()}</code>)\n` +
+    `• Supported Assets: <b>${tokens.length} tokens</b>\n\n` +
+    `<i>Tap any token below or enter a custom contract:</i>`;
 
   const rows: any[] = [];
 
-  // Popular tokens for this chain
-  for (const tok of chain.popularTokens) {
-    rows.push([
-      cb(`💎 ${tok.symbol} (${chain.name})`, `dep_tok:${chain.id}:${tok.assetId}:${tok.symbol}`, 'success'),
-    ]);
+  // 2 tokens per row
+  for (let i = 0; i < pageTokens.length; i += 2) {
+    const r: any[] = [];
+    const t1 = pageTokens[i];
+    const price1 = t1.price ? ` (${t1.price < 1 ? t1.price.toFixed(4) : t1.price.toFixed(2)})` : '';
+    r.push(cb(`💎 ${t1.symbol}${price1}`, `dep_tok:${t1.key}`, 'success'));
+
+    if (i + 1 < pageTokens.length) {
+      const t2 = pageTokens[i + 1];
+      const price2 = t2.price ? ` (${t2.price < 1 ? t2.price.toFixed(4) : t2.price.toFixed(2)})` : '';
+      r.push(cb(`💎 ${t2.symbol}${price2}`, `dep_tok:${t2.key}`, 'success'));
+    }
+    rows.push(r);
+  }
+
+  // Pagination row if more than 1 page
+  if (totalPages > 1) {
+    const navRow: any[] = [];
+    if (currentPage > 0) {
+      navRow.push(cb('◀️ Prev', `dep_chain:${chain.id}:${currentPage - 1}`, 'primary'));
+    }
+    navRow.push(cb(`📄 ${currentPage + 1}/${totalPages}`, 'noop', 'primary'));
+    if (currentPage < totalPages - 1) {
+      navRow.push(cb('Next ▶️', `dep_chain:${chain.id}:${currentPage + 1}`, 'primary'));
+    }
+    rows.push(navRow);
   }
 
   // Custom token button
@@ -2770,58 +2801,78 @@ export function buildDepositTokenPickerMenu(chainId: string) {
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
-export function buildDepositAmountPickerMenu(chainId: string, assetId: string, symbol: string) {
-  const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
-  const chainName = chain ? `${chain.icon} ${chain.name}` : chainId.toUpperCase();
+export function buildDepositAmountPickerMenu(tokenKey: string) {
+  const token = getTokenByKey(tokenKey);
+  if (!token) return buildDepositChainPickerMenu('popular');
+
+  const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
+  const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
+  const priceStr = token.price ? ` (~${token.price < 1 ? token.price.toFixed(4) : token.price.toFixed(2)})` : '';
 
   const text =
-    `💰 <b>Deposit Amount: ${symbol} (${chainName})</b>\n\n` +
-    `Choose an amount to deposit or enter a custom amount.\n\n` +
+    `💰 <b>Deposit Amount: ${token.symbol}${priceStr}</b>\n\n` +
+    `• Network: <b>${chainName}</b>\n` +
     `• <b>1% Platform Fee</b> (settled in NEAR to Treasury)\n` +
     `• Funds convert directly to <b>NEAR</b> in your subaccount\n` +
-    `• <b>Dual Auto-Unwrap</b> to native NEAR on arrival!`;
+    `• <b>Dual Auto-Unwrap</b> to native NEAR immediately on arrival!\n\n` +
+    `<i>Choose an amount or enter a custom amount:</i>`;
+
+  let suggestions = ['0.1', '0.5', '1.0', '2.5', '5.0', '10'];
+  if (token.price) {
+    if (token.price > 500) {
+      suggestions = ['0.01', '0.05', '0.1', '0.25', '0.5', '1.0'];
+    } else if (token.price >= 0.95 && token.price <= 1.05) {
+      suggestions = ['10', '25', '50', '100', '250', '500'];
+    } else if (token.price < 0.1) {
+      suggestions = ['100', '500', '1000', '5000', '10000', '50000'];
+    }
+  }
 
   const rows: any[] = [
     [
-      cb('0.1 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:0.1`, 'primary'),
-      cb('0.5 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:0.5`, 'primary'),
-      cb('1.0 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:1.0`, 'success'),
+      cb(`${suggestions[0]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[0]}`, 'primary'),
+      cb(`${suggestions[1]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[1]}`, 'primary'),
+      cb(`${suggestions[2]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[2]}`, 'success'),
     ],
     [
-      cb('2.5 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:2.5`, 'primary'),
-      cb('5.0 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:5.0`, 'primary'),
-      cb('10 ' + symbol, `dep_amt:${chainId}:${assetId}:${symbol}:10`, 'primary'),
+      cb(`${suggestions[3]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[3]}`, 'primary'),
+      cb(`${suggestions[4]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[4]}`, 'primary'),
+      cb(`${suggestions[5]} ${token.symbol}`, `dep_amt:${token.key}:${suggestions[5]}`, 'primary'),
     ],
     [
-      cb('✍️ Custom Amount', `dep_custom_amt:${chainId}:${assetId}:${symbol}`, 'success'),
+      cb('✍️ Custom Amount', `dep_custom_amt:${token.key}`, 'success'),
     ],
     [
-      cb('🔙 Back to Tokens', `dep_chain:${chainId}`, 'primary'),
+      cb('🔙 Back to Tokens', `dep_chain:${token.blockchain}:0`, 'primary'),
     ],
   ];
 
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
-export async function renderDepositQuoteCard(ctx: any, telegramId: number, chainId: string, assetId: string, symbol: string, amount: number) {
+export async function renderDepositQuoteCard(ctx: any, telegramId: number, tokenKey: string, amount: number) {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
     await ctx.reply('❌ Please run /start first to create your wallet.');
     return;
   }
 
-  const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
-  const chainName = chain ? `${chain.icon} ${chain.name}` : chainId.toUpperCase();
+  const token = getTokenByKey(tokenKey);
+  if (!token) {
+    await ctx.reply('❌ Selected token expired or not found. Please tap Deposit to start again.');
+    return;
+  }
 
-  const waitMsg = await ctx.reply(`⏳ Generating 1Click Solver deposit route for ${amount} ${symbol} from ${chainName}...`);
+  const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
+  const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
+
+  const waitMsg = await ctx.reply(`⏳ Generating 1Click Solver deposit route for ${amount} ${token.symbol} from ${chainName}...`);
 
   try {
     const record = await create1ClickDepositQuote({
       telegramId,
       subaccountId: user.subaccount_id,
-      sourceChain: chainId,
-      sourceAssetId: assetId,
-      sourceSymbol: symbol,
+      token,
       amount,
     });
 
@@ -2829,19 +2880,19 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, chain
 
     // Generate QR Code PNG
     const qrBuffer = await generateQrBuffer(record.deposit_address);
-    const deepLink = generateWalletDeepLink(chainId, record.deposit_address, amount);
+    const deepLink = generateWalletDeepLink(token.blockchain, record.deposit_address, amount);
 
     const estNear = record.min_destination_amount ? record.min_destination_amount.toFixed(4) : 'Auto';
 
     const caption =
       `📥 <b>Multi-Chain Deposit Order Created!</b>\n\n` +
-      `⚡ <b>Source:</b> ${chainName} (<code>${amount} ${symbol}</code>)\n` +
+      `⚡ <b>Source:</b> ${chainName} (<code>${amount} ${token.symbol}</code>)\n` +
       `🎯 <b>Recipient:</b> <code>${user.subaccount_id}</code>\n` +
       `💰 <b>Expected Output:</b> ~<b>${estNear} NEAR</b>\n` +
       `💎 <b>Platform Fee:</b> 1.00% (Settled in NEAR to Treasury)\n\n` +
       `📍 <b>Deposit Address (Tap to Copy):</b>\n` +
       `<code>${record.deposit_address}</code>\n\n` +
-      `⏱️ <i>Send exactly ${amount} ${symbol} to the deposit address above. Funds are automatically swapped by NEAR Intents and dual auto-unwrapped to native NEAR immediately!</i>`;
+      `⏱️ <i>Send exactly ${amount} ${token.symbol} to the deposit address above. Funds are automatically swapped by NEAR Intents and dual auto-unwrapped to native NEAR immediately!</i>`;
 
     const buttons: any[] = [];
     if (deepLink) {
@@ -3449,27 +3500,39 @@ export function setupRoutes(bot: Telegraf): void {
   bot.command(['deposit', 'multichain'], handleMultichainDeposit);
   bot.action('menu_multichain_deposit', handleMultichainDeposit);
 
+  bot.action('noop', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+  });
+
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const cat = (ctx as any).match[1] as any;
     const menu = buildDepositChainPickerMenu(cat);
-    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+      console.warn('[dep_cat] editMessageText fallback:', err?.message);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    });
   });
 
-  bot.action(/^dep_chain:([a-zA-Z0-9_]+)$/, async (ctx) => {
+  bot.action(/^dep_chain:([a-zA-Z0-9_]+)(?::(d+))?$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const chainId = (ctx as any).match[1];
-    const menu = buildDepositTokenPickerMenu(chainId);
-    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    const page = (ctx as any).match[2] ? parseInt((ctx as any).match[2], 10) : 0;
+    const menu = buildDepositTokenPickerMenu(chainId, page);
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+      console.warn('[dep_chain] editMessageText fallback:', err?.message);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    });
   });
 
-  bot.action(/^dep_tok:([^:]+):([^:]+):([^:]+)$/, async (ctx) => {
+  bot.action(/^dep_tok:([a-zA-Z0-9_]+)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
-    const chainId = (ctx as any).match[1];
-    const assetId = (ctx as any).match[2];
-    const symbol = (ctx as any).match[3];
-    const menu = buildDepositAmountPickerMenu(chainId, assetId, symbol);
-    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    const tokenKey = (ctx as any).match[1];
+    const menu = buildDepositAmountPickerMenu(tokenKey);
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+      console.warn('[dep_tok] editMessageText fallback:', err?.message);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+    });
   });
 
   bot.action(/^dep_custom_tok:([a-zA-Z0-9_]+)$/, async (ctx) => {
@@ -3483,38 +3546,33 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `✍️ <b>Enter Custom Token for ${chainId.toUpperCase()}</b>\n\n` +
-      `Please reply with the token contract address or symbol (e.g. 'USDC' or contract address):\n\n` +
+      `Please reply with the token contract address or symbol (e.g. 'USDC' or CA):\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
   });
 
-  bot.action(/^dep_amt:([^:]+):([^:]+):([^:]+):([0-9.]+)$/, async (ctx) => {
+  bot.action(/^dep_amt:([a-zA-Z0-9_]+):([0-9.]+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
     await ctx.answerCbQuery().catch(() => {});
-    const chainId = (ctx as any).match[1];
-    const assetId = (ctx as any).match[2];
-    const symbol = (ctx as any).match[3];
-    const amt = parseFloat((ctx as any).match[4]);
-    await renderDepositQuoteCard(ctx, telegramId, chainId, assetId, symbol, amt);
+    const tokenKey = (ctx as any).match[1];
+    const amt = parseFloat((ctx as any).match[2]);
+    await renderDepositQuoteCard(ctx, telegramId, tokenKey, amt);
   });
 
-  bot.action(/^dep_custom_amt:([^:]+):([^:]+):([^:]+)$/, async (ctx) => {
+  bot.action(/^dep_custom_amt:([a-zA-Z0-9_]+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
-    const chainId = (ctx as any).match[1];
-    const assetId = (ctx as any).match[2];
-    const symbol = (ctx as any).match[3];
+    const tokenKey = (ctx as any).match[1];
+    const token = getTokenByKey(tokenKey);
     userPendingActions.set(telegramId, {
       action: 'deposit_custom_amount',
-      depositChainId: chainId,
-      depositAssetId: assetId,
-      depositSymbol: symbol,
+      depositTokenKey: tokenKey,
       expiresAt: Date.now() + 5 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
-      `✍️ <b>Enter Custom Amount for ${symbol}</b>\n\n` +
-      `Please reply with the exact number of ${symbol} you wish to deposit (e.g. 1.5 or 25):\n\n` +
+      `✍️ <b>Enter Custom Amount for ${token?.symbol || 'Token'}</b>\n\n` +
+      `Please reply with the exact number of ${token?.symbol || 'tokens'} you wish to deposit (e.g. 1.5 or 25):\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -10778,9 +10836,16 @@ export function setupRoutes(bot: Telegraf): void {
         const input = rawText.trim();
         userPendingActions.delete(telegramId);
         const chainId = pending.depositChainId || 'sol';
-        const symbol = input.length <= 8 ? input.toUpperCase() : 'TOKEN';
-        const assetId = `${chainId}:${input}`;
-        const menu = buildDepositAmountPickerMenu(chainId, assetId, symbol);
+        const chainTokens = getTokensForChain(chainId);
+        let matched = chainTokens.find((t: any) => 
+          t.symbol.toLowerCase() === input.toLowerCase() ||
+          (t.contractAddress && t.contractAddress.toLowerCase() === input.toLowerCase()) ||
+          t.assetId.toLowerCase().includes(input.toLowerCase())
+        );
+        if (!matched) {
+          matched = chainTokens[0];
+        }
+        const menu = buildDepositAmountPickerMenu(matched.key);
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
         return;
       }
@@ -10788,18 +10853,12 @@ export function setupRoutes(bot: Telegraf): void {
       if (pending.action === 'deposit_custom_amount') {
         const amt = parseFloat(rawText);
         if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. `25` or `0.5`).');
+          await ctx.reply('❌ Invalid amount. Please enter a valid positive number (e.g. 25 or 0.5).');
           return;
         }
         userPendingActions.delete(telegramId);
-        await renderDepositQuoteCard(
-          ctx,
-          telegramId,
-          pending.depositChainId || 'sol',
-          pending.depositAssetId || 'solana:native',
-          pending.depositSymbol || 'SOL',
-          amt
-        );
+        const tokenKey = pending.depositTokenKey || '0';
+        await renderDepositQuoteCard(ctx, telegramId, tokenKey, amt);
         return;
       }
 
