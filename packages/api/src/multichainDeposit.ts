@@ -78,7 +78,7 @@ const tokenKeyMap = new Map<string, OneClickToken>();
 const tokensByChain = new Map<string, OneClickToken[]>();
 
 const NEAR_INTENTS_API_URL = process.env.NEAR_INTENTS_API_URL || 'https://1click.chaindefuser.com';
-const NEAR_INTENTS_API_KEY = process.env.NEAR_INTENTS_API_KEY || '';
+const NEAR_INTENTS_API_KEY = process.env.NEAR_INTENTS_API_KEY || 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjIwMjUtMDEtMTItdjEifQ.eyJ2IjoxLCJrZXlfdHlwZSI6ImRpc3RyaWJ1dGlvbl9jaGFubmVsIiwicGFydG5lcl9pZCI6InBheWl0IiwiaWF0IjoxNzkyMjAxMjY3LCJleHAiOjE4MjM3MzcyNjd9.Xx-_Xhp8UT138O2pc-MfBotKF_6bCwPNRSjuHgHyVC-cLLWYc6_vYxuuLfZ5ZhIO-n7rvQfFGhL4YXJV-cQ9jae6hFG8b7cuXbvE_Q7ZX57MkyX2qELHQw7r3PqDbOTXfTMlhw7PBDAnBV79h3Lh8ebQU4M-2rKo5dlru4whqjNNyU1jcXr6Z5VQHx1xPFtdiilDAhXbG4N7qfQNY15bp-XqBaewMpgSiUhFNvicXWKKcsTQlkhDa6cGpCI_dRto_mNMJoeZaDVA4nhE9Mxxi8cOIo9_at3dBP6p9p63iBWqFbDRwvODt1gq4sggCHzxROq5Y6IAnDMw8ECRc8rEDw';
 const RACER_FEE_RECIPIENT = process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'wild-falcon-5130.racerbot.near';
 const RACER_FEE_BPS = parseInt(process.env.RACER_FEE_BPS || '100', 10);
 
@@ -136,6 +136,164 @@ export async function refresh1ClickTokens(): Promise<void> {
 refresh1ClickTokens().catch(() => {});
 // Refresh every 15 minutes
 setInterval(() => refresh1ClickTokens().catch(() => {}), 15 * 60 * 1000);
+
+
+export interface MinimumDepositInfo {
+  amount: number;
+  formatted: string;
+  usdEstimated?: string;
+  example: string;
+}
+
+/**
+ * Calculate the lowest deposit amount allowed by NEAR Intents solver
+ */
+export function getMinimumDeposit(token: OneClickToken): MinimumDepositInfo {
+  const sym = (token.symbol || '').toUpperCase();
+  const ch = (token.blockchain || '').toLowerCase();
+
+  // Known hard solver minimums from 1Click
+  if (sym === 'BTC' || token.assetId.includes('btc.omft')) {
+    return {
+      amount: 0.000065,
+      formatted: '0.000065 BTC',
+      usdEstimated: '~$5.30 USD',
+      example: '0.0001',
+    };
+  }
+
+  if (sym === 'SOL' || token.assetId.includes('sol.omft')) {
+    // 890,880 lamports = ~0.000891 SOL
+    return {
+      amount: 0.0009,
+      formatted: '0.0009 SOL',
+      usdEstimated: '~$0.10 USD',
+      example: '0.05',
+    };
+  }
+
+  if (sym === 'XRP') {
+    // 2,000,000 drops = 2.0 XRP
+    return {
+      amount: 2.0,
+      formatted: '2.0 XRP',
+      usdEstimated: '~$1.00 USD',
+      example: '10',
+    };
+  }
+
+  if (ch === 'tron' && sym === 'TRX') {
+    return {
+      amount: 400.0,
+      formatted: '400 TRX',
+      usdEstimated: '~$100 USD (Temporary Solver Limit)',
+      example: '450',
+    };
+  }
+
+  if (sym === 'ETH') {
+    return {
+      amount: 0.0001,
+      formatted: '0.0001 ETH',
+      usdEstimated: '~$0.25 USD',
+      example: '0.01',
+    };
+  }
+
+  // Stablecoins
+  if (sym === 'USDC' || sym === 'USDT' || sym === 'DAI' || sym === 'USDE' || sym === 'USDD' || sym.endsWith('USD')) {
+    return {
+      amount: 0.50,
+      formatted: `0.50 ${token.symbol}`,
+      usdEstimated: '~$0.50 USD',
+      example: '25',
+    };
+  }
+
+  // Priced tokens: calibrate minimum to roughly ~$0.50 USD
+  if (token.price && token.price > 0) {
+    const rawMin = 0.5 / token.price;
+    let minAmt: number;
+    let formatted: string;
+    let example: string;
+
+    if (rawMin < 0.0001) {
+      minAmt = Number(rawMin.toPrecision(2));
+      formatted = `${minAmt} ${token.symbol}`;
+      example = (minAmt * 10).toString();
+    } else if (rawMin < 1) {
+      minAmt = Math.ceil(rawMin * 100) / 100;
+      formatted = `${minAmt} ${token.symbol}`;
+      example = (minAmt * 5).toFixed(2);
+    } else if (rawMin < 10) {
+      minAmt = Math.ceil(rawMin * 10) / 10;
+      formatted = `${minAmt} ${token.symbol}`;
+      example = Math.ceil(minAmt * 5).toString();
+    } else {
+      minAmt = Math.ceil(rawMin);
+      formatted = `${minAmt} ${token.symbol}`;
+      example = (minAmt * 5).toString();
+    }
+
+    const usdVal = (minAmt * token.price).toFixed(2);
+    return {
+      amount: minAmt,
+      formatted,
+      usdEstimated: `~${usdVal} USD`,
+      example,
+    };
+  }
+
+  // Fallback defaults
+  return {
+    amount: 0.1,
+    formatted: `0.1 ${token.symbol}`,
+    example: '1.0',
+  };
+}
+
+export function getAmountSuggestions(token: OneClickToken, minAmount: number): string[] {
+  const sym = (token.symbol || '').toUpperCase();
+  if (sym === 'BTC') {
+    return ['0.0001', '0.0005', '0.001', '0.0025', '0.005', '0.01'];
+  }
+  if (sym === 'SOL') {
+    return ['0.01', '0.05', '0.1', '0.25', '0.5', '1.0'];
+  }
+  if (sym === 'ETH') {
+    return ['0.001', '0.005', '0.01', '0.025', '0.05', '0.1'];
+  }
+  if (sym === 'USDC' || sym === 'USDT' || sym.endsWith('USD')) {
+    return ['5', '10', '25', '50', '100', '250'];
+  }
+  if (token.price) {
+    if (token.price > 1000) {
+      return ['0.001', '0.005', '0.01', '0.025', '0.05', '0.1'];
+    }
+    if (token.price > 100) {
+      return ['0.01', '0.05', '0.1', '0.25', '0.5', '1.0'];
+    }
+    if (token.price > 10) {
+      return ['0.5', '1.0', '2.5', '5.0', '10', '25'];
+    }
+    if (token.price >= 0.5) {
+      return ['5', '10', '25', '50', '100', '250'];
+    }
+    if (token.price < 0.001) {
+      return ['1000', '5000', '10000', '50000', '100000', '500000'];
+    }
+  }
+  // Default based on minAmount
+  const base = Math.max(minAmount * 2, 1);
+  return [
+    (base).toFixed(base < 1 ? 2 : 0),
+    (base * 2.5).toFixed(base < 1 ? 2 : 0),
+    (base * 5).toFixed(base < 1 ? 2 : 0),
+    (base * 10).toFixed(base < 1 ? 2 : 0),
+    (base * 25).toFixed(base < 1 ? 2 : 0),
+    (base * 50).toFixed(base < 1 ? 2 : 0),
+  ];
+}
 
 export function getTokenByKey(key: string): OneClickToken | undefined {
   return tokenKeyMap.get(key);
@@ -268,6 +426,20 @@ export async function create1ClickDepositQuote(params: {
     if (!res.ok) {
       const errText = await res.text();
       logger.error(`1Click quote API error (${res.status}): ${errText}`);
+
+      const matchBridgeMin = errText.match(/try at least (\d+)/i);
+      if (matchBridgeMin) {
+        const minRaw = BigInt(matchBridgeMin[1]);
+        const minHuman = Number(minRaw) / Math.pow(10, token.decimals);
+        throw new Error(`Amount is below NEAR Intents bridge minimum. The lowest deposit amount for ${token.symbol} is ${minHuman} ${token.symbol}.`);
+      }
+      if (errText.includes('Temporary swap limits') || errText.includes('minimum swap amount')) {
+        throw new Error(`NEAR Intents Solver has a temporary minimum swap limit of $100 for ${token.symbol}.`);
+      }
+      if (errText.includes('No liquidity')) {
+        throw new Error(`No solver liquidity route currently available for ${token.symbol} at this amount. Please try a higher amount or another token.`);
+      }
+
       throw new Error(`1Click Solver error: ${errText || res.statusText}`);
     }
 
@@ -286,14 +458,11 @@ export async function create1ClickDepositQuote(params: {
       }
     }
   } catch (err: any) {
-    logger.warn(`1Click live quote failed, generating direct order: ${err.message}`);
-    depositAddress = token.blockchain === 'sol' ? '3svFFX1j4XpKbvxYAL1Bjhtp4MhjJgm2Du26szyEpu1Z' : '0x71C8360562ab8457C7CEFA836998D2D971261B05';
-    quoteData = {
-      depositAddress,
-      amountIn: rawUnits,
-      amountOutFormatted: (params.amount * 4.5).toFixed(4),
-    };
-    minNearOut = params.amount * 4.5;
+    if (err.message && (err.message.includes('bridge minimum') || err.message.includes('minimum swap limit') || err.message.includes('liquidity') || err.message.includes('1Click Solver error'))) {
+      throw err;
+    }
+    logger.error(`1Click live quote failed: ${err.message}`);
+    throw err;
   }
 
   const depositId = quoteData.correlationId || quoteData.depositId || `racer_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
