@@ -252,8 +252,8 @@ interface PendingAction {
     // DCA wizard
     | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
     // Multi-Wallet Management
-    | 'import_near_key' | 'import_near_name' | 'rename_near_wallet'
-    | 'import_sui_key' | 'import_sui_name' | 'rename_sui_wallet'
+    | 'import_near_key' | 'import_near_name' | 'import_near_confirm' | 'rename_near_wallet'
+    | 'import_sui_key' | 'import_sui_name' | 'import_sui_confirm' | 'rename_sui_wallet'
     | 'rename_starknet_wallet'
     // Buy Alert group setup
     | 'set_group_token'
@@ -272,8 +272,10 @@ interface PendingAction {
   // Multi-wallet state
   importNearPrivateKey?: string;
   importNearAccountId?: string;
+  importNearWalletName?: string;
   renameWalletId?: string;
   importSuiPrivateKey?: string;
+  importSuiWalletName?: string;
   renameSuiWalletId?: string;
   renameStarknetWalletId?: string;
   // Copy trading wizard state
@@ -629,17 +631,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   const starknetWallets: UserWalletRecord[] = await getUserWallets(user.id, 'starknet').catch(() => []);
 
   // Self-heal: ensure default active NEAR wallet is in nearWallets if missing
-  if (nearWallets.length === 0 && user.subaccount_id) {
+  if (user.subaccount_id && !nearWallets.some(w => w.address === user.subaccount_id)) {
     if (user.scoped_key_encrypted) {
       try {
         const created = await createUserWallet({
           userId: user.id,
           chain: 'near',
           address: user.subaccount_id,
-          name: 'Wallet 1',
+          name: nearWallets.length === 0 ? 'Wallet 1' : `Wallet ${nearWallets.length + 1}`,
           encryptedPrivateKey: user.scoped_key_encrypted,
           isImported: false,
-          isActive: true,
+          isActive: nearWallets.length === 0 || !nearWallets.some(w => w.is_active),
         });
         nearWallets.push(created);
       } catch {
@@ -671,17 +673,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   }
 
   // Self-heal: ensure default active SUI wallet is in suiWallets if missing
-  if (suiWallets.length === 0 && user.sui_address) {
+  if (user.sui_address && !suiWallets.some(w => w.address === user.sui_address)) {
     if (user.sui_private_key_enc) {
       try {
         const created = await createUserWallet({
           userId: user.id,
           chain: 'sui',
           address: user.sui_address,
-          name: 'Wallet 1',
+          name: suiWallets.length === 0 ? 'Wallet 1' : `Wallet ${suiWallets.length + 1}`,
           encryptedPrivateKey: user.sui_private_key_enc,
           isImported: false,
-          isActive: true,
+          isActive: suiWallets.length === 0 || !suiWallets.some(w => w.is_active),
         });
         suiWallets.push(created);
       } catch {
@@ -713,17 +715,17 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   }
 
   // Self-heal: ensure default active Starknet wallet is in starknetWallets if missing
-  if (starknetWallets.length === 0 && user.starknet_address) {
+  if (user.starknet_address && !starknetWallets.some(w => w.address === user.starknet_address)) {
     if (user.starknet_private_key_enc) {
       try {
         const created = await createUserWallet({
           userId: user.id,
           chain: 'starknet',
           address: user.starknet_address,
-          name: 'Wallet 1',
+          name: starknetWallets.length === 0 ? 'Wallet 1' : `Wallet ${starknetWallets.length + 1}`,
           encryptedPrivateKey: user.starknet_private_key_enc,
           isImported: false,
-          isActive: true,
+          isActive: starknetWallets.length === 0 || !starknetWallets.some(w => w.is_active),
         });
         starknetWallets.push(created);
       } catch {
@@ -765,15 +767,23 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     const w = nearWallets[i];
     const isActive = w.is_active;
     const statusIcon = isActive ? '🟢' : '⚪';
-    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const activeLabel = isActive ? ' <b>[Active Trading Wallet]</b>' : '';
     const importedLabel = w.is_imported ? ' 📥' : '';
 
-    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    if (isActive) {
+      text += `${i + 1}. ${statusIcon} <b>⭐ ${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    } else {
+      text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    }
     text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
     const row: any[] = [];
-    if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `w_sw_near:${w.id}`, 'primary'));
+    if (w.id && !w.id.startsWith('default_')) {
+      if (isActive) {
+        row.push(cb(`✓ Active`, `w_sw_near:${w.id}`, 'success'));
+      } else {
+        row.push(cb(`⚡ Set Active`, `w_sw_near:${w.id}`, 'primary'));
+      }
     }
     if (w.id && !w.id.startsWith('default_')) {
       row.push(cb(`✏️ Rename`, `w_ren_near:${w.id}`, 'primary'));
@@ -792,15 +802,23 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     const w = suiWallets[i];
     const isActive = w.is_active;
     const statusIcon = isActive ? '🟢' : '⚪';
-    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const activeLabel = isActive ? ' <b>[Active Trading Wallet]</b>' : '';
     const importedLabel = w.is_imported ? ' 📥' : '';
 
-    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    if (isActive) {
+      text += `${i + 1}. ${statusIcon} <b>⭐ ${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    } else {
+      text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    }
     text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
     const row: any[] = [];
-    if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `w_sw_sui:${w.id}`, 'primary'));
+    if (w.id && !w.id.startsWith('default_')) {
+      if (isActive) {
+        row.push(cb(`✓ Active`, `w_sw_sui:${w.id}`, 'success'));
+      } else {
+        row.push(cb(`⚡ Set Active`, `w_sw_sui:${w.id}`, 'primary'));
+      }
     }
     if (w.id && !w.id.startsWith('default_')) {
       row.push(cb(`✏️ Rename`, `w_ren_sui:${w.id}`, 'primary'));
@@ -819,15 +837,23 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     const w = starknetWallets[i];
     const isActive = w.is_active;
     const statusIcon = isActive ? '🟢' : '⚪';
-    const activeLabel = isActive ? ' <b>[Active]</b>' : '';
+    const activeLabel = isActive ? ' <b>[Active Trading Wallet]</b>' : '';
     const importedLabel = w.is_imported ? ' 📥' : '';
 
-    text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    if (isActive) {
+      text += `${i + 1}. ${statusIcon} <b>⭐ ${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    } else {
+      text += `${i + 1}. ${statusIcon} <b>${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+    }
     text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
 
     const row: any[] = [];
-    if (!isActive && w.id && !w.id.startsWith('default_')) {
-      row.push(cb(`⚡ Use ${w.name}`, `w_sw_sn:${w.id}`, 'primary'));
+    if (w.id && !w.id.startsWith('default_')) {
+      if (isActive) {
+        row.push(cb(`✓ Active`, `w_sw_sn:${w.id}`, 'success'));
+      } else {
+        row.push(cb(`⚡ Set Active`, `w_sw_sn:${w.id}`, 'primary'));
+      }
     }
     if (w.id && !w.id.startsWith('default_')) {
       row.push(cb(`✏️ Rename`, `w_ren_sn:${w.id}`, 'primary'));
@@ -2285,17 +2311,22 @@ async function executeBuyHelper(
   const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
   const isStarknetHint = isStarknetToken(tokenAddress);
 
+  const activeNearWallet = !isSuiHint && !isStarknetHint ? await getActiveWallet(user.id, 'near').catch(() => null) : null;
+  const nearAccountToUse = activeNearWallet?.address || user.subaccount_id;
+  const activeSuiWallet = isSuiHint || user.sui_address ? await getActiveWallet(user.id, 'sui').catch(() => null) : null;
+  const suiAddrToUse = activeSuiWallet?.address || user.sui_address || '';
+
   // Parallel pre-flight: resolve fast route, wallet balances, USD prices, and honeypot safety audit all in one parallel round-trip!
   const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal, safetyRes] = await Promise.all([
     getFastTokenRoute(tokenAddress).catch(() => null),
-    !isSuiHint && !isStarknetHint && user.subaccount_id
+    !isSuiHint && !isStarknetHint && nearAccountToUse
       ? Promise.all([
-          near.getNearBalance(user.subaccount_id).catch(() => null),
-          near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+          near.getNearBalance(nearAccountToUse).catch(() => null),
+          near.getTokenBalance('wrap.near', nearAccountToUse).catch(() => '0'),
         ])
       : Promise.resolve([null, '0'] as [string | null, string]),
-    isSuiHint || user.sui_address
-      ? getSuiBalance(user.sui_address || '').catch(() => ({ mist: 0n, formatted: '0' }))
+    suiAddrToUse
+      ? getSuiBalance(suiAddrToUse).catch(() => ({ mist: 0n, formatted: '0' }))
       : Promise.resolve({ mist: 0n, formatted: '0' }),
     !isSuiHint && !isStarknetHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
     isSuiHint ? getSuiUsdPrice().catch(() => 0) : Promise.resolve(0),
@@ -6907,6 +6938,18 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) throw new Error('User not found. Run /start first.');
+
+      const nearWallets = await getUserWallets(user.id, 'near');
+      const currentWallet = nearWallets.find(w => w.is_active);
+
+      // Check if already active
+      if (currentWallet && currentWallet.id === walletId) {
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        return;
+      }
+
       const switched = await switchActiveNearWallet(telegramId, walletId);
       await ctx.answerCbQuery(`⚡ Switched active wallet to ${switched.name}!`).catch(() => {});
       const menu = await buildWalletsManagementMenu(telegramId);
@@ -6944,6 +6987,84 @@ export function setupRoutes(bot: Telegraf): void {
       `<i>Send /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
+  });
+
+  bot.action('wallet_import_active_near', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'import_near_confirm') {
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      return;
+    }
+
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const res = await importNearWallet(
+        telegramId,
+        pending.importNearPrivateKey!,
+        pending.importNearWalletName!,
+        pending.importNearAccountId,
+        true // Set as active
+      );
+
+      let successMsg =
+        `🎉 <b>Wallet Imported Successfully!</b>\n\n` +
+        `• <b>Name:</b> ${res.wallet.name}\n` +
+        `• <b>Account:</b> <code>${res.accountId}</code>\n` +
+        `• <b>Status:</b> 🟢 Active (now your primary NEAR trading wallet)\n\n`;
+
+      if (!res.isFullAccess) {
+        successMsg += `⚠️ <i>Note: This key does not have FullAccess permissions on-chain. Some DEX swaps may fail if contract calls are restricted.</i>\n\n`;
+      }
+
+      successMsg += `Your balances and all future NEAR trades now use this wallet.`;
+
+      await ctx.reply(successMsg, { parse_mode: 'HTML' });
+      const walletMenu = await buildWalletMenu(telegramId, true);
+      await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+    userPendingActions.delete(telegramId);
+  });
+
+  bot.action('wallet_import_inactive_near', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'import_near_confirm') {
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      return;
+    }
+
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const res = await importNearWallet(
+        telegramId,
+        pending.importNearPrivateKey!,
+        pending.importNearWalletName!,
+        pending.importNearAccountId,
+        false // Do NOT set as active
+      );
+
+      let successMsg =
+        `🎉 <b>Wallet Imported Successfully!</b>\n\n` +
+        `• <b>Name:</b> ${res.wallet.name}\n` +
+        `• <b>Account:</b> <code>${res.accountId}</code>\n` +
+        `• <b>Status:</b> ⚪ Inactive (added to your wallet list)\n\n`;
+
+      if (!res.isFullAccess) {
+        successMsg += `⚠️ <i>Note: This key does not have FullAccess permissions on-chain. Some DEX swaps may fail if contract calls are restricted.</i>\n\n`;
+      }
+
+      successMsg += `Use the /wallets command to set this wallet as active when needed.`;
+
+      await ctx.reply(successMsg, { parse_mode: 'HTML' });
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+    userPendingActions.delete(telegramId);
   });
 
   bot.action(/^(?:w_ren_near|wallet_rename_prompt):(.+)$/, async (ctx) => {
@@ -6986,6 +7107,18 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) throw new Error('User not found. Run /start first.');
+
+      const suiWallets = await getUserWallets(user.id, 'sui');
+      const currentWallet = suiWallets.find(w => w.is_active);
+
+      // Check if already active
+      if (currentWallet && currentWallet.id === walletId) {
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        return;
+      }
+
       const switched = await switchActiveSuiWallet(telegramId, walletId);
       await ctx.answerCbQuery(`⚡ Switched active SUI wallet to ${switched.name}!`).catch(() => {});
       const menu = await buildWalletsManagementMenu(telegramId);
@@ -7025,6 +7158,72 @@ export function setupRoutes(bot: Telegraf): void {
       `<i>Send /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
+  });
+
+  bot.action('wallet_import_active_sui', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'import_sui_confirm') {
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      return;
+    }
+
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const res = await importSuiWallet(
+        telegramId,
+        pending.importSuiPrivateKey!,
+        pending.importSuiWalletName!,
+        true // Set as active
+      );
+
+      const successMsg =
+        `🎉 <b>SUI Wallet Imported Successfully!</b>\n\n` +
+        `• <b>Name:</b> ${res.wallet.name}\n` +
+        `• <b>Address:</b> <code>${res.address}</code>\n` +
+        `• <b>Status:</b> 🟢 Active (now your primary SUI trading wallet)\n\n` +
+        `Your balances and all future SUI trades now use this wallet.`;
+
+      await ctx.reply(successMsg, { parse_mode: 'HTML' });
+      const walletMenu = await buildWalletMenu(telegramId, true);
+      await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+    userPendingActions.delete(telegramId);
+  });
+
+  bot.action('wallet_import_inactive_sui', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'import_sui_confirm') {
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      return;
+    }
+
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const res = await importSuiWallet(
+        telegramId,
+        pending.importSuiPrivateKey!,
+        pending.importSuiWalletName!,
+        false // Do NOT set as active
+      );
+
+      const successMsg =
+        `🎉 <b>SUI Wallet Imported Successfully!</b>\n\n` +
+        `• <b>Name:</b> ${res.wallet.name}\n` +
+        `• <b>Address:</b> <code>${res.address}</code>\n` +
+        `• <b>Status:</b> ⚪ Inactive (added to your wallet list)\n\n` +
+        `Use the /wallets command to set this wallet as active when needed.`;
+
+      await ctx.reply(successMsg, { parse_mode: 'HTML' });
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+    userPendingActions.delete(telegramId);
   });
 
   bot.action(/^(?:w_ren_sui|wallet_rename_sui_prompt):(.+)$/, async (ctx) => {
@@ -7097,6 +7296,18 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const walletId = ctx.match![1];
     try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) throw new Error('User not found. Run /start first.');
+
+      const starknetWallets = await getUserWallets(user.id, 'starknet');
+      const currentWallet = starknetWallets.find(w => w.is_active);
+
+      // Check if already active
+      if (currentWallet && currentWallet.id === walletId) {
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        return;
+      }
+
       const switched = await switchActiveStarknetWallet(telegramId, walletId);
       await ctx.answerCbQuery(`⚡ Switched active Starknet wallet to ${switched.name}!`).catch(() => {});
       const menu = await buildWalletsManagementMenu(telegramId);
@@ -9664,32 +9875,33 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        try {
-          const res = await importNearWallet(
-            telegramId,
-            pending.importNearPrivateKey,
-            walletName,
-            pending.importNearAccountId
-          );
+        // Ask if user wants to set this wallet as active
+        userPendingActions.set(telegramId, {
+          action: 'import_near_confirm',
+          importNearPrivateKey: pending.importNearPrivateKey,
+          importNearAccountId: pending.importNearAccountId,
+          importNearWalletName: walletName,
+          expiresAt: Date.now() + 180000,
+        });
 
-          let successMsg =
-            `🎉 <b>Wallet Imported Successfully!</b>\n\n` +
-            `• <b>Name:</b> ${res.wallet.name}\n` +
-            `• <b>Account:</b> <code>${res.accountId}</code>\n` +
-            `• <b>Status:</b> 🟢 Active (now your primary NEAR trading wallet)\n\n`;
+        const buttons = [
+          [cb('✅ Set as Active', 'wallet_import_active_near', 'primary')],
+          [cb('➕ Add Only (Keep Current Active)', 'wallet_import_inactive_near', 'primary')],
+          [cb('❌ Cancel', 'menu_home', 'primary')],
+        ];
 
-          if (!res.isFullAccess) {
-            successMsg += `⚠️ <i>Note: This key does not have FullAccess permissions on-chain. Some DEX swaps may fail if contract calls are restricted.</i>\n\n`;
-          }
+        await ctx.reply(
+          `📝 <b>Wallet Name:</b> ${walletName}\n\n` +
+          `Do you want to set this wallet as your <b>active trading wallet</b>?\n\n` +
+          `• <b>Set as Active:</b> All future NEAR trades will use this wallet\n` +
+          `• <b>Add Only:</b> Import without changing your active wallet`,
+          { reply_markup: { inline_keyboard: buttons }, parse_mode: 'HTML' }
+        );
+        return;
+      }
 
-          successMsg += `Your balances and all future NEAR trades now use this wallet.`;
-
-          await ctx.reply(successMsg, { parse_mode: 'HTML' });
-          const walletMenu = await buildWalletMenu(telegramId, true);
-          await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
-        } catch (err: any) {
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-        }
+      if (pending.action === 'import_near_confirm') {
+        // This should be handled by the action handlers below
         return;
       }
 
@@ -9745,26 +9957,32 @@ export function setupRoutes(bot: Telegraf): void {
           return;
         }
 
-        try {
-          const res = await importSuiWallet(
-            telegramId,
-            pending.importSuiPrivateKey,
-            walletName
-          );
+        // Ask if user wants to set this wallet as active
+        userPendingActions.set(telegramId, {
+          action: 'import_sui_confirm',
+          importSuiPrivateKey: pending.importSuiPrivateKey,
+          importSuiWalletName: walletName,
+          expiresAt: Date.now() + 180000,
+        });
 
-          const successMsg =
-            `🎉 <b>SUI Wallet Imported Successfully!</b>\n\n` +
-            `• <b>Name:</b> ${res.wallet.name}\n` +
-            `• <b>Address:</b> <code>${res.address}</code>\n` +
-            `• <b>Status:</b> 🟢 Active (now your primary SUI trading wallet)\n\n` +
-            `Your balances and all future SUI trades now use this wallet.`;
+        const buttons = [
+          [cb('✅ Set as Active', 'wallet_import_active_sui', 'primary')],
+          [cb('➕ Add Only (Keep Current Active)', 'wallet_import_inactive_sui', 'primary')],
+          [cb('❌ Cancel', 'menu_home', 'primary')],
+        ];
 
-          await ctx.reply(successMsg, { parse_mode: 'HTML' });
-          const walletMenu = await buildWalletMenu(telegramId, true);
-          await ctx.reply(walletMenu.text, { parse_mode: 'HTML', ...walletMenu.keyboard });
-        } catch (err: any) {
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-        }
+        await ctx.reply(
+          `📝 <b>Wallet Name:</b> ${walletName}\n\n` +
+          `Do you want to set this wallet as your <b>active trading wallet</b>?\n\n` +
+          `• <b>Set as Active:</b> All future SUI trades will use this wallet\n` +
+          `• <b>Add Only:</b> Import without changing your active wallet`,
+          { reply_markup: { inline_keyboard: buttons }, parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      if (pending.action === 'import_sui_confirm') {
+        // This should be handled by the action handlers below
         return;
       }
 

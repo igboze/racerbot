@@ -20,6 +20,7 @@ import {
 import {
   getUserById,
   getActiveWallet,
+  syncUserActiveWallet,
   createFill,
   getOpenPositions,
   createPosition,
@@ -60,8 +61,15 @@ export async function executeSuiSwap(
   }
 
   const activeSuiWallet = await getActiveWallet(user.id, 'sui').catch(() => null);
-  const suiAddress = activeSuiWallet?.address || user.sui_address;
-  const suiKeyEnc = activeSuiWallet?.encrypted_private_key || user.sui_private_key_enc;
+  let suiAddress = activeSuiWallet?.address || user.sui_address;
+  let suiKeyEnc = activeSuiWallet?.encrypted_private_key || user.sui_private_key_enc;
+
+  if (activeSuiWallet && !activeSuiWallet.is_imported && user.sui_address && activeSuiWallet.address !== user.sui_address) {
+    console.warn(`[SUI_EXECUTOR] Wallet desync for user ${user_id}: activeWallet=${activeSuiWallet.address} vs sui_address=${user.sui_address}. Auto-switching to primary sui_address.`);
+    suiAddress = user.sui_address;
+    suiKeyEnc = user.sui_private_key_enc;
+    syncUserActiveWallet(user.id, 'sui', user.sui_address, user.sui_private_key_enc!).catch(() => {});
+  }
 
   if (!suiAddress || !suiKeyEnc) {
     throw new Error('Sui wallet not configured. Please initialize your wallet via /start.');
