@@ -2754,9 +2754,10 @@ export class MultiRpcNear {
     const progressPct = span > 0 ? Math.min(100, Math.max(0, (offset / span) * 100)) : 100;
 
     const live = launch.step === 'Done' && pool.state === 'Running';
-    // NearlyTrade operates directly on Ref DCL with permanently locked LP (no separate graduation step).
-    // Once launch.step === 'Done', the pool is permanently live on the DEX ('bonded').
-    const isBonded = launch.step === 'Done';
+    // NearlyTrade operates on Ref DCL. The bonding curve spans from left_point to right_point.
+    // The token is pre-bonded while trading along this curve; once currentPoint reaches rightPoint,
+    // the bonding curve is complete ('bonded').
+    const isBonded = !isNaN(currentPoint) && !isNaN(rightPoint) && currentPoint >= rightPoint;
     const bondingPhase: 'prebonded' | 'bonded' = isBonded ? 'bonded' : 'prebonded';
     const bondingProgressPct = isBonded ? 100 : Number(progressPct.toFixed(2));
 
@@ -4718,15 +4719,14 @@ export class MultiRpcNear {
         }
       }
 
-      let nextNonce: bigint;
-      if (forceIncrement) {
-        // Re-signing during the SAME transaction execution window after an 8s mempool drop:
-        const prev = this.highestUsedNonce.get(nonceCacheKey) ?? chainNonce;
-        nextNonce = (prev > chainNonce ? prev : chainNonce) + 1n;
-      } else {
-        // Fresh trade: ALWAYS base nonce on true on-chain access key nonce to avoid phantom nonce gaps!
-        nextNonce = chainNonce + 1n;
-      }
+      // Monotonicity guarantee: nextNonce MUST strictly exceed BOTH:
+      // 1. The on-chain access key nonce (chainNonce)
+      // 2. Any nonce previously signed by this process (prevUsed), which prevents
+      //    replaying the same nonce if an immediate prior tx (like storage_deposit)
+      //    has landed or is in flight while an RPC read is lagging.
+      const prevUsed = this.highestUsedNonce.get(nonceCacheKey) ?? 0n;
+      const baseNonce = chainNonce > prevUsed ? chainNonce : prevUsed;
+      const nextNonce = baseNonce + 1n;
       this.highestUsedNonce.set(nonceCacheKey, nextNonce);
 
       const blockHash = utils.serialize.base_decode(blockHashB58);
@@ -4767,8 +4767,10 @@ export class MultiRpcNear {
 
       const broadcastMs = Date.now() - tStart;
       const seen = { everSeen: false };
-      // Phase 1: Fan-out poll across all trade providers (FastNEAR + validator nodes)
-      const firstWindow = Math.min(16_000, Math.max(8_000, waitForMs - 15_000));
+      // Phase 1: Fan-out poll across all trade providers (FastNEAR + validator nodes).
+      // Under network congestion, block inclusion and receipt routing often take 18-28s.
+      // Give Phase 1 up to 28s before assuming a mempool drop.
+      const firstWindow = Math.min(28_000, Math.max(12_000, waitForMs - 12_000));
       let outcome: any;
       try {
         outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
@@ -4787,29 +4789,44 @@ export class MultiRpcNear {
         } else {
 
         // Phase 2: If the transaction was never seen anywhere after firstWindow,
-        // it was dropped by the mempool (congestion / relay drop).
-        // Re-sign with a strictly incremented fresh nonce so the mempool receives
-        // a brand-new nonce that cannot conflict with the dropped transaction.
-        console.warn(`[NEAR] tx ${signed.hash} (nonce ${signed.nonce}) never seen on any provider after ${firstWindow}ms — re-signing with fresh incremented nonce`);
-        let freshSigned: { hash: string; signedB64: string; nonce: bigint };
-        try {
-          freshSigned = await signOnce(true);
-        } catch {
-          // If re-signing fails, rethrow the original neverSeen error
-          throw firstErr;
+        // it may have been dropped or delayed. Before re-signing, verify if the
+        // on-chain access key nonce has advanced past signed.nonce. If it has,
+        // the transaction is actually executing on-chain — keep polling signed.hash!
+        let currentChainNonce = 0n;
+        if (signerPkStr) {
+          try {
+            const freshAk = await this.queryAccessKeyHedged(accountId, signerPkStr);
+            currentChainNonce = BigInt(freshAk?.nonce ?? 0);
+          } catch {}
         }
 
-        console.warn(`[NEAR] re-signed fresh tx hash=${freshSigned.hash} nonce=${freshSigned.nonce} — broadcasting to all providers`);
-        try {
-          await this.broadcastToAll(freshSigned.signedB64);
-        } catch {
-          await this.broadcastSigned(freshSigned.signedB64);
-        }
-        onBroadcast?.(freshSigned.hash);
+        if (currentChainNonce >= signed.nonce) {
+          console.warn(`[NEAR] tx ${signed.hash} not seen by poller yet, but on-chain nonce advanced to ${currentChainNonce} >= ${signed.nonce} — continuing to poll`);
+          const remainMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
+          outcome = await this.awaitOutcome(signed.hash, accountId, remainMs, seen, allProviderUrls);
+        } else {
+          // The nonce hasn't advanced on chain — re-sign with monotonically advanced nonce
+          console.warn(`[NEAR] tx ${signed.hash} (nonce ${signed.nonce}) never seen on any provider after ${firstWindow}ms — re-signing with fresh incremented nonce`);
+          let freshSigned: { hash: string; signedB64: string; nonce: bigint };
+          try {
+            freshSigned = await signOnce(true);
+          } catch {
+            // If re-signing fails, rethrow the original neverSeen error
+            throw firstErr;
+          }
 
-        const seen2 = { everSeen: false };
-        const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
-        outcome = await this.awaitOutcome(freshSigned.hash, accountId, remainingMs, seen2, allProviderUrls);
+          console.warn(`[NEAR] re-signed fresh tx hash=${freshSigned.hash} nonce=${freshSigned.nonce} — broadcasting to all providers`);
+          try {
+            await this.broadcastToAll(freshSigned.signedB64);
+          } catch {
+            await this.broadcastSigned(freshSigned.signedB64);
+          }
+          onBroadcast?.(freshSigned.hash);
+
+          const seen2 = { everSeen: false };
+          const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
+          outcome = await this.awaitOutcome(freshSigned.hash, accountId, remainingMs, seen2, allProviderUrls);
+        }
         }
       }
 
@@ -4830,9 +4847,9 @@ export class MultiRpcNear {
       (account as any).accessKeyByPublicKeyCache = {};
       if (signerPkStr) {
         const nonceCacheKey = `${accountId}:${signerPkStr}`;
-        if (!confirmedOnChain) {
-          this.highestUsedNonce.delete(nonceCacheKey);
-        }
+        // Keep highestUsedNonce tracked even on timeout to prevent immediate retry
+        // collisions with mempool-delayed transactions. If chainNonce has genuinely advanced,
+        // signOnce will naturally use max(chainNonce, prevUsed) + 1n.
       }
     }
   }
@@ -4903,7 +4920,7 @@ export class MultiRpcNear {
           const otherResults = await Promise.allSettled(
             otherAttempts.map(p => Promise.race([
               p,
-              new Promise<null>(r => setTimeout(() => r(null), 30))
+              new Promise<null>(r => setTimeout(() => r(null), 200))
             ]))
           );
           const okOthers = otherResults
@@ -5306,12 +5323,12 @@ export class MultiRpcNear {
       }
 
       // If primary RPC hasn't confirmed after 1 poll (~100ms), also query secondary endpoints in parallel
-      if (polls >= 1 && allPollUrls.length > 1) {
-        for (const url of allPollUrls) {
-          if (url === pinnedUrl) continue;
-          if (Date.now() >= deadline) break;
-          const altOutcome = await tryRpc(url).catch(() => null);
-          if (altOutcome) {
+      if (polls >= 1 && allPollUrls.length > 1 && Date.now() < deadline) {
+        const secondaryUrls = allPollUrls.filter(url => url !== pinnedUrl);
+        const altOutcomes = await Promise.allSettled(secondaryUrls.map(url => tryRpc(url)));
+        for (const res of altOutcomes) {
+          if (res.status === 'fulfilled' && res.value) {
+            const altOutcome = res.value;
             const fes = altOutcome.final_execution_status;
             const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
             if (fullyExecuted && Array.isArray(altOutcome.receipts_outcome) && altOutcome.receipts_outcome.length > 0) {
