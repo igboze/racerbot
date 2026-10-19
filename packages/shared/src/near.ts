@@ -1311,7 +1311,7 @@ export class MultiRpcNear {
    * Find Rhea pool ID for a token pair with in-memory caching and fast parallel scanning.
    * Scans both newly created pools (backwards from latest) and top historical pools in parallel.
    */
-  async findRheaPoolId(tokenA: string, tokenB: string): Promise<number> {
+  async findRheaPoolId(tokenA: string, tokenB: string, fastOnly = false): Promise<number> {
     const cacheKey1 = `${tokenA}:${tokenB}`;
     const cacheKey2 = `${tokenB}:${tokenA}`;
     if (rheaPoolIdCache.has(cacheKey1)) return rheaPoolIdCache.get(cacheKey1)!;
@@ -1322,7 +1322,39 @@ export class MultiRpcNear {
       throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
     }
 
-    // 1. Check Ref Finance indexer top pools (covers thousands of active pools instantly)
+    // 1. Fast REST lookup via api.ref.finance (covers ALL Ref Finance pools targeted to this pair)
+    // Resolves in ~300ms — avoids downloading large indexer payload or slow on-chain scans.
+    try {
+      const _url = 'https://api.ref.finance/list-pools-by-tokens?token0=' +
+        encodeURIComponent(tokenA) + '&token1=' + encodeURIComponent(tokenB);
+      const _r = await fetch(_url, { signal: AbortSignal.timeout(1500) });
+      if (_r.ok) {
+        const _data = await _r.json();
+        if (Array.isArray(_data) && _data.length > 0) {
+          const _best = _data.reduce((p: any, c: any) => {
+            const pL = (p.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
+            const cL = (c.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
+            return cL > pL ? c : p;
+          });
+          const _id = Number(_best.id);
+          if (!isNaN(_id) && _id >= 0) {
+            rheaPoolIdCache.set(cacheKey1, _id);
+            rheaPoolIdCache.set(cacheKey2, _id);
+            return _id;
+          }
+        } else if (Array.isArray(_data) && _data.length === 0) {
+          // Ref API is authoritative: pair does not exist on Ref simple AMM.
+          noRheaPoolPairCache.set(cacheKey1, Date.now());
+          noRheaPoolPairCache.set(cacheKey2, Date.now());
+          throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
+        }
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('Rhea pool not found')) throw err;
+      /* no-op */
+    }
+
+    // 2. Check Ref Finance indexer top pools (covers thousands of active pools as fallback)
     try {
       const indexerPools = await getRefIndexerPools();
       const match = indexerPools.find(
@@ -1339,29 +1371,12 @@ export class MultiRpcNear {
       }
     } catch { /* no-op */ }
 
-    // 2. Fast REST lookup via api.ref.finance (covers ALL Ref Finance pools)
-    // Resolves any pool in <5s — avoids slow 30x on-chain batch scanning.
-    try {
-      const _url = 'https://api.ref.finance/list-pools-by-tokens?token0=' +
-        encodeURIComponent(tokenA) + '&token1=' + encodeURIComponent(tokenB);
-      const _r = await fetch(_url, { signal: AbortSignal.timeout(5000) });
-      if (_r.ok) {
-        const _data = await _r.json();
-        if (Array.isArray(_data) && _data.length > 0) {
-          const _best = _data.reduce((p: any, c: any) => {
-            const pL = (p.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
-            const cL = (c.amounts || []).reduce((s: bigint, a: string) => s + BigInt(a || '0'), 0n);
-            return cL > pL ? c : p;
-          });
-          const _id = Number(_best.id);
-          if (!isNaN(_id) && _id >= 0) {
-            rheaPoolIdCache.set(cacheKey1, _id);
-            rheaPoolIdCache.set(cacheKey2, _id);
-            return _id;
-          }
-        }
-      }
-    } catch { /* no-op */ }
+    if (fastOnly) {
+      noRheaPoolPairCache.set(cacheKey1, Date.now());
+      noRheaPoolPairCache.set(cacheKey2, Date.now());
+      throw new Error(`Rhea pool not found for pair ${tokenA} / ${tokenB}`);
+    }
+
     const batchSize = 100;
     const batchStarts = [0, 100, 200, 300, 400]; // Top 500 active Ref pools
 
