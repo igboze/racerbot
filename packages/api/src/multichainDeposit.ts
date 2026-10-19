@@ -80,7 +80,7 @@ const tokensByChain = new Map<string, OneClickToken[]>();
 
 const NEAR_INTENTS_API_URL = process.env.NEAR_INTENTS_API_URL || 'https://1click.chaindefuser.com';
 const NEAR_INTENTS_API_KEY = process.env.NEAR_INTENTS_API_KEY || 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjIwMjUtMDEtMTItdjEifQ.eyJ2IjoxLCJrZXlfdHlwZSI6ImRpc3RyaWJ1dGlvbl9jaGFubmVsIiwicGFydG5lcl9pZCI6InBheWl0IiwiaWF0IjoxNzkyMjAxMjY3LCJleHAiOjE4MjM3MzcyNjd9.Xx-_Xhp8UT138O2pc-MfBotKF_6bCwPNRSjuHgHyVC-cLLWYc6_vYxuuLfZ5ZhIO-n7rvQfFGhL4YXJV-cQ9jae6hFG8b7cuXbvE_Q7ZX57MkyX2qELHQw7r3PqDbOTXfTMlhw7PBDAnBV79h3Lh8ebQU4M-2rKo5dlru4whqjNNyU1jcXr6Z5VQHx1xPFtdiilDAhXbG4N7qfQNY15bp-XqBaewMpgSiUhFNvicXWKKcsTQlkhDa6cGpCI_dRto_mNMJoeZaDVA4nhE9Mxxi8cOIo9_at3dBP6p9p63iBWqFbDRwvODt1gq4sggCHzxROq5Y6IAnDMw8ECRc8rEDw';
-const RACER_FEE_RECIPIENT = process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'wild-falcon-5130.racerbot.near';
+const RACER_FEE_RECIPIENT = process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near';
 const RACER_FEE_BPS = parseInt(process.env.RACER_FEE_BPS || '100', 10);
 
 /**

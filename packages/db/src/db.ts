@@ -3772,7 +3772,7 @@ export async function createRacerDeposit(params: CreateRacerDepositParams): Prom
       params.deposit_address,
       params.min_destination_amount ?? null,
       params.fee_amount ?? 0,
-      params.fee_recipient || 'wild-falcon-5130.racerbot.near',
+      params.fee_recipient || process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near',
       params.fee_bps ?? 100,
       params.status || 'PENDING',
       params.quote_data ? JSON.stringify(params.quote_data) : null,

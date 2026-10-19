@@ -22,6 +22,7 @@ import {
 import {
   ROUTER_CONTRACT_ID,
   RACERBOT_PARENT_ACCOUNT,
+  TREASURY_ACCOUNT_ID,
 } from '../config.js';
 
 const logger = createLogger('api-routes');
@@ -1488,7 +1489,7 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
       feePct,
       feeNear,
       netAmountNear: netNear,
-      treasury: 'wild-falcon-5130.racerbot.near',
+      treasury: TREASURY_ACCOUNT_ID,
       ...result,
     });
   } catch (err: any) {
@@ -1554,7 +1555,7 @@ router.post('/alpha/copy-trade', ensureTelegramUser, perUserRateLimit(60000, 30)
       feePct,
       feeNear,
       netAmountNear: netNear,
-      treasury: 'wild-falcon-5130.racerbot.near',
+      treasury: TREASURY_ACCOUNT_ID,
       ...result,
     });
   } catch (err: any) {
