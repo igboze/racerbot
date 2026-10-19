@@ -3076,6 +3076,45 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      // Handle WebApp Telegram Handshake deep link (/start auth_<session_id>)
+      if (rawPayload.startsWith('auth_')) {
+        const sessionId = rawPayload.slice(5);
+        const { linkAuthSession } = await import('./authSession.js');
+        const linkRes = await linkAuthSession(sessionId, {
+          id: telegramId,
+          username: ctx.from?.username,
+          first_name: ctx.from?.first_name,
+        });
+
+        if (linkRes.success) {
+          await ctx.reply(
+            `🏎️ <b>RacerBot WebApp Connected!</b>\n\n` +
+            `✅ <b>Paired Account</b>: <code>@${ctx.from?.username || telegramId}</code>\n` +
+            `💳 <b>Trading Subaccount</b>: <code>${linkRes.user?.subaccount_id || 'Ready'}</code>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `⚡ <b>Unified Trading is Live</b>:\n` +
+            `• Any NEAR wallet connected on the WebApp automatically syncs here.\n` +
+            `• You can execute instant snipes, limit orders, and copy-trades in this chat.\n` +
+            `• Visual analytics, bubble maps, and viewing keys remain open on the web.\n\n` +
+            `<i>You can now return to your browser window.</i>`,
+            {
+              parse_mode: 'HTML',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Manage Wallets', 'wallets_menu'), Markup.button.callback('🏎️ Main Menu', 'menu_home')],
+              ]),
+            }
+          ).catch(() => {});
+          return;
+        } else {
+          await ctx.reply(
+            `⚠️ <b>Session Expired or Invalid</b>\n\n` +
+            `Please return to the WebApp and tap "Connect Telegram" to generate a fresh link.`,
+            { parse_mode: 'HTML' }
+          ).catch(() => {});
+          return;
+        }
+      }
+
       if (rawPayload.includes('_ref_')) {
         const parts = rawPayload.split('_ref_');
         rawPayload = parts[0];
@@ -3432,6 +3471,52 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  // ── WebApp Connection Approval & Denial Handlers ───────────────────────────
+  bot.action(/^tgauth_approve:(.+)$/, async (ctx) => {
+    const requestId = ctx.match[1];
+    const telegramId = ctx.from!.id;
+    try {
+      const { approveTelegramVerification } = await import('./authSession.js');
+      const ok = await approveTelegramVerification(requestId, telegramId);
+      if (ok) {
+        await ctx.answerCbQuery('✅ Connection Approved!').catch(() => {});
+        await ctx.editMessageText(
+          `✅ <b>WebApp Connection Approved!</b>\n\n` +
+          `Your Telegram identity has been safely verified and paired with the RacerBot WebApp.\n\n` +
+          `• You can return to your browser to view alpha feeds, copy-trading, and wallet balances.\n` +
+          `• Your private keys remain 100% secure.`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      } else {
+        await ctx.answerCbQuery('⚠️ Request expired or invalid').catch(() => {});
+        await ctx.editMessageText(
+          `⚠️ <b>Connection Request Expired</b>\n\n` +
+          `This connection request has expired or does not match this Telegram account.`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
+    } catch (err: any) {
+      await ctx.answerCbQuery('Error processing approval').catch(() => {});
+    }
+  });
+
+  bot.action(/^tgauth_deny:(.+)$/, async (ctx) => {
+    const requestId = ctx.match[1];
+    const telegramId = ctx.from!.id;
+    try {
+      const { denyTelegramVerification } = await import('./authSession.js');
+      await denyTelegramVerification(requestId, telegramId);
+      await ctx.answerCbQuery('⛔ Connection Rejected').catch(() => {});
+      await ctx.editMessageText(
+        `⛔ <b>WebApp Connection Rejected</b>\n\n` +
+        `This connection attempt was blocked. No browser session or external wallet was granted access to your account.`,
+        { parse_mode: 'HTML' }
+      ).catch(() => {});
+    } catch (err: any) {
+      await ctx.answerCbQuery().catch(() => {});
     }
   });
 

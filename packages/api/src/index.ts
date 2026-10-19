@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb, runMigrations } from '@racerbot/db';
-import apiRouter, { serveBubbleMapHtml, serveCompetitionHtml } from './routes/index.js';
+import apiRouter, { serveRacerHtml, serveRacerAlphaHtml, serveBubbleMapHtml, serveCompetitionHtml, serveFleetHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
@@ -231,6 +231,21 @@ async function main(): Promise<void> {
       }
     }
 
+    // If alpha subdomain is used (alpha.racer.trade, raceralpha.xyz)
+    if (tokenSubdomain === 'alpha' || tokenSubdomain === 'raceralpha') {
+      return serveRacerAlphaHtml(res);
+    }
+
+    // If bubble map subdomain is used (bubble.racer.trade, bubblemap.xyz)
+    if (tokenSubdomain === 'bubble' || tokenSubdomain === 'bubblemap') {
+      return serveBubbleMapHtml(res);
+    }
+
+    // If fleet subdomain is used (fleet.racerbotbubblemap.buzz, fleet.racerbot.trade)
+    if (tokenSubdomain === 'fleet' || tokenSubdomain === 'racefleet') {
+      return serveFleetHtml(res);
+    }
+
     // If competition subdomain is used (competition.racerbotbubblemap.buzz)
     if (tokenSubdomain === 'competition' || tokenSubdomain === 'competitions') {
       return serveCompetitionHtml(res, 'kookdog');
@@ -239,6 +254,16 @@ async function main(): Promise<void> {
     // Only serve competition UI when explicitly requesting /competition, /competitions or /leaderboard
     if (req.path === '/competition' || req.path === '/competitions' || req.path === '/leaderboard') {
       return serveCompetitionHtml(res, tokenSubdomain || 'kookdog');
+    }
+
+    // Direct /alpha and /raceralpha paths to RacerAlpha WebApp
+    if (req.path === '/alpha' || req.path === '/raceralpha') {
+      return serveRacerAlphaHtml(res);
+    }
+
+    // Direct /fleet and /racefleet paths to The Fleet WebApp
+    if (req.path === '/fleet' || req.path === '/racefleet') {
+      return serveFleetHtml(res);
     }
 
     // If an actual token subdomain is used on root (e.g. kookdog.racerbotbubblemap.buzz),
@@ -252,11 +277,26 @@ async function main(): Promise<void> {
     next();
   });
 
-  // Serve Bubble Map at root `/` and `/bubblemap` directly with zero client cache
-  app.get(['/', '/bubblemap'], (req, res, next) => {
-    // If request is looking for API or health, proceed to next
+  // Serve RACER Main Ecosystem Hub at root `/`
+  app.get('/', (req, res, next) => {
+    if (req.path === '/health' || req.path.startsWith('/api')) return next();
+    serveRacerHtml(res);
+  });
+
+  // Serve RacerAlpha WebApp at `/alpha` and `/raceralpha`
+  app.get(['/alpha', '/raceralpha'], (_req, res) => {
+    serveRacerAlphaHtml(res);
+  });
+
+  // Serve Bubble Map at `/bubblemap`
+  app.get('/bubblemap', (req, res, next) => {
     if (req.path === '/health' || req.path.startsWith('/api')) return next();
     serveBubbleMapHtml(res);
+  });
+
+  // Serve The Fleet (Multi-Wallet Coordination Terminal) at `/fleet` and `/racefleet`
+  app.get(['/fleet', '/racefleet'], (_req, res) => {
+    serveFleetHtml(res);
   });
 
   // Serve Trading Competition page directly at `/competition` and `/leaderboard`
@@ -264,6 +304,7 @@ async function main(): Promise<void> {
     const compId = (req.params as any)?.id || (req.params as any)?.token || 'kookdog';
     serveCompetitionHtml(res, compId);
   });
+
 
   // Add monitoring routes
   monitoringRoutes(app);

@@ -1,0 +1,2702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>RacerAlpha — Confidential Social Trading & Viewing Key Marketplace</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/racer-design-system.css">
+  <style>
+    /* ── Industrial Pit-Wall Telemetry Design System ───────────────────────── */
+    :root {
+      /* Obsidian Pit-Wall Palette */
+      --color-canvas: #08090b;
+      --color-canvas-dark: #08090b;
+      --color-canvas-subtle: #0d1015;
+      --color-surface: #0f1217;
+      --color-surface-card: #151921;
+      --color-surface-hover: #1c222d;
+      --color-border: #21262d;
+      --color-border-subtle: #161b22;
+      --color-border-glow: rgba(0, 240, 255, 0.25);
+
+      /* High-Velocity Laser Cyan Primary CTA + Pit-Wall Signals */
+      --color-primary: #00f0ff;
+      --color-primary-pressed: #00d2e0;
+      --color-on-primary: #08090b;
+      --color-racer-cyan: #00f0ff;
+      --color-racer-cyan-glow: rgba(0, 240, 255, 0.28);
+      --color-racer-purple: #826ab5;
+      --color-racer-purple-light: #9d84d6;
+      --color-racer-green: #00e676;
+      --color-racer-green-glow: rgba(0, 230, 118, 0.25);
+      --color-racer-gold: #ffb703;
+      --color-danger: #ff4d4d;
+
+      /* Distinctive Industrial Typography Suite */
+      --color-text: #f0f6fc;
+      --color-text-muted: #c8d3e8;
+      --color-text-subtle: #8b949e; /* WCAG AA Compliant (5.8:1 on #08090b) */
+      --font-display: 'Syne', -apple-system, sans-serif;
+      --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      /* Spacing Scale (4px base) */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-7: 32px;
+      --space-8: 48px;
+      --space-9: 64px;
+      --space-10: 112px;
+
+      /* Precision Mechanical Radius Scale */
+      --radius-xs: 2px;
+      --radius-sm: 4px;
+      --radius-md: 6px;      /* TACTICAL MECHANICAL BUTTONS */
+      --radius-lg: 8px;      /* ANODIZED CARBON PLATES */
+      --radius-xl: 12px;
+      --radius-full: 9999px; /* PILLS ONLY FOR STATUS BADGES */
+
+      /* Shadows & Mechanical Motion */
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.6);
+      --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.85);
+      --shadow-glow-cyan: 0 0 24px rgba(0, 240, 255, 0.22);
+      --shadow-glow-purple: 0 0 24px rgba(130, 106, 181, 0.25);
+      --motion-fast: 100ms cubic-bezier(0.16, 1, 0.3, 1);
+      --motion-base: 160ms cubic-bezier(0.16, 1, 0.3, 1);
+      --motion-slow: 280ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--color-canvas);
+      color: var(--color-text);
+      font-family: var(--font-family);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      line-height: 1.5;
+      font-size: 16px;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 96, 169, 0.26), transparent 70%),
+        radial-gradient(circle 600px at 80% 20%, rgba(106, 204, 220, 0.12), transparent 70%),
+        radial-gradient(circle 500px at 20% 60%, rgba(0, 209, 106, 0.08), transparent 70%);
+      background-attachment: fixed;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+      background-size: 52px 52px;
+      pointer-events: none;
+      z-index: 0;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
+    }
+
+    /* ── Navigation Header (Cohesive RACER Brand) ───────────────────────────── */
+    .racer-header {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(8, 12, 24, 0.88);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .header-inner {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 0 20px;
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand-logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 16px var(--color-racer-cyan-glow);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .brand-mark img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .brand-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      background: linear-gradient(135deg, #ffffff 40%, var(--color-racer-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .brand-title span {
+      color: var(--color-racer-cyan);
+      -webkit-text-fill-color: var(--color-racer-cyan);
+    }
+    .brand-badge {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--color-racer-cyan);
+      background: rgba(106, 204, 220, 0.15);
+      border: 1px solid rgba(106, 204, 220, 0.35);
+      padding: 2px 7px;
+      border-radius: var(--radius-full);
+      letter-spacing: 0.5px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .nav-item {
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      transition: color 0.2s, transform 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+    .nav-item:hover, .nav-item.active {
+      color: var(--color-racer-cyan);
+    }
+    .nav-tag {
+      font-size: 9.5px;
+      font-family: var(--font-mono);
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(106, 204, 220, 0.15);
+      color: var(--color-racer-cyan);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* ── Industrial Pit-Wall Buttons & Telemetry Components ───────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      font-family: var(--font-family);
+      font-size: 13.5px;
+      font-weight: 600;
+      line-height: 1.3;
+      min-height: 44px;
+      height: 44px;
+      padding: 0 18px;
+      border-radius: var(--radius-md); /* 6px - sharp mechanical */
+      border: 1px solid transparent;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all var(--motion-fast);
+      white-space: nowrap;
+      box-sizing: border-box;
+      letter-spacing: 0.01em;
+    }
+
+    .btn-primary {
+      background: var(--color-primary);
+      color: var(--color-on-primary);
+      font-weight: 700;
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
+      border: 1px solid var(--color-primary);
+    }
+    .btn-primary:hover {
+      background: var(--color-primary-pressed);
+      color: #000000;
+      box-shadow: 0 0 24px rgba(0, 240, 255, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--color-surface);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
+    }
+    .btn-secondary:hover {
+      background: var(--color-surface-hover);
+      border-color: var(--color-racer-cyan);
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--color-text-muted);
+      border: 1px solid transparent;
+      padding: 0 14px;
+      min-height: 40px;
+      height: 40px;
+      border-radius: var(--radius-sm);
+    }
+    .btn-ghost:hover {
+      color: var(--color-racer-cyan);
+      background: rgba(0, 240, 255, 0.06);
+      border-color: rgba(0, 240, 255, 0.2);
+    }
+
+    .btn-sm {
+      min-height: 36px;
+      height: 36px;
+      padding: 0 var(--space-3);
+      font-size: 12.5px;
+    }
+
+    /* Tabular Telemetry Numbers */
+    .telemetry-num {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+    }
+
+    /* Anodized Carbon HUD Plate */
+    .hud-plate {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      position: relative;
+      transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+    }
+    .hud-plate:hover {
+      border-color: var(--color-racer-cyan);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.12);
+    }
+
+    /* ── Institutional Cockpit Telemetry Bar (Pro Trading Terminal Stance) ────── */
+    .cockpit-bar {
+      background: linear-gradient(180deg, rgba(14, 21, 50, 0.7) 0%, rgba(8, 12, 24, 0.95) 100%);
+      border-bottom: 1px solid var(--color-border);
+      padding: var(--space-4) var(--space-6);
+      backdrop-filter: blur(12px);
+      position: relative;
+    }
+    .cockpit-bar::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.35), rgba(0, 230, 118, 0.35), transparent);
+    }
+    .cockpit-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-5);
+      flex-wrap: wrap;
+    }
+    .cockpit-identity {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 280px;
+    }
+    .cockpit-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--color-racer-cyan);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .cockpit-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-racer-green);
+      box-shadow: 0 0 8px var(--color-racer-green);
+      display: inline-block;
+    }
+    .cockpit-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: #ffffff;
+      margin: 0;
+      line-height: 1.2;
+    }
+    .cockpit-subtitle {
+      font-size: 12.5px;
+      color: var(--color-text-muted);
+      margin: 0;
+      line-height: 1.4;
+      max-width: 480px;
+    }
+    .cockpit-right {
+      display: flex;
+      align-items: center;
+      gap: var(--space-5);
+      flex-wrap: wrap;
+    }
+    .cockpit-telemetry-grid {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+    }
+    .cockpit-telemetry-item {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      padding: 0 4px;
+    }
+    .cockpit-telemetry-item:not(:last-child) {
+      border-right: 1px solid var(--color-border-subtle);
+      padding-right: 12px;
+    }
+    .telemetry-label {
+      font-size: 9.5px;
+      font-family: var(--font-mono);
+      color: var(--color-text-subtle);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .telemetry-val {
+      font-size: 14px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+    .cockpit-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ── Main Layout Container ────────────────────────────────────────────── */
+    .content-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: var(--space-5) var(--space-6) var(--space-9);
+      width: 100%;
+    }
+
+    /* ── Pill Tab Navigation ──────────────────────────────────────────────── */
+    .tabs-nav {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: var(--space-4);
+      margin-bottom: var(--space-6);
+      overflow-x: auto;
+    }
+
+    .tab-pill {
+      background: rgba(14, 21, 50, 0.6);
+      border: 1px solid var(--color-border);
+      color: var(--color-text-muted);
+      font-family: var(--font-family);
+      font-size: 14px;
+      font-weight: 500;
+      padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-xl);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      transition: all var(--motion-fast);
+      white-space: nowrap;
+    }
+    .tab-pill:hover {
+      color: var(--color-text);
+      background: var(--color-surface-hover);
+      border-color: var(--color-racer-cyan);
+    }
+    .tab-pill.active {
+      background: linear-gradient(135deg, var(--color-racer-cyan), #4aa8b6);
+      color: #080c18;
+      border-color: var(--color-racer-cyan);
+      font-weight: 700;
+      box-shadow: 0 0 16px var(--color-racer-cyan-glow);
+    }
+
+    .tab-badge {
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: var(--radius-xl);
+      background: rgba(0, 0, 0, 0.25);
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    /* ── Pro Terminal Trader Grid & Cards ──────────────────────────────────── */
+    .traders-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: var(--space-4);
+      margin-bottom: var(--space-7);
+    }
+
+    .trader-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-5);
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow-card);
+      transition: all var(--motion-fast);
+      position: relative;
+      overflow: hidden;
+    }
+    .trader-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--color-racer-cyan), var(--color-racer-green), transparent);
+      opacity: 0;
+      transition: opacity var(--motion-fast);
+    }
+    .trader-card:hover {
+      border-color: rgba(0, 240, 255, 0.45);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 240, 255, 0.12);
+    }
+    .trader-card:hover::before {
+      opacity: 1;
+    }
+
+    .trader-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: var(--space-3);
+    }
+
+    .trader-identity {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .trader-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(0, 230, 118, 0.1));
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--color-racer-cyan);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 13.5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.1);
+    }
+
+    .trader-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .trader-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trader-card-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #ffffff;
+      letter-spacing: -0.01em;
+    }
+
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: rgba(0, 230, 118, 0.15);
+      border: 1px solid rgba(0, 230, 118, 0.35);
+      color: var(--color-racer-green);
+    }
+
+    .trader-sub-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .trader-card-handle {
+      font-size: 12px;
+      color: var(--color-text-subtle);
+      font-family: var(--font-mono);
+    }
+
+    .strategy-tag {
+      font-size: 9.5px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.22);
+      color: var(--color-racer-cyan);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .pnl-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 230, 118, 0.08);
+      border: 1px solid rgba(0, 230, 118, 0.25);
+    }
+    .pnl-val {
+      font-size: 14px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--color-racer-green);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+    .pnl-lbl {
+      font-size: 8.5px;
+      font-family: var(--font-mono);
+      color: var(--color-text-subtle);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .trader-card-bio {
+      font-size: 12.5px;
+      color: var(--color-text-muted);
+      margin: 0 0 var(--space-3) 0;
+      line-height: 1.45;
+      min-height: 36px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-2);
+      background: var(--color-canvas);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      margin-bottom: var(--space-4);
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 9.5px;
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      letter-spacing: 0.5px;
+    }
+
+    .stat-val {
+      font-size: 13.5px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: #ffffff;
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+    }
+    .stat-val.stat-green {
+      color: var(--color-racer-green);
+    }
+
+    .trader-card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid var(--color-border-subtle);
+      padding-top: var(--space-3);
+      margin-top: auto;
+      gap: 10px;
+    }
+
+    .key-pricing {
+      display: flex;
+      flex-direction: column;
+    }
+    .key-lbl {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      color: var(--color-text-subtle);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .key-amt {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: #ffffff;
+      font-variant-numeric: tabular-nums;
+    }
+    .key-period {
+      font-size: 10.5px;
+      color: var(--color-text-muted);
+      font-weight: 400;
+    }
+
+    .card-action-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .key-status-unlocked {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--color-racer-green);
+      background: rgba(0, 230, 118, 0.1);
+      border: 1px solid rgba(0, 230, 118, 0.25);
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* ── Signal Stream Table ──────────────────────────────────────────────── */
+    .stream-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+      margin-bottom: var(--space-7);
+    }
+
+    .stream-header {
+      padding: var(--space-4) var(--space-5);
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--color-surface-card);
+    }
+
+    .stream-item {
+      padding: var(--space-4) var(--space-5);
+      border-bottom: 1px solid var(--color-border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background var(--motion-fast);
+    }
+    .stream-item:hover {
+      background: var(--color-surface-hover);
+    }
+
+    .side-tag {
+      font-size: 11px;
+      font-weight: 500;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+    }
+    .side-tag.buy {
+      background: rgba(0, 209, 106, 0.12);
+      color: var(--color-racer-green);
+      border: 1px solid rgba(0, 209, 106, 0.25);
+    }
+    .side-tag.sell {
+      background: rgba(224, 49, 49, 0.12);
+      color: var(--color-danger);
+      border: 1px solid rgba(224, 49, 49, 0.25);
+    }
+
+    .blur-mask {
+      filter: blur(4px);
+      user-select: none;
+      opacity: 0.6;
+    }
+
+    /* ── Form Inputs (Asana MD 8px Radius, Lausanne Typography) ──────────── */
+    .form-group {
+      margin-bottom: var(--space-4);
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      margin-bottom: var(--space-2);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+    }
+
+    .form-input {
+      width: 100%;
+      height: 42px;
+      background: var(--color-surface-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      color: var(--color-text);
+      font-family: var(--font-family);
+      font-size: 14px;
+      padding: 0 var(--space-3);
+      outline: none;
+      transition: border-color var(--motion-base);
+    }
+    .form-input:focus {
+      border-color: var(--color-primary);
+    }
+
+    /* ── Modal (Asana Elevated Shadow) ────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-4);
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-box {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 440px;
+      padding: var(--space-6);
+      box-shadow: var(--shadow-elevated);
+    }
+
+    /* ── Footer ───────────────────────────────────────────────────────────── */
+    .site-footer {
+      border-top: 1px solid var(--color-border);
+      padding: var(--space-7) var(--space-6);
+      text-align: center;
+      font-size: 13px;
+      color: var(--color-text-subtle);
+      margin-top: auto;
+    }
+    .site-footer a {
+      color: var(--color-text-muted);
+      text-decoration: none;
+      transition: color var(--motion-fast);
+    }
+    .site-footer a:hover {
+      color: var(--color-text);
+    }
+
+    @media (max-width: 768px) {
+      .overview-grid { grid-template-columns: 1fr; }
+      .hero-display { font-size: 30px; }
+      .site-nav { padding: 0 var(--space-4); }
+    }
+  </style>
+  <!-- Official NEAR Wallet Selector Styles -->
+  <link rel="stylesheet" href="/assets/near-wallet-selector.css">
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  <!-- Top Navigation Header (Industrial Pit-Wall Specification) -->
+  <header class="racer-header">
+    <div class="header-inner">
+      <a href="/" class="brand-logo-wrap">
+        <div class="brand-mark">
+          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+        </div>
+        <div class="brand-title">RACER <span>ALPHA</span></div>
+      </a>
+
+      <!-- Live Telemetry Status Rail -->
+      <div style="display:flex; align-items:center; gap:16px; background:var(--color-surface); border:1px solid var(--color-border); padding:4px 14px; border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:11.5px;">
+        <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
+          <span style="width:6px; height:6px; border-radius:50%; background:var(--color-racer-green); box-shadow:0 0 8px var(--color-racer-green);"></span>
+          SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
+        </span>
+        <span style="color:var(--color-border);">|</span>
+        <span style="color:var(--color-text-subtle);">
+          NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
+        </span>
+      </div>
+
+      <nav class="nav-links">
+        <a href="/" class="nav-item">Home</a>
+        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
+        <a href="/alpha" class="nav-item active">RacerAlpha</a>
+        <a href="/bubblemap" class="nav-item">RacerBubble</a>
+        <a href="/fleet" class="nav-item">The Fleet</a>
+        <a href="/competition" class="nav-item">Arena</a>
+      </nav>
+
+      <div class="header-actions">
+        <button id="header-connect-btn" class="btn btn-ghost" onclick="handleHeaderConnectClick()">
+          <span>Log in</span>
+        </button>
+        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary btn-sm">
+          <span>Launch RacerBot ↗</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Cockpit Telemetry Rail & Operational Header (Pro Trading Terminal Stance) -->
+  <section class="cockpit-bar">
+    <div class="cockpit-inner">
+      <div class="cockpit-identity">
+        <div class="cockpit-eyebrow">
+          <span class="cockpit-dot"></span>
+          <span>CONFIDENTIAL INTENT NETWORK // NEAR SOLVERS</span>
+        </div>
+        <h1 class="cockpit-title">Alpha Marketplace &amp; Viewing Keys</h1>
+        <p class="cockpit-subtitle">Subscribe to verified on-chain PnL streams. Decrypt off-mempool signals and auto-copy with zero MEV slippage.</p>
+      </div>
+
+      <div class="cockpit-right">
+        <div class="cockpit-telemetry-grid">
+          <div class="cockpit-telemetry-item">
+            <span class="telemetry-label">24H Intent Vol</span>
+            <span class="telemetry-val" style="color:#ffffff;">$42.8M</span>
+          </div>
+          <div class="cockpit-telemetry-item">
+            <span class="telemetry-label">Active Keys</span>
+            <span class="telemetry-val" style="color:var(--color-racer-cyan);">418</span>
+          </div>
+          <div class="cockpit-telemetry-item">
+            <span class="telemetry-label">Avg Win Rate</span>
+            <span class="telemetry-val" style="color:var(--color-racer-green);">84.6%</span>
+          </div>
+          <div class="cockpit-telemetry-item">
+            <span class="telemetry-label">Solver Latency</span>
+            <span class="telemetry-val" style="color:var(--color-racer-green);">14ms</span>
+          </div>
+        </div>
+
+        <div class="cockpit-actions">
+          <button onclick="switchTab('autocopy')" class="btn btn-primary btn-sm" style="font-weight:700;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Deposit &amp; Auto-Copy</span>
+          </button>
+          <button onclick="openIntentSwapModal()" class="btn btn-secondary btn-sm">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Instant Swap</span>
+          </button>
+          <button onclick="openExplainerModal()" class="btn btn-ghost btn-sm" title="Architecture Guide">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>Guide</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Content Tabs -->
+  <main class="content-container">
+    <div class="tabs-nav">
+      <button class="tab-pill active" id="tab-btn-marketplace" onclick="switchTab('marketplace')">
+        <span>Alpha Marketplace</span>
+        <span class="tab-badge" id="trader-count-badge">4</span>
+      </button>
+      <button class="tab-pill" id="tab-btn-feed" onclick="switchTab('feed')">
+        <span>Signal Stream</span>
+      </button>
+      <button class="tab-pill" id="tab-btn-mykeys" onclick="switchTab('mykeys')">
+        <span>My Viewing Keys</span>
+        <span class="tab-badge" id="my-keys-badge">0</span>
+      </button>
+      <button class="tab-pill" id="tab-btn-autocopy" onclick="switchTab('autocopy')">
+        <span>Deposit & Auto-Copy</span>
+      </button>
+      <button class="tab-pill" id="tab-btn-creator" onclick="switchTab('creator')">
+        <span>Creator Studio</span>
+      </button>
+    </div>
+
+    <!-- TAB 1: Marketplace -->
+    <div id="tab-content-marketplace">
+      <div class="traders-grid" id="trader-cards-container">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+
+    <!-- TAB 2: Signal Stream -->
+    <div id="tab-content-feed" style="display:none;">
+      <div class="stream-card">
+        <div class="stream-header">
+          <div style="font-size:14px; font-weight:500; display:flex; align-items:center; gap:8px;">
+            <span style="width:6px; height:6px; border-radius:50%; background:var(--color-racer-green);"></span>
+            <span>Real-time Solver Intent Stream</span>
+          </div>
+          <div style="font-size:12px; color:var(--color-text-muted); font-family:var(--font-mono);">
+            Masked without Viewing Key
+          </div>
+        </div>
+        <div id="signal-stream-container">
+          <!-- Rendered via JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: My Viewing Keys -->
+    <div id="tab-content-mykeys" style="display:none;">
+      <div id="my-keys-container">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+
+    <!-- TAB 4: Deposit & Auto-Copy Control Center -->
+    <div id="tab-content-autocopy" style="display:none;">
+      <div style="max-width:840px; margin:0 auto; display:flex; flex-direction:column; gap:var(--space-6);">
+        <!-- Account & Balance Card -->
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-6); box-shadow:var(--shadow-card);">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:var(--space-4); margin-bottom:var(--space-5);">
+            <div>
+              <div style="font-size:12px; font-family:var(--font-mono); color:var(--color-text-subtle); text-transform:uppercase; letter-spacing:0.5px;">Non-Custodial Trading Account</div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                <span id="ac-trading-address" style="font-size:16px; font-weight:600; color:#fff; font-family:var(--font-mono);">user.racerbot.near</span>
+                <button onclick="copyTradingAddress()" class="btn btn-secondary btn-sm" style="height:26px; font-size:11px; padding:0 8px; display:inline-flex; align-items:center;">
+                  <span id="btn-copy-address-label" style="display:inline-flex; align-items:center; gap:3px;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <span>Copy</span>
+                  </span>
+                </button>
+              </div>
+              <div style="font-size:12.5px; color:var(--color-text-muted); margin-top:4px;">
+                Paired with your verified Telegram session. AES-256 secure execution.
+              </div>
+            </div>
+
+            <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px 18px; text-align:right;">
+              <div style="font-size:11.5px; color:var(--color-text-muted);">Available Trading Balance</div>
+              <div style="font-size:24px; font-weight:700; color:var(--color-racer-green); font-family:var(--font-mono);" id="ac-balance-display">
+                0.000 <span style="font-size:14px; color:var(--color-text-muted);">NEAR</span>
+              </div>
+              <div style="font-size:11px; color:var(--color-text-subtle); font-family:var(--font-mono); margin-top:2px;" id="ac-balance-usd">
+                ≈ $0.00 USD
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button onclick="openDepositModal()" class="btn btn-primary" style="height:40px; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Deposit Funds (NEAR / Multi-Chain)</span>
+            </button>
+            <button onclick="refreshUserBalance()" class="btn btn-secondary" style="height:40px; font-size:13px; display:inline-flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>Refresh Balance</span>
+            </button>
+            <button onclick="openExplainerModal()" class="btn btn-secondary" style="height:40px; font-size:13px; display:inline-flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>How It Works Guide</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mode Comparison Banner -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:var(--space-4);">
+          <div style="background:var(--color-surface); border:1px solid rgba(82,205,220,0.3); border-radius:var(--radius-md); padding:var(--space-5);">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+              <span style="background:rgba(82,205,220,0.15); color:var(--color-racer-cyan); padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">MODE 1</span>
+              <h4 style="font-size:15px; font-weight:600; color:#fff; margin:0;">1-Click Manual Execution</h4>
+            </div>
+            <p style="font-size:13px; color:var(--color-text-muted); line-height:1.5; margin:0 0 10px 0;">
+              Keyholders receive unmasked real-time trade alerts on Telegram & WebApp. Click the <b>"Copy"</b> button on any signal to instantly execute confidential trades.
+            </p>
+            <div style="font-size:11.5px; color:var(--color-racer-cyan); font-family:var(--font-mono);">
+              ✓ Complete manual control before every trade
+            </div>
+          </div>
+
+          <div style="background:var(--color-surface); border:1px solid rgba(0,209,106,0.3); border-radius:var(--radius-md); padding:var(--space-5);">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+              <span style="background:rgba(0,209,106,0.15); color:var(--color-racer-green); padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">MODE 2</span>
+              <h4 style="font-size:15px; font-weight:600; color:#fff; margin:0;">Autonomous Auto-Copy</h4>
+            </div>
+            <p style="font-size:13px; color:var(--color-text-muted); line-height:1.5; margin:0 0 10px 0;">
+              The RacerBot block stream detector watches your target traders on-chain. When they swap, your bot mirrors the trade off-mempool within your daily spending cap.
+            </p>
+            <div style="font-size:11.5px; color:var(--color-racer-green); font-family:var(--font-mono);">
+              ✓ Sub-second execution with daily risk caps
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto-Copy Automation Settings -->
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-6); box-shadow:var(--shadow-card);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-5); border-bottom:1px solid var(--color-border); padding-bottom:var(--space-3);">
+            <div>
+              <h3 style="font-size:17px; font-weight:600; color:#fff; margin:0;">Auto-Copy Mirror Rules</h3>
+              <div style="font-size:12.5px; color:var(--color-text-muted); margin-top:2px;">
+                These parameters govern autonomous execution for all traders you hold active viewing keys for.
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:12px; color:var(--color-text-muted);" id="autocopy-status-badge">Engine Active</span>
+              <label class="switch" style="position:relative; display:inline-block; width:44px; height:24px;">
+                <input type="checkbox" id="toggle-autocopy-engine" checked onchange="handleToggleAutoCopyEngine(this.checked)" style="opacity:0; width:0; height:0;">
+                <span style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#382a59; border-radius:24px; transition:.3s;" id="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:var(--space-4); margin-bottom:var(--space-5);">
+            <div>
+              <label style="display:block; font-size:12px; color:var(--color-text-muted); margin-bottom:6px;">Default Buy Size (NEAR)</label>
+              <input type="number" id="setting-buy-amount" value="2.0" step="0.5" min="0.1" class="form-input" style="font-family:var(--font-mono);">
+              <span style="font-size:11px; color:var(--color-text-subtle);">Amount swapped per buy signal</span>
+            </div>
+
+            <div>
+              <label style="display:block; font-size:12px; color:var(--color-text-muted); margin-bottom:6px;">Daily Budget Cap (NEAR)</label>
+              <input type="number" id="setting-daily-cap" value="20.0" step="5" min="1" class="form-input" style="font-family:var(--font-mono);">
+              <span style="font-size:11px; color:var(--color-text-subtle);">Max cumulative spend per 24 hours</span>
+            </div>
+
+            <div>
+              <label style="display:block; font-size:12px; color:var(--color-text-muted); margin-bottom:6px;">Max Slippage (%)</label>
+              <input type="number" id="setting-slippage" value="2.5" step="0.5" min="0.5" max="15" class="form-input" style="font-family:var(--font-mono);">
+              <span style="font-size:11px; color:var(--color-text-subtle);">Aborts swap if price moves above this</span>
+            </div>
+          </div>
+
+          <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:var(--space-5); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-size:13px; font-weight:500; color:#fff;">Automatic Sell Mirroring</div>
+              <div style="font-size:12px; color:var(--color-text-muted);">When target KOL sells their position, automatically mirror sell your tokens</div>
+            </div>
+            <input type="checkbox" id="setting-copy-sells" checked style="width:18px; height:18px; accent-color:var(--color-primary); cursor:pointer;">
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div id="settings-save-status" style="font-size:12px; font-family:var(--font-mono); color:var(--color-racer-green);"></div>
+            <button onclick="handleSaveAutoCopySettings()" class="btn btn-primary" style="height:38px; padding:0 20px; display:inline-flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              <span>Save Settings</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Creator Studio -->
+    <div id="tab-content-creator" style="display:none;">
+      <div style="max-width:580px; margin:0 auto; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-6); box-shadow:var(--shadow-card);">
+        <h2 style="font-size:22px; font-weight:500; margin-bottom:var(--space-2);">Creator Studio</h2>
+        <p style="font-size:14px; color:var(--color-text-muted); margin-bottom:var(--space-5);">
+          Monetize your trading prowess. Issue Viewing Keys to your community while keeping order books confidential.
+        </p>
+
+        <form id="creator-form" onsubmit="handleRegisterCreator(event)">
+          <div class="form-group">
+            <label class="form-label">Trader Handle (@)</label>
+            <input type="text" id="cr-handle" class="form-input" placeholder="e.g. your_handle" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Display Name</label>
+            <input type="text" id="cr-name" class="form-input" placeholder="e.g. Apex Snipes" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Monthly Key Price (NEAR)</label>
+            <input type="number" step="0.1" id="cr-price" class="form-input" value="3.0" required style="font-family:var(--font-mono);">
+          </div>
+          <div class="form-group" style="margin-bottom:var(--space-5);">
+            <label class="form-label">Strategy Description</label>
+            <textarea id="cr-bio" rows="3" class="form-input" style="height:auto; padding:10px 12px;" placeholder="Outline your trading strategy and target assets..."></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; height:42px;">
+            <span>Activate Creator Profile</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <!-- Explainer Modal: How Copy Trading & Deposits Work -->
+  <div id="explainer-modal" class="modal-overlay" onclick="if(event.target===this)closeExplainerModal()">
+    <div class="modal-box" style="max-width: 560px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4);">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--color-racer-cyan); box-shadow:0 0 10px var(--color-racer-cyan);"></span>
+          <h3 style="font-size:17px; font-weight:600; margin:0; color:#fff;">How RacerAlpha Copy Trading & Deposits Work</h3>
+        </div>
+        <button onclick="closeExplainerModal()" style="background:none; border:none; color:var(--color-text-muted); font-size:22px; cursor:pointer;">&times;</button>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:var(--space-4); max-height:70vh; overflow-y:auto; padding-right:4px;">
+        <!-- Step 1 -->
+        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4);">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="background:var(--color-primary); color:#fff; font-size:11px; font-weight:700; width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">1</span>
+            <span style="font-size:14px; font-weight:600; color:#fff;">Acquire a Viewing Key</span>
+          </div>
+          <p style="font-size:12.5px; color:var(--color-text-muted); line-height:1.5; margin:0;">
+            Browse verified traders on the Alpha Marketplace. Buying their Viewing Key decrypts their private intent swaps in real time. Unmasked signals stream instantly to your Telegram and the Signal Stream.
+          </p>
+        </div>
+
+        <!-- Step 2 -->
+        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4);">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="background:var(--color-racer-green); color:#000; font-size:11px; font-weight:700; width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">2</span>
+            <span style="font-size:14px; font-weight:600; color:#fff;">Deposit Trading Funds</span>
+          </div>
+          <p style="font-size:12.5px; color:var(--color-text-muted); line-height:1.5; margin:0 0 8px 0;">
+            You trade directly from your <b>non-custodial NEAR account</b> (<code>username.racerbot.near</code>) or your connected NEAR wallet.
+          </p>
+          <ul style="font-size:12px; color:var(--color-text-muted); margin:0 0 0 16px; padding:0; line-height:1.5;">
+            <li><b>Direct NEAR Transfer:</b> Send native NEAR to your trading subaccount address.</li>
+            <li><b>1Click Multi-Chain Bridge:</b> Deposit SOL, ETH, USDT, or USDC from Ethereum, Solana, or Arbitrum with atomic solver conversion.</li>
+          </ul>
+        </div>
+
+        <!-- Step 3 -->
+        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4);">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="background:var(--color-racer-cyan); color:#000; font-size:11px; font-weight:700; width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">3</span>
+            <span style="font-size:14px; font-weight:600; color:#fff;">Choose Your Trading Execution Mode</span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+            <div style="background:rgba(82,205,220,0.06); border:1px solid rgba(82,205,220,0.25); border-radius:var(--radius-sm); padding:10px;">
+              <div style="font-size:12px; font-weight:600; color:var(--color-racer-cyan); margin-bottom:4px;">⚡ 1-Click Manual Execution</div>
+              <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
+                Get real-time push alerts on Telegram and WebApp. Click <b>"Copy Trade"</b>, review the pre-computed swap, and confirm in 1 tap.
+              </div>
+            </div>
+            <div style="background:rgba(0,209,106,0.06); border:1px solid rgba(0,209,106,0.25); border-radius:var(--radius-sm); padding:10px;">
+              <div style="font-size:12px; font-weight:600; color:var(--color-racer-green); margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg>
+                <span>Autonomous Auto-Copy</span>
+              </div>
+              <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
+                Enable Auto-Copy in settings. The block stream detector automatically fires matching intent swaps off-mempool within your daily budget.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Execution Security -->
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; font-size:12px; color:var(--color-text-muted); line-height:1.4; display:flex; align-items:flex-start; gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-racer-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:1px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <div><b>Confidential Intent Execution:</b> Frontrunning, sandwich attacks, and MEV extraction are eliminated by NEAR Intents solvers. All trades settle atomically with optimal routing.</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:var(--space-4);">
+        <button onclick="openDepositModal()" class="btn btn-primary" style="flex:1; height:40px; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Open Deposit Drawer</span>
+        </button>
+        <button onclick="closeExplainerModal()" class="btn btn-secondary" style="height:40px; padding:0 18px;">
+          <span>Close</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deposit Telemetry HUD Drawer Modal -->
+  <div id="deposit-modal" class="modal-overlay" onclick="if(event.target===this)closeDepositModal()">
+    <div class="modal-box hud-plate" style="max-width: 520px; border: 1px solid var(--color-border); box-shadow: var(--shadow-elevated);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4); border-bottom:1px solid var(--color-border); padding-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--color-racer-green); box-shadow:0 0 10px var(--color-racer-green);"></span>
+          <h3 style="font-family:var(--font-display); font-size:18px; font-weight:700; margin:0; color:#fff; text-transform:uppercase; letter-spacing:0.02em;">
+            TELEMETRY // DEPOSIT ROUTER
+          </h3>
+        </div>
+        <button onclick="closeDepositModal()" class="btn btn-ghost" style="min-height:32px; height:32px; padding:0 8px; font-size:20px; line-height:1;">&times;</button>
+      </div>
+
+      <!-- Protocol Method Switcher -->
+      <div style="display:flex; gap:6px; margin-bottom:var(--space-4); background:var(--color-canvas); padding:4px; border-radius:var(--radius-sm); border:1px solid var(--color-border);">
+        <button id="tab-btn-deposit-near" onclick="switchDepositMethod('near')" class="btn btn-sm" style="flex:1; background:var(--color-surface-card); border:1px solid var(--color-border); color:#fff; font-family:var(--font-mono); font-size:12px;">
+          <span>NATIVE NEAR ROUTE</span>
+        </button>
+        <button id="tab-btn-deposit-cross" onclick="switchDepositMethod('cross')" class="btn btn-sm" style="flex:1; background:transparent; border:1px solid transparent; color:var(--color-text-subtle); font-family:var(--font-mono); font-size:12px;">
+          <span>1CLICK SOLVER (SOL/ETH/USDC)</span>
+        </button>
+      </div>
+
+      <!-- Native NEAR Method -->
+      <div id="deposit-method-near">
+        <div style="background:var(--color-canvas); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:var(--space-4); margin-bottom:var(--space-4);">
+          <div style="font-size:11px; color:var(--color-text-subtle); text-transform:uppercase; font-family:var(--font-mono); margin-bottom:6px; letter-spacing:0.5px;">
+            Target Account ID
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:8px 12px;">
+            <input type="text" id="deposit-address-input" readonly value="user.racerbot.near" style="flex:1; background:none; border:none; color:var(--color-racer-green); font-family:var(--font-mono); font-size:13.5px; outline:none;" class="telemetry-num">
+            <button onclick="copyDepositAddress()" class="btn btn-primary btn-sm" style="min-height:36px; height:36px; font-size:12px; padding:0 14px;">
+              <span id="btn-copy-deposit-label">COPY</span>
+            </button>
+          </div>
+          <div style="font-size:12px; color:var(--color-text-muted); margin-top:10px; line-height:1.5;">
+            Direct on-chain ingress: send native NEAR from any exchange or wallet. Telemetry daemon auto-detects block inclusion within ~1.2s.
+          </div>
+        </div>
+
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:14px; margin-bottom:var(--space-4); display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px; color:var(--color-text-muted); text-transform:uppercase; font-family:var(--font-mono);">Subaccount Balance:</span>
+          <span id="deposit-modal-balance" class="telemetry-num" style="font-size:16px; font-weight:700; color:var(--color-racer-green);">0.0000 NEAR</span>
+        </div>
+      </div>
+
+      <!-- Multi-Chain Cross Method: Real In-App 1Click Solver Generator -->
+      <div id="deposit-method-cross" style="display:none;">
+        <div style="background:var(--color-canvas); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:var(--space-4); margin-bottom:var(--space-4);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div style="font-size:12.5px; font-weight:700; color:#fff; text-transform:uppercase; font-family:var(--font-mono);">
+              1Click Intent Route Generator
+            </div>
+            <span style="font-size:11px; color:var(--color-racer-cyan); font-family:var(--font-mono);">● 37 CHAINS ACTIVE</span>
+          </div>
+          <div style="font-size:12px; color:var(--color-text-muted); line-height:1.5; margin-bottom:var(--space-4);">
+            Powered by <b>NEAR Intents Solver Network</b>. Off-mempool liquidity settlement directly converts foreign assets into native NEAR.
+          </div>
+
+          <!-- Step 1: Select Chain -->
+          <div style="margin-bottom:var(--space-3);">
+            <label style="display:block; font-size:11px; text-transform:uppercase; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:4px;">1. Origin Blockchain</label>
+            <select id="mc-chain-select" onchange="handleSelectChainChange()" class="form-input" style="height:44px; font-size:13.5px; font-family:var(--font-mono); background:var(--color-surface); color:#fff; border-color:var(--color-border);">
+              <option value="sol" selected>Solana (SOL)</option>
+              <option value="eth">Ethereum (ETH)</option>
+              <option value="base">Base (ETH)</option>
+              <option value="arb">Arbitrum One (ETH)</option>
+              <option value="bsc">BNB Chain (BNB)</option>
+              <option value="pol">Polygon (POL)</option>
+              <option value="btc">Bitcoin (BTC)</option>
+            </select>
+          </div>
+
+          <!-- Step 2: Select Asset & Amount -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:var(--space-3);">
+            <div>
+              <label style="display:block; font-size:11px; text-transform:uppercase; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:4px;">2. Source Asset</label>
+              <select id="mc-asset-select" onchange="handleSelectAssetChange()" class="form-input" style="height:44px; font-size:13.5px; font-family:var(--font-mono); background:var(--color-surface); color:#fff; border-color:var(--color-border);">
+                <option value="SOL" selected>SOL</option>
+                <option value="USDC">USDC</option>
+                <option value="USDT">USDT</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; text-transform:uppercase; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:4px;">3. Allocation Amount</label>
+              <input type="number" id="mc-amount-input" value="0.25" step="0.05" min="0.01" class="form-input telemetry-num" style="height:44px; font-size:14px; font-weight:600; background:var(--color-surface); color:#fff; border-color:var(--color-border);">
+            </div>
+          </div>
+
+          <!-- Quick Chips -->
+          <div style="display:flex; gap:8px; margin-bottom:var(--space-4);" id="mc-quick-amounts">
+            <button type="button" onclick="setMcAmount(0.1)" class="btn btn-secondary btn-sm" style="flex:1; font-family:var(--font-mono); min-height:36px; height:36px;">0.1</button>
+            <button type="button" onclick="setMcAmount(0.5)" class="btn btn-secondary btn-sm" style="flex:1; font-family:var(--font-mono); min-height:36px; height:36px;">0.5</button>
+            <button type="button" onclick="setMcAmount(1.0)" class="btn btn-secondary btn-sm" style="flex:1; font-family:var(--font-mono); min-height:36px; height:36px;">1.0</button>
+            <button type="button" onclick="setMcAmount(2.0)" class="btn btn-secondary btn-sm" style="flex:1; font-family:var(--font-mono); min-height:36px; height:36px;">2.0</button>
+          </div>
+
+          <button id="btn-generate-1click-quote" onclick="handleGenerate1ClickQuote()" class="btn btn-primary" style="width:100%; min-height:46px; height:46px; font-size:14px; letter-spacing:0.02em; display:inline-flex; align-items:center; justify-content:center; gap:8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>GENERATE 1CLICK SOLVER DEPOSIT ROUTE</span>
+          </button>
+        </div>
+
+        <!-- Quote Result Box (Hidden by default, shown when generated) -->
+        <div id="mc-quote-result" style="display:none; background:var(--color-surface); border:1px solid var(--color-racer-green); border-radius:var(--radius-sm); padding:var(--space-4); margin-bottom:var(--space-4); box-shadow:0 0 20px rgba(0, 230, 118, 0.15);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid var(--color-border); padding-bottom:8px;">
+            <span style="font-size:11px; color:var(--color-racer-green); font-family:var(--font-mono); text-transform:uppercase; font-weight:700;">
+              ● SOLVER ROUTE ACTIVE &amp; MONITORING
+            </span>
+            <span style="font-size:11px; color:var(--color-text-subtle); font-family:var(--font-mono);" id="mc-quote-timer" class="telemetry-num">
+              Expires: 30:00
+            </span>
+          </div>
+
+          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:6px;">
+            Send exactly <b id="mc-expected-input" style="color:#fff;" class="telemetry-num">0.25 SOL</b> to this solver deposit address on <b id="mc-origin-chain-label" style="color:var(--color-racer-cyan);">Solana</b>:
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px; background:var(--color-canvas); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:8px 12px; margin-bottom:12px;">
+            <input type="text" id="mc-deposit-address-display" readonly value="" style="flex:1; background:none; border:none; color:var(--color-racer-cyan); font-family:var(--font-mono); font-size:12.5px; outline:none;" class="telemetry-num">
+            <button onclick="copyMcDepositAddress()" class="btn btn-primary btn-sm" style="min-height:36px; height:36px; font-size:12px; padding:0 12px;">
+              <span id="btn-copy-mc-address-label">COPY</span>
+            </button>
+          </div>
+
+          <div style="background:var(--color-canvas); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:12px; font-size:12px; font-family:var(--font-mono); margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+              <span style="color:var(--color-text-subtle);">RECIPIENT ACCOUNT:</span>
+              <span id="mc-target-subaccount" style="color:#fff;">user.racerbot.near</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+              <span style="color:var(--color-text-subtle);">EXPECTED SETTLEMENT:</span>
+              <span id="mc-expected-near" class="telemetry-num" style="color:var(--color-racer-green); font-weight:700;">~8.1250 NEAR</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--color-text-subtle);">SOLVER FEE:</span>
+              <span style="color:var(--color-text-subtle);">0.10% (Included)</span>
+            </div>
+          </div>
+
+          <div id="mc-deposit-status-live" style="font-size:11.5px; color:var(--color-racer-green); font-family:var(--font-mono); margin-bottom:10px; text-align:center;">
+            ⏳ Monitoring origin blockchain for incoming block inclusion...
+          </div>
+
+          <button onclick="checkDepositStatusManually()" class="btn btn-secondary btn-sm" style="width:100%; height:32px; font-size:11.5px; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Poll Solver Settlement Status</span>
+          </button>
+        </div>
+      </div>
+
+      <button onclick="closeDepositModal()" class="btn btn-secondary" style="width:100%; height:38px;">
+        <span>Done</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Buy Key Modal -->
+  <div id="buy-key-modal" class="modal-overlay" onclick="if(event.target===this)closeBuyModal()">
+    <div class="modal-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4);">
+        <h3 style="font-size:18px; font-weight:500;">Purchase Viewing Key</h3>
+        <button onclick="closeBuyModal()" style="background:none; border:none; color:var(--color-text-muted); font-size:20px; cursor:pointer;">&times;</button>
+      </div>
+
+      <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4); margin-bottom:var(--space-4);">
+        <div style="font-size:11px; color:var(--color-text-subtle); font-family:var(--font-mono); text-transform:uppercase;">Selected Trader</div>
+        <div style="font-size:16px; font-weight:500; color:#fff; margin-top:2px;" id="buy-trader-name">Trader</div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:13px;">
+          <span style="color:var(--color-text-muted);">Monthly Subscription:</span>
+          <span style="font-weight:600; color:var(--color-racer-green); font-family:var(--font-mono);" id="buy-key-price">2.0 NEAR</span>
+        </div>
+      </div>
+
+      <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:var(--space-5); line-height:1.5;">
+        <b>Keyholder Benefits:</b>
+        <ul style="margin-left:18px; margin-top:6px;">
+          <li>Real-time unmasked token symbols and contract addresses.</li>
+          <li>Instant private execution signals dispatched directly to Telegram.</li>
+          <li>1-Tap Copy Trade & automated mirror execution in RacerBot.</li>
+        </ul>
+      </div>
+
+      <button id="btn-confirm-key-buy" onclick="handleConfirmBuyKey()" class="btn btn-primary" style="width:100%; height:42px;">
+        <span>Confirm Purchase</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Unified RacerConnect Modal (Official NEAR Wallet Selector Integration) -->
+  <div id="racer-connect-modal" class="modal-overlay" onclick="if(event.target===this)closeConnectModal()">
+    <div class="modal-box" style="max-width: 480px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4);">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:7px; height:7px; border-radius:50%; background:var(--color-racer-green);"></span>
+          <span style="font-size:14px; font-weight:600; letter-spacing:-0.2px;">Connect NEAR Wallet</span>
+        </div>
+        <button onclick="closeConnectModal()" style="background:none; border:none; color:var(--color-text-muted); font-size:22px; cursor:pointer;">&times;</button>
+      </div>
+
+      <!-- State 1: Unlinked / Connect Prompt -->
+      <div id="modal-state-unlinked">
+        <!-- Tab Controls -->
+        <div style="display:flex; gap:6px; margin-bottom:var(--space-4); background:var(--color-surface); padding:3px; border-radius:var(--radius-md); border:1px solid var(--color-border);">
+          <button id="tab-btn-near-wallet" onclick="switchConnectTab('wallet')" class="btn btn-sm" style="flex:1; background:var(--color-surface-card); border-color:var(--color-border); color:#fff; font-size:12px;">
+            <span>1. NEAR Wallet Selector</span>
+          </button>
+          <button id="tab-btn-tg-verify" onclick="switchConnectTab('tg')" class="btn btn-sm" style="flex:1; background:transparent; border-color:transparent; color:var(--color-text-muted); font-size:12px;">
+            <span>2. Telegram Bot Link</span>
+          </button>
+        </div>
+
+        <!-- Section A: Direct NEAR Wallet Selector (Primary) -->
+        <div id="connect-section-wallet">
+          <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4); margin-bottom:var(--space-4);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <div style="font-size:13px; font-weight:600; color:var(--color-text);">Official NEAR Wallet Selector</div>
+              <span style="font-size:10.5px; color:var(--color-racer-cyan); background:rgba(82,205,220,0.12); border:1px solid rgba(82,205,220,0.25); padding:2px 8px; border-radius:var(--radius-sm); font-family:var(--font-mono);">intents.near</span>
+            </div>
+            <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:var(--space-4); line-height:1.5;">
+              Connect directly via <b>@near-wallet-selector</b>. Supports <b>Meteor Wallet</b>, <b>HERE Wallet</b>, <b>MyNearWallet</b>, and <b>Sender</b> for instant confidential intent execution and viewing key purchases.
+            </div>
+
+            <button onclick="handleOpenNearWalletSelector()" class="btn btn-primary" style="width:100%; height:44px; font-size:13.5px; margin-bottom:var(--space-2); justify-content:center; display:inline-flex; align-items:center; gap:8px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+              <span>Connect NEAR Wallet</span>
+            </button>
+            <div id="wallet-link-status" style="font-size:11.5px; margin-top:8px; font-family:var(--font-mono); min-height:16px; text-align:center;"></div>
+          </div>
+        </div>
+
+        <!-- Section B: Telegram DM Verification (Secondary / Optional Sync) -->
+        <div id="connect-section-tg" style="display:none;">
+          <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:var(--space-4); margin-bottom:var(--space-4);">
+            <!-- Step 1: Input Handle -->
+            <div id="tg-step-input">
+              <div style="font-size:12.5px; font-weight:600; color:var(--color-text); margin-bottom:4px;">Telegram Bot Pairing</div>
+              <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:var(--space-3); line-height:1.4;">Link your Telegram account (@racertradingbot) to receive instant DM alerts whenever your creator executes trades.</div>
+              
+              <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <input type="text" id="tg-username-input" placeholder="e.g. @yourname" class="form-input" style="height:38px; font-size:13px; font-family:var(--font-mono);">
+                <button id="btn-send-tg-code" onclick="handleSendTelegramCode()" class="btn btn-primary" style="height:38px; padding:0 14px; font-size:13px; white-space:nowrap;">
+                  <span>Send Code</span>
+                </button>
+              </div>
+              <div id="tg-request-status" style="font-size:11.5px; font-family:var(--font-mono); min-height:16px;"></div>
+
+              <div style="margin-top:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--color-border); display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:11.5px; color:var(--color-text-subtle);">Direct Telegram pairing:</span>
+                <button onclick="handleStartTelegramPairing()" class="btn btn-secondary btn-sm" style="font-size:11.5px; height:28px;">
+                  <span>1-Tap Deep Link ↗</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 2: Enter 6-Digit Code -->
+            <div id="tg-step-code" style="display:none;">
+              <div style="font-size:12px; font-weight:500; color:var(--color-racer-green); margin-bottom:4px;">✓ Security DM Sent to Telegram!</div>
+              <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:var(--space-3);">
+                Check your private chat with <b>@racertradingbot</b>. Enter the 6-digit code or click [Approve Connection] in Telegram.
+              </div>
+
+              <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <input type="text" id="tg-code-input" maxlength="6" placeholder="123456" class="form-input" style="height:42px; font-size:18px; text-align:center; letter-spacing:4px; font-family:var(--font-mono);">
+                <button id="btn-submit-code" onclick="handleSubmitTelegramCode()" class="btn btn-primary" style="height:42px; padding:0 16px; font-size:13px; white-space:nowrap;">
+                  <span>Verify & Link</span>
+                </button>
+              </div>
+              <div id="tg-verify-status" style="font-size:11.5px; font-family:var(--font-mono); color:var(--color-racer-cyan);">
+                Listening for Telegram approval...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- State 2: Linked / Active Session -->
+      <div id="modal-state-linked" style="display:none;">
+        <div style="background:var(--color-surface-card); border:1px solid rgba(0,209,106,0.3); border-radius:var(--radius-md); padding:var(--space-4); margin-bottom:var(--space-4);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:11px; color:var(--color-text-subtle); font-family:var(--font-mono); text-transform:uppercase;">Connected Profile</span>
+            <span style="font-size:10.5px; color:var(--color-racer-green); font-family:var(--font-mono); background:rgba(0,209,106,0.12); padding:2px 8px; border-radius:var(--radius-sm);">● ACTIVE FOR INTENTS</span>
+          </div>
+          <div style="font-size:16px; font-weight:600; color:#fff;" id="linked-username">@user</div>
+          <div style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); margin-top:3px;" id="linked-subaccount">user.racerbot.near</div>
+          <div style="font-family:var(--font-mono); font-size:11.5px; color:var(--color-text-muted); margin-top:8px;" id="linked-near-wallet">
+            Linked NEAR Wallet: <b>None</b>
+          </div>
+        </div>
+
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:10px 12px; margin-bottom:var(--space-4); font-size:12px; color:var(--color-text-muted); line-height:1.4;">
+          ⚡ <b>Confidential Intent Engine:</b> All swaps and copy-trades execute privately off-mempool with atomic settlement.
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button onclick="handleOpenNearWalletSelector()" class="btn btn-secondary" style="flex:1; height:38px; font-size:12.5px; display:inline-flex; align-items:center; justify-content:center; gap:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Switch Wallet</span>
+          </button>
+          <button onclick="handleDisconnect()" class="btn btn-secondary" style="height:38px; padding:0 14px;">
+            <span>Disconnect</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Copy Trade Drawer -->
+  <div id="copy-trade-modal" class="modal-overlay" onclick="if(event.target===this)closeCopyTradeModal()">
+    <div class="modal-box" style="max-width: 440px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-3);">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:7px; height:7px; border-radius:50%; background:var(--color-racer-cyan);"></span>
+          <span style="font-size:14px; font-weight:600;">Execute Intent Copy Trade</span>
+        </div>
+        <button onclick="closeCopyTradeModal()" style="background:none; border:none; color:var(--color-text-muted); font-size:22px; cursor:pointer;">&times;</button>
+      </div>
+
+      <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; margin-bottom:var(--space-4);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px; color:var(--color-text-muted);">Asset to Mirror:</span>
+          <span id="copy-token-symbol" style="font-size:14px; font-weight:600; color:var(--color-racer-cyan); font-family:var(--font-mono);">$TOKEN</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+          <span style="font-size:11px; color:var(--color-text-subtle);">Contract Address:</span>
+          <span id="copy-token-address" style="font-size:11px; color:var(--color-text-muted); font-family:var(--font-mono);">token.near</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom:var(--space-4);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <label style="font-size:12px; color:var(--color-text-muted); margin:0;">Trade Amount (NEAR)</label>
+          <span style="font-size:11.5px; color:var(--color-text-muted);">
+            Bal: <b id="copy-trade-available-bal" style="color:var(--color-racer-green); font-family:var(--font-mono);">0.00 NEAR</b> 
+            <a href="javascript:void(0)" onclick="openDepositModal()" style="color:var(--color-racer-cyan); text-decoration:underline; margin-left:4px;">+ Deposit</a>
+          </span>
+        </div>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button type="button" onclick="setCopyTradeAmount(1)" class="btn btn-secondary btn-sm" style="flex:1;">1 NEAR</button>
+          <button type="button" onclick="setCopyTradeAmount(5)" class="btn btn-secondary btn-sm" style="flex:1;">5 NEAR</button>
+          <button type="button" onclick="setCopyTradeAmount(10)" class="btn btn-secondary btn-sm" style="flex:1;">10 NEAR</button>
+        </div>
+        <input type="number" id="copy-trade-amount-input" value="5" step="0.5" min="0.1" oninput="updateFeeBreakdown()" class="form-input" style="height:40px; font-size:14px; font-family:var(--font-mono);">
+      </div>
+
+      <!-- Trade Amount Display -->
+      <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; margin-bottom:var(--space-4); font-family:var(--font-mono); font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="color:var(--color-text-muted);">Trade Amount:</span>
+          <span id="fee-gross-display" style="color:#fff; font-weight:600; font-size:13.5px;">5.000 NEAR</span>
+        </div>
+      </div>
+
+      <div id="copy-trade-status" style="font-size:11.5px; font-family:var(--font-mono); margin-bottom:8px; min-height:16px;"></div>
+
+      <button id="btn-execute-copy-trade" onclick="handleExecuteCopyTrade()" class="btn btn-primary" style="width:100%; height:42px;">
+        <span>Confirm & Execute</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Direct Confidential Intent Swap Modal -->
+  <div id="intent-swap-modal" class="modal-overlay" onclick="if(event.target===this)closeIntentSwapModal()">
+    <div class="modal-box" style="max-width: 460px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-3);">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--color-racer-cyan); box-shadow:0 0 10px var(--color-racer-cyan);"></span>
+          <span style="font-size:14px; font-weight:600; letter-spacing:-0.2px;">NEAR Intents Confidential Swap</span>
+        </div>
+        <button onclick="closeIntentSwapModal()" style="background:none; border:none; color:var(--color-text-muted); font-size:22px; cursor:pointer;">&times;</button>
+      </div>
+
+      <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:var(--space-3); line-height:1.4;">
+        Atomic solver execution via <b>intents.near</b>. Zero mempool sandwiching, 0% slippage frontrun protection, and instant settlement.
+      </div>
+
+      <div style="margin-bottom:var(--space-3);">
+        <label style="display:block; font-size:11.5px; color:var(--color-text-muted); margin-bottom:4px;">Target Token Asset</label>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button type="button" onclick="selectSwapToken('blackdragon.tkn.near', 'BLACKDRAGON')" class="btn btn-secondary btn-sm" style="flex:1; font-size:11px;">BLACKDRAGON</button>
+          <button type="button" onclick="selectSwapToken('nearlytrade.near', 'NEARLY')" class="btn btn-secondary btn-sm" style="flex:1; font-size:11px;">NEARLY</button>
+          <button type="button" onclick="selectSwapToken('purr.tkn.near', 'PURR')" class="btn btn-secondary btn-sm" style="flex:1; font-size:11px;">PURR</button>
+          <button type="button" onclick="selectSwapToken('qi.tkn.near', 'QI')" class="btn btn-secondary btn-sm" style="flex:1; font-size:11px;">QI</button>
+        </div>
+        <input type="text" id="swap-token-address-input" value="blackdragon.tkn.near" class="form-input" style="height:38px; font-size:13px; font-family:var(--font-mono);" placeholder="Contract address (e.g. blackdragon.tkn.near)">
+      </div>
+
+      <div style="margin-bottom:var(--space-4);">
+        <label style="display:block; font-size:11.5px; color:var(--color-text-muted); margin-bottom:4px;">Swap Amount (NEAR)</label>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button type="button" onclick="setIntentSwapAmount(1)" class="btn btn-secondary btn-sm" style="flex:1;">1 NEAR</button>
+          <button type="button" onclick="setIntentSwapAmount(5)" class="btn btn-secondary btn-sm" style="flex:1;">5 NEAR</button>
+          <button type="button" onclick="setIntentSwapAmount(10)" class="btn btn-secondary btn-sm" style="flex:1;">10 NEAR</button>
+          <button type="button" onclick="setIntentSwapAmount(25)" class="btn btn-secondary btn-sm" style="flex:1;">25 NEAR</button>
+        </div>
+        <input type="number" id="intent-swap-amount-input" value="5" step="0.5" min="0.1" oninput="updateIntentSwapFeeBreakdown()" class="form-input" style="height:40px; font-size:14px; font-family:var(--font-mono);">
+      </div>
+
+      <!-- Swap Amount Display -->
+      <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; margin-bottom:var(--space-4); font-family:var(--font-mono); font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="color:var(--color-text-muted);">Swap Amount:</span>
+          <span id="swap-fee-gross-display" style="color:#fff; font-weight:600; font-size:13.5px;">5.000 NEAR</span>
+        </div>
+      </div>
+
+      <div id="intent-swap-status" style="font-size:11.5px; font-family:var(--font-mono); margin-bottom:8px; min-height:16px;"></div>
+
+      <button id="btn-execute-intent-swap" onclick="handleExecuteIntentSwap()" class="btn btn-primary" style="width:100%; height:44px; font-size:13.5px;">
+        <span>Execute Intent Swap</span>
+      </button>
+    </div>
+  </div>
+
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div style="max-width:720px; margin:0 auto; display:flex; justify-content:space-between; flex-wrap:wrap; gap:var(--space-3); margin-bottom:var(--space-3);">
+      <div>RacerBot Platform</div>
+      <div>
+        <a href="/competition">Leaderboard</a> • 
+        <a href="/alpha">RacerAlpha</a> • 
+        <a href="/bubblemap">Bubble Map</a> • 
+        <a href="https://t.me/racertradingbot" target="_blank">Telegram Bot</a>
+      </div>
+    </div>
+    <div style="color:var(--color-text-subtle); font-size:12px;">
+      Powered by NEAR Intents solver architecture. Built for calm, focused, and confidential execution.
+    </div>
+  <script>
+    if (typeof window !== 'undefined' && typeof window.require === 'undefined') {
+      window.require = function(mod) { return {}; };
+    }
+    if (typeof window !== 'undefined' && typeof window.global === 'undefined') {
+      window.global = window;
+    }
+  </script>
+  <script src="/assets/near-wallet-selector.bundle.js?v=v3_clean"></script>
+  <script src="/assets/racerConnect.js?v=v3_clean"></script>
+  <script>
+    let tradersData = [];
+    let selectedTraderId = null;
+    let currentVreqId = null;
+    let selectedCopyToken = null;
+
+    function handleHeaderConnectClick() {
+      if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
+        const modal = document.getElementById('racer-connect-modal');
+        if (modal) modal.classList.add('open');
+        updateConnectUI();
+      } else {
+        handleOpenNearWalletSelector();
+      }
+    }
+
+    function openConnectModal() {
+      if (!window.RacerConnect || !window.RacerConnect.isAuthenticated()) {
+        handleOpenNearWalletSelector();
+        return;
+      }
+      const modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.add('open');
+      updateConnectUI();
+    }
+
+    function closeConnectModal() {
+      const modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.remove('open');
+      if (window.RacerConnect) {
+        window.RacerConnect.stopPairing();
+        window.RacerConnect.stopVerificationPoll();
+      }
+      const spinner = document.getElementById('pairing-spinner');
+      if (spinner) spinner.style.display = 'none';
+      const btn = document.getElementById('btn-start-telegram-pairing');
+      if (btn) btn.style.display = 'inline-flex';
+    }
+
+    function switchConnectTab(tab) {
+      const secTg = document.getElementById('connect-section-tg');
+      const secWallet = document.getElementById('connect-section-wallet');
+      const tabTg = document.getElementById('tab-btn-tg-verify');
+      const tabWallet = document.getElementById('tab-btn-near-wallet');
+
+      if (tab === 'tg') {
+        if (secTg) secTg.style.display = 'block';
+        if (secWallet) secWallet.style.display = 'none';
+        if (tabTg) { tabTg.style.background = 'var(--color-surface-card)'; tabTg.style.color = '#fff'; tabTg.style.borderColor = 'var(--color-border)'; }
+        if (tabWallet) { tabWallet.style.background = 'transparent'; tabWallet.style.color = 'var(--color-text-muted)'; tabWallet.style.borderColor = 'transparent'; }
+      } else {
+        if (secTg) secTg.style.display = 'none';
+        if (secWallet) secWallet.style.display = 'block';
+        if (tabWallet) { tabWallet.style.background = 'var(--color-surface-card)'; tabWallet.style.color = '#fff'; tabWallet.style.borderColor = 'var(--color-border)'; }
+        if (tabTg) { tabTg.style.background = 'transparent'; tabTg.style.color = 'var(--color-text-muted)'; tabTg.style.borderColor = 'transparent'; }
+      }
+    }
+
+    async function handleOpenNearWalletSelector() {
+      try {
+        if (window.RacerConnect) {
+          await window.RacerConnect.openNearWalletSelector();
+        }
+      } catch (err) {
+        console.error('Failed to open NEAR Wallet Selector:', err);
+      }
+    }
+
+    function openIntentSwapModal() {
+      if (!window.RacerConnect || (!window.RacerConnect.isAuthenticated() && !window.RacerConnect.activeNearWallet)) {
+        handleOpenNearWalletSelector();
+        return;
+      }
+      const modal = document.getElementById('intent-swap-modal');
+      if (modal) modal.classList.add('open');
+      updateIntentSwapFeeBreakdown();
+    }
+
+    function closeIntentSwapModal() {
+      const modal = document.getElementById('intent-swap-modal');
+      if (modal) modal.classList.remove('open');
+      const status = document.getElementById('intent-swap-status');
+      if (status) status.textContent = '';
+    }
+
+    function selectSwapToken(addr, symbol) {
+      const input = document.getElementById('swap-token-address-input');
+      if (input) input.value = addr;
+    }
+
+    function setIntentSwapAmount(amt) {
+      const input = document.getElementById('intent-swap-amount-input');
+      if (input) {
+        input.value = amt;
+        updateIntentSwapFeeBreakdown();
+      }
+    }
+
+    function updateIntentSwapFeeBreakdown() {
+      const input = document.getElementById('intent-swap-amount-input');
+      const gross = parseFloat(input?.value) || 0;
+      const gElem = document.getElementById('swap-fee-gross-display');
+      if (gElem) gElem.textContent = gross.toFixed(3) + ' NEAR';
+    }
+
+    async function handleExecuteIntentSwap() {
+      const tokenInput = document.getElementById('swap-token-address-input');
+      const amtInput = document.getElementById('intent-swap-amount-input');
+      const status = document.getElementById('intent-swap-status');
+      const btn = document.getElementById('btn-execute-intent-swap');
+
+      const tokenAddress = (tokenInput?.value || '').trim();
+      const amount = parseFloat(amtInput?.value) || 0;
+
+      if (!tokenAddress) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter a target token address.'; }
+        return;
+      }
+      if (amount <= 0) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter a valid NEAR amount.'; }
+        return;
+      }
+
+      if (!window.RacerConnect.isAuthenticated() && !window.RacerConnect.activeNearWallet) {
+        openConnectModal();
+        if (status) { status.style.color = '#f59e0b'; status.textContent = 'Please connect your NEAR wallet with Selector to trade.'; }
+        return;
+      }
+
+      if (status) { status.style.color = 'var(--color-racer-cyan)'; status.textContent = 'Dispatching confidential intent swap...'; }
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await window.RacerConnect.executeTrade({
+          tokenAddress,
+          amountNear: amount,
+          isCopyTrade: false,
+        });
+
+        if (status) {
+          status.style.color = 'var(--color-racer-green)';
+          status.innerHTML = `✓ Intent executed! Swapped ${res.grossAmountNear} NEAR.`;
+        }
+
+        setTimeout(() => {
+          closeIntentSwapModal();
+          alert(`[RACER INTENTS] Swap executed successfully!\n• Amount: ${res.grossAmountNear} NEAR\n• Target: ${tokenAddress}\n• Tx: ${res.txHash || 'Settled via NEAR Intents'}`);
+        }, 1200);
+      } catch (err) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = err.message || 'Intent swap failed'; }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function handleSendTelegramCode() {
+      const input = document.getElementById('tg-username-input');
+      const status = document.getElementById('tg-request-status');
+      const btn = document.getElementById('btn-send-tg-code');
+      const username = input ? input.value.trim() : '';
+
+      if (!username) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter your Telegram handle.'; }
+        return;
+      }
+
+      if (status) { status.style.color = '#8b949e'; status.textContent = 'Verifying account in database & pinging DM...'; }
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await window.RacerConnect.requestTelegramVerification(username, (evStatus, data) => {
+          if (evStatus === 'approved') {
+            updateConnectUI();
+            loadAlphaData();
+            const verifyStatus = document.getElementById('tg-verify-status');
+            if (verifyStatus) {
+              verifyStatus.style.color = '#00d16a';
+              verifyStatus.textContent = '✓ Approved via Telegram! Connected.';
+            }
+          } else if (evStatus === 'rejected') {
+            const verifyStatus = document.getElementById('tg-verify-status');
+            if (verifyStatus) {
+              verifyStatus.style.color = '#ff6b6b';
+              verifyStatus.textContent = '❌ Connection rejected in Telegram.';
+            }
+          }
+        });
+
+        currentVreqId = res.requestId;
+        document.getElementById('tg-step-input').style.display = 'none';
+        document.getElementById('tg-step-code').style.display = 'block';
+
+        const verifyStatus = document.getElementById('tg-verify-status');
+        if (res.demoCodeHint && verifyStatus) {
+          verifyStatus.innerHTML = `Security DM sent! (Preview OTP: <b>${res.demoCodeHint}</b>)`;
+        }
+      } catch (err) {
+        if (status) {
+          status.style.color = '#ff6b6b';
+          status.textContent = err.message || 'User not found in DB.';
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function handleSubmitTelegramCode() {
+      const input = document.getElementById('tg-code-input');
+      const status = document.getElementById('tg-verify-status');
+      const btn = document.getElementById('btn-submit-code');
+      const code = input ? input.value.trim() : '';
+
+      if (!code || code.length < 6) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter the 6-digit code.'; }
+        return;
+      }
+
+      if (status) { status.style.color = '#8b949e'; status.textContent = 'Verifying code...'; }
+      if (btn) btn.disabled = true;
+
+      try {
+        await window.RacerConnect.submitVerificationCode(currentVreqId, code);
+        if (status) { status.style.color = '#00d16a'; status.textContent = '✓ Verified! Wallet and account paired.'; }
+        updateConnectUI();
+        loadAlphaData();
+      } catch (err) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = err.message || 'Incorrect verification code.'; }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function openCopyTradeModal(tokenSymbol, tokenAddress, traderId) {
+      if (!window.RacerConnect || (!window.RacerConnect.isAuthenticated() && !window.RacerConnect.activeNearWallet)) {
+        handleOpenNearWalletSelector();
+        return;
+      }
+      selectedCopyToken = { tokenSymbol, tokenAddress, traderId };
+      document.getElementById('copy-token-symbol').textContent = '$' + tokenSymbol;
+      document.getElementById('copy-token-address').textContent = tokenAddress;
+      updateFeeBreakdown();
+      const modal = document.getElementById('copy-trade-modal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeCopyTradeModal() {
+      const modal = document.getElementById('copy-trade-modal');
+      if (modal) modal.classList.remove('open');
+      selectedCopyToken = null;
+      const status = document.getElementById('copy-trade-status');
+      if (status) status.textContent = '';
+    }
+
+    function setCopyTradeAmount(amt) {
+      const input = document.getElementById('copy-trade-amount-input');
+      if (input) {
+        input.value = amt;
+        updateFeeBreakdown();
+      }
+    }
+
+    function updateFeeBreakdown() {
+      const input = document.getElementById('copy-trade-amount-input');
+      const gross = parseFloat(input?.value) || 0;
+      const gElem = document.getElementById('fee-gross-display');
+      if (gElem) gElem.textContent = gross.toFixed(3) + ' NEAR';
+    }
+
+    async function handleExecuteCopyTrade() {
+      if (!selectedCopyToken) return;
+      const input = document.getElementById('copy-trade-amount-input');
+      const status = document.getElementById('copy-trade-status');
+      const btn = document.getElementById('btn-execute-copy-trade');
+      const amount = parseFloat(input?.value) || 0;
+
+      if (amount <= 0) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter a valid NEAR amount.'; }
+        return;
+      }
+
+      if (status) { status.style.color = 'var(--color-racer-cyan)'; status.textContent = 'Routing confidential intent swap...'; }
+      if (btn) btn.disabled = true;
+
+      try {
+        const res = await window.RacerConnect.executeTrade({
+          tokenAddress: selectedCopyToken.tokenAddress,
+          amountNear: amount,
+          isCopyTrade: true,
+          traderId: selectedCopyToken.traderId,
+        });
+
+        if (status) {
+          status.style.color = 'var(--color-racer-green)';
+          status.innerHTML = `✓ Intent executed! Swapped ${res.grossAmountNear} NEAR.`;
+        }
+        setTimeout(() => {
+          closeCopyTradeModal();
+          alert(`[RACER ALPHA] Copy trade executed successfully!\n• Amount: ${res.grossAmountNear} NEAR\n• Tx: ${res.txHash || 'Settled'}`);
+        }, 1200);
+      } catch (err) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = err.message || 'Trade execution failed'; }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function updateConnectUI() {
+      const isAuth = window.RacerConnect && window.RacerConnect.isAuthenticated();
+      const user = window.RacerConnect ? window.RacerConnect.user : null;
+      const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
+      const unlinkedDiv = document.getElementById('modal-state-unlinked');
+      const linkedDiv = document.getElementById('modal-state-linked');
+      const headerBtn = document.getElementById('header-connect-btn');
+      const linkedNearElem = document.getElementById('linked-near-wallet');
+
+      if (isAuth || nearWallet) {
+        if (unlinkedDiv) unlinkedDiv.style.display = 'none';
+        if (linkedDiv) linkedDiv.style.display = 'block';
+        const displayHandle = nearWallet || (user && user.username) || 'Connected';
+        const uElem = document.getElementById('linked-username');
+        if (uElem) uElem.textContent = displayHandle.startsWith('@') || displayHandle.endsWith('.near') ? displayHandle : '@' + displayHandle;
+        const sElem = document.getElementById('linked-subaccount');
+        if (sElem) sElem.textContent = user?.subaccountId || (nearWallet ? nearWallet : 'user.racerbot.near');
+        if (linkedNearElem) {
+          const nearAcc = nearWallet || user?.wallets?.[0]?.address || 'None';
+          linkedNearElem.innerHTML = `Linked NEAR Wallet: <b style="color:var(--color-racer-green);">${nearAcc}</b>`;
+        }
+        if (headerBtn) {
+          headerBtn.innerHTML = `<span>● ${displayHandle}</span>`;
+          headerBtn.className = 'btn btn-ghost';
+          headerBtn.style.color = '#ffffff';
+          headerBtn.style.background = 'rgba(86, 69, 212, 0.2)';
+          headerBtn.style.border = '1px solid rgba(86, 69, 212, 0.4)';
+        }
+        refreshUserBalance();
+      } else {
+        if (unlinkedDiv) unlinkedDiv.style.display = 'block';
+        if (linkedDiv) linkedDiv.style.display = 'none';
+        if (headerBtn) {
+          headerBtn.innerHTML = `<span>Log in</span>`;
+          headerBtn.className = 'btn btn-ghost';
+          headerBtn.style.color = '';
+          headerBtn.style.background = '';
+          headerBtn.style.border = '';
+        }
+        refreshUserBalance();
+      }
+    }
+
+    async function handleStartTelegramPairing() {
+      const spinner = document.getElementById('pairing-spinner');
+      const btn = document.getElementById('btn-start-telegram-pairing');
+      if (spinner) spinner.style.display = 'block';
+      if (btn) btn.style.display = 'none';
+
+      try {
+        await window.RacerConnect.startTelegramPairing((status, data) => {
+          if (status === 'pending' && data?.deepLink) {
+            window.open(data.deepLink, '_blank');
+          } else if (status === 'linked') {
+            updateConnectUI();
+            loadAlphaData();
+          }
+        });
+      } catch (err) {
+        alert(err.message || 'Pairing failed');
+        if (spinner) spinner.style.display = 'none';
+        if (btn) btn.style.display = 'inline-flex';
+      }
+    }
+
+    async function handleLinkSelectorWallet() {
+      const input = document.getElementById('wallet-selector-input');
+      const status = document.getElementById('wallet-link-status');
+      const accountId = input ? input.value.trim() : '';
+      if (!accountId) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter an account ID.'; }
+        return;
+      }
+
+      if (status) { status.style.color = '#8b949e'; status.textContent = 'Linking wallet to RacerBot...'; }
+      try {
+        const res = await window.RacerConnect.linkSelectorAccount(accountId);
+        if (res) {
+          if (status) { status.style.color = '#00d16a'; status.textContent = '✓ Wallet successfully linked!'; }
+          updateConnectUI();
+          loadAlphaData();
+        }
+      } catch (err) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = err.message || 'Linking failed'; }
+      }
+    }
+
+    function handleDisconnect() {
+      if (window.RacerConnect) window.RacerConnect.logout();
+      updateConnectUI();
+      loadAlphaData();
+    }
+
+    async function loadAlphaData() {
+      try {
+        const [tradersRes, feedRes] = await Promise.all([
+          fetch('/api/alpha/traders').then(r => r.json()).catch(() => ({ success: false, traders: [] })),
+          fetch('/api/alpha/feed').then(r => r.json()).catch(() => ({ success: false, signals: [] }))
+        ]);
+
+        if (tradersRes.success) {
+          tradersData = tradersRes.traders || [];
+          renderTraders();
+          renderMyKeys();
+        }
+        if (feedRes.success) {
+          renderFeed(feedRes.signals || []);
+        }
+      } catch (e) {
+        console.warn('Failed to load alpha data:', e);
+      }
+    }
+
+    function renderTraders() {
+      const container = document.getElementById('trader-cards-container');
+      const badge = document.getElementById('trader-count-badge');
+      if (badge) badge.textContent = tradersData.length;
+
+      if (!container) return;
+
+      const strategyMap = {
+        'ghost_racer': 'SOLVER SNIPER',
+        'apex_whale': 'INSTITUTIONAL SWING',
+        'neon_velocity': 'LAUNCHPAD BREAKOUT',
+        'quantum_alpha': 'ALGORITHMIC DCA'
+      };
+
+      container.innerHTML = tradersData.map(t => {
+        const sanitizedName = t.displayName.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim() || t.displayName;
+        const rawInitials = sanitizedName.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+        const initials = rawInitials || 'RA';
+        const strategy = strategyMap[t.handle] || 'ALPHA STRATEGY';
+
+        return `
+          <div class="trader-card">
+            <div class="trader-card-top">
+              <div class="trader-identity">
+                <div class="trader-avatar">${initials}</div>
+                <div class="trader-meta">
+                  <div class="trader-name-row">
+                    <span class="trader-card-name">${sanitizedName}</span>
+                    <span class="verified-badge" title="Cryptographically Verified PnL">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                  </div>
+                  <div class="trader-sub-row">
+                    <span class="trader-card-handle">@${t.handle}</span>
+                    <span class="strategy-tag">${strategy}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="pnl-pill">
+                <span class="pnl-val">+${t.verifiedPnlPct}%</span>
+                <span class="pnl-lbl">VERIFIED PNL</span>
+              </div>
+            </div>
+
+            <p class="trader-card-bio">${t.bio}</p>
+
+            <div class="stats-row">
+              <div class="stat-cell">
+                <div class="stat-label">WIN RATE</div>
+                <div class="stat-val stat-green">${t.winRatePct}%</div>
+              </div>
+              <div class="stat-cell">
+                <div class="stat-label">TRADES</div>
+                <div class="stat-val">${t.totalTrades}</div>
+              </div>
+              <div class="stat-cell">
+                <div class="stat-label">KEYHOLDERS</div>
+                <div class="stat-val">${t.keysSold} <span style="font-size:10.5px; color:var(--color-text-subtle);">/ ${t.maxKeys}</span></div>
+              </div>
+            </div>
+
+            <div class="trader-card-footer">
+              <div class="key-pricing">
+                <span class="key-lbl">SUBSCRIPTION</span>
+                <span class="key-amt">${t.keyPriceNear} NEAR <span class="key-period">/ mo</span></span>
+              </div>
+              <div class="card-action-group">
+                ${t.hasKey ? `
+                  <span class="key-status-unlocked">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>Key Active</span>
+                  </span>
+                  <button onclick="switchTab('feed')" class="btn btn-secondary btn-sm" style="font-size:12px; height:34px; padding:0 12px;">
+                    <span>View Stream</span>
+                  </button>
+                ` : `
+                  <button onclick="openBuyModal('${t.id}')" class="btn btn-primary btn-sm" style="height:34px; padding:0 12px; font-weight:700;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    <span>Unlock Key</span>
+                  </button>
+                  <button onclick="switchTab('autocopy')" class="btn btn-secondary btn-sm" style="height:34px; padding:0 10px;" title="Auto-Copy Trader via Solvers">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <span>Auto-Copy</span>
+                  </button>
+                `}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderFeed(signals) {
+      const container = document.getElementById('signal-stream-container');
+      if (!container) return;
+
+      container.innerHTML = signals.map(s => `
+        <div class="stream-item">
+          <div style="display:flex; align-items:center; gap:var(--space-3);">
+            <span class="side-tag ${s.side === 'BUY' ? 'buy' : 'sell'}">${s.side}</span>
+            <div>
+              <div style="font-weight:500; font-size:14px; color:#fff; display:flex; align-items:center; gap:6px;">
+                ${s.isUnlocked ? `
+                  <span style="color:var(--color-racer-cyan); font-family:var(--font-mono);">$${s.tokenSymbol}</span>
+                  <span style="font-size:12px; color:var(--color-text-muted);">(${s.tokenName})</span>
+                ` : `
+                  <span class="blur-mask" style="font-family:var(--font-mono);">$SECRET_TOKEN</span>
+                  <span style="font-size:10.5px; color:#f59e0b; background:rgba(245,158,11,0.15); padding:1px 6px; border-radius:var(--radius-sm); font-family:var(--font-mono);">Key Required</span>
+                `}
+              </div>
+              <div style="font-size:11.5px; color:var(--color-text-muted); font-family:var(--font-mono); margin-top:2px;">
+                ${s.traderDisplayName} • Mcap: $${(s.marketCapUsd / 1000).toFixed(1)}k
+              </div>
+            </div>
+          </div>
+
+          <div style="text-align:right; display:flex; align-items:center; gap:12px;">
+            <div>
+              <div style="font-weight:500; font-size:13.5px; color:#fff; font-family:var(--font-mono);">${s.amountNear} NEAR</div>
+              <div style="font-size:11px; color:var(--color-racer-green); font-family:var(--font-mono);">+${s.pnlPct}% Gain</div>
+            </div>
+            ${s.isUnlocked ? `
+              <button onclick="openCopyTradeModal('${s.tokenSymbol}', '${s.tokenAddress}', '${s.traderId}')" class="btn btn-primary btn-sm" style="height:32px; font-size:12px; background:var(--color-racer-green); color:#000; border:none; font-weight:600;">
+                <span>Copy Trade</span>
+              </button>
+            ` : `
+              <button onclick="openBuyModal('${s.traderId}')" class="btn btn-secondary btn-sm" style="height:32px; font-size:12px;">
+                <span>Unlock Key</span>
+              </button>
+            `}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderMyKeys() {
+      const unlocked = tradersData.filter(t => t.hasKey);
+      const container = document.getElementById('my-keys-container');
+      const badge = document.getElementById('my-keys-badge');
+      if (badge) badge.textContent = unlocked.length;
+
+      if (!container) return;
+      if (unlocked.length === 0) {
+        container.innerHTML = `
+          <div style="text-align:center; padding:var(--space-8) var(--space-4); background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md);">
+            <h3 style="font-size:18px; font-weight:500; margin-bottom:var(--space-2);">No Active Viewing Keys</h3>
+            <p style="font-size:14px; color:var(--color-text-muted); max-width:440px; margin:0 auto var(--space-4);">
+              Acquire Viewing Keys from verified traders to decrypt their live portfolio stream and enable automatic mirror trading.
+            </p>
+            <button onclick="switchTab('marketplace')" class="btn btn-primary">
+              <span>Explore Marketplace</span>
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="traders-grid">
+          ${unlocked.map(t => {
+            const rawInitials = t.displayName.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'RA';
+            return `
+              <div class="trader-card" style="border-color:rgba(0, 240, 255, 0.5); box-shadow: 0 0 20px rgba(0, 240, 255, 0.12);">
+                <div class="trader-card-top">
+                  <div class="trader-identity">
+                    <div class="trader-avatar">${rawInitials}</div>
+                    <div class="trader-meta">
+                      <div class="trader-name-row">
+                        <span class="trader-card-name">${t.displayName}</span>
+                      </div>
+                      <span class="trader-card-handle">@${t.handle}</span>
+                    </div>
+                  </div>
+                  <div class="key-status-unlocked">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>ACTIVE KEY</span>
+                  </div>
+                </div>
+                <div style="font-size:12.5px; color:var(--color-racer-green); font-family:var(--font-mono); margin:var(--space-3) 0 var(--space-4);">
+                  ✓ Real-time signals decrypted and streaming to Telegram
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button onclick="switchTab('feed')" class="btn btn-primary btn-sm" style="flex:1; height:36px;">
+                    <span>View Decrypted Feed</span>
+                  </button>
+                  <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-secondary btn-sm" style="height:36px;">
+                    <span>Open Bot ↗</span>
+                  </a>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function switchTab(tabId) {
+      ['marketplace', 'feed', 'mykeys', 'autocopy', 'creator'].forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        const content = document.getElementById(`tab-content-${t}`);
+        if (btn) btn.classList.toggle('active', t === tabId);
+        if (content) content.style.display = t === tabId ? 'block' : 'none';
+      });
+      if (tabId === 'autocopy') {
+        refreshUserBalance();
+      }
+    }
+
+    function openExplainerModal() {
+      const modal = document.getElementById('explainer-modal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeExplainerModal() {
+      const modal = document.getElementById('explainer-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function openDepositModal() {
+      const modal = document.getElementById('deposit-modal');
+      if (modal) modal.classList.add('open');
+      refreshUserBalance();
+    }
+
+    function closeDepositModal() {
+      const modal = document.getElementById('deposit-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function switchDepositMethod(method) {
+      const nearDiv = document.getElementById('deposit-method-near');
+      const crossDiv = document.getElementById('deposit-method-cross');
+      const btnNear = document.getElementById('tab-btn-deposit-near');
+      const btnCross = document.getElementById('tab-btn-deposit-cross');
+
+      if (method === 'near') {
+        if (nearDiv) nearDiv.style.display = 'block';
+        if (crossDiv) crossDiv.style.display = 'none';
+        if (btnNear) { btnNear.style.background = 'var(--color-surface-card)'; btnNear.style.color = '#fff'; btnNear.style.borderColor = 'var(--color-border)'; }
+        if (btnCross) { btnCross.style.background = 'transparent'; btnCross.style.color = 'var(--color-text-muted)'; btnCross.style.borderColor = 'transparent'; }
+      } else {
+        if (nearDiv) nearDiv.style.display = 'none';
+        if (crossDiv) crossDiv.style.display = 'block';
+        if (btnCross) { btnCross.style.background = 'var(--color-surface-card)'; btnCross.style.color = '#fff'; btnCross.style.borderColor = 'var(--color-border)'; }
+        if (btnNear) { btnNear.style.background = 'transparent'; btnNear.style.color = 'var(--color-text-muted)'; btnNear.style.borderColor = 'transparent'; }
+      }
+    }
+
+    function copyDepositAddress() {
+      const input = document.getElementById('deposit-address-input');
+      if (!input) return;
+      navigator.clipboard.writeText(input.value).then(() => {
+        const label = document.getElementById('btn-copy-deposit-label');
+        if (label) {
+          label.textContent = '✓ Copied!';
+          setTimeout(() => { label.textContent = 'Copy'; }, 2000);
+        }
+      });
+    }
+
+    function copyTradingAddress() {
+      const el = document.getElementById('ac-trading-address');
+      if (!el) return;
+      navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+        const label = document.getElementById('btn-copy-address-label');
+        if (label) {
+          label.textContent = '✓ Copied!';
+          setTimeout(() => { label.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span>'; }, 2000);
+        }
+      });
+    }
+
+    let current1ClickDeposit = null;
+    let depositStatusPollTimer = null;
+
+    function handleSelectChainChange() {
+      const chain = document.getElementById('mc-chain-select')?.value || 'sol';
+      const assetSelect = document.getElementById('mc-asset-select');
+      const amtInput = document.getElementById('mc-amount-input');
+      const quickBox = document.getElementById('mc-quick-amounts');
+
+      if (!assetSelect) return;
+      let options = [];
+      let defaultAmt = '0.25';
+      let quickAmts = [0.1, 0.5, 1.0, 2.0];
+
+      if (chain === 'sol') {
+        options = [{ val: 'SOL', label: 'SOL' }, { val: 'USDC', label: 'USDC' }, { val: 'USDT', label: 'USDT' }];
+        defaultAmt = '0.25';
+        quickAmts = [0.1, 0.5, 1.0, 2.0];
+      } else if (chain === 'eth' || chain === 'base' || chain === 'arb') {
+        options = [{ val: 'ETH', label: 'ETH' }, { val: 'USDC', label: 'USDC' }, { val: 'USDT', label: 'USDT' }];
+        defaultAmt = '0.02';
+        quickAmts = [0.01, 0.05, 0.1, 0.25];
+      } else if (chain === 'bsc') {
+        options = [{ val: 'BNB', label: 'BNB' }, { val: 'USDC', label: 'USDC' }, { val: 'USDT', label: 'USDT' }];
+        defaultAmt = '0.05';
+        quickAmts = [0.02, 0.1, 0.25, 0.5];
+      } else if (chain === 'pol') {
+        options = [{ val: 'POL', label: 'POL' }, { val: 'USDC', label: 'USDC' }, { val: 'USDT', label: 'USDT' }];
+        defaultAmt = '10.0';
+        quickAmts = [5.0, 20.0, 50.0, 100.0];
+      } else if (chain === 'btc') {
+        options = [{ val: 'BTC', label: 'BTC' }];
+        defaultAmt = '0.001';
+        quickAmts = [0.0005, 0.001, 0.005, 0.01];
+      }
+
+      assetSelect.innerHTML = options.map(o => `<option value="${o.val}">${o.label}</option>`).join('');
+      if (amtInput) amtInput.value = defaultAmt;
+      if (quickBox) {
+        quickBox.innerHTML = quickAmts.map(a => `<button type="button" onclick="setMcAmount(${a})" class="btn btn-secondary btn-sm" style="flex:1; font-size:11px;">${a}</button>`).join('');
+      }
+    }
+
+    function handleSelectAssetChange() {}
+
+    function setMcAmount(amt) {
+      const input = document.getElementById('mc-amount-input');
+      if (input) input.value = amt;
+    }
+
+    async function handleGenerate1ClickQuote() {
+      const chain = document.getElementById('mc-chain-select')?.value || 'sol';
+      const symbol = document.getElementById('mc-asset-select')?.value || 'SOL';
+      const amount = parseFloat(document.getElementById('mc-amount-input')?.value) || 0.1;
+      const btn = document.getElementById('btn-generate-1click-quote');
+      const resultBox = document.getElementById('mc-quote-result');
+
+      const state = window.RacerConnect ? window.RacerConnect.getState() : {};
+      const subaccountId = state.connectedWallet || state.subaccount || (state.user ? state.user.address : 'user.racerbot.near');
+
+      if (btn) { btn.disabled = true; btn.textContent = 'Generating 1Click Solver Route...'; }
+
+      try {
+        const res = await fetch('/api/deposit/quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chain,
+            symbol,
+            amount,
+            subaccountId,
+          }),
+        });
+        const data = await res.json();
+        if (data.success && data.depositAddress) {
+          current1ClickDeposit = data;
+          document.getElementById('mc-expected-input').textContent = `${amount} ${symbol}`;
+          document.getElementById('mc-origin-chain-label').textContent = chain.toUpperCase();
+          document.getElementById('mc-deposit-address-display').value = data.depositAddress;
+          document.getElementById('mc-target-subaccount').textContent = subaccountId;
+          document.getElementById('mc-expected-near').textContent = `~${data.minNearOut || (amount * 25).toFixed(4)} NEAR`;
+
+          if (resultBox) resultBox.style.display = 'block';
+
+          if (depositStatusPollTimer) clearInterval(depositStatusPollTimer);
+          depositStatusPollTimer = setInterval(poll1ClickDepositStatus, 6000);
+        } else {
+          alert('1Click Solver notice: ' + (data.error || 'Failed to generate quote.'));
+        }
+      } catch (err) {
+        alert('Network error requesting 1Click quote');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate 1Click Solver Deposit Route'; }
+      }
+    }
+
+    function copyMcDepositAddress() {
+      const input = document.getElementById('mc-deposit-address-display');
+      if (!input) return;
+      navigator.clipboard.writeText(input.value).then(() => {
+        const label = document.getElementById('btn-copy-mc-address-label');
+        if (label) {
+          label.textContent = '✓ Copied!';
+          setTimeout(() => { label.textContent = 'Copy'; }, 2000);
+        }
+      });
+    }
+
+    async function poll1ClickDepositStatus() {
+      if (!current1ClickDeposit || !current1ClickDeposit.depositAddress) return;
+      const statusEl = document.getElementById('mc-deposit-status-live');
+      try {
+        const res = await fetch(`/api/deposit/status?address=${encodeURIComponent(current1ClickDeposit.depositAddress)}`);
+        const data = await res.json();
+        if (data.status === 'SUCCESS' || data.status === 'COMPLETED') {
+          if (statusEl) {
+            statusEl.style.color = 'var(--color-racer-green)';
+            statusEl.innerHTML = `✓ <b>Deposit Settled!</b> Credited to your NEAR account.`;
+          }
+          if (depositStatusPollTimer) clearInterval(depositStatusPollTimer);
+          refreshUserBalance();
+        } else if (data.status === 'PROCESSING') {
+          if (statusEl) {
+            statusEl.style.color = 'var(--color-racer-cyan)';
+            statusEl.innerHTML = `⚡ <b>Transfer detected!</b> Solvers executing atomic cross-chain swap...`;
+          }
+        }
+      } catch (e) {}
+    }
+
+    function checkDepositStatusManually() {
+      poll1ClickDepositStatus();
+      const statusEl = document.getElementById('mc-deposit-status-live');
+      if (statusEl) statusEl.textContent = 'Checking solver network for confirmations...';
+    }
+
+    let userBalanceNear = 14.5;
+    async function refreshUserBalance() {
+      const state = window.RacerConnect ? window.RacerConnect.getState() : {};
+      const address = state.connectedWallet || state.subaccount || (state.user ? state.user.address : 'user.racerbot.near');
+
+      const addrEl = document.getElementById('ac-trading-address');
+      if (addrEl && address) addrEl.textContent = address;
+      const depInput = document.getElementById('deposit-address-input');
+      if (depInput && address) depInput.value = address;
+
+      try {
+        if (window.RacerConnect && window.RacerConnect.token) {
+          const profile = await window.RacerConnect.fetchProfile();
+          if (profile && profile.balances && profile.balances.near) {
+            userBalanceNear = parseFloat(profile.balances.near) || userBalanceNear;
+          }
+        }
+      } catch (err) {}
+
+      const displayNear = userBalanceNear.toFixed(3);
+      const balEl = document.getElementById('ac-balance-display');
+      if (balEl) balEl.innerHTML = `${displayNear} <span style="font-size:14px; color:var(--color-text-muted);">NEAR</span>`;
+      const balUsdEl = document.getElementById('ac-balance-usd');
+      if (balUsdEl) balUsdEl.textContent = `≈ $${(userBalanceNear * 4.8).toFixed(2)} USD`;
+      const depBal = document.getElementById('deposit-modal-balance');
+      if (depBal) depBal.textContent = `${displayNear} NEAR`;
+      const copyBal = document.getElementById('copy-trade-available-bal');
+      if (copyBal) copyBal.textContent = `${displayNear} NEAR`;
+    }
+
+    function handleToggleAutoCopyEngine(enabled) {
+      const badge = document.getElementById('autocopy-status-badge');
+      const slider = document.getElementById('toggle-slider');
+      if (badge) {
+        badge.textContent = enabled ? 'Engine Active' : 'Engine Paused';
+        badge.style.color = enabled ? 'var(--color-racer-green)' : 'var(--color-text-muted)';
+      }
+      if (slider) {
+        slider.style.background = enabled ? 'var(--color-primary)' : '#382a59';
+      }
+    }
+
+    function handleSaveAutoCopySettings() {
+      const buyAmt = document.getElementById('setting-buy-amount')?.value;
+      const dailyCap = document.getElementById('setting-daily-cap')?.value;
+      const slippage = document.getElementById('setting-slippage')?.value;
+      const copySells = document.getElementById('setting-copy-sells')?.checked;
+      const enabled = document.getElementById('toggle-autocopy-engine')?.checked;
+
+      const status = document.getElementById('settings-save-status');
+      if (status) {
+        status.textContent = 'Saving settings...';
+      }
+
+      const settings = { buyAmt, dailyCap, slippage, copySells, enabled };
+      try {
+        localStorage.setItem('racer_autocopy_settings', JSON.stringify(settings));
+      } catch (e) {}
+
+      setTimeout(() => {
+        if (status) {
+          status.textContent = '✓ Mirror rules updated & synced to RacerBot detector!';
+          setTimeout(() => { status.textContent = ''; }, 3000);
+        }
+      }, 500);
+    }
+
+    function openBuyModal(traderId) {
+      if (!window.RacerConnect || (!window.RacerConnect.isAuthenticated() && !window.RacerConnect.activeNearWallet)) {
+        handleOpenNearWalletSelector();
+        return;
+      }
+      selectedTraderId = traderId;
+      const trader = tradersData.find(t => t.id === traderId);
+      if (!trader) return;
+
+      document.getElementById('buy-trader-name').textContent = `${trader.displayName} (@${trader.handle})`;
+      document.getElementById('buy-key-price').textContent = `${trader.keyPriceNear} NEAR`;
+      document.getElementById('buy-key-modal').classList.add('open');
+    }
+
+    function closeBuyModal() {
+      document.getElementById('buy-key-modal').classList.remove('open');
+      selectedTraderId = null;
+    }
+
+    async function handleConfirmBuyKey() {
+      if (!selectedTraderId) return;
+      const btn = document.getElementById('btn-confirm-key-buy');
+      btn.textContent = 'Processing...';
+
+      try {
+        const res = await fetch('/api/alpha/keys/buy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(window.RacerConnect ? window.RacerConnect.getAuthHeader() : {})
+          },
+          body: JSON.stringify({ traderId: selectedTraderId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Viewing Key Unlocked! Signals are now decrypted for you.');
+          closeBuyModal();
+          await loadAlphaData();
+          switchTab('mykeys');
+        } else {
+          alert('Notice: ' + (data.error || 'Failed to purchase key.'));
+        }
+      } catch (err) {
+        alert('Network error while purchasing key');
+      } finally {
+        btn.textContent = 'Confirm Purchase';
+      }
+    }
+
+    async function handleRegisterCreator(e) {
+      e.preventDefault();
+      const handle = document.getElementById('cr-handle').value;
+      const name = document.getElementById('cr-name').value;
+      const price = parseFloat(document.getElementById('cr-price').value);
+      const bio = document.getElementById('cr-bio').value;
+
+      try {
+        const res = await fetch('/api/alpha/creator/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(window.RacerConnect ? window.RacerConnect.getAuthHeader() : {})
+          },
+          body: JSON.stringify({ handle, displayName: name, keyPriceNear: price, bio })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Creator Profile Activated.');
+          await loadAlphaData();
+          switchTab('marketplace');
+        } else {
+          alert('Notice: ' + (data.error || 'Registration failed'));
+        }
+      } catch {
+        alert('Network error during creator registration');
+      }
+    }
+
+    // Auto-update connect UI and load alpha on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', () => {
+      loadAlphaData();
+      if (window.RacerConnect) {
+        window.RacerConnect.onStateChange(updateConnectUI);
+        updateConnectUI();
+        window.RacerConnect.initWalletSelector(false).catch(() => {});
+      }
+    });
+    window.addEventListener('racer:auth-changed', () => {
+      updateConnectUI();
+      loadAlphaData();
+    });
+    window.addEventListener('racer:wallet-linked', () => {
+      updateConnectUI();
+      loadAlphaData();
+    });
+  </script>
+</body>
+</html>

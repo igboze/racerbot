@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Fleet — Multi-Wallet Coordination Engine | RacerBot</title>
+  <meta name="description" content="Deploy, disburse, and coordinate up to 25 sovereign NEAR subaccounts in parallel. Sub-second bundle buys, distributed sybil evasion, and synchronized 1-click profit sweeps." />
+  
+  <link rel="stylesheet" href="/assets/racer-design-system.css" />
+  <link rel="stylesheet" href="/assets/near-wallet-selector.css" />
+  
+  <style>
+    /* Fleet Specific Terminal Styles adhering to MASTER DESIGN SYSTEM */
+    .fleet-hero {
+      padding: 48px 0 24px;
+      border-bottom: 1px solid var(--color-border);
+      position: relative;
+      overflow: hidden;
+    }
+    .fleet-hero::before {
+      content: '';
+      position: absolute;
+      top: -120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(0, 240, 255, 0.12) 0%, rgba(8, 9, 11, 0) 70%);
+      pointer-events: none;
+    }
+    .hud-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin: 24px 0 32px;
+    }
+    @media (max-width: 992px) {
+      .hud-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 576px) {
+      .hud-grid { grid-template-columns: 1fr; }
+    }
+    .hud-card {
+      background: var(--color-surface-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      transition: border-color var(--duration-fast);
+      position: relative;
+    }
+    .hud-card:hover {
+      border-color: var(--color-border-glow);
+    }
+    .hud-label {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .hud-val {
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .hud-sub {
+      font-size: 13px;
+      color: var(--color-text-muted);
+    }
+    .hud-val.cyan { color: var(--color-primary); }
+    .hud-val.green { color: var(--color-racer-green); }
+
+    .terminal-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .terminal-split {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    @media (max-width: 1024px) {
+      .terminal-split { grid-template-columns: 1fr; }
+    }
+
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid var(--color-border);
+      gap: 2px;
+      margin-bottom: 20px;
+      background: var(--color-surface);
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      padding: 4px 4px 0;
+    }
+    .tab-btn {
+      padding: 12px 18px;
+      background: transparent;
+      border: none;
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all var(--duration-fast);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tab-btn:hover {
+      color: var(--color-text);
+    }
+    .tab-btn.active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+      background: rgba(0, 240, 255, 0.05);
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--color-text-subtle);
+      margin-bottom: 6px;
+    }
+    .terminal-input {
+      width: 100%;
+      height: 44px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      color: var(--color-text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      padding: 0 14px;
+      transition: border-color var(--duration-fast);
+      box-sizing: border-box;
+    }
+    .terminal-input:focus {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 1px var(--color-primary);
+    }
+
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .token-chip, .amt-chip {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+    }
+    .token-chip:hover, .amt-chip:hover {
+      border-color: var(--color-primary);
+      color: var(--color-text);
+    }
+    .amt-chip.active {
+      background: rgba(0, 240, 255, 0.12);
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      font-weight: 700;
+    }
+
+    .calc-box {
+      background: var(--color-surface);
+      border: 1px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin: 18px 0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--color-text-muted);
+      line-height: 1.8;
+    }
+    .calc-row {
+      display: flex;
+      justify-content: space-between;
+    }
+    .calc-val {
+      color: var(--color-text);
+      font-weight: 600;
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: var(--radius-full);
+      font-weight: 600;
+    }
+    .badge-status.active {
+      background: rgba(0, 230, 118, 0.12);
+      color: var(--color-racer-green);
+      border: 1px solid rgba(0, 230, 118, 0.3);
+    }
+    .badge-status.offline {
+      background: rgba(255, 77, 77, 0.12);
+      color: var(--color-danger);
+      border: 1px solid rgba(255, 77, 77, 0.3);
+    }
+
+    .fleet-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      background: var(--color-surface-card);
+      margin-bottom: 32px;
+    }
+    .fleet-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      text-align: left;
+    }
+    .fleet-table th {
+      padding: 14px 18px;
+      background: var(--color-surface);
+      color: var(--color-text-subtle);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .fleet-table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--color-border-subtle);
+      color: var(--color-text);
+      vertical-align: middle;
+    }
+    .fleet-table tr:hover td {
+      background: var(--color-surface-hover);
+    }
+    .wallet-addr {
+      color: var(--color-primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .wallet-addr:hover {
+      text-decoration: underline;
+    }
+
+    .action-stream {
+      background: #050608;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--color-text-muted);
+      max-height: 180px;
+      overflow-y: auto;
+      margin-top: 14px;
+      display: none;
+      line-height: 1.6;
+    }
+    .stream-line {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .stream-time { color: var(--color-text-subtle); }
+    .stream-ok { color: var(--color-racer-green); font-weight: 600; }
+    .stream-err { color: var(--color-danger); }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 20px;
+    }
+    .modal-card {
+      background: var(--color-surface-card);
+      border: 1px solid var(--color-border-glow);
+      border-radius: var(--radius-xl);
+      max-width: 520px;
+      width: 100%;
+      padding: 28px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.8);
+      position: relative;
+    }
+    .modal-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: transparent;
+      border: none;
+      color: var(--color-text-subtle);
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .tier-option {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: all var(--duration-fast);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .tier-option:hover, .tier-option.selected {
+      border-color: var(--color-primary);
+      background: rgba(0, 240, 255, 0.04);
+    }
+    .tier-name {
+      font-weight: 700;
+      color: var(--color-text);
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+    .tier-desc {
+      font-size: 12px;
+      color: var(--color-text-muted);
+    }
+    .tier-price {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--color-primary);
+      text-align: right;
+    }
+
+    .btn-sweep {
+      background: rgba(255, 183, 3, 0.1);
+      border: 1px solid rgba(255, 183, 3, 0.4);
+      color: var(--color-racer-gold);
+    }
+    .btn-sweep:hover {
+      background: rgba(255, 183, 3, 0.2);
+    }
+  </style>
+</head>
+<body>
+  <!-- Universal Racer Master Header -->
+  <header class="master-header">
+    <div class="header-inner">
+      <a href="/" class="header-brand" aria-label="RacerBot Ecosystem">
+        <span class="brand-bolt">🏎</span>
+        <span class="brand-name">RACER</span>
+        <span class="brand-tag">FLEET // v2.0</span>
+      </a>
+
+      <!-- Telemetry Strip -->
+      <div class="telemetry-pill d-none-mobile">
+        <span class="telemetry-live-dot"></span>
+        <span class="telemetry-text">NEAR MAINNET</span>
+        <span class="telemetry-divider">/</span>
+        <span class="telemetry-metric cyan" id="telemetry-latency">38ms</span>
+        <span class="telemetry-divider">/</span>
+        <span class="telemetry-metric" id="telemetry-block">#220.5M</span>
+      </div>
+
+      <!-- Navigation Links -->
+      <nav class="nav-links">
+        <a href="/" class="nav-item">Home</a>
+        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
+        <a href="/alpha" class="nav-item">RacerAlpha</a>
+        <a href="/bubblemap" class="nav-item">RacerBubble</a>
+        <a href="/fleet" class="nav-item active">The Fleet</a>
+        <a href="/competition" class="nav-item">Arena</a>
+      </nav>
+
+      <!-- Right Header Actions -->
+      <div class="header-actions">
+        <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
+          <span id="header-connect-label">Log in</span>
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="openDeployModal()">
+          <span>+ Deploy Fleet</span>
+        </button>
+        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary btn-sm">
+          <span>Launch RacerBot ↗</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero & Cockpit Section -->
+  <section class="fleet-hero">
+    <div class="terminal-container">
+      <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px;">
+        <div>
+          <div style="display:inline-flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11px; color:var(--color-primary); letter-spacing:0.08em; margin-bottom:8px;">
+            <span style="display:inline-block; width:6px; height:6px; background:var(--color-primary); border-radius:50%; box-shadow:0 0 8px var(--color-primary);"></span>
+            <span>MULTI-WALLET ENGINE // CONFIDENTIAL SUBACCOUNTS</span>
+          </div>
+          <h1 style="font-family:var(--font-display); font-size:36px; font-weight:800; color:var(--color-text); margin:0 0 8px; text-transform:uppercase; letter-spacing:-0.02em;">
+            RaceFleet Command Cockpit
+          </h1>
+          <p style="margin:0; font-size:15px; color:var(--color-text-muted); max-width:680px; line-height:1.5;">
+            Coordinate up to 25 sovereign NEAR subaccounts in parallel. Execute coordinated bundle snipes, randomized jitter to defeat bubblemap clustering, and synchronized 1-click profit sweeps.
+          </p>
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="openDisburseModal()">
+            <span>📥 Disburse Capital</span>
+          </button>
+          <button class="btn btn-sm btn-sweep" onclick="executeSweepFunds()">
+            <span>🧹 Sweep 100% Funds</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="openExportModal()" title="Export access keypairs">
+            <span>🔑 Export Keys</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cockpit HUD Grid -->
+      <div class="hud-grid">
+        <div class="hud-card">
+          <div class="hud-label"><span>Active Fleet Squadron</span></div>
+          <div class="hud-val cyan" id="hud-fleet-tag">Loading...</div>
+          <div class="hud-sub">
+            <span id="hud-status-badge" class="badge-status active">🟢 ACTIVE</span> • <span id="hud-fleet-wallets">5 Wallets</span>
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-label"><span>Combined Fleet Capital</span></div>
+          <div class="hud-val green"><span id="hud-total-near">0.00</span> NEAR</div>
+          <div class="hud-sub">
+            <span id="hud-total-usd">$0.00</span> USD Across Wallets
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-label"><span>Execution Latency</span></div>
+          <div class="hud-val cyan">&lt;140ms</div>
+          <div class="hud-sub">Parallel Multi-RPC RPC Failover</div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-label"><span>BubbleMap Cluster Evasion</span></div>
+          <div class="hud-val green">100% CLEAN</div>
+          <div class="hud-sub">Independent Keypairs &amp; Jitter</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Terminal Body -->
+  <main class="terminal-container" style="padding-top:28px; padding-bottom:64px;">
+    <div class="terminal-split">
+      <!-- Left Column: Coordinated Multi-Wallet Terminal -->
+      <div>
+        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-lg); overflow:hidden;">
+          <div class="tab-bar">
+            <button class="tab-btn active" id="tab-btn-buy" onclick="switchTab('buy')">
+              <span>🚀 Coordinated Bundle Buy</span>
+            </button>
+            <button class="tab-btn" id="tab-btn-sell" onclick="switchTab('sell')">
+              <span>⚡ Coordinated Bundle Sell</span>
+            </button>
+            <button class="tab-btn" id="tab-btn-ops" onclick="switchTab('ops')">
+              <span>⚙️ Capital Management</span>
+            </button>
+          </div>
+
+          <div style="padding:20px;">
+            <!-- TAB 1: BUNDLE BUY -->
+            <div id="tab-content-buy">
+              <div class="form-group">
+                <div class="form-label">
+                  <span>TARGET TOKEN CONTRACT</span>
+                  <span id="token-verified-badge" style="color:var(--color-primary); font-size:11px;">VERIFIED FT</span>
+                </div>
+                <input type="text" id="buy-token-input" class="terminal-input" placeholder="e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" oninput="updateBuyCalculation()" />
+                <div class="chips-row">
+                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">QUICK:</span>
+                  <button type="button" class="token-chip" onclick="setBuyToken('blackdragon.tkn.near')">BLACKDRAGON</button>
+                  <button type="button" class="token-chip" onclick="setBuyToken('wrap.near')">NEAR</button>
+                  <button type="button" class="token-chip" onclick="setBuyToken('lonk.tkn.near')">LONK</button>
+                  <button type="button" class="token-chip" onclick="setBuyToken('shitzu.tkn.near')">SHITZU</button>
+                  <button type="button" class="token-chip" onclick="setBuyToken('usdt.tether-token.near')">USDT</button>
+                </div>
+              </div>
+
+              <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+                <div>
+                  <div class="form-label"><span>NEAR PER SUBACCOUNT</span></div>
+                  <input type="number" id="buy-amount-input" class="terminal-input" value="1.0" step="0.1" min="0.1" oninput="updateBuyCalculation()" />
+                  <div class="chips-row">
+                    <button type="button" class="amt-chip" onclick="setBuyAmount(0.5)">0.5</button>
+                    <button type="button" class="amt-chip active" onclick="setBuyAmount(1.0)">1.0</button>
+                    <button type="button" class="amt-chip" onclick="setBuyAmount(2.5)">2.5</button>
+                    <button type="button" class="amt-chip" onclick="setBuyAmount(5.0)">5.0</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="form-label"><span>SLIPPAGE TOLERANCE</span></div>
+                  <select id="buy-slippage" class="terminal-input" style="cursor:pointer;" onchange="updateBuyCalculation()">
+                    <option value="1.0">1.0% (Tight)</option>
+                    <option value="3.0" selected>3.0% (Standard)</option>
+                    <option value="5.0">5.0% (Fast)</option>
+                    <option value="10.0">10.0% (Degen)</option>
+                  </select>
+                  <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:8px;">
+                    Intents solver protects against MEV frontrun.
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="form-label">
+                  <span>ANTI-BUBBLEMAP JITTER INTERVAL</span>
+                  <span id="jitter-val" style="color:var(--color-primary);">400ms</span>
+                </div>
+                <input type="range" id="buy-jitter" min="0" max="2500" step="100" value="400" style="width:100%; accent-color:var(--color-primary);" oninput="document.getElementById('jitter-val').textContent = this.value + 'ms'" />
+                <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:4px;">
+                  Randomizes millisecond spacing between wallets to evade on-chain bubblemap clustering.
+                </div>
+              </div>
+
+              <!-- Order Summary HUD -->
+              <div class="calc-box">
+                <div class="calc-row">
+                  <span>Wallets Firing:</span>
+                  <span class="calc-val" id="calc-wallet-count">5 Subaccounts</span>
+                </div>
+                <div class="calc-row">
+                  <span>Total Capital Committed:</span>
+                  <span class="calc-val" id="calc-total-near">5.00 NEAR</span>
+                </div>
+                <div class="calc-row">
+                  <span>Platform Fee (1.5%):</span>
+                  <span class="calc-val" id="calc-fee-near">0.075 NEAR</span>
+                </div>
+                <div class="calc-row" style="border-top:1px dashed var(--color-border); padding-top:4px; margin-top:4px;">
+                  <span>Net Token Purchase:</span>
+                  <span class="calc-val" style="color:var(--color-racer-green);" id="calc-net-near">4.925 NEAR</span>
+                </div>
+              </div>
+
+              <button class="btn btn-primary" id="btn-exec-buy" style="width:100%; height:48px; font-size:14px;" onclick="executeBundleBuy()">
+                <span>🚀 EXECUTE COORDINATED BUNDLE BUY</span>
+              </button>
+
+              <div id="buy-stream" class="action-stream"></div>
+            </div>
+
+            <!-- TAB 2: BUNDLE SELL -->
+            <div id="tab-content-sell" style="display:none;">
+              <div class="form-group">
+                <div class="form-label"><span>SELECT TOKEN TO SELL</span></div>
+                <input type="text" id="sell-token-input" class="terminal-input" placeholder="e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" />
+                <div class="chips-row">
+                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">FROM FLEET:</span>
+                  <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'blackdragon.tkn.near'">BLACKDRAGON</button>
+                  <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'wrap.near'">WRAP.NEAR</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="form-label"><span>EXIT PERCENTAGE ACROSS ALL WALLETS</span></div>
+                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(25)">25%</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(50)">50%</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(75)">75%</button>
+                  <button type="button" class="btn btn-primary btn-sm" style="background:var(--color-danger); border-color:var(--color-danger);" onclick="setSellPct(100)">100% (LIQUIDATE)</button>
+                </div>
+                <input type="hidden" id="sell-pct-val" value="100" />
+                <div style="font-size:12px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:8px;">
+                  Target Exit: <b id="sell-pct-display" style="color:var(--color-text);">100%</b> of held tokens in each wallet.
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="form-label"><span>SLIPPAGE TOLERANCE</span></div>
+                <select id="sell-slippage" class="terminal-input">
+                  <option value="1.0">1.0%</option>
+                  <option value="3.0" selected>3.0% (Standard)</option>
+                  <option value="5.0">5.0%</option>
+                </select>
+              </div>
+
+              <button class="btn btn-primary" id="btn-exec-sell" style="width:100%; height:48px; font-size:14px; background:var(--color-danger); border-color:var(--color-danger);" onclick="executeBundleSell()">
+                <span>⚡ EXECUTE COORDINATED FLEET EXIT</span>
+              </button>
+
+              <div id="sell-stream" class="action-stream"></div>
+            </div>
+
+            <!-- TAB 3: CAPITAL OPERATIONS -->
+            <div id="tab-content-ops" style="display:none;">
+              <div style="margin-bottom:24px;">
+                <h3 style="font-family:var(--font-display); font-size:16px; margin:0 0 8px; color:var(--color-text);">
+                  📥 Disburse Capital to Fleet
+                </h3>
+                <p style="font-size:13px; color:var(--color-text-muted); margin:0 0 14px; line-height:1.5;">
+                  Evenly splits NEAR from your primary account to every subaccount in your fleet with 1 transaction.
+                </p>
+                <div style="display:flex; gap:10px;">
+                  <input type="number" id="ops-disburse-amt" class="terminal-input" placeholder="Total NEAR to split" value="5.0" step="0.5" min="0.5" />
+                  <button class="btn btn-primary" style="white-space:nowrap; padding:0 24px;" onclick="executeDisburseFunds()">
+                    <span>Disburse Evenly</span>
+                  </button>
+                </div>
+              </div>
+
+              <hr style="border:none; border-top:1px solid var(--color-border); margin:24px 0;" />
+
+              <div>
+                <h3 style="font-family:var(--font-display); font-size:16px; margin:0 0 8px; color:var(--color-racer-gold);">
+                  🧹 Synchronized Capital Sweep
+                </h3>
+                <p style="font-size:13px; color:var(--color-text-muted); margin:0 0 14px; line-height:1.5;">
+                  Sweeps 100% of all liquid NEAR from all fleet subaccounts back into your primary account. Leaves storage deposit intact.
+                </p>
+                <button class="btn btn-sweep" style="width:100%; height:44px; font-weight:700;" onclick="executeSweepFunds()">
+                  <span>🧹 SWEEP ALL FLEET FUNDS TO MAIN WALLET</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Live Fleet Analytics & Telemetry -->
+      <div>
+        <!-- Portfolio Holdings Card -->
+        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-lg); padding:20px; margin-bottom:24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <div style="font-family:var(--font-display); font-size:16px; font-weight:700; color:var(--color-text);">
+              Consolidated Holdings
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="fetchFleetStatus(true)" style="font-family:var(--font-mono); font-size:11px;">
+              <span>↻ Refresh</span>
+            </button>
+          </div>
+
+          <div id="fleet-holdings-container">
+            <div style="text-align:center; padding:32px 16px; color:var(--color-text-subtle); font-family:var(--font-mono); font-size:12px;">
+              Querying on-chain balances across fleet subaccounts...
+            </div>
+          </div>
+        </div>
+
+        <!-- Security & Sybil Info Box -->
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-lg); padding:18px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span style="color:var(--color-primary); font-size:16px;">🛡</span>
+            <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-text);">
+              RacerFleet Sybil Architecture
+            </span>
+          </div>
+          <p style="font-size:12px; color:var(--color-text-muted); margin:0 0 10px; line-height:1.6;">
+            • Each subaccount possesses distinct private keys generated with ed25519 cryptography.<br />
+            • FastNEAR multi-RPC queries avoid indexer tracking.<br />
+            • Randomized milliseconds jitter prevents simultaneous block inclusion heuristic matching.<br />
+            • Full parity with your Telegram bot commands (<code>/racefleet</code>).
+          </p>
+          <a href="/bubblemap" class="btn btn-secondary btn-sm" style="width:100%; text-align:center;">
+            <span>Inspect Clusters on RacerBubble ↗</span>
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subaccounts Matrix Table -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h2 style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin:0; text-transform:uppercase;">
+        Fleet Subaccounts Matrix
+      </h2>
+      <span style="font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle);">
+        LIVE TELEMETRY // REAL-TIME BALANCE
+      </span>
+    </div>
+
+    <div class="fleet-table-wrap">
+      <table class="fleet-table">
+        <thead>
+          <tr>
+            <th style="width:60px;">#</th>
+            <th>SUBACCOUNT ADDRESS</th>
+            <th>NEAR BALANCE</th>
+            <th>STATUS</th>
+            <th>EXPLORER</th>
+            <th>ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="fleet-wallets-tbody">
+          <tr>
+            <td colspan="6" style="text-align:center; padding:32px; color:var(--color-text-subtle);">
+              Loading subaccounts telemetry...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Deploy Fleet Modal -->
+  <div class="modal-overlay" id="modal-deploy">
+    <div class="modal-card">
+      <button class="modal-close" onclick="closeDeployModal()">✕</button>
+      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">
+        Deploy RaceFleet
+      </div>
+      <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:20px; line-height:1.5;">
+        Choose your squadron size. Real named subaccounts will be generated and registered on NEAR mainnet with independent access keys.
+      </p>
+
+      <div class="tier-option selected" id="tier-5" onclick="selectTier(5, 2.0)">
+        <div>
+          <div class="tier-name">Viper Squadron (5 Wallets)</div>
+          <div class="tier-desc">Ideal for launchpad bonding curve entries and light sybil protection.</div>
+        </div>
+        <div class="tier-price">2.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
+      </div>
+
+      <div class="tier-option" id="tier-10" onclick="selectTier(10, 3.5)">
+        <div>
+          <div class="tier-name">Falcon Fleet (10 Wallets)</div>
+          <div class="tier-desc">High-speed parallel entries across Ref Finance and NearlyTrade.</div>
+        </div>
+        <div class="tier-price">3.5 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
+      </div>
+
+      <div class="tier-option" id="tier-25" onclick="selectTier(25, 7.0)">
+        <div>
+          <div class="tier-name">Apex Armada (25 Wallets)</div>
+          <div class="tier-desc">Maximum stealth and institutional volume distribution.</div>
+        </div>
+        <div class="tier-price">7.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
+      </div>
+
+      <div class="form-group" style="margin-top:16px;">
+        <div class="form-label"><span>FLEET NAME / SQUADRON TAG</span></div>
+        <input type="text" id="deploy-fleet-name" class="terminal-input" value="Apex Squadron" />
+      </div>
+
+      <button class="btn btn-primary" id="btn-deploy-confirm" style="width:100%; height:48px; margin-top:12px;" onclick="confirmDeployFleet()">
+        <span>Deploy Squadron (2.0 NEAR)</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Export Private Keys Modal -->
+  <div class="modal-overlay" id="modal-export">
+    <div class="modal-card" style="max-width:580px;">
+      <button class="modal-close" onclick="closeExportModal()">✕</button>
+      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-danger); margin-bottom:8px;">
+        ⚠️ Export Private Access Keys
+      </div>
+      <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px; line-height:1.5;">
+        These keys grant direct, unrestricted control over your fleet's on-chain subaccounts. Never share them or paste them into untrusted apps.
+      </p>
+
+      <div id="export-keys-box" style="background:#050608; border:1px solid var(--color-border); border-radius:var(--radius-md); padding:14px; font-family:var(--font-mono); font-size:12px; color:var(--color-text-muted); max-height:260px; overflow-y:auto; margin-bottom:18px;">
+        Loading keys...
+      </div>
+
+      <button class="btn btn-secondary" style="width:100%;" onclick="closeExportModal()">
+        <span>Close Key Vault</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Wallet Selector & RacerConnect Scripts -->
+  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
+  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+
+  <script>
+    // State Variables
+    let currentFleet = null;
+    let currentWallets = [];
+    let selectedTierCount = 5;
+    let selectedTierFee = 2.0;
+
+    // Initialize UI on DOM load
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchFleetStatus();
+      updateBuyCalculation();
+      updateConnectUI();
+      // Polling every 15 seconds
+      setInterval(() => {
+        if (!document.hidden) fetchFleetStatus(true);
+      }, 15000);
+    });
+
+    // ── Navigation Tabs ──────────────────────────────────────────────────────────
+    function switchTab(tab) {
+      document.getElementById('tab-btn-buy').classList.toggle('active', tab === 'buy');
+      document.getElementById('tab-btn-sell').classList.toggle('active', tab === 'sell');
+      document.getElementById('tab-btn-ops').classList.toggle('active', tab === 'ops');
+
+      document.getElementById('tab-content-buy').style.display = tab === 'buy' ? 'block' : 'none';
+      document.getElementById('tab-content-sell').style.display = tab === 'sell' ? 'block' : 'none';
+      document.getElementById('tab-content-ops').style.display = tab === 'ops' ? 'block' : 'none';
+    }
+
+    function setBuyToken(token) {
+      document.getElementById('buy-token-input').value = token;
+      updateBuyCalculation();
+    }
+
+    function setBuyAmount(amt) {
+      document.getElementById('buy-amount-input').value = amt;
+      document.querySelectorAll('.amt-chip').forEach(c => {
+        c.classList.toggle('active', parseFloat(c.textContent) === amt);
+      });
+      updateBuyCalculation();
+    }
+
+    function setSellPct(pct) {
+      document.getElementById('sell-pct-val').value = pct;
+      document.getElementById('sell-pct-display').textContent = pct + '%';
+    }
+
+    function updateBuyCalculation() {
+      const amtPerWallet = parseFloat(document.getElementById('buy-amount-input')?.value) || 1.0;
+      const count = (currentWallets && currentWallets.length > 0) ? currentWallets.length : (currentFleet?.walletCount || 5);
+      
+      const totalGross = amtPerWallet * count;
+      const fee = Number((totalGross * 0.015).toFixed(4));
+      const net = Number((totalGross - fee).toFixed(4));
+
+      const countEl = document.getElementById('calc-wallet-count');
+      const grossEl = document.getElementById('calc-total-near');
+      const feeEl = document.getElementById('calc-fee-near');
+      const netEl = document.getElementById('calc-net-near');
+
+      if (countEl) countEl.textContent = `${count} Subaccounts`;
+      if (grossEl) grossEl.textContent = `${totalGross.toFixed(2)} NEAR`;
+      if (feeEl) feeEl.textContent = `${fee.toFixed(4)} NEAR`;
+      if (netEl) netEl.textContent = `${net.toFixed(4)} NEAR`;
+    }
+
+    // ── Fetch Real Fleet Telemetry from API ────────────────────────────────────
+    async function fetchFleetStatus(silent = false) {
+      try {
+        const token = localStorage.getItem('racer_auth_token') || '';
+        const nearWallet = localStorage.getItem('racer_connected_near_wallet') || '';
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        let url = '/api/fleet/status';
+        if (nearWallet) url += `?username=${encodeURIComponent(nearWallet)}`;
+
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error('Status failed');
+        const data = await res.json();
+
+        if (data.hasFleet && data.fleet) {
+          currentFleet = data.fleet;
+          const balances = data.balances || {};
+          currentWallets = balances.wallets || [];
+
+          // Update HUD
+          document.getElementById('hud-fleet-tag').textContent = data.fleet.fleetTag || data.fleet.name;
+          document.getElementById('hud-fleet-wallets').textContent = `${data.fleet.walletCount} Wallets`;
+          document.getElementById('hud-status-badge').textContent = '🟢 ACTIVE';
+          document.getElementById('hud-status-badge').className = 'badge-status active';
+          document.getElementById('hud-total-near').textContent = balances.totalNearFormatted || '0.00';
+          document.getElementById('hud-total-usd').textContent = `$${balances.totalNearUsd || '0.00'}`;
+
+          renderWalletsTable(currentWallets);
+          renderHoldings(balances.wallets || []);
+          updateBuyCalculation();
+        } else {
+          // Fallback view when no fleet is active yet
+          document.getElementById('hud-fleet-tag').textContent = 'No Fleet Deployed';
+          document.getElementById('hud-status-badge').textContent = '⚪ UNCONFIGURED';
+          document.getElementById('hud-status-badge').className = 'badge-status offline';
+          document.getElementById('fleet-wallets-tbody').innerHTML = `
+            <tr>
+              <td colspan="6" style="text-align:center; padding:32px;">
+                <div style="font-size:14px; color:var(--color-text); margin-bottom:8px;">You don't have an active RaceFleet squadron.</div>
+                <button class="btn btn-primary btn-sm" onclick="openDeployModal()">Deploy 5-Wallet Squadron (2.0 NEAR)</button>
+              </td>
+            </tr>
+          `;
+          document.getElementById('fleet-holdings-container').innerHTML = `
+            <div style="text-align:center; padding:24px; color:var(--color-text-subtle); font-size:13px;">
+              Deploy your RaceFleet to begin coordinated multi-wallet trading.
+            </div>
+          `;
+        }
+      } catch (err) {
+        if (!silent) console.warn('[Fleet] Status fetch error:', err);
+      }
+    }
+
+    function renderWalletsTable(wallets) {
+      const tbody = document.getElementById('fleet-wallets-tbody');
+      if (!tbody) return;
+
+      if (!wallets || wallets.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px;">No wallets found in squadron.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = wallets.map((w, idx) => `
+        <tr>
+          <td><span style="color:var(--color-text-subtle);">#${w.walletIndex || (idx + 1)}</span></td>
+          <td>
+            <a class="wallet-addr" href="https://nearblocks.io/address/${encodeURIComponent(w.accountId)}" target="_blank" rel="noopener">
+              ${w.accountId}
+            </a>
+          </td>
+          <td>
+            <span class="telemetry-num" style="color:var(--color-text); font-weight:600;">${w.balanceNear ? w.balanceNear.toFixed(4) : '0.0000'} NEAR</span>
+            ${w.wNearFormatted && w.wNearFormatted !== '0.00' ? `<div style="font-size:11px; color:var(--color-primary);">${w.wNearFormatted} wNEAR</div>` : ''}
+          </td>
+          <td><span class="badge-status active">🟢 READY</span></td>
+          <td>
+            <a href="https://nearblocks.io/address/${encodeURIComponent(w.accountId)}" target="_blank" rel="noopener" style="color:var(--color-text-muted); font-size:12px;">
+              View ↗
+            </a>
+          </td>
+          <td>
+            <button class="btn btn-ghost btn-sm" style="font-size:11px; padding:2px 8px;" onclick="navigator.clipboard.writeText('${w.accountId}'); alert('Copied address to clipboard!');">
+              Copy
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderHoldings(wallets) {
+      const container = document.getElementById('fleet-holdings-container');
+      if (!container) return;
+
+      let totalNearSum = 0;
+      wallets.forEach(w => { totalNearSum += (w.balanceNear || 0); });
+
+      container.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--color-border-subtle);">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,240,255,0.1); border:1px solid rgba(0,240,255,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;">🪙</div>
+            <div>
+              <div style="font-weight:700; color:var(--color-text); font-size:14px;">NEAR Protocol</div>
+              <div style="font-size:11px; color:var(--color-text-subtle);">Gas &amp; Native Asset</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div class="telemetry-num" style="font-size:14px; font-weight:700; color:var(--color-primary);">${totalNearSum.toFixed(4)} NEAR</div>
+            <div style="font-size:11px; color:var(--color-text-subtle);">$${(totalNearSum * 4.90).toFixed(2)} USD</div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,230,118,0.1); border:1px solid rgba(0,230,118,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;">🐉</div>
+            <div>
+              <div style="font-weight:700; color:var(--color-text); font-size:14px;">BlackDragon</div>
+              <div style="font-size:11px; color:var(--color-text-subtle);">blackdragon.tkn.near</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <button class="btn btn-secondary btn-sm" style="font-size:11px;" onclick="setBuyToken('blackdragon.tkn.near'); switchTab('buy');">
+              Trade with Fleet
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── Execute Actions ───────────────────────────────────────────────────────
+    async function executeBundleBuy() {
+      const token = document.getElementById('buy-token-input')?.value?.trim();
+      const amount = parseFloat(document.getElementById('buy-amount-input')?.value);
+      const slippage = parseFloat(document.getElementById('buy-slippage')?.value) || 3.0;
+
+      if (!token || !amount) {
+        alert('Please specify token address and NEAR amount.');
+        return;
+      }
+
+      const stream = document.getElementById('buy-stream');
+      stream.style.display = 'block';
+      stream.innerHTML = `<div class="stream-line"><span class="stream-time">[${new Date().toLocaleTimeString()}]</span> <span>⚡ Dispatching parallel bundle orders across fleet...</span></div>`;
+
+      const btn = document.getElementById('btn-exec-buy');
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳ EXECUTING BUNDLE BUY...</span>`;
+
+      try {
+        const authToken = localStorage.getItem('racer_auth_token') || '';
+        const res = await fetch('/api/fleet/bundle-buy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            tokenAddress: token,
+            amountNearPerWallet: amount,
+            slippagePct: slippage,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          stream.innerHTML += `
+            <div class="stream-line"><span class="stream-time">[${new Date().toLocaleTimeString()}]</span> <span class="stream-ok">✅ Bundle Buy Confirmed!</span></div>
+            <div class="stream-line"><span>• Successful Wallets: ${data.successCount} / ${data.successCount + (data.failCount || 0)}</span></div>
+            <div class="stream-line"><span>• Total Spent: ${data.totalSpentNear} NEAR</span></div>
+            ${(data.txHashes || []).map(tx => `<div class="stream-line"><span>• Tx: <a href="https://nearblocks.io/txns/${tx}" target="_blank" style="color:var(--color-primary);">${tx.slice(0, 16)}...</a></span></div>`).join('')}
+          `;
+          setTimeout(() => fetchFleetStatus(true), 1500);
+        } else {
+          stream.innerHTML += `<div class="stream-line"><span class="stream-err">❌ Execution error: ${data.error || data.errors?.[0] || 'Unknown error'}</span></div>`;
+        }
+      } catch (err) {
+        stream.innerHTML += `<div class="stream-line"><span class="stream-err">❌ Network error: ${err.message}</span></div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>🚀 EXECUTE COORDINATED BUNDLE BUY</span>`;
+      }
+    }
+
+    async function executeBundleSell() {
+      const token = document.getElementById('sell-token-input')?.value?.trim();
+      const pct = parseFloat(document.getElementById('sell-pct-val')?.value) || 100;
+      const slippage = parseFloat(document.getElementById('sell-slippage')?.value) || 3.0;
+
+      if (!token) {
+        alert('Please specify token address to sell.');
+        return;
+      }
+
+      const stream = document.getElementById('sell-stream');
+      stream.style.display = 'block';
+      stream.innerHTML = `<div class="stream-line"><span class="stream-time">[${new Date().toLocaleTimeString()}]</span> <span>⚡ Dispatching parallel sell orders (${pct}% exit)...</span></div>`;
+
+      const btn = document.getElementById('btn-exec-sell');
+      btn.disabled = true;
+
+      try {
+        const authToken = localStorage.getItem('racer_auth_token') || '';
+        const res = await fetch('/api/fleet/bundle-sell', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            tokenAddress: token,
+            sellPct: pct,
+            slippagePct: slippage,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          stream.innerHTML += `
+            <div class="stream-line"><span class="stream-time">[${new Date().toLocaleTimeString()}]</span> <span class="stream-ok">✅ Coordinated Exit Executed!</span></div>
+            <div class="stream-line"><span>• Successful Wallets: ${data.successCount}</span></div>
+          `;
+          setTimeout(() => fetchFleetStatus(true), 1500);
+        } else {
+          stream.innerHTML += `<div class="stream-line"><span class="stream-err">❌ Exit error: ${data.error || data.errors?.[0] || 'Unknown error'}</span></div>`;
+        }
+      } catch (err) {
+        stream.innerHTML += `<div class="stream-line"><span class="stream-err">❌ Network error: ${err.message}</span></div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function executeSweepFunds() {
+      if (!confirm('Are you sure you want to sweep all liquid NEAR from your fleet subaccounts back into your primary wallet?')) return;
+
+      try {
+        const authToken = localStorage.getItem('racer_auth_token') || '';
+        const res = await fetch('/api/fleet/sweep', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({}),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ Sweep complete! Swept ${data.totalSweptNear || '0.00'} NEAR across ${data.successCount || 0} wallets back to your main wallet.`);
+          fetchFleetStatus(true);
+        } else {
+          alert(`❌ Sweep failed: ${data.error || data.reason || 'Unknown error'}`);
+        }
+      } catch (err) {
+        alert(`❌ Network error: ${err.message}`);
+      }
+    }
+
+    async function executeDisburseFunds() {
+      const amt = parseFloat(document.getElementById('ops-disburse-amt')?.value);
+      if (!amt || amt <= 0) {
+        alert('Please enter a valid NEAR amount to disburse.');
+        return;
+      }
+
+      try {
+        const authToken = localStorage.getItem('racer_auth_token') || '';
+        const res = await fetch('/api/fleet/distribute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({ totalNear: amt }),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ Capital disbursed! Sent ${data.distributedPerWallet || (amt / 5).toFixed(3)} NEAR to each subaccount.`);
+          fetchFleetStatus(true);
+        } else {
+          alert(`❌ Disburse failed: ${data.error || data.reason || 'Check your balance'}`);
+        }
+      } catch (err) {
+        alert(`❌ Error: ${err.message}`);
+      }
+    }
+
+    // ── Deploy Modal Controls ─────────────────────────────────────────────────
+    function openDeployModal() {
+      document.getElementById('modal-deploy').style.display = 'flex';
+    }
+    function closeDeployModal() {
+      document.getElementById('modal-deploy').style.display = 'none';
+    }
+
+    function selectTier(count, fee) {
+      selectedTierCount = count;
+      selectedTierFee = fee;
+      document.getElementById('tier-5').classList.toggle('selected', count === 5);
+      document.getElementById('tier-10').classList.toggle('selected', count === 10);
+      document.getElementById('tier-25').classList.toggle('selected', count === 25);
+      document.getElementById('btn-deploy-confirm').innerHTML = `<span>Deploy Squadron (${fee.toFixed(1)} NEAR)</span>`;
+    }
+
+    async function confirmDeployFleet() {
+      const fleetName = document.getElementById('deploy-fleet-name')?.value || 'Apex Squadron';
+      const btn = document.getElementById('btn-deploy-confirm');
+      btn.disabled = true;
+      btn.innerHTML = `<span>⏳ Initializing Subaccounts on NEAR Mainnet...</span>`;
+
+      try {
+        const authToken = localStorage.getItem('racer_auth_token') || '';
+        const res = await fetch('/api/fleet/deploy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({
+            walletCount: selectedTierCount,
+            fleetName,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          alert(`🚀 RaceFleet successfully deployed! ${data.wallets?.length || selectedTierCount} subaccounts active.`);
+          closeDeployModal();
+          fetchFleetStatus(true);
+        } else {
+          alert(`❌ Deployment failed: ${data.error || 'Ensure your main balance has enough NEAR for subscription.'}`);
+        }
+      } catch (err) {
+        alert(`❌ Deployment error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>Deploy Squadron (${selectedTierFee.toFixed(1)} NEAR)</span>`;
+      }
+    }
+
+    // ── Export Modal Controls ─────────────────────────────────────────────────
+    function openExportModal() {
+      document.getElementById('modal-export').style.display = 'flex';
+      const box = document.getElementById('export-keys-box');
+      if (currentWallets && currentWallets.length > 0) {
+        box.innerHTML = currentWallets.map(w => `
+          <div style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px dashed #21262d;">
+            <div style="color:var(--color-primary); font-weight:700;">${w.accountId}</div>
+            <div style="color:var(--color-text-subtle); word-break:break-all; font-size:11px; margin-top:2px;">
+              ed25519:•••••••••••••••••••••••••••••••••••••••••••••••••••• (Encrypted in secure key vault)
+            </div>
+          </div>
+        `).join('') + `<div style="font-size:11px; color:var(--color-racer-green);">To view plain keys, send /racefleet in Telegram to request ephemeral private session export.</div>`;
+      } else {
+        box.innerHTML = `No active fleet wallets loaded.`;
+      }
+    }
+    function closeExportModal() {
+      document.getElementById('modal-export').style.display = 'none';
+    }
+
+    // ── RacerConnect Header Auth State ─────────────────────────────────────────
+    function handleHeaderConnectClick() {
+      if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
+        const nearWallet = window.RacerConnect.activeNearWallet || 'your connected account';
+        alert(`Connected to RACER Ecosystem as ${nearWallet}!`);
+      } else {
+        if (window.RacerConnect) {
+          window.RacerConnect.openNearWalletSelector().catch(console.error);
+        }
+      }
+    }
+
+    function updateConnectUI() {
+      const isAuth = window.RacerConnect && window.RacerConnect.isAuthenticated();
+      const user = window.RacerConnect ? window.RacerConnect.user : null;
+      const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
+      const label = document.getElementById('header-connect-label');
+      const headerBtn = document.getElementById('header-connect-btn');
+
+      if (isAuth || nearWallet) {
+        const displayHandle = nearWallet || (user && user.username) || 'Connected';
+        if (label) label.textContent = '● ' + displayHandle;
+        if (headerBtn) {
+          headerBtn.style.background = 'rgba(0, 240, 255, 0.12)';
+          headerBtn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+          headerBtn.style.color = '#ffffff';
+        }
+      } else {
+        if (label) label.textContent = 'Log in';
+        if (headerBtn) {
+          headerBtn.style.background = '';
+          headerBtn.style.borderColor = '';
+          headerBtn.style.color = '';
+        }
+      }
+    }
+
+    window.addEventListener('racer:auth-changed', () => { updateConnectUI(); fetchFleetStatus(true); });
+    window.addEventListener('racer:wallet-linked', () => { updateConnectUI(); fetchFleetStatus(true); });
+  </script>
+</body>
+</html>
