@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS racer_deposits (
     deposit_address TEXT NOT NULL,
     min_destination_amount NUMERIC,
     fee_amount NUMERIC DEFAULT 0,
-    fee_recipient TEXT DEFAULT 'wild-falcon-5130.racerbot.near',
+    fee_recipient TEXT DEFAULT 'racerbottreasury.near',
     fee_bps INTEGER DEFAULT 100,
     status TEXT NOT NULL DEFAULT 'PENDING',
     quote_data JSONB,

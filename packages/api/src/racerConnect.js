@@ -7,7 +7,7 @@
  *  2. Zero-Click Telegram Auth inside Telegram Mini App (TMA via window.Telegram.WebApp.initData)
  *  3. 1-Tap Deep-Link Handshake for Desktop/Mobile Browsers (/start auth_sess_...)
  *  4. Direct NEAR Wallet Selector (https://github.com/near/wallet-selector) integration with modal-ui & wallet modules
- *  5. 1.5% Platform Trading Fee calculations & execution routing to treasury (wild-falcon-5130.racerbot.near)
+ *  5. 1.5% Platform Trading Fee calculations & execution routing to treasury (racerbottreasury.near)
  */
 
 (function () {
@@ -15,7 +15,7 @@
   const USER_KEY = 'racer_user_profile';
   const WALLET_KEY = 'racer_connected_near_wallet';
   const PLATFORM_FEE_PCT = 1.5;
-  const TREASURY_ACCOUNT = 'wild-falcon-5130.racerbot.near';
+  const TREASURY_ACCOUNT = 'racerbottreasury.near';
 
   class RacerConnectClient {
     constructor() {

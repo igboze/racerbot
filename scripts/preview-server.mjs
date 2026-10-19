@@ -226,7 +226,7 @@ const server = http.createServer(async (req, res) => {
           feePct,
           feeNear,
           netAmountNear,
-          treasury: 'wild-falcon-5130.racerbot.near',
+          treasury: 'racerbottreasury.near',
           txHash,
           tokenAddress: parsed.tokenAddress || 'blackdragon.tkn.near',
           positionId: 'pos-' + Date.now(),
