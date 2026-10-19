@@ -15,6 +15,10 @@ export function setBotInstance(bot: Telegraf): void {
   _bot = bot;
 }
 
+export function getBotInstance(): Telegraf | null {
+  return _bot;
+}
+
 /**
  * Start listening for NOTIFY_USER events from Redis and forward to Telegram.
  * This is async and non-blocking — PNL cards and trigger alerts go through here.

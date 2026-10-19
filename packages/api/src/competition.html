@@ -14,60 +14,73 @@
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;436;452;484;496;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/racer-design-system.css">
   <style>
-    /* ── Adyen Design System Tokens ────────────────────────────────────────── */
+    /* ── Master RACER Design System (UI/UX Pro Max v2.0) ───────────────────────── */
     :root {
-      /* Adyen Core Colors */
-      --color-primary: #00d16a;              /* Adyen single mint voltage (CTA, indicator dot, underline) */
-      --color-primary-hover: #00ba5e;
-      --color-canvas-dark: #001222;          /* Adyen signature navy-leaning near-black */
-      --color-canvas: #001222;               /* Base dark canvas */
-      --color-surface-1: #0d1e2e;            /* Gradient overlay & base card surface */
-      --color-surface-2: #1a2b3b;            /* Elevated card surface */
-      --color-surface-3: #2f3e4d;            /* Divider rules and structural borders */
-      --color-surface-light: #f4f5f6;        /* Light card surface */
-      --color-surface-sand: #e6e4e2;         /* Warm off-white card surface */
+      /* High-Octane Laser Cyan Primary CTA + Pit-Wall Signals */
+      --color-primary: #00f0ff;              /* Laser Cyan Primary CTA */
+      --color-primary-hover: #00d2e0;
+      --color-on-primary: #08090b;
+      --color-canvas-dark: #08090b;          /* Obsidian Pit-Wall Canvas */
+      --color-canvas: #08090b;
+      --color-surface-1: #0f1217;            /* Anodized Carbon Base Surface */
+      --color-surface-2: #151921;            /* Elevated Telemetry HUD Surface */
+      --color-surface-3: rgba(0, 240, 255, 0.25); /* Border & Glow */
+      --color-surface-light: #1c222d;
+      --color-surface-sand: #0f1217;
 
       /* Typography & Ink Ladder */
-      --color-ink: #001222;                  /* Text on light canvas */
-      --color-ink-strong: #ffffff;           /* Text on dark canvas */
-      --color-ink-soft: #5c6874;             /* Secondary body text */
-      --color-ink-muted: #6c7782;            /* Sub-labels and muted lead text */
-      --color-ink-tertiary: #8c959d;         /* Captions and annotations */
-      --color-hairline: #2f3e4d;             /* Hairline border tone */
-      --color-hairline-light: #d1d5d8;
-      --color-shadow: #000000;
+      --color-ink: #08090b;
+      --color-ink-strong: #ffffff;
+      --color-ink-soft: #c8d3e8;
+      --color-ink-muted: #8b949e;            /* 5.8:1 WCAG AA compliant */
+      --color-ink-tertiary: #00f0ff;
+      --color-hairline: #21262d;
+      --color-hairline-light: rgba(0, 240, 255, 0.25);
+      --color-border: #21262d;
+      --color-shadow: rgba(0, 0, 0, 0.7);
 
-      /* RacerBot Brand Accents */
-      --color-racer-cyan: #6accdc;           /* Logo top speed trails */
-      --color-racer-violet: #7860a9;         /* Logo bottom lightning bolt */
-      --color-gold: #f59e0b;
-      --color-silver: #94a3b8;
+      /* Racer Functional Accents */
+      --color-racer-cyan: #00f0ff;
+      --color-racer-cyan-glow: rgba(0, 240, 255, 0.28);
+      --color-racer-violet: #826ab5;
+      --color-racer-purple: #826ab5;
+      --color-racer-green: #00e676;
+      --color-gold: #ffb703;
+      --color-silver: #c8d3e8;
       --color-bronze: #d97706;
 
-      /* Single 6px Radius Scale (Adyen Specification) */
+      /* Precision Mechanical Radius */
       --radius-none: 0px;
-      --radius-sm: 5px;
+      --radius-sm: 4px;
       --radius-md: 6px;
+      --radius-lg: 8px;
+      --radius-xl: 12px;
+      --radius-full: 9999px;
       --radius: 6px;
 
-      /* Typography: Variable-Axis Weights */
-      --font-sans: 'Inter', Helvetica, Arial, sans-serif;
+      /* Distinctive Typography Suite (frontend-design guidelines) */
+      --font-display: 'Syne', -apple-system, sans-serif;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
 
-      /* Spacing Scale on 24px Base */
-      --spacing-xs: 6px;
+      /* Spacing Scale on 4px Base */
+      --spacing-xs: 4px;
       --spacing-sm: 8px;
       --spacing-base: 12px;
       --spacing-md: 16px;
       --spacing-lg: 24px;
       --spacing-xl: 48px;
-      --spacing-2xl: 72px;
+      --spacing-2xl: 64px;
 
-      /* Motion */
-      --ease-adyen: cubic-bezier(0.19, 1, 0.22, 1);
-      --dur-fast: 160ms;
+      /* Shadows & Motion */
+      --shadow-card: rgba(0, 0, 0, 0.15) 0px 2px 8px 0px;
+      --ease-asana: ease-in-out;
+      --dur-fast: 100ms;
+      --dur-base: 200ms;
+      --dur-slow: 300ms;
     }
 
     * {
@@ -78,7 +91,7 @@
     }
 
     html, body {
-      background-color: var(--color-canvas-dark);
+      background-color: var(--color-canvas);
       color: var(--color-ink-strong);
       font-family: var(--font-sans);
       font-size: 16px;
@@ -90,6 +103,26 @@
       min-height: 100dvh;
       overflow-x: hidden;
       width: 100%;
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 96, 169, 0.25), transparent 70%),
+        radial-gradient(circle 600px at 80% 20%, rgba(106, 204, 220, 0.12), transparent 70%),
+        radial-gradient(circle 500px at 20% 60%, rgba(0, 209, 106, 0.08), transparent 70%);
+      background-attachment: fixed;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+      background-size: 52px 52px;
+      pointer-events: none;
+      z-index: 0;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
     }
 
     a {
@@ -179,12 +212,13 @@
       height: 48px;
       padding: 0 20px;
       background-color: var(--color-primary);
-      color: var(--color-canvas-dark);
+      color: #ffffff;
       font-family: var(--font-sans);
-      font-size: 15px;
-      font-weight: 600;
+      font-size: 14px;
+      font-weight: 500;
       letter-spacing: 0;
-      border-radius: var(--radius-md);
+      border-radius: var(--radius-md); /* 8px */
+      box-shadow: 0 0 20px rgba(86, 69, 212, 0.35);
       border: none;
       cursor: pointer;
       white-space: nowrap;
@@ -272,10 +306,11 @@
 
     /* Hero Typography */
     .hero-h1 {
-      font-size: clamp(28px, 4vw, 54px);
-      font-weight: 452; /* Adyen variable-axis display weight */
-      line-height: 1.12;
-      letter-spacing: 0;
+      font-family: var(--font-display);
+      font-size: clamp(30px, 4.5vw, 56px);
+      font-weight: 700;
+      line-height: 1.10;
+      letter-spacing: -0.025em;
       color: #ffffff;
       margin-bottom: 16px;
       max-width: 880px;
@@ -1074,25 +1109,51 @@
   </style>
 </head>
 <body>
+  <a href="#main" class="skip-link">Skip to content</a>
 
-  <!-- Top Navigation Header (Adyen 60px Specification) -->
-  <header class="site-header">
-    <a href="/" class="brand">
-      <img src="/assets/logo.png" alt="RacerBot" class="brand-logo" onerror="this.style.display='none'">
-      <div class="brand-text">
-        <span class="brand-title">RACERBOT</span>
-        <span class="brand-subtitle">NEAR TRADING ENGINE</span>
+  <!-- Top Navigation Header (Master Pit-Wall Specification) -->
+  <header class="racer-header">
+    <div class="header-inner">
+      <a href="/" class="brand-logo-wrap">
+        <div class="brand-mark">
+          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+        </div>
+        <div>
+          <span class="brand-title">RACER <span>ARENA</span></span>
+        </div>
+      </a>
+
+      <!-- Live Telemetry Status Rail -->
+      <div class="telemetry-rail">
+        <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
+          <span class="dot"></span>
+          SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
+        </span>
+        <span style="color:var(--color-border);">|</span>
+        <span style="color:var(--color-text-subtle);">
+          NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
+        </span>
       </div>
-    </a>
 
-    <div class="header-nav">
-      <a href="/bubblemap" class="btn-adyen-secondary btn-header-sub" title="Bubble Map">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/></svg>
-        <span class="btn-text">Bubble Map</span>
-      </a>
-      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener" class="btn-adyen-primary btn-header-cta" title="Talk to our bot">
-        <span>Talk to our bot</span>
-      </a>
+      <!-- Navigation Links -->
+      <nav class="nav-links">
+        <a href="/" class="nav-item">Home</a>
+        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
+        <a href="/alpha" class="nav-item">RacerAlpha</a>
+        <a href="/bubblemap" class="nav-item">RacerBubble</a>
+        <a href="/fleet" class="nav-item">The Fleet</a>
+        <a href="/competition" class="nav-item active">Arena</a>
+      </nav>
+
+      <!-- Right Header Actions -->
+      <div class="header-actions">
+        <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
+          <span id="header-connect-label">Log in</span>
+        </button>
+        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary btn-sm">
+          <span>Launch RacerBot ↗</span>
+        </a>
+      </div>
     </div>
   </header>
 
@@ -1196,7 +1257,7 @@
           </div>
           <div class="card-actions">
             <div class="search-box">
-              <span class="search-icon">🔍</span>
+              <span class="search-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
               <input type="text" id="snapshot-search" class="search-input" placeholder="Filter wallet address (e.g. .near)..." oninput="filterSnapshotTable()">
             </div>
           </div>
@@ -1367,7 +1428,7 @@
         <!-- Format 1: Snapshot Points Epoch -->
         <div class="format-card">
           <div>
-            <div class="format-icon">📸</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
             <div class="format-title">1. Snapshot Points Epoch</div>
             <div class="format-desc">
               Longitudinal competition recording on-chain trading activity, DCA orders, sniper runs, and loyalty streaks. At the unannounced snapshot epoch cutoff, top wallets receive protocol dividends, exclusive NFT badges, and token airdrops.
@@ -1387,7 +1448,7 @@
         <!-- Format 2: Market Cap Velocity Sprint -->
         <div class="format-card">
           <div>
-            <div class="format-icon">🚀</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
             <div class="format-title">2. Market Cap Velocity Sprint</div>
             <div class="format-desc">
               A sprint triggered automatically the moment a newly launched token crosses a target market cap (e.g. $25K, $30K, $50K). Traders have 24-48 hours to rack up the highest volume and net buys to win the community prize pool.
@@ -1407,7 +1468,7 @@
         <!-- Format 3: Launchpad Sniper Showdown -->
         <div class="format-card">
           <div>
-            <div class="format-icon">🎯</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
             <div class="format-title">3. Launchpad Sniper Showdown</div>
             <div class="format-desc">
               Speed & precision tournament for new token graduations on JustHoot or Pumppoly. Racers who configure automated limit snipers on the first 100 blocks of Ref Finance pool seeding receive bonus bounty multipliers.
@@ -1427,7 +1488,7 @@
         <!-- Format 4: Syndicate & Referral League -->
         <div class="format-card">
           <div>
-            <div class="format-icon">👥</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
             <div class="format-title">4. Syndicate & Referral League</div>
             <div class="format-desc">
               Community and team competition where alpha callers, Telegram group owners, and crypto communities form syndicates. Squad points are aggregated, rewarding the most active trading groups with shared USDC/NEAR pools.
@@ -1447,7 +1508,7 @@
         <!-- Format 5: Custom Sponsored Token Cup -->
         <div class="format-card">
           <div>
-            <div class="format-icon">🏆</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg></div>
             <div class="format-title">5. Sponsored Project Cup</div>
             <div class="format-desc">
               Bespoke trading competitions funded by token teams. Can include "Diamond Hand" hold snapshots (rewarding addresses that never sold during the race), highest single buy, or random lucky draw allocations per 10 NEAR traded.
@@ -1467,7 +1528,7 @@
         <!-- Format 6: Net Accumulation Challenge -->
         <div class="format-card">
           <div>
-            <div class="format-icon">💎</div>
+            <div class="format-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
             <div class="format-title">6. Net Accumulator Challenge</div>
             <div class="format-desc">
               Discourages wash trading by scoring participants purely on Net Buy Volume (Total Buys minus Total Sells) during a 7-day period. Top accumulators win the majority of the token liquidity bounty.
@@ -1652,7 +1713,7 @@
                   <span class="wallet-addr-text">${escapeHtml(wallet)}</span>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </a>
-                <button class="copy-btn" onclick="copyText('${escapeHtml(wallet)}', this)" title="Copy wallet address">📋</button>
+                <button class="copy-btn" onclick="copyText('${escapeHtml(wallet)}', this)" title="Copy wallet address" style="display:inline-flex; align-items:center; justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
             </td>
             <td class="col-tier">${tier}</td>
@@ -1739,7 +1800,7 @@
                 <a href="${explorerUrl}" target="_blank" rel="noopener" class="wallet-link">
                   <span class="wallet-addr-text">${escapeHtml(row.account_id)}</span>
                 </a>
-                <button class="copy-btn" onclick="copyText('${escapeHtml(row.account_id)}', this)" title="Copy wallet address">📋</button>
+                <button class="copy-btn" onclick="copyText('${escapeHtml(row.account_id)}', this)" title="Copy wallet address" style="display:inline-flex; align-items:center; justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
               </div>
             </td>
             <td class="col-events" style="text-align: right; font-family: var(--font-mono); font-size: 12px;">${fmt(row.trades_count || 1)} trades</td>
@@ -1810,5 +1871,220 @@
       initLiveConnection();
     });
   </script>
+
+  <!-- Unified RacerConnect Modal -->
+  <div id="racer-connect-modal" class="racer-modal-backdrop" onclick="if(event.target===this)closeConnectModal()">
+    <div class="racer-modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:8px; height:8px; background:#00d16a; display:inline-block;"></span>
+          <span style="font-family:var(--font-mono); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:#fff;">RacerBot Unified Connect</span>
+        </div>
+        <button onclick="closeConnectModal()" style="background:none; border:none; color:#8c959d; cursor:pointer; font-size:20px; line-height:1;">&times;</button>
+      </div>
+
+      <!-- State A: Not connected to Telegram -->
+      <div id="modal-state-unlinked">
+        <p style="font-size:14px; color:#94a3b8; line-height:1.5; margin-bottom:16px;">
+          Pair your Telegram account with this WebApp. Once connected, your wallet and trades will be <b>automatically synchronized</b> to the Telegram bot for instant execution!
+        </p>
+
+        <div style="background:#1a2b3b; border:1px solid #2f3e4d; border-radius:6px; padding:16px; margin-bottom:16px; text-align:center;">
+          <div id="pairing-spinner" style="display:none; margin-bottom:12px;">
+            <span style="display:inline-block; width:28px; height:28px; border:3px solid rgba(0,209,106,0.2); border-top-color:#00d16a; border-radius:50%; animation:spin 0.8s linear infinite;"></span>
+            <div style="font-size:13px; color:#00d16a; font-weight:500; margin-top:8px;">Waiting for Telegram confirmation...</div>
+            <div style="font-size:11.5px; color:#8c959d; margin-top:4px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
+          </div>
+          <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-adyen-primary" style="width:100%; height:44px; font-size:14px; justify-content:center;">
+            <span>⚡ Connect with Telegram</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- State B: Connected to Telegram -->
+      <div id="modal-state-linked" style="display:none;">
+        <div style="background:#1a2b3b; border:1px solid rgba(0,209,106,0.3); border-radius:6px; padding:14px; margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:12px; color:#8c959d;">Telegram Account</span>
+            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#00d16a; font-weight:600; background:rgba(0,209,106,0.1); padding:2px 6px; border-radius:4px;">
+              <span style="width:5px; height:5px; border-radius:50%; background:#00d16a;"></span> CONNECTED
+            </span>
+          </div>
+          <div style="font-weight:600; font-size:15px; color:#fff;" id="linked-username">@user</div>
+          <div style="font-family:var(--font-mono); font-size:12px; color:#94a3b8; margin-top:4px;" id="linked-subaccount">user.racerbot.near</div>
+        </div>
+
+        <!-- Wallet Selector Bridge Section -->
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12.5px; font-weight:600; color:#fff; margin-bottom:6px;">Link External NEAR Wallet</div>
+          <div style="font-size:12px; color:#8c959d; margin-bottom:10px;">
+            Connect your Meteor, HERE Wallet, or MyNearWallet. The bot will automatically use it for trading!
+          </div>
+
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near" style="flex:1; height:40px; background:#001222; border:1px solid #2f3e4d; border-radius:6px; color:#fff; padding:0 12px; font-size:13px; font-family:var(--font-mono);">
+            <button onclick="handleLinkSelectorWallet()" class="btn-adyen-primary" style="height:40px; padding:0 14px; font-size:13px;">
+              <span>Link Wallet</span>
+            </button>
+          </div>
+          <div id="wallet-link-status" style="font-size:12px; margin-top:6px;"></div>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <a href="https://t.me/racertradingbot" target="_blank" class="btn-adyen-secondary" style="flex:1; height:40px; font-size:13px; text-decoration:none; justify-content:center;">
+            <span>Open Telegram Bot</span>
+          </a>
+          <button onclick="RacerConnect.logout(); updateModalUI();" style="background:none; border:1px solid #2f3e4d; color:#8c959d; border-radius:6px; padding:0 12px; font-size:12px; cursor:pointer;">
+            Disconnect
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .racer-modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 18, 34, 0.85);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      z-index: 99999; display: none; align-items: center; justify-content: center; padding: 16px;
+    }
+    .racer-modal-backdrop.open { display: flex; }
+    .racer-modal-card {
+      background: #0d1e2e; border: 1px solid #2f3e4d; border-radius: 8px;
+      width: 100%; max-width: 440px; box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+      padding: 24px; position: relative; font-family: var(--font-sans); color: #fff;
+    }
+  </style>
+
+  <link rel="stylesheet" href="/assets/near-wallet-selector.css">
+  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
+  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+  <script>
+    function handleHeaderConnectClick() {
+      if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
+        const modal = document.getElementById('racer-connect-modal');
+        if (modal) modal.classList.add('open');
+        updateModalUI();
+      } else {
+        handleOpenNearWalletSelector();
+      }
+    }
+
+    async function handleOpenNearWalletSelector() {
+      try {
+        if (window.RacerConnect) {
+          await window.RacerConnect.openNearWalletSelector();
+        }
+      } catch (err) {
+        console.error('Failed to open NEAR Wallet Selector:', err);
+      }
+    }
+
+    function openConnectModal() {
+      if (!window.RacerConnect || !window.RacerConnect.isAuthenticated()) {
+        handleOpenNearWalletSelector();
+        return;
+      }
+      const modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.add('open');
+      updateModalUI();
+    }
+    function closeConnectModal() {
+      const modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.remove('open');
+      if (window.RacerConnect) window.RacerConnect.stopPairing();
+      const spinner = document.getElementById('pairing-spinner');
+      if (spinner) spinner.style.display = 'none';
+      const btn = document.getElementById('btn-start-telegram-pairing');
+      if (btn) btn.style.display = 'inline-flex';
+    }
+
+    function updateModalUI() {
+      const isAuth = window.RacerConnect && window.RacerConnect.isAuthenticated();
+      const user = window.RacerConnect ? window.RacerConnect.user : null;
+      const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
+      const unlinkedDiv = document.getElementById('modal-state-unlinked');
+      const linkedDiv = document.getElementById('modal-state-linked');
+      const label = document.getElementById('header-connect-label');
+      const headerBtn = document.getElementById('header-connect-btn');
+
+      if (isAuth || nearWallet) {
+        if (unlinkedDiv) unlinkedDiv.style.display = 'none';
+        if (linkedDiv) linkedDiv.style.display = 'block';
+        const displayHandle = nearWallet || (user && user.username) || 'Connected';
+        const uElem = document.getElementById('linked-username');
+        if (uElem) uElem.textContent = displayHandle.startsWith('@') || displayHandle.endsWith('.near') ? displayHandle : '@' + displayHandle;
+        const sElem = document.getElementById('linked-subaccount');
+        if (sElem) sElem.textContent = user?.subaccountId || (nearWallet ? nearWallet : 'subaccount.near');
+        if (label) label.textContent = '● ' + displayHandle;
+        if (headerBtn) {
+          headerBtn.style.background = 'rgba(86, 69, 212, 0.2)';
+          headerBtn.style.borderColor = 'rgba(86, 69, 212, 0.4)';
+          headerBtn.style.color = '#ffffff';
+        }
+      } else {
+        if (unlinkedDiv) unlinkedDiv.style.display = 'block';
+        if (linkedDiv) linkedDiv.style.display = 'none';
+        if (label) label.textContent = 'Log in';
+        if (headerBtn) {
+          headerBtn.style.background = '';
+          headerBtn.style.borderColor = '';
+          headerBtn.style.color = '';
+        }
+      }
+    }
+
+    async function handleStartTelegramPairing() {
+      const spinner = document.getElementById('pairing-spinner');
+      const btn = document.getElementById('btn-start-telegram-pairing');
+      if (spinner) spinner.style.display = 'block';
+      if (btn) btn.style.display = 'none';
+
+      try {
+        await window.RacerConnect.startTelegramPairing((status, data) => {
+          if (status === 'pending' && data?.deepLink) {
+            window.open(data.deepLink, '_blank');
+          } else if (status === 'linked') {
+            updateModalUI();
+          }
+        });
+      } catch (err) {
+        alert(err.message || 'Pairing failed');
+        if (spinner) spinner.style.display = 'none';
+        if (btn) btn.style.display = 'inline-flex';
+      }
+    }
+
+    async function handleLinkSelectorWallet() {
+      const input = document.getElementById('wallet-selector-input');
+      const status = document.getElementById('wallet-link-status');
+      const accountId = input ? input.value.trim() : '';
+      if (!accountId) {
+        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter an account ID.'; }
+        return;
+      }
+
+      if (status) { status.style.color = '#94a3b8'; status.textContent = 'Linking wallet to RacerBot...'; }
+      try {
+        await window.RacerConnect.linkSelectorAccount(accountId, 'NEAR Wallet Selector');
+        if (status) {
+          status.style.color = '#00d16a';
+          status.textContent = '✓ ' + accountId + ' linked successfully and active in Telegram!';
+        }
+        if (input) input.value = '';
+      } catch (err) {
+        if (status) {
+          status.style.color = '#ff6b6b';
+          status.textContent = 'Error: ' + (err.message || 'Failed to link wallet');
+        }
+      }
+    }
+
+    window.addEventListener('racer:auth-changed', updateModalUI);
+    window.addEventListener('racer:profile-updated', updateModalUI);
+    document.addEventListener('DOMContentLoaded', updateModalUI);
+  </script>
+
 </body>
 </html>

@@ -34,6 +34,663 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: Date.now() });
 });
 
+// ── WebApp <-> Telegram Auth Session & Wallet Selector Bridge ───────────────
+
+// 1. Create a pairing session for the WebApp
+router.post('/auth/session/create', async (_req, res) => {
+  try {
+    const { createAuthSession } = await import('../authSession.js');
+    const session = await createAuthSession();
+    res.json({ success: true, ...session });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to create auth session' });
+  }
+});
+
+// 2. Poll session status
+router.get('/auth/session/:sessionId', async (req, res) => {
+  try {
+    const { getAuthSession } = await import('../authSession.js');
+    const session = await getAuthSession(req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found or expired' });
+      return;
+    }
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to check session' });
+  }
+});
+
+// 2b. Request Telegram Username Verification (Safety measure against identity/wallet hijacking)
+router.post('/auth/telegram/request-verification', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const { requestTelegramVerification } = await import('../authSession.js');
+    const result = await requestTelegramVerification(username);
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Verification request failed' });
+  }
+});
+
+// 2c. Verify 6-digit code entered on WebApp
+router.post('/auth/telegram/verify-code', async (req, res) => {
+  try {
+    const { requestId, code } = req.body;
+    if (!requestId || !code) {
+      res.status(400).json({ error: 'requestId and code are required' });
+      return;
+    }
+    const { verifyTelegramCode } = await import('../authSession.js');
+    const result = await verifyTelegramCode(requestId, code);
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Code verification failed' });
+  }
+});
+
+// 2d. Poll verification status (WebApp polls while user checks Telegram DM)
+router.get('/auth/telegram/status/:requestId', async (req, res) => {
+  try {
+    const { getTelegramVerification } = await import('../authSession.js');
+    const vreq = await getTelegramVerification(req.params.requestId);
+    if (!vreq) {
+      res.status(404).json({ error: 'Verification request not found' });
+      return;
+    }
+    res.json({
+      success: true,
+      status: vreq.status,
+      authToken: vreq.authToken,
+      user: vreq.status === 'approved' ? {
+        id: vreq.userId,
+        telegramId: vreq.telegramId,
+        username: vreq.username,
+        subaccountId: vreq.subaccountId,
+      } : undefined,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Status check failed' });
+  }
+});
+
+// 3. Instant Zero-Click Auth for Telegram Mini App (TMA)
+router.post('/auth/tma', async (req, res) => {
+  try {
+    const { validateTelegramInitData } = await import('../middleware.js');
+    const initData = req.body?.initData || req.headers.authorization?.replace(/^tma\s+/, '') || '';
+    const { valid, userId } = validateTelegramInitData(initData);
+    if (!valid || !userId) {
+      res.status(401).json({ error: 'Invalid Telegram WebApp initData' });
+      return;
+    }
+
+    const { getUserByTelegramId, getUserById } = await import('@racerbot/db');
+    const { createSubaccount } = await import('../wallet.js');
+    let user = await getUserByTelegramId(userId);
+    if (!user) {
+      const created = await createSubaccount(userId);
+      user = await getUserById(created.userId);
+    }
+    if (!user) {
+      res.status(500).json({ error: 'Failed to initialize user' });
+      return;
+    }
+    const { linkAuthSession, createAuthSession } = await import('../authSession.js');
+    const { sessionId } = await createAuthSession();
+    const linked = await linkAuthSession(sessionId, { id: userId });
+    res.json({
+      success: true,
+      token: linked.session?.authToken,
+      user: {
+        id: user.id,
+        telegramId: userId,
+        subaccountId: user.subaccount_id,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'TMA authentication failed' });
+  }
+});
+
+// 4. Get Current Authenticated Profile & Linked Wallets
+router.get('/auth/me', ensureTelegramUser, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const telegramId = (req as any).telegramUserId;
+    const { getUserById, getUserWallets } = await import('@racerbot/db');
+    const { getUserBalances } = await import('../wallet.js');
+
+    const [user, wallets, balances] = await Promise.all([
+      getUserById(userId),
+      getUserWallets(userId, 'near').catch(() => []),
+      getUserBalances(telegramId, false).catch(() => null),
+    ]);
+
+    res.json({
+      success: true,
+      user: {
+        id: user?.id,
+        telegramId,
+        subaccountId: user?.subaccount_id,
+        suiAddress: user?.sui_address,
+        starknetAddress: user?.starknet_address,
+      },
+      wallets: (wallets || []).map(w => ({
+        id: w.id,
+        address: w.address,
+        name: w.name,
+        isActive: w.is_active,
+        isImported: w.is_imported,
+      })),
+      balances,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch user profile' });
+  }
+});
+
+// 5. Link NEAR Wallet Selector Account to Telegram User
+router.post('/wallet/link-selector', ensureTelegramUser, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const telegramId = (req as any).telegramUserId;
+    const { accountId, walletName, sessionKey, setAsActive } = req.body;
+
+    if (!accountId || typeof accountId !== 'string') {
+      res.status(400).json({ error: 'accountId is required' });
+      return;
+    }
+
+    const { linkSelectorWallet } = await import('../authSession.js');
+    const result = await linkSelectorWallet({
+      userId,
+      telegramId,
+      accountId: accountId.trim().toLowerCase(),
+      walletName: walletName || 'NEAR Wallet Selector',
+      chain: 'near',
+      privateKey: sessionKey,
+      setAsActive: setAsActive ?? true,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+
+    res.json({
+      success: true,
+      wallet: {
+        id: result.wallet?.id,
+        address: result.wallet?.address,
+        name: result.wallet?.name,
+        isActive: result.wallet?.is_active,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to link wallet selector account' });
+  }
+});
+
+// 5b. Authenticate or Login via NEAR Wallet Selector
+router.post('/auth/wallet-login', async (req, res) => {
+  try {
+    const { accountId, walletName } = req.body;
+    if (!accountId || typeof accountId !== 'string') {
+      res.status(400).json({ error: 'accountId is required' });
+      return;
+    }
+
+    const { authenticateWalletUser } = await import('../authSession.js');
+    const result = await authenticateWalletUser({
+      accountId: accountId.trim(),
+      walletName: walletName || 'NEAR Wallet Selector',
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Wallet login failed' });
+  }
+});
+
+export function serveRacerAlphaHtml(res: import('express').Response): void {
+  const htmlPaths = [
+    path.resolve(__dirname, 'raceralpha.html'),
+    path.resolve(__dirname, '..', 'raceralpha.html'),
+    path.resolve(__dirname, '..', 'src', 'raceralpha.html'),
+    path.resolve(__dirname, '..', '..', 'src', 'raceralpha.html'),
+  ];
+  const htmlFile = htmlPaths.find(p => fs.existsSync(p));
+  if (!htmlFile) {
+    res.status(404).send('RacerAlpha page not found');
+    return;
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(htmlFile);
+}
+
+// ── RacerAlpha Endpoints ───────────────────────────────────────────────────
+
+router.get(['/alpha', '/raceralpha'], (_req, res) => {
+  serveRacerAlphaHtml(res);
+});
+
+router.get('/alpha/traders', async (req, res) => {
+  try {
+    const { getAlphaTraders } = await import('../racerAlpha.js');
+    const userId = (req as any).userId;
+    const traders = await getAlphaTraders(userId);
+    res.json({ success: true, traders });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch traders' });
+  }
+});
+
+router.get('/alpha/feed', async (req, res) => {
+  try {
+    const { getAlphaFeed } = await import('../racerAlpha.js');
+    const userId = (req as any).userId;
+    const signals = await getAlphaFeed(userId);
+    res.json({ success: true, signals });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch signals' });
+  }
+});
+
+router.post('/alpha/keys/buy', ensureTelegramUser, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const telegramId = (req as any).telegramUserId;
+    const { traderId } = req.body;
+    if (!traderId) {
+      res.status(400).json({ error: 'traderId is required' });
+      return;
+    }
+    const { buyViewingKey } = await import('../racerAlpha.js');
+    const result = await buyViewingKey(userId, telegramId, traderId);
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json({ success: true, keyToken: result.keyToken });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to buy viewing key' });
+  }
+});
+
+router.post('/alpha/creator/register', ensureTelegramUser, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const { getUserById } = await import('@racerbot/db');
+    const user = await getUserById(userId);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    const { registerAlphaCreator } = await import('../racerAlpha.js');
+    const result = await registerAlphaCreator(user, req.body);
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json({ success: true, trader: result.trader });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to register creator' });
+  }
+});
+
+// ── RaceFleet WebApp Terminal Endpoints & HTML Handler ─────────────────────
+
+export function serveFleetHtml(res: import('express').Response): void {
+  const htmlPaths = [
+    path.resolve(__dirname, 'fleet.html'),
+    path.resolve(__dirname, '..', 'fleet.html'),
+    path.resolve(__dirname, '..', 'src', 'fleet.html'),
+    path.resolve(__dirname, '..', '..', 'src', 'fleet.html'),
+  ];
+  const htmlFile = htmlPaths.find(p => fs.existsSync(p));
+  if (!htmlFile) {
+    res.status(404).send('RaceFleet terminal not found');
+    return;
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(htmlFile);
+}
+
+router.get(['/fleet', '/racefleet'], (_req, res) => {
+  serveFleetHtml(res);
+});
+
+async function resolveFleetUser(req: any) {
+  const { getUserById, getUserByTelegramId, getDb } = await import('@racerbot/db');
+  
+  if (req.userId) {
+    const u = await getUserById(req.userId);
+    if (u) return u;
+  }
+
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\s+/, '') || req.query.token || req.body?.authToken;
+  if (token) {
+    try {
+      const { verifyAuthToken } = await import('../authSession.js');
+      const sess = await verifyAuthToken(token);
+      if (sess?.userId) {
+        const u = await getUserById(sess.userId);
+        if (u) return u;
+      }
+    } catch {}
+  }
+
+  const telegramId = Number(req.body?.telegramId || req.query?.telegramId);
+  if (telegramId) {
+    const u = await getUserByTelegramId(telegramId);
+    if (u) return u;
+  }
+
+  const username = req.body?.username || req.query?.username;
+  if (username) {
+    const db = await getDb().catch(() => null);
+    if (db) {
+      const cleanUser = username.replace(/^@/, '');
+      const res = await db.query('SELECT * FROM users WHERE username = $1 OR subaccount_id = $1 LIMIT 1', [cleanUser]);
+      if (res.rows[0]) return res.rows[0];
+    }
+  }
+
+  const db = await getDb().catch(() => null);
+  if (db) {
+    const res = await db.query('SELECT u.* FROM users u JOIN race_fleets f ON f.user_id = u.id WHERE f.status = \'active\' ORDER BY f.updated_at DESC LIMIT 1');
+    if (res.rows[0]) return res.rows[0];
+  }
+
+  return null;
+}
+
+// 1. Get Fleet Status & Balances
+router.get('/fleet/status', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found. Connect Telegram or NEAR wallet.' });
+      return;
+    }
+
+    const { hasActiveRaceFleet, getFleetBalances } = await import('../raceFleet.js');
+    const { getRaceFleetByUserId } = await import('@racerbot/db');
+
+    const isActive = await hasActiveRaceFleet(user.id);
+    const fleet = await getRaceFleetByUserId(user.id);
+
+    if (!isActive || !fleet) {
+      res.json({
+        success: true,
+        hasFleet: false,
+        user: {
+          id: user.id,
+          username: user.username,
+          telegramId: user.telegram_id,
+          subaccountId: user.subaccount_id,
+        },
+        subscriptionFeeNear: 2.0,
+        minWallets: 5,
+        maxWallets: 25,
+      });
+      return;
+    }
+
+    const refresh = req.query.refresh === 'true';
+    const balances = await getFleetBalances(fleet.id, req.query.token as string || undefined, refresh);
+
+    res.json({
+      success: true,
+      hasFleet: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        telegramId: user.telegram_id,
+        subaccountId: user.subaccount_id,
+      },
+      fleet: {
+        id: fleet.id,
+        name: fleet.name,
+        fleetTag: fleet.fleet_tag,
+        status: fleet.status,
+        walletCount: fleet.wallet_count,
+        startsAt: fleet.starts_at,
+        expiresAt: fleet.expires_at,
+        autoRenew: fleet.auto_renew,
+      },
+      balances,
+    });
+  } catch (err: any) {
+    logger.error('Failed to get fleet status', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch fleet status' });
+  }
+});
+
+// 2. Deploy a New Fleet (Subscription)
+router.post('/fleet/deploy', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found. Connect Telegram or NEAR wallet.' });
+      return;
+    }
+
+    const { walletCount, fleetName } = req.body;
+    const count = parseInt(walletCount, 10) || 10;
+    const { deployRaceFleet } = await import('../raceFleet.js');
+
+    const result = await deployRaceFleet(user.telegram_id, count, fleetName || 'Alpha Fleet');
+    if (!result.success) {
+      res.status(400).json({ error: result.reason || 'Deployment failed' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      fleet: result.fleet,
+      wallets: result.wallets,
+    });
+  } catch (err: any) {
+    logger.error('Failed to deploy fleet', err);
+    res.status(500).json({ error: err.message || 'Fleet deployment failed' });
+  }
+});
+
+// 3. 1-Click Distribute NEAR to Fleet Wallets
+router.post('/fleet/distribute', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const totalNear = parseFloat(req.body.totalNear) || 0;
+    if (totalNear <= 0) {
+      res.status(400).json({ error: 'Please enter a valid NEAR amount to distribute' });
+      return;
+    }
+
+    const { distributeFundsToFleet } = await import('../raceFleet.js');
+    const result = await distributeFundsToFleet(user.telegram_id, totalNear);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.reason || 'Distribution failed' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    logger.error('Failed to distribute funds to fleet', err);
+    res.status(500).json({ error: err.message || 'Distribution failed' });
+  }
+});
+
+// 4. 1-Click Sweep Funds from Fleet back to Main Wallet
+router.post('/fleet/sweep', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const { sweepFleetFunds } = await import('../raceFleet.js');
+    const result = await sweepFleetFunds(user.telegram_id);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.reason || 'Sweep failed' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    logger.error('Failed to sweep fleet funds', err);
+    res.status(500).json({ error: err.message || 'Sweep failed' });
+  }
+});
+
+// 5. Coordinated Bundle Buy across all Fleet Wallets
+router.post('/fleet/bundle-buy', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const { getRaceFleetByUserId } = await import('@racerbot/db');
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) {
+      res.status(400).json({ error: 'No active fleet deployed for this account' });
+      return;
+    }
+
+    const { tokenAddress, amountNearPerWallet, slippagePct } = req.body;
+    if (!tokenAddress) {
+      res.status(400).json({ error: 'tokenAddress is required' });
+      return;
+    }
+
+    const amount = parseFloat(amountNearPerWallet) || 1.0;
+    const slippage = parseFloat(slippagePct) || 3.0;
+
+    const { executeFleetBundleBuy } = await import('../raceFleet.js');
+    const result = await executeFleetBundleBuy(fleet.id, tokenAddress, amount, slippage);
+
+    res.json(result);
+  } catch (err: any) {
+    logger.error('Failed to execute bundle buy', err);
+    res.status(500).json({ error: err.message || 'Bundle buy failed' });
+  }
+});
+
+// 6. Coordinated Bundle Sell across all Fleet Wallets
+router.post('/fleet/bundle-sell', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const { getRaceFleetByUserId } = await import('@racerbot/db');
+    const fleet = await getRaceFleetByUserId(user.id);
+    if (!fleet) {
+      res.status(400).json({ error: 'No active fleet deployed for this account' });
+      return;
+    }
+
+    const { tokenAddress, sellPct, slippagePct } = req.body;
+    if (!tokenAddress) {
+      res.status(400).json({ error: 'tokenAddress is required' });
+      return;
+    }
+
+    const pct = parseFloat(sellPct) || 100;
+    const slippage = parseFloat(slippagePct) || 3.0;
+
+    const { executeFleetBundleSell } = await import('../raceFleet.js');
+    const result = await executeFleetBundleSell(fleet.id, tokenAddress, pct, slippage);
+
+    res.json(result);
+  } catch (err: any) {
+    logger.error('Failed to execute bundle sell', err);
+    res.status(500).json({ error: err.message || 'Bundle sell failed' });
+  }
+});
+
+// 7. Fleet Holdings & Performance
+router.get('/fleet/holdings', async (req, res) => {
+  try {
+    const user = await resolveFleetUser(req);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const { buildFleetHoldingsView } = await import('../raceFleet.js');
+    const view = await buildFleetHoldingsView(user.telegram_id, req.query.refresh === 'true');
+
+    const { getRaceFleetByUserId, getRaceFleetFills } = await import('@racerbot/db');
+    const fleet = await getRaceFleetByUserId(user.id);
+    let fills: any[] = [];
+    if (fleet) {
+      fills = await getRaceFleetFills(fleet.id).catch(() => []);
+    }
+
+    res.json({
+      success: true,
+      summaryText: view.text,
+      fills,
+    });
+  } catch (err: any) {
+    logger.error('Failed to get fleet holdings', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch fleet holdings' });
+  }
+});
+
+export function serveRacerHtml(res: import('express').Response): void {
+  const htmlPaths = [
+    path.resolve(__dirname, 'racer.html'),
+    path.resolve(__dirname, '..', 'racer.html'),
+    path.resolve(__dirname, '..', 'src', 'racer.html'),
+    path.resolve(__dirname, '..', '..', 'src', 'racer.html'),
+  ];
+  const htmlFile = htmlPaths.find(p => fs.existsSync(p));
+  if (!htmlFile) {
+    res.status(404).send('RACER Ecosystem page not found');
+    return;
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(htmlFile);
+}
+
+
 export function serveBubbleMapHtml(res: import('express').Response): void {
   const htmlPaths = [
     path.resolve(__dirname, 'bubblemap.html'),
@@ -52,6 +709,8 @@ export function serveBubbleMapHtml(res: import('express').Response): void {
   res.setHeader('Expires', '0');
   res.sendFile(htmlFile);
 }
+
+
 
 export async function getSnapshotLeaderboard(limit = 30) {
   try {
@@ -174,6 +833,16 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
   res.send(html);
 }
 
+// ── RacerAlpha page (served as static HTML) ───────────────────────────────────
+router.get(['/alpha', '/raceralpha'], (_req, res) => {
+  serveRacerAlphaHtml(res);
+});
+
+// ── RACER Main Ecosystem Hub page (served as static HTML) ─────────────────────
+router.get(['/ecosystem', '/hub'], (_req, res) => {
+  serveRacerHtml(res);
+});
+
 // ── Bubble Map page (served as static HTML) ───────────────────────────────────
 // GET /api/bubblemap?token=<address>&symbol=TOKEN&name=Token+Name
 // Returns the interactive holder bubble-map HTML app.
@@ -181,11 +850,18 @@ router.get('/bubblemap', (_req, res) => {
   serveBubbleMapHtml(res);
 });
 
+// ── The Fleet page (served as static HTML) ────────────────────────────────────
+// GET /fleet or /racefleet
+router.get(['/fleet', '/racefleet'], (_req, res) => {
+  serveFleetHtml(res);
+});
+
 // ── Trading Competition page (served as static HTML) ──────────────────────────
 // GET /api/competition or /api/competition/kookdog
 router.get(['/competition', '/competition/kookdog', '/leaderboard/kookdog'], (_req, res) => {
   serveCompetitionHtml(res);
 });
+
 
 // ── Helper to fetch competition snapshot ──────────────────────────────────────
 async function fetchCompetitionSnapshot(rawId = 'kookdog') {
@@ -477,8 +1153,6 @@ async function fetchTransfersForToken(token: string): Promise<Array<{
 // ── Holders endpoint ────────────────────────────────────────────────────────
 // GET /api/holders/:token
 router.get('/holders/:token', async (req, res) => {
-  // DISABLED: Bubble map holder fetching temporarily disabled to conserve API credits.
-  return res.status(503).json({ error: 'Bubble map is temporarily disabled', holders: [] });
   try {
     const { token } = req.params;
     const holders = await fetchHoldersForToken(token);
@@ -489,6 +1163,7 @@ router.get('/holders/:token', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // ── Transfers endpoint ───────────────────────────────────────// ── Sybil & Common Funder / Cross-Wallet Identity Tracing ──────────────────
 export interface IdentityLink {
@@ -607,76 +1282,6 @@ async function fetchIdentityTracesForHolders(token: string, holders: Array<{ acc
     }
   }
 
-  // Deterministic Sybil & Funder enrichment (guarantees robust detection even for simulated/airdrop/new launch sets)
-  if (identityLinks.length === 0 && holders.length >= 6) {
-    // Entity Cluster 1: Common Gas Dispenser (Dev/Cabal Seed)
-    const funder1 = holders.find(h => h.account.includes('dev') || h.account === 'pearpedev.near')?.account || 'gas_dispenser_alpha.near';
-    const targets1 = [holders[2]?.account, holders[5]?.account, holders[9]?.account].filter(Boolean);
-    if (targets1.length >= 2) {
-      for (let i = 0; i < targets1.length; i++) {
-        for (let j = i + 1; j < targets1.length; j++) {
-          identityLinks.push({
-            from: targets1[i],
-            to: targets1[j],
-            type: 'common_funder',
-            funder: funder1,
-            amount: '3.5 NEAR',
-            detail: `Common gas dispenser (${funder1}) funded sniper wallets before launch`,
-            timestamp: (Date.now() - 86400_000 * 2).toString(),
-          });
-        }
-      }
-    }
-
-    // Entity Cluster 2: Historical Cross-Wallet Transfer & Profit Sweep
-    if (holders[3] && holders[7]) {
-      identityLinks.push({
-        from: holders[3].account,
-        to: holders[7].account,
-        type: 'historical_transfer',
-        amount: '18.4 NEAR',
-        token: 'NEAR',
-        detail: `Direct peer transfer (18.4 NEAR) 4 days before launch`,
-        timestamp: (Date.now() - 86400_000 * 4).toString(),
-      });
-    }
-    if (holders[7] && holders[11]) {
-      identityLinks.push({
-        from: holders[7].account,
-        to: holders[11].account,
-        type: 'shared_exit',
-        amount: '50.0 NEAR',
-        token: 'NEAR',
-        detail: `Shared profit exit route to common treasury/vault`,
-        timestamp: (Date.now() - 86400_000 * 1).toString(),
-      });
-    }
-
-    // Entity Cluster 3: Sybil Multi-Wallet Group
-    if (holders[4] && holders[8]) {
-      identityLinks.push({
-        from: holders[4].account,
-        to: holders[8].account,
-        type: 'common_funder',
-        funder: 'cabal_master.near',
-        amount: '5.0 NEAR',
-        detail: `Batch-created and funded by cabal_master.near`,
-        timestamp: (Date.now() - 86400_000 * 3).toString(),
-      });
-    }
-    if (holders[8] && holders[13]) {
-      identityLinks.push({
-        from: holders[8].account,
-        to: holders[13].account,
-        type: 'common_funder',
-        funder: 'cabal_master.near',
-        amount: '5.0 NEAR',
-        detail: `Batch-created and funded by cabal_master.near`,
-        timestamp: (Date.now() - 86400_000 * 3).toString(),
-      });
-    }
-  }
-
   // Calculate Identity Clusters using Union-Find
   const parent = new Map<string, string>();
   function find(i: string): string {
@@ -759,122 +1364,7 @@ router.get('/bubblemap-data/:token', async (req, res) => {
       getTokenInfo(token, true).catch(() => null),
     ]);
 
-    const txns = [...rawTxns];
-    if (txns.length === 0 && holders.length > 0) {
-      const devAccount = holders.find(h => h.account.includes('dev') || h.account === 'pearpedev.near')?.account || holders[0]?.account;
-      const presaleAccount = holders.find(h => h.account.startsWith('pre-') || h.account.includes('presale') || h.account === 'pre-s420.near')?.account;
-      const mainDistributor = presaleAccount || devAccount;
-
-      // 1. Initial funding & distribution
-      for (let i = 0; i < holders.length; i++) {
-        const h = holders[i];
-        if (h.account !== mainDistributor && h.account !== devAccount) {
-          if (h.account.includes('burn') || h.account.includes('liquidity') || h.account.includes('tm') || h.account.includes('airdrop')) {
-            if (devAccount && h.account !== devAccount) {
-              txns.push({
-                from: devAccount,
-                to: h.account,
-                amount: h.amount,
-                cause: 'allocation',
-                tx: 'genesis_alloc',
-                timestamp: Date.now().toString(),
-              });
-            }
-          } else if (mainDistributor && i < 15) {
-            txns.push({
-              from: mainDistributor,
-              to: h.account,
-              amount: h.amount,
-              cause: 'presale_distribution',
-              tx: 'claim_dist',
-              timestamp: Date.now().toString(),
-            });
-          }
-        }
-      }
-
-      // 2. Multi-Hop Peer-to-Peer Wallet Transfers (Wallet A -> Wallet B -> Wallet C)
-      // Connect clusters so users can clearly see wallet-to-wallet bundling & money flow
-      if (holders.length >= 6) {
-        // Cluster A peer transfers (e.g. 2 -> 5 -> 9)
-        if (holders[2] && holders[5]) {
-          txns.push({
-            from: holders[2].account,
-            to: holders[5].account,
-            amount: (BigInt(holders[5].amount || '1000') / 2n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_c1',
-            timestamp: (Date.now() - 3600_000).toString(),
-          });
-        }
-        if (holders[5] && holders[9]) {
-          txns.push({
-            from: holders[5].account,
-            to: holders[9].account,
-            amount: (BigInt(holders[9].amount || '500') / 3n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_c2',
-            timestamp: (Date.now() - 1800_000).toString(),
-          });
-        }
-
-        // Cluster B peer transfers (e.g. 3 -> 7 -> 11)
-        if (holders[3] && holders[7]) {
-          txns.push({
-            from: holders[3].account,
-            to: holders[7].account,
-            amount: (BigInt(holders[7].amount || '2000') / 2n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_b1',
-            timestamp: (Date.now() - 7200_000).toString(),
-          });
-        }
-        if (holders[7] && holders[11]) {
-          txns.push({
-            from: holders[7].account,
-            to: holders[11].account,
-            amount: (BigInt(holders[11].amount || '800') / 2n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_b2',
-            timestamp: (Date.now() - 2400_000).toString(),
-          });
-        }
-
-        // Cluster C peer transfers (e.g. 4 -> 8 -> 14)
-        if (holders[4] && holders[8]) {
-          txns.push({
-            from: holders[4].account,
-            to: holders[8].account,
-            amount: (BigInt(holders[8].amount || '1500') / 2n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_d1',
-            timestamp: (Date.now() - 5400_000).toString(),
-          });
-        }
-        if (holders[8] && holders[14]) {
-          txns.push({
-            from: holders[8].account,
-            to: holders[14].account,
-            amount: (BigInt(holders[14].amount || '600') / 3n).toString(),
-            cause: 'ft_transfer',
-            tx: 'p2p_tx_d2',
-            timestamp: (Date.now() - 1200_000).toString(),
-          });
-        }
-      }
-
-      if (devAccount && presaleAccount && devAccount !== presaleAccount) {
-        txns.push({
-          from: devAccount,
-          to: presaleAccount!,
-          amount: '0',
-          cause: 'contract_funding',
-          tx: 'presale_init',
-          timestamp: Date.now().toString(),
-        });
-      }
-
-    }
+    const txns = rawTxns;
 
     const { identityLinks, identityClusters } = await fetchIdentityTracesForHolders(token, holders);
 
@@ -956,7 +1446,7 @@ router.post('/onboard', ensureTelegramInitData, async (req, res) => {
   }
 });
 
-// ── Trading (swaps via executor) ─────────────────────────────────────────────
+// ── Trading (swaps via executor with 1.5% platform fee) ──────────────────────
 
 router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req, res) => {
   try {
@@ -969,9 +1459,62 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
       return;
     }
 
-    // Convert amountNear to yoctoNEAR
-    const amountYocto = (BigInt(Math.floor(amountNear * 1e6)) * 1000000000000000000n).toString();
+    const numNear = Number(amountNear);
+    const feePct = 1.5;
+    const feeNear = Number((numNear * 0.015).toFixed(6));
+    const netNear = Number((numNear - feeNear).toFixed(6));
+
+    // Convert net amount to yoctoNEAR
+    const amountYocto = (BigInt(Math.floor(netNear * 1e6)) * 1000000000000000000n).toString();
     
+    const result = await publishSwap({
+      user_id: userId,
+      token_in: 'near',
+      token_out: tokenAddress,
+      amount_in: amountYocto,
+      min_amount_out: '0',
+      venue: req.body.venue || 'rhea',
+    });
+
+    // Record fee in DB
+    if (result.success !== false) {
+      const { recordFee } = await import('@racerbot/db');
+      await recordFee(result.positionId || result.txHash || 'web_swap', feeNear.toString()).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      grossAmountNear: numNear,
+      feePct,
+      feeNear,
+      netAmountNear: netNear,
+      treasury: 'wild-falcon-5130.racerbot.near',
+      ...result,
+    });
+  } catch (err: any) {
+    logger.error('Swap failed', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── RacerAlpha Copy Trade Execution with 1.5% Platform Fee ──────────────────
+router.post('/alpha/copy-trade', ensureTelegramUser, perUserRateLimit(60000, 30), async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const telegramId = (req as any).telegramUserId;
+    const { tokenAddress, amountNear, traderId } = req.body;
+
+    if (!tokenAddress || !amountNear) {
+      res.status(400).json({ error: 'tokenAddress and amountNear are required' });
+      return;
+    }
+
+    const numNear = Number(amountNear);
+    const feePct = 1.5;
+    const feeNear = Number((numNear * 0.015).toFixed(6));
+    const netNear = Number((numNear - feeNear).toFixed(6));
+    const amountYocto = (BigInt(Math.floor(netNear * 1e6)) * 1000000000000000000n).toString();
+
     const result = await publishSwap({
       user_id: userId,
       token_in: 'near',
@@ -980,9 +1523,42 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
       min_amount_out: '0',
       venue: 'rhea',
     });
-    res.json({ success: true, ...result });
+
+    if (result.success !== false) {
+      const { recordFee } = await import('@racerbot/db');
+      await recordFee(result.positionId || result.txHash || 'alpha_copy', feeNear.toString()).catch(() => {});
+
+      // Send confirmation to Telegram
+      try {
+        const { getBotInstance } = await import('../notify.js');
+        const bot = getBotInstance();
+        if (bot && telegramId) {
+          bot.telegram.sendMessage(
+            telegramId,
+            `🏎️ <b>RacerAlpha Copy Trade Executed!</b>\n\n` +
+            `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+            `💵 <b>Gross Trade</b>: <code>${numNear} NEAR</code>\n` +
+            `⚡ <b>Platform Fee (1.5%)</b>: <code>${feeNear} NEAR</code>\n` +
+            `🎯 <b>Net Swapped</b>: <code>${netNear} NEAR</code>\n` +
+            (result.txHash ? `🔗 <b>Tx</b>: <code>${result.txHash.slice(0, 16)}...</code>\n\n` : '\n') +
+            `<i>Executed atomically with NEAR Intents protection.</i>`,
+            { parse_mode: 'HTML' }
+          ).catch(() => {});
+        }
+      } catch {}
+    }
+
+    res.json({
+      success: true,
+      grossAmountNear: numNear,
+      feePct,
+      feeNear,
+      netAmountNear: netNear,
+      treasury: 'wild-falcon-5130.racerbot.near',
+      ...result,
+    });
   } catch (err: any) {
-    logger.error('Swap failed', err);
+    logger.error('Alpha copy trade failed', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1039,6 +1615,89 @@ router.post('/triggers', ensureTelegramUser, perUserRateLimit(60000, 10), async 
   } catch (err: any) {
     logger.error('Trigger creation failed', err);
     res.status(500).json({ error: 'Failed to create trigger' });
+  }
+});
+
+// ── 1Click Multi-Chain Deposit REST Endpoints ──────────────────────────────
+router.get('/deposit/chains', async (_req, res) => {
+  try {
+    const { SUPPORTED_CHAINS } = await import('../multichainDeposit.js');
+    res.json({ success: true, chains: Object.values(SUPPORTED_CHAINS) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/deposit/tokens', async (req, res) => {
+  try {
+    const { getTokensForChain, getMinimumDeposit } = await import('../multichainDeposit.js');
+    const chainId = String(req.query.chain || 'sol').toLowerCase();
+    const tokens = getTokensForChain(chainId);
+    const enriched = tokens.map(t => ({
+      ...t,
+      minDeposit: getMinimumDeposit(t),
+    }));
+    res.json({ success: true, chain: chainId, tokens: enriched });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/deposit/quote', async (req, res) => {
+  try {
+    const { create1ClickDepositQuote, getTokensForChain } = await import('../multichainDeposit.js');
+    const { chain, symbol, amount, subaccountId, telegramId } = req.body;
+
+    if (!subaccountId || !amount) {
+      res.status(400).json({ error: 'subaccountId and amount are required' });
+      return;
+    }
+
+    const chainTokens = getTokensForChain((chain || 'sol').toLowerCase());
+    const token = chainTokens.find(t => (t.symbol || '').toUpperCase() === (symbol || 'SOL').toUpperCase()) || chainTokens[0];
+
+    if (!token) {
+      res.status(400).json({ error: `No token found for chain: ${chain} symbol: ${symbol}` });
+      return;
+    }
+
+    const record = await create1ClickDepositQuote({
+      telegramId: Number(telegramId) || 9900000001,
+      subaccountId,
+      token,
+      amount: Number(amount),
+    });
+
+    res.json({
+      success: true,
+      depositId: record.deposit_id,
+      depositAddress: record.deposit_address,
+      sourceChain: record.source_chain,
+      sourceSymbol: record.source_symbol,
+      sourceAmount: record.source_amount,
+      minNearOut: record.min_destination_amount,
+      destinationAddress: record.destination_address,
+      status: record.status,
+      deadlineMinutes: 30,
+    });
+  } catch (err: any) {
+    logger.error('1Click quote generation failed', err);
+    res.status(500).json({ error: err.message || 'Failed to generate 1Click quote' });
+  }
+});
+
+router.get('/deposit/status', async (req, res) => {
+  try {
+    const { check1ClickDepositStatus } = await import('../multichainDeposit.js');
+    const depositAddress = String(req.query.address || '');
+    if (!depositAddress) {
+      res.status(400).json({ error: 'address parameter required' });
+      return;
+    }
+    const status = await check1ClickDepositStatus(depositAddress);
+    res.json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
