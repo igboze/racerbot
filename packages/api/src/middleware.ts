@@ -79,8 +79,30 @@ export function ensureTelegramInitData(req: Request, res: Response, next: NextFu
  */
 export async function ensureTelegramUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization ?? '';
+
+  // 1. Bearer Token Auth (Web sessions linked via Telegram deep-link handshake)
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    try {
+      const { verifyAuthToken } = await import('./authSession.js');
+      const auth = await verifyAuthToken(token);
+      if (auth) {
+        (req as any).telegramUserId = auth.telegramId;
+        (req as any).userId = auth.userId;
+        next();
+        return;
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: 'Auth token lookup failed' });
+      return;
+    }
+    res.status(401).json({ error: 'Unauthorized: invalid or expired session token' });
+    return;
+  }
+
+  // 2. Telegram Mini App (TMA) InitData Auth
   if (!authHeader.startsWith('tma ')) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: 'Unauthorized: valid Telegram initData or Bearer token required' });
     return;
   }
 

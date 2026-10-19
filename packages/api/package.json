@@ -4,7 +4,8 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc && node --input-type=module -e \"import fs from 'fs'; fs.copyFileSync('src/bubblemap.html', 'dist/bubblemap.html'); fs.copyFileSync('src/competition.html', 'dist/competition.html')\"",
+    "build": "tsc && node --input-type=module -e \"import fs from 'fs'; fs.copyFileSync('src/bubblemap.html', 'dist/bubblemap.html'); fs.copyFileSync('src/competition.html', 'dist/competition.html'); fs.copyFileSync('src/raceralpha.html', 'dist/raceralpha.html'); fs.copyFileSync('src/racer.html', 'dist/racer.html'); fs.copyFileSync('src/fleet.html', 'dist/fleet.html')\"",
+
     "dev": "node --watch dist/index.js",
     "start": "node dist/index.js"
   },

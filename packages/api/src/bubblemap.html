@@ -14,65 +14,80 @@
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/racer-design-system.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    /* ── 71UI Core Design System Tokens ───────────────────────── */
+    /* ── Master RACER Design System (UI/UX Pro Max v2.0) ───────────────────────── */
     :root {
       color-scheme: dark;
-      --color-canvas: #0A0A0B;
-      --color-surface: #111113;
-      --color-surface-2: #1A1A1D;
-      --color-hairline: rgb(255 255 255 / 0.08);
-      --color-hairline-strong: rgb(255 255 255 / 0.14);
-      --color-control-border: rgb(255 255 255 / 0.28);
-      --color-ink-strong: #F4F4F2;
-      --color-ink: #D6D6D3;
-      --color-ink-subtle: #8F8F8A;
-      --color-primary: #0070E0;
-      --color-primary-hover: #005FC2;
-      --color-link: #4193F5;
-      --color-inverse: #F4F4F2;
-      --color-inverse-hover: #DADAD6;
-      --color-on-inverse: #0A0A0B;
+      --color-canvas: #08090b;
+      --color-surface: #0f1217;
+      --color-surface-2: #151921;
+      --color-hairline: #21262d;
+      --color-hairline-strong: rgba(0, 240, 255, 0.35);
+      --color-control-border: #21262d;
+      --color-ink-strong: #ffffff;
+      --color-ink: #c8d3e8;
+      --color-ink-subtle: #8b949e; /* 5.8:1 WCAG AA compliant */
+      --color-primary: #00f0ff;
+      --color-primary-hover: #00d2e0;
+      --color-link: #00f0ff;
+      --color-racer-cyan: #00f0ff;
+      --color-racer-purple: #826ab5;
+      --color-inverse: #08090b;
+      --color-inverse-hover: #151921;
+      --color-on-inverse: #ffffff;
       
-      --color-success: #15B042;
-      --color-success-fill: #0F2A19;
-      --color-on-success: #5FD68A;
+      --color-success: #00e676;
+      --color-success-fill: rgba(0, 230, 118, 0.12);
+      --color-on-success: #00e676;
       
-      --color-warning: #F59E0B;
-      --color-warning-fill: #2E2210;
-      --color-on-warning: #F5B94A;
+      --color-warning: #ffb703;
+      --color-warning-fill: rgba(255, 183, 3, 0.12);
+      --color-on-warning: #ffb703;
       
-      --color-danger: #D92D20;
-      --color-danger-fill: #3A1512;
-      --color-on-danger: #F97066;
+      --color-danger: #ff4d4d;
+      --color-danger-fill: rgba(255, 77, 77, 0.12);
+      --color-on-danger: #ff4d4d;
       
-      --color-info-fill: #0E2440;
-      --color-on-info: #6AAEFF;
+      --color-info-fill: rgba(0, 240, 255, 0.12);
+      --color-on-info: #00f0ff;
 
       /* Elevation & Depth */
-      --shadow-ring: 0 0 0 1px rgb(255 255 255 / .08);
-      --shadow-sm: 0 2px 3px -1px rgb(0 0 0 / .40), 0 0 0 1px rgb(255 255 255 / .08);
-      --shadow-md: 0 0 0 1px rgb(255 255 255 / .08), 0 8px 24px -4px rgb(0 0 0 / .6);
-      --shadow-lg: 0 0 0 1px rgb(255 255 255 / .10), 0 24px 48px -12px rgb(0 0 0 / .8);
-      --shadow-bevel: inset 0 1px 0 rgb(255 255 255 / .08), inset 0 -1px 0 rgb(0 0 0 / .7);
+      --shadow-ring: 0 0 0 1px #26282b;
+      --shadow-sm: rgba(0, 0, 0, 0.15) 0px 2px 4px 0px;
+      --shadow-md: rgba(0, 0, 0, 0.15) 0px 2px 8px 0px;
+      --shadow-lg: rgba(0, 0, 0, 0.25) 0px 8px 24px 0px;
+      --shadow-bevel: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
       /* Motion Tokens */
-      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-      --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-      --dur-press: 160ms;
-      --dur-fast: 150ms;
+      --ease-out: ease-in-out;
+      --ease-out-expo: ease-in-out;
+      --ease-standard: ease-in-out;
+      --dur-press: 100ms;
+      --dur-fast: 100ms;
       --dur-base: 200ms;
 
+      /* Notion Radius Scale: Rectangular 8px Buttons, 12px Cards */
+      --radius-sm: 4px;
+      --radius-md: 8px;      /* BUTTONS ARE 8px RECTANGLES, NOT PILLS */
+      --radius-lg: 12px;     /* CARDS, MODALS, FEATURE PANELS */
+      --radius-xl: 16px;
+      --radius-full: 9999px; /* PILLS ONLY FOR STATUS BADGES & TABS */
+
+      /* Distinctive Typography Suite (frontend-design guidelines) */
+      --font-display: 'Syne', -apple-system, sans-serif;
+      --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
       /* Tier Assignment (Consistent with On-Chain Visualizer) */
-      --tier-whale: #A855F7;
-      --tier-large: #0070E0;
-      --tier-medium: #15B042;
-      --tier-small: #F59E0B;
-      --tier-dust: #8F8F8A;
-      --tier-pool: #EAB308;
+      --tier-whale: #7860a9;
+      --tier-large: #6accdc;
+      --tier-medium: #00d16a;
+      --tier-small: #f59e0b;
+      --tier-dust: #6e7681;
+      --tier-pool: #eab308;
     }
 
     * {
@@ -165,9 +180,10 @@
     }
 
     .brand-title {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
+      font-family: var(--font-display);
+      font-size: 13.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
       color: var(--color-ink-strong);
     }
 
@@ -2534,43 +2550,58 @@
     </style>
 </head>
 <body>
+  <a href="#main" class="skip-link">Skip to content</a>
   <div id="app">
 
-
-
-    <!-- ═══════════════════════════════════════════════════════════════════════ -->
-    <!-- RACERBOT OFFICIAL MARKETING TERMINAL WITH NEW LOGO & SOCIAL CARD      -->
-    <!-- ═══════════════════════════════════════════════════════════════════════ -->
     <div id="landing-page">
-      <!-- Top Navigation (60px, Adyen top-nav specification with RacerBot logo) -->
-      <nav class="adyen-nav">
-        <div class="adyen-brand" onclick="showLandingPage()">
-          <div class="adyen-brand-logo">
-            <img src="/assets/logo.png" alt="RacerBot Logo" />
-          </div>
-          <div>
-            <span class="adyen-brand-title">RACERBOT</span>
-            <div class="adyen-brand-subtitle">NEAR TRADING BOT</div>
-          </div>
-        </div>
-
-        <div class="adyen-nav-links">
-          <a class="adyen-nav-link" href="#enterprise-execution">Execution</a>
-          <a class="adyen-nav-link" href="#bubble-maps">Bubble Maps</a>
-          <a class="adyen-nav-link" href="#platform-control">Capabilities</a>
-          <a class="adyen-nav-link" href="/competition">Competition</a>
-          <a class="adyen-nav-link" href="https://t.me/racerbot_community" target="_blank" rel="noopener">Community</a>
-        </div>
-
-        <div class="adyen-nav-actions">
-          <button class="btn-adyen-secondary btn-adyen-nav-cta" onclick="openBubbleMap()">
-            <span>Bubble Map</span>
-          </button>
-          <a class="btn-adyen-primary btn-adyen-nav-cta" href="https://t.me/racertradingbot" target="_blank" rel="noopener">
-            <span>Talk to our bot</span>
+      <!-- Universal Top Navigation (Master Pit-Wall Specification) -->
+      <header class="racer-header">
+        <div class="header-inner">
+          <a href="/" class="brand-logo-wrap">
+            <div class="brand-mark">
+              <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+            </div>
+            <div>
+              <span class="brand-title">RACER <span>BUBBLE</span></span>
+            </div>
           </a>
+
+          <!-- Live Telemetry Status Rail -->
+          <div class="telemetry-rail">
+            <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
+              <span class="dot"></span>
+              SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
+            </span>
+            <span style="color:var(--color-border);">|</span>
+            <span style="color:var(--color-text-subtle);">
+              NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
+            </span>
+          </div>
+
+          <!-- Navigation Links -->
+          <nav class="nav-links">
+            <a href="/" class="nav-item">Home</a>
+            <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
+            <a href="/alpha" class="nav-item">RacerAlpha</a>
+            <a href="/bubblemap" class="nav-item active">RacerBubble</a>
+            <a href="/fleet" class="nav-item">The Fleet</a>
+            <a href="/competition" class="nav-item">Arena</a>
+          </nav>
+
+          <!-- Right Header Actions -->
+          <div class="header-actions">
+            <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
+              <span id="header-connect-label">Log in</span>
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="openBubbleMap()">
+              <span>Bubble Terminal</span>
+            </button>
+            <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary btn-sm">
+              <span>Launch RacerBot ↗</span>
+            </a>
+          </div>
         </div>
-      </nav>
+      </header>
 
       <!-- BAND 1: Cinematic Dark Hero Band (#0e1532) -->
       <section class="band-hero-dark">
@@ -2624,11 +2655,11 @@
 
               <div class="search-chips-row">
                 <span class="chip-label">TRENDING:</span>
-                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('kookdog-42db38.launchpad.justhoot.near')">KOOKDOG</a>
-                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('batman-4f5a31.launchpad.justhoot.near')">BATMAN</a>
-                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('yuvi-6c041e37.qlyphs.near')">YUVI</a>
-                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('pmoney.near')">PMONEY</a>
+                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('blackdragon.tkn.near')">BLACKDRAGON</a>
                 <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('wrap.near')">NEAR</a>
+                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('lonk.tkn.near')">LONK</a>
+                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('shitzu.tkn.near')">SHITZU</a>
+                <a class="adyen-chip" href="javascript:void(0)" onclick="openBubbleMap('usdt.tether-token.near')">USDT</a>
               </div>
             </div>
 
@@ -2948,7 +2979,7 @@
           <span>Search</span>
         </button>
         <button class="btn-chip active" id="sybil-btn" onclick="toggleSybilTraceMode()" title="Trace Same-Owner Wallets & Gas Dispenser Links">
-          <span>🕵️ Sybil</span>
+          <span>Sybil</span>
         </button>
         <button class="btn-chip active" id="traces-btn" onclick="toggleTraces()" title="Toggle Transfer Traces">
           <span>Traces</span>
@@ -3021,7 +3052,10 @@
 
       <!-- View Filters (Bottom Right) -->
       <div id="view-controls">
-        <button class="view-chip-btn active" id="sybil-hud-btn" onclick="toggleSybilTraceMode()">🕵️ Sybil Trace: ON</button>
+        <button class="view-chip-btn active" id="sybil-hud-btn" onclick="toggleSybilTraceMode()" style="display:inline-flex; align-items:center; gap:5px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>Sybil Trace: ON</span>
+        </button>
         <button class="view-chip-btn" id="dust-toggle-btn" onclick="toggleDustFilter()">Hide Dust (&lt;0.05%)</button>
       </div>
     </div>
@@ -3060,20 +3094,20 @@
           <div class="stat-matrix">
             <div class="matrix-box">
               <span class="matrix-lbl">Wallet Category</span>
-              <span class="matrix-val" id="panel-wallet-type" style="font-size:11.5px;">👤 RETAIL</span>
+              <span class="matrix-val" id="panel-wallet-type" style="font-size:11.5px;">RETAIL</span>
             </div>
             <div class="matrix-box">
               <span class="matrix-lbl">Total Sells</span>
-              <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">💎 0 Sells</span>
+              <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">0 Sells</span>
             </div>
           </div>
 
-          
-          <!-- 🕵️ Same-Owner & Sybil Entity Forensics -->
+          <!-- Same-Owner & Sybil Entity Forensics -->
           <div class="sybil-intel-box" id="panel-sybil-box" style="display:none; background:rgba(0, 112, 224, 0.08); border:1px solid rgba(0, 112, 224, 0.28); border-radius:10px; padding:10px 12px; margin-top:8px;">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
               <span style="font-size:12px; font-weight:700; color:var(--color-link); display:flex; align-items:center; gap:5px;">
-                <span>🕵️ Same-Owner Cluster</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span>Same-Owner Cluster</span>
               </span>
               <span class="badge-chip" id="panel-sybil-badge" style="background:rgba(0, 112, 224, 0.22); color:var(--color-link); font-size:10px; font-weight:700;">4 WALLETS</span>
             </div>
@@ -3133,7 +3167,7 @@
         <button class="modal-close-btn" onclick="closeCardModal()">✕</button>
         
         <div class="card-modal-badge">
-          <span>🚀 Viral Referral & Infographic Card</span>
+          <span>Infographic & Referral Card</span>
         </div>
         <h2 style="font-size:17px; font-weight:600; color:var(--color-ink-strong); margin-bottom:4px;">Share Cluster Intelligence</h2>
         <p style="font-size:12px; color:var(--color-ink-subtle); margin-bottom:12px; line-height:1.4;">
@@ -3167,11 +3201,12 @@
         </div>
 
         <div class="card-modal-footer">
-          <button class="btn-chip" style="flex:1; height:34px; justify-content:center;" onclick="copyReferralLink()">
-            <span>📋 Copy Link</span>
+          <button class="btn-chip" style="flex:1; height:34px; justify-content:center; display:inline-flex; align-items:center; gap:6px;" onclick="copyReferralLink()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy Link</span>
           </button>
           <button class="btn-chip" style="flex:1; height:34px; justify-content:center; background:var(--color-primary); color:#fff; border:none;" onclick="downloadCardImage()">
-            <span>⬇ Download HD Card</span>
+            <span>Download HD Card</span>
           </button>
         </div>
       </div>
@@ -3202,22 +3237,22 @@
           <div style="font-size:11px; font-weight:500; color:var(--color-ink-subtle); text-align:center; margin-bottom:8px;">Trending Tokens on NEAR:</div>
           <div class="hero-trending-grid">
             <button class="hero-chip" onclick="navigateToToken('pearpe-420.meme-cooking.near', 'PEARPE', 'PearPe')">
-              <span>🍐</span><span class="hero-chip-sym">$PEARPE</span>
+              <span class="hero-chip-sym">$PEARPE</span>
             </button>
             <button class="hero-chip" onclick="navigateToToken('blackdragon.tkn.near', 'BLACKDRAGON', 'Black Dragon')">
-              <span>🐲</span><span class="hero-chip-sym">$BLACKDRAGON</span>
+              <span class="hero-chip-sym">$BLACKDRAGON</span>
             </button>
             <button class="hero-chip" onclick="navigateToToken('token.lonk.near', 'LONK', 'Lonk')">
-              <span>🥦</span><span class="hero-chip-sym">$LONK</span>
+              <span class="hero-chip-sym">$LONK</span>
             </button>
             <button class="hero-chip" onclick="navigateToToken('jambo-704.meme-cooking.near', 'JAMBO', 'Jambo')">
-              <span>🐘</span><span class="hero-chip-sym">$JAMBO</span>
+              <span class="hero-chip-sym">$JAMBO</span>
             </button>
             <button class="hero-chip" onclick="navigateToToken('token.sweat', 'SWEAT', 'Sweat Economy')">
-              <span>💧</span><span class="hero-chip-sym">$SWEAT</span>
+              <span class="hero-chip-sym">$SWEAT</span>
             </button>
             <button class="hero-chip" onclick="navigateToToken('token.v2.ref-finance.near', 'REF', 'Ref Finance')">
-              <span>🔄</span><span class="hero-chip-sym">$REF</span>
+              <span class="hero-chip-sym">$REF</span>
             </button>
           </div>
         </div>
@@ -3254,7 +3289,7 @@
         <!-- Bundler Exit & Sell Pressure Diagnostics Section -->
         <div class="bundler-pressure-card">
           <div class="bundler-hdr-row">
-            <span style="font-size:12px; font-weight:600; color:var(--color-ink-strong);">🤖 Bundler vs Small Holder Sells</span>
+            <span style="font-size:12px; font-weight:600; color:var(--color-ink-strong);">Bundler vs Retail Sells</span>
             <span class="badge-chip" id="diag-bundler-badge" style="background:var(--color-warning-fill); color:var(--color-on-warning);">0% DUMPED</span>
           </div>
           
@@ -3437,8 +3472,8 @@
         loadData();
         setTimeout(fitToScreen, 120);
       } else {
-        // Default to active trending token or open search
-        currentToken = 'kookdog-42db38.launchpad.justhoot.near';
+        // Default to active trending token on NEAR mainnet
+        currentToken = 'blackdragon.tkn.near';
         const p = new URLSearchParams(window.location.search);
         p.set('token', currentToken);
         history.pushState(null, '', `${window.location.pathname}?${p.toString()}`);
@@ -3453,7 +3488,7 @@
       if (val) {
         openBubbleMap(val);
       } else {
-        openBubbleMap('kookdog-42db38.launchpad.justhoot.near');
+        openBubbleMap('blackdragon.tkn.near');
       }
     };
 
@@ -3900,7 +3935,7 @@
           walletType: 'RETAIL',
           exitPct: 0,
           exitStatus: 'DIAMOND',
-          exitStatusLabel: '💎 Diamond Hand',
+          exitStatusLabel: 'Diamond Hand',
           clusterId: null,
           clusterColor: null,
           isDiamond: true,
@@ -4085,22 +4120,22 @@
           b.walletType = 'BUNDLER';
           if (b.sellCount === 0) {
             b.exitStatus = 'DIAMOND';
-            b.exitStatusLabel = '💎 Bundler Holding (0 Sells)';
+            b.exitStatusLabel = 'Bundler Holding (0 Sells)';
           } else if (b.exitPct >= 90 || curAmt === 0n) {
             b.exitStatus = 'DUMPED';
-            b.exitStatusLabel = `🚨 Bundler Exited (${b.exitPct.toFixed(0)}% Dumped)`;
+            b.exitStatusLabel = `Bundler Exited (${b.exitPct.toFixed(0)}% Dumped)`;
           } else {
             b.exitStatus = 'SELLING';
-            b.exitStatusLabel = `🔥 Bundler Selling (${b.exitPct.toFixed(0)}% Sold)`;
+            b.exitStatusLabel = `Bundler Selling (${b.exitPct.toFixed(0)}% Sold)`;
           }
         } else if (b.pct >= 5.0) {
           b.walletType = 'WHALE';
           b.exitStatus = b.sellCount === 0 ? 'DIAMOND' : (b.exitPct >= 90 ? 'DUMPED' : 'SELLING');
-          b.exitStatusLabel = b.sellCount === 0 ? '💎 Whale Holding' : `🔥 Whale Sold ${b.exitPct.toFixed(0)}%`;
+          b.exitStatusLabel = b.sellCount === 0 ? 'Whale Holding' : `Whale Sold ${b.exitPct.toFixed(0)}%`;
         } else {
           b.walletType = 'RETAIL';
           b.exitStatus = b.sellCount === 0 ? 'DIAMOND' : (b.exitPct >= 90 ? 'DUMPED' : 'SELLING');
-          b.exitStatusLabel = b.sellCount === 0 ? '💎 Retail Holding' : `👤 Retail Sold ${b.exitPct.toFixed(0)}%`;
+          b.exitStatusLabel = b.sellCount === 0 ? 'Retail Holding' : `Retail Sold ${b.exitPct.toFixed(0)}%`;
         }
 
         if (b.walletType !== 'POOL') {
@@ -4200,11 +4235,11 @@
         if (globalBundlerSells === 0 && clusters.length === 0) {
           diagBundlerDesc.textContent = 'No coordinated launch bundlers detected. Token distribution is organic and retail-driven.';
         } else if (globalBundlerDumpPct >= 60) {
-          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-danger)">🚨 Heavy Insider Exit:</b> Bundlers have executed ${globalBundlerSells} sells and dumped ${globalBundlerDumpPct.toFixed(1)}% of their bag onto the market.`;
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-danger)">Heavy Insider Exit:</b> Bundlers have executed ${globalBundlerSells} sells and dumped ${globalBundlerDumpPct.toFixed(1)}% of their bag onto the market.`;
         } else if (globalBundlerSells > 0) {
-          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-warning)">⚠️ Partial Bundler Selling:</b> Insiders have executed ${globalBundlerSells} sells (${globalBundlerDumpPct.toFixed(1)}% dumped), but still hold remaining bags.`;
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-warning)">Partial Bundler Selling:</b> Insiders have executed ${globalBundlerSells} sells (${globalBundlerDumpPct.toFixed(1)}% dumped), but still hold remaining bags.`;
         } else {
-          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-success)">💎 Bundlers Diamond Handing:</b> Bundler clusters hold initial tokens with 0 sells executed.`;
+          diagBundlerDesc.innerHTML = `<b style="color:var(--color-on-success)">Bundlers Diamond Handing:</b> Bundler clusters hold initial tokens with 0 sells executed.`;
         }
       }
 
@@ -4723,22 +4758,22 @@
       const typeEl = document.getElementById('panel-wallet-type');
       if (typeEl) {
         if (b.tier.isPool) {
-          typeEl.innerHTML = '<span style="color:#FBBF24">🔄 DEX POOL</span>';
+          typeEl.innerHTML = '<span style="color:#FBBF24">DEX POOL</span>';
         } else if (b.isBundler) {
-          typeEl.innerHTML = '<span style="color:#F59E0B">🤖 BUNDLER / INSIDER</span>';
+          typeEl.innerHTML = '<span style="color:#F59E0B">BUNDLER / INSIDER</span>';
         } else if (b.tier.tag === 'WHALE') {
-          typeEl.innerHTML = '<span style="color:#C084FC">🐋 WHALE</span>';
+          typeEl.innerHTML = '<span style="color:#C084FC">WHALE</span>';
         } else {
-          typeEl.innerHTML = '<span style="color:#5FD68A">👤 RETAIL HOLDER</span>';
+          typeEl.innerHTML = '<span style="color:#5FD68A">RETAIL HOLDER</span>';
         }
       }
 
       const sellsEl = document.getElementById('panel-sells-count');
       if (sellsEl) {
         if (b.sellCount === 0) {
-          sellsEl.innerHTML = '<span style="color:#5FD68A">💎 0 Sells</span>';
+          sellsEl.innerHTML = '<span style="color:#5FD68A">0 Sells</span>';
         } else {
-          sellsEl.innerHTML = `<span style="color:#F97066">🔥 ${b.sellCount} Sell${b.sellCount > 1 ? 's' : ''}</span>`;
+          sellsEl.innerHTML = `<span style="color:#F97066">${b.sellCount} Sell${b.sellCount > 1 ? 's' : ''}</span>`;
         }
       }
 
@@ -4776,7 +4811,7 @@
               const isCurrent = w === b.address;
               const shortW = w.length > 14 ? w.slice(0, 7) + '…' + w.slice(-4) : w;
               const sisterPct = sisterB ? `${sisterB.pct.toFixed(2)}%` : '—';
-              const sisterSells = sisterB && sisterB.sellCount > 0 ? `🔥 ${sisterB.sellCount}s` : '💎 0s';
+              const sisterSells = sisterB && sisterB.sellCount > 0 ? `${sisterB.sellCount}s` : '0s';
               
               return `
               <div onclick="focusSisterWallet('${w}')" style="display:flex; align-items:center; justify-content:space-between; background:${isCurrent ? 'rgba(0,112,224,0.20)' : 'rgba(255,255,255,0.04)'}; border:1px solid ${isCurrent ? 'var(--color-link)' : 'rgba(255,255,255,0.06)'}; border-radius:6px; padding:4px 8px; cursor:pointer; font-size:11px;">
@@ -4811,10 +4846,10 @@
           let badgeText = '➔ PEER';
           let badgeColor = 'tx-cyan';
           if (t.isSell) {
-            badgeText = '🔥 DEX SELL';
+            badgeText = 'DEX SELL';
             badgeColor = 'tx-danger';
           } else if (t.isBuy) {
-            badgeText = '🛒 DEX BUY';
+            badgeText = 'DEX BUY';
             badgeColor = 'tx-green';
           }
           const peerName = t.dir === 'out' ? t.to : t.from;
@@ -4864,7 +4899,9 @@
       if (sybilBtn) sybilBtn.classList.toggle('active', showSybilTraces);
       if (sybilHudBtn) {
         sybilHudBtn.classList.toggle('active', showSybilTraces);
-        sybilHudBtn.textContent = showSybilTraces ? '🕵️ Sybil Trace: ON' : '🕵️ Sybil Trace: OFF';
+        sybilHudBtn.innerHTML = showSybilTraces
+          ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>Sybil Trace: ON</span>'
+          : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>Sybil Trace: OFF</span>';
       }
       showToast(showSybilTraces ? 'Sybil & Gas Funder Traces: ON' : 'Sybil Traces: OFF');
     };
@@ -5366,13 +5403,58 @@
       }
     });
 
-    // Start load: If token or #bubblemap present, launch visualizer; else show official landing page
-    if (currentToken || window.location.hash === '#bubblemap') {
+    // Start load: Open live visualizer directly on load (matching Telegram bot behavior)
+    if (currentToken) {
       openBubbleMap(currentToken);
     } else {
-      showLandingPage();
+      openBubbleMap('blackdragon.tkn.near');
     }
   })();
+  </script>
+  <link rel="stylesheet" href="/assets/near-wallet-selector.css">
+  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
+  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+  <script>
+    function handleHeaderConnectClick() {
+      if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
+        const nearWallet = window.RacerConnect.activeNearWallet || 'your connected account';
+        alert(`Connected to RACER Ecosystem as ${nearWallet}!`);
+      } else {
+        if (window.RacerConnect) {
+          window.RacerConnect.openNearWalletSelector().catch(console.error);
+        }
+      }
+    }
+
+    function updateConnectUI() {
+      const isAuth = window.RacerConnect && window.RacerConnect.isAuthenticated();
+      const user = window.RacerConnect ? window.RacerConnect.user : null;
+      const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
+      const label = document.getElementById('header-connect-label');
+      const headerBtn = document.getElementById('header-connect-btn');
+
+      if (isAuth || nearWallet) {
+        const displayHandle = nearWallet || (user && user.username) || 'Connected';
+        if (label) label.textContent = '● ' + displayHandle;
+        if (headerBtn) {
+          headerBtn.style.background = 'rgba(86, 69, 212, 0.2)';
+          headerBtn.style.borderColor = 'rgba(86, 69, 212, 0.4)';
+          headerBtn.style.color = '#ffffff';
+        }
+      } else {
+        if (label) label.textContent = 'Log in';
+        if (headerBtn) {
+          headerBtn.style.background = '';
+          headerBtn.style.borderColor = '';
+          headerBtn.style.color = '';
+        }
+      }
+    }
+
+    window.addEventListener('racer:auth-changed', updateConnectUI);
+    window.addEventListener('racer:wallet-linked', updateConnectUI);
+    window.addEventListener('racer:profile-updated', updateConnectUI);
+    document.addEventListener('DOMContentLoaded', updateConnectUI);
   </script>
 </body>
 </html>
