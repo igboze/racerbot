@@ -4669,7 +4669,7 @@ export class MultiRpcNear {
     accountId: string,
     receiverId: string,
     actions: any[],
-    waitForMs = 40_000,
+    waitForMs = 55_000,
     onBroadcast?: (txHash: string) => void
   ): Promise<any> {
     const tStart = Date.now();
@@ -4784,8 +4784,8 @@ export class MultiRpcNear {
       const seen = { everSeen: false };
       // Phase 1: Fan-out poll across all trade providers (FastNEAR + validator nodes).
       // Under network congestion, block inclusion and receipt routing often take 18-28s.
-      // Give Phase 1 up to 28s before assuming a mempool drop.
-      const firstWindow = Math.min(28_000, Math.max(12_000, waitForMs - 12_000));
+      // Give Phase 1 up to 30s before assuming a mempool drop.
+      const firstWindow = Math.min(30_000, Math.max(15_000, waitForMs - 22_000));
       let outcome: any;
       try {
         outcome = await this.awaitOutcome(signed.hash, accountId, firstWindow, seen, allProviderUrls);
@@ -4817,7 +4817,7 @@ export class MultiRpcNear {
 
         if (currentChainNonce >= signed.nonce) {
           console.warn(`[NEAR] tx ${signed.hash} not seen by poller yet, but on-chain nonce advanced to ${currentChainNonce} >= ${signed.nonce} — continuing to poll`);
-          const remainMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
+          const remainMs = Math.max(20_000, waitForMs - (Date.now() - tStart));
           outcome = await this.awaitOutcome(signed.hash, accountId, remainMs, seen, allProviderUrls);
         } else {
           // The nonce hasn't advanced on chain — re-sign with monotonically advanced nonce
@@ -4839,7 +4839,7 @@ export class MultiRpcNear {
           onBroadcast?.(freshSigned.hash);
 
           const seen2 = { everSeen: false };
-          const remainingMs = Math.max(10_000, waitForMs - (Date.now() - tStart));
+          const remainingMs = Math.max(22_000, waitForMs - (Date.now() - tStart));
           outcome = await this.awaitOutcome(freshSigned.hash, accountId, remainingMs, seen2, allProviderUrls);
         }
         }
