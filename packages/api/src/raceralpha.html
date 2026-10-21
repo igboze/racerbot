@@ -586,11 +586,6 @@
     @media (max-width: 1200px) {
       .traders-grid { grid-template-columns: repeat(2, 1fr); }
     }
-    @media (max-width: 768px) {
-      .traders-grid { grid-template-columns: 1fr; }
-      .sidebar { display: none; }
-      .main-viewport { padding: 16px; }
-    }
 
     .trader-card {
       background: rgba(15, 18, 23, 0.85);
@@ -1741,9 +1736,479 @@
       flex-direction: column;
       gap: 12px;
     }
+
+    /* ── Mobile Optimization & Native Bottom Dock (≤ 768px) ─────────────── */
+    .mobile-top-bar {
+      display: none;
+    }
+
+    .mobile-bottom-dock {
+      display: none;
+    }
+
+    @media (max-width: 768px) {
+      /* Prevent horizontal scroll & touch highlight */
+      html, body {
+        overflow-x: hidden !important;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* CRITICAL: Prevent iOS Safari auto-zoom on form inputs */
+      input, select, textarea {
+        font-size: 16px !important;
+      }
+
+      /* Hide desktop sidebar on mobile devices */
+      .sidebar {
+        display: none !important;
+      }
+
+      .app-layout {
+        flex-direction: column !important;
+        width: 100% !important;
+      }
+
+      /* Sticky Mobile Top App Bar */
+      .mobile-top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 950;
+        background: rgba(13, 16, 21, 0.96);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--color-border);
+        padding: 10px 14px;
+        height: 58px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      }
+
+      .mobile-top-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+      }
+
+      .mobile-brand-halo {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-md);
+        background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(130, 106, 181, 0.35));
+        border: 1px solid rgba(0, 240, 255, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-glow-cyan);
+      }
+
+      .mobile-brand-halo img {
+        width: 20px;
+        height: 20px;
+        object-fit: contain;
+      }
+
+      .mobile-brand-text {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .mobile-brand-title {
+        font-family: var(--font-display);
+        font-size: 15px;
+        font-weight: 800;
+        color: #ffffff;
+        line-height: 1.1;
+      }
+
+      .mobile-brand-title span {
+        color: var(--color-racer-cyan);
+      }
+
+      .mobile-brand-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-family: var(--font-mono);
+        font-size: 9px;
+        color: var(--color-racer-green);
+        letter-spacing: 0.5px;
+      }
+
+      .mobile-top-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .mobile-header-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 36px;
+        padding: 0 12px;
+        border-radius: var(--radius-md);
+        font-family: var(--font-family);
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.16s ease;
+      }
+
+      .mobile-deposit-shortcut {
+        background: rgba(0, 240, 255, 0.12);
+        border: 1px solid rgba(0, 240, 255, 0.35);
+        color: var(--color-racer-cyan);
+      }
+
+      .mobile-deposit-shortcut:hover, .mobile-deposit-shortcut:active {
+        background: rgba(0, 240, 255, 0.22);
+      }
+
+      .mobile-wallet-shortcut {
+        background: rgba(130, 106, 181, 0.18);
+        border: 1px solid rgba(130, 106, 181, 0.45);
+        color: #ffffff;
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mobile-wallet-shortcut.connected {
+        background: rgba(0, 230, 118, 0.14);
+        border-color: rgba(0, 230, 118, 0.5);
+        color: var(--color-racer-green);
+      }
+
+      /* Viewport Adjustments for safe area & bottom dock */
+      .main-viewport {
+        padding: 14px 14px calc(78px + env(safe-area-inset-bottom, 16px)) !important;
+        width: 100% !important;
+        min-width: 0 !important;
+      }
+
+      /* Hide redundant desktop top header right buttons on mobile */
+      .top-header {
+        margin-bottom: 16px;
+        gap: 10px;
+      }
+
+      .top-header .header-right {
+        display: none !important;
+      }
+
+      .page-title {
+        font-size: 21px !important;
+      }
+
+      .page-subtitle {
+        font-size: 11.5px !important;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      /* Controls & Search */
+      .controls-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .search-box {
+        width: 100% !important;
+        padding: 10px 14px;
+      }
+
+      .kbd-shortcut {
+        display: none;
+      }
+
+      .filters-group {
+        width: 100%;
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 4px;
+        flex-wrap: nowrap;
+      }
+
+      .select-filter {
+        flex: 1;
+        min-width: 135px;
+        padding: 10px 12px;
+      }
+
+      /* Grid elements into 1 Column */
+      .traders-grid {
+        grid-template-columns: 1fr !important;
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+
+      .trader-card {
+        padding: 16px;
+      }
+
+      .stat-cards-triad {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+      }
+
+      .creator-stats-row {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+      }
+
+      .detail-body-grid {
+        grid-template-columns: 1fr !important;
+        gap: 16px;
+      }
+
+      .terminal-grid {
+        grid-template-columns: 1fr !important;
+        gap: 16px;
+      }
+
+      .creator-onboarding-grid {
+        grid-template-columns: 1fr !important;
+        gap: 14px;
+      }
+
+      /* Detail View adjustments */
+      .trader-profile-header {
+        padding: 16px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
+      }
+
+      .profile-name-title {
+        font-size: 18px;
+      }
+
+      .chart-card-wrap {
+        padding: 16px;
+      }
+
+      .viewing-tiers-panel {
+        padding: 16px;
+      }
+
+      .terminal-card {
+        padding: 16px;
+      }
+
+      /* Bottom Banner */
+      .bottom-promo-banner {
+        padding: 18px 16px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
+      }
+
+      .banner-left {
+        gap: 12px;
+      }
+
+      .banner-right {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      /* Table responsive touch scroll */
+      .table-container {
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -4px;
+      }
+
+      .pos-table {
+        min-width: 520px;
+      }
+
+      /* Touch target heights for mobile buttons */
+      .btn-primary, .btn-secondary {
+        min-height: 44px;
+      }
+
+      /* Native Slide-Up Bottom Sheet Modals */
+      .modal-backdrop,
+      .racer-modal-backdrop {
+        align-items: flex-end !important;
+        padding: 0 !important;
+        z-index: 10000 !important;
+      }
+
+      .modal-window,
+      .modal-window.modal-wide,
+      .racer-modal-card {
+        border-radius: 22px 22px 0 0 !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: 86vh !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
+        animation: mobileSheetSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9) !important;
+        border-bottom: none !important;
+      }
+
+      .modal-window::before,
+      .racer-modal-card::before {
+        content: '';
+        display: block;
+        width: 40px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.28);
+        border-radius: 2px;
+        margin: 0 auto 14px auto;
+      }
+
+      @keyframes mobileSheetSlideUp {
+        from {
+          transform: translateY(100%);
+          opacity: 0.6;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      /* Fixed Mobile Bottom Navigation Dock */
+      .mobile-bottom-dock {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        align-items: center;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 999;
+        height: calc(62px + env(safe-area-inset-bottom, 10px));
+        padding-bottom: env(safe-area-inset-bottom, 10px);
+        background: rgba(11, 14, 19, 0.96);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border-top: 1px solid var(--color-border);
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+      }
+
+      .mobile-dock-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        height: 100%;
+        background: transparent;
+        border: none;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        padding: 6px 2px;
+        transition: all 0.16s ease;
+        position: relative;
+        text-decoration: none;
+      }
+
+      .mobile-dock-btn svg {
+        width: 20px;
+        height: 20px;
+        transition: transform 0.16s ease, color 0.16s ease;
+      }
+
+      .mobile-dock-btn span {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        transition: color 0.16s ease;
+      }
+
+      .mobile-dock-btn.active {
+        color: var(--color-racer-cyan);
+      }
+
+      .mobile-dock-btn.active svg {
+        transform: translateY(-2px);
+        filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.6));
+      }
+
+      .mobile-dock-btn.active::after {
+        content: '';
+        position: absolute;
+        bottom: env(safe-area-inset-bottom, 10px);
+        width: 16px;
+        height: 2px;
+        background: var(--color-racer-cyan);
+        border-radius: 2px;
+        box-shadow: 0 0 8px var(--color-racer-cyan);
+      }
+
+      /* Center elevated deposit button */
+      .mobile-dock-btn.mobile-dock-center {
+        color: #ffffff;
+      }
+
+      .mobile-dock-center-halo {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--color-racer-cyan), var(--color-racer-purple));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 14px rgba(0, 240, 255, 0.45);
+        color: #0b0e13;
+        margin-top: -8px;
+        transition: transform 0.16s ease, box-shadow 0.16s ease;
+      }
+
+      .mobile-dock-btn.mobile-dock-center:active .mobile-dock-center-halo {
+        transform: scale(0.92);
+      }
+
+      .mobile-dock-center-halo svg {
+        width: 18px;
+        height: 18px;
+        stroke-width: 2.5;
+        stroke: #0b0e13;
+      }
+    }
   </style>
 </head>
 <body>
+
+  <!-- Ergonomic Sticky Mobile Top App Bar (Visible on mobile screens) -->
+  <header class="mobile-top-bar">
+    <a href="#" onclick="switchNav('leaderboard'); return false;" class="mobile-top-left">
+      <div class="mobile-brand-halo">
+        <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+      </div>
+      <div class="mobile-brand-text">
+        <div class="mobile-brand-title">RACER <span>ALPHA</span></div>
+        <div class="mobile-brand-pill"><span class="live-dot" style="width:5px; height:5px;"></span> NEAR CONFIDENTIAL</div>
+      </div>
+    </a>
+
+    <div class="mobile-top-right">
+      <button class="mobile-header-btn mobile-deposit-shortcut" onclick="openDepositModal()" title="Cross-Chain Deposit (NEAR Intents)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span>Deposit</span>
+      </button>
+
+      <button class="mobile-header-btn mobile-wallet-shortcut" id="mobile-header-connect-btn" onclick="handleHeaderConnectClick()" title="Connect NEAR Wallet">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"></path><path d="M16 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"></path></svg>
+        <span id="mobile-connect-label">Connect</span>
+      </button>
+    </div>
+  </header>
 
   <div class="app-layout">
     <!-- Left Sidebar (Matching Images 1, 4, 5) -->
@@ -2892,6 +3357,16 @@
       document.querySelectorAll('.nav-item-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.getElementById(`nav-btn-${navKey}`);
       if (activeBtn) activeBtn.classList.add('active');
+
+      // Sync mobile bottom dock
+      document.querySelectorAll('.mobile-dock-btn').forEach(b => b.classList.remove('active'));
+      const activeMobileBtn = document.getElementById(`mobile-btn-${navKey}`);
+      if (activeMobileBtn) activeMobileBtn.classList.add('active');
+
+      // Smooth scroll to top on mobile view switch
+      if (window.innerWidth <= 768) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
 
       document.getElementById('view-leaderboard').style.display = 'none';
       document.getElementById('view-detail').style.display = 'none';
@@ -4645,6 +5120,8 @@
       const headerBtn = document.getElementById('header-connect-btn');
       const sidebarAddr = document.getElementById('sidebar-user-addr');
       const sidebarAvatar = document.getElementById('sidebar-user-avatar');
+      const mobileLabel = document.getElementById('mobile-connect-label');
+      const mobileBtn = document.getElementById('mobile-header-connect-btn');
 
       const activeAddr = nearWallet || (user && user.subaccountId) || (user && user.username);
 
@@ -4653,10 +5130,16 @@
         if (linkedDiv) linkedDiv.style.display = 'block';
 
         const displayLabel = activeAddr.length > 20 ? activeAddr.slice(0, 10) + '...' + activeAddr.slice(-6) : activeAddr;
+        const mobileDisplayLabel = activeAddr.length > 14 ? activeAddr.slice(0, 6) + '...' + activeAddr.slice(-4) : activeAddr;
         if (label) label.textContent = '● ' + displayLabel;
         if (headerBtn) {
           headerBtn.classList.add('connected');
           headerBtn.title = `Connected: ${activeAddr}`;
+        }
+        if (mobileLabel) mobileLabel.textContent = mobileDisplayLabel;
+        if (mobileBtn) {
+          mobileBtn.classList.add('connected');
+          mobileBtn.title = `Connected: ${activeAddr}`;
         }
         if (sidebarAddr) sidebarAddr.textContent = displayLabel;
         if (sidebarAvatar) sidebarAvatar.textContent = activeAddr.charAt(0).toUpperCase();
@@ -4672,6 +5155,11 @@
         if (headerBtn) {
           headerBtn.classList.remove('connected');
           headerBtn.title = 'Connect with NEAR Wallet';
+        }
+        if (mobileLabel) mobileLabel.textContent = 'Connect';
+        if (mobileBtn) {
+          mobileBtn.classList.remove('connected');
+          mobileBtn.title = 'Connect NEAR Wallet';
         }
         if (sidebarAddr) sidebarAddr.textContent = 'Connect Wallet';
         if (sidebarAvatar) sidebarAvatar.textContent = 'R';
@@ -4836,6 +5324,36 @@
       </div>
     </div>
   </div>
+
+  <!-- Ergonomic Fixed Bottom Navigation Dock (Visible on mobile screens) -->
+  <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+    <button class="mobile-dock-btn active" id="mobile-btn-leaderboard" onclick="switchNav('leaderboard')" title="Leaderboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+      <span>Alpha</span>
+    </button>
+
+    <button class="mobile-dock-btn" id="mobile-btn-terminal" onclick="switchNav('terminal')" title="Confidential Terminal">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+      <span>Terminal</span>
+    </button>
+
+    <button class="mobile-dock-btn mobile-dock-center" id="mobile-btn-deposit" onclick="openDepositModal()" title="1Click Cross-Chain Deposit">
+      <div class="mobile-dock-center-halo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+      </div>
+      <span>Deposit</span>
+    </button>
+
+    <button class="mobile-dock-btn" id="mobile-btn-mykeys" onclick="switchNav('mykeys')" title="My Viewing Keys">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="5.5"></circle><path d="m21 2-9.6 9.6"></path><path d="m15.5 7.5 3 3L22 7l-3-3"></path></svg>
+      <span>Keys</span>
+    </button>
+
+    <button class="mobile-dock-btn" id="mobile-btn-creator" onclick="switchNav('creator')" title="Creator Studio">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+      <span>Studio</span>
+    </button>
+  </nav>
 
   <!-- NEAR Connect & RacerConnect SDK -->
   <script src="/assets/near-connect.bundle.js"></script>
