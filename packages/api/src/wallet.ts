@@ -2307,7 +2307,7 @@ export async function publishSwap(swapEvent: {
   pool_id?: number;
   slippage_pct?: number;
   quoted_at?: number;
-}, onProgress?: (stage: string) => void): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+}, onProgress?: (stage: string) => void, options: { suppressAlphaSignal?: boolean } = {}): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
   if (!directExecutor) {
     const { SwapExecutor } = await import('@racerbot/executor');
     directExecutor = new SwapExecutor();
@@ -2338,6 +2338,58 @@ export async function publishSwap(swapEvent: {
     }).catch(() => {});
   }
 
+  if (
+    options.suppressAlphaSignal !== true &&
+    result.success === true &&
+    (swapEvent.chain || 'near') === 'near' &&
+    (
+      (
+        (['near', 'wrap.near'].includes(swapEvent.token_in.toLowerCase()) &&
+          Number.isFinite(Number(result.nearSpent)) && Number(result.nearSpent) > 0) ||
+        (['near', 'wrap.near'].includes(swapEvent.token_out.toLowerCase()) &&
+          Number.isFinite(Number(result.nearReceived)) && Number(result.nearReceived) > 0)
+      )
+    )
+  ) {
+    void (async () => {
+      const isBuy = ['near', 'wrap.near'].includes(swapEvent.token_in.toLowerCase());
+      const amountNear = Number(isBuy ? result.nearSpent : result.nearReceived);
+      const priceNear = Number(result.priceNear);
+      const tokenSymbol = result.tokenSymbol?.trim();
+      const tokenName = result.tokenName?.trim() || tokenSymbol;
+      if (!Number.isFinite(amountNear) || amountNear <= 0 ||
+          !Number.isFinite(priceNear) || priceNear <= 0 ||
+          !tokenSymbol || !tokenName) {
+        return;
+      }
+
+      const db = await getDb();
+      const creator = await db.query(
+        `SELECT id FROM racer_alpha_traders
+         WHERE user_id = $1 AND is_active = TRUE
+         LIMIT 1`,
+        [swapEvent.user_id]
+      );
+      if (!creator.rows[0]) return;
+
+      const { recordAlphaSignal } = await import('./racerAlpha.js');
+      await recordAlphaSignal({
+        traderId: creator.rows[0].id,
+        tokenAddress: swapEvent.token_out,
+        tokenSymbol: tokenSymbol.slice(0, 30),
+        tokenName: tokenName.slice(0, 100),
+        side: isBuy ? 'BUY' : 'SELL',
+        priceNear,
+        amountNear,
+        venue: swapEvent.venue,
+        txHash: result.txHash,
+        copySellPct: isBuy ? undefined : result.sellPercent,
+      });
+    })().catch((error) => {
+      console.warn('[RACER_ALPHA] Failed to publish creator BUY signal:', error);
+    });
+  }
+
   return {
     txHash: result.txHash,
     success: result.success !== false,
@@ -2348,6 +2400,8 @@ export async function publishSwap(swapEvent: {
     tokenQty: result.tokenQty,
     priceNear: result.priceNear,
     nearSpent: result.nearSpent,
+    nearReceived: result.nearReceived,
+    sellPercent: result.sellPercent,
   };
 }
 
@@ -2771,6 +2825,45 @@ export async function withdrawFunds(
       destination,
     };
   });
+}
+
+export async function transferNearFromUser(
+  userId: string,
+  destination: string,
+  amountYocto: string
+): Promise<{ txHash: string }> {
+  const user = await getUserById(userId);
+  if (!user?.subaccount_id || !user.scoped_key_encrypted) {
+    throw new Error('A platform-managed NEAR account is required for this transfer.');
+  }
+  if (!MASTER_KEY) {
+    throw new Error('NEAR transfer signing is not configured on the server.');
+  }
+
+  const recipient = destination.trim().toLowerCase();
+  if (!isValidNearAccountId(recipient) || recipient === user.subaccount_id.toLowerCase()) {
+    throw new Error('Invalid NEAR transfer destination.');
+  }
+
+  const amount = BigInt(amountYocto);
+  if (amount <= 0n) {
+    throw new Error('Transfer amount must be greater than zero.');
+  }
+
+  const balance = BigInt(await getNear().getNearBalance(user.subaccount_id));
+  const storageReserve = 50_000_000_000_000_000_000_000n;
+  if (balance < amount + storageReserve) {
+    throw new Error('Insufficient NEAR balance after the required account reserve.');
+  }
+
+  const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+  const keyPair = KeyPair.fromString(privateKey as Parameters<typeof KeyPair.fromString>[0]);
+  const result = await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
+    const transfer = await account.sendMoney(recipient, amount);
+    return { txHash: transfer.transaction.hash };
+  });
+
+  return result;
 }
 
 /**

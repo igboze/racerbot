@@ -1,8 +1,8 @@
 -- Migration 042: RacerAlpha Confidential Social Trading & Viewing Key Marketplace
 
 CREATE TABLE IF NOT EXISTS racer_alpha_traders (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id TEXT NOT NULL,
     telegram_id BIGINT,
     handle VARCHAR(50) NOT NULL UNIQUE,
     display_name VARCHAR(100) NOT NULL,
@@ -28,14 +28,17 @@ CREATE INDEX IF NOT EXISTS idx_alpha_traders_user ON racer_alpha_traders(user_id
 CREATE INDEX IF NOT EXISTS idx_alpha_traders_active ON racer_alpha_traders(is_active);
 
 CREATE TABLE IF NOT EXISTS racer_alpha_keys (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    trader_id UUID NOT NULL REFERENCES racer_alpha_traders(id) ON DELETE CASCADE,
-    buyer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    trader_id TEXT NOT NULL,
+    buyer_user_id TEXT NOT NULL,
     buyer_telegram_id BIGINT,
     price_paid_near NUMERIC(10, 2) NOT NULL,
     key_token TEXT NOT NULL UNIQUE,
     auto_copy_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     auto_copy_amount_near NUMERIC(10, 2) NOT NULL DEFAULT 1.00,
+    max_slippage_pct NUMERIC(5, 2) DEFAULT 2.00,
+    daily_budget_near NUMERIC(10, 2) DEFAULT 20.00,
+    copy_sells BOOLEAN DEFAULT TRUE,
     expires_at TIMESTAMPTZ, -- null = permanent key, date = subscription
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT unique_trader_buyer UNIQUE (trader_id, buyer_user_id)
@@ -45,8 +48,8 @@ CREATE INDEX IF NOT EXISTS idx_alpha_keys_buyer ON racer_alpha_keys(buyer_user_i
 CREATE INDEX IF NOT EXISTS idx_alpha_keys_trader ON racer_alpha_keys(trader_id);
 
 CREATE TABLE IF NOT EXISTS racer_alpha_signals (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    trader_id UUID NOT NULL REFERENCES racer_alpha_traders(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    trader_id TEXT NOT NULL,
     token_address TEXT NOT NULL,
     token_symbol VARCHAR(30) NOT NULL,
     token_name VARCHAR(100) NOT NULL,

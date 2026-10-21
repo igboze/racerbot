@@ -238,7 +238,7 @@ export class TriggerEngine {
     if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {
       const user = await getUserById(position.user_id).catch(() => null);
       const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
-      const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 2.0);
+      const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
       const swapEvent = {
         type: 'execute_swap',
         chain: 'sui',
@@ -291,7 +291,7 @@ export class TriggerEngine {
     // Stop-loss default slippage tolerance of 5% to prioritize exit execution; respect user setting if higher
     const user = await getUserById(position.user_id).catch(() => null);
     const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
-    const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 2.0);
+    const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
     const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
       venue as any,

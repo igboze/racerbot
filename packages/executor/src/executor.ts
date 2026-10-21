@@ -448,7 +448,7 @@ export class SwapExecutor {
    * Execute a swap event with observability: records a trade_attempts row with
    * per-stage timings, updated on success/failure. Throws propagate unchanged.
    */
-  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
     const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
 
     // Record the attempt WITHOUT blocking the trade — the DB insert overlaps
@@ -476,7 +476,7 @@ export class SwapExecutor {
     // the 'confirming_slow' progress ping keeps the user informed at 15s.
     const TRADE_DEADLINE_MS = 210_000;
     const timings: Record<string, number> = {};
-    let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }>;
+    let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }>;
     try {
       inner = this.executeInner(event, timings, onProgress);
     } catch (err: any) {
@@ -491,7 +491,7 @@ export class SwapExecutor {
       throw err;
     }
 
-    let result: { txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number };
+    let result: { txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number };
     let deadlineTimer: NodeJS.Timeout | null = null;
     try {
       result = await Promise.race([
@@ -543,7 +543,7 @@ export class SwapExecutor {
     return result;
   }
 
-  private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+  private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
@@ -3225,7 +3225,7 @@ export class SwapExecutor {
 
     timings.post_ms = Date.now() - (timings.signStart ?? t0) - (timings.sign_ms ?? 0);
 
-    return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent };
+    return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent, nearReceived: fillData?.nearReceived, sellPercent: fillData?.sellPercent };
   }
 
   /**
@@ -3611,7 +3611,7 @@ export class SwapExecutor {
     venue: string,
     txHash: string,
     _event: SwapEvent,
-  ): Promise<{ positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number } | undefined> {
+  ): Promise<{ positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number } | undefined> {
     // Determine buy vs sell direction
     const isBuy = tokenIn === 'wrap.near' || tokenIn === 'near';
     const tokenAddress = isBuy ? tokenOut : tokenIn;
@@ -3654,6 +3654,14 @@ export class SwapExecutor {
     // Find or create position
     const positions = await getOpenPositions(userId);
     let position = positions.find(p => p.token_address === tokenAddress);
+    let sellPercent: number | undefined;
+    if (!isBuy && position) {
+      const positionQuantity = BigInt(position.quantity_held.split('.')[0] || '0');
+      const soldQuantity = BigInt(amountIn.split('.')[0] || '0');
+      if (positionQuantity > 0n && soldQuantity > 0n) {
+        sellPercent = Math.min(100, Number((soldQuantity * 10000n) / positionQuantity) / 100);
+      }
+    }
 
     if (isBuy) {
       if (!position) {
@@ -3960,7 +3968,16 @@ export class SwapExecutor {
         nearSpent: nearSpentHuman,
       };
     }
-    return { positionId: position?.id };
+    const tokenQtyHuman = parseFloat(tokenQty) / Math.pow(10, decimals);
+    return {
+      positionId: position?.id,
+      tokenName: (meta as any)?.name ?? tokenAddress,
+      tokenSymbol: (meta as any)?.symbol ?? tokenAddress.slice(0, 8),
+      tokenQty: tokenQtyHuman.toString(),
+      priceNear,
+      nearReceived,
+      sellPercent,
+    };
   }
 
   // ── Notifications ─────────────────────────────────────────────────────────

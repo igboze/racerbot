@@ -59,4 +59,22 @@ describe('sellAtTarget failure feedback', () => {
     const result = await sellAtTarget('user-1', 'pos-1', 50);
     expect(result.success).toBe(true);
   });
+
+  it('supports fractional sell percentages without rounding down to whole percentages', async () => {
+    publishSwapMock.mockResolvedValue({ success: true, txHash: 'tx-2' });
+
+    const result = await sellAtTarget('user-1', 'pos-1', 25.5);
+
+    expect(result.success).toBe(true);
+    expect(publishSwapMock.mock.calls.at(-1)?.[0].amount_in).toBe('255');
+  });
+
+  it('rejects invalid sell percentages without submitting a swap', async () => {
+    publishSwapMock.mockClear();
+
+    const result = await sellAtTarget('user-1', 'pos-1', 101);
+
+    expect(result).toEqual({ success: false, reason: 'invalid_sell_percentage' });
+    expect(publishSwapMock).not.toHaveBeenCalled();
+  });
 });

@@ -205,10 +205,14 @@ router.post('/wallet/link-selector', ensureTelegramUser, async (req, res) => {
   try {
     const userId = (req as any).userId;
     const telegramId = (req as any).telegramUserId;
-    const { accountId, walletName, sessionKey, setAsActive } = req.body;
+    const { accountId, walletName, proof } = req.body;
 
     if (!accountId || typeof accountId !== 'string') {
       res.status(400).json({ error: 'accountId is required' });
+      return;
+    }
+    if (!proof || typeof proof !== 'object') {
+      res.status(400).json({ error: 'A signed wallet proof is required' });
       return;
     }
 
@@ -218,9 +222,7 @@ router.post('/wallet/link-selector', ensureTelegramUser, async (req, res) => {
       telegramId,
       accountId: accountId.trim().toLowerCase(),
       walletName: walletName || 'NEAR Wallet Selector',
-      chain: 'near',
-      privateKey: sessionKey,
-      setAsActive: setAsActive ?? true,
+      proof,
     });
 
     if (!result.success) {
@@ -242,12 +244,33 @@ router.post('/wallet/link-selector', ensureTelegramUser, async (req, res) => {
   }
 });
 
+// 5a. Create a signed wallet challenge for Wallet Selector authentication
+router.post('/auth/wallet/challenge', async (req, res) => {
+  try {
+    const { accountId } = req.body;
+    if (!accountId || typeof accountId !== 'string') {
+      res.status(400).json({ error: 'accountId is required' });
+      return;
+    }
+
+    const { createWalletAuthChallenge } = await import('../authSession.js');
+    const challenge = await createWalletAuthChallenge(accountId);
+    res.json({ success: true, ...challenge });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'Failed to create wallet challenge' });
+  }
+});
+
 // 5b. Authenticate or Login via NEAR Wallet Selector
 router.post('/auth/wallet-login', async (req, res) => {
   try {
-    const { accountId, walletName } = req.body;
+    const { accountId, walletName, proof } = req.body;
     if (!accountId || typeof accountId !== 'string') {
       res.status(400).json({ error: 'accountId is required' });
+      return;
+    }
+    if (!proof || typeof proof !== 'object') {
+      res.status(400).json({ error: 'A signed wallet proof is required' });
       return;
     }
 
@@ -255,6 +278,7 @@ router.post('/auth/wallet-login', async (req, res) => {
     const result = await authenticateWalletUser({
       accountId: accountId.trim(),
       walletName: walletName || 'NEAR Wallet Selector',
+      proof,
     });
 
     if (!result.success) {
@@ -285,7 +309,73 @@ export function serveRacerAlphaHtml(res: import('express').Response): void {
   res.sendFile(htmlFile);
 }
 
-// ── RacerAlpha Endpoints ───────────────────────────────────────────────────
+// ── RacerAlpha Endpoints & User Resolution ────────────────────────────────
+
+export async function resolveAlphaUser(req: any) {
+  const { getUserById, getUserByTelegramId, getDb } = await import('@racerbot/db');
+
+  if (req.userId) {
+    const u = await getUserById(req.userId);
+    if (u) return u;
+  }
+
+  // 1. Bearer Token Auth
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\s+/, '') || req.query.token || req.body?.authToken;
+  if (token && typeof token === 'string') {
+    try {
+      const { verifyAuthToken } = await import('../authSession.js');
+      const sess = await verifyAuthToken(token);
+      if (sess?.userId) {
+        const u = await getUserById(sess.userId);
+        if (u) return u;
+      }
+    } catch {}
+  }
+
+  // 2. Telegram Mini App (TMA) InitData Auth
+  if (authHeader.startsWith('tma ')) {
+    try {
+      const { validateTelegramInitData } = await import('../middleware.js');
+      const { valid, userId } = validateTelegramInitData(authHeader.slice(4));
+      if (valid && userId) {
+        const u = await getUserByTelegramId(userId);
+        if (u) return u;
+      }
+    } catch {}
+  }
+
+  // 3. NEAR Connect Wallet Header
+  const walletHeader = req.headers['x-wallet-address'] || req.query.walletAddress || req.body?.walletAddress;
+  if (walletHeader && typeof walletHeader === 'string' && walletHeader.trim()) {
+    const cleanWallet = walletHeader.trim();
+    try {
+      const db = await getDb();
+      const uRes = await db.query(
+        `SELECT * FROM users WHERE subaccount_id = $1 OR id = $1 LIMIT 1`,
+        [cleanWallet]
+      );
+      if (uRes.rows[0]) return uRes.rows[0];
+
+      const newU = await db.query(
+        `INSERT INTO users (id, subaccount_id, username)
+         VALUES ($1, $1, $1)
+         ON CONFLICT (id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id
+         RETURNING *`,
+        [cleanWallet]
+      );
+      if (newU.rows[0]) return newU.rows[0];
+    } catch {}
+    return {
+      id: cleanWallet,
+      subaccount_id: cleanWallet,
+      username: cleanWallet,
+      telegram_id: null,
+    };
+  }
+
+  return null;
+}
 
 router.get(['/alpha', '/raceralpha'], (_req, res) => {
   serveRacerAlphaHtml(res);
@@ -293,9 +383,9 @@ router.get(['/alpha', '/raceralpha'], (_req, res) => {
 
 router.get('/alpha/traders', async (req, res) => {
   try {
+    const user = await resolveAlphaUser(req);
     const { getAlphaTraders } = await import('../racerAlpha.js');
-    const userId = (req as any).userId;
-    const traders = await getAlphaTraders(userId);
+    const traders = await getAlphaTraders(user?.id);
     res.json({ success: true, traders });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch traders' });
@@ -304,43 +394,251 @@ router.get('/alpha/traders', async (req, res) => {
 
 router.get('/alpha/feed', async (req, res) => {
   try {
+    const user = await resolveAlphaUser(req);
     const { getAlphaFeed } = await import('../racerAlpha.js');
-    const userId = (req as any).userId;
-    const signals = await getAlphaFeed(userId);
+    const signals = await getAlphaFeed(user?.id);
     res.json({ success: true, signals });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch signals' });
   }
 });
 
-router.post('/alpha/keys/buy', ensureTelegramUser, async (req, res) => {
+router.get('/alpha/traders/:id', async (req, res) => {
   try {
-    const userId = (req as any).userId;
-    const telegramId = (req as any).telegramUserId;
-    const { traderId } = req.body;
+    const user = await resolveAlphaUser(req);
+    const { getAlphaTraderById } = await import('../racerAlpha.js');
+    const trader = await getAlphaTraderById(req.params.id, user?.id);
+    if (!trader) {
+      res.status(404).json({ error: 'Trader not found' });
+      return;
+    }
+    res.json({ success: true, trader });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch trader' });
+  }
+});
+
+router.get('/alpha/traders/:id/positions', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    const { getAlphaTraderPositions } = await import('../racerAlpha.js');
+    const data = await getAlphaTraderPositions(req.params.id, user?.id);
+    res.json({ success: true, positions: data.positions, totalPnlUsd: data.totalPnlUsd, totalPnlPct: data.totalPnlPct, isLocked: data.isLocked, heldTier: data.heldTier });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch positions' });
+  }
+});
+
+router.get('/alpha/traders/:id/swaps', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    const { getAlphaTraderSwaps } = await import('../racerAlpha.js');
+    const data = await getAlphaTraderSwaps(req.params.id, user?.id);
+    res.json({ success: true, swaps: data.swaps, isLocked: data.isLocked });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch swaps' });
+  }
+});
+
+router.get('/alpha/my-keys', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.json({ success: true, keys: [], totalSpentNear: 0, totalSpentUsd: 0, activeCount: 0 });
+      return;
+    }
+    const { getUserViewingKeys } = await import('../racerAlpha.js');
+    const data = await getUserViewingKeys(user.id);
+    res.json({ success: true, ...data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch viewing keys' });
+  }
+});
+
+router.post('/alpha/copy-settings', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { traderId, allocationPct, riskMultiplier, stopLossPct, autoCopyEnabled, autoCopyAmountNear } = req.body;
+    if (!traderId) {
+      res.status(400).json({ error: 'traderId is required' });
+      return;
+    }
+    const { updateKeyCopySettings } = await import('../racerAlpha.js');
+    const result = await updateKeyCopySettings(user.id, traderId, {
+      allocationPct,
+      riskMultiplier,
+      stopLossPct,
+      autoCopyEnabled,
+      autoCopyAmountNear,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update copy settings' });
+  }
+});
+
+router.get('/alpha/creator/eligibility', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    const walletAddress = req.headers['x-wallet-address'] || req.query.walletAddress || user?.subaccount_id || user?.id;
+    const { getCreatorEligibility } = await import('../racerAlpha.js');
+    const data = await getCreatorEligibility(user?.id || (walletAddress as string) || 'guest', walletAddress as string);
+    res.json({ success: true, ...data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to check creator eligibility' });
+  }
+});
+
+router.post('/alpha/creator/pay-entry-fee', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet to pay entry fee.' });
+      return;
+    }
+    const { walletAddress, txHash, amountNear } = req.body;
+    const { payCreatorEntryFee } = await import('../racerAlpha.js');
+    const result = await payCreatorEntryFee(user.id, {
+      walletAddress: walletAddress || user.subaccount_id || user.id,
+      txHash,
+      amountNear,
+    });
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json({ success: true, txHash: result.txHash });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to process entry fee payment' });
+  }
+});
+
+router.get('/alpha/creator/dashboard', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const walletAddress = req.headers['x-wallet-address'] || user.subaccount_id;
+    const { getCreatorStudioData } = await import('../racerAlpha.js');
+    const data = await getCreatorStudioData(user.id, walletAddress as string);
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch creator dashboard' });
+  }
+});
+
+router.post('/alpha/creator/pricing', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { updateCreatorPricing } = await import('../racerAlpha.js');
+    const result = await updateCreatorPricing(user.id, req.body);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update pricing' });
+  }
+});
+
+router.post('/alpha/creator/terminal-link', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { generateTerminalLink } = await import('../racerAlpha.js');
+    const result = await generateTerminalLink(user.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to generate terminal link' });
+  }
+});
+
+router.post('/alpha/creator/signal', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { publishAlphaSignal } = await import('../racerAlpha.js');
+    const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue } = req.body;
+    const result = await publishAlphaSignal({
+      traderId,
+      tokenAddress,
+      tokenSymbol,
+      tokenName,
+      side,
+      priceNear,
+      amountNear,
+      venue,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to dispatch signal' });
+  }
+});
+
+router.post('/deposit/unwrap', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { unwrapUserWrapNear } = await import('../wallet.js');
+    const result = await unwrapUserWrapNear(user.telegram_id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to unwrap wrap.near' });
+  }
+});
+
+router.post('/alpha/keys/buy', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to purchase viewing keys.' });
+      return;
+    }
+    const { traderId, tier, autoCopyEnabled, autoCopyAmountNear, allocationPct, riskMultiplier, stopLossPct } = req.body;
     if (!traderId) {
       res.status(400).json({ error: 'traderId is required' });
       return;
     }
     const { buyViewingKey } = await import('../racerAlpha.js');
-    const result = await buyViewingKey(userId, telegramId, traderId);
+    const result = await buyViewingKey(user, traderId, {
+      tier,
+      autoCopyEnabled,
+      autoCopyAmountNear,
+      allocationPct,
+      riskMultiplier,
+      stopLossPct,
+    });
     if (!result.success) {
       res.status(400).json({ error: result.reason });
       return;
     }
-    res.json({ success: true, keyToken: result.keyToken });
+    res.json({ success: true, keyToken: result.keyToken, trader: result.trader });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to buy viewing key' });
   }
 });
 
-router.post('/alpha/creator/register', ensureTelegramUser, async (req, res) => {
+router.post('/alpha/creator/register', async (req, res) => {
   try {
-    const userId = (req as any).userId;
-    const { getUserById } = await import('@racerbot/db');
-    const user = await getUserById(userId);
+    const user = await resolveAlphaUser(req);
     if (!user) {
-      res.status(404).json({ error: 'User not found' });
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to register as a creator.' });
       return;
     }
     const { registerAlphaCreator } = await import('../racerAlpha.js');
@@ -352,6 +650,39 @@ router.post('/alpha/creator/register', ensureTelegramUser, async (req, res) => {
     res.json({ success: true, trader: result.trader });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to register creator' });
+  }
+});
+
+router.get('/alpha/autocopy/settings', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.json({
+        success: true,
+        settings: { enabled: false, buyAmountNear: 2.0, dailyCapNear: 20.0, maxSlippagePct: 2.0, copySells: false }
+      });
+      return;
+    }
+    const { getAutoCopySettings } = await import('../racerAlpha.js');
+    const settings = await getAutoCopySettings(user.id);
+    res.json({ success: true, settings });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch auto-copy settings' });
+  }
+});
+
+router.post('/alpha/autocopy/settings', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your wallet or Telegram to save auto-copy settings.' });
+      return;
+    }
+    const { saveAutoCopySettings } = await import('../racerAlpha.js');
+    const result = await saveAutoCopySettings(user.id, req.body);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save auto-copy settings' });
   }
 });
 
@@ -1461,12 +1792,15 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
     }
 
     const numNear = Number(amountNear);
+    if (typeof tokenAddress !== 'string' || !tokenAddress.trim() || !Number.isFinite(numNear) || numNear <= 0) {
+      res.status(400).json({ error: 'tokenAddress and a positive amountNear are required' });
+      return;
+    }
     const feePct = 1.5;
     const feeNear = Number((numNear * 0.015).toFixed(6));
     const netNear = Number((numNear - feeNear).toFixed(6));
 
-    // Convert net amount to yoctoNEAR
-    const amountYocto = (BigInt(Math.floor(netNear * 1e6)) * 1000000000000000000n).toString();
+    const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
     
     const result = await publishSwap({
       user_id: userId,
@@ -1476,12 +1810,6 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
       min_amount_out: '0',
       venue: req.body.venue || 'rhea',
     });
-
-    // Record fee in DB
-    if (result.success !== false) {
-      const { recordFee } = await import('@racerbot/db');
-      await recordFee(result.positionId || result.txHash || 'web_swap', feeNear.toString()).catch(() => {});
-    }
 
     res.json({
       success: true,
@@ -1498,69 +1826,98 @@ router.post('/swap', ensureTelegramUser, perUserRateLimit(60000, 30), async (req
   }
 });
 
-// ── RacerAlpha Copy Trade Execution with 1.5% Platform Fee ──────────────────
-router.post('/alpha/copy-trade', ensureTelegramUser, perUserRateLimit(60000, 30), async (req, res) => {
+// ── RacerAlpha Copy Trade Execution across ALL Launchpads & DEXes with 1.5% Fee ──
+router.post('/alpha/copy-trade', perUserRateLimit(60000, 30), async (req, res) => {
   try {
-    const userId = (req as any).userId;
-    const telegramId = (req as any).telegramUserId;
-    const { tokenAddress, amountNear, traderId } = req.body;
-
-    if (!tokenAddress || !amountNear) {
-      res.status(400).json({ error: 'tokenAddress and amountNear are required' });
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to trade.' });
       return;
     }
 
+    const { tokenAddress, amountNear, traderId, slippagePct, venue: explicitVenue } = req.body;
     const numNear = Number(amountNear);
+    if (typeof tokenAddress !== 'string' || !tokenAddress.trim() || !Number.isFinite(numNear) || numNear <= 0 || typeof traderId !== 'string' || !traderId.trim()) {
+      res.status(400).json({ error: 'tokenAddress, traderId, and a positive amountNear are required' });
+      return;
+    }
+
+    const db = await (await import('@racerbot/db')).getDb();
+    const access = await db.query(
+      `SELECT t.user_id,
+              EXISTS (
+                SELECT 1 FROM racer_alpha_keys k
+                WHERE k.trader_id = t.id AND k.buyer_user_id = $2 AND k.payment_status = 'completed'
+              ) AS has_key
+       FROM racer_alpha_traders t
+       WHERE t.id = $1 AND t.is_active = TRUE AND t.user_id <> 'system_alpha'`,
+      [traderId, user.id]
+    );
+    if (!access.rows[0]) {
+      res.status(404).json({ error: 'The RacerAlpha trader was not found.' });
+      return;
+    }
+    if (access.rows[0].user_id !== user.id && !access.rows[0].has_key) {
+      res.status(403).json({ error: 'Purchase this trader’s viewing key before copying their signals.' });
+      return;
+    }
+
     const feePct = 1.5;
     const feeNear = Number((numNear * 0.015).toFixed(6));
     const netNear = Number((numNear - feeNear).toFixed(6));
-    const amountYocto = (BigInt(Math.floor(netNear * 1e6)) * 1000000000000000000n).toString();
+    const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+
+    // Dynamically infer venue across NearlyTrade, MemeCooking, Shards, Intear, and Rhea
+    const { inferVenueFromToken } = await import('../racerAlpha.js');
+    const venue = explicitVenue || inferVenueFromToken(tokenAddress);
 
     const result = await publishSwap({
-      user_id: userId,
+      user_id: user.id,
       token_in: 'near',
       token_out: tokenAddress,
       amount_in: amountYocto,
       min_amount_out: '0',
-      venue: 'rhea',
-    });
+      venue: venue as any,
+      slippage_pct: Number(slippagePct) || 2,
+    }, undefined, { suppressAlphaSignal: true });
 
     if (result.success !== false) {
-      const { recordFee } = await import('@racerbot/db');
-      await recordFee(result.positionId || result.txHash || 'alpha_copy', feeNear.toString()).catch(() => {});
-
-      // Send confirmation to Telegram
-      try {
-        const { getBotInstance } = await import('../notify.js');
-        const bot = getBotInstance();
-        if (bot && telegramId) {
-          bot.telegram.sendMessage(
-            telegramId,
-            `🏎️ <b>RacerAlpha Copy Trade Executed!</b>\n\n` +
-            `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
-            `💵 <b>Gross Trade</b>: <code>${numNear} NEAR</code>\n` +
-            `⚡ <b>Platform Fee (1.5%)</b>: <code>${feeNear} NEAR</code>\n` +
-            `🎯 <b>Net Swapped</b>: <code>${netNear} NEAR</code>\n` +
-            (result.txHash ? `🔗 <b>Tx</b>: <code>${result.txHash.slice(0, 16)}...</code>\n\n` : '\n') +
-            `<i>Executed atomically with NEAR Intents protection.</i>`,
-            { parse_mode: 'HTML' }
-          ).catch(() => {});
-        }
-      } catch {}
+      // Send confirmation to Telegram if user has linked Telegram
+      if (user.telegram_id) {
+        try {
+          const { getBotInstance } = await import('../notify.js');
+          const bot = getBotInstance();
+          if (bot) {
+            bot.telegram.sendMessage(
+              user.telegram_id,
+              `🏎️ <b>RacerAlpha Copy Trade Executed!</b>\n\n` +
+              `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+              `🏛️ <b>Venue</b>: <code>${venue.toUpperCase()}</code>\n` +
+              `💵 <b>Gross Trade</b>: <code>${numNear} NEAR</code>\n` +
+              `⚡ <b>Platform Fee (1.5%)</b>: <code>${feeNear} NEAR</code>\n` +
+              `🎯 <b>Net Swapped</b>: <code>${netNear} NEAR</code>\n` +
+              (result.txHash ? `🔗 <b>Tx</b>: <code>${result.txHash.slice(0, 16)}...</code>\n\n` : '\n') +
+              `<i>Executed through RacerBot's managed ${venue.toUpperCase()} swap route.</i>`,
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+        } catch {}
+      }
     }
 
     res.json({
-      success: true,
+      success: result.success !== false,
       grossAmountNear: numNear,
       feePct,
       feeNear,
       netAmountNear: netNear,
+      venue,
       treasury: TREASURY_ACCOUNT_ID,
       ...result,
     });
   } catch (err: any) {
     logger.error('Alpha copy trade failed', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err?.message || 'Trade execution failed' });
   }
 });
 
