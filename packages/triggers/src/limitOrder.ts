@@ -83,7 +83,7 @@ export async function runLimitOrderEngine(): Promise<void> {
   }
 }
 
-async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
+export async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
   // Ensure token price is cached and fresh
   let cached = localPriceCache.get(order.token_address);
   if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
@@ -97,7 +97,7 @@ async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
 
   const currentPrice = cached.price;
   const currentMcap = cached.marketCap || 0;
-  const target = order.target_value;
+  const target = Number(order.target_value);
 
   let isTriggered = false;
 
@@ -107,8 +107,26 @@ async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
     } else {
       isTriggered = currentMcap >= target;
     }
+  } else if (order.target_type === 'percent_offset') {
+    // Percentage offset from reference price (e.g. +50 for +50% TP, -20 for -20% SL)
+    const refPrice = order.reference_price ? Number(order.reference_price) : 0;
+    if (refPrice > 0) {
+      const targetPrice = refPrice * (1 + target / 100);
+      if (order.trigger_condition === 'lte') {
+        isTriggered = currentPrice <= targetPrice;
+      } else {
+        isTriggered = currentPrice >= targetPrice;
+      }
+    } else {
+      // Fallback if reference_price was not stored: compare target directly
+      if (order.trigger_condition === 'lte') {
+        isTriggered = currentPrice <= target;
+      } else {
+        isTriggered = currentPrice >= target;
+      }
+    }
   } else {
-    // Price-based (or percent-offset converted to target price)
+    // Price-based
     if (order.trigger_condition === 'lte') {
       isTriggered = currentPrice <= target;
     } else {
@@ -135,7 +153,7 @@ async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
   await executeLimitOrder(lockedOrder, currentPrice, currentMcap);
 }
 
-async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, currentMcap: number): Promise<void> {
+export async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, currentMcap: number): Promise<void> {
   const near = getNear();
 
   const user = await getUserById(order.user_id).catch(() => null);
@@ -156,7 +174,9 @@ async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, 
     return;
   }
   const venue = venueRaw || 'ref';
-  const slippagePct = order.max_slippage_pct || (user.slippage_pct ? Number(user.slippage_pct) : 3.0);
+  const userSlip = user.slippage_pct ? Number(user.slippage_pct) : 0;
+  const defaultSlip = order.side === 'sell' && order.trigger_condition === 'lte' ? 5.0 : 3.0;
+  const slippagePct = order.max_slippage_pct || (userSlip > 0 ? userSlip : defaultSlip);
   const symbol = tokenCache.symbol || order.token_address.slice(0, 10);
 
   // Soft balance check before dispatching
@@ -267,14 +287,28 @@ async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, 
       return;
     }
 
-    // Determine sell quantity: fraction or raw
+    // Determine sell quantity: percentage of holdings or NEAR worth
     let sellQtyRaw = rawBalBigInt;
-    if (order.sell_pct && order.sell_pct > 0 && order.sell_pct < 100) {
+    if (order.sell_pct && order.sell_pct > 0 && order.sell_pct <= 100) {
       sellQtyRaw = (rawBalBigInt * BigInt(Math.floor(order.sell_pct))) / 100n;
-    } else if (order.amount_input > 0 && !order.sell_pct) {
-      const specifiedRaw = BigInt(Math.floor(order.amount_input));
-      if (specifiedRaw < rawBalBigInt) {
-        sellQtyRaw = specifiedRaw;
+    } else if (order.amount_input > 0) {
+      // order.amount_input represents the target value in NEAR to sell
+      // Convert NEAR amount to token quantity: tokens = amount_near / currentPrice
+      const tokenDecimals = tokenCache.decimals ?? 18;
+      if (currentPrice > 0) {
+        const tokensToSell = order.amount_input / currentPrice;
+        const factor = 10 ** Math.min(tokenDecimals, 12);
+        const tokensScaled = BigInt(Math.floor(tokensToSell * factor));
+        const remainingDecimals = tokenDecimals - Math.min(tokenDecimals, 12);
+        const calculatedRaw = tokensScaled * (10n ** BigInt(remainingDecimals));
+
+        if (calculatedRaw > 0n && calculatedRaw < rawBalBigInt) {
+          sellQtyRaw = calculatedRaw;
+        } else {
+          sellQtyRaw = rawBalBigInt;
+        }
+      } else {
+        sellQtyRaw = rawBalBigInt;
       }
     }
 

@@ -148,15 +148,17 @@ export function escapeHtml(text: string): string {
 
 /**
  * Builds the Telegram message card posted in groups.
- * Presents a verified, high-trust community token airdrop/giveaway
- * with clean institutional formatting, zero spam cues, and no emojis.
- */
+  * Builds the Telegram message card posted in groups.
+  * Presents an official, clean, non-spammy community token airdrop card
+  * with token-named heading, essential stats, and zero bulky spam text.
+  */
 export function buildRaceDropGroupCard(
   drop: RaceDropRecord,
   creatorUsername?: string,
   botUsername: string = 'racertradingbot',
   claimants: Array<{ claimant_name?: string; claim_amount: string }> = []
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
+  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
   const perUserFormatted = drop.amount_per_user
@@ -166,15 +168,6 @@ export function buildRaceDropGroupCard(
   const isCompleted = drop.status === 'completed' || drop.claims_count >= drop.total_claims;
   const isExpired = drop.status === 'expired' || (!isCompleted && new Date() > drop.expires_at);
 
-  let statusBadge = '<b>ACTIVE AIRDROP</b>';
-  if (isCompleted) {
-    statusBadge = '<b>COMPLETED (ALL CLAIMED)</b>';
-  } else if (isExpired) {
-    statusBadge = '<b>EXPIRED</b>';
-  } else if (drop.status === 'cancelled') {
-    statusBadge = '<b>CANCELLED</b>';
-  }
-
   const progressPercent = Math.min(100, Math.round((drop.claims_count / drop.total_claims) * 100));
   const progressBar = '▓'.repeat(Math.floor(progressPercent / 10)) + '░'.repeat(10 - Math.floor(progressPercent / 10));
   const remainingSpots = Math.max(0, drop.total_claims - drop.claims_count);
@@ -182,49 +175,40 @@ export function buildRaceDropGroupCard(
 
   let noteSection = '';
   if (drop.message_text) {
-    noteSection = `\n<b>Sponsor Note:</b> <i>"${escapeHtml(drop.message_text)}"</i>\n`;
+    noteSection = `\n💬 <i>"${escapeHtml(drop.message_text)}"</i>\n`;
+  }
+
+  let statusSection = '';
+  if (isCompleted) {
+    statusSection = `\n🏁 <b>COMPLETED (ALL CLAIMED)</b>\n<i>All spots have been claimed. Follow for upcoming airdrops.</i>`;
+  } else if (isExpired) {
+    statusSection = `\n⌛ <b>This airdrop has ended.</b>`;
+  } else if (drop.status === 'cancelled') {
+    statusSection = `\n❌ <b>This airdrop was cancelled.</b>`;
+  } else {
+    statusSection = `\n👇 <i>Tap below to deposit tokens directly into your wallet:</i>`;
   }
 
   let claimersSection = '';
   if (claimants && claimants.length > 0) {
-    claimersSection = `\n<b>Recent Claimers (${claimants.length}/${drop.total_claims}):</b>\n`;
-    const recent = claimants.slice(-10).reverse();
-    recent.forEach((c) => {
-      claimersSection += `• ${escapeHtml(c.claimant_name || 'Racer')} (<code>+${formatDropAmount(c.claim_amount)} ${drop.token_symbol}</code>)\n`;
-    });
-    if (claimants.length > 10) {
-      claimersSection += `<i>...and ${claimants.length - 10} more</i>\n`;
-    }
+    const names = claimants
+      .slice(0, 3)
+      .map((c) => escapeHtml(c.claimant_name || 'Racer'))
+      .join(', ');
+    const more = claimants.length > 3 ? ` +${claimants.length - 3} more` : '';
+    claimersSection = `\n👥 <b>Recent Claimers:</b> ${names}${more}\n`;
   }
 
-  const claimUrl = `https://t.me/${botUsername}?start=drop_${drop.id}`;
-
-  const actionLine = isCompleted
-    ? `\n<b>All spots have been claimed.</b> Follow for upcoming airdrops.`
-    : isExpired
-    ? `\n<b>This giveaway has ended.</b>`
-    : `\nTap below to deposit tokens directly into your wallet.`;
-
-  const claimLinkLine = (!isCompleted && !isExpired && drop.status === 'active')
-    ? `\n<a href="${claimUrl}"><b>Tap Here to Claim Your Free ${drop.token_symbol} →</b></a>\n`
-    : '';
-
   const text =
-    `<b>COMMUNITY TOKEN AIRDROP</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🎁 <b>${tokenHeading} AIRDROP</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
     `<b>Sponsored by:</b> <b>${escapeHtml(creatorDisplay)}</b>\n` +
-    `<b>Token:</b> <b>${drop.token_symbol}</b>\n` +
-    `<b>Claim Reward:</b> <code>+${perUserFormatted}</code> / person (<b>100% Free</b>)\n` +
-    `<b>Total Pool:</b> <code>${totalFormatted}</code> (${drop.total_claims} spots)\n` +
-    `<b>Spots Left:</b> <b>${remainingSpots}</b> of <b>${drop.total_claims}</b> remaining (${progressPercent}% claimed)\n` +
-    `<b>Progress:</b> [${progressBar}]\n` +
-    `<b>Status:</b> ${statusBadge}\n` +
+    `<b>Claim Reward:</b> <code>+${perUserFormatted}</code>\n` +
+    `<b>Total Pool:</b> <code>${totalFormatted}</code>\n` +
+    `<b>Spots Left:</b> <b>${remainingSpots}</b> of <b>${drop.total_claims}</b> remaining (${progressBar} ${progressPercent}%)\n` +
     noteSection +
     claimersSection +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `<i>100% Free • No Gas Required • Direct Wallet Deposit • Zero Approvals</i>\n` +
-    claimLinkLine +
-    actionLine +
+    statusSection +
     `\n<code>#drop_${shortDropId}</code>`;
 
   const buttons: any[] = [];
@@ -263,6 +247,7 @@ export function buildRaceDropClaimMenuCard(
   claimants: Array<{ claimant_name?: string; claim_amount: string }> = [],
   isCreator: boolean = false
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
+  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
   const perUserFormatted = drop.amount_per_user
@@ -272,15 +257,6 @@ export function buildRaceDropClaimMenuCard(
   const isCompleted = drop.status === 'completed' || drop.claims_count >= drop.total_claims;
   const isExpired = drop.status === 'expired' || (!isCompleted && new Date() > drop.expires_at);
 
-  let statusBadge = '<b>ACTIVE AIRDROP</b>';
-  if (isCompleted) {
-    statusBadge = '<b>COMPLETED (ALL CLAIMED)</b>';
-  } else if (isExpired) {
-    statusBadge = '<b>EXPIRED</b>';
-  } else if (drop.status === 'cancelled') {
-    statusBadge = '<b>CANCELLED</b>';
-  }
-
   const progressPercent = Math.min(100, Math.round((drop.claims_count / drop.total_claims) * 100));
   const progressBar = '▓'.repeat(Math.floor(progressPercent / 10)) + '░'.repeat(10 - Math.floor(progressPercent / 10));
   const remainingSpots = Math.max(0, drop.total_claims - drop.claims_count);
@@ -288,18 +264,18 @@ export function buildRaceDropClaimMenuCard(
 
   let noteSection = '';
   if (drop.message_text) {
-    noteSection = `\n<b>Sponsor Note:</b> <i>"${escapeHtml(drop.message_text)}"</i>\n`;
+    noteSection = `\n💬 <b>Sponsor Note:</b> <i>"${escapeHtml(drop.message_text)}"</i>\n`;
   }
 
   let claimersSection = '';
   if (claimants && claimants.length > 0) {
     claimersSection = `\n<b>Recent Claimers (${claimants.length}/${drop.total_claims}):</b>\n`;
-    const recent = claimants.slice(-10).reverse();
+    const recent = claimants.slice(-5).reverse();
     recent.forEach((c) => {
       claimersSection += `• ${escapeHtml(c.claimant_name || 'Racer')} (<code>+${formatDropAmount(c.claim_amount)} ${drop.token_symbol}</code>)\n`;
     });
-    if (claimants.length > 10) {
-      claimersSection += `<i>...and ${claimants.length - 10} more</i>\n`;
+    if (claimants.length > 5) {
+      claimersSection += `<i>...and ${claimants.length - 5} more</i>\n`;
     }
   }
 
@@ -307,7 +283,7 @@ export function buildRaceDropClaimMenuCard(
   const buttons: any[] = [];
 
   if (isCreator) {
-    promptSection = `\n<b>You created this Community Airdrop.</b>\nShare this drop to your groups or chats so members can claim directly with the 1-click Claim button:`;
+    promptSection = `\n<b>You created this ${drop.token_symbol} Airdrop.</b>\nShare this drop to your groups or chats so members can claim directly with the 1-click Claim button:`;
     const startGroupUrl = `https://t.me/${botUsername}?startgroup=drop_${drop.id}`;
     buttons.push([
       Markup.button.switchToChat('Share to Group (With Claim Button)', `drop_${drop.id}`),
@@ -350,19 +326,14 @@ export function buildRaceDropClaimMenuCard(
   }
 
   const text =
-    `<b>COMMUNITY TOKEN AIRDROP</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🎁 <b>${tokenHeading} AIRDROP</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
     `<b>Sponsored by:</b> <b>${escapeHtml(creatorDisplay)}</b>\n` +
-    `<b>Token:</b> <b>${drop.token_symbol}</b>\n` +
-    `<b>Your Reward:</b> <code>+${perUserFormatted}</code> (<b>100% Free</b>)\n` +
+    `<b>Your Reward:</b> <code>+${perUserFormatted}</code>\n` +
     `<b>Total Pool:</b> <code>${totalFormatted}</code> (${drop.total_claims} spots)\n` +
-    `<b>Spots Left:</b> <b>${remainingSpots}</b> of <b>${drop.total_claims}</b> remaining (${progressPercent}% claimed)\n` +
-    `<b>Progress:</b> [${progressBar}]\n` +
-    `<b>Status:</b> ${statusBadge}\n` +
+    `<b>Spots Left:</b> <b>${remainingSpots}</b> of <b>${drop.total_claims}</b> remaining (${progressBar} ${progressPercent}%)\n` +
     noteSection +
     claimersSection +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `<i>100% Free • No Gas Fees • Instant Direct Wallet Deposit</i>\n` +
     promptSection +
     `\n<code>#drop_${shortDropId}</code>`;
 
@@ -441,13 +412,14 @@ export function buildRaceDropCreatorShareCard(
     ? `${formatDropAmount(drop.amount_per_user)} ${drop.token_symbol}`
     : `${formatDropAmount(parseFloat(drop.total_amount) / drop.total_claims)} ${drop.token_symbol}`;
   const shortDropId = drop.id.replace(/-/g, '').slice(0, 8);
+  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
   const claimUrl = `https://t.me/${botUsername}?start=drop_${drop.id}`;
   const startGroupUrl = `https://t.me/${botUsername}?startgroup=drop_${drop.id}`;
-  const shareText = `${creatorDisplay} is giving away ${perUserFormatted} in a free community airdrop! Claim directly into your wallet:`;
+  const shareText = `${creatorDisplay} dropped ${perUserFormatted} in the ${tokenHeading} Airdrop! Claim directly into your wallet:`;
   const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(claimUrl)}&text=${encodeURIComponent(shareText)}`;
 
   const text =
-    `<b>Token Airdrop Created Successfully</b>\n` +
+    `<b>${tokenHeading} Airdrop Created Successfully</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `<b>Creator:</b> ${escapeHtml(creatorDisplay)}\n` +
     `<b>Token:</b> <code>${drop.token_symbol}</code>\n` +
@@ -1227,15 +1199,15 @@ export function setupRaceDropRoutes(
           const creatorTgUser = creatorUser
             ? (await ctx.telegram.getChat(creatorUser.telegram_id).catch(() => null) as any)
             : null;
-          const creatorUsername = creatorTgUser?.username || undefined;
-
+          const creatorUsername = creatorTgUser?.username || creatorUser?.username || null;
           const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
           const groupCard = buildRaceDropGroupCard(drop, creatorUsername, botUsername, allClaims);
           const spotsRemaining = Math.max(0, drop.total_claims - drop.claims_count);
+          const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
           return {
             type: 'article' as const,
             id: `drop_${drop.id}`,
-            title: `Community Airdrop: +${perUserFormatted}`,
+            title: `${tokenHeading} AIRDROP: +${perUserFormatted}`,
             description: `Sponsored by ${creatorDisplay} • ${spotsRemaining} spots left • Tap to share with Claim button`,
             input_message_content: {
               message_text: groupCard.text,

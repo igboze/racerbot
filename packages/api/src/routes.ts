@@ -3474,6 +3474,102 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // ── /alpha & /raceralpha — Confidential Social Trading & Viewing Keys ────
+  bot.command(['alpha', 'raceralpha'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const { getAlphaTraders } = await import('./racerAlpha.js');
+      const { getUserByTelegramId } = await import('@racerbot/db');
+      const user = await getUserByTelegramId(telegramId);
+      const traders = await getAlphaTraders(user?.id);
+
+      const topTraders = traders.slice(0, 3);
+      const heldCount = traders.filter(t => t.hasKey).length;
+
+      let traderListStr = '';
+      topTraders.forEach((t, i) => {
+        traderListStr += `<b>${i + 1}. ${t.displayName}</b> (@${t.handle})\n` +
+          `   • PnL: <code>+${t.verifiedPnlPct}%</code> | Win: <code>${t.winRatePct}%</code>\n` +
+          `   • Key: <code>${t.keyPriceNear} NEAR/mo</code> | Keys Sold: <code>${t.keysSold}/${t.maxKeys}</code>\n`;
+      });
+
+      const text =
+        `🏎️ <b>RacerAlpha — Confidential Social Trading</b>\n` +
+        `<i>Monetize & mirror alpha signals privately off-mempool across NEAR launchpads & Rhea.</i>\n\n` +
+        `🏆 <b>Top Verified Traders:</b>\n` +
+        traderListStr +
+        `\n🔑 <b>Your Active Keys:</b> <code>${heldCount} active</code>\n` +
+        `🏛️ <b>Supported Venues:</b> Rhea DEX, NearlyTrade DCL, Meme.Cooking, Shards\n` +
+        `⚡ <i>All trades execute privately without mempool frontrunning.</i>`;
+
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🏎️ Open RacerAlpha WebApp', web_app: { url: 'https://raceralpha.xyz/alpha' } }
+            ],
+            [
+              { text: '🔑 My Unlocked Keys', callback_data: 'alpha_my_keys' },
+              { text: '« Back to Menu', callback_data: 'menu_home' }
+            ]
+          ]
+        }
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to load RacerAlpha: ${err?.message || 'Server error'}`);
+    }
+  });
+
+  bot.action('alpha_my_keys', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const { getAlphaTraders } = await import('./racerAlpha.js');
+      const { getUserByTelegramId } = await import('@racerbot/db');
+      const user = await getUserByTelegramId(telegramId);
+      const traders = await getAlphaTraders(user?.id);
+      const myTraders = traders.filter(t => t.hasKey);
+
+      await ctx.answerCbQuery().catch(() => {});
+      if (myTraders.length === 0) {
+        await ctx.reply(
+          `🔑 <b>No Active Viewing Keys</b>\n\n` +
+          `You have not unlocked any Alpha Trader viewing keys yet.\n` +
+          `Visit RacerAlpha to subscribe to top traders and decrypt live signals.`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🏎️ Explore Marketplace', web_app: { url: 'https://raceralpha.xyz/alpha' } }],
+                [{ text: '« Back to Menu', callback_data: 'menu_home' }]
+              ]
+            }
+          }
+        );
+        return;
+      }
+
+      let keysMsg = `🔑 <b>Your Active Viewing Keys (${myTraders.length})</b>\n\n`;
+      myTraders.forEach((t, idx) => {
+        keysMsg += `<b>${idx + 1}. ${t.displayName}</b> (@${t.handle})\n` +
+          `   • PnL: <code>+${t.verifiedPnlPct}%</code> | Win Rate: <code>${t.winRatePct}%</code>\n` +
+          `   • Status: <code>Active (Signals Decrypted)</code>\n\n`;
+      });
+
+      await ctx.reply(keysMsg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🏎️ Open WebApp Feed', web_app: { url: 'https://raceralpha.xyz/alpha' } }],
+            [{ text: '« Back', callback_data: 'menu_home' }]
+          ]
+        }
+      });
+    } catch {
+      await ctx.answerCbQuery('Failed to load keys').catch(() => {});
+    }
+  });
+
   // ── WebApp Connection Approval & Denial Handlers ───────────────────────────
   bot.action(/^tgauth_approve:(.+)$/, async (ctx) => {
     const requestId = ctx.match[1];
@@ -4177,8 +4273,11 @@ export function setupRoutes(bot: Telegraf): void {
     const dir = o.trigger_condition === 'lte' ? '≤' : '≥';
     const expiry = o.expires_at ? new Date(o.expires_at).toLocaleDateString() : 'GTC';
     const token = o.token_address.length > 20 ? o.token_address.slice(0, 10) + '...' + o.token_address.slice(-6) : o.token_address;
+    const targetDisplay = o.target_type === 'percent_offset'
+      ? (Number(o.target_value) > 0 ? `+${o.target_value}%` : `${o.target_value}%`)
+      : o.target_value;
     return `${side} • ${token}\n` +
-      `  Condition: ${cond} ${dir} ${o.target_value}\n` +
+      `  Condition: ${cond} ${dir} ${targetDisplay}\n` +
       `  Amount: ${o.amount_input} NEAR • Expires: ${expiry}\n` +
       `  Status: ${o.status}`;
   }
@@ -4288,11 +4387,32 @@ export function setupRoutes(bot: Telegraf): void {
     const durationMs = expiryDurations[expiryKey];
     const expiresAt = durationMs !== null ? new Date(Date.now() + durationMs) : null;
 
+    // Resolve current price and mcap for reference and directional determination
+    const tokenInfo = await getTokenInfo(pending.loTokenAddress!, false).catch(() => null);
+    const currentPrice = tokenInfo?.price ? parseFloat(tokenInfo.price) : 0;
+    const currentMcap = (tokenInfo as any)?.market_cap ? parseFloat((tokenInfo as any).market_cap) : ((tokenInfo as any)?.marketCap ? parseFloat((tokenInfo as any).marketCap) : 0);
+
     // Determine condition direction from side + condition type
     let triggerCondition: 'lte' | 'gte' = 'lte';
-    if (pending.loSide === 'sell') triggerCondition = 'gte';
     if (pending.loConditionType === 'percent_change') {
+      // For percent change: positive (+50%) means >= target, negative (-20%) means <= target
       triggerCondition = pending.loTargetValue! < 0 ? 'lte' : 'gte';
+    } else if (pending.loConditionType === 'price') {
+      if (pending.loSide === 'sell') {
+        // Selling: if target > currentPrice it's Take Profit (gte), if target < currentPrice it's Stop Loss (lte)
+        triggerCondition = (currentPrice > 0 && pending.loTargetValue! < currentPrice) ? 'lte' : 'gte';
+      } else {
+        // Buying: if target < currentPrice it's Dip Buy (lte), if target > currentPrice it's Breakout Buy (gte)
+        triggerCondition = (currentPrice > 0 && pending.loTargetValue! > currentPrice) ? 'gte' : 'lte';
+      }
+    } else if (pending.loConditionType === 'market_cap') {
+      if (pending.loSide === 'sell') {
+        triggerCondition = (currentMcap > 0 && pending.loTargetValue! < currentMcap) ? 'lte' : 'gte';
+      } else {
+        triggerCondition = (currentMcap > 0 && pending.loTargetValue! > currentMcap) ? 'gte' : 'lte';
+      }
+    } else {
+      triggerCondition = pending.loSide === 'sell' ? 'gte' : 'lte';
     }
 
     const targetType: 'mcap' | 'price' | 'percent_offset' =
@@ -4309,6 +4429,8 @@ export function setupRoutes(bot: Telegraf): void {
         target_type: targetType,
         trigger_condition: triggerCondition,
         target_value: pending.loTargetValue!,
+        reference_price: currentPrice > 0 ? currentPrice : null,
+        reference_mcap: currentMcap > 0 ? currentMcap : null,
         amount_input: pending.loAmount!,
         expires_at: expiresAt,
       });
@@ -4317,12 +4439,15 @@ export function setupRoutes(bot: Telegraf): void {
       const expiryLabel = expiryKey === 'gtc' ? '🔁 GTC (Never expires)' : `${expiryKey === '24h' ? '24 Hours' : expiryKey === '3d' ? '3 Days' : '7 Days'}`;
       const condLabel = order.target_type === 'price' ? 'Price' : order.target_type === 'mcap' ? 'Market Cap' : '% Offset';
       const dirLabel = order.trigger_condition === 'lte' ? '≤' : '≥';
+      const targetValDisplay = order.target_type === 'percent_offset'
+        ? (Number(order.target_value) > 0 ? `+${order.target_value}%` : `${order.target_value}%`)
+        : order.target_value;
 
       await ctx.reply(
         `✅ *Limit Order Created!*\n\n` +
         `🪙 *Token*: \`${order.token_address}\`\n` +
         `📊 *Direction*: ${order.side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n` +
-        `📐 *Trigger*: ${condLabel} ${dirLabel} \`${order.target_value}\`\n` +
+        `📐 *Trigger*: ${condLabel} ${dirLabel} \`${targetValDisplay}\`\n` +
         `💰 *Amount*: \`${order.amount_input} NEAR\`\n` +
         `⏰ *Expires*: ${expiryLabel}\n\n` +
         `RacerBot polls prices every 4 seconds. You'll get a DM when triggered.`,
@@ -11149,9 +11274,11 @@ export function setupRoutes(bot: Telegraf): void {
 
       // ── Limit Order wizard: target value input ────────────────────────────
       if (pending.action === 'lo_target_value') {
-        const val = parseFloat(rawText.replace(/[$,]/g, ''));
-        if (isNaN(val) || val <= 0) {
-          await ctx.reply('❌ Invalid value. Enter a positive number (e.g. `0.001` for price, `50000` for market cap, or `25` for +25%).');
+        const cleanStr = rawText.replace(/[$,%]/g, '').trim();
+        const val = parseFloat(cleanStr);
+        const isPercent = pending.loConditionType === 'percent_change';
+        if (isNaN(val) || (!isPercent && val <= 0) || (isPercent && val === 0)) {
+          await ctx.reply('❌ Invalid value. Enter a valid positive number for price or market cap, or a percentage (e.g. `+50` or `-20`).');
           return;
         }
         userPendingActions.set(telegramId, {
@@ -11161,8 +11288,9 @@ export function setupRoutes(bot: Telegraf): void {
           expiresAt: Date.now() + 5 * 60_000,
         });
         const condLabel = pending.loConditionType === 'price' ? 'Price' : pending.loConditionType === 'market_cap' ? 'Market Cap' : '% Change';
+        const valDisplay = isPercent ? (val > 0 ? `+${val}%` : `${val}%`) : `${val}`;
         await ctx.reply(
-          `✅ Target ${condLabel}: \`${val}\`\n\n` +
+          `✅ Target ${condLabel}: \`${valDisplay}\`\n\n` +
           `💰 *How much NEAR ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
           `Reply with a number (e.g. \`5\` for 5 NEAR):`,
           { parse_mode: 'Markdown' }

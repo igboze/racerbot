@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>RACER — High-Performance Trading Suite on NEAR & Multi-Chain</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RACER — NEAR Trading Workspace</title>
   <link rel="icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="apple-touch-icon" href="/assets/racer-logo.png">
   <meta property="og:title" content="RACER — The Next-Generation Trading Suite">
-  <meta property="og:description" content="One unified ecosystem: RacerBot, RacerAlpha, RacerBubble, and The RacerFleet. Sub-second execution, confidential intents, and institutional multi-wallet coordination.">
+  <meta property="og:description" content="A NEAR trading workspace with social trading, holder analysis, wallet operations, and community tools.">
   <meta property="og:image" content="/assets/racerbot-banner.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
@@ -861,15 +861,16 @@
     }
     .form-input:focus { border-color: var(--color-racer-cyan); }
   </style>
+  <link rel="stylesheet" href="/assets/racer-terminal.css">
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
 
   <!-- Promo Banner -->
   <div class="promo-banner">
-    <span class="promo-badge">Live Intent Solver</span>
-    <span>NEAR Intents Confidential Solver Engine is live: 0% MEV slippage and instant settlement.</span>
-    <a href="/alpha" style="color:var(--color-racer-cyan); font-weight:600; text-decoration:underline;">Explore RacerAlpha →</a>
+    <span class="promo-badge">RACER WORKSPACE</span>
+    <span>Trading, wallet coordination, social signals, and on-chain holder analysis.</span>
+    <a href="/alpha" style="color:var(--color-racer-cyan); font-weight:600; text-decoration:underline;">Open RacerAlpha →</a>
   </div>
 
   <!-- Navigation Header (Master Pit-Wall Specification) -->
@@ -883,18 +884,6 @@
           <span class="brand-title">RACER</span>
         </div>
       </a>
-
-      <!-- Live Telemetry Status Rail -->
-      <div class="telemetry-rail">
-        <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
-          <span class="dot"></span>
-          SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
-        </span>
-        <span style="color:var(--color-border);">|</span>
-        <span style="color:var(--color-text-subtle);">
-          NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
-        </span>
-      </div>
 
       <!-- Navigation Links -->
       <nav class="nav-links">
@@ -920,138 +909,58 @@
 
   <!-- Hero Band (Notion Hero Architecture) -->
   <section class="hero-band-dark">
-    <!-- Atmospheric Notion Sticky-Note Dots (Racer Colors) -->
-    <div class="hero-sticky-dot dot-cyan" style="top:40px; left:12%;"></div>
-    <div class="hero-sticky-dot dot-purple" style="top:90px; right:15%;"></div>
-    <div class="hero-sticky-dot dot-green" style="bottom:220px; left:8%;"></div>
-    <div class="hero-sticky-dot dot-gold" style="bottom:180px; right:10%;"></div>
-
     <div class="hero-eyebrow">
-      <span style="width:7px; height:7px; border-radius:50%; background:var(--color-racer-green); box-shadow:0 0 8px var(--color-racer-green);"></span>
-      <span>RACER ECOSYSTEM • HIGH-OCTANE TRADING SUITE</span>
+      <span class="status-indicator" aria-hidden="true"></span>
+      <span>NEAR TRADING WORKSPACE</span>
     </div>
 
     <h1 class="hero-display">
-      The High-Performance Trading Suite on <span class="hero-display-gradient">NEAR & Multi-Chain</span>
+      Your trading workflow, <span class="hero-display-gradient">in one place.</span>
     </h1>
 
     <p class="hero-subtitle">
-      One ecosystem. Four specialized execution pillars designed for sub-second terminal speed, confidential intent solvers, holder bubble map analytics, and multi-wallet fleet deployment.
+      Move from market research to wallet activity with purpose-built tools for social trading, holder analysis, and coordinated wallet operations.
     </p>
 
-    <!-- Notion Rectangular 8px CTA Buttons (Signature Purple Primary + Secondary on Dark) -->
     <div class="hero-button-row">
-      <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="padding:12px 24px; height:46px;">
-        <span>Launch RacerBot on Telegram ↗</span>
-      </a>
-      <a href="/alpha" class="btn btn-secondary-on-dark" style="padding:12px 22px; height:46px;">
-        <span>Explore RacerAlpha</span>
-      </a>
-      <a href="/bubblemap" class="btn btn-secondary-on-dark" style="padding:12px 22px; height:46px;">
-        <span>Open RacerBubble Map</span>
-      </a>
+      <a href="/alpha" class="btn btn-primary"><span>Open trading workspace</span></a>
+      <a href="/bubblemap" class="btn btn-secondary-on-dark"><span>Analyze holders</span></a>
     </div>
 
-    <!-- Real Workspace Mockup Card (Live Racer Terminal View Inside Hero Band) -->
-    <div class="workspace-mockup-card">
-      <div class="mockup-header-bar">
-        <div class="mockup-window-controls">
-          <div class="mockup-dot" style="background:#ff5f56;"></div>
-          <div class="mockup-dot" style="background:#ffbd2e;"></div>
-          <div class="mockup-dot" style="background:#27c93f;"></div>
-        </div>
-        <div class="mockup-pill-tabs">
-          <span class="mockup-tab active"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Sub-Second Solver</span>
-          <span class="mockup-tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Viewing Keys</span>
-          <span class="mockup-tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2.5"/><circle cx="5" cy="5" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/></svg>Whale Clusters</span>
-          <span class="mockup-tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:4px;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>5-Wallet Fleet</span>
-        </div>
-        <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-racer-green);">
-          ● SOLVER CONNECTED (28ms)
-        </div>
-      </div>
-
-      <div class="mockup-body">
-        <div class="mockup-terminal-panel">
-          <div style="font-size:11px; color:var(--color-racer-cyan); margin-bottom:12px; letter-spacing:1px; text-transform:uppercase;">
-            ACTIVE PROTOCOL EXECUTION ROUTE
-          </div>
-          <div class="terminal-line">
-            <span class="term-key">Intent Venue:</span>
-            <span class="term-val" style="color:var(--color-racer-cyan);">NEAR Intents Confidential Solver</span>
-          </div>
-          <div class="terminal-line">
-            <span class="term-key">Trading Pair:</span>
-            <span class="term-val">NEAR → FAST (Bonding Curve)</span>
-          </div>
-          <div class="terminal-line">
-            <span class="term-key">Execution Speed:</span>
-            <span class="term-val" style="color:var(--color-racer-green);">28 ms (Sub-second)</span>
-          </div>
-          <div class="terminal-line">
-            <span class="term-key">MEV Protection:</span>
-            <span class="term-val" style="color:var(--color-racer-green);">100% Encrypted Viewing Key</span>
-          </div>
-          <div class="terminal-line">
-            <span class="term-key">Settlement:</span>
-            <span class="term-val" style="color:var(--color-racer-cyan);">Atomic NEAR Intents Solver</span>
-          </div>
-        </div>
-
-        <div class="mockup-radar-panel">
-          <div class="radar-header">
-            <span>LIVE TELEMETRY RADAR</span>
-            <span style="font-size:11px; color:var(--color-text-subtle);">FastNEAR v2</span>
-          </div>
-          <div class="radar-chips">
-            <div class="radar-chip">
-              <div class="radar-chip-val" style="color:var(--color-racer-cyan);">0%</div>
-              <div class="radar-chip-lbl">Slippage Exploits</div>
-            </div>
-            <div class="radar-chip">
-              <div class="radar-chip-val" style="color:var(--color-racer-green);">$42.8M</div>
-              <div class="radar-chip-lbl">Volume Tracked</div>
-            </div>
-            <div class="radar-chip">
-              <div class="radar-chip-val" style="color:var(--color-racer-purple-light);">48</div>
-              <div class="radar-chip-lbl">Sybil Clusters</div>
-            </div>
-            <div class="radar-chip">
-              <div class="radar-chip-val" style="color:var(--color-racer-cyan);">0%</div>
-              <div class="radar-chip-lbl">MEV Slippage</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Live Telemetry Bar -->
-    <div class="telemetry-bar">
-      <div class="telemetry-item">
-        <div class="telemetry-val" style="color:var(--color-racer-cyan);">28ms</div>
-        <div class="telemetry-label">Avg Intent Execution</div>
-      </div>
-      <div class="telemetry-item">
-        <div class="telemetry-val" style="color:var(--color-racer-green);">$42.8M+</div>
-        <div class="telemetry-label">Total Volume Monitored</div>
-      </div>
-      <div class="telemetry-item">
-        <div class="telemetry-val" style="color:var(--color-racer-purple-light);">100%</div>
-        <div class="telemetry-label">Frontrun / MEV Protection</div>
-      </div>
-      <div class="telemetry-item">
-        <div class="telemetry-val" style="color:var(--color-racer-green);">Sub-Second</div>
-        <div class="telemetry-label">Solver Execution</div>
-      </div>
+    <div class="workspace-launch-grid" aria-label="Trading workspace tools">
+      <a class="workspace-launch-card" href="/alpha">
+        <span class="workspace-launch-kicker">01 / SOCIAL TRADING</span>
+        <strong>RacerAlpha</strong>
+        <span>Discover traders, review signals, and manage copy-trading settings.</span>
+        <span class="workspace-launch-action">Open Alpha <span aria-hidden="true">→</span></span>
+      </a>
+      <a class="workspace-launch-card" href="/bubblemap">
+        <span class="workspace-launch-kicker">02 / HOLDER ANALYSIS</span>
+        <strong>RacerBubble</strong>
+        <span>Explore token holders and wallet relationships on an interactive map.</span>
+        <span class="workspace-launch-action">Open Bubble Map <span aria-hidden="true">→</span></span>
+      </a>
+      <a class="workspace-launch-card" href="/fleet">
+        <span class="workspace-launch-kicker">03 / WALLET OPERATIONS</span>
+        <strong>RacerFleet</strong>
+        <span>Manage wallets, allocations, coordinated buys, and sweeps.</span>
+        <span class="workspace-launch-action">Open Fleet <span aria-hidden="true">→</span></span>
+      </a>
+      <a class="workspace-launch-card" href="/competition">
+        <span class="workspace-launch-kicker">04 / COMMUNITY</span>
+        <strong>Racer Arena</strong>
+        <span>Browse competitions, leaderboards, and community events.</span>
+        <span class="workspace-launch-action">Open Arena <span aria-hidden="true">→</span></span>
+      </a>
     </div>
   </section>
 
   <!-- Product Pillars Section (Notion Pastel Feature Cards) -->
   <section class="pillars-section">
     <div class="section-header">
-      <div class="section-eyebrow">THE 4 CORE PILLARS</div>
-      <h2 class="section-title">Engineered for Every Dimension of Speed</h2>
-      <p class="section-desc">Each Racer sub-product handles a critical component of institutional and retail decentralized execution.</p>
+      <div class="section-eyebrow">RACER TOOLS</div>
+      <h2 class="section-title">A focused tool for each part of your workflow</h2>
+      <p class="section-desc">Choose a workspace based on the task at hand. Connect a wallet only when you are ready to use a wallet-enabled action.</p>
     </div>
 
     <div class="pillars-grid">
@@ -1065,13 +974,12 @@
           <h3 class="pillar-name">RacerBot</h3>
           <div class="pillar-tagline">Sub-Second Telegram Trading Terminal</div>
           <p class="pillar-desc">
-            The ultra-fast execution engine living inside Telegram. Execute bonding curve snipes, limit orders, auto-DCA, and instant swaps across NEAR, Sui, and Starknet with zero latency.
+            Access RacerBot through Telegram for supported trading and wallet workflows.
           </p>
           <ul class="pillar-feature-list">
-            <li>Sub-second mempool & launchpad auto-buy</li>
-            <li>Automated stop loss & take-profit triggers</li>
-            <li>Cross-chain deposit routing (EVM, SUI, STRK)</li>
-            <li>Dedicated custodial trading subaccounts</li>
+            <li>Telegram-based trading interface</li>
+            <li>Supported order and wallet actions</li>
+            <li>Cross-chain deposit options where available</li>
           </ul>
         </div>
         <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="width:100%;">
@@ -1087,15 +995,15 @@
             <span class="pillar-subdomain">alpha.racer.trade</span>
           </div>
           <h3 class="pillar-name">RacerAlpha</h3>
-          <div class="pillar-tagline">Confidential Social Trading & Viewing Keys</div>
+          <div class="pillar-tagline">Social trading and viewing keys</div>
           <p class="pillar-desc">
-            NEAR Intents confidential solver execution meets social alpha. Top traders monetize their trading signals via encrypted viewing keys without exposing token contract addresses to public mempool frontrunners.
+                Explore trader profiles, signals, and key-based access. Review the available copy settings before enabling any automated trading.
           </p>
           <ul class="pillar-feature-list">
-            <li>Confidential intent swaps (Zero MEV sandwiching)</li>
-            <li>Verifiable on-chain PnL performance track records</li>
-            <li>Dynamic token unmasking for verified keyholders</li>
-            <li>1-Click mirror trading via NEAR Intents</li>
+            <li>Trader marketplace and signal feed</li>
+            <li>Viewing-key access controls</li>
+            <li>Opt-in copy-trading settings</li>
+            <li>Wallet connection through NEAR Wallet Selector</li>
           </ul>
         </div>
         <a href="/alpha" class="btn btn-primary" style="width:100%;">
@@ -1113,13 +1021,13 @@
           <h3 class="pillar-name">RacerBubble</h3>
           <div class="pillar-tagline">Interactive Holder Cluster & Bubble Map</div>
           <p class="pillar-desc">
-            Visual intelligence for on-chain liquidity. Explore physical force-directed bubble graphs of token holder clusters, whale wallets, dev distribution percentages, and multi-wallet linkages in real-time.
+            Inspect token holder distribution and explore wallet relationships in an interactive visualization.
           </p>
           <ul class="pillar-feature-list">
             <li>Force-directed physics bubble visualization</li>
-            <li>Whale cluster & coordinated sniper detection</li>
-            <li>Direct FastNEAR live on-chain holder indexing</li>
-            <li>Supply concentration risk scoring</li>
+            <li>Holder distribution visualization</li>
+            <li>Wallet relationship exploration</li>
+            <li>Token-level context for further research</li>
           </ul>
         </div>
         <a href="/bubblemap" class="btn btn-primary" style="width:100%;">
@@ -1137,11 +1045,11 @@
           <h3 class="pillar-name">The RacerFleet</h3>
           <div class="pillar-tagline">Coordinated Multi-Wallet Bundle Execution</div>
           <p class="pillar-desc">
-            Deploy up to 20 coordinated wallets simultaneously. Execute split buys, multi-bundle volume support, and 1-click master sweeps to prevent sandwich bots from exploiting single-wallet trade sizes.
+            Organize wallet groups and coordinate buy, sell, and sweep operations from a dedicated cockpit.
           </p>
           <ul class="pillar-feature-list">
             <li>Parallel multi-wallet bundle deployment</li>
-            <li>Anti-sandwich split buy algorithms</li>
+            <li>Configurable multi-wallet allocations</li>
             <li>Automated profit sweep back to master wallet</li>
             <li>Active on Telegram • Dedicated Web Cockpit Soon</li>
           </ul>
@@ -1153,29 +1061,16 @@
     </div>
   </section>
 
-  <!-- Confidential Intent Solver Section -->
+  <!-- Execution information -->
   <section class="fee-banner-section">
     <div class="card-feature-yellow-bold" style="background:var(--color-surface); border:1px solid var(--color-border);">
       <div class="fee-info">
-        <h3>Confidential NEAR Intents Solver Execution</h3>
+        <h3>Execution routes are shown in context</h3>
         <p>
-          Racer routes swaps, copy-trades, and fleet snipes directly through confidential off-mempool solver networks. Frontrunning, sandwich attacks, and MEV extraction are eliminated.
+          Available execution methods depend on the action and asset. NEAR Intents supports cross-chain deposit and quote flows; it is not represented here as the execution route for every trade.
         </p>
       </div>
-      <div class="fee-stats-pills">
-        <div class="fee-pill">
-          <div class="fee-pill-num">0%</div>
-          <div class="fee-pill-lbl">MEV Slippage</div>
-        </div>
-        <div class="fee-pill">
-          <div class="fee-pill-num">&lt;1s</div>
-          <div class="fee-pill-lbl">Execution Speed</div>
-        </div>
-        <div class="fee-pill">
-          <div class="fee-pill-num">100%</div>
-          <div class="fee-pill-lbl">Atomic Settlement</div>
-        </div>
-      </div>
+      <a href="/alpha" class="btn btn-secondary">Review RacerAlpha →</a>
     </div>
   </section>
 
@@ -1190,7 +1085,7 @@
           <span class="brand-title">RACER</span>
         </div>
         <p style="font-size:13px; color:var(--color-text-subtle); line-height:1.6;">
-          High-performance trading suite on NEAR Protocol and multi-chain. Engineered for sub-second intent execution, confidential viewing keys, and multi-wallet fleet deployment.
+          Trading and research tools on NEAR, including social trading, holder analysis, and coordinated wallet operations.
         </p>
       </div>
 
@@ -1311,8 +1206,8 @@
     </div>
   </div>
 
-  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
-  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+  <script src="/assets/near-connect.bundle.js"></script>
+  <script src="/assets/racerConnect.js"></script>
   <script>
     let currentVreqId = null;
 

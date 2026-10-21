@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { createLogger, createRedis, encrypt, type RedisClient } from '@racerbot/shared';
+import { createLogger, createRedis, encrypt, isValidNearAccountId, type RedisClient } from '@racerbot/shared';
 import {
   getUserByTelegramId,
   getUserById,
@@ -9,7 +9,7 @@ import {
   type UserRecord,
   type UserWalletRecord,
 } from '@racerbot/db';
-import { REDIS_URL, MASTER_KEY, TELEGRAM_BOT_TOKEN } from './config.js';
+import { REDIS_URL, MASTER_KEY, PUBLIC_URL, TELEGRAM_BOT_TOKEN } from './config.js';
 import { getBotInstance } from './notify.js';
 import { createSubaccount } from './wallet.js';
 
@@ -30,6 +30,29 @@ export interface AuthSessionData {
 // In-memory fallback if Redis is temporarily unreachable
 const inMemorySessions = new Map<string, AuthSessionData>();
 const inMemoryTokens = new Map<string, { userId: string; telegramId: number; expiresAt: number }>();
+const inMemoryWalletChallenges = new Map<string, WalletAuthChallenge>();
+
+interface WalletAuthChallenge {
+  accountId: string;
+  message: string;
+  nonce: string;
+  recipient: string;
+  expiresAt: number;
+}
+
+export interface WalletAuthProof {
+  challengeId: string;
+  accountId: string;
+  message: string;
+  nonce: string;
+  recipient: string;
+  publicKey: string;
+  signature: string;
+}
+
+const WALLET_CHALLENGE_TTL_SECONDS = 300;
+const WALLET_AUTH_RECIPIENT = process.env.WALLET_AUTH_RECIPIENT ||
+  (PUBLIC_URL ? new URL(PUBLIC_URL).host : 'racerbot.trade');
 
 let _authRedis: RedisClient | null = null;
 function getAuthRedis(): RedisClient | null {
@@ -165,15 +188,17 @@ export async function verifyAuthToken(token: string): Promise<{ userId: string; 
   const redis = getAuthRedis();
 
   if (redis) {
-    const raw = await redis.get(`auth:token:${token}`);
-    if (raw) {
-      try {
+    try {
+      const raw = await redis.get(`auth:token:${token}`);
+      if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.expiresAt && Date.now() > parsed.expiresAt) return null;
-        return { userId: parsed.userId, telegramId: parsed.telegramId };
-      } catch {}
+        if (parsed.expiresAt && Date.now() <= parsed.expiresAt) {
+          return { userId: parsed.userId, telegramId: parsed.telegramId };
+        }
+      }
+    } catch (err: any) {
+      logger.warn('Redis auth token lookup failed; checking process-local session:', err?.message);
     }
-    return null;
   }
 
   const mem = inMemoryTokens.get(token);
@@ -188,12 +213,116 @@ export async function verifyAuthToken(token: string): Promise<{ userId: string; 
   return null;
 }
 
+export async function createWalletAuthChallenge(accountIdInput: string): Promise<{
+  challengeId: string;
+  accountId: string;
+  message: string;
+  nonce: string;
+  recipient: string;
+}> {
+  const accountId = accountIdInput.trim().toLowerCase();
+  if (!isValidNearAccountId(accountId)) {
+    throw new Error('Enter a valid NEAR account ID.');
+  }
+
+  const challengeId = crypto.randomBytes(24).toString('hex');
+  const nonce = crypto.randomBytes(32).toString('base64');
+  const message = `Sign in to RacerBot\nAccount: ${accountId}\nChallenge: ${crypto.randomBytes(16).toString('hex')}`;
+  const challenge: WalletAuthChallenge = {
+    accountId,
+    message,
+    nonce,
+    recipient: WALLET_AUTH_RECIPIENT,
+    expiresAt: Date.now() + WALLET_CHALLENGE_TTL_SECONDS * 1000,
+  };
+
+  const redis = getAuthRedis();
+  if (redis) {
+    await redis.set(`auth:wallet-challenge:${challengeId}`, JSON.stringify(challenge), WALLET_CHALLENGE_TTL_SECONDS);
+  } else {
+    inMemoryWalletChallenges.set(challengeId, challenge);
+  }
+
+  return { challengeId, accountId, message, nonce, recipient: challenge.recipient };
+}
+
+async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAuthChallenge | null> {
+  const redis = getAuthRedis();
+  if (redis) {
+    const result = await redis.eval(
+      "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
+      1,
+      `auth:wallet-challenge:${challengeId}`
+    );
+    if (typeof result !== 'string') return null;
+    return JSON.parse(result) as WalletAuthChallenge;
+  }
+
+  const challenge = inMemoryWalletChallenges.get(challengeId) || null;
+  inMemoryWalletChallenges.delete(challengeId);
+  return challenge;
+}
+
+export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<void> {
+  if (!proof || typeof proof.challengeId !== 'string' || !/^[a-f0-9]{48}$/.test(proof.challengeId)) {
+    throw new Error('Wallet authentication challenge is invalid or expired.');
+  }
+
+  const challenge = await consumeWalletAuthChallenge(proof.challengeId);
+  if (!challenge || Date.now() > challenge.expiresAt) {
+    throw new Error('Wallet authentication challenge is invalid or expired. Please reconnect.');
+  }
+
+  const accountId = proof.accountId.trim().toLowerCase();
+  const nonce = Buffer.from(proof.nonce || '', 'base64');
+  const expectedNonce = Buffer.from(challenge.nonce, 'base64');
+  if (
+    accountId !== challenge.accountId ||
+    proof.message !== challenge.message ||
+    proof.recipient !== challenge.recipient ||
+    nonce.length !== 32 ||
+    !crypto.timingSafeEqual(nonce, expectedNonce) ||
+    !proof.publicKey ||
+    !proof.signature
+  ) {
+    throw new Error('Wallet authentication proof does not match the issued challenge.');
+  }
+
+  const { verifySignature, verifyFullKeyBelongsToUser } = await import('@near-wallet-selector/core');
+  const validSignature = verifySignature({
+    publicKey: proof.publicKey,
+    signature: proof.signature,
+    message: challenge.message,
+    nonce,
+    recipient: challenge.recipient,
+  });
+  if (!validSignature) {
+    throw new Error('The NEAR wallet signature is invalid.');
+  }
+
+  const ownsAccountKey = await verifyFullKeyBelongsToUser({
+    publicKey: proof.publicKey,
+    accountId,
+    network: {
+      networkId: 'mainnet',
+      nodeUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org',
+      helperUrl: 'https://helper.mainnet.near.org',
+      explorerUrl: 'https://nearblocks.io',
+      indexerUrl: 'https://api.nearblocks.io',
+    },
+  });
+  if (!ownsAccountKey) {
+    throw new Error('The signing key is not a full-access key for this NEAR account.');
+  }
+}
+
 /**
  * 4b. Authenticate or auto-provision a user directly via NEAR Wallet Selector
  */
 export async function authenticateWalletUser(params: {
   accountId: string;
   walletName?: string;
+  proof: WalletAuthProof;
 }): Promise<{
   success: boolean;
   authToken?: string;
@@ -202,76 +331,29 @@ export async function authenticateWalletUser(params: {
 }> {
   try {
     const accountId = (params.accountId || '').trim().toLowerCase();
-    if (!accountId) {
-      return { success: false, reason: 'accountId is required' };
+    if (!isValidNearAccountId(accountId) || params.proof.accountId.trim().toLowerCase() !== accountId) {
+      return { success: false, reason: 'A valid signed NEAR account proof is required.' };
     }
+    await verifyWalletAuthProof(params.proof);
 
     const walletName = params.walletName || 'NEAR Wallet Selector';
     const db = await import('@racerbot/db').then(m => m.getDb()).catch(() => null);
-
-    let user: any = null;
-
-    if (db) {
-      // 1. Check if a user with this wallet in user_wallets exists
-      const wRes = await db.query(
-        `SELECT u.* FROM users u JOIN user_wallets w ON u.id = w.user_id WHERE LOWER(w.address) = LOWER($1) LIMIT 1`,
-        [accountId]
-      ).catch(() => ({ rows: [] }));
-
-      if (wRes.rows.length > 0) {
-        user = wRes.rows[0];
-      } else {
-        // 2. Check if subaccount matches
-        const sRes = await db.query(
-          `SELECT * FROM users WHERE LOWER(subaccount_id) = LOWER($1) OR LOWER(username) = LOWER($1) LIMIT 1`,
-          [accountId]
-        ).catch(() => ({ rows: [] }));
-
-        if (sRes.rows.length > 0) {
-          user = sRes.rows[0];
-        }
-      }
-
-      // 3. If not found, create a new user profile for this wallet
-      if (!user) {
-        let hash = 0;
-        for (let i = 0; i < accountId.length; i++) {
-          hash = (hash << 5) - hash + accountId.charCodeAt(i);
-          hash |= 0;
-        }
-        const pseudoTgId = 9000000000 + Math.abs(hash % 900000000);
-
-        const insRes = await db.query(
-          `INSERT INTO users (telegram_id, subaccount_id, scoped_key_encrypted, username)
-           VALUES ($1, $2, 'CONNECTED_SELECTOR_WALLET', $3)
-           ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username
-           RETURNING *`,
-          [pseudoTgId, accountId, accountId]
-        ).catch(() => null);
-
-        if (insRes && insRes.rows.length > 0) {
-          user = insRes.rows[0];
-        }
-      }
-
-      // 4. Ensure wallet is recorded in user_wallets
-      if (user) {
-        await db.query(
-          `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
-           VALUES ($1, 'near', $2, $3, 'CONNECTED_SELECTOR_WALLET', TRUE, TRUE)
-           ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
-          [user.id, accountId, walletName]
-        ).catch(() => {});
-      }
+    if (!db) {
+      return { success: false, reason: 'Wallet login requires the account database. Please try again.' };
     }
 
+    const userResult = await db.query(
+      `SELECT u.* FROM users u
+       LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain = 'near'
+       WHERE LOWER(u.subaccount_id) = $1 OR LOWER(w.address) = $1
+       LIMIT 1`,
+      [accountId]
+    );
+    const user = userResult.rows[0];
     if (!user) {
-      // In-memory fallback
-      user = {
-        id: 'u-wallet-' + accountId.replace(/[^a-zA-Z0-9]/g, '_'),
-        telegram_id: 9900000001,
-        username: accountId,
-        subaccount_id: accountId,
+      return {
+        success: false,
+        reason: 'Connect your Telegram-managed RacerBot account first, then link this NEAR wallet.',
       };
     }
 
@@ -284,9 +366,10 @@ export async function authenticateWalletUser(params: {
 
     const redis = getAuthRedis();
     if (redis) {
-      await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS).catch(() => {});
+      await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS);
+    } else {
+      inMemoryTokens.set(authToken, tokenPayload);
     }
-    inMemoryTokens.set(authToken, tokenPayload);
 
     return {
       success: true,
@@ -313,29 +396,32 @@ export async function linkSelectorWallet(params: {
   telegramId: number;
   accountId: string;
   walletName?: string;
-  chain?: 'near' | 'sui' | 'starknet';
-  privateKey?: string;
-  setAsActive?: boolean;
+  proof: WalletAuthProof;
 }): Promise<{ success: boolean; wallet?: UserWalletRecord; reason?: string }> {
   try {
-    const chain = params.chain || 'near';
-    const walletName = params.walletName || 'NEAR Wallet';
-    const encryptedKey = params.privateKey && MASTER_KEY
-      ? encrypt(params.privateKey, MASTER_KEY)
-      : 'EXTERNAL_CONNECTED_WALLET';
+    const accountId = params.accountId.trim().toLowerCase();
+    if (!isValidNearAccountId(accountId) || params.proof.accountId.trim().toLowerCase() !== accountId) {
+      return { success: false, reason: 'A valid signed NEAR account proof is required.' };
+    }
+    await verifyWalletAuthProof(params.proof);
 
-    // If active or user has no other wallets on this chain, make it active
-    const existing = await getUserWallets(params.userId, chain).catch(() => []);
-    const shouldBeActive = params.setAsActive ?? (existing.length === 0);
+    const chain = 'near';
+    const walletName = (params.walletName || 'NEAR Wallet').trim().slice(0, 30);
+
+    const existing = await getUserWallets(params.userId, chain);
+    const alreadyLinked = existing.find(wallet => wallet.address.toLowerCase() === accountId);
+    if (alreadyLinked) {
+      return { success: true, wallet: alreadyLinked };
+    }
 
     const wallet = await createUserWallet({
       userId: params.userId,
       chain,
-      address: params.accountId,
+      address: accountId,
       name: walletName,
-      encryptedPrivateKey: encryptedKey,
+      encryptedPrivateKey: 'EXTERNAL_CONNECTED_WALLET',
       isImported: true,
-      isActive: shouldBeActive,
+      isActive: false,
     });
 
     // Notify the user directly in Telegram
@@ -345,10 +431,10 @@ export async function linkSelectorWallet(params: {
         bot.telegram.sendMessage(
           params.telegramId,
           `🔗 <b>New Wallet Linked from WebApp!</b>\n\n` +
-          `💳 <b>Account</b>: <code>${params.accountId}</code>\n` +
+          `💳 <b>Account</b>: <code>${accountId}</code>\n` +
           `🏷️ <b>Provider</b>: <b>${walletName}</b>\n` +
-          `⚡ <b>Status</b>: ${shouldBeActive ? '<b>Active Trading Wallet</b>' : 'Linked Wallet'}\n\n` +
-          `<i>You can now execute snipes and trades from this account directly inside RacerBot.</i>`,
+          `⚡ <b>Status</b>: Linked external wallet\n\n` +
+          `<i>Your RacerBot trading account remains unchanged; this connection does not export or store your wallet keys.</i>`,
           { parse_mode: 'HTML' }
         ).catch((err: any) => logger.warn('Failed to send wallet link notification to Telegram:', err?.message));
       }
@@ -624,4 +710,3 @@ export async function getTelegramVerification(requestId: string): Promise<Telegr
   }
   return inMemoryVerifications.get(requestId) || null;
 }
-

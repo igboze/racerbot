@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>RacerBot — Competition Arena & On-Chain Snapshot Leaderboard</title>
   <link rel="icon" type="image/png" href="/assets/logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
@@ -1107,6 +1107,7 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/assets/racer-terminal.css">
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
@@ -1123,17 +1124,7 @@
         </div>
       </a>
 
-      <!-- Live Telemetry Status Rail -->
-      <div class="telemetry-rail">
-        <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
-          <span class="dot"></span>
-          SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
-        </span>
-        <span style="color:var(--color-border);">|</span>
-        <span style="color:var(--color-text-subtle);">
-          NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
-        </span>
-      </div>
+      <span class="network-badge">RACER COMMUNITY</span>
 
       <!-- Navigation Links -->
       <nav class="nav-links">
@@ -1188,19 +1179,19 @@
     <div class="tabs-strip">
       <button class="tab-btn active" onclick="switchTab('snapshot')">
         <span>Snapshot Arena</span>
-        <span class="tab-badge" id="snapshot-count-badge">30 Racers</span>
+        <span class="tab-badge" id="snapshot-count-badge">On-chain standings</span>
       </button>
       <button class="tab-btn" onclick="switchTab('sprint')">
         <span>Volume Sprints</span>
-        <span class="tab-badge">Active</span>
+        <span class="tab-badge">Event listings</span>
       </button>
       <button class="tab-btn" onclick="switchTab('formats')">
         <span>Competition Types</span>
-        <span class="tab-badge">5 Formats</span>
+        <span class="tab-badge">Program formats</span>
       </button>
       <button class="tab-btn" onclick="switchTab('host')">
         <span>Host a Competition</span>
-        <span class="tab-badge">For Founders</span>
+        <span class="tab-badge">For organizers</span>
       </button>
     </div>
 
@@ -1957,9 +1948,9 @@
     }
   </style>
 
-  <link rel="stylesheet" href="/assets/near-wallet-selector.css">
-  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
-  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+  <!-- NEAR Connect & RacerConnect SDK -->
+  <script src="/assets/near-connect.bundle.js"></script>
+  <script src="/assets/racerConnect.js"></script>
   <script>
     function handleHeaderConnectClick() {
       if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {

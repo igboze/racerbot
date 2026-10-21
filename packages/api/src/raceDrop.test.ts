@@ -48,15 +48,12 @@ describe('RaceDrop formatting and card generators', () => {
 
   it('builds group card with Telegram creator name in header and claim button', () => {
     const card = buildRaceDropGroupCard(mockDropWithName, 'satoshi', 'racertradingbot');
-    // Header & trust assurance check (no emojis)
-    expect(card.text).toContain('<b>COMMUNITY TOKEN AIRDROP</b>');
-    expect(card.text).not.toContain('🎁');
-    expect(card.text).not.toContain('🏎️');
+    // Header & token name check
+    expect(card.text).toContain('<b>BLACKDRAGON AIRDROP</b>');
     expect(card.text).toContain('Sponsored by:</b> <b>Satoshi Nakamoto</b>');
     expect(card.text).toContain('Claim Reward:</b> <code>+10k BLACKDRAGON</code>');
     expect(card.text).toContain('Total Pool:</b> <code>100k BLACKDRAGON</code>');
     expect(card.text).toContain('Spots Left:</b> <b>8</b> of <b>10</b> remaining');
-    expect(card.text).toContain('100% Free • No Gas Required • Direct Wallet Deposit • Zero Approvals');
     expect(card.text).toContain('RacerBot to the moon!');
     expect(card.text).toContain('#drop_11111111');
 
@@ -69,7 +66,7 @@ describe('RaceDrop formatting and card generators', () => {
     );
     expect(buttons[1][0].text).toBe('Share Airdrop with Friends');
     expect((buttons[1][0] as any).switch_inline_query).toBe('drop_11111111-2222-3333-4444-555555555555');
-    expect(card.text).toContain('Tap Here to Claim Your Free BLACKDRAGON →');
+    expect(card.text).toContain('Tap below to deposit tokens directly into your wallet:');
   });
 
   it('builds group card displaying recent claimers when claims exist', () => {
@@ -78,15 +75,14 @@ describe('RaceDrop formatting and card generators', () => {
       { claimant_name: '@bob', claim_amount: '10000' },
     ];
     const card = buildRaceDropGroupCard(mockDropWithName, 'satoshi', 'racertradingbot', claimants);
-    expect(card.text).toContain('Recent Claimers (2/10):');
+    expect(card.text).toContain('Recent Claimers:');
     expect(card.text).toContain('@alice');
     expect(card.text).toContain('@bob');
   });
 
   it('builds interactive Claim MENU page with Claim Now button', () => {
     const card = buildRaceDropClaimMenuCard(mockDropWithName, false, 'satoshi', 'racertradingbot');
-    expect(card.text).toContain('<b>COMMUNITY TOKEN AIRDROP</b>');
-    expect(card.text).not.toContain('🎁');
+    expect(card.text).toContain('<b>BLACKDRAGON AIRDROP</b>');
     expect(card.text).toContain('Sponsored by:</b> <b>Satoshi Nakamoto</b>');
     expect(card.text).toContain('Your Reward:</b> <code>+10k BLACKDRAGON</code>');
     expect(card.text).toContain('Tap the button below to claim your free tokens:');
@@ -164,7 +160,7 @@ describe('RaceDrop formatting and card generators', () => {
 
   it('builds Claim MENU page showing creator controls when viewed by creator', () => {
     const card = buildRaceDropClaimMenuCard(mockDropWithName, false, 'satoshi', 'racertradingbot', [], true);
-    expect(card.text).toContain('You created this Community Airdrop.');
+    expect(card.text).toContain('You created this BLACKDRAGON Airdrop.');
     expect(card.text).toContain('Share this drop to your groups');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
@@ -175,7 +171,7 @@ describe('RaceDrop formatting and card generators', () => {
 
   it('builds creator share card with Post to Group, Share Inline, and Share Link buttons', () => {
     const card = buildRaceDropCreatorShareCard(mockDropWithName, 'racertradingbot');
-    expect(card.text).toContain('Token Airdrop Created Successfully');
+    expect(card.text).toContain('BLACKDRAGON Airdrop Created Successfully');
     expect(card.text).not.toContain('🎁');
     expect(card.text).not.toContain('🚀');
     expect(card.text).toContain('Satoshi Nakamoto');
