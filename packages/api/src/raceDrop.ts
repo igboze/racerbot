@@ -147,18 +147,52 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Resolves the clean, user-friendly token name heading for an Airdrop.
+ * Prioritizes the drop's token_symbol, and falls back cleanly to the token's
+ * name or contract prefix (e.g. "HOOT", "IKP", "BLACKDRAGON") instead of generic "COMMUNITY" or "TOKEN".
+ */
+export function getRaceDropTokenHeading(drop: RaceDropRecord): string {
+  let sym = (drop.token_symbol || '').trim();
+  if (
+    !sym ||
+    sym.toUpperCase() === 'TOKEN' ||
+    sym.toUpperCase() === 'COMMUNITY' ||
+    sym.toUpperCase() === 'COMMUNITY TOKEN' ||
+    sym.toUpperCase() === 'UNKNOWN' ||
+    sym === '???'
+  ) {
+    if (drop.token_address) {
+      if (drop.token_address.toLowerCase() === 'near') {
+        sym = 'NEAR';
+      } else if (drop.token_address.toLowerCase() === 'sui') {
+        sym = 'SUI';
+      } else {
+        // e.g. "hoot-f5dd7a.launchpad.justhoot.near" -> "HOOT"
+        // "wth-0b2227.launchpad.justhoot.near" -> "WTH"
+        // "ikp.v2-launchpad.justhoot.near" -> "IKP"
+        const prefix = drop.token_address.split('.')[0] || '';
+        const cleanPrefix = prefix.split('-')[0] || prefix;
+        sym = cleanPrefix.toUpperCase() || 'TOKEN';
+      }
+    } else {
+      sym = 'TOKEN';
+    }
+  }
+  return sym.toUpperCase();
+}
+
+/**
  * Builds the Telegram message card posted in groups.
-  * Builds the Telegram message card posted in groups.
-  * Presents an official, clean, non-spammy community token airdrop card
-  * with token-named heading, essential stats, and zero bulky spam text.
-  */
+ * Presents an official, clean, non-spammy community token airdrop card
+ * with token-named heading (e.g. HOOT AIRDROP), essential stats, and zero bulky spam text.
+ */
 export function buildRaceDropGroupCard(
   drop: RaceDropRecord,
   creatorUsername?: string,
   botUsername: string = 'racertradingbot',
   claimants: Array<{ claimant_name?: string; claim_amount: string }> = []
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
-  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
+  const tokenHeading = getRaceDropTokenHeading(drop);
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
   const perUserFormatted = drop.amount_per_user
@@ -247,7 +281,7 @@ export function buildRaceDropClaimMenuCard(
   claimants: Array<{ claimant_name?: string; claim_amount: string }> = [],
   isCreator: boolean = false
 ): { text: string; keyboard: ReturnType<typeof Markup.inlineKeyboard> } {
-  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
+  const tokenHeading = getRaceDropTokenHeading(drop);
   const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
   const totalFormatted = `${formatDropAmount(drop.total_amount)} ${drop.token_symbol}`;
   const perUserFormatted = drop.amount_per_user
@@ -283,7 +317,7 @@ export function buildRaceDropClaimMenuCard(
   const buttons: any[] = [];
 
   if (isCreator) {
-    promptSection = `\n<b>You created this ${drop.token_symbol} Airdrop.</b>\nShare this drop to your groups or chats so members can claim directly with the 1-click Claim button:`;
+    promptSection = `\n<b>You created this ${tokenHeading} Airdrop.</b>\nShare this drop to your groups or chats so members can claim directly with the 1-click Claim button:`;
     const startGroupUrl = `https://t.me/${botUsername}?startgroup=drop_${drop.id}`;
     buttons.push([
       Markup.button.switchToChat('Share to Group (With Claim Button)', `drop_${drop.id}`),
@@ -294,19 +328,19 @@ export function buildRaceDropClaimMenuCard(
       Markup.button.callback('Main Menu', 'menu_home'),
     ]);
   } else if (hasClaimed) {
-    promptSection = `\n<b>You have already claimed this Airdrop.</b>\nYour tokens have been credited to your RacerBot wallet balance.`;
+    promptSection = `\n<b>You have already claimed this ${tokenHeading} Airdrop.</b>\nYour tokens have been credited to your RacerBot wallet balance.`;
     buttons.push([
       Markup.button.callback('View Wallet', 'wallet_refresh'),
       Markup.button.callback('Main Menu', 'menu_home'),
     ]);
   } else if (isCompleted) {
-    promptSection = `\n<b>This Airdrop is completed.</b> All ${drop.total_claims} claim spots have been filled.`;
+    promptSection = `\n<b>This ${tokenHeading} Airdrop is completed.</b> All ${drop.total_claims} claim spots have been filled.`;
     buttons.push([
       Markup.button.callback('View Wallet', 'wallet_refresh'),
       Markup.button.callback('Main Menu', 'menu_home'),
     ]);
   } else if (isExpired || drop.status !== 'active') {
-    promptSection = `\n<b>This Airdrop is no longer active.</b>`;
+    promptSection = `\n<b>This ${tokenHeading} Airdrop is no longer active.</b>`;
     buttons.push([
       Markup.button.callback('View Wallet', 'wallet_refresh'),
       Markup.button.callback('Main Menu', 'menu_home'),
@@ -368,8 +402,9 @@ export function buildRaceDropClaimSuccessCard(
     txSection = `<a href="${explorerUrl}">View Transaction on ${explorerName}</a>\n\n`;
   }
 
+  const tokenHeading = getRaceDropTokenHeading(drop);
   const text =
-    `<b>AIRDROP CLAIMED SUCCESSFULLY</b>\n` +
+    `<b>${tokenHeading} AIRDROP CLAIMED SUCCESSFULLY</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     welcomeBanner +
     `<b>Received:</b> <code>+${amountFormatted}</code> (<b>100% Free</b>)\n` +
@@ -412,13 +447,14 @@ export function buildRaceDropCreatorShareCard(
     ? `${formatDropAmount(drop.amount_per_user)} ${drop.token_symbol}`
     : `${formatDropAmount(parseFloat(drop.total_amount) / drop.total_claims)} ${drop.token_symbol}`;
   const shortDropId = drop.id.replace(/-/g, '').slice(0, 8);
-  const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
+  const tokenHeading = getRaceDropTokenHeading(drop);
   const claimUrl = `https://t.me/${botUsername}?start=drop_${drop.id}`;
   const startGroupUrl = `https://t.me/${botUsername}?startgroup=drop_${drop.id}`;
   const shareText = `${creatorDisplay} dropped ${perUserFormatted} in the ${tokenHeading} Airdrop! Claim directly into your wallet:`;
   const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(claimUrl)}&text=${encodeURIComponent(shareText)}`;
 
   const text =
+    `<b>${tokenHeading} AIRDROP</b>\n` +
     `<b>${tokenHeading} Airdrop Created Successfully</b>\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
     `<b>Creator:</b> ${escapeHtml(creatorDisplay)}\n` +
@@ -871,7 +907,12 @@ export async function getUserAvailableBalance(
   const isSuiTok = chain === 'sui' || isSuiToken(tokenAddress);
   const info = await getTokenInfo(tokenAddress).catch(() => null);
   const decimals = info?.decimals ?? (isSuiTok ? 9 : 18);
-  const symbol = info?.symbol || tokenAddress.split('.')[0].toUpperCase();
+  let symbol = info?.symbol;
+  if (!symbol || symbol === '???' || symbol === 'UNKNOWN' || symbol.toUpperCase() === 'TOKEN' || symbol.toUpperCase() === 'COMMUNITY' || symbol.toUpperCase() === 'COMMUNITY TOKEN') {
+    const prefix = tokenAddress.split('.')[0] || '';
+    const cleanPrefix = prefix.split('-')[0] || prefix;
+    symbol = cleanPrefix.toUpperCase() || 'TOKEN';
+  }
 
   // 1. Check live on-chain balance first
   let rawBalance = '0';
@@ -1037,13 +1078,20 @@ export async function handleRaceDropClaimsInput(
 
   const creatorName = pending.raceDropCreatorName || getTelegramDisplayName(ctx.from);
 
+  let cleanSymbol = pending.raceDropSymbol || symbol;
+  if (!cleanSymbol || cleanSymbol === '???' || cleanSymbol.toUpperCase() === 'TOKEN' || cleanSymbol.toUpperCase() === 'COMMUNITY' || cleanSymbol.toUpperCase() === 'COMMUNITY TOKEN') {
+    const prefix = pending.raceDropToken ? pending.raceDropToken.split('.')[0] : '';
+    const cleanPrefix = prefix.split('-')[0] || prefix;
+    cleanSymbol = cleanPrefix.toUpperCase() || 'TOKEN';
+  }
+
   const drop = await createRaceDrop({
     creator_id: user.id,
     creator_telegram_id: telegramId,
     creator_name: creatorName,
     chain: pending.raceDropChain || 'near',
     token_address: pending.raceDropToken,
-    token_symbol: pending.raceDropSymbol || symbol,
+    token_symbol: cleanSymbol,
     amount_per_user: pending.raceDropAmountPerUser,
     total_amount: totalAmount,
     total_claims: claims,
@@ -1203,12 +1251,12 @@ export function setupRaceDropRoutes(
           const creatorDisplay = drop.creator_name || (creatorUsername ? `@${creatorUsername}` : `User #${drop.creator_telegram_id}`);
           const groupCard = buildRaceDropGroupCard(drop, creatorUsername, botUsername, allClaims);
           const spotsRemaining = Math.max(0, drop.total_claims - drop.claims_count);
-          const tokenHeading = (drop.token_symbol || 'TOKEN').toUpperCase();
+          const tokenHeading = getRaceDropTokenHeading(drop);
           return {
             type: 'article' as const,
             id: `drop_${drop.id}`,
             title: `${tokenHeading} AIRDROP: +${perUserFormatted}`,
-            description: `Sponsored by ${creatorDisplay} • ${spotsRemaining} spots left • Tap to share with Claim button`,
+            description: `Sponsored by ${creatorDisplay} • ${spotsRemaining} spots left • Tap to share ${tokenHeading} Airdrop with Claim button`,
             input_message_content: {
               message_text: groupCard.text,
               parse_mode: 'HTML' as const,
@@ -1331,13 +1379,20 @@ export function setupRaceDropRoutes(
 
         const creatorName = getTelegramDisplayName(ctx.from);
 
+        let cleanSymbol = symbol;
+        if (!cleanSymbol || cleanSymbol === '???' || cleanSymbol.toUpperCase() === 'TOKEN' || cleanSymbol.toUpperCase() === 'COMMUNITY' || cleanSymbol.toUpperCase() === 'COMMUNITY TOKEN') {
+          const prefix = tokenAddress.split('.')[0] || '';
+          const cleanPrefix = prefix.split('-')[0] || prefix;
+          cleanSymbol = cleanPrefix.toUpperCase() || 'TOKEN';
+        }
+
         const drop = await createRaceDrop({
           creator_id: user.id,
           creator_telegram_id: telegramId,
           creator_name: creatorName,
           chain,
           token_address: tokenAddress,
-          token_symbol: symbol,
+          token_symbol: cleanSymbol,
           amount_per_user: amountPerUser,
           total_amount: totalAmount,
           total_claims: totalClaims,
