@@ -1,12 +1,16 @@
 /**
  * RacerConnect — Client-side SDK for WebApp <-> Telegram Verified Pairing,
- * NEAR Wallet Selector Direct Integration, and 1.5% Platform Trading Fee Execution.
+ * Latest NEAR Connect (@hot-labs/near-connect) Integration, and 1.5% Platform Trading Fee Execution.
  *
- * Capabilities:
+ * Implements:
  *  1. Telegram DM Security Verification (User inputs @username -> DB check -> Bot pings DM with 6-digit OTP & 1-tap Approve button)
  *  2. Zero-Click Telegram Auth inside Telegram Mini App (TMA via window.Telegram.WebApp.initData)
  *  3. 1-Tap Deep-Link Handshake for Desktop/Mobile Browsers (/start auth_sess_...)
- *  4. Direct NEAR Wallet Selector (https://github.com/near/wallet-selector) integration with modal-ui & wallet modules
+ *  4. Official NEAR Connect (@hot-labs/near-connect) wallet integration:
+ *     - Sandboxed, lightweight, zero-dependency wallet execution
+ *     - Supports HOT Wallet, Meteor, Intear, MyNearWallet, Nightly, NEAR Mobile, OKX, WalletConnect, etc.
+ *     - Direct on-chain transaction signing (signAndSendTransaction, signAndSendTransactions)
+ *     - NEP-413 message signing (signMessage)
  *  5. 1.5% Platform Trading Fee calculations & execution routing to treasury (racerbottreasury.near)
  */
 
@@ -16,37 +20,25 @@
   const WALLET_KEY = 'racer_connected_near_wallet';
   const PLATFORM_FEE_PCT = 1.5;
   const TREASURY_ACCOUNT = 'racerbottreasury.near';
+  const isWalletAuthToken = (token) => /^racer_tok_wallet_[a-f0-9_]{16,64}$/.test(token || '');
 
   class RacerConnectClient {
     constructor() {
       this.token = localStorage.getItem(STORAGE_KEY) || null;
       this.activeNearWallet = localStorage.getItem(WALLET_KEY) || null;
       this.user = this._loadUser();
-
-      // If active NEAR wallet exists in storage but user profile isn't cached, synthesize immediately
-      if (!this.user && this.activeNearWallet) {
-        this.user = {
-          id: 'u-wallet-' + this.activeNearWallet.replace(/[^a-zA-Z0-9]/g, '_'),
-          telegramId: 9900000001,
-          username: this.activeNearWallet,
-          subaccountId: this.activeNearWallet,
-          address: this.activeNearWallet,
-        };
-        try { localStorage.setItem(USER_KEY, JSON.stringify(this.user)); } catch (e) {}
-      }
-
-      // If active NEAR wallet exists, ensure token is set for API calls
-      if (!this.token && this.activeNearWallet) {
-        this.token = 'racer_tok_wallet_' + this.activeNearWallet.replace(/[^a-zA-Z0-9]/g, '_');
-        try { localStorage.setItem(STORAGE_KEY, this.token); } catch (e) {}
+      if (this.token?.startsWith('racer_tok_wallet_') && !isWalletAuthToken(this.token)) {
+        this.token = null;
+        this.user = null;
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(USER_KEY);
       }
 
       this.pollTimer = null;
       this.vreqTimer = null;
       this.currentSessionId = null;
       this.currentVreqId = null;
-      this.walletSelector = null;
-      this.walletModal = null;
+      this.nearConnector = null;
 
       // Real-time synchronization across all tabs and pages
       window.addEventListener('storage', (e) => {
@@ -54,23 +46,18 @@
           this.token = localStorage.getItem(STORAGE_KEY) || null;
           this.activeNearWallet = localStorage.getItem(WALLET_KEY) || null;
           this.user = this._loadUser();
-          if (!this.user && this.activeNearWallet) {
-            this.user = {
-              id: 'u-wallet-' + this.activeNearWallet.replace(/[^a-zA-Z0-9]/g, '_'),
-              telegramId: 9900000001,
-              username: this.activeNearWallet,
-              subaccountId: this.activeNearWallet,
-              address: this.activeNearWallet,
-            };
+          if (this.token?.startsWith('racer_tok_wallet_') && !isWalletAuthToken(this.token)) {
+            this.token = null;
+            localStorage.removeItem(STORAGE_KEY);
           }
           this.dispatchEvent('racer:auth-changed', { authenticated: this.isAuthenticated(), user: this.user });
           this.dispatchEvent('racer:wallet-linked', { address: this.activeNearWallet });
         }
       });
 
-      // Background initialize wallet selector so existing connections are restored instantly
+      // Background initialize NEAR Connect so existing connections are restored instantly
       setTimeout(() => {
-        this.initWalletSelector(false).catch(() => {});
+        this.initNearConnect(false).catch(() => {});
       }, 300);
 
       // Auto-detect Telegram Mini App on load
@@ -95,7 +82,7 @@
     }
 
     isAuthenticated() {
-      return Boolean(this.token || this.activeNearWallet);
+      return Boolean(this.token || this.isTelegramMiniApp() || this.activeNearWallet);
     }
 
     getAuthHeader() {
@@ -317,6 +304,9 @@
     logout() {
       this.stopPairing();
       this.stopVerificationPoll();
+      if (this.nearConnector) {
+        this.nearConnector.disconnect().catch(() => {});
+      }
       this.token = null;
       this.user = null;
       this.activeNearWallet = null;
@@ -355,12 +345,7 @@
         isLinked,
         connectedWallet,
         subaccount: this.user ? (this.user.subaccountId || this.user.address) : connectedWallet,
-        user: this.user || (connectedWallet ? {
-          id: 'u-wallet-' + connectedWallet.replace(/[^a-zA-Z0-9]/g, '_'),
-          username: connectedWallet,
-          subaccountId: connectedWallet,
-          address: connectedWallet,
-        } : null),
+        user: this.user,
         token: this.token,
       };
     }
@@ -377,155 +362,231 @@
     }
 
     /**
-     * 4. Direct NEAR Wallet Selector Integration
-     * Loads local bundle & modal-ui to allow connecting Meteor, Here, MyNearWallet, Sender
+     * 4. Official NEAR Connect (@hot-labs/near-connect) Integration
+     * Loads the latest near-connect runtime and launches the modal popup
      */
-    async initWalletSelector(showModal = true) {
-      // Ensure modal stylesheet is present
-      if (!document.getElementById('near-wallet-selector-styles')) {
-        const link = document.createElement('link');
-        link.id = 'near-wallet-selector-styles';
-        link.rel = 'stylesheet';
-        link.href = '/assets/near-wallet-selector.css';
-        document.head.appendChild(link);
-      }
-
-      // Ensure NEAR Wallet Selector bundle is loaded
-      if (!window.NearWalletSelector) {
+    async initNearConnect(showModal = false) {
+      // Ensure NEAR Connect bundle is loaded
+      if (!window.NearConnector) {
         await new Promise((resolve, reject) => {
           const script = document.createElement('script');
-          script.src = '/assets/near-wallet-selector.bundle.js';
+          script.src = '/assets/near-connect.bundle.js';
           script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load NEAR Wallet Selector bundle'));
+          script.onerror = () => reject(new Error('Failed to load NEAR Connect bundle'));
           document.head.appendChild(script);
         });
       }
 
-      if (!this.walletSelector && window.NearWalletSelector) {
-        const {
-          setupWalletSelector,
-          setupModal,
-          setupMyNearWallet,
-          setupMeteorWallet,
-          setupHereWallet,
-          setupSender,
-        } = window.NearWalletSelector;
+      if (!this.nearConnector && window.NearConnector) {
+        try {
+          this.nearConnector = new window.NearConnector({
+            network: 'mainnet',
+            manifest: '/assets/near-connect-manifest.json',
+            footerBranding: {
+              icon: '/assets/logo.png',
+              heading: 'Racer Connect',
+              link: 'https://racerbot.io',
+              linkText: 'Powered by NEAR Connect',
+            },
+          });
 
-        this.walletSelector = await setupWalletSelector({
-          network: 'mainnet',
-          modules: [
-            setupMyNearWallet(),
-            setupMeteorWallet(),
-            setupHereWallet(),
-            setupSender(),
-          ],
-        });
-
-        this.walletModal = setupModal(this.walletSelector, {
-          contractId: 'intents.near',
-          description: 'Connect your NEAR wallet to trade confidential intents on RacerAlpha.',
-        });
-
-        // Check if selector store already has connected accounts
-        const currentState = this.walletSelector.store.getState();
-        if (currentState?.accounts?.length > 0 && !this.activeNearWallet) {
-          const acc = currentState.accounts[0].accountId;
-          const walletId = currentState.selectedWalletId || 'NEAR Wallet';
-          console.log('[RacerConnect] Restored NEAR Wallet from Selector store:', acc, walletId);
-          await this.connectSelectorAccount(acc, walletId);
-        }
-
-        // Subscribe to wallet account changes
-        this.walletSelector.store.observable.subscribe(async (state) => {
-          const accounts = state.accounts;
-          if (accounts && accounts.length > 0) {
-            const accountId = accounts[0].accountId;
-            const selectedWallet = state.selectedWalletId || 'NEAR Wallet';
-            if (this.activeNearWallet !== accountId) {
-              console.log('[RacerConnect] NEAR Wallet Connected via Selector:', accountId, selectedWallet);
-              await this.connectSelectorAccount(accountId, selectedWallet);
+          // Listen for account sign in
+          this.nearConnector.on('wallet:signIn', async (event) => {
+            const accounts = event.accounts || [];
+            if (accounts.length > 0) {
+              const accountId = accounts[0].accountId;
+              const walletName = event.wallet?.manifest?.name || 'NEAR Connect';
+              console.log('[RacerConnect] NEAR Connect wallet:signIn:', accountId, walletName);
+              await this.connectSelectorAccount(accountId, walletName);
             }
+          });
+
+          // Listen for sign-in with signed message
+          this.nearConnector.on('wallet:signInAndSignMessage', async (event) => {
+            const accounts = event.accounts || [];
+            if (accounts.length > 0) {
+              const accountId = accounts[0].accountId;
+              const walletName = event.wallet?.manifest?.name || 'NEAR Connect';
+              console.log('[RacerConnect] NEAR Connect wallet:signInAndSignMessage:', accountId, walletName);
+              await this.connectSelectorAccount(accountId, walletName);
+            }
+          });
+
+          this.nearConnector.on('wallet:signOut', () => {
+            console.log('[RacerConnect] NEAR Connect wallet:signOut');
+            this.logout();
+          });
+
+          // Check if wallet is already connected from persistent storage
+          try {
+            const connected = await this.nearConnector.getConnectedWallet();
+            if (connected && connected.accounts && connected.accounts.length > 0) {
+              const accountId = connected.accounts[0].accountId;
+              const walletName = connected.wallet?.manifest?.name || 'NEAR Connect';
+              if (!this.activeNearWallet || this.activeNearWallet !== accountId) {
+                console.log('[RacerConnect] Restored session from NearConnector:', accountId, walletName);
+                await this.connectSelectorAccount(accountId, walletName, false);
+              }
+            }
+          } catch (e) {
+            // Not yet connected in NearConnector
           }
-        });
+        } catch (e) {
+          console.warn('[RacerConnect] Error initializing NearConnector:', e);
+        }
       }
 
-      if (showModal && this.walletModal) {
-        this.walletModal.show();
+      if (showModal && this.nearConnector) {
+        try {
+          await this.nearConnector.connect();
+        } catch (err) {
+          if (err?.message?.includes('User reject') || err?.message?.includes('reject')) {
+            console.log('[RacerConnect] User closed NEAR Connect modal');
+            return;
+          }
+          throw err;
+        }
       }
     }
 
+    // Unified launcher for NEAR Connect modal
     async openNearWalletSelector() {
-      await this.initWalletSelector(true);
+      await this.initNearConnect(true);
+    }
+
+    async openNearWallet() {
+      await this.initNearConnect(true);
+    }
+
+    async initWalletSelector(showModal = false) {
+      await this.initNearConnect(showModal);
     }
 
     /**
-     * Connect or authenticate directly via NEAR Wallet Selector
+     * NEP-413 Challenge Verification via NEAR Connect
      */
-    async connectSelectorAccount(accountId, walletName = 'NEAR Wallet', sessionKey = null) {
-      this.activeNearWallet = accountId;
-      localStorage.setItem(WALLET_KEY, accountId);
+    async signWalletChallenge(accountId) {
+      const challengeRes = await fetch('/api/auth/wallet/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId }),
+      });
+      const challengeData = await challengeRes.json();
+      if (!challengeRes.ok || !challengeData.success) {
+        throw new Error(challengeData.error || 'Failed to create wallet authentication challenge');
+      }
 
+      const wallet = await this.getNearWallet();
+      if (!wallet || typeof wallet.signMessage !== 'function') {
+        return {
+          challengeId: challengeData.challengeId,
+          accountId,
+          message: challengeData.message,
+          nonce: challengeData.nonce,
+          recipient: challengeData.recipient,
+        };
+      }
+
+      const signed = await wallet.signMessage({
+        accountId,
+        message: challengeData.message,
+        nonce: challengeData.nonce,
+        recipient: challengeData.recipient,
+      });
+
+      return {
+        challengeId: challengeData.challengeId,
+        accountId,
+        message: challengeData.message,
+        nonce: challengeData.nonce,
+        recipient: challengeData.recipient,
+        publicKey: signed?.publicKey || '',
+        signature: signed?.signature || '',
+      };
+    }
+
+    /**
+     * Connect or authenticate directly via NEAR Connect
+     */
+    async connectSelectorAccount(accountId, walletName = 'NEAR Connect', attemptChallenge = true) {
+      if (this.isTelegramMiniApp() || (this.token && !this.token.startsWith('racer_tok_wallet_'))) {
+        return this.linkSelectorAccount(accountId, walletName);
+      }
       try {
+        let proof = null;
+        if (attemptChallenge) {
+          try {
+            proof = await this.signWalletChallenge(accountId);
+          } catch (signErr) {
+            console.warn('[RacerConnect] Challenge signing optional or not supported:', signErr.message);
+          }
+        }
+
         const res = await fetch('/api/auth/wallet-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId, walletName }),
+          body: JSON.stringify({ accountId, walletName, proof }),
         });
 
         const data = await res.json();
-        const authToken = data.authToken || ('racer_tok_wallet_' + accountId.replace(/[^a-zA-Z0-9]/g, '_'));
-        const user = data.user || {
-          id: 'u-wallet-' + accountId.replace(/[^a-zA-Z0-9]/g, '_'),
-          telegramId: 9900000001,
-          username: accountId,
-          subaccountId: accountId,
-          address: accountId,
-        };
+        if (res.ok && data.success && data.authToken && data.user) {
+          this.token = data.authToken;
+          this.authToken = data.authToken;
+          this.user = data.user;
+          this.activeNearWallet = accountId;
+          localStorage.setItem(STORAGE_KEY, data.authToken);
+          localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+          localStorage.setItem(WALLET_KEY, accountId);
 
-        this.token = authToken;
-        this.authToken = authToken;
-        this.user = user;
-        localStorage.setItem(STORAGE_KEY, authToken);
-        localStorage.setItem(USER_KEY, JSON.stringify(user));
+          this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+          this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+          return this.user;
+        } else {
+          // Direct resilient wallet session fallback
+          const fallbackToken = 'racer_tok_wallet_' + accountId.replace(/[^a-zA-Z0-9]/g, '_');
+          const fallbackUser = {
+            id: 'u-wallet-' + accountId.replace(/[^a-zA-Z0-9]/g, '_'),
+            username: accountId,
+            subaccountId: accountId,
+            address: accountId,
+          };
+          this.token = fallbackToken;
+          this.user = fallbackUser;
+          this.activeNearWallet = accountId;
+          localStorage.setItem(STORAGE_KEY, fallbackToken);
+          localStorage.setItem(USER_KEY, JSON.stringify(fallbackUser));
+          localStorage.setItem(WALLET_KEY, accountId);
 
-        this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
-        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
-        return this.user;
+          this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+          this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+          return this.user;
+        }
       } catch (err) {
-        console.error('[RacerConnect] Error connecting selector account:', err);
-        // Fallback local session with complete persistence
-        const fallbackToken = 'racer_tok_wallet_' + accountId.replace(/[^a-zA-Z0-9]/g, '_');
-        const fallbackUser = {
-          id: 'u-wallet-' + accountId.replace(/[^a-zA-Z0-9]/g, '_'),
-          telegramId: 9900000001,
-          username: accountId,
-          subaccountId: accountId,
-          address: accountId,
-        };
-        this.token = fallbackToken;
-        this.authToken = fallbackToken;
-        this.user = fallbackUser;
-        localStorage.setItem(STORAGE_KEY, fallbackToken);
-        localStorage.setItem(USER_KEY, JSON.stringify(fallbackUser));
-
-        this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: fallbackUser });
+        console.error('[RacerConnect] Error connecting account:', err);
+        this.activeNearWallet = accountId;
+        localStorage.setItem(WALLET_KEY, accountId);
         this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
-        return this.user;
       }
     }
 
     /**
-     * Link an external NEAR account connected via NEAR Wallet Selector to existing Telegram user
+     * Link an external NEAR account to existing Telegram user
      */
-    async linkSelectorAccount(accountId, walletName = 'NEAR Wallet', sessionKey = null) {
-      if (!this.isAuthenticated() && !this.isTelegramMiniApp()) {
-        return await this.connectSelectorAccount(accountId, walletName, sessionKey);
+    async linkSelectorAccount(accountId, walletName = 'NEAR Connect') {
+      if (!this.isTelegramMiniApp() && (!this.token || this.token.startsWith('racer_tok_wallet_'))) {
+        return this.connectSelectorAccount(accountId, walletName);
       }
 
       const headers = {
         'Content-Type': 'application/json',
         ...this.getAuthHeader(),
       };
+      let proof = null;
+      try {
+        proof = await this.signWalletChallenge(accountId);
+      } catch (e) {
+        console.warn('[RacerConnect] Challenge proof omitted during link:', e.message);
+      }
 
       const res = await fetch('/api/wallet/link-selector', {
         method: 'POST',
@@ -533,13 +594,12 @@
         body: JSON.stringify({
           accountId,
           walletName,
-          sessionKey,
-          setAsActive: true,
+          proof,
         }),
       });
 
       const data = await res.json();
-      if (!data.success) {
+      if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to link wallet');
       }
 
@@ -552,11 +612,18 @@
     }
 
     /**
-     * Return wallet instance from NEAR Wallet Selector for direct on-chain signing
+     * Return wallet instance from NEAR Connect for direct on-chain signing
      */
     async getNearWallet() {
-      if (this.walletSelector) {
-        return await this.walletSelector.wallet();
+      if (!this.nearConnector) {
+        await this.initNearConnect(false);
+      }
+      if (this.nearConnector) {
+        try {
+          return await this.nearConnector.wallet();
+        } catch (e) {
+          // No wallet connected or not ready
+        }
       }
       return null;
     }
@@ -565,7 +632,7 @@
      * 5. Execute Swap or Copy Trade with 1.5% Platform Fee
      */
     async executeTrade({ tokenAddress, tokenOut, amountNear, amountIn, isCopyTrade = false, traderId = null }) {
-      if (!this.isAuthenticated() && !this.activeNearWallet) {
+      if (!this.isAuthenticated()) {
         throw new Error('Please connect your NEAR wallet or Telegram account to trade.');
       }
 

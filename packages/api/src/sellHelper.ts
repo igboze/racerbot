@@ -6,7 +6,17 @@ import { getTokenInfo, publishSwap } from './wallet.js';
  * Sell a percentage of a position by publishing EXECUTE_SWAP to Redis.
  * Called from both the Telegram bot sell buttons and REST API.
  */
-export async function sellAtTarget(userId: string, positionId: string, percentage: number, onProgress?: (stage: string) => void): Promise<{ success: boolean; reason?: string }> {
+export async function sellAtTarget(
+  userId: string,
+  positionId: string,
+  percentage: number,
+  onProgress?: (stage: string) => void,
+  options: { suppressAlphaSignal?: boolean; slippagePct?: number } = {}
+): Promise<{ success: boolean; reason?: string }> {
+  if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) {
+    return { success: false, reason: 'invalid_sell_percentage' };
+  }
+
   const position = await getPositionById(positionId);
   if (!position) return { success: false, reason: 'position_not_found' };
   if (position.status === 'closed') return { success: false, reason: 'position_already_closed' };
@@ -15,9 +25,10 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   const rawQty = BigInt(position.quantity_held.split('.')[0] || '0');
   if (rawQty <= 0n) return { success: false, reason: 'zero_quantity' };
 
+  const sellPctBps = BigInt(Math.floor(percentage * 100));
   const sellQty = percentage === 100
     ? rawQty.toString()
-    : ((rawQty * BigInt(Math.floor(percentage))) / 100n).toString();
+    : ((rawQty * sellPctBps) / 10000n).toString();
 
   if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
 
@@ -26,7 +37,10 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
   if (!info) return { success: false, reason: 'token_not_found' };
 
   const user = await getUserById(userId).catch(() => null);
-  const slippagePct = user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
+  const configuredSlippage = Number(options.slippagePct);
+  const slippagePct = Number.isFinite(configuredSlippage) && configuredSlippage > 0
+    ? Math.min(15, configuredSlippage)
+    : user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // Starknet Chain Execution Route
   if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable') {
@@ -43,7 +57,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
       slippage_pct: slippagePct,
     };
 
-    const swapResult = await publishSwap(swapEvent, onProgress);
+    const swapResult = await publishSwap(swapEvent, onProgress, options);
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Starknet sell failed on-chain.' };
     }
@@ -73,7 +87,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
       slippage_pct: slippagePct,
     };
 
-    const swapResult = await publishSwap(swapEvent, onProgress);
+    const swapResult = await publishSwap(swapEvent, onProgress, options);
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Sui sell failed on-chain.' };
     }
@@ -178,7 +192,7 @@ export async function sellAtTarget(userId: string, positionId: string, percentag
     quoted_at: quoteCompletedAt, // executor skips its second quote while < 2s old
   };
 
-  const swapResult = await publishSwap(swapEvent, onProgress);
+  const swapResult = await publishSwap(swapEvent, onProgress, options);
   console.log(`[SELL_HELPER] publishSwap result: success=${swapResult.success}, reason=${swapResult.reason || 'ok'}, tx=${swapResult.txHash}`);
   if (swapResult.success === false) {
     // Pass the executor's distilled on-chain reason through so users learn

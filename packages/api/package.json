@@ -13,6 +13,7 @@
     "@racerbot/db": "*",
     "@racerbot/executor": "*",
     "@racerbot/shared": "*",
+    "@near-wallet-selector/core": "^10.1.4",
     "@resvg/resvg-js": "^2.6.2",
     "@types/helmet": "^0.0.48",
     "@types/qrcode": "^1.5.6",

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>RacerBot — On-Chain Bubble Map & Institutional Cluster Intelligence</title>
   <link rel="icon" type="image/png" href="/assets/logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/logo.png">
@@ -1394,6 +1394,14 @@
         align-items: center;
         gap: 4px;
         flex-shrink: 0;
+        min-width: 0;
+        max-width: calc(100vw - 222px);
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      .header-actions::-webkit-scrollbar {
+        display: none;
       }
       .header-search-chip { display: none !important; }
       .btn-chip {
@@ -2548,6 +2556,7 @@
     }
 
     </style>
+    <link rel="stylesheet" href="/assets/racer-terminal.css">
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
@@ -2566,17 +2575,7 @@
             </div>
           </a>
 
-          <!-- Live Telemetry Status Rail -->
-          <div class="telemetry-rail">
-            <span style="color:var(--color-racer-green); display:flex; align-items:center; gap:6px;">
-              <span class="dot"></span>
-              SOLVER: ONLINE <span class="telemetry-num" style="color:#fff;">14ms</span>
-            </span>
-            <span style="color:var(--color-border);">|</span>
-            <span style="color:var(--color-text-subtle);">
-              NEAR: <span class="telemetry-num" style="color:var(--color-racer-cyan); font-weight:600;">$4.82</span>
-            </span>
-          </div>
+          <span class="network-badge">NEAR HOLDER ANALYSIS</span>
 
           <!-- Navigation Links -->
           <nav class="nav-links">
@@ -2945,7 +2944,7 @@
 
       <!-- Financial Market Data Strip (DexScreener / Ref LP style) -->
       <div class="market-strip" id="market-strip">
-        <div class="live-status-pill" title="Live real-time on-chain & market synchronizer active"><span class="live-dot"></span>LIVE</div>
+        <div class="live-status-pill" title="On-chain holder analysis">ON-CHAIN ANALYSIS</div>
         <div class="market-item">
           <span class="market-lbl">Price:</span>
           <span class="market-val" id="hdr-price">$—</span>
@@ -3012,11 +3011,11 @@
       </div>
       <div class="stat-pill" onclick="openRiskModal()" title="Bundler Selling & Dump Activity">
         <span class="stat-pill-label">Bundler Sells</span>
-        <span class="stat-pill-val" id="stat-bundler-sells" style="color:var(--color-on-warning)">0 (0% dump)</span>
+        <span class="stat-pill-val" id="stat-bundler-sells" style="color:var(--color-on-warning)">—</span>
       </div>
       <div class="stat-pill" onclick="openRiskModal()" title="Organic Retail Small Holder Sells">
         <span class="stat-pill-label">Retail Sells</span>
-        <span class="stat-pill-val" id="stat-retail-sells">0 sells</span>
+        <span class="stat-pill-val" id="stat-retail-sells">—</span>
       </div>
       <div class="stat-pill" onclick="openRiskModal()">
         <span class="stat-pill-label">Top 10 Whale %</span>
@@ -3024,7 +3023,7 @@
       </div>
       <div class="stat-pill" onclick="openRiskModal()">
         <span class="stat-pill-label">Risk Rating</span>
-        <span class="risk-badge risk-low" id="stat-risk-badge">LOW RISK (84/100)</span>
+        <span class="risk-badge" id="stat-risk-badge">Awaiting data</span>
       </div>
     </div>
 
@@ -3072,33 +3071,33 @@
       <div class="inspector-content">
         <div class="hero-card">
           <div class="hero-row">
-            <span class="hero-wallet-addr" id="panel-addr">account.near</span>
-            <span class="badge-chip badge-whale" id="panel-tier-badge">WHALE</span>
+            <span class="hero-wallet-addr" id="panel-addr">No wallet selected</span>
+            <span class="badge-chip" id="panel-tier-badge">—</span>
           </div>
           <div class="stat-matrix">
             <div class="matrix-box">
               <span class="matrix-lbl">Holdings Share</span>
-              <span class="matrix-val" id="panel-pct">0.00%</span>
+              <span class="matrix-val" id="panel-pct">—</span>
             </div>
             <div class="matrix-box">
               <span class="matrix-lbl">Rank</span>
-              <span class="matrix-val" id="panel-rank">#1</span>
+              <span class="matrix-val" id="panel-rank">—</span>
             </div>
           </div>
           <div class="matrix-box">
             <span class="matrix-lbl">Token Balance</span>
-            <span class="matrix-val" id="panel-balance">0</span>
+            <span class="matrix-val" id="panel-balance">—</span>
           </div>
 
           <!-- Bundler / Wallet Classification Matrix -->
           <div class="stat-matrix">
             <div class="matrix-box">
               <span class="matrix-lbl">Wallet Category</span>
-              <span class="matrix-val" id="panel-wallet-type" style="font-size:11.5px;">RETAIL</span>
+              <span class="matrix-val" id="panel-wallet-type" style="font-size:11.5px;">—</span>
             </div>
             <div class="matrix-box">
               <span class="matrix-lbl">Total Sells</span>
-              <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">0 Sells</span>
+              <span class="matrix-val" id="panel-sells-count" style="font-size:11.5px;">—</span>
             </div>
           </div>
 
@@ -3129,7 +3128,7 @@
           <div class="sell-progress-box">
             <div class="sell-progress-hdr">
               <span class="matrix-lbl" id="panel-exit-status-lbl">Exit Status</span>
-              <span class="matrix-val" id="panel-exit-pct-lbl" style="font-size:11px; color:var(--color-ink-subtle);">0% Sold</span>
+              <span class="matrix-val" id="panel-exit-pct-lbl" style="font-size:11px; color:var(--color-ink-subtle);">—</span>
             </div>
             <div class="sell-progress-track">
               <div class="sell-progress-bar" id="panel-exit-bar" style="width:0%;"></div>
@@ -5411,9 +5410,9 @@
     }
   })();
   </script>
-  <link rel="stylesheet" href="/assets/near-wallet-selector.css">
-  <script src="/assets/near-wallet-selector.bundle.js?v=selector_fixed"></script>
-  <script src="/assets/racerConnect.js?v=selector_fixed"></script>
+  <!-- NEAR Connect & RacerConnect SDK -->
+  <script src="/assets/near-connect.bundle.js"></script>
+  <script src="/assets/racerConnect.js"></script>
   <script>
     function handleHeaderConnectClick() {
       if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {

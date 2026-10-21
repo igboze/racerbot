@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { CHANNELS, createLogger, type PriceUpdateEvent } from '@racerbot/shared';
-import { getDb, getActiveTriggers, getPositionById } from '@racerbot/db';
+import { getDb, getActiveTriggers, getActiveLimitOrders, getPositionById } from '@racerbot/db';
 import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { runDcaEngine } from './dca.js';
 import { runLimitOrderEngine } from './limitOrder.js';
@@ -46,8 +46,15 @@ async function main(): Promise<void> {
   // Seed price cache from Redis on startup (tokens detected before this process started)
   logger.info('Price cache warming from Redis...');
   try {
-    const activeTriggers = await getActiveTriggers();
+    const [activeTriggers, activeLimitOrders] = await Promise.all([
+      getActiveTriggers().catch(() => []),
+      getActiveLimitOrders().catch(() => []),
+    ]);
     const tokenSet = new Set<string>();
+
+    for (const lo of activeLimitOrders) {
+      if (lo.token_address) tokenSet.add(lo.token_address);
+    }
 
     await Promise.all(
       activeTriggers.map(async (trigger) => {
@@ -63,7 +70,7 @@ async function main(): Promise<void> {
     );
 
     const tokenAddresses = Array.from(tokenSet);
-    logger.info('Found distinct tokens with active triggers', { count: tokenAddresses.length });
+    logger.info('Found distinct tokens with active triggers and limit orders', { count: tokenAddresses.length });
 
     await Promise.all(
       tokenAddresses.map(async (tokenAddress) => {
