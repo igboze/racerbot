@@ -100,7 +100,7 @@ describe('RaceDrop formatting and card generators', () => {
 
   it('builds Claim MENU page showing already claimed for prior claimants', () => {
     const card = buildRaceDropClaimMenuCard(mockDropWithName, true, 'satoshi', 'racertradingbot');
-    expect(card.text).toContain('You have already claimed this Airdrop.');
+    expect(card.text).toContain('You have already claimed this BLACKDRAGON Airdrop.');
 
     const buttons = card.keyboard.reply_markup.inline_keyboard;
     expect(buttons[0][0].text).toBe('View Wallet');
