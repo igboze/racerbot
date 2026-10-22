@@ -563,6 +563,31 @@ router.post('/alpha/creator/pricing', async (req, res) => {
   }
 });
 
+// Update Creator Profile (handle/username, display name, bio)
+router.post('/alpha/creator/profile', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { handle, displayName, bio, strategyTag } = req.body;
+    if (!handle && !displayName && !bio && !strategyTag) {
+      res.status(400).json({ error: 'At least one field (handle, displayName, bio, strategyTag) is required.' });
+      return;
+    }
+    const { updateCreatorProfile } = await import('../racerAlpha.js');
+    const result = await updateCreatorProfile(user.id, { handle, displayName, bio, strategyTag });
+    if (!result.success) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update profile' });
+  }
+});
+
 router.post('/alpha/creator/terminal-link', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
@@ -585,19 +610,73 @@ router.post('/alpha/creator/signal', async (req, res) => {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
       return;
     }
-    const { publishAlphaSignal } = await import('../racerAlpha.js');
-    const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue } = req.body;
-    const result = await publishAlphaSignal({
+    const { recordAlphaSignal, inferVenueFromToken } = await import('../racerAlpha.js');
+    const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue: explicitVenue, txHash: clientTxHash, slippagePct } = req.body;
+
+    if (!traderId || !tokenAddress || !side) {
+      res.status(400).json({ error: 'traderId, tokenAddress, and side are required.' });
+      return;
+    }
+
+    const numNear = Number(amountNear) || 1.0;
+    const venue = explicitVenue || inferVenueFromToken(tokenAddress);
+
+    let onChainTxHash: string | undefined = clientTxHash || undefined;
+
+    // ── Phase 1: Real On-Chain Swap via Managed Subaccount (if available) ──
+    // When the user has a managed subaccount wallet (Telegram users), execute
+    // the real swap through publishSwap. External wallet users (NEAR Wallet
+    // Selector) already confirmed the transaction client-side; their txHash
+    // arrives as clientTxHash.
+    if (!onChainTxHash && user.subaccount_id) {
+      try {
+        const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+        const swapResult = await publishSwap({
+          user_id: user.id,
+          token_in: 'near',
+          token_out: tokenAddress,
+          amount_in: amountYocto,
+          min_amount_out: '0',
+          venue: venue as any,
+          slippage_pct: Number(slippagePct) || 2,
+        }, undefined, { suppressAlphaSignal: true });
+
+        if (swapResult && swapResult.success !== false) {
+          onChainTxHash = swapResult.txHash;
+        } else {
+          res.status(400).json({ error: swapResult?.reason || 'On-chain swap failed. Please retry.' });
+          return;
+        }
+      } catch (swapErr: any) {
+        // Subaccount not funded or unavailable — require client-side txHash
+        if (!clientTxHash) {
+          res.status(400).json({ error: `Trade failed: ${swapErr?.message || 'wallet error'}. Please ensure your wallet is funded and try again.` });
+          return;
+        }
+        onChainTxHash = clientTxHash;
+      }
+    }
+
+    // Require a real on-chain transaction hash — no mocks allowed
+    if (!onChainTxHash) {
+      res.status(400).json({ error: 'A real on-chain transaction hash is required. Please sign the trade in your wallet first.' });
+      return;
+    }
+
+    // ── Phase 2: Record Encrypted Alpha Signal & Trigger Auto-Copy ──
+    const result = await recordAlphaSignal({
       traderId,
       tokenAddress,
-      tokenSymbol,
-      tokenName,
-      side,
-      priceNear,
-      amountNear,
+      tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
+      tokenName: tokenName || tokenSymbol || tokenAddress.split('.')[0],
+      side: side.toUpperCase() as 'BUY' | 'SELL',
+      priceNear: Number(priceNear) || (numNear / 50),
+      amountNear: numNear,
       venue,
+      txHash: onChainTxHash,
     });
-    res.json({ success: true, ...result });
+
+    res.json({ success: true, txHash: onChainTxHash, ...result });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to dispatch signal' });
   }
