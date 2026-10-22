@@ -3723,7 +3723,48 @@
                 </button>
               </div>
 
-              <!-- Terminal Link Generator (Image 4) -->
+              <!-- ── Edit Profile Card ── -->
+              <div class="terminal-card" id="creator-profile-card">
+                <div style="font-size:15px; font-weight:700; color:#fff;">Edit Your Profile</div>
+                <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Update your username (handle), display name, and bio. Your handle is permanently tied to your wallet address — one handle per wallet.</div>
+
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div class="form-group-item">
+                    <label style="font-size:11.5px;">Channel Handle (@) <span style="color:var(--color-racer-cyan);">· Unique per wallet</span></label>
+                    <input type="text" id="edit-creator-handle" placeholder="e.g. quantum_racer" minlength="3" maxlength="30"
+                      style="padding:8px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; color:#fff; font-family:var(--font-mono); font-size:13px; width:100%; box-sizing:border-box;">
+                  </div>
+                  <div class="form-group-item">
+                    <label style="font-size:11.5px;">Display Name</label>
+                    <input type="text" id="edit-creator-display-name" placeholder="e.g. Quantum Alpha Syndicate" maxlength="50"
+                      style="padding:8px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; color:#fff; font-size:13px; width:100%; box-sizing:border-box;">
+                  </div>
+                  <div class="form-group-item">
+                    <label style="font-size:11.5px;">Strategy Focus</label>
+                    <select id="edit-creator-strategy"
+                      style="padding:8px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; color:#fff; font-size:13px; width:100%; box-sizing:border-box;">
+                      <option value="Bonding Curve Sniper">Bonding Curve Sniper</option>
+                      <option value="Trend Following">Trend Following</option>
+                      <option value="Launchpad Breakout">Launchpad Breakout</option>
+                      <option value="Microcap DCA">Microcap DCA</option>
+                      <option value="Confidential Intent Arbitrage">Confidential Intent Arbitrage</option>
+                    </select>
+                  </div>
+                  <div class="form-group-item">
+                    <label style="font-size:11.5px;">Bio / Strategy Overview</label>
+                    <textarea id="edit-creator-bio" rows="2" maxlength="300" placeholder="Describe your confidential execution strategy..."
+                      style="padding:8px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; color:#fff; font-size:12.5px; width:100%; box-sizing:border-box; resize:vertical;"></textarea>
+                  </div>
+
+                  <div id="profile-save-feedback" style="display:none; padding:8px 12px; border-radius:6px; font-size:12px;"></div>
+
+                  <button class="btn-secondary" style="width:100%; justify-content:center;" onclick="saveCreatorProfile()">
+                    <span>Save Profile Changes</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Terminal Link Generator -->
               <div class="terminal-card">
                 <div style="font-size:15px; font-weight:700; color:#fff;">Confidential Trading Terminal</div>
                 <div style="font-size:12px; color:var(--color-text-muted);">Share your edge securely. Encrypted solver access link.</div>
@@ -4877,11 +4918,37 @@
     }
 
     async function loadTerminalData() {
-      // Refresh GmGn tokens & balance
+      // Refresh GmGn token list and live wallet balance in parallel
       fetchGmGnTokens();
-      const sbBal = document.getElementById('sidebar-user-bal');
+
+      // Directly fetch live wallet balance — do NOT rely on sidebar element text
+      // (sidebar may not yet be populated when terminal is opened first).
       const gmBal = document.getElementById('gmgn-wallet-balance');
-      if (sbBal && gmBal) gmBal.textContent = sbBal.textContent;
+      try {
+        const addr = getActiveUserAddress();
+        if (addr) {
+          const balRes = await fetch(`/api/user/balance?accountId=${encodeURIComponent(addr)}`).catch(() => null);
+          if (balRes && balRes.ok) {
+            const balData = await balRes.json();
+            if (balData.near !== undefined) {
+              const bal = parseFloat(balData.near).toFixed(4);
+              if (gmBal) gmBal.textContent = `${bal} Ⓝ`;
+              // Also keep the sidebar in sync
+              const sbBal = document.getElementById('sidebar-user-bal');
+              if (sbBal) sbBal.textContent = `${parseFloat(balData.near).toFixed(2)} NEAR`;
+              const depBal = document.getElementById('deposit-modal-balance');
+              if (depBal) depBal.textContent = `${parseFloat(balData.near).toFixed(2)} NEAR`;
+            }
+          }
+        } else {
+          // No wallet connected — fall back to sidebar text if available
+          const sbBal = document.getElementById('sidebar-user-bal');
+          if (gmBal && sbBal && sbBal.textContent && sbBal.textContent !== '0.00 NEAR') {
+            gmBal.textContent = sbBal.textContent.replace(' NEAR', ' Ⓝ');
+          }
+        }
+      } catch (_balErr) { /* Non-blocking: balance display is best-effort */ }
+
 
       const select = document.getElementById('terminal-trader-select');
       const traderId = select ? select.value : (allTraders[0]?.id || '');
@@ -5230,6 +5297,18 @@
             if (elBasic) elBasic.value = data.trader.tierBasicPriceNear || 1.5;
             if (elPro) elPro.value = data.trader.tierCopyPriceNear || 3.5;
             if (elElite) elElite.value = data.trader.tierPremiumPriceNear || 8.0;
+
+            // Pre-populate profile editing fields with current values
+            const elHandle = document.getElementById('edit-creator-handle');
+            const elDispName = document.getElementById('edit-creator-display-name');
+            const elBio = document.getElementById('edit-creator-bio');
+            const elStrategy = document.getElementById('edit-creator-strategy');
+            if (elHandle) elHandle.value = data.trader.handle || '';
+            if (elDispName) elDispName.value = data.trader.displayName || '';
+            if (elBio) elBio.value = data.trader.bio || '';
+            if (elStrategy && data.trader.strategyTag) {
+              elStrategy.value = data.trader.strategyTag;
+            }
           }
 
           const tbody = document.getElementById('creator-holders-tbody');
@@ -5602,6 +5681,83 @@
         alert('❌ Failed to update pricing: ' + err.message);
       }
     }
+
+    async function saveCreatorProfile() {
+      const handleEl = document.getElementById('edit-creator-handle');
+      const dispNameEl = document.getElementById('edit-creator-display-name');
+      const bioEl = document.getElementById('edit-creator-bio');
+      const strategyEl = document.getElementById('edit-creator-strategy');
+      const feedbackEl = document.getElementById('profile-save-feedback');
+
+      const handle = handleEl ? handleEl.value.trim() : '';
+      const displayName = dispNameEl ? dispNameEl.value.trim() : '';
+      const bio = bioEl ? bioEl.value.trim() : '';
+      const strategyTag = strategyEl ? strategyEl.value : '';
+
+      if (!handle && !displayName && !bio) {
+        if (feedbackEl) {
+          feedbackEl.style.display = 'block';
+          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.color = 'var(--color-danger)';
+          feedbackEl.textContent = 'Please fill in at least one field to update.';
+        }
+        return;
+      }
+
+      // Validate handle if provided
+      if (handle && !/^[a-z0-9_.–-]{3,30}$/i.test(handle)) {
+        if (feedbackEl) {
+          feedbackEl.style.display = 'block';
+          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.color = 'var(--color-danger)';
+          feedbackEl.textContent = 'Handle must be 3–30 characters: lowercase letters, numbers, _ or . only.';
+        }
+        return;
+      }
+
+      if (feedbackEl) {
+        feedbackEl.style.display = 'block';
+        feedbackEl.style.background = 'rgba(0,240,255,0.08)';
+        feedbackEl.style.color = 'var(--color-racer-cyan)';
+        feedbackEl.textContent = 'Saving profile changes…';
+      }
+
+      try {
+        const res = await fetch('/alpha/creator/profile', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            handle: handle || undefined,
+            displayName: displayName || undefined,
+            bio: bio || undefined,
+            strategyTag: strategyTag || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (feedbackEl) {
+            feedbackEl.style.background = 'rgba(0,230,118,0.12)';
+            feedbackEl.style.color = 'var(--color-racer-green)';
+            feedbackEl.textContent = `✓ Profile updated! Your handle @${handle || '(unchanged)'} is tied to your wallet.`;
+          }
+          // Refresh the whole creator studio dashboard to reflect new values
+          setTimeout(() => loadCreatorStudio(), 800);
+        } else {
+          if (feedbackEl) {
+            feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+            feedbackEl.style.color = 'var(--color-danger)';
+            feedbackEl.textContent = '❌ ' + (data.error || 'Failed to update profile.');
+          }
+        }
+      } catch (err) {
+        if (feedbackEl) {
+          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.color = 'var(--color-danger)';
+          feedbackEl.textContent = '❌ Network error: ' + err.message;
+        }
+      }
+    }
+
 
     function copyTerminalLink() {
       const input = document.getElementById('creator-terminal-link');
