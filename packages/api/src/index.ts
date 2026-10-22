@@ -185,6 +185,24 @@ async function main(): Promise<void> {
   app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
   app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
 
+  // Serve racerConnect.js client SDK — must be accessible as /assets/racerConnect.js
+  // The file lives in src/ at dev time and in the compiled dist alongside index.js at runtime.
+  app.get('/assets/racerConnect.js', (_req, res) => {
+    const candidates = [
+      path.resolve(__dirname, 'racerConnect.js'),           // runtime (compiled)
+      path.resolve(__dirname, '..', 'src', 'racerConnect.js'), // ts-node / dev
+      path.resolve(__dirname, 'src', 'racerConnect.js'),
+    ];
+    const target = candidates.find(f => fs.existsSync(f));
+    if (target) {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.sendFile(target);
+    } else {
+      res.status(404).send('// racerConnect.js not found');
+    }
+  });
+
   app.get('/favicon.ico', (_req, res) => {
     const logoFile = path.resolve(__dirname, '..', 'assets', 'logo.png');
     const fallbackLogo = path.resolve(__dirname, 'assets', 'logo.png');

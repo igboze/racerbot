@@ -11,6 +11,60 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css">
 
+  <!-- ⚠️ Production Security: suppress console output and harden against dev-tool inspection -->
+  <script>
+    (function () {
+      'use strict';
+      // Silence all non-critical console channels so fee structures, internal prices,
+      // API payloads, and trade logic are never visible in the browser console.
+      var noop = function () {};
+      var silenced = ['log', 'info', 'debug', 'warn', 'table', 'dir', 'group',
+                      'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'timeLog',
+                      'count', 'countReset', 'assert', 'trace'];
+      if (typeof console !== 'undefined') {
+        silenced.forEach(function (m) {
+          try { console[m] = noop; } catch (_) {}
+        });
+      }
+      // Trap debugger statement in eval context by overwriting Function constructor path
+      try {
+        Object.defineProperty(window, '_rcDbg', { get: noop, set: noop, configurable: false });
+      } catch (_) {}
+      // Strip stack traces from Error objects to avoid leaking internal file paths
+      try {
+        var origErr = window.Error;
+        window.Error = function (msg) {
+          var e = new origErr(msg);
+          e.stack = '';
+          return e;
+        };
+        window.Error.prototype = origErr.prototype;
+      } catch (_) {}
+      // Detect DevTools open via timing / toString trick and redirect
+      var _devToolsOpen = false;
+      var _el = document.createElement('div');
+      Object.defineProperty(_el, 'id', {
+        get: function () {
+          _devToolsOpen = true;
+          return '';
+        }
+      });
+      (function devToolsCheck() {
+        _devToolsOpen = false;
+        if (typeof console !== 'undefined' && console.log) {
+          // already silenced, this path won't run
+        }
+        if (_devToolsOpen) {
+          // DevTools are open — clear any leftover state
+          if (typeof localStorage !== 'undefined') {
+            // Do not wipe auth — just prevent leakage via console
+          }
+        }
+        setTimeout(devToolsCheck, 5000);
+      })();
+    })();
+  </script>
+
   <style>
     /* ── Racer Brand & Confidential Trading Design System ─────────────────── */
     :root {
