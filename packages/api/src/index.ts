@@ -182,8 +182,11 @@ async function main(): Promise<void> {
     });
   }
 
+  app.use('/assets', express.static(path.resolve(__dirname, '..', '..', 'assets')));
   app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
   app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
+  app.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
+  app.use('/assets', express.static(path.resolve(process.cwd(), 'packages', 'api', 'assets')));
 
   // Serve racerConnect.js client SDK — must be accessible as /assets/racerConnect.js
   // The file lives in src/ at dev time and in the compiled dist alongside index.js at runtime.
@@ -192,6 +195,8 @@ async function main(): Promise<void> {
       path.resolve(__dirname, 'racerConnect.js'),           // runtime (compiled)
       path.resolve(__dirname, '..', 'src', 'racerConnect.js'), // ts-node / dev
       path.resolve(__dirname, 'src', 'racerConnect.js'),
+      path.resolve(__dirname, '..', 'assets', 'racerConnect.js'),
+      path.resolve(__dirname, 'assets', 'racerConnect.js'),
     ];
     const target = candidates.find(f => fs.existsSync(f));
     if (target) {
@@ -203,12 +208,41 @@ async function main(): Promise<void> {
     }
   });
 
-  app.get('/favicon.ico', (_req, res) => {
-    const logoFile = path.resolve(__dirname, '..', 'assets', 'logo.png');
-    const fallbackLogo = path.resolve(__dirname, 'assets', 'logo.png');
-    const target = fs.existsSync(logoFile) ? logoFile : (fs.existsSync(fallbackLogo) ? fallbackLogo : null);
+  // Dedicated handler for Racer Logo assets to ensure they never 404
+  app.get(['/assets/racer-logo.png', '/assets/logo.png', '/assets/racerbot-logo.png'], (_req, res) => {
+    const candidates = [
+      path.resolve(__dirname, '..', 'assets', 'racer-logo.png'),
+      path.resolve(__dirname, 'assets', 'racer-logo.png'),
+      path.resolve(__dirname, '..', '..', 'assets', 'racer-logo.png'),
+      path.resolve(process.cwd(), 'packages', 'api', 'assets', 'racer-logo.png'),
+      path.resolve(process.cwd(), 'assets', 'racer-logo.png'),
+      path.resolve(__dirname, '..', 'assets', 'logo.png'),
+      path.resolve(__dirname, 'assets', 'logo.png'),
+    ];
+    const target = candidates.find(f => fs.existsSync(f));
     if (target) {
       res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.sendFile(target);
+    } else {
+      res.status(404).send('Logo not found');
+    }
+  });
+
+  app.get('/favicon.ico', (_req, res) => {
+    const candidates = [
+      path.resolve(__dirname, '..', 'assets', 'favicon.ico'),
+      path.resolve(__dirname, '..', 'assets', 'racer-logo.png'),
+      path.resolve(__dirname, 'assets', 'favicon.ico'),
+      path.resolve(__dirname, 'assets', 'racer-logo.png'),
+      path.resolve(__dirname, '..', '..', 'assets', 'favicon.ico'),
+      path.resolve(__dirname, '..', '..', 'assets', 'racer-logo.png'),
+      path.resolve(process.cwd(), 'packages', 'api', 'assets', 'racer-logo.png'),
+      path.resolve(process.cwd(), 'assets', 'racer-logo.png'),
+    ];
+    const target = candidates.find(f => fs.existsSync(f));
+    if (target) {
+      res.setHeader('Content-Type', target.endsWith('.ico') ? 'image/x-icon' : 'image/png');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.sendFile(target);
     } else {

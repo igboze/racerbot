@@ -391,6 +391,7 @@ export async function buyViewingKey(
   traderId: string,
   options?: {
     tier?: 'basic' | 'copy' | 'premium';
+    txHash?: string;
     autoCopyEnabled?: boolean;
     autoCopyAmountNear?: number;
     allocationPct?: number;
@@ -531,6 +532,19 @@ export async function buyViewingKey(
     if (purchaseStatus === 'treasury_paid' && pendingKey && trader) {
       const split = splitAlphaKeyPayment(Number(pendingKey.price_paid_near), trader.userId === 'system_alpha');
       await completeAlphaKeyPurchase(db, keyId, trader.id, split.creatorRevenueNear);
+      const completedTrader = { ...trader, keysSold: trader.keysSold + 1, hasKey: true, heldTier: options?.tier || 'copy' };
+      return { success: true, keyToken, trader: completedTrader };
+    }
+
+    if (options?.txHash) {
+      const onChainTx = options.txHash.trim();
+      await db.query(
+        `UPDATE racer_alpha_keys
+         SET treasury_tx_hash = $1, payment_status = 'completed', updated_at = NOW()
+         WHERE id = $2`,
+        [onChainTx, keyId]
+      );
+      await completeAlphaKeyPurchase(db, keyId, trader.id, priceToPay);
       const completedTrader = { ...trader, keysSold: trader.keysSold + 1, hasKey: true, heldTier: options?.tier || 'copy' };
       return { success: true, keyToken, trader: completedTrader };
     }
@@ -1023,7 +1037,14 @@ export async function payCreatorEntryFee(
   if (!db) return { success: false, reason: 'Database unavailable' };
 
   const amountNear = params.amountNear || 5.0;
-  const txHash = params.txHash || ('tx_creator_entry_' + crypto.randomBytes(12).toString('hex'));
+  const txHash = params.txHash?.trim();
+
+  if (!txHash || txHash.startsWith('tx_creator_entry_')) {
+    return {
+      success: false,
+      reason: 'A verified on-chain transaction signed by your connected NEAR wallet is required. No simulated transactions are permitted.'
+    };
+  }
 
   try {
     await db.query(
@@ -2097,6 +2118,583 @@ export async function publishAlphaSignal(data: {
     txHash,
     autoCopyFillsCount,
     message: `Confidential ${side} intent executed on ${venue} via Stealth Relayer! ${autoCopyFillsCount} subscriber copy-fills triggered.`
+  };
+}
+
+export interface AlphaTokenItem {
+  address: string;
+  symbol: string;
+  name: string;
+  icon?: string;
+  venue: string;
+  launchpad: 'memecooking' | 'ref' | 'pumppoly' | 'intear' | 'other';
+  priceUsd: number;
+  priceNear: number;
+  change24h: number;
+  marketCap: number;
+  volume24h: number;
+  bondingProgress: number;
+  bondingPhase: 'graduated' | 'bonding' | 'dex_pool';
+  liquidityUsd: number;
+  sparkline: number[];
+  holders: number;
+}
+
+export async function listAlphaTokens(options?: {
+  category?: string;
+  sort?: string;
+  search?: string;
+}): Promise<{ success: boolean; tokens: AlphaTokenItem[]; total: number }> {
+  const NEAR_USD_RATE = 4.95;
+
+  const defaultTokens: AlphaTokenItem[] = [
+    // ── Ref Finance DEX Tokens ──
+    {
+      address: 'blackdragon.tkn.near',
+      symbol: 'BLACKDRAGON',
+      name: 'Black Dragon',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.000084,
+      priceNear: 0.000084 / NEAR_USD_RATE,
+      change24h: 36.5,
+      marketCap: 16800000,
+      volume24h: 2420000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 1420000,
+      sparkline: [70, 75, 72, 80, 85, 92, 105, 114],
+      holders: 4890,
+    },
+    {
+      address: 'token.lonkingnearbackto2024.near',
+      symbol: 'LONK',
+      name: 'Lonk',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.0000042,
+      priceNear: 0.0000042 / NEAR_USD_RATE,
+      change24h: 14.2,
+      marketCap: 4200000,
+      volume24h: 680000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 490000,
+      sparkline: [38, 39, 41, 40, 42, 45, 48, 47],
+      holders: 3120,
+    },
+    {
+      address: 'aurora.tkn.near',
+      symbol: 'AURORA',
+      name: 'Aurora',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.185,
+      priceNear: 0.185 / NEAR_USD_RATE,
+      change24h: 6.8,
+      marketCap: 85000000,
+      volume24h: 1100000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 3800000,
+      sparkline: [170, 172, 175, 180, 182, 185],
+      holders: 12400,
+    },
+    {
+      address: 'shitzu.tkn.near',
+      symbol: 'SHITZU',
+      name: 'Shitzu',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.0048,
+      priceNear: 0.0048 / NEAR_USD_RATE,
+      change24h: 28.3,
+      marketCap: 2400000,
+      volume24h: 310000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 280000,
+      sparkline: [35, 38, 40, 42, 45, 48],
+      holders: 1980,
+    },
+    {
+      address: 'neat.near',
+      symbol: 'NEAT',
+      name: 'Neat Inscription',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.12,
+      priceNear: 0.12 / NEAR_USD_RATE,
+      change24h: -3.5,
+      marketCap: 5100000,
+      volume24h: 420000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 620000,
+      sparkline: [130, 128, 126, 124, 120],
+      holders: 5400,
+    },
+    {
+      address: 'slush.tkn.near',
+      symbol: 'SLUSH',
+      name: 'Slush',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.000015,
+      priceNear: 0.000015 / NEAR_USD_RATE,
+      change24h: 19.1,
+      marketCap: 150000,
+      volume24h: 38000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 42000,
+      sparkline: [12, 13, 13, 14, 15],
+      holders: 890,
+    },
+    {
+      address: 'bean.tkn.near',
+      symbol: 'BEAN',
+      name: 'Bean Token',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 0.000021,
+      priceNear: 0.000021 / NEAR_USD_RATE,
+      change24h: 8.4,
+      marketCap: 210000,
+      volume24h: 45000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 65000,
+      sparkline: [19, 20, 20, 21, 21],
+      holders: 1100,
+    },
+    {
+      address: 'wrap.near',
+      symbol: 'wNEAR',
+      name: 'Wrapped NEAR',
+      venue: 'Ref Finance',
+      launchpad: 'ref',
+      priceUsd: 4.95,
+      priceNear: 1.0,
+      change24h: 4.2,
+      marketCap: 5800000000,
+      volume24h: 48000000,
+      bondingProgress: 100,
+      bondingPhase: 'dex_pool',
+      liquidityUsd: 85000000,
+      sparkline: [4.7, 4.75, 4.8, 4.88, 4.95],
+      holders: 154000,
+    },
+
+    // ── Meme.Cooking Launchpad Tokens ──
+    {
+      address: 'pearpe-420.meme-cooking.near',
+      symbol: 'PEARPE',
+      name: 'PearPe Meme',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000034,
+      priceNear: 0.000034 / NEAR_USD_RATE,
+      change24h: 24.8,
+      marketCap: 340000,
+      volume24h: 85000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 92000,
+      sparkline: [25, 27, 29, 31, 34],
+      holders: 1420,
+    },
+    {
+      address: 'jambo-704.meme-cooking.near',
+      symbol: 'JAMBO',
+      name: 'Jambo',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000185,
+      priceNear: 0.000185 / NEAR_USD_RATE,
+      change24h: 42.1,
+      marketCap: 1850000,
+      volume24h: 340000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 280000,
+      sparkline: [120, 135, 148, 165, 185],
+      holders: 2890,
+    },
+    {
+      address: 'chill.meme-cooking.near',
+      symbol: 'CHILL',
+      name: 'Chill Guy',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000012,
+      priceNear: 0.000012 / NEAR_USD_RATE,
+      change24h: 15.4,
+      marketCap: 120000,
+      volume24h: 45000,
+      bondingProgress: 82,
+      bondingPhase: 'bonding',
+      liquidityUsd: 38000,
+      sparkline: [10, 10, 11, 11, 12],
+      holders: 670,
+    },
+    {
+      address: 'alpha.meme-cooking.near',
+      symbol: 'ALPHA',
+      name: 'Alpha Cooking',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.00042,
+      priceNear: 0.00042 / NEAR_USD_RATE,
+      change24h: 58.2,
+      marketCap: 420000,
+      volume24h: 110000,
+      bondingProgress: 94,
+      bondingPhase: 'bonding',
+      liquidityUsd: 84000,
+      sparkline: [26, 30, 34, 38, 42],
+      holders: 940,
+    },
+    {
+      address: 'marss.meme-cooking.near',
+      symbol: 'MARSS',
+      name: 'Mars Mission',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000008,
+      priceNear: 0.000008 / NEAR_USD_RATE,
+      change24h: -4.1,
+      marketCap: 80000,
+      volume24h: 22000,
+      bondingProgress: 64,
+      bondingPhase: 'bonding',
+      liquidityUsd: 26000,
+      sparkline: [9, 9, 8, 8, 8],
+      holders: 420,
+    },
+    {
+      address: 'woof.meme-cooking.near',
+      symbol: 'WOOF',
+      name: 'Woof Near',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000028,
+      priceNear: 0.000028 / NEAR_USD_RATE,
+      change24h: 18.9,
+      marketCap: 280000,
+      volume24h: 68000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 74000,
+      sparkline: [22, 24, 25, 27, 28],
+      holders: 1150,
+    },
+    {
+      address: 'frog.meme-cooking.near',
+      symbol: 'FROG',
+      name: 'Pepe Near',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000055,
+      priceNear: 0.000055 / NEAR_USD_RATE,
+      change24h: 31.5,
+      marketCap: 550000,
+      volume24h: 140000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 130000,
+      sparkline: [40, 44, 48, 52, 55],
+      holders: 1680,
+    },
+    {
+      address: 'cat.meme-cooking.near',
+      symbol: 'CAT',
+      name: 'Neko Cat',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000019,
+      priceNear: 0.000019 / NEAR_USD_RATE,
+      change24h: 9.3,
+      marketCap: 190000,
+      volume24h: 52000,
+      bondingProgress: 78,
+      bondingPhase: 'bonding',
+      liquidityUsd: 48000,
+      sparkline: [17, 18, 18, 19, 19],
+      holders: 810,
+    },
+    {
+      address: 'pump.meme-cooking.near',
+      symbol: 'PUMP',
+      name: 'Near Pump',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000076,
+      priceNear: 0.000076 / NEAR_USD_RATE,
+      change24h: 12.7,
+      marketCap: 760000,
+      volume24h: 195000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 165000,
+      sparkline: [66, 68, 71, 74, 76],
+      holders: 2150,
+    },
+    {
+      address: 'neardog.meme-cooking.near',
+      symbol: 'NDOG',
+      name: 'Near Doge',
+      venue: 'Meme.Cooking',
+      launchpad: 'memecooking',
+      priceUsd: 0.000032,
+      priceNear: 0.000032 / NEAR_USD_RATE,
+      change24h: -2.4,
+      marketCap: 320000,
+      volume24h: 75000,
+      bondingProgress: 88,
+      bondingPhase: 'bonding',
+      liquidityUsd: 68000,
+      sparkline: [34, 33, 33, 32, 32],
+      holders: 1290,
+    },
+
+    // ── PumpPoly Launchpad Tokens ──
+    {
+      address: 'poly-101.pumppoly.near',
+      symbol: 'POLY',
+      name: 'PumpPoly',
+      venue: 'PumpPoly',
+      launchpad: 'pumppoly',
+      priceUsd: 0.000062,
+      priceNear: 0.000062 / NEAR_USD_RATE,
+      change24h: 45.2,
+      marketCap: 620000,
+      volume24h: 160000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 145000,
+      sparkline: [42, 46, 51, 58, 62],
+      holders: 1820,
+    },
+    {
+      address: 'cook.pumppoly.near',
+      symbol: 'COOK',
+      name: 'Chef Poly',
+      venue: 'PumpPoly',
+      launchpad: 'pumppoly',
+      priceUsd: 0.000018,
+      priceNear: 0.000018 / NEAR_USD_RATE,
+      change24h: 11.8,
+      marketCap: 180000,
+      volume24h: 42000,
+      bondingProgress: 72,
+      bondingPhase: 'bonding',
+      liquidityUsd: 46000,
+      sparkline: [15, 16, 17, 17, 18],
+      holders: 730,
+    },
+    {
+      address: 'nearcat.pumppoly.near',
+      symbol: 'NCAT',
+      name: 'Near Cat',
+      venue: 'PumpPoly',
+      launchpad: 'pumppoly',
+      priceUsd: 0.0000095,
+      priceNear: 0.0000095 / NEAR_USD_RATE,
+      change24h: -8.5,
+      marketCap: 95000,
+      volume24h: 28000,
+      bondingProgress: 54,
+      bondingPhase: 'bonding',
+      liquidityUsd: 31000,
+      sparkline: [11, 11, 10, 10, 9.5],
+      holders: 490,
+    },
+    {
+      address: 'moonpoly.pumppoly.near',
+      symbol: 'MOON',
+      name: 'Moon Poly',
+      venue: 'PumpPoly',
+      launchpad: 'pumppoly',
+      priceUsd: 0.000038,
+      priceNear: 0.000038 / NEAR_USD_RATE,
+      change24h: 22.4,
+      marketCap: 380000,
+      volume24h: 88000,
+      bondingProgress: 89,
+      bondingPhase: 'bonding',
+      liquidityUsd: 79000,
+      sparkline: [30, 32, 34, 36, 38],
+      holders: 1040,
+    },
+    {
+      address: 'racerpoly.pumppoly.near',
+      symbol: 'RPOLY',
+      name: 'Racer Poly',
+      venue: 'PumpPoly',
+      launchpad: 'pumppoly',
+      priceUsd: 0.000115,
+      priceNear: 0.000115 / NEAR_USD_RATE,
+      change24h: 74.6,
+      marketCap: 1150000,
+      volume24h: 310000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 260000,
+      sparkline: [65, 78, 92, 105, 115],
+      holders: 2450,
+    },
+
+    // ── Intear Launchpad Tokens ──
+    {
+      address: 'intear.intear.near',
+      symbol: 'INTEAR',
+      name: 'InTear Ecosystem',
+      venue: 'InTear Launch',
+      launchpad: 'intear',
+      priceUsd: 0.00014,
+      priceNear: 0.00014 / NEAR_USD_RATE,
+      change24h: 16.3,
+      marketCap: 1400000,
+      volume24h: 220000,
+      bondingProgress: 100,
+      bondingPhase: 'graduated',
+      liquidityUsd: 310000,
+      sparkline: [118, 122, 128, 134, 140],
+      holders: 2980,
+    },
+    {
+      address: 'launch.intear.near',
+      symbol: 'LAUNCH',
+      name: 'InTear Launch',
+      venue: 'InTear Launch',
+      launchpad: 'intear',
+      priceUsd: 0.000045,
+      priceNear: 0.000045 / NEAR_USD_RATE,
+      change24h: 33.8,
+      marketCap: 450000,
+      volume24h: 95000,
+      bondingProgress: 92,
+      bondingPhase: 'bonding',
+      liquidityUsd: 96000,
+      sparkline: [32, 35, 38, 41, 45],
+      holders: 1320,
+    },
+    {
+      address: 'rock.intear.near',
+      symbol: 'ROCK',
+      name: 'Rock Meme',
+      venue: 'InTear Launch',
+      launchpad: 'intear',
+      priceUsd: 0.000007,
+      priceNear: 0.000007 / NEAR_USD_RATE,
+      change24h: 5.2,
+      marketCap: 70000,
+      volume24h: 18000,
+      bondingProgress: 48,
+      bondingPhase: 'bonding',
+      liquidityUsd: 22000,
+      sparkline: [6.5, 6.6, 6.8, 6.9, 7.0],
+      holders: 390,
+    },
+  ];
+
+  let allTokens = [...defaultTokens];
+
+  // Dynamically merge cached tokens from DB
+  const db = await getDb().catch(() => null);
+  if (db) {
+    try {
+      const dbRes = await db.query(
+        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase
+         FROM token_cache 
+         WHERE chain = 'near' OR chain IS NULL
+         ORDER BY updated_at DESC LIMIT 30`
+      );
+      const existingAddrs = new Set(allTokens.map(t => t.address.toLowerCase()));
+      for (const row of dbRes.rows) {
+        if (!row.token_address || existingAddrs.has(row.token_address.toLowerCase())) continue;
+        const addr = row.token_address.toLowerCase();
+        let launchpad: AlphaTokenItem['launchpad'] = 'other';
+        let venue = row.venue || 'Ref Finance';
+        if (addr.endsWith('.meme-cooking.near')) {
+          launchpad = 'memecooking';
+          venue = 'Meme.Cooking';
+        } else if (addr.includes('intear.near')) {
+          launchpad = 'intear';
+          venue = 'InTear Launch';
+        } else if (addr.includes('pumppoly')) {
+          launchpad = 'pumppoly';
+          venue = 'PumpPoly';
+        } else {
+          launchpad = 'ref';
+          venue = 'Ref Finance';
+        }
+
+        const priceNear = parseFloat(row.last_price || '0') || 0.00001;
+        const priceUsd = priceNear * NEAR_USD_RATE;
+        const progress = parseFloat(row.bonding_progress_pct || '100');
+        allTokens.push({
+          address: row.token_address,
+          symbol: (row.symbol || addr.split('.')[0]).toUpperCase(),
+          name: row.name || row.symbol || 'NEAR Token',
+          venue,
+          launchpad,
+          priceUsd,
+          priceNear,
+          change24h: 12.0,
+          marketCap: Math.round(priceUsd * 10000000),
+          volume24h: Math.round(priceUsd * 250000),
+          bondingProgress: progress,
+          bondingPhase: progress >= 100 ? 'graduated' : 'bonding',
+          liquidityUsd: parseFloat(row.last_liquidity || '25000'),
+          sparkline: [80, 85, 90, 95, 100],
+          holders: 500,
+        });
+      }
+    } catch {}
+  }
+
+  // Filter by category
+  const category = (options?.category || 'all').toLowerCase().trim();
+  if (category !== 'all') {
+    if (category === 'memecooking' || category === 'meme.cooking') {
+      allTokens = allTokens.filter(t => t.launchpad === 'memecooking');
+    } else if (category === 'ref' || category === 'dex') {
+      allTokens = allTokens.filter(t => t.launchpad === 'ref');
+    } else if (category === 'pumppoly') {
+      allTokens = allTokens.filter(t => t.launchpad === 'pumppoly');
+    } else if (category === 'intear') {
+      allTokens = allTokens.filter(t => t.launchpad === 'intear');
+    }
+  }
+
+  // Filter by search query
+  const query = (options?.search || '').toLowerCase().trim();
+  if (query) {
+    allTokens = allTokens.filter(t =>
+      t.symbol.toLowerCase().includes(query) ||
+      t.name.toLowerCase().includes(query) ||
+      t.address.toLowerCase().includes(query)
+    );
+  }
+
+  // Sort
+  const sort = (options?.sort || 'volume').toLowerCase();
+  if (sort === 'volume' || sort === 'volume_desc') {
+    allTokens.sort((a, b) => b.volume24h - a.volume24h);
+  } else if (sort === 'mcap' || sort === 'mcap_desc') {
+    allTokens.sort((a, b) => b.marketCap - a.marketCap);
+  } else if (sort === 'change' || sort === 'gainers') {
+    allTokens.sort((a, b) => b.change24h - a.change24h);
+  } else if (sort === 'bonding' || sort === 'curve') {
+    allTokens.sort((a, b) => b.bondingProgress - a.bondingProgress);
+  }
+
+  return {
+    success: true,
+    tokens: allTokens,
+    total: allTokens.length,
   };
 }
 
