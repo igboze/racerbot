@@ -3084,8 +3084,8 @@
           <div class="creator-stat-card">
             <div>
               <div style="font-size:12px; font-family:var(--font-mono); color:var(--color-text-subtle);">TOTAL SPENT</div>
-              <div style="font-size:28px; font-family:var(--font-mono); font-weight:700; color:var(--color-racer-purple-light);" id="mykeys-total-spent">12.48 NEAR</div>
-              <div style="font-size:11.5px; color:var(--color-text-muted);" id="mykeys-total-usd">≈ $62.40 USD</div>
+              <div style="font-size:28px; font-family:var(--font-mono); font-weight:700; color:var(--color-racer-purple-light);" id="mykeys-total-spent">—</div>
+              <div style="font-size:11.5px; color:var(--color-text-muted);" id="mykeys-total-usd">—</div>
             </div>
             <span style="font-size:28px;">🔑</span>
           </div>
@@ -3093,7 +3093,7 @@
           <div class="creator-stat-card">
             <div>
               <div style="font-size:12px; font-family:var(--font-mono); color:var(--color-text-subtle);">ACTIVE VIEWING KEYS</div>
-              <div style="font-size:28px; font-family:var(--font-mono); font-weight:700; color:var(--color-racer-green);" id="mykeys-active-count">3</div>
+              <div style="font-size:28px; font-family:var(--font-mono); font-weight:700; color:var(--color-racer-green);" id="mykeys-active-count">—</div>
               <div style="font-size:11.5px; color:var(--color-text-muted);">of 5 maximum copies</div>
             </div>
             <span style="font-size:28px;">🟢</span>
@@ -4595,26 +4595,47 @@
 
     // ── View 5: My Viewing Keys Data Loader ────────────────────────────────
     async function loadMyViewingKeys() {
+      const container = document.getElementById('mykeys-list-container');
+
+      // Guard: require a connected wallet before loading data
+      if (!connectedWallet) {
+        document.getElementById('mykeys-total-spent').textContent = '—';
+        document.getElementById('mykeys-total-usd').textContent = '—';
+        document.getElementById('mykeys-active-count').textContent = '—';
+        if (container) {
+          container.innerHTML = `
+            <div style="text-align:center; padding:48px 20px; color:var(--color-text-muted);">
+              <div style="font-size:36px; margin-bottom:12px;">🔑</div>
+              <div style="font-size:15px; font-weight:600; color:#fff; margin-bottom:8px;">Connect your wallet to view your keys</div>
+              <div style="font-size:13px; margin-bottom:20px;">Your viewing key subscriptions will appear here after connecting.</div>
+              <button class="btn-primary" onclick="handleOpenNearWalletSelector()" style="margin:0 auto;">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+                Connect NEAR Wallet
+              </button>
+            </div>`;
+        }
+        return;
+      }
+
       try {
         const res = await fetch('/alpha/my-keys', { headers: getAuthHeaders() });
         const data = await res.json();
         if (data.success) {
-          document.getElementById('mykeys-total-spent').textContent = `${data.totalSpentNear} NEAR`;
-          document.getElementById('mykeys-total-usd').textContent = `≈ $${data.totalSpentUsd} USD`;
-          document.getElementById('mykeys-active-count').textContent = data.activeCount;
+          document.getElementById('mykeys-total-spent').textContent = data.totalSpentNear > 0 ? `${data.totalSpentNear} NEAR` : '0 NEAR';
+          document.getElementById('mykeys-total-usd').textContent = data.totalSpentNear > 0 ? `≈ $${data.totalSpentUsd} USD` : '—';
+          document.getElementById('mykeys-active-count').textContent = data.activeCount ?? 0;
 
-          const container = document.getElementById('mykeys-list-container');
           if (!container) return;
 
-          if (data.keys.length === 0) {
-            container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--color-text-muted);">You do not hold any viewing keys yet. Explore top traders on the Leaderboard.</div>';
+          if (!data.keys || data.keys.length === 0) {
+            container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--color-text-muted);">You do not hold any viewing keys yet. Explore top traders on the Leaderboard to get started.</div>';
             return;
           }
 
           container.innerHTML = data.keys.map(k => `
             <div class="key-holder-item">
               <div style="display:flex; align-items:center; gap:14px;">
-                <img src="${k.traderAvatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}" style="width:44px; height:44px; border-radius:10px; object-fit:cover;">
+                <img src="${k.traderAvatarUrl || ''}" style="width:44px; height:44px; border-radius:10px; object-fit:cover; background:var(--color-surface);">
                 <div>
                   <div style="display:flex; align-items:center; gap:8px;">
                     <span style="font-weight:700; color:#fff; font-size:15px;">${escapeHtml(k.traderDisplayName)}</span>
@@ -4637,9 +4658,16 @@
               </div>
             </div>
           `).join('');
+        } else {
+          // API returned but not success (e.g. auth error)
+          document.getElementById('mykeys-total-spent').textContent = '—';
+          document.getElementById('mykeys-total-usd').textContent = '—';
+          document.getElementById('mykeys-active-count').textContent = '0';
+          if (container) container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--color-text-muted);">No viewing keys found. Explore top traders on the Leaderboard to get started.</div>';
         }
       } catch (err) {
         console.error('Failed to load my viewing keys:', err);
+        if (container) container.innerHTML = '<div style="text-align:center; padding:40px; color:var(--color-text-muted);">Failed to load viewing keys. Please try again.</div>';
       }
     }
 
