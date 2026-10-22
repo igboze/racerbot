@@ -115,7 +115,7 @@ export async function initCopyTradeDetector(): Promise<void> {
 async function refreshTrackedWallets(): Promise<void> {
   try {
     const wallets = await getAllActiveCopyTargetWallets();
-    trackedWallets = new Set(wallets);
+    trackedWallets = new Set(wallets.map((w) => w.trim().toLowerCase()));
   } catch (err) {
     logger.error('Failed to refresh tracked copy-trade wallets', err as Error);
   }
@@ -137,23 +137,25 @@ export async function checkCopyTradeReceipt(
   signerAccountId: string,
   receiverAccountId: string,
   txHash: string,
-  actions: Array<{ methodName: string; args: Record<string, unknown> }>
+  actions: Array<{ methodName: string; args: Record<string, unknown> }>,
+  predecessorId?: string
 ): Promise<void> {
+  const normalizedSigner = (signerAccountId || '').trim().toLowerCase();
   // Fast O(1) check - skip untracked wallets immediately
-  if (!trackedWallets.has(signerAccountId)) return;
+  if (!trackedWallets.has(normalizedSigner)) return;
 
-  const swap = extractSwapDetails(receiverAccountId, actions);
+  const swap = extractSwapDetails(receiverAccountId, actions, predecessorId);
   if (!swap || !swap.tokenAddress) return;
 
   logger.info('Copy-trade event detected', {
-    signer: signerAccountId,
+    signer: normalizedSigner,
     side: swap.side,
     token: swap.tokenAddress,
     txHash,
   });
 
   // Load followers (with DB cache-hit courtesy of the in-memory set above)
-  const followers = await getCopyTargetFollowersByWallet(signerAccountId).catch(() => []);
+  const followers = await getCopyTargetFollowersByWallet(normalizedSigner).catch(() => []);
   if (followers.length === 0) return;
 
   // Process each follower in parallel, independently - one failure must not block others
@@ -559,7 +561,8 @@ async function executeCopySell(
  */
 export function extractSwapDetails(
   receiverId: string,
-  actions: Array<{ methodName: string; args: Record<string, unknown> }>
+  actions: Array<{ methodName: string; args: Record<string, unknown> }>,
+  predecessorId?: string
 ): DetectedSwap | null {
   const isWrapNear = (addr?: string | null) =>
     addr === 'wrap.near' || addr === 'near';
@@ -599,10 +602,13 @@ export function extractSwapDetails(
       }
     }
 
-    // ── B. NEP-141 Token Transfers: ft_transfer_call ──
-    if (action.methodName === 'ft_transfer_call') {
-      const tokenTransferred = receiverId;
-      const targetReceiver = (args?.receiver_id as string) ?? '';
+    // ── B. NEP-141 Token Transfers: ft_transfer_call & ft_on_transfer ──
+    const isFtTransferCall = action.methodName === 'ft_transfer_call';
+    const isFtOnTransfer = action.methodName === 'ft_on_transfer';
+
+    if (isFtTransferCall || isFtOnTransfer) {
+      const tokenTransferred = isFtTransferCall ? receiverId : (predecessorId || '');
+      const targetReceiver = isFtTransferCall ? ((args?.receiver_id as string) ?? '') : receiverId;
       const msg = args?.msg;
       let tokenIn = tokenTransferred;
       let tokenOut: string | null = null;
@@ -648,12 +654,12 @@ export function extractSwapDetails(
         }
       }
 
-      // 2. Standard AMM / DEX parsed messages (Ref Finance, Rhea DEX, JumpDeFi)
+      // 2. Standard AMM / DEX parsed messages (Ref Finance, Rhea DEX, JumpDeFi, DCL)
       if (typeof msg === 'string') {
         try {
           const parsed = JSON.parse(msg);
           // Standard Ref/Rhea actions array: { actions: [{ token_in, token_out, ... }] }
-          const refActions = parsed?.actions ?? parsed?.Swap?.actions ?? [];
+          const refActions = parsed?.actions ?? parsed?.Swap?.actions ?? parsed?.dcl_actions ?? [];
           if (Array.isArray(refActions) && refActions.length > 0) {
             tokenIn = refActions[0]?.token_in || tokenTransferred;
             tokenOut = refActions[refActions.length - 1]?.token_out || null;
@@ -663,6 +669,13 @@ export function extractSwapDetails(
             if (parsed.swap?.token_in) tokenIn = parsed.swap.token_in;
           } else if (parsed?.output_token) {
             tokenOut = parsed.output_token;
+          } else if (parsed?.token_out) {
+            tokenOut = parsed.token_out;
+          } else if (parsed?.DclSwap?.token_out || parsed?.dcl_swap?.token_out) {
+            tokenOut = parsed.DclSwap?.token_out || parsed.dcl_swap?.token_out;
+            if (parsed.DclSwap?.token_in || parsed.dcl_swap?.token_in) {
+              tokenIn = parsed.DclSwap?.token_in || parsed.dcl_swap?.token_in;
+            }
           }
         } catch { /* ignore JSON parse error */ }
       }
