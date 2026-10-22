@@ -517,6 +517,21 @@ router.post('/alpha/creator/pay-entry-fee', async (req, res) => {
   }
 });
 
+router.get('/alpha/tokens', async (req, res) => {
+  try {
+    const { category, sort, search } = req.query;
+    const { listAlphaTokens } = await import('../racerAlpha.js');
+    const result = await listAlphaTokens({
+      category: category as string,
+      sort: sort as string,
+      search: search as string,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to list tokens' });
+  }
+});
+
 router.get('/alpha/creator/dashboard', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
@@ -610,7 +625,7 @@ router.post('/alpha/keys/buy', async (req, res) => {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to purchase viewing keys.' });
       return;
     }
-    const { traderId, tier, autoCopyEnabled, autoCopyAmountNear, allocationPct, riskMultiplier, stopLossPct } = req.body;
+    const { traderId, tier, txHash, autoCopyEnabled, autoCopyAmountNear, allocationPct, riskMultiplier, stopLossPct } = req.body;
     if (!traderId) {
       res.status(400).json({ error: 'traderId is required' });
       return;
@@ -618,6 +633,7 @@ router.post('/alpha/keys/buy', async (req, res) => {
     const { buyViewingKey } = await import('../racerAlpha.js');
     const result = await buyViewingKey(user, traderId, {
       tier,
+      txHash,
       autoCopyEnabled,
       autoCopyAmountNear,
       allocationPct,
