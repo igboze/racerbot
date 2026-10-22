@@ -2263,7 +2263,7 @@ export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams)
     [
       generateId(),
       params.user_id,
-      params.target_wallet,
+      params.target_wallet.trim().toLowerCase(),
       params.referrer_id ?? null,
       params.buy_amount_near ?? 1.0,
       params.copy_sells ?? true,
@@ -2290,7 +2290,7 @@ export async function getCopyTargetFollowersByWallet(
 ): Promise<CopyTradeTargetRecord[]> {
   const db = await getDb();
   const res = await db.query(
-    `SELECT * FROM copy_trade_targets WHERE target_wallet = $1 AND status = 'active'`,
+    `SELECT * FROM copy_trade_targets WHERE LOWER(TRIM(target_wallet)) = LOWER(TRIM($1)) AND status = 'active'`,
     [targetWallet]
   );
   return res.rows.map(rowToCopyTarget);
@@ -2300,7 +2300,7 @@ export async function getCopyTargetFollowersByWallet(
 export async function getAllActiveCopyTargetWallets(): Promise<string[]> {
   const db = await getDb();
   const res = await db.query(
-    `SELECT DISTINCT target_wallet FROM copy_trade_targets WHERE status = 'active'`
+    `SELECT DISTINCT LOWER(TRIM(target_wallet)) AS target_wallet FROM copy_trade_targets WHERE status = 'active'`
   );
   return res.rows.map((r: any) => r.target_wallet as string);
 }
