@@ -2852,7 +2852,7 @@
         </div>
 
         <!-- ONBOARDING & GATING PANEL: For Traders applying to become Creators -->
-        <div id="creator-onboarding-panel" style="display:none; flex-direction:column; gap:24px;">
+        <div id="creator-onboarding-panel" style="display:flex; flex-direction:column; gap:24px;">
           <div class="bottom-promo-banner" style="background:linear-gradient(135deg, rgba(130, 106, 181, 0.15), rgba(0, 240, 255, 0.08)); border-color:rgba(0, 240, 255, 0.3);">
             <div class="banner-left">
               <div class="brand-logo-halo" style="width:40px; height:40px;">
@@ -4228,6 +4228,20 @@
       const onboardingPanel = document.getElementById('creator-onboarding-panel');
       const dashboardPanel = document.getElementById('creator-dashboard-panel');
 
+      // Default baseline: ensure onboarding & volume audit gating suite is visible immediately
+      if (dashboardPanel) dashboardPanel.style.display = 'none';
+      if (onboardingPanel) onboardingPanel.style.display = 'flex';
+      if (badgeEl) {
+        badgeEl.innerHTML = `
+          <span class="active-pill" style="font-size:11px; background:rgba(0,240,255,0.1); border-color:rgba(0,240,255,0.3); color:var(--color-racer-cyan);">
+            CREATOR AUDIT &amp; GATING
+          </span>
+        `;
+      }
+
+      // Check volume eligibility right away
+      checkWalletEligibility();
+
       try {
         const res = await fetch('/alpha/creator/dashboard', { headers: getAuthHeaders() });
         const data = await res.json();
@@ -4299,6 +4313,9 @@
         }
       } catch (err) {
         console.error('Failed to load creator studio:', err);
+        if (dashboardPanel) dashboardPanel.style.display = 'none';
+        if (onboardingPanel) onboardingPanel.style.display = 'flex';
+        checkWalletEligibility();
       }
     }
 
@@ -4445,6 +4462,9 @@
         }
       } catch (err) {
         console.error('Error checking eligibility:', err);
+        if (auditFeedback && addr) {
+          auditFeedback.innerHTML = `Active wallet: <code style="color:var(--color-racer-cyan);">${escapeHtml(addr)}</code>. Volume audit in progress. Click "Audit & Refresh Volume ↻" to verify directly on NEAR RPC.`;
+        }
       }
     }
 
