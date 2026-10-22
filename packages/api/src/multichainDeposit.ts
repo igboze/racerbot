@@ -79,7 +79,7 @@ const tokenKeyMap = new Map<string, OneClickToken>();
 const tokensByChain = new Map<string, OneClickToken[]>();
 
 const NEAR_INTENTS_API_URL = process.env.NEAR_INTENTS_API_URL || 'https://1click.chaindefuser.com';
-const NEAR_INTENTS_API_KEY = process.env.NEAR_INTENTS_API_KEY || 'REDACTED';
+const NEAR_INTENTS_API_KEY = process.env.NEAR_INTENTS_API_KEY || '';
 const RACER_FEE_RECIPIENT = process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near';
 const RACER_FEE_BPS = parseInt(process.env.RACER_FEE_BPS || '100', 10);
 
