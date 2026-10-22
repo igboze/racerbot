@@ -2006,6 +2006,72 @@ export async function updateCreatorPricing(userId: string, data: {
   return { success: true };
 }
 
+/**
+ * Update Creator Profile (username / display name / bio)
+ * - handle is globally unique across all creators; enforced at DB level
+ * - a user can only own ONE handle — tied to their wallet/user_id
+ * - display_name is freeform, bio is freeform
+ */
+export async function updateCreatorProfile(userId: string, data: {
+  handle?: string;
+  displayName?: string;
+  bio?: string;
+  strategyTag?: string;
+}): Promise<{ success: boolean; reason?: string }> {
+  const db = await getDb().catch(() => null);
+  if (!db) return { success: false, reason: 'Database unavailable' };
+
+  // Validate handle format if provided
+  if (data.handle !== undefined) {
+    const handle = data.handle.replace(/^@/, '').toLowerCase().trim();
+    if (!handle || handle.length < 3 || handle.length > 30 || !/^[a-z0-9_.-]+$/.test(handle)) {
+      return { success: false, reason: 'Handle must be 3–30 characters: lowercase letters, numbers, _ or . only.' };
+    }
+
+    // Check if the desired handle is already taken by a DIFFERENT user
+    const conflict = await db.query(
+      `SELECT user_id FROM racer_alpha_traders WHERE handle = $1 AND user_id <> $2`,
+      [handle, userId]
+    );
+    if (conflict.rows.length > 0) {
+      return { success: false, reason: `The handle "@${handle}" is already taken. Please choose another.` };
+    }
+
+    // Ensure this user actually has a registered trader record before updating
+    const existing = await db.query(
+      `SELECT id FROM racer_alpha_traders WHERE user_id = $1`,
+      [userId]
+    );
+    if (existing.rows.length === 0) {
+      return { success: false, reason: 'No registered Creator Studio account found for your wallet.' };
+    }
+
+    await db.query(
+      `UPDATE racer_alpha_traders
+       SET handle      = $1,
+           display_name = COALESCE($2, display_name),
+           bio          = COALESCE($3, bio),
+           strategy_tag = COALESCE($4, strategy_tag),
+           updated_at   = NOW()
+       WHERE user_id = $5`,
+      [handle, data.displayName || null, data.bio || null, data.strategyTag || null, userId]
+    );
+  } else {
+    // No handle change – just update display name / bio / strategy
+    await db.query(
+      `UPDATE racer_alpha_traders
+       SET display_name = COALESCE($1, display_name),
+           bio          = COALESCE($2, bio),
+           strategy_tag = COALESCE($3, strategy_tag),
+           updated_at   = NOW()
+       WHERE user_id = $4`,
+      [data.displayName || null, data.bio || null, data.strategyTag || null, userId]
+    );
+  }
+
+  return { success: true };
+}
+
 export async function generateTerminalLink(userId: string): Promise<any> {
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
