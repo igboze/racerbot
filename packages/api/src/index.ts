@@ -217,13 +217,24 @@ async function main(): Promise<void> {
   });
 
   app.use('/api', apiRouter);
+  app.use(apiRouter);
 
   // ── Subdomain & path routing ──────────────────────────────────────────────
   // Detects token subdomains such as:
   // kookdog.bubblemap.racerbot.trade, kookdog.bubblemap.xyz, kookdog.localhost, etc.
   app.use((req, res, next) => {
     // Ignore internal API, assets, webhooks and health checks
-    if (req.path.startsWith('/api') || req.path.startsWith('/assets') || req.path === '/health' || req.path === '/favicon.ico' || req.path === webhookPath) {
+    if (
+      req.path.startsWith('/api') ||
+      req.path.startsWith('/assets') ||
+      req.path.startsWith('/alpha/') ||
+      req.path.startsWith('/deposit') ||
+      req.path.startsWith('/fleet/') ||
+      req.path.startsWith('/auth') ||
+      req.path === '/health' ||
+      req.path === '/favicon.ico' ||
+      req.path === webhookPath
+    ) {
       return next();
     }
 
