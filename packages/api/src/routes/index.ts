@@ -24,6 +24,7 @@ import {
   RACERBOT_PARENT_ACCOUNT,
   TREASURY_ACCOUNT_ID,
 } from '../config.js';
+import { executeShieldedVaultIntent } from '../racerVault.js';
 
 const logger = createLogger('api-routes');
 
@@ -817,6 +818,8 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       amountTokens,
       amountTokensRaw,
       tokenDecimals: clientDecimals,
+      poolId: clientPoolId,
+      dclPoolId: clientDclPoolId,
       venue: explicitVenue,
       txHash: clientTxHash,
       slippagePct,
@@ -908,7 +911,6 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     // Supports ALL launchpads on NEAR (Ref, Rhea, NearlyTrade, Shardsmarket, Intear, MemeCooking, etc.) and native tokens
     if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
       try {
-        const { executeShieldedVaultIntent } = await import('../racerVault.js');
         const vaultRes = await executeShieldedVaultIntent({
           user,
           tokenAddress,
@@ -917,6 +919,9 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           amountNear: numNear,
           amountTokens: calculatedAmountIn,
           slippagePct: Number(slippagePct) || 2,
+          poolId: clientPoolId ? Number(clientPoolId) : undefined,
+          dclPoolId: clientDclPoolId ? String(clientDclPoolId) : undefined,
+          tokenDecimals: Number(clientDecimals) > 0 ? Number(clientDecimals) : undefined,
         });
 
         if (vaultRes.success && vaultRes.txHash) {
