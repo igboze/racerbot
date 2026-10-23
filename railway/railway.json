@@ -11,7 +11,7 @@
       "environments": [
         {
           "variable": "RPC_PROVIDERS",
-          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://rpc.shitzuapes.xyz,https://rpc.mainnet.near.org,https://rpc.mainnet.fastnear.com,https://rpc.intea.rs"
         },
         {
           "variable": "FASTNEAR_API_KEY",
