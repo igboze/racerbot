@@ -436,15 +436,25 @@
         }
       }
 
-      if (showModal && this.nearConnector) {
-        try {
-          await this.nearConnector.connect();
-        } catch (err) {
-          if (err?.message?.includes('User reject') || err?.message?.includes('reject')) {
-            console.log('[RacerConnect] User closed NEAR Connect modal');
-            return;
+      if (showModal) {
+        if (this.nearConnector) {
+          try {
+            await this.nearConnector.connect();
+          } catch (err) {
+            if (err?.message?.includes('User reject') || err?.message?.includes('reject')) {
+              console.log('[RacerConnect] User closed NEAR Connect modal');
+              return;
+            }
+            throw err;
           }
-          throw err;
+        } else {
+          console.warn('[RacerConnect] NearConnector not available, opening Racer Connect modal');
+          if (typeof window.openConnectModal === 'function') {
+            window.openConnectModal();
+          } else {
+            const modal = document.getElementById('racer-connect-modal');
+            if (modal) modal.classList.add('open');
+          }
         }
       }
     }
@@ -452,10 +462,18 @@
     // Unified launcher for NEAR Connect modal
     async openNearWalletSelector() {
       await this.initNearConnect(true);
+      if (!this.nearConnector) {
+        if (typeof window.openConnectModal === 'function') {
+          window.openConnectModal();
+        } else {
+          const modal = document.getElementById('racer-connect-modal');
+          if (modal) modal.classList.add('open');
+        }
+      }
     }
 
     async openNearWallet() {
-      await this.initNearConnect(true);
+      await this.openNearWalletSelector();
     }
 
     async initWalletSelector(showModal = false) {

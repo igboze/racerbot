@@ -436,15 +436,25 @@
         }
       }
 
-      if (showModal && this.nearConnector) {
-        try {
-          await this.nearConnector.connect();
-        } catch (err) {
-          if (err?.message?.includes('User reject') || err?.message?.includes('reject')) {
-            console.log('[RacerConnect] User closed NEAR Connect modal');
-            return;
+      if (showModal) {
+        if (this.nearConnector) {
+          try {
+            await this.nearConnector.connect();
+          } catch (err) {
+            if (err?.message?.includes('User reject') || err?.message?.includes('reject')) {
+              console.log('[RacerConnect] User closed NEAR Connect modal');
+              return;
+            }
+            throw err;
           }
-          throw err;
+        } else {
+          console.warn('[RacerConnect] NearConnector not available, opening Racer Connect modal');
+          if (typeof window.openConnectModal === 'function') {
+            window.openConnectModal();
+          } else {
+            const modal = document.getElementById('racer-connect-modal');
+            if (modal) modal.classList.add('open');
+          }
         }
       }
     }
@@ -452,10 +462,18 @@
     // Unified launcher for NEAR Connect modal
     async openNearWalletSelector() {
       await this.initNearConnect(true);
+      if (!this.nearConnector) {
+        if (typeof window.openConnectModal === 'function') {
+          window.openConnectModal();
+        } else {
+          const modal = document.getElementById('racer-connect-modal');
+          if (modal) modal.classList.add('open');
+        }
+      }
     }
 
     async openNearWallet() {
-      await this.initNearConnect(true);
+      await this.openNearWalletSelector();
     }
 
     async initWalletSelector(showModal = false) {
@@ -626,6 +644,67 @@
         }
       }
       return null;
+    }
+
+    /**
+     * Send native NEAR transaction on-chain via connected wallet selector.
+     * Prompts the user's wallet (Meteor, HOT, Intear, MyNearWallet, etc.) to approve & sign.
+     */
+    async sendNearTransaction({ receiverId, amountNear }) {
+      if (!this.nearConnector) {
+        await this.initNearConnect(false);
+      }
+      let wallet = await this.getNearWallet();
+      if (!wallet || typeof wallet.signAndSendTransaction !== 'function') {
+        await this.openNearWalletSelector();
+        wallet = await this.getNearWallet();
+        if (!wallet || typeof wallet.signAndSendTransaction !== 'function') {
+          throw new Error('Please connect your NEAR wallet (Meteor, HOT, Intear, etc.) to approve transaction.');
+        }
+      }
+
+      const numNear = parseFloat(amountNear);
+      if (isNaN(numNear) || numNear <= 0) {
+        throw new Error('Invalid NEAR transfer amount.');
+      }
+
+      // Convert NEAR to yoctoNEAR (1 NEAR = 10^24 yoctoNEAR)
+      const yocto = (BigInt(Math.round(numNear * 1e6)) * 1000000000000000000n).toString();
+
+      const outcome = await wallet.signAndSendTransaction({
+        receiverId: receiverId || TREASURY_ACCOUNT,
+        actions: [
+          {
+            type: 'Transfer',
+            params: {
+              deposit: yocto,
+            },
+          },
+        ],
+      });
+
+      let hash = null;
+      if (outcome && typeof outcome === 'object') {
+        if (outcome.transaction && outcome.transaction.hash) {
+          hash = outcome.transaction.hash;
+        } else if (outcome.transaction_outcome && outcome.transaction_outcome.id) {
+          hash = outcome.transaction_outcome.id;
+        } else if (outcome.hash) {
+          hash = outcome.hash;
+        } else if (Array.isArray(outcome.transactions) && outcome.transactions[0]?.transaction?.hash) {
+          hash = outcome.transactions[0].transaction.hash;
+        }
+      } else if (typeof outcome === 'string') {
+        hash = outcome;
+      }
+
+      return {
+        success: true,
+        hash: hash || outcome?.id || outcome,
+        txHash: hash || outcome?.id || outcome,
+        transaction: { hash: hash || outcome?.id || outcome },
+        outcome,
+      };
     }
 
     /**

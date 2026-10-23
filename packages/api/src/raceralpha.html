@@ -12,58 +12,49 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css">
 
-  <!-- ⚠️ Production Security: suppress console output and harden against dev-tool inspection -->
+  <!-- Early Global Wallet & Modal Bootstrap (guarantees buttons respond immediately) -->
   <script>
-    (function () {
-      'use strict';
-      // Silence all non-critical console channels so fee structures, internal prices,
-      // API payloads, and trade logic are never visible in the browser console.
-      var noop = function () {};
-      var silenced = ['log', 'info', 'debug', 'warn', 'table', 'dir', 'group',
-                      'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'timeLog',
-                      'count', 'countReset', 'assert', 'trace'];
-      if (typeof console !== 'undefined') {
-        silenced.forEach(function (m) {
-          try { console[m] = noop; } catch (_) {}
-        });
+    window.handleHeaderConnectClick = function() {
+      if (window.RacerConnect && (window.RacerConnect.isAuthenticated() || window.RacerConnect.activeNearWallet)) {
+        if (typeof window.openConnectModal === 'function') window.openConnectModal();
+      } else {
+        if (typeof window.handleOpenNearWalletSelector === 'function') {
+          window.handleOpenNearWalletSelector();
+        } else if (typeof window.openConnectModal === 'function') {
+          window.openConnectModal();
+        }
       }
-      // Trap debugger statement in eval context by overwriting Function constructor path
+    };
+    window.handleWalletAction = function() {
+      window.handleHeaderConnectClick();
+    };
+    window.openConnectModal = function() {
+      var modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.add('open');
+      if (typeof window.updateWalletUI === 'function') window.updateWalletUI();
+    };
+    window.closeConnectModal = function() {
+      var modal = document.getElementById('racer-connect-modal');
+      if (modal) modal.classList.remove('open');
+      if (window.RacerConnect && typeof window.RacerConnect.stopPairing === 'function') {
+        window.RacerConnect.stopPairing();
+      }
+      var spinner = document.getElementById('pairing-spinner');
+      if (spinner) spinner.style.display = 'none';
+      var btn = document.getElementById('btn-start-telegram-pairing');
+      if (btn) btn.style.display = 'inline-flex';
+    };
+    window.handleOpenNearWalletSelector = async function() {
       try {
-        Object.defineProperty(window, '_rcDbg', { get: noop, set: noop, configurable: false });
-      } catch (_) {}
-      // Strip stack traces from Error objects to avoid leaking internal file paths
-      try {
-        var origErr = window.Error;
-        window.Error = function (msg) {
-          var e = new origErr(msg);
-          e.stack = '';
-          return e;
-        };
-        window.Error.prototype = origErr.prototype;
-      } catch (_) {}
-      // Detect DevTools open via timing / toString trick and redirect
-      var _devToolsOpen = false;
-      var _el = document.createElement('div');
-      Object.defineProperty(_el, 'id', {
-        get: function () {
-          _devToolsOpen = true;
-          return '';
+        if (window.RacerConnect && window.NearConnector) {
+          await window.RacerConnect.openNearWalletSelector();
+        } else {
+          window.openConnectModal();
         }
-      });
-      (function devToolsCheck() {
-        _devToolsOpen = false;
-        if (typeof console !== 'undefined' && console.log) {
-          // already silenced, this path won't run
-        }
-        if (_devToolsOpen) {
-          // DevTools are open — clear any leftover state
-          if (typeof localStorage !== 'undefined') {
-            // Do not wipe auth — just prevent leakage via console
-          }
-        }
-        setTimeout(devToolsCheck, 5000);
-      })();
-    })();
+      } catch (err) {
+        window.openConnectModal();
+      }
+    };
   </script>
 
   <style>
@@ -4898,7 +4889,21 @@
     }
 
     function getTokenLogoHtml(tok, size = 28) {
-      const fallbackEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.launchpad === 'memecooking' ? '🍳' : (tok.launchpad === 'nearpad' ? '🪐' : (tok.launchpad === 'shoremarkets' ? '🌊' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))))));
+      let fallbackEmoji = '🪙';
+      const sym = (tok?.symbol || '').toUpperCase();
+      const lp = (tok?.launchpad || '').toLowerCase();
+      if (lp === 'justhoot') fallbackEmoji = '🦉';
+      else if (lp === 'nearlytrade') fallbackEmoji = '⚡';
+      else if (lp === 'memecooking') fallbackEmoji = '🍳';
+      else if (lp === 'nearpad') fallbackEmoji = '🪐';
+      else if (lp === 'shoremarkets') fallbackEmoji = '🌊';
+      else if (sym.includes('DRAGON')) fallbackEmoji = '🐉';
+      else if (sym.includes('JAMBO')) fallbackEmoji = '🐘';
+      else if (sym.includes('PEAR')) fallbackEmoji = '🍐';
+      else if (sym.includes('CHILL')) fallbackEmoji = '🦥';
+      else if (sym.includes('DOG')) fallbackEmoji = '🐶';
+      else if (sym.includes('CAT')) fallbackEmoji = '🐱';
+      else if (sym.includes('FROG')) fallbackEmoji = '🐸';
       if (tok.icon && typeof tok.icon === 'string' && tok.icon.length > 5) {
         return `
           <div class="gmgn-tok-icon" style="width:${size}px; height:${size}px; border-radius:50%; overflow:hidden; position:relative; background:var(--color-surface-hover); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
@@ -5469,8 +5474,17 @@
         }
 
         const isIntent = data.routing === 'INTENT_SOLVER';
-        const routeLabel = isIntent ? '🔒 Decentralized Private Intent (Defuse Solver)' : `🏛️ AMM Relayer (${escapeHtml(selectedGmGnToken.venue)})`;
-        const extraNote = isIntent ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>' : '';
+        const isVault = data.routing === 'RACER_SHIELDED_VAULT';
+        const routeLabel = isIntent
+          ? '🔒 Decentralized Private Intent (Defuse Solver)'
+          : isVault
+          ? '🏎️ Racer Shielded Router (racerbotrouter.near)'
+          : `🏛️ AMM Relayer (${escapeHtml(selectedGmGnToken.venue)})`;
+        const extraNote = isIntent
+          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>'
+          : isVault
+          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Atomic Multi-Hop On-Chain Settlement Confirmed via Deployed Contract!</span>'
+          : '';
 
         const txLink = data.txHash
           ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
