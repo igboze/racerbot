@@ -104,21 +104,22 @@ const configuredRpcList = (process.env.RPC_PROVIDERS || '')
   .filter(Boolean)
   .map(formatNearRpcUrl);
 
-// Robust validator endpoints that do NOT throttle transactions with 429 rate limits
-const robustRpcUrls = [
-  'https://rpc.shitzuapes.xyz',
-  'https://rpc.mainnet.near.org',
-  'https://near.drpc.org',
-];
-
+// FastNEAR Paid RPC is primary; validator endpoints serve as resilient fallbacks
 const fastnearUrls = hasFastnearKey
   ? [formatNearRpcUrl('https://rpc.mainnet.fastnear.com')]
   : ['https://free.rpc.fastnear.com'];
 
+const robustRpcUrls = [
+  'https://rpc.shitzuapes.xyz',
+  'https://rpc.mainnet.near.org',
+  'https://near.drpc.org',
+  'https://rpc.intea.rs',
+];
+
 const RPC_URLS = Array.from(
   new Set([
-    ...robustRpcUrls,
     ...fastnearUrls,
+    ...robustRpcUrls,
     ...configuredRpcList.filter(
       u => !u.includes('quiknode.pro') && !u.includes('quicknode')
     ),
@@ -2107,10 +2108,14 @@ export async function connectWithNearRpcFailover<T>(
   for (const url of urls) {
     try {
       const formattedUrl = formatNearRpcUrl(url);
+      const isFastnear = formattedUrl.includes('fastnear.com');
       const nearConn = await connect({
         networkId: 'mainnet',
         keyStore,
         nodeUrl: formattedUrl,
+        headers: hasFastnearKey && isFastnear
+          ? { Authorization: `Bearer ${fastnearApiKey}` }
+          : undefined,
       });
       const account = await nearConn.account(accountId);
       return await fn(account);

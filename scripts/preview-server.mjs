@@ -21,7 +21,6 @@ const bubblemapHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src'
 const raceralphaHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'raceralpha.html');
 const racerHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'racer.html');
 const fleetHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'fleet.html');
-const assetsDir = path.resolve(__dirname, '..', 'assets');
 const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || '***REMOVED***';
 
 // Real PostgreSQL Database Pool
@@ -77,17 +76,21 @@ async function fetchOnChainAccountVolume(accountId) {
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
     'https://rpc.shitzuapes.xyz',
-    'https://free.rpc.fastnear.com',
-    'https://rpc.intea.rs',
     'https://rpc.mainnet.near.org',
+    'https://rpc.intea.rs',
+    'https://free.rpc.fastnear.com',
   ];
 
   async function callRpc(method, params) {
     for (const url of rpcUrls) {
       try {
+        const isFastnear = url.includes('fastnear.com');
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(isFastnear && fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : {}),
+          },
           body: JSON.stringify({ jsonrpc: '2.0', id: '1', method, params }),
           signal: AbortSignal.timeout(4500),
         });
