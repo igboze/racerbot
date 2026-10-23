@@ -357,11 +357,16 @@ export class MultiRpcNear {
       ...sanitizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea')),
     ]));
 
+    const fastnearPaidEndpoint = hasValidKey
+      ? `https://rpc.mainnet.fastnear.com?apiKey=${apiKey}`
+      : 'https://rpc.mainnet.fastnear.com';
+
     // Trade URLs: FastNEAR first (primary RPC), QuickNode (if configured), Shitzu, Intear validator nodes, then Free FastNEAR backup.
     // Shitzu and Intear connect directly to block producers with zero rate limiting on broadcasts,
     // ensuring broadcasted transactions are instantly relayed to the consensus mempool.
     // Even if caller provided limited URLs, always include validator nodes in trade providers for reliable broadcast.
     const tradeUrls = Array.from(new Set([
+      ...(hasValidKey ? [fastnearPaidEndpoint] : []),
       ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
       ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       'https://rpc.shitzuapes.xyz',
@@ -369,11 +374,17 @@ export class MultiRpcNear {
       'https://free.rpc.fastnear.com',
     ]));
 
-    this.readProviders = readUrls.map((url, i) => {
-      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
-      const isPaidFn = Boolean(url.includes('rpc.mainnet.fastnear.com') && hasValidKey);
+    this.readProviders = readUrls.map((rawUrl, i) => {
+      const isQn = rawUrl.includes('quiknode.pro') || rawUrl.includes('quicknode');
+      const isPaidFn = Boolean(rawUrl.includes('rpc.mainnet.fastnear.com') && hasValidKey);
+      let url = rawUrl;
+      if (isPaidFn && !url.includes('apiKey=')) {
+        const sep = url.includes('?') ? '&' : '?';
+        url = `${url}${sep}apiKey=${apiKey}`;
+      }
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (isPaidFn) {
+        headers['apiKey'] = apiKey;
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
       const name = isQn
@@ -388,11 +399,17 @@ export class MultiRpcNear {
       return createProvider(url, name, isQn, headers, isPaidFn);
     });
 
-    this.tradeProviders = tradeUrls.map((url, i) => {
-      const isQn = url.includes('quiknode.pro') || url.includes('quicknode');
-      const isPaidFn = Boolean(url.includes('rpc.mainnet.fastnear.com') && hasValidKey);
+    this.tradeProviders = tradeUrls.map((rawUrl, i) => {
+      const isQn = rawUrl.includes('quiknode.pro') || rawUrl.includes('quicknode');
+      const isPaidFn = Boolean(rawUrl.includes('rpc.mainnet.fastnear.com') && hasValidKey);
+      let url = rawUrl;
+      if (isPaidFn && !url.includes('apiKey=')) {
+        const sep = url.includes('?') ? '&' : '?';
+        url = `${url}${sep}apiKey=${apiKey}`;
+      }
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (isPaidFn) {
+        headers['apiKey'] = apiKey;
         headers['Authorization'] = `Bearer ${apiKey}`;
       }
       const name = isQn
