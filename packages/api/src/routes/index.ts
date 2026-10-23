@@ -765,6 +765,18 @@ router.post('/alpha/creator/signal', async (req, res) => {
           onChainTxHash = intentResult.txHash;
           executionRouting = 'INTENT_SOLVER';
           intentMessage = intentResult.message;
+        } else if (intentResult.requiresClientSignature && intentResult.depositAddress) {
+          // External wallet selector user — return single-use stealth deposit address for client-side signing
+          res.json({
+            success: false,
+            requiresClientSignature: true,
+            routing: 'INTENT_SOLVER',
+            depositAddress: intentResult.depositAddress,
+            amountNear: numNear,
+            correlationId: intentResult.correlationId,
+            message: 'Please confirm the intent transfer in your connected NEAR wallet.'
+          });
+          return;
         } else {
           logger.info(`Defuse Intent route skipped (${intentResult.reason || 'unlisted'}), falling back to Direct AMM Relayer`);
         }
