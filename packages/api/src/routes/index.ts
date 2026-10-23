@@ -351,8 +351,11 @@ export async function resolveAlphaUser(req: any) {
     const cleanWallet = walletHeader.trim();
     try {
       const db = await getDb();
+      // IMPORTANT: Only filter by subaccount_id (TEXT) — never by id (UUID) with a wallet address.
+      // Passing a NEAR address to a UUID column causes Postgres to throw
+      // "invalid input syntax for type uuid" which propagates as a trade error.
       const uRes = await db.query(
-        `SELECT * FROM users WHERE subaccount_id = $1 OR id = $1 LIMIT 1`,
+        `SELECT * FROM users WHERE subaccount_id = $1 LIMIT 1`,
         [cleanWallet]
       );
       if (uRes.rows[0]) {
@@ -376,10 +379,12 @@ export async function resolveAlphaUser(req: any) {
       );
       const customHandle = tRes.rows[0]?.handle || null;
 
+      // Generate a proper UUID for `id` — the wallet address goes into subaccount_id (TEXT).
+      // Using uuid_generate_v4() server-side is safest; ON CONFLICT on subaccount_id ensures idempotency.
       const newU = await db.query(
-        `INSERT INTO users (id, subaccount_id, username)
-         VALUES ($1, $1, $2)
-         ON CONFLICT (id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id
+        `INSERT INTO users (id, subaccount_id, telegram_id, scoped_key_encrypted, username)
+         VALUES (uuid_generate_v4(), $1, 0, '', $2)
+         ON CONFLICT (subaccount_id) DO UPDATE SET username = COALESCE(EXCLUDED.username, users.username)
          RETURNING *`,
         [cleanWallet, customHandle]
       );
