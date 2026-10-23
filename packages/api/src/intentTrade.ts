@@ -45,12 +45,14 @@ export interface IntentExecutionResult {
 export async function getIntentSwapQuote(params: {
   tokenAddress: string;
   side: 'BUY' | 'SELL';
-  amountNear: number;
+  amountNear?: number;
+  amountTokens?: string | number;
+  tokenDecimals?: number;
   recipientAccountId: string;
   dryRun?: boolean;
 }): Promise<IntentQuoteResult> {
   const isBuy = params.side === 'BUY';
-  const numNear = params.amountNear;
+  const numNear = params.amountNear || 1;
 
   // Origin & destination asset specification for Defuse
   const wrapNearAsset = 'nep141:wrap.near';
@@ -61,8 +63,14 @@ export async function getIntentSwapQuote(params: {
   const originAsset = isBuy ? wrapNearAsset : targetTokenAsset;
   const destinationAsset = isBuy ? targetTokenAsset : wrapNearAsset;
 
-  // Convert NEAR to yocto (10^24)
-  const yoctoIn = (BigInt(Math.round(numNear * 1e6)) * 1000000000000000000n).toString();
+  let rawAmountIn: string;
+  if (isBuy) {
+    rawAmountIn = (BigInt(Math.round(numNear * 1e6)) * 1000000000000000000n).toString();
+  } else {
+    const decimals = params.tokenDecimals ?? 18;
+    const { parseTokenUnits } = await import('@racerbot/shared');
+    rawAmountIn = parseTokenUnits(String(params.amountTokens || '1'), decimals).toString();
+  }
   const deadline = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
   const payload = {
@@ -72,7 +80,7 @@ export async function getIntentSwapQuote(params: {
     originAsset,
     depositType: 'ORIGIN_CHAIN',
     destinationAsset,
-    amount: yoctoIn,
+    amount: rawAmountIn,
     recipient: params.recipientAccountId,
     recipientType: 'DESTINATION_CHAIN',
     refundTo: params.recipientAccountId,
@@ -102,8 +110,8 @@ export async function getIntentSwapQuote(params: {
       return {
         supported: false,
         routing: 'AMM',
-        amountIn: yoctoIn,
-        amountInFormatted: String(numNear),
+        amountIn: rawAmountIn,
+        amountInFormatted: isBuy ? String(numNear) : String(params.amountTokens || '0'),
         amountOut: '0',
         amountOutFormatted: '0',
         minAmountOut: '0',
@@ -119,8 +127,8 @@ export async function getIntentSwapQuote(params: {
     return {
       supported: true,
       routing: 'INTENT_SOLVER',
-      amountIn: q.amountIn || yoctoIn,
-      amountInFormatted: q.amountInFormatted || String(numNear),
+      amountIn: q.amountIn || rawAmountIn,
+      amountInFormatted: q.amountInFormatted || (isBuy ? String(numNear) : String(params.amountTokens || '0')),
       amountOut: q.amountOut || '0',
       amountOutFormatted: q.amountOutFormatted || '0',
       minAmountOut: q.minAmountOut || q.amountOut || '0',
@@ -135,8 +143,8 @@ export async function getIntentSwapQuote(params: {
     return {
       supported: false,
       routing: 'AMM',
-      amountIn: yoctoIn,
-      amountInFormatted: String(numNear),
+      amountIn: rawAmountIn,
+      amountInFormatted: isBuy ? String(numNear) : String(params.amountTokens || '0'),
       amountOut: '0',
       amountOutFormatted: '0',
       minAmountOut: '0',
