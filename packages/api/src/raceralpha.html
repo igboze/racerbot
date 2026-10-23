@@ -4943,6 +4943,71 @@
         });
 
         const data = await res.json();
+
+        // If user is connected via an external wallet (Meteor, MyNearWallet, etc.), prompt wallet approval
+        if (data.requiresClientSignature && data.depositAddress) {
+          if (btn) btn.innerHTML = '<span>Please confirm Intent Transfer in your wallet...</span>';
+          if (feedback) {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(0, 240, 255, 0.15)';
+            feedback.style.color = 'var(--color-racer-cyan)';
+            feedback.innerHTML = `<span>Please approve confidential transfer of <b>${amtNear} NEAR</b> to stealth solver in your connected wallet...</span>`;
+          }
+
+          if (!window.RacerConnect || typeof window.RacerConnect.sendNearTransaction !== 'function') {
+            throw new Error('Please connect your NEAR wallet (Meteor, MyNearWallet, etc.) to approve the trade.');
+          }
+
+          const txRes = await window.RacerConnect.sendNearTransaction({
+            receiverId: data.depositAddress,
+            amountNear: data.amountNear || amtNear
+          });
+
+          const walletTxHash = txRes?.hash || txRes?.transaction?.hash;
+          if (!walletTxHash) {
+            throw new Error('Transaction cancelled or no hash returned from wallet.');
+          }
+
+          if (feedback) {
+            feedback.innerHTML = `<span>✓ On-chain intent transfer confirmed (${walletTxHash.slice(0, 10)}...). Broadcasting signal & triggering copy-fills...</span>`;
+          }
+
+          // Re-dispatch with confirmed txHash to record alpha signal and trigger subscribers
+          const confirmRes = await fetch('/alpha/creator/signal', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              traderId,
+              tokenAddress: selectedGmGnToken.address,
+              tokenSymbol: selectedGmGnToken.symbol,
+              tokenName: selectedGmGnToken.name,
+              side: selectedGmGnSide,
+              amountNear: amtNear,
+              priceNear: selectedGmGnToken.priceNear,
+              venue: 'NEAR Intents (Defuse)',
+              txHash: walletTxHash,
+              routingPreference: 'intent'
+            })
+          });
+
+          const confirmData = await confirmRes.json();
+          if (!confirmRes.ok || !confirmData.success) {
+            throw new Error(confirmData.error || 'Signal registration failed.');
+          }
+
+          const txLink = `<br><a href="https://nearblocks.io/txns/${walletTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${walletTxHash.slice(0, 10)}...) ↗</a>`;
+
+          if (feedback) {
+            feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+            feedback.style.color = 'var(--color-racer-green)';
+            feedback.innerHTML = `✓ <b>Confidential ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>🔒 Decentralized Private Intent (Defuse Solver)</b> • 🚀 <b>${confirmData.autoCopyFillsCount || 0} subscriber copy-fills</b> triggered.<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>${txLink}`;
+          }
+
+          refreshUserBalance();
+          loadTerminalData();
+          return;
+        }
+
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Trade execution failed.');
         }

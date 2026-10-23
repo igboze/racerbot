@@ -1665,7 +1665,7 @@ export async function getAlphaTraderById(traderId: string, userId?: string): Pro
   const trader = rowToTrader(res.rows[0]);
   const userKeysMap = await getUserHeldKeysMap(userId);
   const keyInfo = userKeysMap.get(trader.id);
-  const isOwner = Boolean(userId && trader.userId === userId);
+  const isOwner = Boolean(userId && (trader.userId === userId || trader.payoutWalletAddress === userId || trader.handle === userId));
   return {
     ...trader,
     hasKey: Boolean(keyInfo) || isOwner,
@@ -1684,7 +1684,7 @@ export async function getAlphaTraderPositions(traderId: string, userId?: string)
   const trader = await getAlphaTraderById(traderId, userId);
   const userKeysMap = await getUserHeldKeysMap(userId);
   const keyInfo = userKeysMap.get(trader?.id || traderId);
-  const isOwner = Boolean(userId && trader && trader.userId === userId);
+  const isOwner = Boolean(userId && trader && (trader.userId === userId || trader.payoutWalletAddress === userId || trader.handle === userId));
   const hasExecutionKey = isOwner || (keyInfo && (keyInfo.tier === 'copy' || keyInfo.tier === 'premium'));
 
   let rows: any[] = [];
@@ -1765,7 +1765,7 @@ export async function getAlphaTraderSwaps(traderId: string, userId?: string): Pr
   const trader = await getAlphaTraderById(traderId, userId);
   const userKeysMap = await getUserHeldKeysMap(userId);
   const keyInfo = userKeysMap.get(trader?.id || traderId);
-  const isOwner = Boolean(userId && trader && trader.userId === userId);
+  const isOwner = Boolean(userId && trader && (trader.userId === userId || trader.payoutWalletAddress === userId || trader.handle === userId));
   const hasAccess = isOwner || Boolean(keyInfo);
 
   if (!hasAccess) {
