@@ -104,24 +104,26 @@ const configuredRpcList = (process.env.RPC_PROVIDERS || '')
   .filter(Boolean)
   .map(formatNearRpcUrl);
 
-const qnUrl = formatNearRpcUrl((process.env.QUICKNODE_ENDPOINT_URL || '').trim());
-
-const freeValidatorUrls = [
+// Robust validator endpoints that do NOT throttle transactions with 429 rate limits
+const robustRpcUrls = [
   'https://rpc.shitzuapes.xyz',
-  'https://rpc.intea.rs',
-  'https://free.rpc.fastnear.com',
-  ...configuredRpcList.filter(u => !u.includes('rpc.mainnet.fastnear.com')),
-];
-
-const paidUrls = [
-  formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
-  ...configuredRpcList.filter(u => u.includes('rpc.mainnet.fastnear.com')),
-  ...(qnUrl ? [qnUrl] : []),
   'https://rpc.mainnet.near.org',
   'https://near.drpc.org',
 ];
 
-const RPC_URLS = Array.from(new Set([...paidUrls, ...freeValidatorUrls])).filter(Boolean);
+const fastnearUrls = hasFastnearKey
+  ? [formatNearRpcUrl('https://rpc.mainnet.fastnear.com')]
+  : ['https://free.rpc.fastnear.com'];
+
+const RPC_URLS = Array.from(
+  new Set([
+    ...robustRpcUrls,
+    ...fastnearUrls,
+    ...configuredRpcList.filter(
+      u => !u.includes('quiknode.pro') && !u.includes('quicknode')
+    ),
+  ])
+).filter(Boolean);
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
