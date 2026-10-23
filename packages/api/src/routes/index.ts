@@ -834,11 +834,11 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'AMM' = 'AMM';
+    let executionRouting: 'INTENT_SOLVER' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
 
-    // 1. Phase 1a: Decentralized Private Intent Solver Execution (Option B)
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm' && isBuy) {
+    // 1. Phase 1a: Decentralized Private Intent Solver Execution (Defuse Solver)
+    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm' && routingPreference !== 'vault' && isBuy) {
       try {
         const { executeIntentTrade } = await import('../intentTrade.js');
         const intentResult = await executeIntentTrade({
@@ -867,11 +867,38 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           return;
         }
       } catch (intentErr: any) {
-        logger.warn(`Intent solver execution error (${intentErr.message}), falling back to direct AMM`);
+        logger.warn(`Intent solver execution error (${intentErr.message}), trying Shielded Router Vault`);
       }
     }
 
-    // 2. Phase 1b: Direct AMM Swap via Managed Subaccount
+    // 2. Phase 1b: Deployed Shielded Intent Router Contract (racerbotrouter.near)
+    // Supports ALL launchpads on NEAR (Ref, Rhea, NearlyTrade, Shardsmarket, Intear, MemeCooking, etc.) and native tokens
+    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
+      try {
+        const { executeShieldedVaultIntent } = await import('../racerVault.js');
+        const vaultRes = await executeShieldedVaultIntent({
+          user,
+          tokenAddress,
+          venue: venue as any,
+          side: isBuy ? 'BUY' : 'SELL',
+          amountNear: numNear,
+          amountTokens: amountTokensRaw || (amountTokens ? String(amountTokens) : undefined),
+          slippagePct: Number(slippagePct) || 2,
+        });
+
+        if (vaultRes.success && vaultRes.txHash) {
+          onChainTxHash = vaultRes.txHash;
+          executionRouting = 'RACER_SHIELDED_VAULT';
+          intentMessage = vaultRes.message || `Shielded atomic trade executed via Racer Router (${vaultRes.txHash})`;
+        } else {
+          logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}, falling back to AMM`);
+        }
+      } catch (vaultErr: any) {
+        logger.warn(`Shielded vault router execution error (${vaultErr.message}), falling back to direct AMM`);
+      }
+    }
+
+    // 3. Phase 1c: Direct AMM Swap via Managed Subaccount (Fallback)
     if (!onChainTxHash && user.subaccount_id) {
       try {
         // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
@@ -993,12 +1020,94 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       isPrivateTrade: true,
       txHash: onChainTxHash,
       routing: executionRouting,
-      message: intentMessage || (executionRouting === 'INTENT_SOLVER' ? 'Private Zero-MEV Intent executed via Defuse Solver batch auction' : 'Private trade executed on-chain'),
+      message:
+        intentMessage ||
+        (executionRouting === 'INTENT_SOLVER'
+          ? 'Private Zero-MEV Intent executed via Defuse Solver batch auction'
+          : executionRouting === 'RACER_SHIELDED_VAULT'
+          ? 'Atomic Shielded Trade executed via Racer Router (racerbotrouter.near)'
+          : 'Private trade executed on-chain'),
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to execute private trade' });
   }
 });
+
+// ── Racer Shielded Vault Endpoints (Option B) ────────────────────────────────
+router.get('/alpha/vault/balance', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const token = (req.query.token as string) || 'near';
+    const accountId = user.subaccount_id || user.id;
+    const { getVaultBalance } = await import('../racerVault.js');
+    const balanceYocto = await getVaultBalance(accountId, token);
+    const balanceNear = Number(BigInt(balanceYocto || '0') / 10n ** 20n) / 10000;
+    res.json({ success: true, accountId, token, balanceYocto, balanceNear });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch vault balance' });
+  }
+});
+
+router.get('/alpha/vault/intents', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const accountId = user.subaccount_id || user.id;
+    const { getUserVaultIntents } = await import('@racerbot/db');
+    const intents = await getUserVaultIntents(accountId, 50);
+    res.json({ success: true, intents });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch vault intents' });
+  }
+});
+
+router.get('/alpha/vault/intent/:correlationId', async (req, res) => {
+  try {
+    const { correlationId } = req.params;
+    const { getVaultIntentByCorrelationId } = await import('@racerbot/db');
+    const intent = await getVaultIntentByCorrelationId(correlationId);
+    if (!intent) {
+      res.status(404).json({ error: 'Intent not found with this correlation ID' });
+      return;
+    }
+    res.json({ success: true, intent });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to query intent' });
+  }
+});
+
+router.post('/alpha/vault/deposit', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const numNear = Number(req.body.amountNear);
+    if (!numNear || numNear <= 0) {
+      res.status(400).json({ error: 'Valid amountNear required.' });
+      return;
+    }
+    const yocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+    const { depositNearToVault } = await import('../racerVault.js');
+    const result = await depositNearToVault(user, yocto);
+    if (!result.success) {
+      res.status(400).json({ error: result.reason || 'Deposit failed' });
+      return;
+    }
+    res.json({ success: true, txHash: result.txHash, amountNear: numNear });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Vault deposit error' });
+  }
+});
+
 
 // ── Alpha Caller Signal Broadcast & Copy Dispatch ───────────────────────────
 router.post('/alpha/creator/signal', async (req, res) => {
@@ -1315,27 +1424,7 @@ router.get('/alpha/copy-settings/:traderId', async (req, res) => {
   }
 });
 
-router.post('/alpha/trade/intent-quote', async (req, res) => {
-  try {
-    const user = await resolveAlphaUser(req);
-    const { tokenAddress, side = 'BUY', amountNear = 1.0 } = req.body;
-    if (!tokenAddress) {
-      res.status(400).json({ error: 'tokenAddress is required' });
-      return;
-    }
-    const { getIntentSwapQuote } = await import('../intentTrade.js');
-    const quote = await getIntentSwapQuote({
-      tokenAddress,
-      side: side.toUpperCase() as 'BUY' | 'SELL',
-      amountNear: Number(amountNear) || 1.0,
-      recipientAccountId: user?.subaccount_id || user?.id || 'anonymous.near',
-      dryRun: true,
-    });
-    res.json({ success: true, ...quote });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch intent quote' });
-  }
-});
+
 
 router.post('/deposit/unwrap', async (req, res) => {
   try {
