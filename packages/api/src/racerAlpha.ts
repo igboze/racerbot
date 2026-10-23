@@ -2335,6 +2335,24 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     holders: 145,
   },
   {
+    address: 'dragons-2.nearlytrade.near',
+    symbol: 'DRAGONS',
+    name: 'Near Dragons',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/dragons.png',
+    venue: '⚡ NearlyTrade',
+    launchpad: 'nearlytrade',
+    priceUsd: 0.00014083,
+    priceNear: 0.00002845,
+    change24h: 8.5,
+    marketCap: 139972,
+    volume24h: 34500,
+    bondingProgress: 88,
+    bondingPhase: 'dex_pool',
+    liquidityUsd: 43479,
+    sparkline: [0.00012, 0.000125, 0.00013, 0.000135, 0.000138, 0.000141],
+    holders: 320,
+  },
+  {
     address: 'sol.nearlytrade.near',
     symbol: 'SOL',
     name: 'Sol Nearly',
@@ -2465,24 +2483,6 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     holders: 2840,
   },
   {
-    address: 'wrap.near',
-    symbol: 'wNEAR',
-    name: 'Wrapped NEAR',
-    icon: 'https://assets.ref.finance/images/near.png',
-    venue: '💎 Ref Finance',
-    launchpad: 'ref',
-    priceUsd: 4.95,
-    priceNear: 1.0,
-    change24h: 3.8,
-    marketCap: 5800000000,
-    volume24h: 185000000,
-    bondingProgress: 100,
-    bondingPhase: 'dex_pool',
-    liquidityUsd: 42000000,
-    sparkline: [4.75, 4.80, 4.82, 4.88, 4.91, 4.95],
-    holders: 85000,
-  },
-  {
     address: 'aurora.tkn.near',
     symbol: 'AURORA',
     name: 'Aurora',
@@ -2590,6 +2590,13 @@ export const CURATED_ALPHA_TOKENS = [
     name: 'Diarhea',
   },
   {
+    address: 'dragons-2.nearlytrade.near',
+    fallbackLaunchpad: 'nearlytrade' as const,
+    fallbackVenue: '⚡ NearlyTrade',
+    symbol: 'DRAGONS',
+    name: 'Near Dragons',
+  },
+  {
     address: 'sol.nearlytrade.near',
     fallbackLaunchpad: 'nearlytrade' as const,
     fallbackVenue: '⚡ NEARLY',
@@ -2641,13 +2648,6 @@ export const CURATED_ALPHA_TOKENS = [
     fallbackVenue: 'Ref Finance',
     symbol: 'LONK',
     name: 'Lonk',
-  },
-  {
-    address: 'wrap.near',
-    fallbackLaunchpad: 'ref' as const,
-    fallbackVenue: 'Ref Finance',
-    symbol: 'wNEAR',
-    name: 'Wrapped NEAR',
   },
   {
     address: 'aurora.tkn.near',
@@ -2730,16 +2730,19 @@ function mapTokenInfoToAlphaItem(
   const symbol = (info?.symbol || fallbackMeta.symbol || address.split('.')[0]).toUpperCase();
   const name = info?.name || fallbackMeta.name || symbol;
 
-  const priceNear = parseFloat(info?.price || '0');
+  const rawPriceNear = parseFloat(info?.price || '0');
+  const safePriceNear = isNaN(rawPriceNear) || rawPriceNear < 0 ? 0 : rawPriceNear;
   const activeNearUsd = info?.near_usd || nearUsd || 4.95;
-  const priceUsd = parseFloat(info?.price_usd || '0') || (priceNear * activeNearUsd);
-  const liquidityUsd = parseFloat(info?.liquidity_usd || '0') || (parseFloat(info?.liquidity || '0') * activeNearUsd);
+  const rawPriceUsd = parseFloat(info?.price_usd || '0') || (safePriceNear * activeNearUsd);
+  const safePriceUsd = isNaN(rawPriceUsd) || rawPriceUsd < 0 ? 0 : rawPriceUsd;
+  const rawLiq = parseFloat(info?.liquidity_usd || '0') || (parseFloat(info?.liquidity || '0') * activeNearUsd);
+  const liquidityUsd = isNaN(rawLiq) || rawLiq < 0 ? 0 : rawLiq;
   
   let marketCap = Number(info?.market_cap_usd || 0);
-  if (!marketCap && priceUsd > 0 && info?.total_supply) {
+  if (!marketCap && safePriceUsd > 0 && info?.total_supply) {
     const dec = info?.decimals ?? 18;
     const supply = parseFloat(info.total_supply) / Math.pow(10, dec);
-    marketCap = Math.round(priceUsd * supply);
+    marketCap = Math.round(safePriceUsd * supply);
   }
 
   const bondingProgress = info?.bonding_progress_pct !== null && info?.bonding_progress_pct !== undefined
@@ -2753,7 +2756,7 @@ function mapTokenInfoToAlphaItem(
     bondingPhase = 'graduated';
   }
 
-  const p = priceUsd || 0.0001;
+  const p = safePriceUsd || 0.0001;
   const sparkline = [
     Number((p * 0.88).toFixed(6)),
     Number((p * 0.92).toFixed(6)),
@@ -2772,8 +2775,8 @@ function mapTokenInfoToAlphaItem(
     icon,
     venue,
     launchpad: fallbackMeta.fallbackLaunchpad || launchpad,
-    priceUsd: Number(priceUsd.toFixed(8)),
-    priceNear: Number(priceNear.toFixed(8)),
+    priceUsd: Number(safePriceUsd.toFixed(8)),
+    priceNear: Number(safePriceNear.toFixed(8)),
     change24h: info?.price_24h_change !== undefined && info?.price_24h_change !== null ? Number(info.price_24h_change) : 0,
     marketCap: Math.round(marketCap),
     volume24h: info?.volume_24h_usd ? Math.round(info.volume_24h_usd) : Math.round(liquidityUsd * 0.35),
@@ -3023,7 +3026,10 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
     }
   }
 
-  return results.length > 0 ? results : [...INITIAL_ALPHA_TOKENS];
+  // Exclude base collateral wrap.near and native near from meme / alpha screener
+  const filteredResults = results.filter(t => t && t.address && t.address.toLowerCase() !== 'wrap.near' && t.address.toLowerCase() !== 'near');
+
+  return filteredResults.length > 0 ? filteredResults : [...INITIAL_ALPHA_TOKENS];
 }
 
 export async function listAlphaTokens(options?: {
@@ -3071,7 +3077,7 @@ export async function listAlphaTokens(options?: {
     }
   }
 
-  let tokens = [...cachedAlphaTokensList.tokens];
+  let tokens = [...cachedAlphaTokensList.tokens].filter(t => t && t.address && t.address.toLowerCase() !== 'wrap.near' && t.address.toLowerCase() !== 'near');
 
   // Live On-Chain Address Query: If user searches for a specific .near contract address
   const rawSearch = (options?.search || '').trim();
@@ -3155,9 +3161,9 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
   if (!tokenAddress) return null;
   const lowerAddr = tokenAddress.toLowerCase().trim();
 
-  // If token list is not yet populated from on-chain/indexer, trigger immediate load
+  // Kick off background token list load if empty, non-blocking
   if (cachedAlphaTokensList.tokens.length <= INITIAL_ALPHA_TOKENS.length) {
-    await listAlphaTokens({ category: 'all' }).catch(() => null);
+    listAlphaTokens({ category: 'all' }).catch(() => null);
   }
 
   const cached = cachedAlphaTokensList.tokens.find(t => t.address.toLowerCase() === lowerAddr);
@@ -3165,8 +3171,8 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
   const nearUsd = await getNearUsdPrice().catch(() => 4.95);
 
   try {
-    const liveInfo = await withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 2500, null);
-    if (liveInfo && (liveInfo.price || liveInfo.symbol)) {
+    const liveInfo = await withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 5000, null);
+    if (liveInfo && (liveInfo.price || liveInfo.symbol || liveInfo.name)) {
       const item = mapTokenInfoToAlphaItem(
         tokenAddress,
         liveInfo,
@@ -3180,6 +3186,13 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
       );
       if (fallback?.icon && !item.icon) {
         item.icon = fallback.icon;
+      }
+      // Upsert into cachedAlphaTokensList for fast access
+      const existingIdx = cachedAlphaTokensList.tokens.findIndex(t => t.address.toLowerCase() === lowerAddr);
+      if (existingIdx >= 0) {
+        cachedAlphaTokensList.tokens[existingIdx] = item;
+      } else {
+        cachedAlphaTokensList.tokens.unshift(item);
       }
       return item;
     }

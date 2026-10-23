@@ -871,6 +871,28 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       }
     }
 
+    // Calculate exact amount_in in raw integer format
+    let calculatedAmountIn: string;
+    if (isBuy) {
+      calculatedAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+    } else {
+      if (amountTokensRaw && typeof amountTokensRaw === 'string' && /^\d+$/.test(amountTokensRaw)) {
+        calculatedAmountIn = amountTokensRaw;
+      } else if (amountTokens !== undefined && amountTokens !== null && String(amountTokens).trim() !== '') {
+        const { parseTokenUnits, getNear } = await import('@racerbot/shared');
+        let decimals = Number(clientDecimals);
+        if (isNaN(decimals) || decimals <= 0) {
+          const near = getNear();
+          const meta = await near.getTokenMetadata(tokenAddress).catch(() => null);
+          decimals = meta?.decimals ?? 18;
+        }
+        calculatedAmountIn = parseTokenUnits(String(amountTokens), decimals).toString();
+      } else {
+        // fallback if someone passed amountNear instead
+        calculatedAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+      }
+    }
+
     // 2. Phase 1b: Deployed Shielded Intent Router Contract (racerbotrouter.near)
     // Supports ALL launchpads on NEAR (Ref, Rhea, NearlyTrade, Shardsmarket, Intear, MemeCooking, etc.) and native tokens
     if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
@@ -882,7 +904,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           venue: venue as any,
           side: isBuy ? 'BUY' : 'SELL',
           amountNear: numNear,
-          amountTokens: amountTokensRaw || (amountTokens ? String(amountTokens) : undefined),
+          amountTokens: calculatedAmountIn,
           slippagePct: Number(slippagePct) || 2,
         });
 
@@ -906,50 +928,27 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           try {
             const { getNear } = await import('@racerbot/shared');
             const near = getNear();
-            if (isBuy) {
-              // Register token storage for every NEP-141 token (all venues require this)
-              if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
-                await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
-                  logger.warn(`Storage deposit pre-check warning for ${user.subaccount_id} on ${tokenAddress}: ${err?.message}`);
-                });
-              }
-              // Ref-Finance internal whitelist registration (needed for ref/rhea/memecooking/gaypad/kelytra/nearpumpfun)
-              const refVenues = ['rhea', 'ref', 'memecooking', 'gaypad', 'kelytra', 'nearpumpfun', 'nearlytrade', 'onetokenhub', 'nearpad', 'shoremarkets', 'qlyphs'];
-              if (refVenues.includes(venue)) {
-                const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
-                await ensureRefStorage(user.subaccount_id).catch(() => {});
-                await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
-              }
-            } else {
-              // On sell, ensure user has storage deposit on wrap.near so they can receive wNEAR
-              await near.ensureStorageDeposit(user.subaccount_id, 'wrap.near').catch((err: any) => {
-                logger.warn(`wrap.near storage deposit warning for ${user.subaccount_id}: ${err?.message}`);
+            // Register token storage for every NEP-141 token
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
+                logger.warn(`Storage deposit pre-check warning for ${user.subaccount_id} on ${tokenAddress}: ${err?.message}`);
               });
+            }
+            // Ensure user has wrap.near storage deposit for receiving or unbundling wNEAR
+            await near.ensureStorageDeposit(user.subaccount_id, 'wrap.near').catch((err: any) => {
+              logger.warn(`wrap.near storage deposit warning for ${user.subaccount_id}: ${err?.message}`);
+            });
+
+            // Ref-Finance internal whitelist registration (needed for ref/rhea/memecooking/gaypad/kelytra/nearpumpfun/nearlytrade/etc)
+            // Required on BOTH buy and sell so Ref can accept ft_transfer_call
+            const refVenues = ['rhea', 'ref', 'memecooking', 'gaypad', 'kelytra', 'nearpumpfun', 'nearlytrade', 'onetokenhub', 'nearpad', 'shoremarkets', 'qlyphs'];
+            if (refVenues.includes(venue)) {
+              const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+              await ensureRefStorage(user.subaccount_id).catch(() => {});
+              await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
             }
           } catch (preErr: any) {
             logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
-          }
-        }
-
-        // Calculate exact amount_in in raw integer format
-        let calculatedAmountIn: string;
-        if (isBuy) {
-          calculatedAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
-        } else {
-          if (amountTokensRaw && typeof amountTokensRaw === 'string' && /^\d+$/.test(amountTokensRaw)) {
-            calculatedAmountIn = amountTokensRaw;
-          } else if (amountTokens !== undefined && amountTokens !== null && String(amountTokens).trim() !== '') {
-            const { parseTokenUnits, getNear } = await import('@racerbot/shared');
-            let decimals = Number(clientDecimals);
-            if (isNaN(decimals) || decimals <= 0) {
-              const near = getNear();
-              const meta = await near.getTokenMetadata(tokenAddress).catch(() => null);
-              decimals = meta?.decimals ?? 18;
-            }
-            calculatedAmountIn = parseTokenUnits(String(amountTokens), decimals).toString();
-          } else {
-            // fallback if someone passed amountNear instead
-            calculatedAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
           }
         }
 
@@ -978,14 +977,13 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           try {
             const { getNear } = await import('@racerbot/shared');
             const near = getNear();
-            if (isBuy && tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
-              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress);
-              const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
-              await ensureRefStorage(user.subaccount_id);
-              await ensureRefTokenRegistered(tokenAddress, user.subaccount_id);
-            } else {
-              await near.ensureStorageDeposit(user.subaccount_id, 'wrap.near');
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch(() => {});
             }
+            await near.ensureStorageDeposit(user.subaccount_id, 'wrap.near').catch(() => {});
+            const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+            await ensureRefStorage(user.subaccount_id).catch(() => {});
+            await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
             // Single retry after successful registration
             swapResult = await publishSwap(buildSwapArgs(), undefined, { suppressAlphaSignal: true });
             logger.info(`[TRADE-ROUTE] Storage self-heal retry result for ${user.subaccount_id}: success=${swapResult?.success}`);
