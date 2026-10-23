@@ -703,6 +703,113 @@ router.post('/alpha/creator/terminal-link', async (req, res) => {
   }
 });
 
+// ── Private DEX Trading & Intent Execution Endpoint ────────────────────────
+router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to trade.' });
+      return;
+    }
+
+    const { tokenAddress, tokenSymbol, tokenName, side, amountNear, venue: explicitVenue, txHash: clientTxHash, slippagePct } = req.body;
+    if (!tokenAddress || !side) {
+      res.status(400).json({ error: 'tokenAddress and side are required.' });
+      return;
+    }
+
+    const { inferVenueFromToken } = await import('../racerAlpha.js');
+    const isBuy = side.toUpperCase() === 'BUY';
+    const numNear = Number(amountNear) || 1.0;
+    const venue = explicitVenue || inferVenueFromToken(tokenAddress);
+    const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
+
+    let onChainTxHash: string | undefined = clientTxHash || undefined;
+    let executionRouting: 'INTENT_SOLVER' | 'AMM' = 'AMM';
+    let intentMessage: string | undefined;
+
+    // 1. Phase 1a: Decentralized Private Intent Solver Execution (Option B)
+    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
+      try {
+        const { executeIntentTrade } = await import('../intentTrade.js');
+        const intentResult = await executeIntentTrade({
+          user,
+          tokenAddress,
+          tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
+          side: isBuy ? 'BUY' : 'SELL',
+          amountNear: numNear,
+          recipientAccountId: user.subaccount_id || user.id,
+        });
+
+        if (intentResult.success && intentResult.txHash) {
+          onChainTxHash = intentResult.txHash;
+          executionRouting = 'INTENT_SOLVER';
+          intentMessage = intentResult.message;
+        } else if (intentResult.requiresClientSignature && intentResult.depositAddress) {
+          res.json({
+            success: false,
+            requiresClientSignature: true,
+            routing: 'INTENT_SOLVER',
+            depositAddress: intentResult.depositAddress,
+            amountNear: numNear,
+            correlationId: intentResult.correlationId,
+            message: 'Please confirm the intent transfer in your connected NEAR wallet.'
+          });
+          return;
+        }
+      } catch (intentErr: any) {
+        logger.warn(`Intent solver execution error (${intentErr.message}), falling back to direct AMM`);
+      }
+    }
+
+    // 2. Phase 1b: Direct AMM Swap via Managed Subaccount
+    if (!onChainTxHash && user.subaccount_id) {
+      try {
+        const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+        const swapResult = await publishSwap({
+          user_id: user.id,
+          token_in: isBuy ? 'near' : tokenAddress,
+          token_out: isBuy ? tokenAddress : 'wrap.near',
+          amount_in: isBuy ? amountYocto : (req.body.amountTokens || amountYocto),
+          min_amount_out: '0',
+          venue: venue as any,
+          slippage_pct: Number(slippagePct) || 2,
+        }, undefined, { suppressAlphaSignal: true });
+
+        if (swapResult && swapResult.success !== false) {
+          onChainTxHash = swapResult.txHash;
+          executionRouting = 'AMM';
+        } else {
+          res.status(400).json({ error: swapResult?.reason || 'On-chain swap failed. Please retry.' });
+          return;
+        }
+      } catch (swapErr: any) {
+        if (!clientTxHash) {
+          res.status(400).json({ error: `Trade failed: ${swapErr?.message || 'wallet error'}. Please ensure your wallet is funded and try again.` });
+          return;
+        }
+        onChainTxHash = clientTxHash;
+      }
+    }
+
+    if (!onChainTxHash) {
+      res.status(400).json({ error: 'A real on-chain transaction hash is required. Please sign the trade in your wallet first.' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      isPrivateTrade: true,
+      txHash: onChainTxHash,
+      routing: executionRouting,
+      message: intentMessage || (executionRouting === 'INTENT_SOLVER' ? 'Private Zero-MEV Intent executed via Defuse Solver batch auction' : 'Private trade executed on-chain'),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to execute private trade' });
+  }
+});
+
+// ── Alpha Caller Signal Broadcast & Copy Dispatch ───────────────────────────
 router.post('/alpha/creator/signal', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
@@ -710,6 +817,19 @@ router.post('/alpha/creator/signal', async (req, res) => {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
       return;
     }
+
+    // If caller explicitly asked for private trade, delegate cleanly
+    if (req.body.isPrivateTrade) {
+      const { tokenAddress, side } = req.body;
+      if (!tokenAddress || !side) {
+        res.status(400).json({ error: 'tokenAddress and side are required.' });
+        return;
+      }
+      // Execute as private trade
+      req.url = '/alpha/trade/execute';
+      return (router as any).handle(req, res);
+    }
+
     const { recordAlphaSignal, inferVenueFromToken } = await import('../racerAlpha.js');
     const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue: explicitVenue, txHash: clientTxHash, slippagePct } = req.body;
 
@@ -850,6 +970,107 @@ router.post('/alpha/creator/signal', async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to dispatch signal' });
+  }
+});
+
+// ── Copy Trading Settings (Requires Paid Viewing Key) ───────────────────────
+router.post('/alpha/copy-settings', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+
+    const { traderId, allocationPct, riskMultiplier, stopLossPct, autoCopyEnabled, autoCopyAmountNear } = req.body;
+    if (!traderId) {
+      res.status(400).json({ error: 'traderId is required to configure copy trading.' });
+      return;
+    }
+
+    const { getUserHeldKeysMap, updateKeyCopySettings } = await import('../racerAlpha.js');
+    const userKeysMap = await getUserHeldKeysMap(user.id);
+    const keyInfo = userKeysMap.get(traderId);
+
+    // Verify key ownership: users who are not copy trading can trade tokens freely,
+    // but MUST purchase an Alpha Caller's key if they want to copy trade them.
+    if (!keyInfo) {
+      res.status(403).json({
+        success: false,
+        requiresKey: true,
+        traderId,
+        error: 'Paid Viewing Key Required. You must purchase a Viewing Key for this Alpha Caller to enable automated copy trading.',
+      });
+      return;
+    }
+
+    const result = await updateKeyCopySettings(user.id, traderId, {
+      allocationPct: allocationPct !== undefined ? Number(allocationPct) : undefined,
+      riskMultiplier: riskMultiplier !== undefined ? Number(riskMultiplier) : undefined,
+      stopLossPct: stopLossPct !== undefined ? Number(stopLossPct) : undefined,
+      autoCopyEnabled: autoCopyEnabled !== undefined ? Boolean(autoCopyEnabled) : true,
+      autoCopyAmountNear: autoCopyAmountNear !== undefined ? Number(autoCopyAmountNear) : undefined,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.reason || 'Failed to update copy settings' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Confidential copy settings updated successfully.',
+      heldTier: keyInfo.tier,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update copy settings' });
+  }
+});
+
+router.get('/alpha/copy-settings/:traderId', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const { traderId } = req.params;
+    const { getUserHeldKeysMap } = await import('../racerAlpha.js');
+    const userKeysMap = await getUserHeldKeysMap(user.id);
+    const keyInfo = userKeysMap.get(traderId);
+
+    if (!keyInfo) {
+      res.json({
+        success: true,
+        hasKey: false,
+        requiresKey: true,
+        traderId,
+        message: 'No active viewing key held for this caller.',
+      });
+      return;
+    }
+
+    const db = await (await import('@racerbot/db')).getDb();
+    const rows = await db.query(
+      `SELECT allocation_pct, risk_multiplier, stop_loss_pct, auto_copy_enabled, auto_copy_amount_near 
+       FROM racer_alpha_keys 
+       WHERE buyer_user_id = $1 AND trader_id = $2 AND payment_status = 'completed' LIMIT 1`,
+      [user.id, traderId]
+    ).catch(() => ({ rows: [] }));
+
+    const r = rows.rows[0];
+    res.json({
+      success: true,
+      hasKey: true,
+      heldTier: keyInfo.tier,
+      allocationPct: r?.allocation_pct ?? 25,
+      riskMultiplier: r?.risk_multiplier ?? 1.5,
+      stopLossPct: r?.stop_loss_pct ?? -8,
+      autoCopyEnabled: r?.auto_copy_enabled ?? true,
+      autoCopyAmountNear: r?.auto_copy_amount_near ?? 1.0,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch copy settings' });
   }
 });
 
