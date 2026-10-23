@@ -321,9 +321,14 @@ export class MultiRpcNear {
   private nearBalanceCache = new Map<string, { at: number; value: string }>();
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
-    const rawApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
-    const apiKey = rawApiKey.startsWith('${') ? '' : rawApiKey;
-    const hasValidKey = Boolean(apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me'));
+    const ACTIVE_PAID_FASTNEAR_KEY = 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0';
+    const DEPRECATED_FASTNEAR_KEY = '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83';
+    let rawApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    if (!rawApiKey || rawApiKey === DEPRECATED_FASTNEAR_KEY || rawApiKey.startsWith('TEMP') || rawApiKey.startsWith('change-me') || rawApiKey.startsWith('${')) {
+      rawApiKey = ACTIVE_PAID_FASTNEAR_KEY;
+    }
+    const apiKey = rawApiKey;
+    const hasValidKey = Boolean(apiKey);
     const rawQn = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
     const qnUrl = rawQn.startsWith('${') ? '' : rawQn;
     const brokenDefaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/';
@@ -456,9 +461,17 @@ export class MultiRpcNear {
       return this.connections.get(providerUrl)!;
     }
 
-    const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
-    const hasValidKey = apiKey && !apiKey.startsWith('TEMP') && !apiKey.startsWith('change-me');
+    const ACTIVE_PAID_FASTNEAR_KEY = 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0';
+    const DEPRECATED_FASTNEAR_KEY = '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83';
+    let apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    if (!apiKey || apiKey === DEPRECATED_FASTNEAR_KEY || apiKey.startsWith('TEMP') || apiKey.startsWith('change-me') || apiKey.startsWith('${')) {
+      apiKey = ACTIVE_PAID_FASTNEAR_KEY;
+    }
+    const hasValidKey = Boolean(apiKey);
     let nodeUrl = providerUrl;
+    if (nodeUrl.includes(DEPRECATED_FASTNEAR_KEY)) {
+      nodeUrl = nodeUrl.replace(DEPRECATED_FASTNEAR_KEY, apiKey);
+    }
     const isMainnetFastnear = nodeUrl.includes('rpc.mainnet.fastnear.com');
 
     if (isMainnetFastnear && hasValidKey && !nodeUrl.includes('apiKey=')) {

@@ -85,15 +85,31 @@ import { notifyTokenDeposit } from './notify.js';
 import { recordUserTrade } from './depositWatcher.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
-const fastnearApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
-const hasFastnearKey = fastnearApiKey && !fastnearApiKey.startsWith('TEMP') && !fastnearApiKey.startsWith('change-me') && !fastnearApiKey.startsWith('${');
+export const ACTIVE_PAID_FASTNEAR_KEY = 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0';
+const DEPRECATED_FASTNEAR_KEY = '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83';
+
+function resolveFastnearKey(rawKey?: string): string {
+  const k = (rawKey || '').trim();
+  if (!k || k === DEPRECATED_FASTNEAR_KEY || k.startsWith('TEMP') || k.startsWith('change-me') || k.startsWith('${')) {
+    return ACTIVE_PAID_FASTNEAR_KEY;
+  }
+  return k;
+}
+
+const fastnearApiKey = resolveFastnearKey(process.env.FASTNEAR_API_KEY);
+const hasFastnearKey = Boolean(fastnearApiKey);
 
 export function formatNearRpcUrl(url: string): string {
   let cleanUrl = url.trim();
   if (!cleanUrl) return '';
-  if (cleanUrl.includes('rpc.mainnet.fastnear.com') && hasFastnearKey && !cleanUrl.includes('apiKey=')) {
-    const sep = cleanUrl.includes('?') ? '&' : '?';
-    cleanUrl = `${cleanUrl}${sep}apiKey=${fastnearApiKey}`;
+  if (cleanUrl.includes(DEPRECATED_FASTNEAR_KEY)) {
+    cleanUrl = cleanUrl.replace(DEPRECATED_FASTNEAR_KEY, fastnearApiKey);
+  }
+  if (cleanUrl.includes('rpc.mainnet.fastnear.com') && hasFastnearKey) {
+    if (!cleanUrl.includes('apiKey=')) {
+      const sep = cleanUrl.includes('?') ? '&' : '?';
+      cleanUrl = `${cleanUrl}${sep}apiKey=${fastnearApiKey}`;
+    }
   }
   return cleanUrl;
 }
