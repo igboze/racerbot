@@ -2281,6 +2281,9 @@ export interface AlphaTokenItem {
   liquidityUsd: number;
   sparkline: number[];
   holders: number;
+  decimals?: number;
+  poolId?: number | null;
+  dclPoolId?: string | null;
 }
 
 // ── In-Memory Fast Cache for Live On-Chain Tokens ────────────────────────────
@@ -2795,6 +2798,9 @@ function mapTokenInfoToAlphaItem(
     liquidityUsd: Math.round(liquidityUsd),
     sparkline,
     holders: info?.holders_count || 100,
+    decimals: info?.decimals ?? (fallbackMeta as any)?.decimals ?? 18,
+    poolId: info?.pool_id ?? info?.poolId ?? null,
+    dclPoolId: info?.dcl_pool_id ?? info?.dclPoolId ?? null,
   };
 }
 

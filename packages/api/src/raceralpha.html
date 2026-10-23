@@ -5418,6 +5418,8 @@
         amountTokens: amtTokens,
         amountTokensRaw: amtTokensRaw,
         tokenDecimals: tokenDecimals,
+        poolId: selectedGmGnToken.poolId || selectedGmGnToken.pool_id || null,
+        dclPoolId: selectedGmGnToken.dclPoolId || selectedGmGnToken.dcl_pool_id || null,
         priceNear: selectedGmGnToken.priceNear,
         venue: selectedGmGnToken.venue,
         routingPreference: (selectedGmGnToken.venue && selectedGmGnToken.venue.toLowerCase() !== 'defuse') ? 'vault' : 'auto',

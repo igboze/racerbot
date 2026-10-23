@@ -1,4 +1,11 @@
-import { createLogger, getNear, getNearUsdPrice, parseMemeCookingId } from '@racerbot/shared';
+import {
+  createLogger,
+  getNear,
+  getNearUsdPrice,
+  parseMemeCookingId,
+  decrypt,
+  parseTokenUnits,
+} from '@racerbot/shared';
 import {
   getDb,
   recordVaultIntent,
@@ -8,7 +15,7 @@ import {
   type UserRecord,
 } from '@racerbot/db';
 import crypto from 'crypto';
-import { KeyPair } from 'near-api-js';
+import { KeyPair, transactions } from 'near-api-js';
 import { connectWithNearRpcFailover } from './wallet.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 
@@ -16,6 +23,22 @@ const logger = createLogger('racer-vault');
 
 export const RACER_VAULT_CONTRACT_ID =
   process.env.RACER_VAULT_CONTRACT_ID || process.env.ROUTER_CONTRACT_ID || 'vault.racerbot.near';
+
+// High-performance in-memory cache for resolved vault hop routes (0ms route lookup on repeat trades)
+const hopRouteCache = new Map<string, {
+  route: {
+    venue: VaultVenue;
+    hops: VaultHop[];
+    tokenIn: string;
+    tokenOut: string;
+    expectedOut: string;
+    minAmountOut: string;
+    custom_contract?: string | null;
+    custom_msg?: string | null;
+  };
+  cachedAt: number;
+}>();
+const HOP_CACHE_TTL_MS = 300_000; // 5 minutes
 
 export type VaultVenue =
   | 'Rhea'
@@ -247,6 +270,8 @@ export async function planVaultHops(params: {
   side: 'BUY' | 'SELL';
   amountIn: string;
   slippagePct: number;
+  poolId?: number | null;
+  dclPoolId?: string | null;
 }): Promise<{
   venue: VaultVenue;
   hops: VaultHop[];
@@ -257,10 +282,18 @@ export async function planVaultHops(params: {
   custom_contract?: string | null;
   custom_msg?: string | null;
 }> {
-  const near = getNear();
   const isBuy = params.side === 'BUY';
   const WRAP_NEAR = 'wrap.near';
   const vNorm = (params.venue || '').toLowerCase().trim();
+
+  // 0. Cache check for ultra-fast instant resolution (0ms repeat route calculation)
+  const cacheKey = `${params.tokenAddress}:${vNorm}:${params.side}:${params.dclPoolId || ''}:${params.poolId ?? ''}`;
+  const cached = hopRouteCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < HOP_CACHE_TTL_MS) {
+    return cached.route;
+  }
+
+  const near = getNear();
 
   // 1. Shardsmarket Bonding Curve
   if (vNorm === 'shardsmarket') {
@@ -480,15 +513,17 @@ export async function planVaultHops(params: {
     vNorm === 'dcl';
 
   if (isDclVenue) {
-    // Check multi-hop route for non-NEAR quote assets (USDT, USDC)
-    const route = await near.planNearlytradeRoute(params.tokenAddress).catch(() => null);
-    if (route && route.kind === 'multihop') {
-      const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
-      const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
-      if (isBuy) {
-        return {
-          venue: 'Dcl',
-          hops: [
+    let dclPoolId: string | null = params.dclPoolId || null;
+
+    if (!dclPoolId) {
+      // Check multi-hop route for non-NEAR quote assets (USDT, USDC)
+      const route = await near.planNearlytradeRoute(params.tokenAddress).catch(() => null);
+      if (route && route.kind === 'multihop') {
+        const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
+        const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
+        const plan = {
+          venue: 'Dcl' as const,
+          hops: isBuy ? [
             {
               dcl_pool_id: route.hop1.poolId,
               token_in: WRAP_NEAR,
@@ -501,16 +536,7 @@ export async function planVaultHops(params: {
               token_out: params.tokenAddress,
               min_amount_out: '0',
             },
-          ],
-          tokenIn,
-          tokenOut,
-          expectedOut: '0',
-          minAmountOut: '0',
-        };
-      } else {
-        return {
-          venue: 'Dcl',
-          hops: [
+          ] : [
             {
               dcl_pool_id: route.launchPoolId,
               token_in: params.tokenAddress,
@@ -529,20 +555,26 @@ export async function planVaultHops(params: {
           expectedOut: '0',
           minAmountOut: '0',
         };
+        hopRouteCache.set(cacheKey, { route: plan, cachedAt: Date.now() });
+        return plan;
+      } else if (route && route.launchPoolId) {
+        // Fast path: direct launch pool already resolved by planNearlytradeRoute!
+        dclPoolId = route.launchPoolId;
       }
     }
 
     // Direct DCL pair
-    let dclPoolId: string | null = null;
-    if (vNorm === 'onetokenhub') {
-      const st = await near.getOneTokenHubState(params.tokenAddress).catch(() => null);
-      dclPoolId = st?.dclPoolId || null;
-    } else if (vNorm === 'shoremarkets') {
-      const st = await near.getShoremarketsTokenState(params.tokenAddress).catch(() => null);
-      dclPoolId = st?.dclPoolId || null;
-    } else if (vNorm === 'nearpad') {
-      const st = await near.getNEARpadState(params.tokenAddress).catch(() => null);
-      dclPoolId = st?.dclPoolId || null;
+    if (!dclPoolId) {
+      if (vNorm === 'onetokenhub') {
+        const st = await near.getOneTokenHubState(params.tokenAddress).catch(() => null);
+        dclPoolId = st?.dclPoolId || null;
+      } else if (vNorm === 'shoremarkets') {
+        const st = await near.getShoremarketsTokenState(params.tokenAddress).catch(() => null);
+        dclPoolId = st?.dclPoolId || null;
+      } else if (vNorm === 'nearpad') {
+        const st = await near.getNEARpadState(params.tokenAddress).catch(() => null);
+        dclPoolId = st?.dclPoolId || null;
+      }
     }
     if (!dclPoolId) {
       dclPoolId = await near.findDclPoolId(WRAP_NEAR, params.tokenAddress).catch(() => null);
@@ -550,8 +582,8 @@ export async function planVaultHops(params: {
 
     const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
     const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
-    return {
-      venue: 'Dcl',
+    const plan = {
+      venue: 'Dcl' as const,
       hops: [{
         dcl_pool_id: dclPoolId || `${params.tokenAddress}|${WRAP_NEAR}|10000`,
         token_in: tokenIn,
@@ -563,17 +595,28 @@ export async function planVaultHops(params: {
       expectedOut: '0',
       minAmountOut: '0',
     };
+    hopRouteCache.set(cacheKey, { route: plan, cachedAt: Date.now() });
+    return plan;
   }
 
   // 7. Rhea & Ref AMM v2 (default)
-  // Check if token actually lives on DCL
-  const rheaPool = await near.findRheaPoolForToken(params.tokenAddress).catch(() => null);
-  if (rheaPool && rheaPool.isDcl) {
-    const dclId = String(rheaPool.poolId);
+  let dclId: string | null = params.dclPoolId || null;
+  let ammPoolId: number | null = typeof params.poolId === 'number' ? params.poolId : null;
+
+  if (!dclId && ammPoolId === null) {
+    const rheaPool = await near.findRheaPoolForToken(params.tokenAddress).catch(() => null);
+    if (rheaPool && rheaPool.isDcl) {
+      dclId = String(rheaPool.poolId);
+    } else if (typeof rheaPool?.poolId === 'number') {
+      ammPoolId = rheaPool.poolId;
+    }
+  }
+
+  if (dclId) {
     const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
     const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
-    return {
-      venue: 'Dcl',
+    const plan = {
+      venue: 'Dcl' as const,
       hops: [{
         dcl_pool_id: dclId,
         token_in: tokenIn,
@@ -585,19 +628,21 @@ export async function planVaultHops(params: {
       expectedOut: '0',
       minAmountOut: '0',
     };
+    hopRouteCache.set(cacheKey, { route: plan, cachedAt: Date.now() });
+    return plan;
   }
 
-  const poolId = typeof rheaPool?.poolId === 'number'
-    ? rheaPool.poolId
-    : (await near.findRheaPoolId(WRAP_NEAR, params.tokenAddress).catch(() => null));
+  if (ammPoolId === null) {
+    ammPoolId = await near.findRheaPoolId(WRAP_NEAR, params.tokenAddress).catch(() => null);
+  }
 
   const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
   const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
 
-  return {
-    venue: 'RefAmm',
+  const plan = {
+    venue: 'RefAmm' as const,
     hops: [{
-      pool_id: poolId ?? 0,
+      pool_id: ammPoolId ?? 0,
       token_in: tokenIn,
       token_out: tokenOut,
       min_amount_out: '0',
@@ -607,6 +652,8 @@ export async function planVaultHops(params: {
     expectedOut: '0',
     minAmountOut: '0',
   };
+  hopRouteCache.set(cacheKey, { route: plan, cachedAt: Date.now() });
+  return plan;
 }
 
 /**
@@ -623,6 +670,9 @@ export async function executeShieldedVaultIntent(params: {
   amountNear?: number;
   amountTokens?: string;
   slippagePct?: number;
+  poolId?: number | null;
+  dclPoolId?: string | null;
+  tokenDecimals?: number;
 }): Promise<VaultExecutionResult> {
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const nonceBytes = crypto.randomBytes(32);
@@ -642,27 +692,43 @@ export async function executeShieldedVaultIntent(params: {
       rawAmountIn = rawInput;
     } else if (rawInput && !isNaN(Number(rawInput))) {
       // Input was passed as a decimal number (e.g. "50.5" tokens) -> parse with token decimals
-      const { parseTokenUnits, getNear } = await import('@racerbot/shared');
-      const near = getNear();
-      const meta = await near.getTokenMetadata(params.tokenAddress).catch(() => null);
-      const dec = meta?.decimals ?? 18;
+      let dec = params.tokenDecimals;
+      if (!dec || isNaN(dec) || dec <= 0) {
+        const near = getNear();
+        const meta = await near.getTokenMetadata(params.tokenAddress).catch(() => null);
+        dec = meta?.decimals ?? 18;
+      }
       rawAmountIn = parseTokenUnits(rawInput, dec).toString();
     } else {
       rawAmountIn = '1000000000000000000';
     }
   }
 
-  // 1. Plan hops (handles all launchpads, multi-hop, non-NEAR quotes, bonding curves)
-  const planned = await planVaultHops({
-    tokenAddress: params.tokenAddress,
-    venue: params.venue,
-    side: params.side,
-    amountIn: rawAmountIn,
-    slippagePct: slippage,
-  });
+  const userAccountId = params.user.subaccount_id || params.user.id;
+  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
+  const privateKey = decrypt(params.user.scoped_key_encrypted, masterKey);
+  const keyPair = KeyPair.fromString(privateKey as any);
+  const near = getNear();
+
+  // Concurrent Execution: 1. Plan hops, 2. Check vault ledger balances, 3. Ensure signing key ready in NearClient
+  const [planned, [balNear, balWrap]] = await Promise.all([
+    planVaultHops({
+      tokenAddress: params.tokenAddress,
+      venue: params.venue,
+      side: params.side,
+      amountIn: rawAmountIn,
+      slippagePct: slippage,
+      poolId: params.poolId,
+      dclPoolId: params.dclPoolId,
+    }),
+    isBuy
+      ? Promise.all([getVaultBalance(userAccountId, 'near'), getVaultBalance(userAccountId, 'wrap.near')])
+      : Promise.all([getVaultBalance(userAccountId, params.tokenAddress), Promise.resolve('0')]),
+    near.addKey(userAccountId, keyPair),
+  ]);
 
   const intentPayload: ShieldedIntentPayload = {
-    user: params.user.subaccount_id || params.user.id,
+    user: userAccountId,
     venue: planned.venue,
     hops: planned.hops,
     amount_in: rawAmountIn,
@@ -680,27 +746,21 @@ export async function executeShieldedVaultIntent(params: {
   // For BUY: If insufficient, we atomically batch [deposit_near, execute_intent] into a single transaction,
   // cutting out the sequential 2nd transaction and eliminating 4+ seconds of latency!
   let autoDepositedToken: string | null = null;
-  let currentBal = await getVaultBalance(intentPayload.user, intentPayload.token_in);
   let neededNearToAttach = 0n;
 
   if (isBuy) {
-    if (BigInt(currentBal) < BigInt(rawAmountIn)) {
-      const altToken = intentPayload.token_in === 'wrap.near' ? 'near' : 'wrap.near';
-      const altBal = await getVaultBalance(intentPayload.user, altToken);
-      if (BigInt(altBal) >= BigInt(rawAmountIn)) {
-        currentBal = altBal;
-      } else {
-        const needed = BigInt(rawAmountIn) - BigInt(currentBal);
-        if (needed > 0n) {
-          logger.info(`Auto-funding vault sub-ledger: ${needed} yocto for ${intentPayload.user} (batched atomically into intent tx)`);
-          neededNearToAttach = needed;
-          autoDepositedToken = 'near';
-        }
+    const maxAvailable = BigInt(balNear) >= BigInt(balWrap) ? BigInt(balNear) : BigInt(balWrap);
+    if (maxAvailable < BigInt(rawAmountIn)) {
+      const needed = BigInt(rawAmountIn) - maxAvailable;
+      if (needed > 0n) {
+        logger.info(`Auto-funding vault sub-ledger: ${needed} yocto for ${userAccountId} (batched atomically into intent tx)`);
+        neededNearToAttach = needed;
+        autoDepositedToken = 'near';
       }
     }
-  } else if (BigInt(currentBal) < BigInt(rawAmountIn) && !isBuy) {
-    const needed = (BigInt(rawAmountIn) - BigInt(currentBal)).toString();
-    logger.info(`Auto-depositing ${needed} FT (${planned.tokenIn}) into vault sub-ledger for ${intentPayload.user}`);
+  } else if (!isBuy && BigInt(balNear) < BigInt(rawAmountIn)) {
+    const needed = (BigInt(rawAmountIn) - BigInt(balNear)).toString();
+    logger.info(`Auto-depositing ${needed} FT (${planned.tokenIn}) into vault sub-ledger for ${userAccountId}`);
     const depRes = await depositFtToVault(params.user, planned.tokenIn, needed);
     if (!depRes.success) {
       return {
@@ -735,14 +795,6 @@ export async function executeShieldedVaultIntent(params: {
   }).catch((dbErr: any) => logger.warn(`Failed recording vault intent to DB: ${dbErr?.message}`));
 
   // 4. Submit intent using user's scoped subaccount with fast hedged multi-RPC broadcaster
-  const { transactions } = await import('near-api-js');
-  const { decrypt, getNear } = await import('@racerbot/shared');
-  const near = getNear();
-  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
-  const privateKey = decrypt(params.user.scoped_key_encrypted, masterKey);
-  const keyPair = KeyPair.fromString(privateKey as any);
-  await near.addKey(intentPayload.user, keyPair);
-
   const actions: any[] = [];
   if (isBuy && neededNearToAttach > 0n) {
     actions.push(

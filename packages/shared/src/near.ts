@@ -5391,39 +5391,23 @@ export class MultiRpcNear {
 
     let polls = 0;
     while (Date.now() < deadline) {
-      // Primary check: pinnedUrl
-      const outcome = await tryRpc(pinnedUrl).catch((err) => {
-        lastErr = err as Error;
-        return null;
-      });
-
-      if (outcome) {
-        const fes = outcome.final_execution_status;
-        const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
-        if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
-          return outcome;
-        }
-      }
-
-      // If primary RPC hasn't confirmed after 1 poll (~100ms), also query secondary endpoints in parallel
-      if (polls >= 1 && allPollUrls.length > 1 && Date.now() < deadline) {
-        const secondaryUrls = allPollUrls.filter(url => url !== pinnedUrl);
-        const altOutcomes = await Promise.allSettled(secondaryUrls.map(url => tryRpc(url)));
-        for (const res of altOutcomes) {
-          if (res.status === 'fulfilled' && res.value) {
-            const altOutcome = res.value;
-            const fes = altOutcome.final_execution_status;
-            const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
-            if (fullyExecuted && Array.isArray(altOutcome.receipts_outcome) && altOutcome.receipts_outcome.length > 0) {
-              return altOutcome;
-            }
+      // Query all candidate RPC endpoints concurrently from poll 0 to capture the fastest confirmation
+      const pollTargets = allPollUrls.length > 0 ? allPollUrls : [pinnedUrl];
+      const outcomes = await Promise.allSettled(pollTargets.map(url => tryRpc(url)));
+      for (const res of outcomes) {
+        if (res.status === 'fulfilled' && res.value) {
+          const outcome = res.value;
+          const fes = outcome.final_execution_status;
+          const fullyExecuted = fes === 'EXECUTED' || fes === 'EXECUTED_OPTIMISTIC' || fes === 'FINAL';
+          if (fullyExecuted && Array.isArray(outcome.receipts_outcome) && outcome.receipts_outcome.length > 0) {
+            return outcome;
           }
         }
       }
 
       polls++;
-      // Fast polling: 100ms for first 10 polls (~1s), then 200ms for next 10 polls, then 400ms
-      const pollDelay = polls < 10 ? 100 : (polls < 20 ? 200 : 400);
+      // Ultra-fast responsive polling: 80ms for first 15 polls (~1.2s), then 150ms for next 15 polls, then 300ms
+      const pollDelay = polls < 15 ? 80 : (polls < 30 ? 150 : 300);
       await sleep(pollDelay);
     }
 
