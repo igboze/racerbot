@@ -460,18 +460,9 @@ impl RacerbotVault {
             "msg": swap_msg,
         });
 
-        let xfer_promise = Promise::new(WRAP_NEAR.parse().unwrap())
-            .function_call(
-                "ft_transfer_call".to_string(),
-                serde_json::to_vec(&xfer_args).unwrap(),
-                ONE_YOCTO,
-                GAS_SWAP,
-            )
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_RESOLVE_RHEA)
-                    .on_rhea_swap(swap_nonce)
-            );
+        let callback = Self::ext(env::current_account_id())
+            .with_static_gas(GAS_RESOLVE_RHEA)
+            .on_rhea_swap(swap_nonce);
 
         if is_near_wrapped {
             Promise::new(WRAP_NEAR.parse().unwrap())
@@ -481,7 +472,16 @@ impl RacerbotVault {
                     NearToken::from_yoctonear(intent.amount_in.0),
                     GAS_WRAP,
                 )
-                .then(xfer_promise)
+                .then(
+                    Promise::new(WRAP_NEAR.parse().unwrap())
+                        .function_call(
+                            "ft_transfer_call".to_string(),
+                            serde_json::to_vec(&xfer_args).unwrap(),
+                            ONE_YOCTO,
+                            GAS_SWAP,
+                        )
+                )
+                .then(callback)
         } else {
             let token_contract = if intent.token_in == "near" { WRAP_NEAR } else { &intent.token_in };
             Promise::new(token_contract.parse().unwrap())
@@ -491,11 +491,7 @@ impl RacerbotVault {
                     ONE_YOCTO,
                     GAS_SWAP,
                 )
-                .then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_RESOLVE_RHEA)
-                        .on_rhea_swap(swap_nonce)
-                )
+                .then(callback)
         }
     }
 
@@ -520,18 +516,9 @@ impl RacerbotVault {
             "msg": swap_msg,
         });
 
-        let xfer_promise = Promise::new(WRAP_NEAR.parse().unwrap())
-            .function_call(
-                "ft_transfer_call".to_string(),
-                serde_json::to_vec(&xfer_args).unwrap(),
-                ONE_YOCTO,
-                GAS_SWAP,
-            )
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_RESOLVE)
-                    .on_swap_complete(swap_nonce)
-            );
+        let callback = Self::ext(env::current_account_id())
+            .with_static_gas(GAS_RESOLVE)
+            .on_swap_complete(swap_nonce);
 
         if is_near_wrapped {
             Promise::new(WRAP_NEAR.parse().unwrap())
@@ -541,7 +528,16 @@ impl RacerbotVault {
                     NearToken::from_yoctonear(intent.amount_in.0),
                     GAS_WRAP,
                 )
-                .then(xfer_promise)
+                .then(
+                    Promise::new(WRAP_NEAR.parse().unwrap())
+                        .function_call(
+                            "ft_transfer_call".to_string(),
+                            serde_json::to_vec(&xfer_args).unwrap(),
+                            ONE_YOCTO,
+                            GAS_SWAP,
+                        )
+                )
+                .then(callback)
         } else {
             let token_contract = if intent.token_in == "near" { WRAP_NEAR } else { &intent.token_in };
             Promise::new(token_contract.parse().unwrap())
@@ -551,11 +547,7 @@ impl RacerbotVault {
                     ONE_YOCTO,
                     GAS_SWAP,
                 )
-                .then(
-                    Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_RESOLVE)
-                        .on_swap_complete(swap_nonce)
-                )
+                .then(callback)
         }
     }
 
