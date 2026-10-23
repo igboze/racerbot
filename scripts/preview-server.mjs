@@ -21,8 +21,7 @@ const bubblemapHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src'
 const raceralphaHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'raceralpha.html');
 const racerHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'racer.html');
 const fleetHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'fleet.html');
-const assetsDir = path.resolve(__dirname, '..', 'assets');
-const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83';
+const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0';
 
 // Real PostgreSQL Database Pool
 const pool = new pg.Pool({
@@ -73,21 +72,25 @@ async function fetchOnChainAccountVolume(accountId) {
     };
   }
 
-  const fastnearKey = (process.env.FASTNEAR_API_KEY || '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83').trim();
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0').trim();
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
     'https://rpc.shitzuapes.xyz',
-    'https://free.rpc.fastnear.com',
-    'https://rpc.intea.rs',
     'https://rpc.mainnet.near.org',
+    'https://rpc.intea.rs',
+    'https://free.rpc.fastnear.com',
   ];
 
   async function callRpc(method, params) {
     for (const url of rpcUrls) {
       try {
+        const isFastnear = url.includes('fastnear.com');
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(isFastnear && fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : {}),
+          },
           body: JSON.stringify({ jsonrpc: '2.0', id: '1', method, params }),
           signal: AbortSignal.timeout(4500),
         });

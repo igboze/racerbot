@@ -346,32 +346,38 @@ export class MultiRpcNear {
       ? Array.from(new Set(allowedUrls))
       : fallbackUrls;
 
-    // Read URLs: Free validator nodes first (zero credit consumption: Shitzu, Intear, Free FastNEAR),
-    // then paid FastNEAR (primary dedicated RPC), QuickNode, and others
-    const readUrls = Array.from(new Set([
-      ...sanitizedUrls.filter(u => u.includes('shitzuapes.xyz')),
-      ...sanitizedUrls.filter(u => u.includes('intea.rs')),
-      ...sanitizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      ...sanitizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea')),
-    ]));
-
     const fastnearPaidEndpoint = hasValidKey
       ? `https://rpc.mainnet.fastnear.com?apiKey=${apiKey}`
       : 'https://rpc.mainnet.fastnear.com';
 
-    // Trade URLs: FastNEAR first (primary RPC), QuickNode (if configured), Shitzu, Intear validator nodes, then Free FastNEAR backup.
-    // Shitzu and Intear connect directly to block producers with zero rate limiting on broadcasts,
-    // ensuring broadcasted transactions are instantly relayed to the consensus mempool.
-    // Even if caller provided limited URLs, always include validator nodes in trade providers for reliable broadcast.
+    const normalizedUrls = sanitizedUrls.map(u => {
+      if (u.includes('rpc.mainnet.fastnear.com') && hasValidKey && !u.includes('apiKey=')) {
+        return fastnearPaidEndpoint;
+      }
+      return u;
+    });
+
+    // Read URLs: Free validator nodes first (zero credit consumption: Shitzu, Intear, Free FastNEAR),
+    // then paid FastNEAR (primary dedicated RPC), QuickNode, and others
+    const readUrls = Array.from(new Set([
+      ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+      ...normalizedUrls.filter(u => u.includes('near.org')),
+      ...normalizedUrls.filter(u => u.includes('intea.rs')),
+      ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...normalizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea') && !u.includes('near.org')),
+    ]));
+
+    // Trade URLs: FastNEAR first (primary paid RPC for execution & signing), then QuickNode, then validator nodes.
     const tradeUrls = Array.from(new Set([
-      ...(hasValidKey ? [fastnearPaidEndpoint] : []),
-      ...sanitizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
-      ...sanitizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      'https://rpc.shitzuapes.xyz',
-      'https://rpc.intea.rs',
-      'https://free.rpc.fastnear.com',
+      ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+      ...normalizedUrls.filter(u => u.includes('near.org')),
+      ...normalizedUrls.filter(u => u.includes('intea.rs')),
+      ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls,
     ]));
 
     this.readProviders = readUrls.map((rawUrl, i) => {
@@ -464,6 +470,7 @@ export class MultiRpcNear {
       networkId: this.networkId,
       nodeUrl,
       keyStore: this.keyStore,
+      headers: isMainnetFastnear && hasValidKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
     });
 
     if (isMainnetFastnear && hasValidKey) {
@@ -5553,10 +5560,11 @@ function sleep(ms: number): Promise<void> {
 
 /** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (Free validator nodes first, then FastNEAR). */
 export const DEFAULT_RPC_URLS = [
+  'https://rpc.mainnet.fastnear.com',
   'https://rpc.shitzuapes.xyz',
+  'https://rpc.mainnet.near.org',
   'https://rpc.intea.rs',
   'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.fastnear.com',
 ];
 
 let _nearInstance: MultiRpcNear | null = null;

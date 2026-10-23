@@ -340,7 +340,7 @@ describe('near: sign-path nonce/block hedged across trade providers', () => {
     const ak = await near.queryAccessKeyHedged('a.near', 'ed25519:xyz');
     expect(ak.nonce).toBe(100); // max wins — a stale lower nonce would collide
     expect(attempted).toContain(QN);
-    expect(attempted).toContain(FN);
+    expect(attempted.some((u: string) => u.startsWith(FN))).toBe(true);
     vi.unstubAllGlobals();
   });
 
