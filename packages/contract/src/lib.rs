@@ -27,10 +27,11 @@ use near_sdk::store::{LookupMap, LookupSet};
 
 // ── Gas budgets ───────────────────────────────────────────────────────────────
 const GAS_WRAP: Gas          = Gas::from_tgas(10);
-const GAS_SWAP: Gas          = Gas::from_tgas(90);
-const GAS_RESOLVE_RHEA: Gas  = Gas::from_tgas(110);
-const GAS_WITHDRAW_REF: Gas  = Gas::from_tgas(50);
-const GAS_RESOLVE: Gas       = Gas::from_tgas(55);
+const GAS_SWAP: Gas          = Gas::from_tgas(80);
+const GAS_RESOLVE_RHEA: Gas  = Gas::from_tgas(160);
+const GAS_WITHDRAW_REF: Gas  = Gas::from_tgas(40);
+const GAS_BALANCE: Gas       = Gas::from_tgas(15);
+const GAS_RESOLVE: Gas       = Gas::from_tgas(115);
 const GAS_STORAGE: Gas       = Gas::from_tgas(20);
 const GAS_FT_XFER: Gas       = Gas::from_tgas(30);
 
@@ -789,8 +790,59 @@ impl RacerbotVault {
     }
 
     /// Generic callback for DCL, Intear, and Shardsmarket swaps.
+    /// Step 1: Venue swap finished.
+    /// Query the router's own ft_balance_of for token_out (or wrap.near) to discover
+    /// the exact number of tokens received from the venue.
     #[private]
     pub fn on_swap_complete(&mut self, swap_nonce: u64) -> PromiseOrValue<U128> {
+        let pending = match self.pending_swaps.get(&swap_nonce) {
+            Some(p) => p.clone(),
+            None => {
+                env::log_str(&format!("WARN: no pending swap nonce={}", swap_nonce));
+                return PromiseOrValue::Value(U128(0));
+            }
+        };
+
+        match env::promise_result_checked(0, 2048) {
+            Ok(_) => {
+                let check_token = if pending.token_out == "near" { WRAP_NEAR } else { &pending.token_out };
+                let bal_args = serde_json::json!({
+                    "account_id": env::current_account_id(),
+                });
+
+                Promise::new(check_token.parse().unwrap())
+                    .function_call(
+                        "ft_balance_of".to_string(),
+                        serde_json::to_vec(&bal_args).unwrap(),
+                        NearToken::ZERO,
+                        GAS_BALANCE,
+                    )
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(GAS_RESOLVE)
+                            .on_swap_payout(swap_nonce)
+                    )
+                    .into()
+            }
+            Err(_) => {
+                let pending = self.pending_swaps.remove(&swap_nonce).unwrap();
+                self.credit(&pending.user, &pending.token_in, pending.amount_in);
+                Self::emit("swap_failed", serde_json::json!({
+                    "correlation_id": pending.correlation_id,
+                    "user": pending.user,
+                    "reason": "venue_reverted",
+                    "refunded_token": pending.token_in,
+                    "refunded_amount": U128(pending.amount_in),
+                }));
+                PromiseOrValue::Value(U128(0))
+            }
+        }
+    }
+
+    /// Step 2: Balance query resolved.
+    /// `raw_out` is the exact token balance held by the router contract.
+    #[private]
+    pub fn on_swap_payout(&mut self, swap_nonce: u64) -> PromiseOrValue<U128> {
         let pending = match self.pending_swaps.remove(&swap_nonce) {
             Some(p) => p,
             None => {
@@ -799,7 +851,7 @@ impl RacerbotVault {
             }
         };
 
-        match env::promise_result_checked(0, 2048) {
+        match env::promise_result_checked(0, 1024) {
             Ok(bytes) => {
                 let raw_out: U128 = serde_json::from_slice(&bytes).unwrap_or(U128(0));
                 if raw_out.0 == 0 {
@@ -807,7 +859,7 @@ impl RacerbotVault {
                     Self::emit("swap_failed", serde_json::json!({
                         "correlation_id": pending.correlation_id,
                         "user": pending.user,
-                        "reason": "venue_returned_zero",
+                        "reason": "zero_tokens_received",
                         "refunded_token": pending.token_in,
                         "refunded_amount": U128(pending.amount_in),
                     }));
@@ -820,7 +872,7 @@ impl RacerbotVault {
                 Self::emit("swap_failed", serde_json::json!({
                     "correlation_id": pending.correlation_id,
                     "user": pending.user,
-                    "reason": "venue_reverted",
+                    "reason": "balance_query_failed",
                     "refunded_token": pending.token_in,
                     "refunded_amount": U128(pending.amount_in),
                 }));
@@ -882,7 +934,7 @@ impl RacerbotVault {
 
         // If user wants native NEAR and swap returned wrap.near, unwrap wrap.near -> near
         if pending.token_out == "near" && is_ref_venue {
-            let mut unwrap_promise = Promise::new(WRAP_NEAR.parse().unwrap())
+            let user_p = Promise::new(WRAP_NEAR.parse().unwrap())
                 .function_call(
                     "near_withdraw".to_string(),
                     serde_json::to_vec(&serde_json::json!({ "amount": U128(raw_out) })).unwrap(),
@@ -895,21 +947,25 @@ impl RacerbotVault {
                 );
 
             if fee_amount > 0 {
-                unwrap_promise = unwrap_promise.and(
-                    Promise::new(self.treasury_id.clone())
-                        .transfer(NearToken::from_yoctonear(fee_amount))
+                return PromiseOrValue::Promise(
+                    user_p.then(
+                        Promise::new(self.treasury_id.clone())
+                            .transfer(NearToken::from_yoctonear(fee_amount))
+                    )
                 );
+            } else {
+                return PromiseOrValue::Promise(user_p);
             }
-
-            return PromiseOrValue::Promise(unwrap_promise);
         }
 
-        let mut p = self.xfer_out(&pending.token_out, &pending.user, net_amount);
+        let user_xfer = self.xfer_out(&pending.token_out, &pending.user, net_amount);
         if fee_amount > 0 {
-            p = p.and(self.xfer_out(&pending.token_out, &self.treasury_id, fee_amount));
+            PromiseOrValue::Promise(
+                user_xfer.then(self.xfer_out(&pending.token_out, &self.treasury_id, fee_amount))
+            )
+        } else {
+            PromiseOrValue::Promise(user_xfer)
         }
-
-        PromiseOrValue::Promise(p)
     }
 
     // ═══════════════════════ SUB-LEDGER HELPERS ═══════════════════════════════
