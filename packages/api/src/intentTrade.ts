@@ -102,6 +102,7 @@ export async function getIntentSwapQuote(params: {
         ...(NEAR_INTENTS_API_KEY ? { Authorization: `Bearer ${NEAR_INTENTS_API_KEY}` } : {}),
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3500),
     });
 
     if (!res.ok) {

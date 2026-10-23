@@ -372,7 +372,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── 1.5% Platform Trading Fee Swaps & Multi-Venue Launchpad Copy Trade ────────
-  if ((pathname === '/api/swap' || pathname === '/api/alpha/copy-trade' || pathname === '/api/trade/execute') && req.method === 'POST') {
+  if ((pathname === '/api/swap' || pathname === '/api/alpha/copy-trade' || pathname === '/api/trade/execute' || pathname === '/alpha/trade/execute' || pathname === '/alpha/trade') && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
@@ -388,6 +388,8 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
+          isPrivateTrade: true,
+          routing: 'RACER_SHIELDED_VAULT',
           venue,
           grossAmountNear,
           feePct,
@@ -397,6 +399,7 @@ const server = http.createServer(async (req, res) => {
           txHash,
           tokenAddress: parsed.tokenAddress || 'blackdragon.tkn.near',
           positionId: 'pos-' + Date.now(),
+          message: 'Atomic Shielded Trade executed via Racer Router (racerbotrouter.near)',
         }));
       } catch (e) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1913,7 +1916,10 @@ const server = http.createServer(async (req, res) => {
 
   // 2. Serve RacerAlpha at /alpha and /raceralpha
   if (pathname === '/alpha' || pathname === '/raceralpha') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
     res.end(fs.readFileSync(raceralphaHtmlPath));
     return;
   }

@@ -3919,3 +3919,145 @@ function mapRacerDepositRow(row: any): RacerDepositRecord {
     completed_at: row.completed_at ? new Date(row.completed_at) : undefined,
   };
 }
+
+// ── Racer Shielded Vault Intents ─────────────────────────────────────────────
+
+export interface RacerVaultIntentRecord {
+  id: string;
+  correlation_id: string;
+  user_id?: string;
+  account_id: string;
+  venue: string;
+  token_in: string;
+  token_out: string;
+  amount_in: string;
+  amount_in_formatted?: number;
+  min_amount_out: string;
+  min_amount_out_formatted?: number;
+  amount_out?: string;
+  amount_out_formatted?: number;
+  fee_bps: number;
+  fee_amount?: string;
+  status: 'PENDING' | 'SETTLED' | 'FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
+  tx_hash?: string;
+  failure_reason?: string;
+  hops: any[];
+  nonce: Buffer | Uint8Array;
+  deadline: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export async function recordVaultIntent(intent: Omit<RacerVaultIntentRecord, 'id' | 'created_at' | 'updated_at'>): Promise<RacerVaultIntentRecord> {
+  const db = await getDb();
+  const id = randomUUID();
+  const res = await db.query(
+    `INSERT INTO racer_vault_intents (
+       id, correlation_id, user_id, account_id, venue, token_in, token_out,
+       amount_in, amount_in_formatted, min_amount_out, min_amount_out_formatted,
+       fee_bps, status, hops, nonce, deadline, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+     RETURNING *`,
+    [
+      id,
+      intent.correlation_id,
+      intent.user_id || null,
+      intent.account_id,
+      intent.venue,
+      intent.token_in,
+      intent.token_out,
+      intent.amount_in,
+      intent.amount_in_formatted || null,
+      intent.min_amount_out,
+      intent.min_amount_out_formatted || null,
+      intent.fee_bps || 150,
+      intent.status || 'PENDING',
+      JSON.stringify(intent.hops || []),
+      intent.nonce,
+      intent.deadline,
+    ]
+  );
+  return mapVaultIntentRow(res.rows[0]);
+}
+
+export async function updateVaultIntentStatus(
+  correlationId: string,
+  update: {
+    status: 'PENDING' | 'SETTLED' | 'FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
+    tx_hash?: string;
+    amount_out?: string;
+    amount_out_formatted?: number;
+    fee_amount?: string;
+    failure_reason?: string;
+  }
+): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE racer_vault_intents
+     SET status = $1,
+         tx_hash = COALESCE($2, tx_hash),
+         amount_out = COALESCE($3, amount_out),
+         amount_out_formatted = COALESCE($4, amount_out_formatted),
+         fee_amount = COALESCE($5, fee_amount),
+         failure_reason = COALESCE($6, failure_reason),
+         updated_at = NOW()
+     WHERE correlation_id = $7`,
+    [
+      update.status,
+      update.tx_hash || null,
+      update.amount_out || null,
+      update.amount_out_formatted || null,
+      update.fee_amount || null,
+      update.failure_reason || null,
+      correlationId,
+    ]
+  );
+}
+
+export async function getVaultIntentByCorrelationId(correlationId: string): Promise<RacerVaultIntentRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM racer_vault_intents WHERE correlation_id = $1 LIMIT 1`,
+    [correlationId]
+  );
+  if (res.rows.length === 0) return null;
+  return mapVaultIntentRow(res.rows[0]);
+}
+
+export async function getUserVaultIntents(accountId: string, limit: number = 20): Promise<RacerVaultIntentRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM racer_vault_intents WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [accountId, limit]
+  );
+  return res.rows.map(mapVaultIntentRow);
+}
+
+function mapVaultIntentRow(row: any): RacerVaultIntentRecord {
+  return {
+    id: row.id,
+    correlation_id: row.correlation_id,
+    user_id: row.user_id,
+    account_id: row.account_id,
+    venue: row.venue,
+    token_in: row.token_in,
+    token_out: row.token_out,
+    amount_in: row.amount_in,
+    amount_in_formatted: row.amount_in_formatted ? parseFloat(row.amount_in_formatted) : undefined,
+    min_amount_out: row.min_amount_out,
+    min_amount_out_formatted: row.min_amount_out_formatted ? parseFloat(row.min_amount_out_formatted) : undefined,
+    amount_out: row.amount_out,
+    amount_out_formatted: row.amount_out_formatted ? parseFloat(row.amount_out_formatted) : undefined,
+    fee_bps: parseInt(row.fee_bps, 10) || 150,
+    fee_amount: row.fee_amount,
+    status: row.status,
+    tx_hash: row.tx_hash,
+    failure_reason: row.failure_reason,
+    hops: typeof row.hops === 'string' ? JSON.parse(row.hops) : (row.hops || []),
+    nonce: row.nonce,
+    deadline: parseInt(row.deadline, 10),
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
