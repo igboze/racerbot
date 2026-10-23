@@ -3395,15 +3395,15 @@
                 <!-- Amount Input & Quick Chips -->
                 <div style="display:flex; flex-direction:column; gap:6px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <label style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
-                    <span style="font-size:11px; color:var(--color-text-subtle);">Balance: <b id="gmgn-wallet-balance" style="color:var(--color-racer-green);">-- Ⓝ</b></span>
+                    <label id="gmgn-amount-label" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
+                    <span style="font-size:11px; color:var(--color-text-subtle);"><span id="gmgn-balance-label">NEAR Balance:</span> <b id="gmgn-wallet-balance" style="color:var(--color-racer-green);">-- Ⓝ</b></span>
                   </div>
                   <div style="position:relative;">
-                    <input type="number" id="gmgn-trade-amount" step="0.1" min="0.1" value="2.5" oninput="updateGmGnEstimatedOutput()" style="width:100%; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 45px 0 12px; font-size:15px; font-family:var(--font-mono); font-weight:700;">
-                    <span style="position:absolute; right:12px; top:11px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700;">NEAR</span>
+                    <input type="number" id="gmgn-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="updateGmGnEstimatedOutput()" style="width:100%; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-weight:700;">
+                    <span id="gmgn-trade-unit" style="position:absolute; right:12px; top:11px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700; text-transform:uppercase; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;">NEAR</span>
                   </div>
                   
-                  <div class="gmgn-preset-chips">
+                  <div class="gmgn-preset-chips" id="gmgn-preset-chips-container">
                     <button type="button" class="gmgn-chip" onclick="setGmGnAmount(0.5)">0.5Ⓝ</button>
                     <button type="button" class="gmgn-chip" onclick="setGmGnAmount(1.0)">1.0Ⓝ</button>
                     <button type="button" class="gmgn-chip" onclick="setGmGnAmount(2.5)">2.5Ⓝ</button>
@@ -4739,6 +4739,9 @@
     let selectedGmGnToken = null;
     let selectedGmGnSide = 'BUY';
     let selectedGmGnSlippage = 1.0;
+    let selectedTokenBalance = { formatted: '0', raw: '0', decimals: 18, symbol: '' };
+    let isSelectedMaxSell = false;
+    let lastCachedNearBalance = 0;
     const NEAR_USD_PRICE = 4.95;
 
     async function fetchGmGnTokens() {
@@ -4955,6 +4958,19 @@
         avatarEl.style.background = 'transparent';
       }
 
+      isSelectedMaxSell = false;
+      if (selectedGmGnSide === 'SELL') {
+        const unitBadge = document.getElementById('gmgn-trade-unit');
+        if (unitBadge) {
+          unitBadge.textContent = tok.symbol;
+          unitBadge.style.color = '#ff6b6b';
+        }
+        const input = document.getElementById('gmgn-trade-amount');
+        if (input) input.placeholder = `Amount of ${tok.symbol}`;
+        renderBalanceForCurrentSide();
+      }
+
+      fetchUserTokenBalance(tok.address);
       updateGmGnEstimatedOutput();
       renderGmGnTable();
 
@@ -5050,25 +5066,161 @@
       fetchGmGnTokens();
     }
 
+    async function fetchUserTokenBalance(tokenAddress) {
+      if (!tokenAddress || tokenAddress === 'near' || tokenAddress === 'wrap.near') return;
+      try {
+        const res = await fetch(`/alpha/user/token-balance?tokenAddress=${encodeURIComponent(tokenAddress)}`, {
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            selectedTokenBalance = {
+              formatted: data.balance || '0',
+              raw: data.balanceRaw || '0',
+              decimals: data.decimals || 18,
+              symbol: data.symbol || selectedGmGnToken?.symbol || 'TOKEN'
+            };
+            if (selectedGmGnSide === 'SELL') {
+              renderBalanceForCurrentSide();
+              const input = document.getElementById('gmgn-trade-amount');
+              if (input && (!input.value || isSelectedMaxSell)) {
+                setGmGnSellPercent(1.0);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch user token balance:', err);
+      }
+    }
+
+    function renderBalanceForCurrentSide() {
+      const balEl = document.getElementById('gmgn-wallet-balance');
+      const balLabel = document.getElementById('gmgn-balance-label');
+      if (!balEl) return;
+
+      if (selectedGmGnSide === 'BUY') {
+        if (balLabel) balLabel.textContent = 'NEAR Balance:';
+        balEl.textContent = `${(lastCachedNearBalance || 0).toFixed(4)} Ⓝ`;
+        balEl.style.color = 'var(--color-racer-green)';
+      } else {
+        const sym = selectedGmGnToken?.symbol || selectedTokenBalance.symbol || 'TOKEN';
+        if (balLabel) balLabel.textContent = `${sym} Balance:`;
+        const numBal = parseFloat(selectedTokenBalance.formatted || '0');
+        balEl.textContent = `${numBal.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${sym}`;
+        balEl.style.color = 'var(--color-racer-cyan)';
+      }
+    }
+
+    function renderTradePresetChips() {
+      const container = document.getElementById('gmgn-preset-chips-container');
+      if (!container) return;
+
+      if (selectedGmGnSide === 'BUY') {
+        container.innerHTML = `
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(0.5)">0.5Ⓝ</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(1.0)">1.0Ⓝ</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(2.5)">2.5Ⓝ</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(5.0)">5.0Ⓝ</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(10.0)">10Ⓝ</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnAmount(25.0)">25Ⓝ</button>
+        `;
+      } else {
+        container.innerHTML = `
+          <button type="button" class="gmgn-chip" onclick="setGmGnSellPercent(0.25)">25%</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnSellPercent(0.50)">50%</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnSellPercent(0.75)">75%</button>
+          <button type="button" class="gmgn-chip" onclick="setGmGnSellPercent(1.0)" style="color:var(--color-racer-cyan); font-weight:700;">100% MAX</button>
+        `;
+      }
+    }
+
+    function setGmGnSellPercent(pct) {
+      const input = document.getElementById('gmgn-trade-amount');
+      if (!input) return;
+
+      const rawBalBig = BigInt(selectedTokenBalance.raw || '0');
+      if (rawBalBig <= 0n) {
+        input.value = '0';
+        isSelectedMaxSell = false;
+        updateGmGnEstimatedOutput();
+        return;
+      }
+
+      if (pct >= 1.0) {
+        isSelectedMaxSell = true;
+        input.value = selectedTokenBalance.formatted;
+      } else {
+        isSelectedMaxSell = false;
+        const dec = selectedTokenBalance.decimals || 18;
+        const factorBig = BigInt(Math.floor(pct * 10000));
+        const targetRaw = (rawBalBig * factorBig) / 10000n;
+        const divisor = 10n ** BigInt(dec);
+        const whole = targetRaw / divisor;
+        const rem = targetRaw % divisor;
+        let fracStr = rem.toString().padStart(dec, '0').slice(0, 4).replace(/0+$/, '');
+        input.value = fracStr ? `${whole}.${fracStr}` : `${whole}`;
+      }
+      updateGmGnEstimatedOutput();
+    }
+
     function setGmGnTradeSide(side) {
       selectedGmGnSide = side;
+      isSelectedMaxSell = false;
       const btnBuy = document.getElementById('gmgn-trade-btn-buy');
       const btnSell = document.getElementById('gmgn-trade-btn-sell');
       const btnExec = document.getElementById('btn-gmgn-label');
+      const unitBadge = document.getElementById('gmgn-trade-unit');
+      const amountInput = document.getElementById('gmgn-trade-amount');
 
       if (side === 'BUY') {
         if (btnBuy) btnBuy.classList.add('active');
         if (btnSell) btnSell.classList.remove('active');
         if (btnExec) btnExec.textContent = 'Execute Confidential BUY & Broadcast';
+        if (unitBadge) {
+          unitBadge.textContent = 'NEAR';
+          unitBadge.style.color = 'var(--color-racer-cyan)';
+        }
+        if (amountInput) {
+          amountInput.placeholder = 'Amount in NEAR';
+          amountInput.step = '0.1';
+          amountInput.min = '0.1';
+          amountInput.value = '2.5';
+        }
       } else {
         if (btnBuy) btnBuy.classList.remove('active');
         if (btnSell) btnSell.classList.add('active');
-        if (btnExec) btnExec.textContent = 'Execute Confidential SELL & Broadcast';
+        const sym = selectedGmGnToken ? selectedGmGnToken.symbol : 'TOKEN';
+        if (btnExec) btnExec.textContent = `Execute Confidential SELL & Broadcast`;
+        if (unitBadge) {
+          unitBadge.textContent = sym;
+          unitBadge.style.color = '#ff6b6b';
+        }
+        if (amountInput) {
+          amountInput.placeholder = `Amount of ${sym}`;
+          amountInput.step = 'any';
+          amountInput.min = '0';
+          const rawBalBig = BigInt(selectedTokenBalance.raw || '0');
+          if (rawBalBig > 0n) {
+            setGmGnSellPercent(1.0);
+          } else {
+            amountInput.value = '';
+          }
+        }
       }
+
+      renderBalanceForCurrentSide();
+      renderTradePresetChips();
       updateGmGnEstimatedOutput();
+
+      if (side === 'SELL' && selectedGmGnToken) {
+        fetchUserTokenBalance(selectedGmGnToken.address);
+      }
     }
 
     function setGmGnAmount(amt) {
+      isSelectedMaxSell = false;
       const input = document.getElementById('gmgn-trade-amount');
       if (input) input.value = amt;
       updateGmGnEstimatedOutput();
@@ -5083,18 +5235,22 @@
     let intentQuoteDebounce = null;
     function updateGmGnEstimatedOutput() {
       const estEl = document.getElementById('gmgn-est-tokens');
-      const amtNear = parseFloat(document.getElementById('gmgn-trade-amount')?.value || '1.0');
+      const inputVal = parseFloat(document.getElementById('gmgn-trade-amount')?.value || '0');
       if (!estEl || !selectedGmGnToken) return;
 
       const tokPriceUsd = selectedGmGnToken.priceUsd || 0.0001;
-      const nearValUsd = amtNear * NEAR_USD_PRICE;
+      const tokPriceNear = selectedGmGnToken.priceNear || (tokPriceUsd / NEAR_USD_PRICE);
 
       if (selectedGmGnSide === 'BUY') {
-        const estTokens = nearValUsd / tokPriceUsd;
+        const amtNear = inputVal || 0;
+        const nearValUsd = amtNear * NEAR_USD_PRICE;
+        const estTokens = tokPriceUsd > 0 ? (nearValUsd / tokPriceUsd) : 0;
         estEl.textContent = `≈ ${Math.round(estTokens).toLocaleString()} ${selectedGmGnToken.symbol}`;
       } else {
-        const estNear = nearValUsd / NEAR_USD_PRICE;
-        estEl.textContent = `≈ ${estNear.toFixed(2)} NEAR ($${nearValUsd.toFixed(2)})`;
+        const amtTokens = inputVal || 0;
+        const tokenValUsd = amtTokens * tokPriceUsd;
+        const estNear = NEAR_USD_PRICE > 0 ? (tokenValUsd / NEAR_USD_PRICE) : (amtTokens * tokPriceNear);
+        estEl.textContent = `≈ ${estNear.toFixed(4)} NEAR ($${tokenValUsd.toFixed(2)})`;
       }
 
       // Live Intent Solver quote check (Option B)
@@ -5107,7 +5263,9 @@
             body: JSON.stringify({
               tokenAddress: selectedGmGnToken.address,
               side: selectedGmGnSide,
-              amountNear: amtNear,
+              amountNear: selectedGmGnSide === 'BUY' ? inputVal : undefined,
+              amountTokens: selectedGmGnSide === 'SELL' ? String(inputVal) : undefined,
+              tokenDecimals: selectedTokenBalance.decimals || selectedGmGnToken.decimals || 18,
             }),
           });
           if (res.ok) {
@@ -5122,7 +5280,10 @@
                 tag.style.color = 'var(--color-racer-green)';
                 tag.style.background = 'rgba(0,230,118,0.12)';
               }
-              if (desc) desc.textContent = `Off-chain private intent verified by Defuse solvers with zero public mempool exposure. Est Output: ${q.amountOutFormatted} ${selectedGmGnToken.symbol}.`;
+              const outText = selectedGmGnSide === 'BUY'
+                ? `${q.amountOutFormatted} ${selectedGmGnToken.symbol}`
+                : `${q.amountOutFormatted} NEAR`;
+              if (desc) desc.textContent = `Off-chain private intent verified by Defuse solvers with zero public mempool exposure. Est Output: ${outText}.`;
             } else {
               if (badge) badge.textContent = '⚡ Direct AMM Relayer Shield Active';
               if (tag) {
@@ -5130,7 +5291,7 @@
                 tag.style.color = 'var(--color-racer-cyan)';
                 tag.style.background = 'rgba(0,240,255,0.12)';
               }
-              if (desc) desc.textContent = 'Executed via private managed subaccount relayer on Ref Finance / Meme.Cooking.';
+              if (desc) desc.textContent = `Executed via private managed subaccount relayer on ${escapeHtml(selectedGmGnToken.venue || 'Ref Finance')}.`;
             }
           }
         } catch {}
@@ -5152,10 +5313,19 @@
         return;
       }
 
-      const amtNear = parseFloat(document.getElementById('gmgn-trade-amount')?.value || '1.0');
-      if (!amtNear || amtNear <= 0) {
-        alert('Please enter a valid NEAR amount to trade.');
+      const inputVal = parseFloat(document.getElementById('gmgn-trade-amount')?.value || '0');
+      if (!inputVal || inputVal <= 0) {
+        alert(selectedGmGnSide === 'BUY' ? 'Please enter a valid NEAR amount to trade.' : 'Please enter a valid token amount to sell.');
         return;
+      }
+
+      const isBuy = selectedGmGnSide === 'BUY';
+      const amtNear = isBuy ? inputVal : undefined;
+      const amtTokens = !isBuy ? inputVal.toString() : undefined;
+      const tokenDecimals = selectedTokenBalance.decimals || selectedGmGnToken.decimals || 18;
+      let amtTokensRaw = undefined;
+      if (!isBuy && isSelectedMaxSell && selectedTokenBalance.raw && BigInt(selectedTokenBalance.raw) > 0n) {
+        amtTokensRaw = selectedTokenBalance.raw;
       }
 
       const btn = document.getElementById('btn-gmgn-execute');
@@ -5164,13 +5334,16 @@
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>🔒 Dispatching Decentralized Private Intent...</span>';
+        btn.innerHTML = '<span>🔒 Dispatching Private Intent...</span>';
       }
       if (feedback) {
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(0, 240, 255, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
-        feedback.innerHTML = `📡 Routing private <b>${selectedGmGnSide}</b> of <b>${amtNear} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b> via <b>Decentralized Intent Solvers (Option B)</b>...`;
+        const dispatchDesc = isBuy 
+          ? `Routing private <b>BUY</b> of <b>${inputVal} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b>`
+          : `Routing private <b>SELL</b> of <b>${inputVal.toLocaleString()} ${escapeHtml(selectedGmGnToken.symbol)}</b> for NEAR`;
+        feedback.innerHTML = `📡 ${dispatchDesc} via <b>Private Solver Relayer</b>...`;
       }
 
       const tradePayload = () => JSON.stringify({
@@ -5179,6 +5352,9 @@
         tokenName: selectedGmGnToken.name,
         side: selectedGmGnSide,
         amountNear: amtNear,
+        amountTokens: amtTokens,
+        amountTokensRaw: amtTokensRaw,
+        tokenDecimals: tokenDecimals,
         priceNear: selectedGmGnToken.priceNear,
         venue: selectedGmGnToken.venue,
         routingPreference: 'auto',
@@ -5283,6 +5459,7 @@
           }
 
           refreshUserBalance();
+          if (selectedGmGnToken) fetchUserTokenBalance(selectedGmGnToken.address);
           loadTerminalData();
           return;
         }
@@ -5307,6 +5484,7 @@
 
         // Immediately update live wallet balance and terminal views
         refreshUserBalance();
+        if (selectedGmGnToken) fetchUserTokenBalance(selectedGmGnToken.address);
         loadTerminalData();
       } catch (err) {
         if (feedback) {
@@ -6756,6 +6934,7 @@
     function applyUserBalance(balNear, addr) {
       if (balNear === undefined || balNear === null || isNaN(parseFloat(balNear))) return;
       const num = parseFloat(balNear);
+      lastCachedNearBalance = num;
       const shortBal = num.toFixed(2);
       const preciseBal = num.toFixed(4);
 
@@ -6770,7 +6949,7 @@
       const sbBal = document.getElementById('sidebar-user-bal');
       const depBal = document.getElementById('deposit-modal-balance');
 
-      if (gmBal) gmBal.textContent = `${preciseBal} Ⓝ`;
+      if (gmBal && selectedGmGnSide === 'BUY') gmBal.textContent = `${preciseBal} Ⓝ`;
       if (sbBal) sbBal.textContent = `${shortBal} NEAR`;
       if (depBal) depBal.textContent = `${shortBal} NEAR`;
     }
