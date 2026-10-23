@@ -123,6 +123,7 @@ export interface TokenCacheRecord {
   buy_tax_pct?: number | null;
   sell_tax_pct?: number | null;
   is_safe?: boolean | null;
+  icon?: string | null;
   updated_at?: Date | null;
 }
 
@@ -1291,8 +1292,8 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
   const db = await getDb();
   const chain = record.chain || 'near';
   await db.query(
-    `INSERT INTO token_cache (token_address, chain, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, buy_tax_pct, sell_tax_pct, is_safe, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+    `INSERT INTO token_cache (token_address, chain, name, symbol, decimals, total_supply, pool_address, venue, rhea_pool_id, bonding_phase, bonding_progress_pct, dcl_pool_id, last_price, last_liquidity, buy_tax_pct, sell_tax_pct, is_safe, icon, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
      ON CONFLICT (token_address) DO UPDATE SET 
        chain = COALESCE(EXCLUDED.chain, token_cache.chain),
        name = COALESCE(EXCLUDED.name, token_cache.name), 
@@ -1310,6 +1311,7 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
        buy_tax_pct = COALESCE(EXCLUDED.buy_tax_pct, token_cache.buy_tax_pct),
        sell_tax_pct = COALESCE(EXCLUDED.sell_tax_pct, token_cache.sell_tax_pct),
        is_safe = COALESCE(EXCLUDED.is_safe, token_cache.is_safe),
+       icon = COALESCE(EXCLUDED.icon, token_cache.icon),
        updated_at = NOW()`,
     [
       record.token_address,
@@ -1329,6 +1331,7 @@ export async function upsertTokenCache(record: TokenCacheRecord): Promise<void> 
       record.buy_tax_pct ?? null,
       record.sell_tax_pct ?? null,
       record.is_safe ?? null,
+      record.icon ?? null,
     ]
   );
 }
@@ -2005,6 +2008,7 @@ function rowToTokenCache(row: any): TokenCacheRecord {
     buy_tax_pct: row.buy_tax_pct != null ? parseFloat(row.buy_tax_pct) : null,
     sell_tax_pct: row.sell_tax_pct != null ? parseFloat(row.sell_tax_pct) : null,
     is_safe: row.is_safe != null ? Boolean(row.is_safe) : null,
+    icon: row.icon ?? null,
     updated_at: row.updated_at 
   };
 }

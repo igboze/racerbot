@@ -1327,6 +1327,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       buy_tax_pct: tax.buyTaxPct,
       sell_tax_pct: tax.sellTaxPct,
       paired_symbol: cachedPairedSymbol,
+      icon: dbCache.icon || (dexData as any)?.imageUrl || undefined,
     };
     // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
     // 3s, not a fresh window. Stale data must never renew itself.
@@ -1890,6 +1891,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       buy_tax_pct: tax.buyTaxPct,
       sell_tax_pct: tax.sellTaxPct,
       is_safe: true,
+      icon: result.icon || (meta as any)?.icon || (dexData as any)?.imageUrl || null,
       updated_at: new Date(),
     }).catch(() => {})
   );
