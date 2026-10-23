@@ -3105,7 +3105,9 @@ export class SwapExecutor {
           if (retryResult && retryResult.success) {
             return { ...retryResult, reason: `Executed with ${bumpedSlippage}% slippage after price moved.` };
           }
+          console.warn(`[EXECUTOR] Slippage-bump retry also failed user=${user_id}`);
         }
+      }
 
       // Storage registration self-healing retry: if the transaction reverted on-chain
       // due to missing storage registration, explicitly register storage and retry trade once
