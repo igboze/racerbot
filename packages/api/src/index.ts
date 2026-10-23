@@ -346,8 +346,8 @@ async function main(): Promise<void> {
     serveRacerHtml(res);
   });
 
-  // Serve RacerAlpha WebApp at `/alpha` and `/raceralpha`
-  app.get(['/alpha', '/raceralpha'], (_req, res) => {
+  // Serve RacerAlpha WebApp at `/alpha`, `/raceralpha`, `/terminal`, `/console`, and `/trade`
+  app.get(['/alpha', '/raceralpha', '/terminal', '/console', '/trade'], (_req, res) => {
     serveRacerAlphaHtml(res);
   });
 

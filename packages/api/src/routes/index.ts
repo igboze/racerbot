@@ -355,21 +355,40 @@ export async function resolveAlphaUser(req: any) {
         `SELECT * FROM users WHERE subaccount_id = $1 OR id = $1 LIMIT 1`,
         [cleanWallet]
       );
-      if (uRes.rows[0]) return uRes.rows[0];
+      if (uRes.rows[0]) {
+        // If users.username is default or empty, check if racer_alpha_traders has a custom handle
+        if (!uRes.rows[0].username || uRes.rows[0].username === cleanWallet) {
+          const tRes = await db.query(
+            `SELECT handle FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $1 LIMIT 1`,
+            [cleanWallet]
+          );
+          if (tRes.rows[0]?.handle) {
+            uRes.rows[0].username = tRes.rows[0].handle;
+          }
+        }
+        return uRes.rows[0];
+      }
+
+      // Check if a trader record exists with a custom handle
+      const tRes = await db.query(
+        `SELECT handle FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $1 LIMIT 1`,
+        [cleanWallet]
+      );
+      const customHandle = tRes.rows[0]?.handle || null;
 
       const newU = await db.query(
         `INSERT INTO users (id, subaccount_id, username)
-         VALUES ($1, $1, $1)
+         VALUES ($1, $1, $2)
          ON CONFLICT (id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id
          RETURNING *`,
-        [cleanWallet]
+        [cleanWallet, customHandle]
       );
       if (newU.rows[0]) return newU.rows[0];
     } catch {}
     return {
       id: cleanWallet,
       subaccount_id: cleanWallet,
-      username: cleanWallet,
+      username: null,
       telegram_id: null,
     };
   }
@@ -377,7 +396,7 @@ export async function resolveAlphaUser(req: any) {
   return null;
 }
 
-router.get(['/alpha', '/raceralpha'], (_req, res) => {
+router.get(['/alpha', '/raceralpha', '/terminal', '/console', '/trade'], (_req, res) => {
   serveRacerAlphaHtml(res);
 });
 
@@ -563,8 +582,78 @@ router.post('/alpha/creator/pricing', async (req, res) => {
   }
 });
 
-// Update Creator Profile (handle/username, display name, bio)
-router.post('/alpha/creator/profile', async (req, res) => {
+// ── Live On-Chain Wallet Balance Endpoint (with memory cache) ───────────────
+const accountBalanceCache = new Map<string, { balance: any; timestamp: number }>();
+const BALANCE_CACHE_TTL_MS = 2500;
+
+router.get(['/api/user/balance', '/user/balance'], async (req, res) => {
+  try {
+    let accountId = (req.query.accountId as string)?.trim() ||
+                    (req.query.walletAddress as string)?.trim() ||
+                    (req.headers['x-wallet-address'] as string)?.trim();
+
+    if (!accountId) {
+      const user = await resolveAlphaUser(req);
+      accountId = user?.subaccount_id || user?.id;
+    }
+
+    if (!accountId) {
+      res.json({
+        success: true,
+        accountId: '',
+        near: '0.0000',
+        nearYocto: '0',
+        formatted: '0.00 NEAR',
+        totalNear: '0.00',
+        usd: '0.00',
+      });
+      return;
+    }
+
+    const cacheKey = accountId.toLowerCase();
+    const cached = accountBalanceCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < BALANCE_CACHE_TTL_MS) {
+      res.json(cached.balance);
+      return;
+    }
+
+    const { getNear } = await import('@racerbot/shared');
+    const near = getNear();
+    const yocto = await near.getNearBalance(accountId).catch(() => '0');
+    
+    // 1 NEAR = 10^24 yoctoNEAR
+    const yoctoBigInt = BigInt(yocto || '0');
+    const nearFloat = Number(yoctoBigInt / 1000000000000000000n) / 1e6;
+    const nearFormatted = nearFloat.toFixed(4);
+    const nearUsd = (nearFloat * 4.95).toFixed(2);
+
+    const result = {
+      success: true,
+      accountId,
+      near: nearFormatted,
+      nearYocto: yocto,
+      formatted: `${nearFloat.toFixed(2)} NEAR`,
+      totalNear: nearFormatted,
+      usd: nearUsd,
+    };
+
+    accountBalanceCache.set(cacheKey, { balance: result, timestamp: Date.now() });
+    res.json(result);
+  } catch (err: any) {
+    res.json({
+      success: false,
+      error: err?.message || 'Failed to fetch balance',
+      near: '0.0000',
+      nearYocto: '0',
+      formatted: '0.00 NEAR',
+      totalNear: '0.00',
+      usd: '0.00',
+    });
+  }
+});
+
+// Update Creator Profile (handle/username, display name, bio) — tied 1:1 to wallet
+router.post(['/alpha/creator/profile', '/api/user/profile', '/api/user/username'], async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
     if (!user) {
@@ -577,7 +666,13 @@ router.post('/alpha/creator/profile', async (req, res) => {
       return;
     }
     const { updateCreatorProfile } = await import('../racerAlpha.js');
-    const result = await updateCreatorProfile(user.id, { handle, displayName, bio, strategyTag });
+    const result = await updateCreatorProfile(user.id, {
+      handle,
+      displayName,
+      bio,
+      strategyTag,
+      walletAddress: user.subaccount_id || user.id,
+    });
     if (!result.success) {
       res.status(400).json({ error: result.reason });
       return;
@@ -613,29 +708,52 @@ router.post('/alpha/creator/signal', async (req, res) => {
     const { recordAlphaSignal, inferVenueFromToken } = await import('../racerAlpha.js');
     const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue: explicitVenue, txHash: clientTxHash, slippagePct } = req.body;
 
-    if (!traderId || !tokenAddress || !side) {
-      res.status(400).json({ error: 'traderId, tokenAddress, and side are required.' });
+    if (!tokenAddress || !side) {
+      res.status(400).json({ error: 'tokenAddress and side are required.' });
       return;
     }
 
+    const isBuy = side.toUpperCase() === 'BUY';
     const numNear = Number(amountNear) || 1.0;
     const venue = explicitVenue || inferVenueFromToken(tokenAddress);
+
+    // Auto-resolve or create effective trader ID if not provided
+    let effectiveTraderId = traderId;
+    if (!effectiveTraderId) {
+      const db = await (await import('@racerbot/db')).getDb();
+      const tr = await db.query(
+        `SELECT id FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $2 LIMIT 1`,
+        [user.id, user.subaccount_id || user.id]
+      ).catch(() => ({ rows: [] }));
+      effectiveTraderId = tr.rows[0]?.id;
+    }
+    if (!effectiveTraderId) {
+      const { updateCreatorProfile } = await import('../racerAlpha.js');
+      const fallbackHandle = (user.username || ('trader_' + user.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10))).toLowerCase();
+      await updateCreatorProfile(user.id, {
+        handle: fallbackHandle,
+        displayName: user.username || 'Alpha Trader',
+        walletAddress: user.subaccount_id || user.id,
+      });
+      const db = await (await import('@racerbot/db')).getDb();
+      const tr = await db.query(
+        `SELECT id FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $2 LIMIT 1`,
+        [user.id, user.subaccount_id || user.id]
+      ).catch(() => ({ rows: [] }));
+      effectiveTraderId = tr.rows[0]?.id || ('trader_' + user.id.slice(0, 16));
+    }
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
 
     // ── Phase 1: Real On-Chain Swap via Managed Subaccount (if available) ──
-    // When the user has a managed subaccount wallet (Telegram users), execute
-    // the real swap through publishSwap. External wallet users (NEAR Wallet
-    // Selector) already confirmed the transaction client-side; their txHash
-    // arrives as clientTxHash.
     if (!onChainTxHash && user.subaccount_id) {
       try {
         const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
         const swapResult = await publishSwap({
           user_id: user.id,
-          token_in: 'near',
-          token_out: tokenAddress,
-          amount_in: amountYocto,
+          token_in: isBuy ? 'near' : tokenAddress,
+          token_out: isBuy ? tokenAddress : 'wrap.near',
+          amount_in: isBuy ? amountYocto : (req.body.amountTokens || amountYocto),
           min_amount_out: '0',
           venue: venue as any,
           slippage_pct: Number(slippagePct) || 2,
@@ -665,7 +783,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
     // ── Phase 2: Record Encrypted Alpha Signal & Trigger Auto-Copy ──
     const result = await recordAlphaSignal({
-      traderId,
+      traderId: effectiveTraderId,
       tokenAddress,
       tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
       tokenName: tokenName || tokenSymbol || tokenAddress.split('.')[0],
