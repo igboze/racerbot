@@ -34,6 +34,7 @@ export interface IntentExecutionResult {
   correlationId?: string;
   tokensOut?: string;
   amountOutFormatted?: string;
+  requiresClientSignature?: boolean;
   message?: string;
   reason?: string;
 }
@@ -210,6 +211,19 @@ export async function executeIntentTrade(params: {
       message: `Confidential trade settled via NEAR Intents Solver (${depositAddress.slice(0, 8)}...). Atomic private batch fill complete.`,
     };
   } catch (err: any) {
+    const isManagedRequired = err.message && err.message.includes('platform-managed NEAR account is required');
+    if (isManagedRequired) {
+      logger.info(`Server-side key not present for user ${params.user.id}. Relaying stealth depositAddress to client wallet selector.`);
+      return {
+        success: false,
+        routing: 'INTENT_SOLVER',
+        depositAddress,
+        correlationId: quote.correlationId,
+        amountOutFormatted: quote.amountOutFormatted,
+        requiresClientSignature: true,
+        reason: 'Client-side wallet approval required',
+      };
+    }
     logger.error(`Intent execution error: ${err.message}`);
     return {
       success: false,
