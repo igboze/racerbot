@@ -75,9 +75,9 @@ async function fetchOnChainAccountVolume(accountId) {
   const fastnearKey = (process.env.FASTNEAR_API_KEY || '***REMOVED***').trim();
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
-    'https://rpc.shitzuapes.xyz',
-    'https://rpc.mainnet.near.org',
+    'https://near.drpc.org',
     'https://rpc.intea.rs',
+    'https://rpc.shitzuapes.xyz',
     'https://free.rpc.fastnear.com',
   ];
 

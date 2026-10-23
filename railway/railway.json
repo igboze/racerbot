@@ -11,7 +11,7 @@
       "environments": [
         {
           "variable": "RPC_PROVIDERS",
-          "value": "https://rpc.shitzuapes.xyz,https://rpc.mainnet.near.org,https://rpc.mainnet.fastnear.com,https://rpc.intea.rs"
+          "value": "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz"
         },
         {
           "variable": "FASTNEAR_API_KEY",
@@ -75,7 +75,7 @@
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
-          "value": "https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://near.drpc.org"
         },
         {
           "variable": "QUICKNODE_CHAIN_ID",
@@ -101,7 +101,7 @@
       "environments": [
         {
           "variable": "RPC_PROVIDERS",
-          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://near.drpc.org"
         },
         {
           "variable": "FASTNEAR_API_KEY",
@@ -109,7 +109,7 @@
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
-          "value": "https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://near.drpc.org"
         },
         {
           "variable": "DATABASE_URL",
@@ -135,7 +135,7 @@
       "environments": [
         {
           "variable": "RPC_PROVIDERS",
-          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://near.drpc.org"
         },
         {
           "variable": "FASTNEAR_API_KEY",
@@ -143,7 +143,7 @@
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
-          "value": "https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://near.drpc.org"
         },
         {
           "variable": "DATABASE_URL",
@@ -169,7 +169,7 @@
       "environments": [
         {
           "variable": "RPC_PROVIDERS",
-          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://near.drpc.org"
         },
         {
           "variable": "FASTNEAR_API_KEY",
@@ -177,7 +177,7 @@
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
-          "value": "https://blissful-capable-road.near-mainnet.quiknode.pro/***REMOVED***/"
+          "value": "https://near.drpc.org"
         },
         {
           "variable": "DATABASE_URL",
