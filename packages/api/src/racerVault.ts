@@ -178,6 +178,51 @@ export async function depositFtToVault(
 }
 
 /**
+ * Relayer refunds/withdraws a user's isolated vault sub-ledger balance back to their managed subaccount.
+ * Uses the relayer key (owner_id: racerbot.near) calling contract method `withdraw_user`.
+ * Non-custodial: contract forces recipient to strictly be `user`!
+ */
+export async function refundUserFromVault(
+  subaccountId: string,
+  token: string = 'near'
+): Promise<{ success: boolean; txHash?: string; reason?: string }> {
+  const relayerAccountId =
+    process.env.RELAYER_ACCOUNT_ID ||
+    process.env.RACERBOT_PARENT_ACCOUNT ||
+    'racerbot.near';
+  const rawRelayerKey =
+    process.env.RELAYER_PRIVATE_KEY ||
+    process.env.MAIN_WALLET_PRIVATE_KEY ||
+    process.env.ROUTER_CONTRACT_PRIVATE_KEY ||
+    '';
+  const relayerKey = rawRelayerKey.trim();
+  if (!relayerKey) {
+    return { success: false, reason: 'Relayer private key not configured' };
+  }
+
+  try {
+    const keyPair = KeyPair.fromString(relayerKey as any);
+    const res = await connectWithNearRpcFailover(relayerAccountId, keyPair, async (account) => {
+      return await account.functionCall({
+        contractId: RACER_VAULT_CONTRACT_ID,
+        methodName: 'withdraw_user',
+        args: { user: subaccountId, token },
+        gas: BigInt('60000000000000'), // 60 TGas
+        attachedDeposit: 1n, // 1 yocto
+      });
+    });
+
+    const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
+    logger.info(`Refunded ${token} from vault to ${subaccountId}: tx=${txHash}`);
+    return { success: true, txHash };
+  } catch (err: any) {
+    logger.warn(`Failed refundUserFromVault for ${subaccountId} (${token}): ${err.message}`);
+    return { success: false, reason: err.message };
+  }
+}
+
+
+/**
  * Plan atomic route for ANY launchpad on NEAR (Ref AMM, Ref DCL, Intear,
  * Shardsmarket, NearPumpFun, MemeCooking, OneTokenHub, Gaypad, ShoreMarkets, NearPad, Qlyphs, Kelytra)
  * Supports native tokens (NEAR / wNEAR) and non-NEAR quote tokens (USDT, USDC, INTEAR).
@@ -618,6 +663,7 @@ export async function executeShieldedVaultIntent(params: {
   };
 
   // 2. Pre-check balance in vault. If insufficient, auto-deposit from user managed account
+  let autoDepositedToken: string | null = null;
   let currentBal = await getVaultBalance(intentPayload.user, intentPayload.token_in);
   if (BigInt(currentBal) < BigInt(rawAmountIn) && isBuy) {
     const altToken = intentPayload.token_in === 'wrap.near' ? 'near' : 'wrap.near';
@@ -639,6 +685,7 @@ export async function executeShieldedVaultIntent(params: {
           reason: `Insufficient vault balance and auto-deposit failed: ${depRes.reason}`,
         };
       }
+      autoDepositedToken = 'near';
     }
   } else if (BigInt(currentBal) < BigInt(rawAmountIn) && !isBuy) {
     const needed = (BigInt(rawAmountIn) - BigInt(currentBal)).toString();
@@ -655,6 +702,7 @@ export async function executeShieldedVaultIntent(params: {
         reason: `Insufficient ${planned.tokenIn} in shielded vault ledger and auto-deposit failed: ${depRes.reason}`,
       };
     }
+    autoDepositedToken = planned.tokenIn;
   }
 
   // 3. Record PENDING intent in DB for team tracking & user history
@@ -768,6 +816,13 @@ export async function executeShieldedVaultIntent(params: {
         message: `Trade settled via Racer Shielded Intent Vault (Atomic multi-hop). On-chain private execution confirmed.`,
       };
     } else {
+      if (autoDepositedToken) {
+        logger.info(`Auto-refunding ${autoDepositedToken} to ${intentPayload.user} following execution failure...`);
+        await refundUserFromVault(intentPayload.user, autoDepositedToken).catch(rErr =>
+          logger.warn(`Auto-refund attempt failed: ${rErr?.message}`)
+        );
+      }
+
       return {
         success: false,
         routing: 'RACER_SHIELDED_VAULT',
@@ -785,6 +840,13 @@ export async function executeShieldedVaultIntent(params: {
       status: 'FAILED',
       failure_reason: err.message,
     }).catch(() => {});
+
+    if (autoDepositedToken) {
+      logger.info(`Auto-refunding ${autoDepositedToken} to ${intentPayload.user} following execution error...`);
+      await refundUserFromVault(intentPayload.user, autoDepositedToken).catch(rErr =>
+        logger.warn(`Auto-refund attempt failed: ${rErr?.message}`)
+      );
+    }
 
     return {
       success: false,

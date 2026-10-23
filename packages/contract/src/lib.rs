@@ -287,6 +287,25 @@ impl RacerbotVault {
         self.xfer_out_with_callback(&token, &user, amount.0)
     }
 
+    /// Relayer (owner_id) or user can refund/withdraw the user's balance back to the user's own wallet.
+    /// Non-custodial guarantee: destination is strictly `user`!
+    #[payable]
+    pub fn withdraw_user(&mut self, user: AccountId, token: String) -> Promise {
+        self.assert_not_paused();
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner_id || caller == user,
+            "Only owner/relayer or user can withdraw"
+        );
+        let amount = self.debit_all(&user, &token);
+        require!(amount > 0, "Nothing to withdraw");
+        Self::emit("withdraw_initiated", serde_json::json!({
+            "user": user, "token": token, "amount": U128(amount)
+        }));
+        self.xfer_out_with_callback(&token, &user, amount)
+    }
+
+
     fn xfer_out_with_callback(&self, token: &str, recipient: &AccountId, amount: u128) -> Promise {
         self.xfer_out(token, recipient, amount)
             .then(
