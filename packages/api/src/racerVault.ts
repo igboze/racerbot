@@ -578,7 +578,19 @@ export async function executeShieldedVaultIntent(params: {
   if (isBuy) {
     rawAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
   } else {
-    rawAmountIn = params.amountTokens || '1000000000000000000';
+    const rawInput = (params.amountTokens || '').trim();
+    if (/^\d+$/.test(rawInput)) {
+      rawAmountIn = rawInput;
+    } else if (rawInput && !isNaN(Number(rawInput))) {
+      // Input was passed as a decimal number (e.g. "50.5" tokens) -> parse with token decimals
+      const { parseTokenUnits, getNear } = await import('@racerbot/shared');
+      const near = getNear();
+      const meta = await near.getTokenMetadata(params.tokenAddress).catch(() => null);
+      const dec = meta?.decimals ?? 18;
+      rawAmountIn = parseTokenUnits(rawInput, dec).toString();
+    } else {
+      rawAmountIn = '1000000000000000000';
+    }
   }
 
   // 1. Plan hops (handles all launchpads, multi-hop, non-NEAR quotes, bonding curves)

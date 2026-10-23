@@ -409,6 +409,89 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── RacerAlpha Token Screener & Single Token Live Detail ─────────────────
+  if (pathname === '/alpha/tokens' || pathname === '/api/alpha/tokens') {
+    try {
+      const category = urlObj.searchParams.get('category') || 'all';
+      const sort = urlObj.searchParams.get('sort') || 'volume';
+      const search = urlObj.searchParams.get('search') || '';
+      const { listAlphaTokens } = await import('../packages/api/dist/racerAlpha.js');
+      const result = await listAlphaTokens({ category, sort, search });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: e.message, tokens: [] }));
+    }
+    return;
+  }
+
+  const singleTokenMatch = pathname.match(/^\/(?:api\/)?alpha\/token\/([^/]+)$/);
+  if (singleTokenMatch) {
+    try {
+      const rawAddress = decodeURIComponent(singleTokenMatch[1] || '').trim();
+      const { getAlphaTokenDetail } = await import('../packages/api/dist/racerAlpha.js');
+      const token = await getAlphaTokenDetail(rawAddress);
+      if (!token) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Token not found' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, token }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: e.message }));
+    }
+    return;
+  }
+
+  if ((pathname === '/alpha/trade/intent-quote' || pathname === '/api/alpha/trade/intent-quote') && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const tokenAddress = parsed.tokenAddress;
+        if (!tokenAddress) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'tokenAddress is required' }));
+          return;
+        }
+        const { getIntentSwapQuote } = await import('../packages/api/dist/intentTrade.js');
+        const recipient = req.headers['x-wallet-address'] || currentLinkedProfile?.subaccountId || 'racerbot.near';
+        const quote = await getIntentSwapQuote({
+          tokenAddress,
+          side: (parsed.side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+          amountNear: Number(parsed.amountNear) || 1,
+          amountTokens: parsed.amountTokens,
+          tokenDecimals: parsed.tokenDecimals,
+          recipientAccountId: recipient,
+          dryRun: true,
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(quote));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/alpha/user/token-balance' || pathname === '/api/alpha/user/token-balance') {
+    const tokenAddress = urlObj.searchParams.get('tokenAddress');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      tokenAddress,
+      balanceRaw: '0',
+      balanceFormatted: '0',
+      decimals: 18,
+    }));
+    return;
+  }
+
   // ── RacerAlpha APIs (Real DB Data & Confidential Suite Support) ───────────
   if (pathname === '/alpha/traders' || pathname === '/api/alpha/traders') {
     try {

@@ -11,7 +11,7 @@ const RACER_FEE_BPS = parseInt(process.env.RACER_FEE_BPS || '100', 10);
 
 export interface IntentQuoteResult {
   supported: boolean;
-  routing: 'INTENT_SOLVER' | 'AMM';
+  routing: 'INTENT_SOLVER' | 'AMM' | 'RACER_SHIELDED_ROUTER';
   amountIn: string;
   amountInFormatted: string;
   amountOut: string;
@@ -28,7 +28,7 @@ export interface IntentQuoteResult {
 
 export interface IntentExecutionResult {
   success: boolean;
-  routing: 'INTENT_SOLVER' | 'AMM';
+  routing: 'INTENT_SOLVER' | 'AMM' | 'RACER_SHIELDED_ROUTER';
   txHash?: string;
   depositAddress?: string;
   correlationId?: string;
@@ -108,17 +108,35 @@ export async function getIntentSwapQuote(params: {
     if (!res.ok) {
       const errText = await res.text();
       logger.info(`Defuse quote unavailable for ${params.tokenAddress} (${res.status}): ${errText}`);
+
+      // Calculate realistic estimate via on-chain token price
+      let estOutFormatted = '0';
+      try {
+        const { getAlphaTokenDetail } = await import('./racerAlpha.js');
+        const tok = await getAlphaTokenDetail(params.tokenAddress);
+        if (tok && tok.priceNear && tok.priceNear > 0) {
+          if (isBuy) {
+            const outTokens = numNear / tok.priceNear;
+            estOutFormatted = outTokens >= 1000 ? Math.round(outTokens).toLocaleString() : outTokens.toFixed(2);
+          } else {
+            const numTokens = Number(params.amountTokens || 0);
+            const outNear = numTokens * tok.priceNear;
+            estOutFormatted = outNear.toFixed(4);
+          }
+        }
+      } catch {}
+
       return {
         supported: false,
-        routing: 'AMM',
+        routing: 'RACER_SHIELDED_ROUTER',
         amountIn: rawAmountIn,
         amountInFormatted: isBuy ? String(numNear) : String(params.amountTokens || '0'),
-        amountOut: '0',
-        amountOutFormatted: '0',
-        minAmountOut: '0',
-        minAmountOutFormatted: '0',
+        amountOut: estOutFormatted,
+        amountOutFormatted: estOutFormatted,
+        minAmountOut: estOutFormatted,
+        minAmountOutFormatted: estOutFormatted,
         timeEstimateSeconds: 2,
-        reason: 'Token route not listed on Defuse solver network. Fallback to Direct AMM.',
+        reason: 'Token route routed via Shielded Router (racerbotrouter.near) on-chain.',
       };
     }
 
