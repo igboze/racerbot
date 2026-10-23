@@ -305,7 +305,7 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<voi
     accountId,
     network: {
       networkId: 'mainnet',
-      nodeUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org',
+      nodeUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com?apiKey=b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0',
       helperUrl: 'https://helper.mainnet.near.org',
       explorerUrl: 'https://nearblocks.io',
       indexerUrl: 'https://api.nearblocks.io',

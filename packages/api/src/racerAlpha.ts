@@ -757,21 +757,31 @@ export async function fetchOnChainAccountVolume(accountId?: string): Promise<OnC
     };
   }
 
-  const fastnearKey = (process.env.FASTNEAR_API_KEY || '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83').trim();
+  const ACTIVE_PAID_FASTNEAR_KEY = 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0';
+  const DEPRECATED_FASTNEAR_KEY = '66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83';
+  const rawKey = (process.env.FASTNEAR_API_KEY || '').trim();
+  const fastnearKey = (!rawKey || rawKey === DEPRECATED_FASTNEAR_KEY || rawKey.startsWith('TEMP') || rawKey.startsWith('${'))
+    ? ACTIVE_PAID_FASTNEAR_KEY
+    : rawKey;
+
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
+    'https://near.drpc.org',
+    'https://rpc.intea.rs',
     'https://rpc.shitzuapes.xyz',
     'https://free.rpc.fastnear.com',
-    'https://rpc.intea.rs',
-    'https://rpc.mainnet.near.org',
   ];
 
   async function callRpc(method: string, params: Record<string, any>): Promise<any> {
     for (const url of rpcUrls) {
       try {
+        const isFastnear = url.includes('fastnear.com');
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(isFastnear && fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : {}),
+          },
           body: JSON.stringify({ jsonrpc: '2.0', id: '1', method, params }),
           signal: AbortSignal.timeout(4500),
         });

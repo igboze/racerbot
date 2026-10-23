@@ -126,10 +126,9 @@ const fastnearUrls = hasFastnearKey
   : ['https://free.rpc.fastnear.com'];
 
 const robustRpcUrls = [
-  'https://rpc.shitzuapes.xyz',
-  'https://rpc.mainnet.near.org',
   'https://near.drpc.org',
   'https://rpc.intea.rs',
+  'https://rpc.shitzuapes.xyz',
 ];
 
 const RPC_URLS = Array.from(
@@ -137,7 +136,7 @@ const RPC_URLS = Array.from(
     ...fastnearUrls,
     ...robustRpcUrls,
     ...configuredRpcList.filter(
-      u => !u.includes('quiknode.pro') && !u.includes('quicknode')
+      u => !u.includes('quiknode.pro') && !u.includes('quicknode') && !u.includes('near.org')
     ),
   ])
 ).filter(Boolean);
@@ -2116,8 +2115,8 @@ export async function connectWithNearRpcFailover<T>(
 
   const urls = RPC_URLS.length > 0 ? RPC_URLS : [
     formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
-    'https://rpc.mainnet.near.org',
     'https://near.drpc.org',
+    'https://rpc.intea.rs',
   ];
 
   let lastErr: any = null;
@@ -3460,7 +3459,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
             reqPromise = (async () => {
               const controller = new AbortController();
               const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
-              const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+              const apiKey = fastnearApiKey;
               const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
               const res = await fetch(url, { signal: controller.signal });
               clearTimeout(timeout);
@@ -3930,7 +3929,7 @@ export async function findAccountsForNearPublicKey(publicKey: string): Promise<s
         reqPromise = (async () => {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 4000);
-          const apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
+          const apiKey = fastnearApiKey;
           const url = `https://api.fastnear.com/v1/public_key/${encodeURIComponent(publicKey)}${apiKey ? `?api_key=${apiKey}` : ''}`;
           const res = await fetch(url, { signal: controller.signal });
           clearTimeout(timeout);

@@ -346,7 +346,7 @@ export class MultiRpcNear {
       return isQn || isFn || isShitzu || isIntear;
     });
 
-    const fallbackUrls = ['https://rpc.shitzuapes.xyz', 'https://rpc.intea.rs', 'https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
+    const fallbackUrls = ['https://near.drpc.org', 'https://rpc.intea.rs', 'https://rpc.shitzuapes.xyz', 'https://free.rpc.fastnear.com', 'https://rpc.mainnet.fastnear.com'];
     const sanitizedUrls = allowedUrls.length > 0
       ? Array.from(new Set(allowedUrls))
       : fallbackUrls;
@@ -355,34 +355,43 @@ export class MultiRpcNear {
       ? `https://rpc.mainnet.fastnear.com?apiKey=${apiKey}`
       : 'https://rpc.mainnet.fastnear.com';
 
-    const normalizedUrls = sanitizedUrls.map(u => {
-      if (u.includes('rpc.mainnet.fastnear.com') && hasValidKey && !u.includes('apiKey=')) {
-        return fastnearPaidEndpoint;
-      }
-      return u;
-    });
+    const normalizedUrls = sanitizedUrls
+      .filter(u => !u.includes('near.org'))
+      .map(u => {
+        if (u.includes('rpc.mainnet.fastnear.com') && hasValidKey && !u.includes('apiKey=')) {
+          return fastnearPaidEndpoint;
+        }
+        return u;
+      });
 
-    // Read URLs: Free validator nodes first (zero credit consumption: Shitzu, Intear, Free FastNEAR),
-    // then paid FastNEAR (primary dedicated RPC), QuickNode, and others
-    const readUrls = Array.from(new Set([
-      ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
-      ...normalizedUrls.filter(u => u.includes('near.org')),
-      ...normalizedUrls.filter(u => u.includes('intea.rs')),
-      ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
-      ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
-      ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-      ...normalizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea') && !u.includes('near.org')),
-    ]));
+    // Read URLs: When a paid FastNEAR key is active, prioritize FastNEAR Paid as primary!
+    // Free validator nodes serve as resilient fallbacks (never rate-limiting near.org).
+    const readUrls = hasValidKey
+      ? Array.from(new Set([
+          fastnearPaidEndpoint,
+          'https://near.drpc.org',
+          'https://rpc.intea.rs',
+          'https://rpc.shitzuapes.xyz',
+          ...normalizedUrls.filter(u => !u.includes('near.org')),
+        ]))
+      : Array.from(new Set([
+          ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+          ...normalizedUrls.filter(u => u.includes('intea.rs')),
+          ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+          ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+          ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+          ...normalizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea') && !u.includes('near.org')),
+        ]));
 
     // Trade URLs: FastNEAR first (primary paid RPC for execution & signing), then QuickNode, then validator nodes.
     const tradeUrls = Array.from(new Set([
+      ...(hasValidKey ? [fastnearPaidEndpoint] : []),
       ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
       ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
-      ...normalizedUrls.filter(u => u.includes('near.org')),
       ...normalizedUrls.filter(u => u.includes('intea.rs')),
       ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
-      ...normalizedUrls,
+      ...normalizedUrls.filter(u => !u.includes('near.org')),
     ]));
 
     this.readProviders = readUrls.map((rawUrl, i) => {
@@ -726,18 +735,20 @@ export class MultiRpcNear {
       p.url.includes('near.org') ||
       p.url.includes('drpc.org');
 
-    const communityFree = this.readProviders.filter(isCommunityFree);
-    const fastnear = this.readProviders.filter(p => !p.isQuickNode && !isCommunityFree(p));
+    const paidFastnear = this.readProviders.filter(p => p.isPaidFastNear || (p.url.includes('fastnear.com') && p.url.includes('apiKey=')));
+    const communityFree = this.readProviders.filter(p => isCommunityFree(p) && !p.isPaidFastNear && !p.url.includes('apiKey='));
+    const fastnear = this.readProviders.filter(p => !p.isQuickNode && !isCommunityFree(p) && !paidFastnear.includes(p));
     const quicknode = this.readProviders.filter(p => p.isQuickNode);
 
     const HEDGE_MS = MultiRpcNear.HEDGE_MS;
     const VIEW_TIMEOUT_MS = MultiRpcNear.VIEW_TIMEOUT_MS;
 
+    const paidFnTargets = eligible(paidFastnear).length > 0 ? eligible(paidFastnear) : paidFastnear;
     const freeTargets = eligible(communityFree).length > 0 ? eligible(communityFree) : communityFree;
     const fnTargets = eligible(fastnear).length > 0 ? eligible(fastnear) : fastnear;
     const qnTargets = eligible(quicknode).length > 0 ? eligible(quicknode) : quicknode;
 
-    if (freeTargets.length === 0 && fnTargets.length === 0 && qnTargets.length === 0) {
+    if (paidFnTargets.length === 0 && freeTargets.length === 0 && fnTargets.length === 0 && qnTargets.length === 0) {
       throw new Error('No NEAR RPC providers configured');
     }
 
@@ -816,10 +827,19 @@ export class MultiRpcNear {
         }
       };
 
+      const hasPaid = paidFnTargets.length > 0;
       const hasFree = freeTargets.length > 0;
 
       const launchPrimary = () => {
-        if (hasFree) {
+        if (hasPaid) {
+          // FastNEAR Paid RPC is primary: zero throttling, full subscription headroom
+          for (const p of paidFnTargets.slice(0, 2)) {
+            started++;
+            const attempt = tryProvider(p, primaryCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
+        } else if (hasFree) {
           // Free community validator nodes first: race up to 2
           for (const p of freeTargets.slice(0, 2)) {
             started++;
@@ -847,7 +867,16 @@ export class MultiRpcNear {
       };
 
       const launchHedge = () => {
-        if (hasFree) {
+        if (hasPaid) {
+          // Hedge to QuickNode or free community nodes if paid FastNEAR is delayed
+          const hedgeList = qnTargets.length > 0 ? qnTargets : (fnTargets.length > 0 ? fnTargets : freeTargets);
+          for (const p of hedgeList.slice(0, 2)) {
+            started++;
+            const attempt = tryProvider(p, hedgeCtrl.signal);
+            allAttempts.push(attempt);
+            attempt.then(onAttemptDone);
+          }
+        } else if (hasFree) {
           // Hedge to FastNEAR, or QuickNode if FastNEAR not available
           const hedgeList = fnTargets.length > 0 ? fnTargets : qnTargets;
           for (const p of hedgeList) {
@@ -874,7 +903,9 @@ export class MultiRpcNear {
 
       launchPrimary();
 
-      const canHedge = hasFree
+      const canHedge = hasPaid
+        ? (qnTargets.length > 0 || fnTargets.length > 0 || freeTargets.length > 0)
+        : hasFree
         ? (fnTargets.length > 0 || qnTargets.length > 0)
         : (fnTargets.length > 0 && qnTargets.length > 0);
 
@@ -5574,9 +5605,9 @@ function sleep(ms: number): Promise<void> {
 /** Safe defaults so a missing/partial RPC_PROVIDERS never crashes a service (Free validator nodes first, then FastNEAR). */
 export const DEFAULT_RPC_URLS = [
   'https://rpc.mainnet.fastnear.com',
-  'https://rpc.shitzuapes.xyz',
-  'https://rpc.mainnet.near.org',
+  'https://near.drpc.org',
   'https://rpc.intea.rs',
+  'https://rpc.shitzuapes.xyz',
   'https://free.rpc.fastnear.com',
 ];
 
@@ -5584,10 +5615,10 @@ let _nearInstance: MultiRpcNear | null = null;
 let _freeNearInstance: MultiRpcNear | null = null;
 
 export const FREE_RPC_URLS = [
-  'https://rpc.shitzuapes.xyz',
+  'https://near.drpc.org',
   'https://rpc.intea.rs',
+  'https://rpc.shitzuapes.xyz',
   'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.near.org',
 ];
 
 export function getFreeNear(): MultiRpcNear {

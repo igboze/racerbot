@@ -4,8 +4,8 @@
 dockerfile = "Dockerfile.api"
 ports = [{ port = 3000 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://rpc.shitzuapes.xyz,https://rpc.mainnet.near.org,https://rpc.mainnet.fastnear.com,https://rpc.intea.rs" },
-  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
+  { variable = "FASTNEAR_API_KEY", value = "b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0" },
   { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
   { variable = "ROUTER_CONTRACT_ID", value = "racerbotrouter.near" },
   { variable = "RELAYER_ACCOUNT_ID", value = "racerbot.near" },
@@ -25,9 +25,8 @@ environments = [
 dockerfile = "Dockerfile.detector"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
-  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
-  { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
+  { variable = "FASTNEAR_API_KEY", value = "b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "3000" },
@@ -37,9 +36,8 @@ environments = [
 dockerfile = "Dockerfile.executor"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
-  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
-  { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
+  { variable = "FASTNEAR_API_KEY", value = "b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
@@ -49,9 +47,8 @@ environments = [
 dockerfile = "Dockerfile.triggers"
 ports = [{ port = 8080 }]
 environments = [
-  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://rpc.shitzuapes.xyz,https://rpc.intea.rs,https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
-  { variable = "FASTNEAR_API_KEY", value = "66204d17579e9fc4990edd3bcd7dec35194747d051a51eb7f3c3a6eb052ccd83" },
-  { variable = "QUICKNODE_ENDPOINT_URL", value = "https://blissful-capable-road.near-mainnet.quiknode.pro/a998ed07e93a1d084f6e81cad734c368c1ecbba6/" },
+  { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
+  { variable = "FASTNEAR_API_KEY", value = "b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "5000" },
