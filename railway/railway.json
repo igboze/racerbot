@@ -23,7 +23,19 @@
         },
         {
           "variable": "ROUTER_CONTRACT_ID",
-          "value": "router.racerbot.near"
+          "value": "racerbotrouter.near"
+        },
+        {
+          "variable": "RELAYER_ACCOUNT_ID",
+          "value": "racerbot.near"
+        },
+        {
+          "variable": "RELAYER_PRIVATE_KEY",
+          "value": "${{secrets.RELAYER_PRIVATE_KEY}}"
+        },
+        {
+          "variable": "ROUTER_CONTRACT_PRIVATE_KEY",
+          "value": "${{secrets.ROUTER_CONTRACT_PRIVATE_KEY}}"
         },
         {
           "variable": "TREASURY_ACCOUNT_ID",
