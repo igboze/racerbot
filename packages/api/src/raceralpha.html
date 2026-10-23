@@ -4774,8 +4774,10 @@
       tbody.innerHTML = gmgnTokens.map((tok, idx) => {
         const isSelected = selectedGmGnToken && selectedGmGnToken.address.toLowerCase() === tok.address.toLowerCase();
         const activeClass = isSelected ? 'active-row' : '';
-        const changeClass = tok.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
-        const changeArrow = tok.change24h >= 0 ? '+' : '';
+        const chg = parseFloat(tok.change24h ?? 0);
+        const changeClass = chg >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+        const changeArrow = chg >= 0 ? '+' : '';
+        const changeDisplay = isNaN(chg) ? '0.0%' : `${changeArrow}${chg.toFixed(1)}%`;
         const venueClass = (tok.launchpad || 'ref').toLowerCase();
         
         let curveHtml = '';
@@ -4815,10 +4817,10 @@
               ${launchpadBadge}
             </td>
             <td style="text-align:right; font-weight:700; color:#fff;" id="row-price-${escapeHtml(tok.address)}">
-              $${tok.priceUsd < 0.001 ? tok.priceUsd.toFixed(6) : tok.priceUsd.toFixed(4)}
+              ${formatPriceUsd(tok.priceUsd)}
             </td>
             <td style="text-align:right; font-weight:700; color:${changeClass};" id="row-change-${escapeHtml(tok.address)}">
-              ${changeArrow}${tok.change24h.toFixed(1)}%
+              ${changeDisplay}
             </td>
             <td style="text-align:right; color:#ffffff;">
               $${formatCompactNumber(tok.marketCap)}
@@ -4927,9 +4929,41 @@
       return num.toLocaleString();
     }
 
-    function selectGmGnToken(address) {
+    function formatPriceUsd(val) {
+      const n = parseFloat(val);
+      if (isNaN(n) || n <= 0) return '$0.0000';
+      return '$' + (n < 0.001 ? n.toFixed(6) : n.toFixed(4));
+    }
+
+    function formatChangePct(val) {
+      const n = parseFloat(val);
+      if (isNaN(n)) return '0.0%';
+      return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+    }
+
+    async function selectGmGnToken(address) {
       if (!address) return;
-      const tok = gmgnTokens.find(t => t.address.toLowerCase() === address.toLowerCase());
+      const cleanAddr = address.trim();
+      let tok = gmgnTokens.find(t => t.address.toLowerCase() === cleanAddr.toLowerCase());
+      if (!tok) {
+        try {
+          const res = await fetch(`/alpha/token/${encodeURIComponent(cleanAddr)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.token) {
+              tok = data.token;
+              const existIdx = gmgnTokens.findIndex(t => t.address.toLowerCase() === tok.address.toLowerCase());
+              if (existIdx >= 0) {
+                gmgnTokens[existIdx] = tok;
+              } else {
+                gmgnTokens.unshift(tok);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to fetch token detail by address:', e);
+        }
+      }
       if (!tok) return;
       selectedGmGnToken = tok;
 
@@ -4943,24 +4977,29 @@
       const volEl = document.getElementById('spotlight-vol');
       const avatarEl = document.getElementById('spotlight-avatar');
 
-      if (symEl) symEl.textContent = tok.symbol;
-      if (nameEl) nameEl.textContent = tok.name;
-      if (contractEl) contractEl.textContent = tok.address;
-      if (venueEl) {
-        venueEl.innerHTML = getLaunchpadBadgeHtml(tok);
-      }
-      if (priceEl) priceEl.textContent = '$' + (tok.priceUsd < 0.001 ? tok.priceUsd.toFixed(6) : tok.priceUsd.toFixed(4));
-      if (changeEl) {
-        changeEl.textContent = (tok.change24h >= 0 ? '+' : '') + tok.change24h.toFixed(1) + '% ' + (tok.change24h >= 0 ? '▲' : '▼');
-        changeEl.style.color = tok.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
-      }
-      if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(tok.marketCap);
-      if (volEl) volEl.textContent = '$' + formatCompactNumber(tok.volume24h);
-      if (avatarEl) {
-        avatarEl.innerHTML = getTokenLogoHtml(tok, 40);
-        avatarEl.style.padding = '0';
-        avatarEl.style.border = 'none';
-        avatarEl.style.background = 'transparent';
+      try {
+        if (symEl) symEl.textContent = tok.symbol || 'TOKEN';
+        if (nameEl) nameEl.textContent = tok.name || tok.symbol || 'Token';
+        if (contractEl) contractEl.textContent = tok.address;
+        if (venueEl) {
+          venueEl.innerHTML = getLaunchpadBadgeHtml(tok);
+        }
+        if (priceEl) priceEl.textContent = formatPriceUsd(tok.priceUsd);
+        if (changeEl) {
+          const chg = parseFloat(tok.change24h ?? 0);
+          changeEl.textContent = formatChangePct(chg) + (chg >= 0 ? ' ▲' : ' ▼');
+          changeEl.style.color = chg >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+        }
+        if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(tok.marketCap);
+        if (volEl) volEl.textContent = '$' + formatCompactNumber(tok.volume24h);
+        if (avatarEl) {
+          avatarEl.innerHTML = getTokenLogoHtml(tok, 40);
+          avatarEl.style.padding = '0';
+          avatarEl.style.border = 'none';
+          avatarEl.style.background = 'transparent';
+        }
+      } catch (domErr) {
+        console.warn('Error updating spotlight card:', domErr);
       }
 
       isSelectedMaxSell = false;
@@ -5013,7 +5052,7 @@
           const volEl = document.getElementById('spotlight-vol');
 
           if (priceEl) {
-            priceEl.textContent = '$' + (newPrice < 0.001 ? newPrice.toFixed(6) : newPrice.toFixed(4));
+            priceEl.textContent = formatPriceUsd(newPrice);
             if (oldPrice && Math.abs(newPrice - oldPrice) > 1e-9) {
               const flashClass = newPrice >= oldPrice ? 'price-flash-up' : 'price-flash-down';
               priceEl.classList.remove('price-flash-up', 'price-flash-down');
@@ -5022,8 +5061,9 @@
             }
           }
           if (changeEl) {
-            changeEl.textContent = (fresh.change24h >= 0 ? '+' : '') + fresh.change24h.toFixed(1) + '% ' + (fresh.change24h >= 0 ? '▲' : '▼');
-            changeEl.style.color = fresh.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+            const chg = parseFloat(fresh.change24h ?? 0);
+            changeEl.textContent = formatChangePct(chg) + (chg >= 0 ? ' ▲' : ' ▼');
+            changeEl.style.color = chg >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
           }
           if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(fresh.marketCap);
           if (volEl) volEl.textContent = '$' + formatCompactNumber(fresh.volume24h);
@@ -5031,10 +5071,11 @@
           // Update matching row in table seamlessly
           const rowPriceEl = document.getElementById(`row-price-${fresh.address}`);
           const rowChangeEl = document.getElementById(`row-change-${fresh.address}`);
-          if (rowPriceEl) rowPriceEl.textContent = '$' + (newPrice < 0.001 ? newPrice.toFixed(6) : newPrice.toFixed(4));
+          if (rowPriceEl) rowPriceEl.textContent = formatPriceUsd(newPrice);
           if (rowChangeEl) {
-            rowChangeEl.textContent = (fresh.change24h >= 0 ? '+' : '') + fresh.change24h.toFixed(1) + '%';
-            rowChangeEl.style.color = fresh.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+            const chg = parseFloat(fresh.change24h ?? 0);
+            rowChangeEl.textContent = formatChangePct(chg);
+            rowChangeEl.style.color = chg >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
           }
 
           // Recalculate estimated output in trade panel with fresh spot price
@@ -5060,6 +5101,9 @@
     let searchDebounceTimer = null;
     function handleGmGnSearch(val) {
       currentGmGnSearch = (val || '').trim();
+      if (currentGmGnSearch.includes('.near')) {
+        selectGmGnToken(currentGmGnSearch);
+      }
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
         fetchGmGnTokens();
@@ -5246,15 +5290,20 @@
       const tokPriceUsd = selectedGmGnToken.priceUsd || 0.0001;
       const tokPriceNear = selectedGmGnToken.priceNear || (tokPriceUsd / NEAR_USD_PRICE);
 
+      let estTokens = 0;
+      let estNear = 0;
       if (selectedGmGnSide === 'BUY') {
         const amtNear = inputVal || 0;
-        const nearValUsd = amtNear * NEAR_USD_PRICE;
-        const estTokens = tokPriceUsd > 0 ? (nearValUsd / tokPriceUsd) : 0;
+        if (tokPriceNear > 0) {
+          estTokens = amtNear / tokPriceNear;
+        } else if (tokPriceUsd > 0) {
+          estTokens = (amtNear * NEAR_USD_PRICE) / tokPriceUsd;
+        }
         estEl.textContent = `≈ ${Math.round(estTokens).toLocaleString()} ${selectedGmGnToken.symbol}`;
       } else {
         const amtTokens = inputVal || 0;
+        estNear = tokPriceNear > 0 ? (amtTokens * tokPriceNear) : (tokPriceUsd > 0 ? (amtTokens * tokPriceUsd / NEAR_USD_PRICE) : 0);
         const tokenValUsd = amtTokens * tokPriceUsd;
-        const estNear = NEAR_USD_PRICE > 0 ? (tokenValUsd / NEAR_USD_PRICE) : (amtTokens * tokPriceNear);
         estEl.textContent = `≈ ${estNear.toFixed(4)} NEAR ($${tokenValUsd.toFixed(2)})`;
       }
 
@@ -5289,14 +5338,23 @@
                 ? `${q.amountOutFormatted} ${selectedGmGnToken.symbol}`
                 : `${q.amountOutFormatted} NEAR`;
               if (desc) desc.textContent = `Off-chain private intent verified by Defuse solvers with zero public mempool exposure. Est Output: ${outText}.`;
-            } else {
-              if (badge) badge.textContent = '⚡ Direct AMM Relayer Shield Active';
-              if (tag) {
-                tag.textContent = 'AMM RELAYER';
-                tag.style.color = 'var(--color-racer-cyan)';
-                tag.style.background = 'rgba(0,240,255,0.12)';
+              if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
+                estEl.textContent = `≈ ${outText}`;
               }
-              if (desc) desc.textContent = `Executed via private managed subaccount relayer on ${escapeHtml(selectedGmGnToken.venue || 'Ref Finance')}.`;
+            } else {
+              if (badge) badge.textContent = '🏎️ Racer Shielded Router Active';
+              if (tag) {
+                tag.textContent = 'SHIELDED ROUTER';
+                tag.style.color = 'var(--color-racer-green)';
+                tag.style.background = 'rgba(0,230,118,0.12)';
+              }
+              const outText = selectedGmGnSide === 'BUY'
+                ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedGmGnToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedGmGnToken.symbol}`)
+                : (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} NEAR` : `${estNear.toFixed(4)} NEAR`);
+              if (desc) desc.textContent = `Atomic on-chain execution via racerbotrouter.near on ${escapeHtml(selectedGmGnToken.venue || 'Direct DEX')}. Est Output: ≈ ${outText}.`;
+              if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
+                estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedGmGnSide === 'BUY' ? selectedGmGnToken.symbol : 'NEAR'}`;
+              }
             }
           }
         } catch {}
