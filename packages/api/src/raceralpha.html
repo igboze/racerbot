@@ -1570,6 +1570,16 @@
       border-radius: 4px;
       font-weight: 600;
     }
+    .gmgn-venue-badge.justhoot {
+      background: rgba(255, 145, 0, 0.14);
+      color: #ff9100;
+      border: 1px solid rgba(255, 145, 0, 0.35);
+    }
+    .gmgn-venue-badge.nearlytrade {
+      background: rgba(0, 229, 255, 0.14);
+      color: #00e5ff;
+      border: 1px solid rgba(0, 229, 255, 0.35);
+    }
     .gmgn-venue-badge.memecooking {
       background: rgba(255, 179, 0, 0.12);
       color: #ffb300;
@@ -3187,17 +3197,20 @@
                 <button type="button" class="gmgn-cat-pill active" onclick="setGmGnCategory('all', this)">
                   <span>🔥 All NEAR</span>
                 </button>
+                <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('hoot', this)">
+                  <span>🦉 HOOT</span>
+                </button>
+                <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('nearly', this)">
+                  <span>⚡ NEARLY</span>
+                </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('memecooking', this)">
                   <span>🍳 Meme.Cooking</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('ref', this)">
-                  <span>🔄 Ref Finance DEX</span>
-                </button>
-                <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('pumppoly', this)">
-                  <span>🚀 PumpPoly</span>
+                  <span>🔄 Ref Finance</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('intear', this)">
-                  <span>💧 Intear</span>
+                  <span>💧 InTear</span>
                 </button>
               </div>
 
@@ -4684,7 +4697,7 @@
           `;
         }
 
-        const avatarEmoji = tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))));
+        const avatarEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
 
         return `
           <tr class="${activeClass}" onclick="selectGmGnToken('${escapeHtml(tok.address)}')">
@@ -4769,7 +4782,7 @@
       if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(tok.marketCap);
       if (volEl) volEl.textContent = '$' + formatCompactNumber(tok.volume24h);
       if (avatarEl) {
-        const emoji = tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))));
+        const emoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
         avatarEl.textContent = emoji;
       }
 
