@@ -3346,14 +3346,17 @@
                   </div>
                 </div>
 
-                <!-- Confidential Intent Callout -->
+                <!-- Decentralized Private Intent Shield Callout (Option B) -->
                 <div class="confidential-card" style="padding:10px; margin:2px 0;">
-                  <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-racer-green);">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    <span>Confidential Relayer Shield Active</span>
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-racer-green);">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                      <span id="intent-routing-badge">Private Intent Solver Shield</span>
+                    </div>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(0,240,255,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,240,255,0.25);">ZERO-MEV BATCH</span>
                   </div>
-                  <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:3px; line-height:1.4;">
-                    Trade executes via isolated NEAR intent relayer. Signal is encrypted on-chain and auto-copied only by authorized viewing key subscribers.
+                  <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;" id="intent-routing-desc">
+                    Decentralized off-chain intent routed via NEAR Intent Solvers (Defuse network). Prevents front-running and MEV sandwiches through private batch auctions.
                   </div>
                 </div>
 
@@ -4825,6 +4828,7 @@
       if (el) el.classList.add('active');
     }
 
+    let intentQuoteDebounce = null;
     function updateGmGnEstimatedOutput() {
       const estEl = document.getElementById('gmgn-est-tokens');
       const amtNear = parseFloat(document.getElementById('gmgn-trade-amount')?.value || '1.0');
@@ -4840,6 +4844,45 @@
         const estNear = nearValUsd / NEAR_USD_PRICE;
         estEl.textContent = `≈ ${estNear.toFixed(2)} NEAR ($${nearValUsd.toFixed(2)})`;
       }
+
+      // Live Intent Solver quote check (Option B)
+      if (intentQuoteDebounce) clearTimeout(intentQuoteDebounce);
+      intentQuoteDebounce = setTimeout(async () => {
+        try {
+          const res = await fetch('/alpha/trade/intent-quote', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              tokenAddress: selectedGmGnToken.address,
+              side: selectedGmGnSide,
+              amountNear: amtNear,
+            }),
+          });
+          if (res.ok) {
+            const q = await res.json();
+            const badge = document.getElementById('intent-routing-badge');
+            const desc = document.getElementById('intent-routing-desc');
+            const tag = document.getElementById('intent-routing-tag');
+            if (q.supported && q.routing === 'INTENT_SOLVER') {
+              if (badge) badge.textContent = '🔒 NEAR Intent Solver Shield Active';
+              if (tag) {
+                tag.textContent = 'ZERO-MEV BATCH';
+                tag.style.color = 'var(--color-racer-green)';
+                tag.style.background = 'rgba(0,230,118,0.12)';
+              }
+              if (desc) desc.textContent = `Off-chain private intent verified by Defuse solvers with zero public mempool exposure. Est Output: ${q.amountOutFormatted} ${selectedGmGnToken.symbol}.`;
+            } else {
+              if (badge) badge.textContent = '⚡ Direct AMM Relayer Shield Active';
+              if (tag) {
+                tag.textContent = 'AMM RELAYER';
+                tag.style.color = 'var(--color-racer-cyan)';
+                tag.style.background = 'rgba(0,240,255,0.12)';
+              }
+              if (desc) desc.textContent = 'Executed via private managed subaccount relayer on Ref Finance / Meme.Cooking.';
+            }
+          }
+        } catch {}
+      }, 350);
     }
 
     function copySelectedContract() {
@@ -4869,20 +4912,20 @@
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>⚡ Executing Real On-Chain Swap (Ref Finance / Meme.Cooking)...</span>';
+        btn.innerHTML = '<span>🔒 Dispatching Decentralized Private Intent...</span>';
       }
       if (feedback) {
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(0, 240, 255, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
-        feedback.innerHTML = `📡 Routing confidential <b>${selectedGmGnSide}</b> of <b>${amtNear} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b> on <b>${escapeHtml(selectedGmGnToken.venue)}</b>...`;
+        feedback.innerHTML = `📡 Routing confidential <b>${selectedGmGnSide}</b> of <b>${amtNear} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b> via <b>Decentralized Intent Solvers (Option B)</b>...`;
       }
 
       try {
         const select = document.getElementById('terminal-trader-select');
         const traderId = select ? select.value : (currentTrader?.id || '');
 
-        // Dispatch to real on-chain swap execution pipeline via publishSwap / SwapExecutor
+        // Dispatch to decentralized intent solver pipeline with AMM fallback
         const res = await fetch('/alpha/creator/signal', {
           method: 'POST',
           headers: getAuthHeaders(),
@@ -4894,14 +4937,19 @@
             side: selectedGmGnSide,
             amountNear: amtNear,
             priceNear: selectedGmGnToken.priceNear,
-            venue: selectedGmGnToken.venue
+            venue: selectedGmGnToken.venue,
+            routingPreference: 'auto'
           })
         });
 
         const data = await res.json();
         if (!res.ok || !data.success) {
-          throw new Error(data.error || 'On-chain trade execution failed.');
+          throw new Error(data.error || 'Trade execution failed.');
         }
+
+        const isIntent = data.routing === 'INTENT_SOLVER';
+        const routeLabel = isIntent ? '🔒 Decentralized Private Intent (Defuse Solver)' : `🏛️ AMM Relayer (${escapeHtml(selectedGmGnToken.venue)})`;
+        const extraNote = isIntent ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>' : '';
 
         const txLink = data.txHash
           ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
@@ -4910,7 +4958,7 @@
         if (feedback) {
           feedback.style.background = 'rgba(0, 230, 118, 0.15)';
           feedback.style.color = 'var(--color-racer-green)';
-          feedback.innerHTML = `✓ <b>Real 100% On-Chain ${selectedGmGnSide} Executed!</b><br>🏛️ Venue: <b>${escapeHtml(selectedGmGnToken.venue)}</b> • ⚡ <b>${data.autoCopyFillsCount || 0} subscriber copy-fills</b> executed.${txLink}`;
+          feedback.innerHTML = `✓ <b>Confidential ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>${routeLabel}</b> • 🚀 <b>${data.autoCopyFillsCount || 0} subscriber copy-fills</b> triggered.${extraNote}${txLink}`;
         }
 
         // Immediately update live wallet balance and terminal views
