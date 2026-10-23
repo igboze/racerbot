@@ -1600,6 +1600,60 @@
       color: #00f0ff;
       border: 1px solid rgba(0, 240, 255, 0.3);
     }
+    .gmgn-venue-badge.onetokenhub {
+      background: rgba(245, 158, 11, 0.14);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+    .gmgn-venue-badge.nearpad {
+      background: rgba(139, 92, 246, 0.14);
+      color: #8b5cf6;
+      border: 1px solid rgba(139, 92, 246, 0.35);
+    }
+
+    @keyframes pulseDot {
+      0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7); }
+      70% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 5px rgba(0, 230, 118, 0); }
+      100% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0); }
+    }
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--color-racer-green);
+      border-radius: 50%;
+      display: inline-block;
+      animation: pulseDot 1.8s infinite;
+    }
+    .live-pulse-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 9.5px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--color-racer-green);
+      background: rgba(0, 230, 118, 0.1);
+      padding: 2px 7px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 230, 118, 0.25);
+      letter-spacing: 0.4px;
+    }
+    @keyframes flashGreen {
+      0% { background: rgba(0, 230, 118, 0.35); color: #fff; }
+      100% { background: transparent; }
+    }
+    @keyframes flashRed {
+      0% { background: rgba(255, 77, 77, 0.35); color: #fff; }
+      100% { background: transparent; }
+    }
+    .price-flash-up {
+      animation: flashGreen 1.1s ease-out;
+      border-radius: 4px;
+    }
+    .price-flash-down {
+      animation: flashRed 1.1s ease-out;
+      border-radius: 4px;
+    }
 
     .gmgn-curve-progress {
       display: flex;
@@ -3264,7 +3318,8 @@
                 <div class="spotlight-info">
                   <div class="spotlight-sym-row">
                     <span class="spotlight-sym" id="spotlight-symbol">BLACKDRAGON</span>
-                    <span class="spotlight-venue-badge gmgn-venue-badge ref" id="spotlight-venue">Ref Finance</span>
+                    <span class="spotlight-venue-badge gmgn-venue-badge ref" id="spotlight-venue">💎 Ref Finance</span>
+                    <span class="live-pulse-badge" id="spotlight-live-badge"><span class="pulse-dot"></span> LIVE</span>
                   </div>
                   <div class="spotlight-name" id="spotlight-name">Black Dragon</div>
                   <div class="spotlight-contract-row">
@@ -4729,14 +4784,15 @@
           `;
         }
 
-        const avatarEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
+        const logoHtml = getTokenLogoHtml(tok, 28);
+        const launchpadBadge = getLaunchpadBadgeHtml(tok);
 
         return `
           <tr class="${activeClass}" onclick="selectGmGnToken('${escapeHtml(tok.address)}')">
             <td style="color:var(--color-text-subtle);">${idx + 1}</td>
             <td>
               <div class="gmgn-tok-cell">
-                <div class="gmgn-tok-icon">${avatarEmoji}</div>
+                ${logoHtml}
                 <div class="gmgn-tok-text">
                   <div class="gmgn-tok-sym">
                     <span>${escapeHtml(tok.symbol)}</span>
@@ -4746,14 +4802,12 @@
               </div>
             </td>
             <td>
-              <span class="gmgn-venue-badge ${venueClass}">
-                ${escapeHtml(tok.venue)}
-              </span>
+              ${launchpadBadge}
             </td>
-            <td style="text-align:right; font-weight:700; color:#fff;">
+            <td style="text-align:right; font-weight:700; color:#fff;" id="row-price-${escapeHtml(tok.address)}">
               $${tok.priceUsd < 0.001 ? tok.priceUsd.toFixed(6) : tok.priceUsd.toFixed(4)}
             </td>
-            <td style="text-align:right; font-weight:700; color:${changeClass};">
+            <td style="text-align:right; font-weight:700; color:${changeClass};" id="row-change-${escapeHtml(tok.address)}">
               ${changeArrow}${tok.change24h.toFixed(1)}%
             </td>
             <td style="text-align:right; color:#ffffff;">
@@ -4773,6 +4827,60 @@
           </tr>
         `;
       }).join('');
+    }
+
+    function getLaunchpadBadgeHtml(tok) {
+      const lp = (tok.launchpad || 'ref').toLowerCase();
+      let icon = '💎';
+      let name = 'Ref Finance';
+      let badgeClass = 'ref';
+      if (lp === 'justhoot' || tok.venue?.includes('HOOT')) {
+        icon = '🦉';
+        name = 'JustHoot';
+        badgeClass = 'justhoot';
+      } else if (lp === 'nearlytrade' || tok.venue?.includes('NEARLY')) {
+        icon = '⚡';
+        name = 'NearlyTrade';
+        badgeClass = 'nearlytrade';
+      } else if (lp === 'memecooking' || tok.venue?.includes('Meme')) {
+        icon = '🍳';
+        name = 'Meme.Cooking';
+        badgeClass = 'memecooking';
+      } else if (lp === 'intear' || tok.venue?.includes('InTear')) {
+        icon = '💧';
+        name = 'InTear';
+        badgeClass = 'intear';
+      } else if (lp === 'pumppoly') {
+        icon = '🚀';
+        name = 'PumpPoly';
+        badgeClass = 'pumppoly';
+      } else if (lp === 'onetokenhub') {
+        icon = '🪙';
+        name = 'OneTokenHub';
+        badgeClass = 'onetokenhub';
+      } else if (lp === 'nearpad') {
+        icon = '🪐';
+        name = 'NearPad';
+        badgeClass = 'nearpad';
+      }
+      return `<span class="gmgn-venue-badge ${badgeClass}"><span style="font-size:11px;">${icon}</span> ${name}</span>`;
+    }
+
+    function getTokenLogoHtml(tok, size = 28) {
+      const fallbackEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
+      if (tok.icon) {
+        return `
+          <div class="gmgn-tok-icon" style="width:${size}px; height:${size}px; border-radius:50%; overflow:hidden; position:relative; background:var(--color-surface-hover); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            <img src="${escapeHtml(tok.icon)}" alt="${escapeHtml(tok.symbol)}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+            <span style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:${Math.round(size * 0.48)}px;">${fallbackEmoji}</span>
+          </div>
+        `;
+      }
+      return `
+        <div class="gmgn-tok-icon" style="width:${size}px; height:${size}px; font-size:${Math.round(size * 0.48)}px; flex-shrink:0;">
+          ${fallbackEmoji}
+        </div>
+      `;
     }
 
     function formatCompactNumber(num) {
@@ -4803,8 +4911,7 @@
       if (nameEl) nameEl.textContent = tok.name;
       if (contractEl) contractEl.textContent = tok.address;
       if (venueEl) {
-        venueEl.textContent = tok.venue;
-        venueEl.className = `spotlight-venue-badge gmgn-venue-badge ${(tok.launchpad || 'ref').toLowerCase()}`;
+        venueEl.innerHTML = getLaunchpadBadgeHtml(tok);
       }
       if (priceEl) priceEl.textContent = '$' + (tok.priceUsd < 0.001 ? tok.priceUsd.toFixed(6) : tok.priceUsd.toFixed(4));
       if (changeEl) {
@@ -4814,12 +4921,81 @@
       if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(tok.marketCap);
       if (volEl) volEl.textContent = '$' + formatCompactNumber(tok.volume24h);
       if (avatarEl) {
-        const emoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
-        avatarEl.textContent = emoji;
+        avatarEl.innerHTML = getTokenLogoHtml(tok, 40);
       }
 
       updateGmGnEstimatedOutput();
       renderGmGnTable();
+
+      // Restart real-time polling for the newly selected token
+      startRealTimeTokenUpdater();
+    }
+
+    let realTimeTokenTimer = null;
+    let realTimeTableTimer = null;
+
+    // ── Live Real-Time Token Detail Updater (Polls every 3.5s) ────────────────
+    function startRealTimeTokenUpdater() {
+      if (realTimeTokenTimer) clearInterval(realTimeTokenTimer);
+      if (realTimeTableTimer) clearInterval(realTimeTableTimer);
+
+      realTimeTokenTimer = setInterval(async () => {
+        if (!selectedGmGnToken || !selectedGmGnToken.address) return;
+
+        try {
+          const res = await fetch(`/alpha/token/${encodeURIComponent(selectedGmGnToken.address)}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!data.success || !data.token) return;
+
+          const fresh = data.token;
+          const oldPrice = selectedGmGnToken.priceUsd;
+          const newPrice = fresh.priceUsd;
+
+          // Merge fresh fields into active selected token
+          Object.assign(selectedGmGnToken, fresh);
+
+          const priceEl = document.getElementById('spotlight-price-usd');
+          const changeEl = document.getElementById('spotlight-change');
+          const mcapEl = document.getElementById('spotlight-mcap');
+          const volEl = document.getElementById('spotlight-vol');
+
+          if (priceEl) {
+            priceEl.textContent = '$' + (newPrice < 0.001 ? newPrice.toFixed(6) : newPrice.toFixed(4));
+            if (oldPrice && Math.abs(newPrice - oldPrice) > 1e-9) {
+              const flashClass = newPrice >= oldPrice ? 'price-flash-up' : 'price-flash-down';
+              priceEl.classList.remove('price-flash-up', 'price-flash-down');
+              void priceEl.offsetWidth; // trigger reflow
+              priceEl.classList.add(flashClass);
+            }
+          }
+          if (changeEl) {
+            changeEl.textContent = (fresh.change24h >= 0 ? '+' : '') + fresh.change24h.toFixed(1) + '% ' + (fresh.change24h >= 0 ? '▲' : '▼');
+            changeEl.style.color = fresh.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+          }
+          if (mcapEl) mcapEl.textContent = '$' + formatCompactNumber(fresh.marketCap);
+          if (volEl) volEl.textContent = '$' + formatCompactNumber(fresh.volume24h);
+
+          // Update matching row in table seamlessly
+          const rowPriceEl = document.getElementById(`row-price-${fresh.address}`);
+          const rowChangeEl = document.getElementById(`row-change-${fresh.address}`);
+          if (rowPriceEl) rowPriceEl.textContent = '$' + (newPrice < 0.001 ? newPrice.toFixed(6) : newPrice.toFixed(4));
+          if (rowChangeEl) {
+            rowChangeEl.textContent = (fresh.change24h >= 0 ? '+' : '') + fresh.change24h.toFixed(1) + '%';
+            rowChangeEl.style.color = fresh.change24h >= 0 ? 'var(--color-racer-green)' : 'var(--color-danger)';
+          }
+
+          // Recalculate estimated output in trade panel with fresh spot price
+          updateGmGnEstimatedOutput();
+        } catch (err) {
+          // background heartbeat poll failover
+        }
+      }, 3500);
+
+      // Periodically refresh screener table in background every 12 seconds
+      realTimeTableTimer = setInterval(() => {
+        fetchGmGnTokens();
+      }, 12000);
     }
 
     function setGmGnCategory(cat, btnEl) {
@@ -4966,25 +5142,55 @@
         feedback.innerHTML = `📡 Routing private <b>${selectedGmGnSide}</b> of <b>${amtNear} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b> via <b>Decentralized Intent Solvers (Option B)</b>...`;
       }
 
+      const tradePayload = () => JSON.stringify({
+        tokenAddress: selectedGmGnToken.address,
+        tokenSymbol: selectedGmGnToken.symbol,
+        tokenName: selectedGmGnToken.name,
+        side: selectedGmGnSide,
+        amountNear: amtNear,
+        priceNear: selectedGmGnToken.priceNear,
+        venue: selectedGmGnToken.venue,
+        routingPreference: 'auto',
+        isPrivateTrade: true,
+      });
+
+      const isStorageError = (msg) =>
+        msg && (
+          msg.includes('registered with this token contract') ||
+          msg.includes('not registered') ||
+          msg.includes('account is not registered') ||
+          msg.includes('storage deposit')
+        );
+
       try {
         // Dispatch to private trading endpoint (independent from social alpha signals)
-        const res = await fetch('/alpha/trade/execute', {
+        let res = await fetch('/alpha/trade/execute', {
           method: 'POST',
           headers: getAuthHeaders(),
-          body: JSON.stringify({
-            tokenAddress: selectedGmGnToken.address,
-            tokenSymbol: selectedGmGnToken.symbol,
-            tokenName: selectedGmGnToken.name,
-            side: selectedGmGnSide,
-            amountNear: amtNear,
-            priceNear: selectedGmGnToken.priceNear,
-            venue: selectedGmGnToken.venue,
-            routingPreference: 'auto',
-            isPrivateTrade: true,
-          })
+          body: tradePayload()
         });
 
-        const data = await res.json();
+        let data = await res.json();
+
+        // ── Storage registration self-heal: if first attempt returns a storage error,
+        //    show friendly progress and retry once (backend will force-register)
+        if ((!res.ok || !data.success) && isStorageError(data.error)) {
+          if (btn) btn.innerHTML = '<span>🔧 Registering wallet with token contract...</span>';
+          if (feedback) {
+            feedback.style.background = 'rgba(255, 183, 3, 0.12)';
+            feedback.style.color = '#ffb703';
+            feedback.innerHTML = `🔧 <b>Registering your wallet</b> with the <b>${escapeHtml(selectedGmGnToken.symbol)}</b> token contract — this only happens once per token. Retrying trade...`;
+          }
+          // Small delay to let the registration propagate on-chain
+          await new Promise(r => setTimeout(r, 1800));
+          if (btn) btn.innerHTML = '<span>🔒 Retrying Private Trade...</span>';
+          res = await fetch('/alpha/trade/execute', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: tradePayload()
+          });
+          data = await res.json();
+        }
 
         // If user is connected via an external wallet (Meteor, MyNearWallet, etc.), prompt wallet approval
         if (data.requiresClientSignature && data.depositAddress) {
@@ -5075,7 +5281,11 @@
         if (feedback) {
           feedback.style.background = 'rgba(255, 77, 77, 0.15)';
           feedback.style.color = 'var(--color-danger)';
-          feedback.textContent = '❌ Trade failed: ' + (err.message || 'Execution error');
+          // Show a clean message without internal jargon for storage errors
+          const msg = err.message || 'Execution error';
+          feedback.textContent = isStorageError(msg)
+            ? '❌ Trade failed: Wallet registration failed — please try again in a moment.'
+            : '❌ Trade failed: ' + msg;
         }
       } finally {
         if (btn) {
@@ -6770,6 +6980,9 @@
       fetchGmGnTokens();
       refreshUserBalance();
       updateWalletUI();
+
+      // Start live price polling (3.5s for selected token detail, 12s for full table refresh)
+      startRealTimeTokenUpdater();
 
       // Deep-link routing for Trading Console, Creator Studio, and My Keys
       const path = window.location.pathname.toLowerCase();
