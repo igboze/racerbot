@@ -22,24 +22,37 @@ async function main() {
   await near.addKey(contractId, kp);
   const account = await near.getAccount(contractId);
 
-  console.log(`Deploying ${contractId}...`);
+  console.log(`Checking existing state for ${contractId}...`);
+  const currentState = await account.state();
+  const isAlreadyInitialized = currentState.code_hash !== '11111111111111111111111111111111';
+
+  console.log(`Deploying updated contract code to ${contractId}...`);
   const deployAction = transactions.deployContract(wasmBytes);
-  const initAction = transactions.functionCall(
-    'new',
-    {
-      owner_id: parentAccount,
-      treasury_id: treasuryAccount,
-      buy_fee_bps: 150,
-      sell_fee_bps: 150,
-      snipe_fee_bps: 250,
-    },
-    BigInt('30000000000000'), // 30 Tgas
-    0n
-  );
+  const actions = [deployAction];
+
+  if (!isAlreadyInitialized) {
+    console.log('Initializing fresh contract state...');
+    actions.push(
+      transactions.functionCall(
+        'new',
+        {
+          owner_id: parentAccount,
+          treasury_id: treasuryAccount,
+          buy_fee_bps: 150,
+          sell_fee_bps: 150,
+          snipe_fee_bps: 250,
+        },
+        BigInt('30000000000000'), // 30 Tgas
+        0n
+      )
+    );
+  } else {
+    console.log('Contract already initialized. Performing seamless in-place code upgrade.');
+  }
 
   const res = await account.signAndSendTransaction({
     receiverId: contractId,
-    actions: [deployAction, initAction],
+    actions,
   });
 
   const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
