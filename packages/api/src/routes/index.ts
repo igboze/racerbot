@@ -1141,9 +1141,29 @@ router.post(['/alpha/vault/withdraw', '/alpha/vault/refund'], async (req, res) =
   }
 });
 
+router.get('/alpha/vault/balance', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user || !user.subaccount_id) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const token = ((req.query.token as string) || 'near').toLowerCase();
+    const { getVaultBalance } = await import('../racerVault.js');
+    const balanceYocto = await getVaultBalance(user.subaccount_id, token);
+    const balanceNear = (Number(BigInt(balanceYocto) / 1000000000000000000n) / 1e6).toFixed(4);
+    res.json({
+      success: true,
+      accountId: user.subaccount_id,
+      token,
+      balanceYocto,
+      balanceFormatted: balanceNear,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch vault balance' });
+  }
+});
 
-
-// ── Alpha Caller Signal Broadcast & Copy Dispatch ───────────────────────────
 router.post('/alpha/creator/signal', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
