@@ -559,6 +559,17 @@ export async function getUserByTelegramId(telegramId: number): Promise<UserRecor
 }
 
 export async function getUserById(id: string): Promise<UserRecord | null> {
+  if (!id) return null;
+
+  // Guard: NEAR wallet addresses (e.g. "lunar-nexus-9768.racerbot.near") are NOT UUIDs.
+  // Passing them to `WHERE id = $1` makes Postgres throw "invalid input syntax for type uuid".
+  // Detect a non-UUID string by the presence of dots combined with "near" suffix and fall back
+  // to subaccount_id lookup (TEXT column), which is always safe.
+  const looksLikeNearAddress = /\.near$/.test(id) || /\.testnet$/.test(id);
+  if (looksLikeNearAddress) {
+    return getUserBySubaccount(id);
+  }
+
   const hit = userIdCache.get(id);
   if (hit && Date.now() < hit.expiresAt) {
     return hit.user ? { ...hit.user } : null;
