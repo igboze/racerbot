@@ -5420,7 +5420,7 @@
         tokenDecimals: tokenDecimals,
         priceNear: selectedGmGnToken.priceNear,
         venue: selectedGmGnToken.venue,
-        routingPreference: 'auto',
+        routingPreference: (selectedGmGnToken.venue && selectedGmGnToken.venue.toLowerCase() !== 'defuse') ? 'vault' : 'auto',
         isPrivateTrade: true,
       });
 
