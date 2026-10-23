@@ -556,6 +556,22 @@ router.get('/alpha/tokens', async (req, res) => {
   }
 });
 
+// ── Live Single Token Detail (Real-time updates) ───────────────────────────
+router.get('/alpha/token/:address', async (req, res) => {
+  try {
+    const address = req.params.address;
+    const { getAlphaTokenDetail } = await import('../racerAlpha.js');
+    const token = await getAlphaTokenDetail(address);
+    if (!token) {
+      res.status(404).json({ success: false, error: 'Token not found' });
+      return;
+    }
+    res.json({ success: true, token });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to fetch token detail' });
+  }
+});
+
 router.get('/alpha/creator/dashboard', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
@@ -718,10 +734,10 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       return;
     }
 
-    const { inferVenueFromToken } = await import('../racerAlpha.js');
+    const { inferVenueFromToken, normalizeVenueName } = await import('../racerAlpha.js');
     const isBuy = side.toUpperCase() === 'BUY';
     const numNear = Number(amountNear) || 1.0;
-    const venue = explicitVenue || inferVenueFromToken(tokenAddress);
+    const venue = normalizeVenueName(explicitVenue, tokenAddress);
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
@@ -765,16 +781,69 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     // 2. Phase 1b: Direct AMM Swap via Managed Subaccount
     if (!onChainTxHash && user.subaccount_id) {
       try {
-        const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
-        const swapResult = await publishSwap({
+        // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
+        if (isBuy && user.subaccount_id) {
+          try {
+            const { getNear } = await import('@racerbot/shared');
+            const near = getNear();
+            // Register token storage for every NEP-141 token (all venues require this)
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
+                logger.warn(`Storage deposit pre-check warning for ${user.subaccount_id} on ${tokenAddress}: ${err?.message}`);
+              });
+            }
+            // Ref-Finance internal whitelist registration (needed for ref/rhea/memecooking/gaypad/kelytra/nearpumpfun)
+            const refVenues = ['rhea', 'ref', 'memecooking', 'gaypad', 'kelytra', 'nearpumpfun', 'nearlytrade', 'onetokenhub', 'nearpad', 'shoremarkets', 'qlyphs'];
+            if (refVenues.includes(venue)) {
+              const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+              await ensureRefStorage(user.subaccount_id).catch(() => {});
+              await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
+            }
+          } catch (preErr: any) {
+            logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
+          }
+        }
+
+        const buildSwapArgs = () => ({
           user_id: user.id,
           token_in: isBuy ? 'near' : tokenAddress,
           token_out: isBuy ? tokenAddress : 'wrap.near',
-          amount_in: isBuy ? amountYocto : (req.body.amountTokens || amountYocto),
+          amount_in: isBuy
+            ? (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString()
+            : (req.body.amountTokens || (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString()),
           min_amount_out: '0',
           venue: venue as any,
           slippage_pct: Number(slippagePct) || 2,
-        }, undefined, { suppressAlphaSignal: true });
+        });
+
+        let swapResult = await publishSwap(buildSwapArgs(), undefined, { suppressAlphaSignal: true });
+
+        // Self-healing retry: if swap failed due to missing storage registration, force-register then retry once
+        const swapFailReason = swapResult?.reason || '';
+        const isStorageFailure =
+          swapFailReason.includes('registered with this token contract') ||
+          swapFailReason.includes('not registered') ||
+          swapFailReason.includes('account is not registered') ||
+          swapFailReason.includes('storage deposit');
+
+        if ((!swapResult || swapResult.success === false) && isStorageFailure && isBuy && user.subaccount_id) {
+          logger.warn(`[TRADE-ROUTE] Storage registration failure detected for ${user.subaccount_id} on ${tokenAddress}. Force-registering and retrying...`);
+          try {
+            const { getNear } = await import('@racerbot/shared');
+            const near = getNear();
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress);
+            }
+            const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+            await ensureRefStorage(user.subaccount_id);
+            await ensureRefTokenRegistered(tokenAddress, user.subaccount_id);
+            // Single retry after successful registration
+            swapResult = await publishSwap(buildSwapArgs(), undefined, { suppressAlphaSignal: true });
+            logger.info(`[TRADE-ROUTE] Storage self-heal retry result for ${user.subaccount_id}: success=${swapResult?.success}`);
+          } catch (retryErr: any) {
+            logger.warn(`[TRADE-ROUTE] Storage self-heal retry failed: ${retryErr?.message}`);
+          }
+        }
 
         if (swapResult && swapResult.success !== false) {
           onChainTxHash = swapResult.txHash;
@@ -830,7 +899,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
       return (router as any).handle(req, res);
     }
 
-    const { recordAlphaSignal, inferVenueFromToken } = await import('../racerAlpha.js');
+    const { recordAlphaSignal, inferVenueFromToken, normalizeVenueName } = await import('../racerAlpha.js');
     const { traderId, tokenAddress, tokenSymbol, tokenName, side, priceNear, amountNear, venue: explicitVenue, txHash: clientTxHash, slippagePct } = req.body;
 
     if (!tokenAddress || !side) {
@@ -840,7 +909,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
     const isBuy = side.toUpperCase() === 'BUY';
     const numNear = Number(amountNear) || 1.0;
-    const venue = explicitVenue || inferVenueFromToken(tokenAddress);
+    const venue = normalizeVenueName(explicitVenue, tokenAddress);
 
     // Auto-resolve or create effective trader ID if not provided
     let effectiveTraderId = traderId;
@@ -913,16 +982,66 @@ router.post('/alpha/creator/signal', async (req, res) => {
     // ── Phase 1b: Direct AMM Swap via Managed Subaccount (Fallback or Direct AMM) ──
     if (!onChainTxHash && user.subaccount_id) {
       try {
-        const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
-        const swapResult = await publishSwap({
+        // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
+        if (isBuy && user.subaccount_id) {
+          try {
+            const { getNear } = await import('@racerbot/shared');
+            const near = getNear();
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
+                logger.warn(`Storage deposit pre-check warning for ${user.subaccount_id} on ${tokenAddress}: ${err?.message}`);
+              });
+            }
+            const refVenues = ['rhea', 'ref', 'memecooking', 'gaypad', 'kelytra', 'nearpumpfun', 'nearlytrade', 'onetokenhub', 'nearpad', 'shoremarkets', 'qlyphs'];
+            if (refVenues.includes(venue)) {
+              const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+              await ensureRefStorage(user.subaccount_id).catch(() => {});
+              await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
+            }
+          } catch (preErr: any) {
+            logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
+          }
+        }
+
+        const buildSwapArgs = () => ({
           user_id: user.id,
           token_in: isBuy ? 'near' : tokenAddress,
           token_out: isBuy ? tokenAddress : 'wrap.near',
-          amount_in: isBuy ? amountYocto : (req.body.amountTokens || amountYocto),
+          amount_in: isBuy
+            ? (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString()
+            : (req.body.amountTokens || (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString()),
           min_amount_out: '0',
           venue: venue as any,
           slippage_pct: Number(slippagePct) || 2,
-        }, undefined, { suppressAlphaSignal: true });
+        });
+
+        let swapResult = await publishSwap(buildSwapArgs(), undefined, { suppressAlphaSignal: true });
+
+        // Self-healing retry: if swap failed due to missing storage registration, force-register then retry once
+        const swapFailReason = swapResult?.reason || '';
+        const isStorageFailure =
+          swapFailReason.includes('registered with this token contract') ||
+          swapFailReason.includes('not registered') ||
+          swapFailReason.includes('account is not registered') ||
+          swapFailReason.includes('storage deposit');
+
+        if ((!swapResult || swapResult.success === false) && isStorageFailure && isBuy && user.subaccount_id) {
+          logger.warn(`[SIGNAL-ROUTE] Storage registration failure for ${user.subaccount_id} on ${tokenAddress}. Force-registering and retrying...`);
+          try {
+            const { getNear } = await import('@racerbot/shared');
+            const near = getNear();
+            if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
+              await near.ensureStorageDeposit(user.subaccount_id, tokenAddress);
+            }
+            const { ensureRefStorage, ensureRefTokenRegistered } = await import('@racerbot/executor');
+            await ensureRefStorage(user.subaccount_id);
+            await ensureRefTokenRegistered(tokenAddress, user.subaccount_id);
+            swapResult = await publishSwap(buildSwapArgs(), undefined, { suppressAlphaSignal: true });
+            logger.info(`[SIGNAL-ROUTE] Storage self-heal retry result: success=${swapResult?.success}`);
+          } catch (retryErr: any) {
+            logger.warn(`[SIGNAL-ROUTE] Storage self-heal retry failed: ${retryErr?.message}`);
+          }
+        }
 
         if (swapResult && swapResult.success !== false) {
           onChainTxHash = swapResult.txHash;

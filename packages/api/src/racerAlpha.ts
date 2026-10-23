@@ -1,4 +1,4 @@
-import { createLogger, getNear, getNearUsdPrice } from '@racerbot/shared';
+import { createLogger, getNear, getNearUsdPrice, type VenueName } from '@racerbot/shared';
 import { getDb, getOpenPositions, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
@@ -148,6 +148,7 @@ export function inferVenueFromToken(tokenAddress: string, defaultVenue = 'rhea')
   const lower = (tokenAddress || '').toLowerCase().trim();
   if (lower.endsWith('.nearlytrade.near')) return 'nearlytrade';
   if (lower.endsWith('.meme-cooking.near')) return 'memecooking';
+  if (lower.includes('justhoot.near') || lower.includes('justhoot')) return 'rhea';
   if (lower.includes('intear.near')) return 'intear';
   if (lower.endsWith('.pad.onetokenhub.near')) return 'onetokenhub';
   if (lower.endsWith('.nearpadfamily.near')) return 'nearpad';
@@ -157,6 +158,28 @@ export function inferVenueFromToken(tokenAddress: string, defaultVenue = 'rhea')
   if (lower.endsWith('.gaypad.j1-racing.near')) return 'gaypad';
   if (lower.endsWith('.kelytra.near')) return 'kelytra';
   return defaultVenue;
+}
+
+/**
+ * Normalizes user-facing or display venue strings (e.g. '🦉 HOOT', '⚡ NEARLY', 'Ref Finance')
+ * to standard valid VenueName identifiers supported by the swap executor.
+ */
+export function normalizeVenueName(venueInput?: string, tokenAddress?: string): VenueName {
+  const v = (venueInput || '').toLowerCase().trim();
+  if (v.includes('hoot') || v.includes('justhoot')) return 'rhea';
+  if (v.includes('nearly')) return 'nearlytrade';
+  if (v.includes('meme') || v.includes('cooking')) return 'memecooking';
+  if (v.includes('ref') || v.includes('rhea')) return 'rhea';
+  if (v.includes('intear')) return 'intear';
+  if (v.includes('onetokenhub')) return 'onetokenhub';
+  if (v.includes('nearpad')) return 'nearpad';
+  if (v.includes('shoremarkets')) return 'shoremarkets';
+  if (v.includes('gaypad')) return 'gaypad';
+  if (v.includes('kelytra')) return 'kelytra';
+  if (v.includes('nearpumpfun')) return 'nearpumpfun';
+  if (v.includes('qlyphs')) return 'qlyphs';
+  if (tokenAddress) return inferVenueFromToken(tokenAddress) as VenueName;
+  return 'rhea';
 }
 
 // ── Production Traders & Signals Registry (Zero Dummy Mock Fallbacks) ───────
@@ -2259,6 +2282,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'kookdog-42db38.launchpad.justhoot.near',
     symbol: 'KOOKDOG',
     name: 'Kook Dog',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/kookdog.png',
     venue: '🦉 HOOT',
     launchpad: 'justhoot',
     priceUsd: 0.000412,
@@ -2276,6 +2300,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'hoot-f5dd7a.launchpad.justhoot.near',
     symbol: 'HOOT',
     name: 'Hoot Token',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/hoot.png',
     venue: '🦉 HOOT',
     launchpad: 'justhoot',
     priceUsd: 0.00185,
@@ -2295,6 +2320,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'diarhea.nearlytrade.near',
     symbol: 'DIARHEA',
     name: 'Diarhea',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/diarhea.png',
     venue: '⚡ NEARLY',
     launchpad: 'nearlytrade',
     priceUsd: 0.000092,
@@ -2312,6 +2338,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'sol.nearlytrade.near',
     symbol: 'SOL',
     name: 'Sol Nearly',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/sol.png',
     venue: '⚡ NEARLY',
     launchpad: 'nearlytrade',
     priceUsd: 0.00034,
@@ -2331,6 +2358,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'chill.meme-cooking.near',
     symbol: 'CHILL',
     name: 'Chill Guy',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/chill.png',
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
     priceUsd: 0.000155,
@@ -2348,6 +2376,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'pearpe-420.meme-cooking.near',
     symbol: 'PEARPE',
     name: 'PearPe Meme',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/pearpe.png',
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
     priceUsd: 0.000078,
@@ -2365,6 +2394,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'jambo-704.meme-cooking.near',
     symbol: 'JAMBO',
     name: 'Jambo',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/jambo.png',
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
     priceUsd: 0.00021,
@@ -2382,6 +2412,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'woof.meme-cooking.near',
     symbol: 'WOOF',
     name: 'Woof Near',
+    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/woof.png',
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
     priceUsd: 0.000045,
@@ -2401,7 +2432,8 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'blackdragon.tkn.near',
     symbol: 'BLACKDRAGON',
     name: 'Black Dragon',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/blackdragon.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.000084,
     priceNear: 0.000017,
@@ -2411,14 +2443,15 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     bondingProgress: 100,
     bondingPhase: 'dex_pool',
     liquidityUsd: 850000,
-    sparkline: [0.000062, 0.000068, 0.000072, 0.000075, 0.000081, 0.000084],
+    sparkline: [0.000062, 0.000070, 0.000072, 0.000075, 0.000081, 0.000084],
     holders: 4520,
   },
   {
     address: 'token.lonkingnearbackto2024.near',
     symbol: 'LONK',
     name: 'Lonk',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/lonk.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.0000038,
     priceNear: 0.00000077,
@@ -2435,7 +2468,8 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'wrap.near',
     symbol: 'wNEAR',
     name: 'Wrapped NEAR',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/near.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 4.95,
     priceNear: 1.0,
@@ -2452,7 +2486,8 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'aurora.tkn.near',
     symbol: 'AURORA',
     name: 'Aurora',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/aurora.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.165,
     priceNear: 0.0333,
@@ -2469,7 +2504,8 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'shitzu.tkn.near',
     symbol: 'SHITZU',
     name: 'Shitzu',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/shitzu.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.0042,
     priceNear: 0.000848,
@@ -2486,7 +2522,8 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'neat.near',
     symbol: 'NEAT',
     name: 'Neat',
-    venue: 'Ref Finance',
+    icon: 'https://assets.ref.finance/images/neat.png',
+    venue: '💎 Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.082,
     priceNear: 0.0166,
@@ -2505,6 +2542,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'intear.intear.near',
     symbol: 'INTEAR',
     name: 'InTear Ecosystem',
+    icon: 'https://assets.ref.finance/images/intear.png',
     venue: '💧 InTear',
     launchpad: 'intear',
     priceUsd: 0.024,
@@ -2713,10 +2751,13 @@ function mapTokenInfoToAlphaItem(
     Number(p.toFixed(6)),
   ];
 
+  const icon = info?.icon || (fallbackMeta as any)?.icon || (INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === address.toLowerCase())?.icon);
+
   return {
     address,
     symbol,
     name,
+    icon,
     venue,
     launchpad: fallbackMeta.fallbackLaunchpad || launchpad,
     priceUsd: Number(priceUsd.toFixed(8)),
@@ -2904,4 +2945,43 @@ export async function listAlphaTokens(options?: {
     total: tokens.length,
   };
 }
+
+/**
+ * Fetches real-time live data for a single token contract, including fresh on-chain price,
+ * 24h metrics, bonding curve progress, and authentic token icon.
+ */
+export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTokenItem | null> {
+  if (!tokenAddress) return null;
+  const lowerAddr = tokenAddress.toLowerCase().trim();
+  const cached = cachedAlphaTokensList.tokens.find(t => t.address.toLowerCase() === lowerAddr);
+  const fallback = INITIAL_ALPHA_TOKENS.find(t => t.address.toLowerCase() === lowerAddr);
+  const nearUsd = await getNearUsdPrice().catch(() => 4.95);
+
+  try {
+    const liveInfo = await withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 2500, null);
+    if (liveInfo && (liveInfo.price || liveInfo.symbol)) {
+      const item = mapTokenInfoToAlphaItem(
+        tokenAddress,
+        liveInfo,
+        {
+          symbol: fallback?.symbol || cached?.symbol,
+          name: fallback?.name || cached?.name,
+          fallbackLaunchpad: fallback?.launchpad || cached?.launchpad,
+          fallbackVenue: fallback?.venue || cached?.venue,
+        },
+        nearUsd
+      );
+      if (fallback?.icon && !item.icon) {
+        item.icon = fallback.icon;
+      }
+      return item;
+    }
+  } catch {}
+
+  if (cached) {
+    return { ...cached, icon: cached.icon || fallback?.icon };
+  }
+  return fallback || null;
+}
+
 
