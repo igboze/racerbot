@@ -107,21 +107,27 @@ export async function depositNearToVault(
     return { success: false, reason: 'No managed subaccount for user' };
   }
 
-  const { decrypt } = await import('@racerbot/shared');
+  const { decrypt, getNear } = await import('@racerbot/shared');
   const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
   const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
   const keyPair = KeyPair.fromString(privateKey as any);
 
   try {
-    const res = await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
-      return await account.functionCall({
-        contractId: RACER_VAULT_CONTRACT_ID,
-        methodName: 'deposit_near',
-        args: { user: user.subaccount_id },
-        gas: BigInt('30000000000000'), // 30 TGas
-        attachedDeposit: BigInt(amountYocto),
-      });
-    });
+    const near = getNear();
+    await near.addKey(user.subaccount_id, keyPair);
+    const { transactions } = await import('near-api-js');
+    const res = await near.signAndSendTransactionAll(
+      user.subaccount_id,
+      RACER_VAULT_CONTRACT_ID,
+      [
+        transactions.functionCall(
+          'deposit_near',
+          { user: user.subaccount_id },
+          BigInt('30000000000000'), // 30 TGas
+          BigInt(amountYocto)
+        )
+      ]
+    );
 
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
     logger.info(`Deposited ${amountYocto} yoctoNEAR to vault for ${user.subaccount_id}: tx=${txHash}`);
@@ -151,22 +157,27 @@ export async function depositFtToVault(
 
   try {
     const near = getNear();
+    await near.addKey(user.subaccount_id, keyPair);
     // Ensure vault contract is registered with storage deposit on token
     await near.ensureStorageDeposit(RACER_VAULT_CONTRACT_ID, tokenContractId).catch(() => {});
 
-    const res = await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
-      return await account.functionCall({
-        contractId: tokenContractId,
-        methodName: 'ft_transfer_call',
-        args: {
-          receiver_id: RACER_VAULT_CONTRACT_ID,
-          amount: amountRaw,
-          msg: `user:${user.subaccount_id}`,
-        },
-        gas: BigInt('80000000000000'), // 80 TGas
-        attachedDeposit: 1n, // 1 yocto required
-      });
-    });
+    const { transactions } = await import('near-api-js');
+    const res = await near.signAndSendTransactionAll(
+      user.subaccount_id,
+      tokenContractId,
+      [
+        transactions.functionCall(
+          'ft_transfer_call',
+          {
+            receiver_id: RACER_VAULT_CONTRACT_ID,
+            amount: amountRaw,
+            msg: `user:${user.subaccount_id}`,
+          },
+          BigInt('80000000000000'), // 80 TGas
+          1n // 1 yocto required
+        )
+      ]
+    );
 
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
     logger.info(`Deposited ${amountRaw} FT (${tokenContractId}) to vault for ${user.subaccount_id}: tx=${txHash}`);
@@ -665,30 +676,27 @@ export async function executeShieldedVaultIntent(params: {
     custom_msg: planned.custom_msg || null,
   };
 
-  // 2. Pre-check balance in vault. If insufficient, auto-deposit from user managed account
+  // 2. Pre-check balance in vault.
+  // For BUY: If insufficient, we atomically batch [deposit_near, execute_intent] into a single transaction,
+  // cutting out the sequential 2nd transaction and eliminating 4+ seconds of latency!
   let autoDepositedToken: string | null = null;
   let currentBal = await getVaultBalance(intentPayload.user, intentPayload.token_in);
-  if (BigInt(currentBal) < BigInt(rawAmountIn) && isBuy) {
-    const altToken = intentPayload.token_in === 'wrap.near' ? 'near' : 'wrap.near';
-    const altBal = await getVaultBalance(intentPayload.user, altToken);
-    if (BigInt(altBal) >= BigInt(rawAmountIn)) {
-      currentBal = altBal;
-    } else {
-      const needed = (BigInt(rawAmountIn) - BigInt(currentBal)).toString();
-      logger.info(`Auto-funding vault sub-ledger: ${needed} yocto for ${intentPayload.user}`);
-      const depRes = await depositNearToVault(params.user, needed);
-      if (!depRes.success) {
-        return {
-          success: false,
-          routing: 'RACER_SHIELDED_VAULT',
-          correlationId,
-          tokenIn: planned.tokenIn,
-          tokenOut: planned.tokenOut,
-          amountInFormatted: String(numNear),
-          reason: `Insufficient vault balance and auto-deposit failed: ${depRes.reason}`,
-        };
+  let neededNearToAttach = 0n;
+
+  if (isBuy) {
+    if (BigInt(currentBal) < BigInt(rawAmountIn)) {
+      const altToken = intentPayload.token_in === 'wrap.near' ? 'near' : 'wrap.near';
+      const altBal = await getVaultBalance(intentPayload.user, altToken);
+      if (BigInt(altBal) >= BigInt(rawAmountIn)) {
+        currentBal = altBal;
+      } else {
+        const needed = BigInt(rawAmountIn) - BigInt(currentBal);
+        if (needed > 0n) {
+          logger.info(`Auto-funding vault sub-ledger: ${needed} yocto for ${intentPayload.user} (batched atomically into intent tx)`);
+          neededNearToAttach = needed;
+          autoDepositedToken = 'near';
+        }
       }
-      autoDepositedToken = 'near';
     }
   } else if (BigInt(currentBal) < BigInt(rawAmountIn) && !isBuy) {
     const needed = (BigInt(rawAmountIn) - BigInt(currentBal)).toString();
@@ -708,8 +716,8 @@ export async function executeShieldedVaultIntent(params: {
     autoDepositedToken = planned.tokenIn;
   }
 
-  // 3. Record PENDING intent in DB for team tracking & user history
-  await recordVaultIntent({
+  // 3. Record PENDING intent in DB for team tracking & user history (non-blocking)
+  recordVaultIntent({
     correlation_id: correlationId,
     user_id: params.user.id,
     account_id: intentPayload.user,
@@ -726,50 +734,45 @@ export async function executeShieldedVaultIntent(params: {
     deadline,
   }).catch((dbErr: any) => logger.warn(`Failed recording vault intent to DB: ${dbErr?.message}`));
 
-  // 4. Submit intent using relayer account (pays gas on behalf of user)
-  // Contract requires predecessor == self.owner_id ('racerbot.near') or predecessor == intent.user
-  let relayerAccountId =
-    process.env.RELAYER_ACCOUNT_ID ||
-    process.env.RACERBOT_PARENT_ACCOUNT ||
-    'racerbot.near';
-  // Guard: Contract account (racerbotrouter.near) is never its own relayer; relayer must be racerbot.near
-  if (relayerAccountId === RACER_VAULT_CONTRACT_ID || relayerAccountId.includes('router')) {
-    relayerAccountId = process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
+  // 4. Submit intent using user's scoped subaccount with fast hedged multi-RPC broadcaster
+  const { transactions } = await import('near-api-js');
+  const { decrypt, getNear } = await import('@racerbot/shared');
+  const near = getNear();
+  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
+  const privateKey = decrypt(params.user.scoped_key_encrypted, masterKey);
+  const keyPair = KeyPair.fromString(privateKey as any);
+  await near.addKey(intentPayload.user, keyPair);
+
+  const actions: any[] = [];
+  if (isBuy && neededNearToAttach > 0n) {
+    actions.push(
+      transactions.functionCall(
+        'deposit_near',
+        { user: intentPayload.user },
+        BigInt('20000000000000'), // 20 TGas
+        neededNearToAttach
+      )
+    );
   }
 
-  const rawRelayerKey =
-    process.env.RELAYER_PRIVATE_KEY ||
-    process.env.MAIN_WALLET_PRIVATE_KEY ||
-    '';
-  const relayerKey = rawRelayerKey.trim();
-
-  if (!relayerKey) {
-    logger.warn('Relayer private key not set. Using user subaccount key as authorized direct fallback.');
-  }
+  actions.push(
+    transactions.functionCall(
+      'execute_intent',
+      { intent: intentPayload },
+      isBuy && neededNearToAttach > 0n ? BigInt('260000000000000') : BigInt('280000000000000'), // 260 or 280 TGas (<= 300 Tgas block limit)
+      0n
+    )
+  );
 
   try {
-    const keyPair = relayerKey
-      ? KeyPair.fromString(relayerKey as any)
-      : KeyPair.fromString(
-          (await import('@racerbot/shared')).decrypt(
-            params.user.scoped_key_encrypted,
-            process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || 'default-master-key'
-          ) as any
-        );
-    const callerId = relayerKey ? relayerAccountId : intentPayload.user;
-
-    const res = await connectWithNearRpcFailover(callerId, keyPair, async (account) => {
-      return await account.functionCall({
-        contractId: RACER_VAULT_CONTRACT_ID,
-        methodName: 'execute_intent',
-        args: { intent: intentPayload },
-        gas: BigInt('280000000000000'), // 280 TGas for multi-hop + callbacks
-        attachedDeposit: 0n,
-      });
-    });
+    const res = await near.signAndSendTransactionAll(
+      intentPayload.user,
+      RACER_VAULT_CONTRACT_ID,
+      actions
+    );
 
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
-    logger.info(`Vault intent submitted on-chain: tx=${txHash}, correlation=${correlationId}`);
+    logger.info(`Vault intent executed on-chain: tx=${txHash}, correlation=${correlationId}`);
 
     // Inspect logs for EVENT_JSON to extract status and amounts
     let isSettled = false;
@@ -848,7 +851,7 @@ export async function executeShieldedVaultIntent(params: {
       failure_reason: err.message,
     }).catch(() => {});
 
-    if (autoDepositedToken) {
+    if (autoDepositedToken && (autoDepositedToken !== 'near' || neededNearToAttach === 0n)) {
       logger.info(`Auto-refunding ${autoDepositedToken} to ${intentPayload.user} following execution error...`);
       await refundUserFromVault(intentPayload.user, autoDepositedToken).catch(rErr =>
         logger.warn(`Auto-refund attempt failed: ${rErr?.message}`)

@@ -840,8 +840,16 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     let executionRouting: 'INTENT_SOLVER' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
 
-    // 1. Phase 1a: Decentralized Private Intent Solver Execution (Defuse Solver)
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm' && routingPreference !== 'vault' && isBuy) {
+    const isLaunchpadToken =
+      (Boolean(venue) && !['defuse', 'intent', 'near intents (defuse)', '1click'].includes(venue.toLowerCase())) ||
+      tokenAddress.includes('nearlytrade.near') ||
+      tokenAddress.includes('shardsmarket.near') ||
+      tokenAddress.includes('intear.near') ||
+      tokenAddress.includes('memecooking') ||
+      tokenAddress.includes('patata-monster');
+
+    // 1. Phase 1a: Decentralized Private Intent Solver Execution (Defuse Solver - major multichain tokens only)
+    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm' && routingPreference !== 'vault' && !isLaunchpadToken && isBuy) {
       try {
         const { executeIntentTrade } = await import('../intentTrade.js');
         const intentResult = await executeIntentTrade({
