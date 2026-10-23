@@ -2769,7 +2769,8 @@
           <li>
             <button class="nav-item-btn" id="nav-btn-terminal" onclick="switchNav('terminal')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              <span>Terminal &amp; Positions</span>
+              <span>Trading Console</span>
+              <span class="active-pill" style="font-size:9px; padding:1px 5px; margin-left:auto; background:rgba(0, 230, 118, 0.15); color:var(--color-racer-green); border-color:rgba(0, 230, 118, 0.3);">LIVE</span>
             </button>
           </li>
           <li>
@@ -2845,6 +2846,10 @@
             <span class="live-dot"></span>
             <span>Network • NEAR</span>
           </div>
+          <button class="btn-primary" id="header-terminal-btn" onclick="switchNav('terminal')" style="background:linear-gradient(135deg, rgba(0, 240, 255, 0.2), rgba(0, 230, 118, 0.2)); border:1px solid rgba(0, 240, 255, 0.4); color:#fff; font-weight:700;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--color-racer-green);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            <span>⚡ Trading Console</span>
+          </button>
           <button id="header-connect-btn" class="btn-wallet-connect" onclick="handleHeaderConnectClick()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"></path><path d="M16 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"></path><path d="M4 7V5a2 2 0 0 1 2-2h12"></path></svg>
             <span id="header-connect-label">Connect NEAR Wallet</span>
@@ -2861,6 +2866,24 @@
 
       <!-- VIEW 1: Leaderboard / Discover Traders (Image 1) -->
       <section id="view-leaderboard">
+        <!-- Trading Console Fast Action Banner -->
+        <div class="bottom-promo-banner" style="margin-bottom:16px; background:linear-gradient(135deg, rgba(0, 240, 255, 0.08), rgba(0, 230, 118, 0.06)); border:1px solid rgba(0, 240, 255, 0.3);">
+          <div class="banner-left">
+            <div class="banner-icon-box" style="background:rgba(0, 240, 255, 0.15); border-color:rgba(0, 240, 255, 0.3); color:var(--color-racer-cyan);">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            </div>
+            <div class="banner-text-col">
+              <div class="banner-title" style="font-size:16px; font-weight:800;">Confidential Trading Console &amp; Live DEX Screener</div>
+              <div class="banner-sub" style="font-size:12.5px;">Execute real confidential swaps on NEAR, screen launchpad tokens in real-time, and broadcast encrypted alpha signals.</div>
+            </div>
+          </div>
+          <div class="banner-right">
+            <button class="btn-primary" onclick="switchNav('terminal')" style="font-size:13.5px; padding:10px 22px; font-weight:700;">
+              <span>🚀 Open Trading Console →</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Controls Bar -->
         <div class="controls-bar">
           <div class="search-box">
@@ -3463,7 +3486,13 @@
             <h2 style="font-family:var(--font-display); font-size:24px; font-weight:800; color:#fff;">Creator Studio</h2>
             <p style="font-size:13px; color:var(--color-text-muted);">Institutional Social Trading • Monetize your private strategy with NEAR Confidential Intents.</p>
           </div>
-          <div id="creator-top-badge" style="display:flex; align-items:center; gap:8px;"></div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <button class="btn-primary" onclick="switchNav('terminal')" style="height:36px; padding:0 16px; font-size:12.5px; font-weight:700;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              <span>⚡ Open Trading Console</span>
+            </button>
+            <div id="creator-top-badge" style="display:flex; align-items:center; gap:8px;"></div>
+          </div>
         </div>
 
         <!-- ONBOARDING & GATING PANEL: For Traders applying to become Creators -->
@@ -3764,15 +3793,19 @@
                 </div>
               </div>
 
-              <!-- Terminal Link Generator -->
+              <!-- Terminal Link Generator & Direct Trading Console Launch -->
               <div class="terminal-card">
                 <div style="font-size:15px; font-weight:700; color:#fff;">Confidential Trading Terminal</div>
-                <div style="font-size:12px; color:var(--color-text-muted);">Share your edge securely. Encrypted solver access link.</div>
+                <div style="font-size:12px; color:var(--color-text-muted);">Execute real on-chain trades and share your edge securely. Encrypted solver access link.</div>
 
                 <div style="display:flex; gap:8px; margin-top:8px;">
                   <input type="text" id="creator-terminal-link" readonly value="https://raceralpha.xyz/terminal/7X-live" style="flex:1; padding:8px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; color:var(--color-racer-cyan); font-family:var(--font-mono); font-size:12px;">
                   <button class="btn-secondary" onclick="copyTerminalLink()" style="padding:0 12px;">Copy</button>
                 </div>
+
+                <button class="btn-primary" style="margin-top:10px; width:100%; justify-content:center; background:linear-gradient(135deg, #00f0ff, #7928ca); color:#fff; font-weight:700; border:none; box-shadow:0 0 16px rgba(0,240,255,0.35); padding:10px;" onclick="switchNav('terminal')">
+                  <span>⚡ Launch Creator Trading Console</span>
+                </button>
 
                 <button class="btn-ghost" style="margin-top:6px; font-size:12px; color:var(--color-text-muted); background:transparent; border:none; cursor:pointer;" onclick="generateNewTerminalLink()">
                   ↻ Generate New One-Time Link
@@ -4836,38 +4869,20 @@
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>Signing &amp; Executing via Confidential Relayer...</span>';
+        btn.innerHTML = '<span>⚡ Executing Real On-Chain Swap (Ref Finance / Meme.Cooking)...</span>';
       }
       if (feedback) {
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(0, 240, 255, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
-        feedback.textContent = `Dispatching confidential ${selectedGmGnSide} for ${selectedGmGnToken.symbol} on ${selectedGmGnToken.venue}...`;
+        feedback.innerHTML = `📡 Routing confidential <b>${selectedGmGnSide}</b> of <b>${amtNear} NEAR</b> for <b>${escapeHtml(selectedGmGnToken.symbol)}</b> on <b>${escapeHtml(selectedGmGnToken.venue)}</b>...`;
       }
 
       try {
-        let onChainTxHash = null;
-
-        // If user is connected via wallet selector, prompt wallet signature
-        if (window.RacerConnect && typeof window.RacerConnect.sendNearTransaction === 'function') {
-          try {
-            btn.innerHTML = '<span>Please confirm in your wallet...</span>';
-            const txRes = await window.RacerConnect.sendNearTransaction({
-              receiverId: 'racerbottreasury.near',
-              amountNear: selectedGmGnSide === 'BUY' ? amtNear : 0.05
-            });
-            onChainTxHash = txRes?.hash || txRes?.transaction?.hash;
-          } catch (walletErr) {
-            console.warn('Wallet direct sign prompt fallback:', walletErr);
-            if (walletErr?.message?.includes('User reject') || walletErr?.message?.includes('Cancel')) {
-              throw new Error('Transaction cancelled in wallet.');
-            }
-          }
-        }
-
         const select = document.getElementById('terminal-trader-select');
         const traderId = select ? select.value : (currentTrader?.id || '');
 
+        // Dispatch to real on-chain swap execution pipeline via publishSwap / SwapExecutor
         const res = await fetch('/alpha/creator/signal', {
           method: 'POST',
           headers: getAuthHeaders(),
@@ -4879,28 +4894,33 @@
             side: selectedGmGnSide,
             amountNear: amtNear,
             priceNear: selectedGmGnToken.priceNear,
-            venue: selectedGmGnToken.venue,
-            txHash: onChainTxHash || undefined
+            venue: selectedGmGnToken.venue
           })
         });
 
         const data = await res.json();
         if (!res.ok || !data.success) {
-          throw new Error(data.error || 'Trade execution failed.');
+          throw new Error(data.error || 'On-chain trade execution failed.');
         }
+
+        const txLink = data.txHash
+          ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
+          : '';
 
         if (feedback) {
           feedback.style.background = 'rgba(0, 230, 118, 0.15)';
           feedback.style.color = 'var(--color-racer-green)';
-          feedback.innerHTML = `✓ <b>Confidential ${selectedGmGnSide} Executed!</b><br>🏛️ Venue: <b>${escapeHtml(selectedGmGnToken.venue)}</b> • ⚡ <b>${data.autoCopyFillsCount} subscriber copy-fills</b> executed in parallel pipeline.<br><span style="font-size:10.5px; color:var(--color-text-subtle);">Tx: ${data.txHash}</span>`;
+          feedback.innerHTML = `✓ <b>Real 100% On-Chain ${selectedGmGnSide} Executed!</b><br>🏛️ Venue: <b>${escapeHtml(selectedGmGnToken.venue)}</b> • ⚡ <b>${data.autoCopyFillsCount || 0} subscriber copy-fills</b> executed.${txLink}`;
         }
 
+        // Immediately update live wallet balance and terminal views
+        refreshUserBalance();
         loadTerminalData();
       } catch (err) {
         if (feedback) {
           feedback.style.background = 'rgba(255, 77, 77, 0.15)';
           feedback.style.color = 'var(--color-danger)';
-          feedback.textContent = '❌ Error: ' + err.message;
+          feedback.textContent = '❌ Trade failed: ' + (err.message || 'Execution error');
         }
       } finally {
         if (btn) {
@@ -4921,33 +4941,12 @@
       // Refresh GmGn token list and live wallet balance in parallel
       fetchGmGnTokens();
 
-      // Directly fetch live wallet balance — do NOT rely on sidebar element text
-      // (sidebar may not yet be populated when terminal is opened first).
-      const gmBal = document.getElementById('gmgn-wallet-balance');
-      try {
-        const addr = getActiveUserAddress();
-        if (addr) {
-          const balRes = await fetch(`/api/user/balance?accountId=${encodeURIComponent(addr)}`).catch(() => null);
-          if (balRes && balRes.ok) {
-            const balData = await balRes.json();
-            if (balData.near !== undefined) {
-              const bal = parseFloat(balData.near).toFixed(4);
-              if (gmBal) gmBal.textContent = `${bal} Ⓝ`;
-              // Also keep the sidebar in sync
-              const sbBal = document.getElementById('sidebar-user-bal');
-              if (sbBal) sbBal.textContent = `${parseFloat(balData.near).toFixed(2)} NEAR`;
-              const depBal = document.getElementById('deposit-modal-balance');
-              if (depBal) depBal.textContent = `${parseFloat(balData.near).toFixed(2)} NEAR`;
-            }
-          }
-        } else {
-          // No wallet connected — fall back to sidebar text if available
-          const sbBal = document.getElementById('sidebar-user-bal');
-          if (gmBal && sbBal && sbBal.textContent && sbBal.textContent !== '0.00 NEAR') {
-            gmBal.textContent = sbBal.textContent.replace(' NEAR', ' Ⓝ');
-          }
-        }
-      } catch (_balErr) { /* Non-blocking: balance display is best-effort */ }
+      // Restore locally cached balance instantly to avoid any '-- Ⓝ' lag, then refresh
+      const terminalAddr = getActiveUserAddress();
+      if (terminalAddr) {
+        restoreCachedBalance(terminalAddr);
+      }
+      refreshUserBalance();
 
 
       const select = document.getElementById('terminal-trader-select');
@@ -5416,14 +5415,16 @@
             }
           }
 
-          // Pre-populate Step 3 handle & display name if empty
+          // Pre-populate Step 3 handle & display name only if creator already has a custom handle/name registered
           if (addr) {
-            const cleanHandle = addr.replace(/\.racerbot\.near$|\.near$/, '').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+            const savedHandle = data.registeredHandle || localStorage.getItem('racer_custom_username_' + addr) || '';
             const elHandle = document.getElementById('reg-handle');
             const elName = document.getElementById('reg-display-name');
-            if (elHandle && !elHandle.value) elHandle.value = cleanHandle;
-            if (elName && !elName.value) {
-              elName.value = cleanHandle.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') + ' Alpha';
+            if (elHandle && !elHandle.value && savedHandle) {
+              elHandle.value = savedHandle;
+            }
+            if (elName && !elName.value && savedHandle) {
+              elName.value = savedHandle.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') + ' Alpha';
             }
           }
 
@@ -5623,6 +5624,9 @@
         });
         const data = await res.json();
         if (data.success) {
+          if (handle && addr) {
+            localStorage.setItem('racer_custom_username_' + addr, handle);
+          }
           if (feedback) {
             feedback.style.background = 'rgba(0, 230, 118, 0.15)';
             feedback.style.color = 'var(--color-racer-green)';
@@ -5735,6 +5739,11 @@
         });
         const data = await res.json();
         if (res.ok && data.success) {
+          const activeAddr = getActiveUserAddress();
+          if (handle && activeAddr) {
+            localStorage.setItem('racer_custom_username_' + activeAddr, handle);
+            updateWalletUI();
+          }
           if (feedbackEl) {
             feedbackEl.style.background = 'rgba(0,230,118,0.12)';
             feedbackEl.style.color = 'var(--color-racer-green)';
@@ -6234,19 +6243,53 @@
       }
     }
 
+    function applyUserBalance(balNear, addr) {
+      if (balNear === undefined || balNear === null || isNaN(parseFloat(balNear))) return;
+      const num = parseFloat(balNear);
+      const shortBal = num.toFixed(2);
+      const preciseBal = num.toFixed(4);
+
+      if (addr) {
+        try {
+          localStorage.setItem('racer_cached_balance_' + addr, String(num));
+          localStorage.setItem('racer_cached_balance_time_' + addr, String(Date.now()));
+        } catch {}
+      }
+
+      const gmBal = document.getElementById('gmgn-wallet-balance');
+      const sbBal = document.getElementById('sidebar-user-bal');
+      const depBal = document.getElementById('deposit-modal-balance');
+
+      if (gmBal) gmBal.textContent = `${preciseBal} Ⓝ`;
+      if (sbBal) sbBal.textContent = `${shortBal} NEAR`;
+      if (depBal) depBal.textContent = `${shortBal} NEAR`;
+    }
+
+    function restoreCachedBalance(addr) {
+      if (!addr) addr = getActiveUserAddress();
+      if (!addr) return null;
+      try {
+        const cached = localStorage.getItem('racer_cached_balance_' + addr);
+        if (cached !== null && !isNaN(parseFloat(cached))) {
+          applyUserBalance(cached, addr);
+          return cached;
+        }
+      } catch {}
+      return null;
+    }
+
     async function refreshUserBalance() {
       try {
         const addr = getActiveUserAddress();
         if (addr) {
+          // Immediately restore any locally cached balance to prevent visual delay
+          restoreCachedBalance(addr);
+
           const res = await fetch(`/api/user/balance?accountId=${encodeURIComponent(addr)}`).catch(() => null);
           if (res && res.ok) {
             const data = await res.json();
             if (data.near !== undefined) {
-              const bal = parseFloat(data.near).toFixed(2);
-              const sbBal = document.getElementById('sidebar-user-bal');
-              const depBal = document.getElementById('deposit-modal-balance');
-              if (sbBal) sbBal.textContent = `${bal} NEAR`;
-              if (depBal) depBal.textContent = `${bal} NEAR`;
+              applyUserBalance(data.near, addr);
             }
           }
         }
@@ -6358,8 +6401,17 @@
         if (sidebarAddr) sidebarAddr.textContent = displayLabel;
         if (sidebarAvatar) sidebarAvatar.textContent = activeAddr.charAt(0).toUpperCase();
 
+        const savedCustomUsername = localStorage.getItem('racer_custom_username_' + activeAddr);
         const uElem = document.getElementById('linked-username');
-        if (uElem) uElem.textContent = user?.username ? (user.username.startsWith('@') ? user.username : '@' + user.username) : 'NEAR Wallet Connected';
+        if (uElem) {
+          if (savedCustomUsername) {
+            uElem.textContent = '@' + savedCustomUsername.replace(/^@/, '');
+          } else if (user?.username && user.username !== activeAddr && !user.username.endsWith('.near')) {
+            uElem.textContent = user.username.startsWith('@') ? user.username : '@' + user.username;
+          } else {
+            uElem.textContent = 'NEAR Wallet Connected';
+          }
+        }
         const sElem = document.getElementById('linked-subaccount');
         if (sElem) sElem.textContent = activeAddr;
       } else {
@@ -6442,9 +6494,25 @@
 
     // ── Init on DOM Ready ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
+      // Immediately restore any locally cached balance to prevent visual flicker
+      restoreCachedBalance();
+
       fetchTraders();
       refreshUserBalance();
       updateWalletUI();
+
+      // Deep-link routing for Trading Console, Creator Studio, and My Keys
+      const path = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = (params.get('tab') || params.get('view') || '').toLowerCase();
+
+      if (path.includes('/terminal') || path.includes('/console') || path.includes('/trade') || tabParam === 'terminal' || tabParam === 'trade' || tabParam === 'console') {
+        switchNav('terminal');
+      } else if (path.includes('/creator') || tabParam === 'creator' || tabParam === 'studio') {
+        switchNav('creator');
+      } else if (path.includes('/mykeys') || tabParam === 'mykeys' || tabParam === 'keys') {
+        switchNav('mykeys');
+      }
 
       // Listen to wallet / auth events
       window.addEventListener('racer:auth-changed', () => {

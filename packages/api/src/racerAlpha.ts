@@ -2017,9 +2017,12 @@ export async function updateCreatorProfile(userId: string, data: {
   displayName?: string;
   bio?: string;
   strategyTag?: string;
-}): Promise<{ success: boolean; reason?: string }> {
+  walletAddress?: string;
+}): Promise<{ success: boolean; reason?: string; handle?: string }> {
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
+
+  const wallet = (data.walletAddress || userId).trim();
 
   // Validate handle format if provided
   if (data.handle !== undefined) {
@@ -2028,48 +2031,87 @@ export async function updateCreatorProfile(userId: string, data: {
       return { success: false, reason: 'Handle must be 3–30 characters: lowercase letters, numbers, _ or . only.' };
     }
 
-    // Check if the desired handle is already taken by a DIFFERENT user
+    // Check if the desired handle is already taken by a DIFFERENT user in racer_alpha_traders
     const conflict = await db.query(
-      `SELECT user_id FROM racer_alpha_traders WHERE handle = $1 AND user_id <> $2`,
-      [handle, userId]
+      `SELECT user_id, payout_wallet_address FROM racer_alpha_traders 
+       WHERE LOWER(handle) = LOWER($1) AND user_id <> $2 AND (payout_wallet_address IS NULL OR payout_wallet_address <> $3)`,
+      [handle, userId, wallet]
     );
     if (conflict.rows.length > 0) {
       return { success: false, reason: `The handle "@${handle}" is already taken. Please choose another.` };
     }
 
-    // Ensure this user actually has a registered trader record before updating
-    const existing = await db.query(
-      `SELECT id FROM racer_alpha_traders WHERE user_id = $1`,
-      [userId]
+    // Check if the desired handle is claimed by a DIFFERENT user in users table
+    const conflictUser = await db.query(
+      `SELECT id FROM users 
+       WHERE LOWER(username) = LOWER($1) AND id <> $2 AND subaccount_id <> $3`,
+      [handle, userId, wallet]
     );
-    if (existing.rows.length === 0) {
-      return { success: false, reason: 'No registered Creator Studio account found for your wallet.' };
+    if (conflictUser.rows.length > 0) {
+      return { success: false, reason: `The username "@${handle}" is already claimed by another account.` };
     }
 
-    await db.query(
-      `UPDATE racer_alpha_traders
-       SET handle      = $1,
-           display_name = COALESCE($2, display_name),
-           bio          = COALESCE($3, bio),
-           strategy_tag = COALESCE($4, strategy_tag),
-           updated_at   = NOW()
-       WHERE user_id = $5`,
-      [handle, data.displayName || null, data.bio || null, data.strategyTag || null, userId]
+    // Check if a trader record exists
+    const existing = await db.query(
+      `SELECT id, handle, display_name FROM racer_alpha_traders 
+       WHERE user_id = $1 OR (payout_wallet_address = $2 AND payout_wallet_address IS NOT NULL) 
+       LIMIT 1`,
+      [userId, wallet]
     );
+
+    if (existing.rows.length === 0) {
+      const traderId = 'trader_' + userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+      await db.query(
+        `INSERT INTO racer_alpha_traders (
+           id, user_id, handle, display_name, bio, strategy_tag, payout_wallet_address,
+           key_price_near, tier_basic_price_near, tier_copy_price_near, tier_premium_price_near, is_active, is_creator_approved
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 3.5, 1.5, 3.5, 8.0, TRUE, TRUE)
+         ON CONFLICT (handle) DO UPDATE SET
+           display_name = COALESCE(EXCLUDED.display_name, racer_alpha_traders.display_name),
+           bio = COALESCE(EXCLUDED.bio, racer_alpha_traders.bio),
+           strategy_tag = COALESCE(EXCLUDED.strategy_tag, racer_alpha_traders.strategy_tag),
+           payout_wallet_address = COALESCE(EXCLUDED.payout_wallet_address, racer_alpha_traders.payout_wallet_address),
+           updated_at = NOW()`,
+        [traderId, userId, handle, data.displayName || handle, data.bio || '', data.strategyTag || 'Trend Following', wallet]
+      );
+    } else {
+      await db.query(
+        `UPDATE racer_alpha_traders
+         SET handle       = $1,
+             display_name = COALESCE($2, display_name),
+             bio          = COALESCE($3, bio),
+             strategy_tag = COALESCE($4, strategy_tag),
+             payout_wallet_address = COALESCE($5, payout_wallet_address),
+             updated_at   = NOW()
+         WHERE id = $6`,
+        [handle, data.displayName || null, data.bio || null, data.strategyTag || null, wallet, existing.rows[0].id]
+      );
+    }
+
+    // Firmly bind the username to this wallet address in users table (1 username per wallet)
+    await db.query(
+      `UPDATE users
+       SET username = $1
+       WHERE id = $2 OR subaccount_id = $3`,
+      [handle, userId, wallet]
+    ).catch(() => {});
+
+    return { success: true, handle };
   } else {
-    // No handle change – just update display name / bio / strategy
+    // No handle change – update display name / bio / strategy
     await db.query(
       `UPDATE racer_alpha_traders
        SET display_name = COALESCE($1, display_name),
            bio          = COALESCE($2, bio),
            strategy_tag = COALESCE($3, strategy_tag),
+           payout_wallet_address = COALESCE($4, payout_wallet_address),
            updated_at   = NOW()
-       WHERE user_id = $4`,
-      [data.displayName || null, data.bio || null, data.strategyTag || null, userId]
+       WHERE user_id = $5 OR payout_wallet_address = $4`,
+      [data.displayName || null, data.bio || null, data.strategyTag || null, wallet, userId]
     );
-  }
 
-  return { success: true };
+    return { success: true };
+  }
 }
 
 export async function generateTerminalLink(userId: string): Promise<any> {
