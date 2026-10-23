@@ -121,7 +121,7 @@ const paidUrls = [
   'https://near.drpc.org',
 ];
 
-const RPC_URLS = Array.from(new Set([...freeValidatorUrls, ...paidUrls])).filter(Boolean);
+const RPC_URLS = Array.from(new Set([...paidUrls, ...freeValidatorUrls])).filter(Boolean);
 const near = getNear(RPC_URLS);
 
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────

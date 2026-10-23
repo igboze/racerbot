@@ -108,7 +108,7 @@ export async function depositNearToVault(
   }
 
   const { decrypt } = await import('@racerbot/shared');
-  const masterKey = process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
+  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
   const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
   const keyPair = KeyPair.fromString(privateKey as any);
 
@@ -145,7 +145,7 @@ export async function depositFtToVault(
   }
 
   const { decrypt, getNear } = await import('@racerbot/shared');
-  const masterKey = process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
+  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
   const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
   const keyPair = KeyPair.fromString(privateKey as any);
 
@@ -676,15 +676,15 @@ export async function executeShieldedVaultIntent(params: {
   }).catch((dbErr: any) => logger.warn(`Failed recording vault intent to DB: ${dbErr?.message}`));
 
   // 4. Submit intent using relayer account (pays gas on behalf of user)
+  // Contract requires predecessor == self.owner_id ('racerbot.near') or predecessor == intent.user
   const relayerAccountId =
     process.env.RELAYER_ACCOUNT_ID ||
-    process.env.ROUTER_CONTRACT_ID ||
-    TREASURY_ACCOUNT_ID;
+    process.env.RACERBOT_PARENT_ACCOUNT ||
+    'racerbot.near';
   const rawRelayerKey =
-    process.env.ROUTER_CONTRACT_PRIVATE_KEY ||
     process.env.RELAYER_PRIVATE_KEY ||
-    process.env.TREASURY_PRIVATE_KEY ||
     process.env.MAIN_WALLET_PRIVATE_KEY ||
+    process.env.ROUTER_CONTRACT_PRIVATE_KEY ||
     '';
   const relayerKey = rawRelayerKey.trim();
 
@@ -698,7 +698,7 @@ export async function executeShieldedVaultIntent(params: {
       : KeyPair.fromString(
           (await import('@racerbot/shared')).decrypt(
             params.user.scoped_key_encrypted,
-            process.env.ENCRYPTION_MASTER_KEY || 'default-master-key'
+            process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || 'default-master-key'
           ) as any
         );
     const callerId = relayerKey ? relayerAccountId : intentPayload.user;

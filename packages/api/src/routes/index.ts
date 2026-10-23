@@ -819,8 +819,11 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       tokenDecimals: clientDecimals,
       venue: explicitVenue,
       txHash: clientTxHash,
-      slippagePct
+      slippagePct,
+      isPrivateTrade: rawIsPrivateTrade,
     } = req.body;
+
+    const isPrivateTrade = rawIsPrivateTrade === true || rawIsPrivateTrade === 'true';
 
     if (!tokenAddress || !side) {
       res.status(400).json({ error: 'tokenAddress and side are required.' });
@@ -913,15 +916,27 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           executionRouting = 'RACER_SHIELDED_VAULT';
           intentMessage = vaultRes.message || `Shielded atomic trade executed via Racer Router (${vaultRes.txHash})`;
         } else {
-          logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}, falling back to AMM`);
+          logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
+          if (isPrivateTrade) {
+            res.status(400).json({
+              error: `Shielded router execution failed: ${vaultRes.reason || 'Transaction could not be shielded'}. Unshielded trade was blocked to protect your wallet privacy.`,
+            });
+            return;
+          }
         }
       } catch (vaultErr: any) {
-        logger.warn(`Shielded vault router execution error (${vaultErr.message}), falling back to direct AMM`);
+        logger.warn(`Shielded vault router execution error (${vaultErr.message})`);
+        if (isPrivateTrade) {
+          res.status(400).json({
+            error: `Shielded router execution failed: ${vaultErr.message}. Unshielded trade was blocked to protect your wallet privacy.`,
+          });
+          return;
+        }
       }
     }
 
-    // 3. Phase 1c: Direct AMM Swap via Managed Subaccount (Fallback)
-    if (!onChainTxHash && user.subaccount_id) {
+    // 3. Phase 1c: Direct AMM Swap via Managed Subaccount (Fallback for public trades only)
+    if (!onChainTxHash && user.subaccount_id && !isPrivateTrade) {
       try {
         // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
         if (user.subaccount_id) {
