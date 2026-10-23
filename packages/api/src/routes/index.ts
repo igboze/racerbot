@@ -743,9 +743,37 @@ router.post('/alpha/creator/signal', async (req, res) => {
       effectiveTraderId = tr.rows[0]?.id || ('trader_' + user.id.slice(0, 16));
     }
 
+    const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
     let onChainTxHash: string | undefined = clientTxHash || undefined;
+    let executionRouting: 'INTENT_SOLVER' | 'AMM' = 'AMM';
+    let intentMessage: string | undefined;
 
-    // ── Phase 1: Real On-Chain Swap via Managed Subaccount (if available) ──
+    // ── Phase 1a: Decentralized Private Intent Solver Execution (Option B) ──
+    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
+      try {
+        const { executeIntentTrade } = await import('../intentTrade.js');
+        const intentResult = await executeIntentTrade({
+          user,
+          tokenAddress,
+          tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
+          side: isBuy ? 'BUY' : 'SELL',
+          amountNear: numNear,
+          recipientAccountId: user.subaccount_id || user.id,
+        });
+
+        if (intentResult.success && intentResult.txHash) {
+          onChainTxHash = intentResult.txHash;
+          executionRouting = 'INTENT_SOLVER';
+          intentMessage = intentResult.message;
+        } else {
+          logger.info(`Defuse Intent route skipped (${intentResult.reason || 'unlisted'}), falling back to Direct AMM Relayer`);
+        }
+      } catch (intentErr: any) {
+        logger.warn(`Intent solver execution error (${intentErr.message}), falling back to direct AMM`);
+      }
+    }
+
+    // ── Phase 1b: Direct AMM Swap via Managed Subaccount (Fallback or Direct AMM) ──
     if (!onChainTxHash && user.subaccount_id) {
       try {
         const amountYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
@@ -761,6 +789,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
         if (swapResult && swapResult.success !== false) {
           onChainTxHash = swapResult.txHash;
+          executionRouting = 'AMM';
         } else {
           res.status(400).json({ error: swapResult?.reason || 'On-chain swap failed. Please retry.' });
           return;
@@ -782,6 +811,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
     }
 
     // ── Phase 2: Record Encrypted Alpha Signal & Trigger Auto-Copy ──
+    const effectiveVenue = executionRouting === 'INTENT_SOLVER' ? 'NEAR Intents (Defuse)' : venue;
     const result = await recordAlphaSignal({
       traderId: effectiveTraderId,
       tokenAddress,
@@ -790,13 +820,41 @@ router.post('/alpha/creator/signal', async (req, res) => {
       side: side.toUpperCase() as 'BUY' | 'SELL',
       priceNear: Number(priceNear) || (numNear / 50),
       amountNear: numNear,
-      venue,
+      venue: effectiveVenue,
       txHash: onChainTxHash,
     });
 
-    res.json({ success: true, txHash: onChainTxHash, ...result });
+    res.json({
+      success: true,
+      txHash: onChainTxHash,
+      routing: executionRouting,
+      message: intentMessage || (executionRouting === 'INTENT_SOLVER' ? 'Confidential Intent executed via Defuse Solver batch auction' : undefined),
+      ...result
+    });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to dispatch signal' });
+  }
+});
+
+router.post('/alpha/trade/intent-quote', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    const { tokenAddress, side = 'BUY', amountNear = 1.0 } = req.body;
+    if (!tokenAddress) {
+      res.status(400).json({ error: 'tokenAddress is required' });
+      return;
+    }
+    const { getIntentSwapQuote } = await import('../intentTrade.js');
+    const quote = await getIntentSwapQuote({
+      tokenAddress,
+      side: side.toUpperCase() as 'BUY' | 'SELL',
+      amountNear: Number(amountNear) || 1.0,
+      recipientAccountId: user?.subaccount_id || user?.id || 'anonymous.near',
+      dryRun: true,
+    });
+    res.json({ success: true, ...quote });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch intent quote' });
   }
 });
 
