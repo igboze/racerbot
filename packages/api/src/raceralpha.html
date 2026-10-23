@@ -1610,6 +1610,16 @@
       color: #8b5cf6;
       border: 1px solid rgba(139, 92, 246, 0.35);
     }
+    .gmgn-venue-badge.shoremarkets {
+      background: rgba(38, 198, 218, 0.14);
+      color: #26c6da;
+      border: 1px solid rgba(38, 198, 218, 0.35);
+    }
+    .gmgn-venue-badge.prismpad {
+      background: rgba(236, 64, 122, 0.14);
+      color: #ec407a;
+      border: 1px solid rgba(236, 64, 122, 0.35);
+    }
 
     @keyframes pulseDot {
       0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7); }
@@ -3249,19 +3259,25 @@
             <div class="gmgn-controls-bar">
               <div class="gmgn-category-pills">
                 <button type="button" class="gmgn-cat-pill active" onclick="setGmGnCategory('all', this)">
-                  <span>🔥 All NEAR</span>
+                  <span>🔥 All Tokens</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('hoot', this)">
-                  <span>🦉 HOOT</span>
+                  <span>🦉 JustHoot</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('nearly', this)">
-                  <span>⚡ NEARLY</span>
+                  <span>⚡ NearlyTrade</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('memecooking', this)">
                   <span>🍳 Meme.Cooking</span>
                 </button>
+                <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('nearpad', this)">
+                  <span>🪐 NearPad</span>
+                </button>
+                <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('shoremarkets', this)">
+                  <span>🌊 Shore</span>
+                </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('ref', this)">
-                  <span>🔄 Ref Finance</span>
+                  <span>🔄 Ref DEX</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('intear', this)">
                   <span>💧 InTear</span>
@@ -4834,11 +4850,11 @@
       let icon = '💎';
       let name = 'Ref Finance';
       let badgeClass = 'ref';
-      if (lp === 'justhoot' || tok.venue?.includes('HOOT')) {
+      if (lp === 'justhoot' || tok.venue?.includes('HOOT') || tok.venue?.includes('JustHoot')) {
         icon = '🦉';
         name = 'JustHoot';
         badgeClass = 'justhoot';
-      } else if (lp === 'nearlytrade' || tok.venue?.includes('NEARLY')) {
+      } else if (lp === 'nearlytrade' || tok.venue?.includes('NEARLY') || tok.venue?.includes('NearlyTrade')) {
         icon = '⚡';
         name = 'NearlyTrade';
         badgeClass = 'nearlytrade';
@@ -4846,6 +4862,14 @@
         icon = '🍳';
         name = 'Meme.Cooking';
         badgeClass = 'memecooking';
+      } else if (lp === 'nearpad' || tok.venue?.includes('NearPad')) {
+        icon = '🪐';
+        name = 'NearPad';
+        badgeClass = 'nearpad';
+      } else if (lp === 'shoremarkets' || tok.venue?.includes('Shore')) {
+        icon = '🌊';
+        name = 'ShoreMarkets';
+        badgeClass = 'shoremarkets';
       } else if (lp === 'intear' || tok.venue?.includes('InTear')) {
         icon = '💧';
         name = 'InTear';
@@ -4854,24 +4878,28 @@
         icon = '🚀';
         name = 'PumpPoly';
         badgeClass = 'pumppoly';
+      } else if (lp === 'prismpad' || tok.venue?.includes('Prism')) {
+        icon = '🔮';
+        name = 'PrismPad';
+        badgeClass = 'prismpad';
+      } else if (lp === 'rhea' || tok.venue?.includes('Rhea')) {
+        icon = '🏛️';
+        name = 'Rhea Meme';
+        badgeClass = 'ref';
       } else if (lp === 'onetokenhub') {
         icon = '🪙';
         name = 'OneTokenHub';
         badgeClass = 'onetokenhub';
-      } else if (lp === 'nearpad') {
-        icon = '🪐';
-        name = 'NearPad';
-        badgeClass = 'nearpad';
       }
       return `<span class="gmgn-venue-badge ${badgeClass}"><span style="font-size:11px;">${icon}</span> ${name}</span>`;
     }
 
     function getTokenLogoHtml(tok, size = 28) {
-      const fallbackEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))));
-      if (tok.icon) {
+      const fallbackEmoji = tok.launchpad === 'justhoot' ? '🦉' : (tok.launchpad === 'nearlytrade' ? '⚡' : (tok.launchpad === 'memecooking' ? '🍳' : (tok.launchpad === 'nearpad' ? '🪐' : (tok.launchpad === 'shoremarkets' ? '🌊' : (tok.symbol.includes('DRAGON') ? '🐉' : (tok.symbol.includes('JAMBO') ? '🐘' : (tok.symbol.includes('PEAR') ? '🍐' : (tok.symbol.includes('CHILL') ? '🦥' : (tok.symbol.includes('DOG') ? '🐶' : (tok.symbol.includes('CAT') ? '🐱' : (tok.symbol.includes('FROG') ? '🐸' : '🪙'))))))))));
+      if (tok.icon && typeof tok.icon === 'string' && tok.icon.length > 5) {
         return `
           <div class="gmgn-tok-icon" style="width:${size}px; height:${size}px; border-radius:50%; overflow:hidden; position:relative; background:var(--color-surface-hover); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-            <img src="${escapeHtml(tok.icon)}" alt="${escapeHtml(tok.symbol)}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+            <img src="${escapeHtml(tok.icon)}" alt="${escapeHtml(tok.symbol)}" loading="lazy" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
             <span style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:${Math.round(size * 0.48)}px;">${fallbackEmoji}</span>
           </div>
         `;
@@ -4922,6 +4950,9 @@
       if (volEl) volEl.textContent = '$' + formatCompactNumber(tok.volume24h);
       if (avatarEl) {
         avatarEl.innerHTML = getTokenLogoHtml(tok, 40);
+        avatarEl.style.padding = '0';
+        avatarEl.style.border = 'none';
+        avatarEl.style.background = 'transparent';
       }
 
       updateGmGnEstimatedOutput();
