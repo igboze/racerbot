@@ -1057,6 +1057,30 @@ export class SwapExecutor {
 
     let result: any;
 
+    const isGlobalBuy = token_in === 'wrap.near' || token_in === 'near';
+    if (isGlobalBuy && token_out && token_out !== 'near' && token_out !== 'wrap.near') {
+      try {
+        await ensureStorage(token_out);
+      } catch (err: any) {
+        console.warn(`[EXECUTOR] Global pre-swap ensureStorage warning for ${token_out}:`, err?.message);
+      }
+      if (
+        venue === 'rhea' ||
+        venue === 'ref' ||
+        venue === 'memecooking' ||
+        venue === 'gaypad' ||
+        venue === 'kelytra' ||
+        venue === 'nearpumpfun'
+      ) {
+        try {
+          await ensureRefStorage(subaccountId);
+          await ensureRefTokenRegistered(token_out, subaccountId);
+        } catch (refErr: any) {
+          console.warn(`[EXECUTOR] Global pre-swap ensureRefStorage warning for ${token_out}:`, refErr?.message);
+        }
+      }
+    }
+
     if (venue === 'nearlytrade') {
       // Resolve the route (direct wNEAR pair or multihop via a non-NEAR quote asset).
       const ntState = preloadedNtState ?? await near.getNearlytradeTokenState(
@@ -3081,7 +3105,42 @@ export class SwapExecutor {
           if (retryResult && retryResult.success) {
             return { ...retryResult, reason: `Executed with ${bumpedSlippage}% slippage after price moved.` };
           }
-          console.warn(`[EXECUTOR] Slippage-bump retry also failed user=${user_id}`);
+        }
+
+      // Storage registration self-healing retry: if the transaction reverted on-chain
+      // due to missing storage registration, explicitly register storage and retry trade once
+      const isRegistrationFailure =
+        failReason.includes('registered with this token contract') ||
+        failReason.includes('not registered') ||
+        failReason.includes('account is not registered') ||
+        failReason.includes('storage deposit');
+      if (isRegistrationFailure && !(event as any).__storage_retry) {
+        console.log(`[EXECUTOR] Swap reverted on-chain due to missing storage registration. Forcing storage_deposit and retrying trade... user=${user_id}`);
+        try {
+          if (token_out && token_out !== 'near' && token_out !== 'wrap.near') {
+            await near.ensureStorageDeposit(subaccountId, token_out);
+          }
+          if (
+            venue === 'rhea' ||
+            venue === 'ref' ||
+            venue === 'memecooking' ||
+            venue === 'gaypad' ||
+            venue === 'kelytra' ||
+            venue === 'nearpumpfun'
+          ) {
+            await ensureRefStorage(subaccountId);
+            await ensureRefTokenRegistered(token_out, subaccountId);
+          }
+          const retryEvent = {
+            ...event,
+            __storage_retry: true,
+          } as SwapEvent;
+          const retryResult = await this.execute(retryEvent).catch(() => null);
+          if (retryResult && retryResult.success) {
+            return { ...retryResult, reason: 'Executed successfully after automatic wallet token registration.' };
+          }
+        } catch (regErr: any) {
+          console.warn(`[EXECUTOR] Automatic storage registration retry failed: ${regErr?.message}`);
         }
       }
 
