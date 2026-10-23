@@ -186,18 +186,21 @@ export async function refundUserFromVault(
   subaccountId: string,
   token: string = 'near'
 ): Promise<{ success: boolean; txHash?: string; reason?: string }> {
-  const relayerAccountId =
+  let relayerAccountId =
     process.env.RELAYER_ACCOUNT_ID ||
     process.env.RACERBOT_PARENT_ACCOUNT ||
     'racerbot.near';
+  if (relayerAccountId === RACER_VAULT_CONTRACT_ID || relayerAccountId.includes('router')) {
+    relayerAccountId = process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
+  }
+
   const rawRelayerKey =
     process.env.RELAYER_PRIVATE_KEY ||
     process.env.MAIN_WALLET_PRIVATE_KEY ||
-    process.env.ROUTER_CONTRACT_PRIVATE_KEY ||
     '';
   const relayerKey = rawRelayerKey.trim();
   if (!relayerKey) {
-    return { success: false, reason: 'Relayer private key not configured' };
+    return { success: false, reason: 'Relayer private key (racerbot.near) not configured' };
   }
 
   try {
@@ -725,14 +728,18 @@ export async function executeShieldedVaultIntent(params: {
 
   // 4. Submit intent using relayer account (pays gas on behalf of user)
   // Contract requires predecessor == self.owner_id ('racerbot.near') or predecessor == intent.user
-  const relayerAccountId =
+  let relayerAccountId =
     process.env.RELAYER_ACCOUNT_ID ||
     process.env.RACERBOT_PARENT_ACCOUNT ||
     'racerbot.near';
+  // Guard: Contract account (racerbotrouter.near) is never its own relayer; relayer must be racerbot.near
+  if (relayerAccountId === RACER_VAULT_CONTRACT_ID || relayerAccountId.includes('router')) {
+    relayerAccountId = process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
+  }
+
   const rawRelayerKey =
     process.env.RELAYER_PRIVATE_KEY ||
     process.env.MAIN_WALLET_PRIVATE_KEY ||
-    process.env.ROUTER_CONTRACT_PRIVATE_KEY ||
     '';
   const relayerKey = rawRelayerKey.trim();
 
