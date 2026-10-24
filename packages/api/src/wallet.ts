@@ -1355,12 +1355,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   // Fetch ft_metadata & total_supply — if cached in memory or in DB, reuse without RPC call
-  let meta: { name: string; symbol: string; decimals: number };
+  let meta: { name: string; symbol: string; decimals: number; icon?: string };
   let totalSupply = '0';
 
   const inMem = tokenMetaCache.get(tokenAddress);
   if (inMem && inMem.totalSupply && inMem.totalSupply !== '0') {
-    meta = { name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals };
+    meta = { name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon };
     totalSupply = inMem.totalSupply;
   } else if (
     dbCache &&
@@ -1371,24 +1371,29 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     dbCache.total_supply &&
     dbCache.total_supply !== '0'
   ) {
-    meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals) };
+    meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals), icon: dbCache.icon || undefined };
     totalSupply = dbCache.total_supply;
-    tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
+    tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
   } else {
     try {
       const [fetchedMeta, fetchedSupply] = await Promise.all([
         inMem
-          ? Promise.resolve({ name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals })
+          ? Promise.resolve({ name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon })
           : near.getTokenMetadata(tokenAddress),
         near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
       ]);
-      meta = fetchedMeta;
+      meta = {
+        name: fetchedMeta.name,
+        symbol: fetchedMeta.symbol,
+        decimals: fetchedMeta.decimals,
+        icon: fetchedMeta.icon || undefined,
+      };
       totalSupply = fetchedSupply;
-      tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
+      tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
     } catch {
       // If RPC metadata fetch fails, fall back to DB cache data if available
       if (dbCache && dbCache.name) {
-        meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18 };
+        meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18, icon: dbCache.icon || undefined };
         totalSupply = dbCache.total_supply ?? '0';
       } else {
         // Last resort: return a minimal result so the caller can still identify the token
@@ -1885,7 +1890,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     paired_symbol: pairedSymbol,
     price_in_paired: priceInPaired,
     liquidity_in_paired: liquidityInPaired,
-    icon: (meta as any)?.icon || (dexData as any)?.imageUrl || undefined,
+    icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
   };
 
   tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

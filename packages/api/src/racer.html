@@ -386,6 +386,20 @@
       height: 100%;
       object-fit: cover;
     }
+    .token-monogram {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--color-text-main);
+      background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+      text-transform: uppercase;
+      user-select: none;
+    }
     .token-name-col {
       display: flex;
       flex-direction: column;
@@ -1250,7 +1264,7 @@
         const changeClass = t.change24h >= 0 ? 'positive' : 'negative';
         const changeSign = t.change24h >= 0 ? '+' : '';
         const priceStr = t.priceUsd < 0.01 ? `$${t.priceUsd.toFixed(6)}` : `$${t.priceUsd.toFixed(4)}`;
-        const mcapStr = t.marketCap >= 1e6 ? `$${(t.marketCap / 1e6).toFixed(2)}M` : `$${(t.marketCap / 1e3).toFixed(1)}K`;
+        const mcapStr = t.marketCap > 0 ? (t.marketCap >= 1e6 ? `$${(t.marketCap / 1e6).toFixed(2)}M` : `$${(t.marketCap / 1e3).toFixed(1)}K`) : '—';
         const volStr = t.volume24h >= 1e6 ? `$${(t.volume24h / 1e6).toFixed(2)}M` : `$${(t.volume24h / 1e3).toFixed(1)}K`;
 
         return `
@@ -1263,7 +1277,11 @@
             <td>
               <div class="token-identity-cell">
                 <div class="token-icon-frame">
-                  <img src="${t.icon || '/assets/racer-logo.png'}" onerror="this.src='/assets/racer-logo.png'" alt="${t.symbol}">
+                  ${t.icon && t.icon.length > 5 && !t.icon.includes('racer-logo') && !t.icon.includes('assets.ref.finance')
+                    ? `<img src="${t.icon}" alt="${t.symbol}" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                       <div class="token-monogram" style="display:none;">${(t.symbol || 'TK').slice(0, 2).toUpperCase()}</div>`
+                    : `<div class="token-monogram">${(t.symbol || 'TK').slice(0, 2).toUpperCase()}</div>`
+                  }
                 </div>
                 <div class="token-name-col">
                   <span class="token-symbol-text">$${t.symbol}</span>
