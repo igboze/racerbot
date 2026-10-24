@@ -60,13 +60,14 @@
   <style>
     /* ── Racer Brand & Confidential Trading Design System ─────────────────── */
     :root {
-      --color-canvas: #08090b;
-      --color-canvas-subtle: #0d1015;
-      --color-surface: #0f1217;
-      --color-surface-card: #151921;
-      --color-surface-hover: #1c222d;
-      --color-border: #21262d;
-      --color-border-subtle: #161b22;
+      --color-canvas: #030712;
+      --color-canvas-subtle: #060e22;
+      --color-surface: #08142c;
+      --color-surface-card: #0b1a38;
+      --color-surface-hover: #10234a;
+      --color-surface-active: #152d5e;
+      --color-border: rgba(59, 130, 246, 0.22);
+      --color-border-subtle: rgba(255, 255, 255, 0.08);
       --color-border-glow: rgba(0, 240, 255, 0.25);
 
       /* Racer Velocity Palette */
@@ -74,9 +75,9 @@
       --color-primary-pressed: #00d2e0;
       --color-racer-cyan: #00f0ff;
       --color-racer-cyan-glow: rgba(0, 240, 255, 0.25);
-      --color-racer-purple: #826ab5;
-      --color-racer-purple-light: #9d84d6;
-      --color-racer-purple-glow: rgba(130, 106, 181, 0.25);
+      --color-racer-purple: #2563eb;
+      --color-racer-purple-light: #3b82f6;
+      --color-racer-purple-glow: rgba(37, 99, 235, 0.28);
       --color-racer-green: #00e676;
       --color-racer-green-glow: rgba(0, 230, 118, 0.25);
       --color-racer-gold: #ffb703;
@@ -86,7 +87,7 @@
       --color-text: #f0f6fc;
       --color-text-muted: #9ba8bc;
       --color-text-subtle: #6e7681;
-      --font-display: 'Syne', -apple-system, sans-serif;
+      --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
       --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
 
@@ -98,7 +99,7 @@
 
       --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.6);
       --shadow-glow-cyan: 0 0 24px rgba(0, 240, 255, 0.22);
-      --shadow-glow-purple: 0 0 24px rgba(130, 106, 181, 0.25);
+      --shadow-glow-purple: 0 0 20px rgba(37, 99, 235, 0.22);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -110,9 +111,8 @@
       min-height: 100vh;
       display: flex;
       background-image: 
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(130, 106, 181, 0.22), transparent 70%),
-        radial-gradient(circle 600px at 80% 20%, rgba(0, 240, 255, 0.08), transparent 70%),
-        radial-gradient(circle 500px at 20% 60%, rgba(0, 230, 118, 0.05), transparent 70%);
+        radial-gradient(100% 70% at 50% -10%, rgba(37, 99, 235, 0.28) 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
+    radial-gradient(circle 500px at 85% 15%, rgba(0, 240, 255, 0.08), transparent 70%);
       background-attachment: fixed;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
@@ -129,7 +129,7 @@
     .sidebar {
       width: 250px;
       min-width: 250px;
-      background: rgba(13, 16, 21, 0.95);
+      background: rgba(6, 14, 34, 0.96);
       backdrop-filter: blur(20px);
       border-right: 1px solid var(--color-border);
       display: flex;
@@ -2330,7 +2330,7 @@
     .deposit-status-live {
       padding: 14px;
       border-radius: var(--radius-lg);
-      background: rgba(13, 16, 21, 0.95);
+      background: rgba(6, 14, 34, 0.96);
       border: 1px solid var(--color-border);
       display: flex;
       flex-direction: column;
@@ -2780,6 +2780,113 @@
         stroke-width: 2.5;
         stroke: #0b0e13;
       }
+
+      /* Mobile Terminal Tabs (Swap & Trade / Screener / Positions) */
+      .mobile-terminal-tabs {
+        display: none;
+      }
+      .mobile-terminal-tabs {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 6px;
+        margin: 8px 0 16px 0;
+        background: var(--color-surface);
+        padding: 4px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--color-border);
+      }
+      .mobile-term-tab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 4px;
+        border-radius: var(--radius-sm);
+        border: none;
+        background: transparent;
+        color: var(--color-text-muted);
+        font-family: var(--font-family);
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .mobile-term-tab.active {
+        background: rgba(0, 240, 255, 0.14);
+        color: var(--color-racer-cyan);
+        box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+      }
+      .mobile-term-tab svg {
+        flex-shrink: 0;
+      }
+
+      /* Control visibility of terminal sections based on data-mobile-tab */
+      .terminal-view-container[data-mobile-tab="trade"] .gmgn-trade-col {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .terminal-view-container[data-mobile-tab="trade"] .gmgn-screener-col {
+        display: none !important;
+      }
+      .terminal-view-container[data-mobile-tab="trade"] .gmgn-bottom-row {
+        display: none !important;
+      }
+
+      .terminal-view-container[data-mobile-tab="screener"] .gmgn-screener-col {
+        display: flex !important;
+        width: 100% !important;
+      }
+      .terminal-view-container[data-mobile-tab="screener"] .gmgn-trade-col {
+        display: none !important;
+      }
+      .terminal-view-container[data-mobile-tab="screener"] .gmgn-bottom-row {
+        display: none !important;
+      }
+
+      .terminal-view-container[data-mobile-tab="positions"] .gmgn-bottom-row {
+        display: block !important;
+        width: 100% !important;
+      }
+      .terminal-view-container[data-mobile-tab="positions"] .gmgn-screener-col {
+        display: none !important;
+      }
+      .terminal-view-container[data-mobile-tab="positions"] .gmgn-trade-col {
+        display: none !important;
+      }
+
+      /* Top strip metrics wrapping on mobile */
+      .gmgn-top-strip {
+        padding: 12px 14px;
+        gap: 10px;
+      }
+      .gmgn-top-metrics {
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        width: 100%;
+      }
+      .gmgn-metric-divider {
+        display: none;
+      }
+
+      /* Touch targets for trade column */
+      .gmgn-token-spotlight {
+        padding: 14px;
+      }
+      .spotlight-stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px;
+      }
+      .gmgn-preset-chips {
+        gap: 6px;
+      }
+      .gmgn-chip {
+        padding: 10px 0;
+        font-size: 12px;
+      }
+      .btn-primary#gmgn-submit-btn {
+        height: 48px !important;
+        font-size: 15px !important;
+      }
     }
   </style>
 </head>
@@ -2806,6 +2913,10 @@
       <button class="mobile-header-btn mobile-wallet-shortcut" id="mobile-header-connect-btn" onclick="handleHeaderConnectClick()" title="Connect NEAR Wallet">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"></path><path d="M16 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"></path></svg>
         <span id="mobile-connect-label">Connect</span>
+      </button>
+
+      <button class="mobile-nav-toggle" id="mobile-nav-toggle-btn" onclick="toggleMobileNav(true)" aria-label="Open navigation menu" style="display:inline-flex; width:36px; height:36px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
       </button>
     </div>
   </header>
@@ -2913,7 +3024,7 @@
           </div>
           <button class="btn-primary" id="header-terminal-btn" onclick="switchNav('terminal')" style="background:linear-gradient(135deg, rgba(0, 240, 255, 0.2), rgba(0, 230, 118, 0.2)); border:1px solid rgba(0, 240, 255, 0.4); color:#fff; font-weight:700;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--color-racer-green);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-            <span>⚡ Trading Console</span>
+            <span>Trading Console</span>
           </button>
           <button id="header-connect-btn" class="btn-wallet-connect" onclick="handleHeaderConnectClick()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"></path><path d="M16 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"></path><path d="M4 7V5a2 2 0 0 1 2-2h12"></path></svg>
@@ -2924,7 +3035,7 @@
           </button>
           <button class="btn-primary" onclick="openDepositModal()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-            <span>🌐 Cross-Chain Deposit</span>
+            <span>Cross-Chain Deposit</span>
           </button>
         </div>
       </header>
@@ -2944,7 +3055,7 @@
           </div>
           <div class="banner-right">
             <button class="btn-primary" onclick="switchNav('terminal')" style="font-size:13.5px; padding:10px 22px; font-weight:700;">
-              <span>🚀 Open Trading Console →</span>
+              <span>Open Trading Console →</span>
             </button>
           </div>
         </div>
@@ -3147,7 +3258,7 @@
                   </div>
                   <div class="tier-price" id="tier-price-basic">1.5 NEAR <span>/ mo</span></div>
                 </div>
-                <span style="font-size:20px;">👑</span>
+                <span class="badge badge-gold">TIER 1</span>
               </div>
               <ul class="tier-bullets">
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Public equity curve</li>
@@ -3165,7 +3276,7 @@
                   </div>
                   <div class="tier-price" id="tier-price-copy">3.5 NEAR <span>/ mo</span></div>
                 </div>
-                <span style="font-size:20px;">🥇</span>
+                <span class="badge badge-blue">TIER 2</span>
               </div>
               <ul class="tier-bullets">
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Full position details</li>
@@ -3183,7 +3294,7 @@
                   </div>
                   <div class="tier-price" id="tier-price-premium">8.0 NEAR <span>/ mo</span></div>
                 </div>
-                <span style="font-size:20px;">💎</span>
+                <span class="badge badge-cyan">TIER 3</span>
               </div>
               <ul class="tier-bullets">
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Full positions &amp; copy</li>
@@ -3197,7 +3308,7 @@
             </button>
 
             <div style="font-size:11px; color:var(--color-text-subtle); line-height:1.4; text-align:center;">
-              🔒 <b>Secure. Private. Revocable Anytime.</b><br>
+              <b>Secure. Private. Revocable Anytime.</b><br>
               Viewing Keys are encrypted and managed securely on NEAR. You control access.
             </div>
           </div>
@@ -3205,7 +3316,7 @@
       </section>
 
       <!-- VIEW 3: Confidential Terminal & GmGn Trading Console -->
-      <section id="view-terminal" class="terminal-view-container">
+      <section id="view-terminal" class="terminal-view-container" data-mobile-tab="trade">
         <!-- Top GmGn Header & Market Ticker Strip -->
         <div class="gmgn-top-strip">
           <div class="gmgn-top-left">
@@ -3237,9 +3348,25 @@
             <div class="gmgn-metric-divider"></div>
             <div class="gmgn-metric-item">
               <span class="gmgn-m-label">CONFIDENTIALITY</span>
-              <span class="gmgn-m-val" style="color:var(--color-racer-green);">🛡️ Zero-Leak</span>
+              <span class="gmgn-m-val" style="color:var(--color-racer-green); font-weight:700;">Zero-Leak</span>
             </div>
           </div>
+        </div>
+
+        <!-- Mobile Terminal Navigation Tabs (Visible only on mobile devices) -->
+        <div class="mobile-terminal-tabs" id="mobile-terminal-tabs" role="tablist">
+          <button type="button" class="mobile-term-tab active" id="term-tab-trade" onclick="switchMobileTerminalTab('trade')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span>Swap &amp; Trade</span>
+          </button>
+          <button type="button" class="mobile-term-tab" id="term-tab-screener" onclick="switchMobileTerminalTab('screener')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Token Screener</span>
+          </button>
+          <button type="button" class="mobile-term-tab" id="term-tab-positions" onclick="switchMobileTerminalTab('positions')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+            <span>Positions</span>
+          </button>
         </div>
 
         <!-- GmGn Main Grid: Screener Matrix (Left) + Interactive Trade Panel (Right) -->
@@ -3250,28 +3377,28 @@
             <div class="gmgn-controls-bar">
               <div class="gmgn-category-pills">
                 <button type="button" class="gmgn-cat-pill active" onclick="setGmGnCategory('all', this)">
-                  <span>🔥 All Tokens</span>
+                  <span>All Tokens</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('hoot', this)">
-                  <span>🦉 JustHoot</span>
+                  <span>JustHoot</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('nearly', this)">
-                  <span>⚡ NearlyTrade</span>
+                  <span>NearlyTrade</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('memecooking', this)">
-                  <span>🍳 Meme.Cooking</span>
+                  <span>Meme.Cooking</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('nearpad', this)">
                   <span>🪐 NearPad</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('shoremarkets', this)">
-                  <span>🌊 Shore</span>
+                  <span>Shore</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('ref', this)">
-                  <span>🔄 Ref DEX</span>
+                  <span>Ref DEX</span>
                 </button>
                 <button type="button" class="gmgn-cat-pill" onclick="setGmGnCategory('intear', this)">
-                  <span>💧 InTear</span>
+                  <span>InTear</span>
                 </button>
               </div>
 
@@ -3364,10 +3491,10 @@
               <!-- Tab Switcher -->
               <div style="display:flex; gap:6px; background:var(--color-surface); padding:3px; border-radius:8px; border:1px solid var(--color-border); margin-bottom:12px;">
                 <button type="button" class="deposit-tab-btn active" id="term-tab-dispatch" onclick="switchTerminalRightTab('dispatch')" style="flex:1; font-size:12px; padding:6px 8px; justify-content:center;">
-                  <span>⚡ Private Trade</span>
+                  <span>Private Trade</span>
                 </button>
                 <button type="button" class="deposit-tab-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')" style="flex:1; font-size:12px; padding:6px 8px; justify-content:center;">
-                  <span>📋 Copy Trading</span>
+                  <span>Copy Trading</span>
                 </button>
               </div>
 
@@ -3376,10 +3503,10 @@
                 <!-- Buy / Sell Mode Tabs -->
                 <div style="display:flex; gap:6px;">
                   <button type="button" id="gmgn-trade-btn-buy" class="gmgn-mode-tab buy active" onclick="setGmGnTradeSide('BUY')">
-                    <span>🟢 BUY</span>
+                    <span style="font-weight:800; letter-spacing:0.04em;">BUY</span>
                   </button>
                   <button type="button" id="gmgn-trade-btn-sell" class="gmgn-mode-tab sell" onclick="setGmGnTradeSide('SELL')">
-                    <span>🔴 SELL</span>
+                    <span style="font-weight:800; letter-spacing:0.04em;">SELL</span>
                   </button>
                 </div>
 
@@ -3468,7 +3595,7 @@
                     You can trade any token privately in the <b>Private Trade</b> tab freely. However, to automatically copy this caller's private signals, you must hold their Viewing Key.
                   </div>
                   <button type="button" class="btn-primary" id="btn-buy-copy-key" onclick="openKeyPurchaseForSelectedTrader()" style="margin-top:10px; width:100%; height:36px; font-size:12px; justify-content:center;">
-                    <span>🔑 Purchase Viewing Key to Copy</span>
+                    <span>Purchase Viewing Key to Copy</span>
                   </button>
                 </div>
 
@@ -3599,7 +3726,7 @@
           <div style="display:flex; align-items:center; gap:10px;">
             <button class="btn-primary" onclick="switchNav('terminal')" style="height:36px; padding:0 16px; font-size:12.5px; font-weight:700;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              <span>⚡ Open Trading Console</span>
+              <span>Open Trading Console</span>
             </button>
             <div id="creator-top-badge" style="display:flex; align-items:center; gap:8px;"></div>
           </div>
@@ -3687,7 +3814,7 @@
               </button>
               <button class="btn-secondary" onclick="openDepositModal()" style="width:100%; justify-content:center; margin-top:8px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                <span>⚡ Deposit from Solana / EVM / Bitcoin (NEAR Intents)</span>
+                <span>Deposit from Solana / EVM / Bitcoin (NEAR Intents)</span>
               </button>
             </div>
           </div>
@@ -3737,15 +3864,15 @@
                 <div style="font-size:13px; font-weight:700; color:#fff;">Set Subscription Tiers (Monthly Fees in NEAR)</div>
                 <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px;">
                   <div class="form-group-item">
-                    <label style="font-size:11px;">👑 Basic View Key</label>
+                    <label style="font-size:11px; font-weight:700;">Tier 1: Basic View Key</label>
                     <input type="number" id="reg-tier-basic" step="0.5" min="0.5" value="1.5" required style="font-family:var(--font-mono);">
                   </div>
                   <div class="form-group-item">
-                    <label style="font-size:11px;">🥇 Auto-Copy Key</label>
+                    <label style="font-size:11px; font-weight:700;">Tier 2: Auto-Copy Key</label>
                     <input type="number" id="reg-tier-copy" step="0.5" min="0.5" value="3.5" required style="font-family:var(--font-mono);">
                   </div>
                   <div class="form-group-item">
-                    <label style="font-size:11px;">💎 VIP Premium Key</label>
+                    <label style="font-size:11px; font-weight:700;">Tier 3: VIP Premium Key</label>
                     <input type="number" id="reg-tier-premium" step="0.5" min="0.5" value="8.0" required style="font-family:var(--font-mono);">
                   </div>
                 </div>
@@ -3759,7 +3886,7 @@
               <div id="reg-form-feedback" style="display:none; padding:10px 14px; border-radius:8px; font-size:12.5px;"></div>
 
               <button type="submit" class="btn-primary" id="btn-submit-creator-reg" style="width:100%; justify-content:center; padding:14px;">
-                <span>🚀 Complete Verification &amp; Open Creator Channel</span>
+                <span>Complete Verification &amp; Open Creator Channel</span>
               </button>
             </form>
           </div>
@@ -4190,7 +4317,7 @@
           <span style="font-family:var(--font-mono); font-weight:700; color:var(--color-racer-green); font-size:14px;" id="deposit-modal-balance">0.00 NEAR</span>
         </div>
 
-        <button class="btn-primary" style="width:100%; justify-content:center;" onclick="refreshUserBalance(); alert('✓ Balance refreshed from NEAR RPC!');">
+        <button class="btn-primary" style="width:100%; justify-content:center;" onclick="refreshUserBalance(); alert('Balance refreshed from NEAR RPC!');">
           <span>I have sent NEAR • Refresh Balance ↻</span>
         </button>
       </div>
@@ -4206,6 +4333,38 @@
     let selectedModalTierType = 'copy';
 
     // ── Navigation Switching ───────────────────────────────────────────────
+    function switchMobileTerminalTab(tab) {
+      const container = document.getElementById('view-terminal');
+      if (container) {
+        container.setAttribute('data-mobile-tab', tab);
+      }
+      document.querySelectorAll('.mobile-term-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.id === `term-tab-${tab}`);
+      });
+      if (window.innerWidth <= 768) {
+        const topEl = document.getElementById('mobile-terminal-tabs');
+        if (topEl) {
+          topEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }
+
+    function toggleMobileNav(open) {
+      const drawer = document.getElementById('mobile-nav-drawer');
+      const backdrop = document.getElementById('mobile-nav-backdrop');
+      if (drawer && backdrop) {
+        if (open) {
+          drawer.classList.add('open');
+          backdrop.classList.add('open');
+          document.body.style.overflow = 'hidden';
+        } else {
+          drawer.classList.remove('open');
+          backdrop.classList.remove('open');
+          document.body.style.overflow = '';
+        }
+      }
+    }
+
     function switchNav(navKey) {
       document.querySelectorAll('.nav-item-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.getElementById(`nav-btn-${navKey}`);
@@ -4219,6 +4378,9 @@
       // Smooth scroll to top on mobile view switch
       if (window.innerWidth <= 768) {
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (navKey === 'terminal') {
+          switchMobileTerminalTab('trade');
+        }
       }
 
       document.getElementById('view-leaderboard').style.display = 'none';
@@ -4699,7 +4861,7 @@
         const txBadge = onChainTxHash 
           ? `<br><span style="font-size:11px;">Tx Hash: <a href="https://nearblocks.io/txns/${onChainTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline;">${onChainTxHash.slice(0, 12)}...</a></span>`
           : '';
-        feedback.innerHTML = `✓ Viewing Key Active on NEAR! Tier: <b>${selectedModalTierType.toUpperCase()}</b>${txBadge}`;
+        feedback.innerHTML = `Viewing Key Active on NEAR! Tier: <b>${selectedModalTierType.toUpperCase()}</b>${txBadge}`;
 
         if (currentTrader) {
           currentTrader.hasKey = true;
@@ -4715,7 +4877,7 @@
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(255, 77, 77, 0.15)';
         feedback.style.color = 'var(--color-danger)';
-        feedback.textContent = `❌ ${err.message}`;
+        feedback.textContent = `${err.message}`;
       } finally {
         btn.disabled = false;
         selectModalTier(selectedModalTierType);
@@ -4833,7 +4995,7 @@
             </td>
             <td style="text-align:center;">
               <button type="button" class="btn-primary btn-sm" onclick="event.stopPropagation(); selectGmGnToken('${escapeHtml(tok.address)}'); document.getElementById('gmgn-selected-token-card').scrollIntoView({ behavior:'smooth' });" style="font-size:11px; padding:3px 8px;">
-                <span>⚡ Trade</span>
+                <span>Trade</span>
               </button>
             </td>
           </tr>
@@ -4843,19 +5005,19 @@
 
     function getLaunchpadBadgeHtml(tok) {
       const lp = (tok.launchpad || 'ref').toLowerCase();
-      let icon = '💎';
+      let icon = 'Ref';
       let name = 'Ref Finance';
       let badgeClass = 'ref';
       if (lp === 'justhoot' || tok.venue?.includes('HOOT') || tok.venue?.includes('JustHoot')) {
-        icon = '🦉';
+        icon = 'Hoot';
         name = 'JustHoot';
         badgeClass = 'justhoot';
       } else if (lp === 'nearlytrade' || tok.venue?.includes('NEARLY') || tok.venue?.includes('NearlyTrade')) {
-        icon = '⚡';
+        icon = 'Nearly';
         name = 'NearlyTrade';
         badgeClass = 'nearlytrade';
       } else if (lp === 'memecooking' || tok.venue?.includes('Meme')) {
-        icon = '🍳';
+        icon = 'Meme';
         name = 'Meme.Cooking';
         badgeClass = 'memecooking';
       } else if (lp === 'nearpad' || tok.venue?.includes('NearPad')) {
@@ -4863,23 +5025,23 @@
         name = 'NearPad';
         badgeClass = 'nearpad';
       } else if (lp === 'shoremarkets' || tok.venue?.includes('Shore')) {
-        icon = '🌊';
+        icon = 'Shore';
         name = 'ShoreMarkets';
         badgeClass = 'shoremarkets';
       } else if (lp === 'intear' || tok.venue?.includes('InTear')) {
-        icon = '💧';
+        icon = 'InTear';
         name = 'InTear';
         badgeClass = 'intear';
       } else if (lp === 'pumppoly') {
-        icon = '🚀';
+        icon = 'Rocket';
         name = 'PumpPoly';
         badgeClass = 'pumppoly';
       } else if (lp === 'prismpad' || tok.venue?.includes('Prism')) {
-        icon = '🔮';
+        icon = 'Oracle';
         name = 'PrismPad';
         badgeClass = 'prismpad';
       } else if (lp === 'rhea' || tok.venue?.includes('Rhea')) {
-        icon = '🏛️';
+        icon = 'Gov';
         name = 'Rhea Meme';
         badgeClass = 'ref';
       } else if (lp === 'onetokenhub') {
@@ -4966,6 +5128,10 @@
       }
       if (!tok) return;
       selectedGmGnToken = tok;
+
+      if (window.innerWidth <= 768 && typeof switchMobileTerminalTab === 'function') {
+        switchMobileTerminalTab('trade');
+      }
 
       const symEl = document.getElementById('spotlight-symbol');
       const nameEl = document.getElementById('spotlight-name');
@@ -5328,7 +5494,7 @@
             const desc = document.getElementById('intent-routing-desc');
             const tag = document.getElementById('intent-routing-tag');
             if (q.supported && q.routing === 'INTENT_SOLVER') {
-              if (badge) badge.textContent = '🔒 NEAR Intent Solver Shield Active';
+              if (badge) badge.textContent = 'NEAR Intent Solver Shield Active';
               if (tag) {
                 tag.textContent = 'ZERO-MEV BATCH';
                 tag.style.color = 'var(--color-racer-green)';
@@ -5342,7 +5508,7 @@
                 estEl.textContent = `≈ ${outText}`;
               }
             } else {
-              if (badge) badge.textContent = '🏎️ Racer Shielded Router Active';
+              if (badge) badge.textContent = 'Racer Shielded Router Active';
               if (tag) {
                 tag.textContent = 'SHIELDED ROUTER';
                 tag.style.color = 'var(--color-racer-green)';
@@ -5364,7 +5530,7 @@
     function copySelectedContract() {
       if (!selectedGmGnToken) return;
       navigator.clipboard.writeText(selectedGmGnToken.address).then(() => {
-        alert(`✓ Copied contract address: ${selectedGmGnToken.address}`);
+        alert(`Copied contract address: ${selectedGmGnToken.address}`);
       }).catch(() => {
         prompt('Copy Token Address:', selectedGmGnToken.address);
       });
@@ -5397,7 +5563,7 @@
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>🔒 Dispatching Private Intent...</span>';
+        btn.innerHTML = '<span>Dispatching Private Intent...</span>';
       }
       if (feedback) {
         feedback.style.display = 'block';
@@ -5447,7 +5613,7 @@
         // ── Storage registration self-heal: if first attempt returns a storage error,
         //    show friendly progress and retry once (backend will force-register)
         if ((!res.ok || !data.success) && isStorageError(data.error)) {
-          if (btn) btn.innerHTML = '<span>🔧 Registering wallet with token contract...</span>';
+          if (btn) btn.innerHTML = '<span>Registering wallet with token contract...</span>';
           if (feedback) {
             feedback.style.background = 'rgba(255, 183, 3, 0.12)';
             feedback.style.color = '#ffb703';
@@ -5455,7 +5621,7 @@
           }
           // Small delay to let the registration propagate on-chain
           await new Promise(r => setTimeout(r, 1800));
-          if (btn) btn.innerHTML = '<span>🔒 Retrying Private Trade...</span>';
+          if (btn) btn.innerHTML = '<span>Retrying Private Trade...</span>';
           res = await fetch('/alpha/trade/execute', {
             method: 'POST',
             headers: getAuthHeaders(),
@@ -5489,7 +5655,7 @@
           }
 
           if (feedback) {
-            feedback.innerHTML = `<span>✓ On-chain intent transfer confirmed (${walletTxHash.slice(0, 10)}...). Finalizing confidential settlement...</span>`;
+            feedback.innerHTML = `<span>On-chain intent transfer confirmed (${walletTxHash.slice(0, 10)}...). Finalizing confidential settlement...</span>`;
           }
 
           // Confirm the executed private trade
@@ -5515,12 +5681,12 @@
             throw new Error(confirmData.error || 'Private trade settlement failed.');
           }
 
-          const txLink = `<br><a href="https://nearblocks.io/txns/${walletTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${walletTxHash.slice(0, 10)}...) ↗</a>`;
+          const txLink = `<br><a href="https://nearblocks.io/txns/${walletTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${walletTxHash.slice(0, 10)}...) ↗</a>`;
 
           if (feedback) {
             feedback.style.background = 'rgba(0, 230, 118, 0.15)';
             feedback.style.color = 'var(--color-racer-green)';
-            feedback.innerHTML = `✓ <b>Private ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>🔒 Decentralized Private Intent (Defuse Solver)</b><br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>${txLink}`;
+            feedback.innerHTML = `<b>Private ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>🔒 Decentralized Private Intent (Defuse Solver)</b><br><span style="font-size:11px; color:var(--color-racer-cyan);">Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>${txLink}`;
           }
 
           refreshUserBalance();
@@ -5536,24 +5702,24 @@
         const isIntent = data.routing === 'INTENT_SOLVER';
         const isVault = data.routing === 'RACER_SHIELDED_VAULT';
         const routeLabel = isIntent
-          ? '🔒 Decentralized Private Intent (Defuse Solver)'
+          ? 'Decentralized Private Intent (Defuse Solver)'
           : isVault
-          ? '🏎️ Racer Shielded Router (racerbotrouter.near)'
+          ? 'Racer Shielded Router (racerbotrouter.near)'
           : `🏛️ AMM Relayer (${escapeHtml(selectedGmGnToken.venue)})`;
         const extraNote = isIntent
-          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>'
+          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>'
           : isVault
-          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">🛡️ Atomic Multi-Hop On-Chain Settlement Confirmed via Deployed Contract!</span>'
+          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Atomic Multi-Hop On-Chain Settlement Confirmed via Deployed Contract!</span>'
           : '';
 
         const txLink = data.txHash
-          ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">✓ View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
+          ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
           : '';
 
         if (feedback) {
           feedback.style.background = 'rgba(0, 230, 118, 0.15)';
           feedback.style.color = 'var(--color-racer-green)';
-          feedback.innerHTML = `✓ <b>Private ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>${routeLabel}</b>${extraNote}${txLink}`;
+          feedback.innerHTML = `<b>Private ${selectedGmGnSide} Executed!</b><br>⚡ Route: <b>${routeLabel}</b>${extraNote}${txLink}`;
         }
 
         // Immediately update live wallet balance and terminal views
@@ -5567,8 +5733,8 @@
           // Show a clean message without internal jargon for storage errors
           const msg = err.message || 'Execution error';
           feedback.textContent = isStorageError(msg)
-            ? '❌ Trade failed: Wallet registration failed — please try again in a moment.'
-            : '❌ Trade failed: ' + msg;
+            ? 'Trade failed: Wallet registration failed — please try again in a moment.'
+            : 'Trade failed: ' + msg;
         }
       } finally {
         if (btn) {
@@ -5822,9 +5988,9 @@
           throw new Error(data.error || 'Failed to save copy settings');
         }
 
-        alert('✓ Confidential copy settings saved! You will automatically copy this Alpha Caller privately through NEAR Intents.');
+        alert('Confidential copy settings saved! You will automatically copy this Alpha Caller privately through NEAR Intents.');
       } catch (err) {
-        alert('❌ Failed to save copy settings: ' + err.message);
+        alert('Failed to save copy settings: ' + err.message);
       }
     }
 
@@ -5985,7 +6151,7 @@
         if (feedback) {
           feedback.style.background = 'rgba(0, 230, 118, 0.15)';
           feedback.style.color = 'var(--color-racer-green)';
-          feedback.innerHTML = `✓ <b>Confidential ${side} Executed!</b><br>🏛️ Venue: <b>${escapeHtml(data.venue)}</b> • ⚡ <b>${data.autoCopyFillsCount} subscriber copy-fills</b> triggered synchronously.<br><span style="font-size:10.5px; color:var(--color-text-subtle);">Tx: ${data.txHash}</span>`;
+          feedback.innerHTML = `<b>Confidential ${side} Executed!</b><br>🏛️ Venue: <b>${escapeHtml(data.venue)}</b> • ⚡ <b>${data.autoCopyFillsCount} subscriber copy-fills</b> triggered synchronously.<br><span style="font-size:10.5px; color:var(--color-text-subtle);">Tx: ${data.txHash}</span>`;
         }
 
         loadTerminalData();
@@ -5994,7 +6160,7 @@
         if (feedback) {
           feedback.style.background = 'rgba(255, 77, 77, 0.15)';
           feedback.style.color = 'var(--color-danger)';
-          feedback.textContent = '❌ Error: ' + err.message;
+          feedback.textContent = 'Error: ' + err.message;
         }
       } finally {
         btn.disabled = false;
@@ -6146,14 +6312,14 @@
 
           if (isQualified) {
             if (step1Pill) {
-              step1Pill.textContent = '✓ RPC Verified ($10K+)';
+              step1Pill.textContent = 'RPC Verified ($10K+)';
               step1Pill.style.color = 'var(--color-racer-green)';
               step1Pill.style.background = 'rgba(0, 230, 118, 0.15)';
               step1Pill.style.borderColor = 'rgba(0, 230, 118, 0.4)';
             }
             if (auditFeedback) {
               const onChainNote = data.verifiedOnChain ? `<span style="display:inline-block; margin-left:4px; padding:2px 6px; font-size:10px; font-family:var(--font-mono); background:rgba(0, 240, 255, 0.15); color:var(--color-racer-cyan); border-radius:4px; border:1px solid rgba(0, 240, 255, 0.3);">RPC ON-CHAIN VERIFIED</span>` : '';
-              auditFeedback.innerHTML = `<span style="color:var(--color-racer-green); font-weight:700;">✓ Wallet Verified &amp; Qualified:</span> True on-chain trading volume of <b>$${volUsd.toLocaleString(undefined, {minimumFractionDigits: 2})}</b> meets the $10,000 qualification standard via direct NEAR RPC audit! ${onChainNote} Settle the 5.0 NEAR platform entry fee below to activate your Alpha Caller channel.`;
+              auditFeedback.innerHTML = `<span style="color:var(--color-racer-green); font-weight:700;">Wallet Verified &amp; Qualified:</span> True on-chain trading volume of <b>$${volUsd.toLocaleString(undefined, {minimumFractionDigits: 2})}</b> meets the $10,000 qualification standard via direct NEAR RPC audit! ${onChainNote} Settle the 5.0 NEAR platform entry fee below to activate your Alpha Caller channel.`;
             }
             const s1Card = document.getElementById('step1-volume-card');
             const s2Card = document.getElementById('step2-fee-card');
@@ -6193,18 +6359,18 @@
           // Update Step 2 (Fee)
           if (isFeePaid) {
             if (feeStatusText) {
-              feeStatusText.textContent = '✓ Settled (5.0 NEAR)';
+              feeStatusText.textContent = 'Settled (5.0 NEAR)';
               feeStatusText.style.color = 'var(--color-racer-green)';
             }
             if (step2Pill) {
-              step2Pill.textContent = '✓ Entry Fee Settled';
+              step2Pill.textContent = 'Entry Fee Settled';
               step2Pill.style.color = 'var(--color-racer-green)';
               step2Pill.style.background = 'rgba(0, 230, 118, 0.15)';
               step2Pill.style.borderColor = 'rgba(0, 230, 118, 0.4)';
             }
             if (btnPayFee) {
               btnPayFee.disabled = true;
-              btnPayFee.innerHTML = '<span>✓ 5.0 NEAR Entry Fee Settled</span>';
+              btnPayFee.innerHTML = '<span>5.0 NEAR Entry Fee Settled</span>';
               btnPayFee.style.opacity = '0.7';
               btnPayFee.style.cursor = 'default';
             }
@@ -6220,7 +6386,7 @@
             if (btnPayFee) {
               btnPayFee.disabled = false;
               btnPayFee.innerHTML = isQualified 
-                ? '<span>⚡ Settle 5.0 NEAR Fee &amp; Enter as Alpha Caller</span>'
+                ? '<span>Settle 5.0 NEAR Fee &amp; Enter as Alpha Caller</span>'
                 : '<span>Pay 5.0 NEAR Entry Fee On-Chain</span>';
               btnPayFee.style.opacity = '1';
               btnPayFee.style.cursor = 'pointer';
@@ -6242,15 +6408,15 @@
             if (!addr) {
               btnSubmitReg.disabled = false;
               btnSubmitReg.onclick = (e) => { e.preventDefault(); openConnectModal(); };
-              btnSubmitReg.innerHTML = '<span>🔗 Connect Wallet to Open Channel</span>';
+              btnSubmitReg.innerHTML = '<span>Connect Wallet to Open Channel</span>';
             } else if (!isFeePaid) {
               btnSubmitReg.disabled = false;
               btnSubmitReg.onclick = null;
-              btnSubmitReg.innerHTML = '<span>🚀 Settle 5.0 NEAR Fee &amp; Open Alpha Caller Channel</span>';
+              btnSubmitReg.innerHTML = '<span>Settle 5.0 NEAR Fee &amp; Open Alpha Caller Channel</span>';
             } else {
               btnSubmitReg.disabled = false;
               btnSubmitReg.onclick = null;
-              btnSubmitReg.innerHTML = '<span>🚀 Complete Verification &amp; Open Alpha Caller Channel</span>';
+              btnSubmitReg.innerHTML = '<span>Complete Verification &amp; Open Alpha Caller Channel</span>';
             }
           }
         }
@@ -6307,7 +6473,7 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert(`✓ 5.0 NEAR Platform Entry Fee Settled on-chain to racerbottreasury.near!\nTx: ${data.txHash}`);
+          alert(`5.0 NEAR Platform Entry Fee Settled on-chain to racerbottreasury.near!\nTx: ${data.txHash}`);
           
           // If profile fields are ready, automatically register and open dashboard
           const handleEl = document.getElementById('reg-handle');
@@ -6319,7 +6485,7 @@
             if (step3) step3.scrollIntoView({ behavior: 'smooth' });
           }
         } else {
-          alert('❌ Entry fee settlement failed: ' + (data.error || 'Unknown error'));
+          alert('Entry fee settlement failed: ' + (data.error || 'Unknown error'));
           if (btn) {
             btn.disabled = false;
             btn.innerHTML = prevText;
@@ -6327,7 +6493,7 @@
         }
       } catch (err) {
         const msg = err?.message || 'Transaction rejected';
-        alert('❌ Wallet Payment Cancelled / Failed: ' + msg);
+        alert('Wallet Payment Cancelled / Failed: ' + msg);
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = prevText;
@@ -6392,7 +6558,7 @@
           if (feedback) {
             feedback.style.background = 'rgba(0, 230, 118, 0.15)';
             feedback.style.color = 'var(--color-racer-green)';
-            feedback.textContent = '✓ Creator Channel successfully opened and verified! Launching dashboard...';
+            feedback.textContent = 'Creator Channel successfully opened and verified! Launching dashboard...';
           }
           setTimeout(async () => {
             await loadCreatorStudio();
@@ -6402,7 +6568,7 @@
           if (feedback) {
             feedback.style.background = 'rgba(255, 77, 77, 0.15)';
             feedback.style.color = 'var(--color-danger)';
-            feedback.textContent = '❌ Registration failed: ' + (data.error || 'Qualification criteria not met.');
+            feedback.textContent = 'Registration failed: ' + (data.error || 'Qualification criteria not met.');
           }
           if (btn) {
             btn.disabled = false;
@@ -6413,7 +6579,7 @@
         if (feedback) {
           feedback.style.background = 'rgba(255, 77, 77, 0.15)';
           feedback.style.color = 'var(--color-danger)';
-          feedback.textContent = '❌ Network error: ' + err.message;
+          feedback.textContent = 'Network error: ' + err.message;
         }
         if (btn) {
           btn.disabled = false;
@@ -6439,12 +6605,12 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert('✓ Tier copy fees updated successfully!');
+          alert('Tier copy fees updated successfully!');
         } else {
-          alert('❌ Failed to update pricing: ' + (data.error || 'Unknown error'));
+          alert('Failed to update pricing: ' + (data.error || 'Unknown error'));
         }
       } catch (err) {
-        alert('❌ Failed to update pricing: ' + err.message);
+        alert('Failed to update pricing: ' + err.message);
       }
     }
 
@@ -6509,7 +6675,7 @@
           if (feedbackEl) {
             feedbackEl.style.background = 'rgba(0,230,118,0.12)';
             feedbackEl.style.color = 'var(--color-racer-green)';
-            feedbackEl.textContent = `✓ Profile updated! Your handle @${handle || '(unchanged)'} is tied to your wallet.`;
+            feedbackEl.textContent = `Profile updated! Your handle @${handle || '(unchanged)'} is tied to your wallet.`;
           }
           // Refresh the whole creator studio dashboard to reflect new values
           setTimeout(() => loadCreatorStudio(), 800);
@@ -6517,14 +6683,14 @@
           if (feedbackEl) {
             feedbackEl.style.background = 'rgba(255,77,77,0.12)';
             feedbackEl.style.color = 'var(--color-danger)';
-            feedbackEl.textContent = '❌ ' + (data.error || 'Failed to update profile.');
+            feedbackEl.textContent = '' + (data.error || 'Failed to update profile.');
           }
         }
       } catch (err) {
         if (feedbackEl) {
           feedbackEl.style.background = 'rgba(255,77,77,0.12)';
           feedbackEl.style.color = 'var(--color-danger)';
-          feedbackEl.textContent = '❌ Network error: ' + err.message;
+          feedbackEl.textContent = 'Network error: ' + err.message;
         }
       }
     }
@@ -6533,7 +6699,7 @@
     function copyTerminalLink() {
       const input = document.getElementById('creator-terminal-link');
       navigator.clipboard.writeText(input.value);
-      alert('✓ Terminal link copied to clipboard!');
+      alert('Terminal link copied to clipboard!');
     }
 
     async function generateNewTerminalLink() {
@@ -6545,7 +6711,7 @@
         const data = await res.json();
         if (data.success) {
           document.getElementById('creator-terminal-link').value = data.terminalUrl;
-          alert('✓ New one-time terminal link generated!');
+          alert('New one-time terminal link generated!');
         }
       } catch {}
     }
@@ -6597,7 +6763,7 @@
                   <div style="display:flex; align-items:center; gap:8px;">
                     <span style="font-weight:700; color:#fff; font-size:15px;">${escapeHtml(k.traderDisplayName)}</span>
                     <span class="strategy-tag" style="font-size:10px;">${escapeHtml(k.tier).toUpperCase()}</span>
-                    <span class="active-pill" style="font-size:10px;">${k.status === 'expiring_soon' ? 'Expiring Soon ⚠️' : 'Active 🟢'}</span>
+                    <span class="active-pill" style="font-size:10px;">${k.status === 'expiring_soon' ? 'Expiring Soon ' : 'Active 🟢'}</span>
                   </div>
                   <div style="font-size:12px; color:var(--color-text-muted); margin-top:2px;">
                     Win Rate: <b>${k.winRatePct}%</b> • Followers: <b>${k.followersCount}</b> • Expires: ${k.expiresAt ? new Date(k.expiresAt).toLocaleDateString() : 'Active'}
@@ -6896,7 +7062,7 @@
         activeDepositQuote = data;
         renderActiveDepositCard(data);
       } catch (err) {
-        alert('❌ Error: ' + err.message);
+        alert('Error: ' + err.message);
       } finally {
         btn.disabled = false;
         btn.innerHTML = '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon><span>Generate 1Click Deposit Address</span>';
@@ -6971,7 +7137,7 @@
             clearInterval(depositStatusPoller);
             depositStatusPoller = null;
             if (statusLabel) {
-              statusLabel.textContent = '✓ Settled & NEAR Deposited!';
+              statusLabel.textContent = 'Settled & NEAR Deposited!';
               statusLabel.style.color = 'var(--color-racer-green)';
             }
             if (progressFill) {
@@ -6981,7 +7147,7 @@
             const nearCredited = data.nearAmount || activeDepositQuote?.minNearOut || 'NEAR';
             const txHashBadge = data.txHash ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11px;">View NearBlocks Receipt ↗</a>` : '';
             if (feedback) {
-              feedback.innerHTML = `🎉 <b>Deposit Successful!</b> Your connected account received <b>${nearCredited} NEAR</b>.${txHashBadge}`;
+              feedback.innerHTML = `<b>Deposit Successful!</b> Your connected account received <b>${nearCredited} NEAR</b>.${txHashBadge}`;
             }
             refreshUserBalance();
           }
@@ -6993,7 +7159,7 @@
       const text = document.getElementById('active-deposit-address')?.textContent;
       if (text && text !== '--') {
         navigator.clipboard.writeText(text);
-        alert('✓ Single-use deposit address copied: ' + text);
+        alert('Single-use deposit address copied: ' + text);
       }
     }
 
@@ -7001,7 +7167,7 @@
       const text = document.getElementById('deposit-account-id')?.textContent;
       if (text) {
         navigator.clipboard.writeText(text);
-        alert('✓ Deposit address copied: ' + text);
+        alert('Deposit address copied: ' + text);
       }
     }
 
@@ -7235,7 +7401,7 @@
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
-        if (statusDiv) { statusDiv.textContent = '✓ Successfully connected!'; statusDiv.style.color = 'var(--color-racer-green)'; }
+        if (statusDiv) { statusDiv.textContent = 'Successfully connected!'; statusDiv.style.color = 'var(--color-racer-green)'; }
         setTimeout(closeConnectModal, 1000);
       } catch (err) {
         if (statusDiv) { statusDiv.textContent = 'Error: ' + err.message; statusDiv.style.color = '#ff4d4d'; }
@@ -7344,7 +7510,7 @@
             <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
           </div>
           <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-secondary" style="width:100%; height:40px; font-size:13px; justify-content:center;">
-            <span>⚡ Pair with Telegram Bot</span>
+            <span>Pair with Telegram Bot</span>
           </button>
         </div>
       </div>
@@ -7403,6 +7569,51 @@
       <span>Studio</span>
     </button>
   </nav>
+
+  <!-- Universal Mobile Navigation Drawer -->
+  <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileNav(false)"></div>
+  <aside class="mobile-nav-drawer" id="mobile-nav-drawer" aria-label="Mobile Navigation">
+    <div class="mobile-drawer-header">
+      <a href="/" class="mobile-drawer-brand">
+        <div class="brand-mark" style="width:32px; height:32px;">
+          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+        </div>
+        <span class="brand-title" style="font-size:18px;">RACER ALPHA</span>
+      </a>
+      <button class="mobile-drawer-close" onclick="toggleMobileNav(false)" aria-label="Close navigation menu">&times;</button>
+    </div>
+    <nav class="mobile-drawer-links">
+      <a href="/" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        <span>Home</span>
+      </a>
+      <a href="/alpha" class="mobile-drawer-link active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        <span>RacerAlpha (Trading)</span>
+      </a>
+      <a href="/bubblemap" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+        <span>RacerBubble Map</span>
+      </a>
+      <a href="/fleet" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        <span>The Fleet (Coordination)</span>
+      </a>
+      <a href="/competition" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
+        <span>Competition Arena</span>
+      </a>
+      <a href="https://t.me/racertradingbot" target="_blank" class="mobile-drawer-link" style="color:var(--color-racer-green);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span>Launch RacerBot TG ↗</span>
+      </a>
+    </nav>
+    <div class="mobile-drawer-footer">
+      <button onclick="handleHeaderConnectClick(); toggleMobileNav(false);" class="btn btn-secondary" style="width:100%; justify-content:center;">
+        <span>Connect Wallet</span>
+      </button>
+    </div>
+  </aside>
 
   <!-- NEAR Connect & RacerConnect SDK -->
   <script src="/assets/near-connect.bundle.js"></script>
