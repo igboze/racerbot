@@ -3477,11 +3477,11 @@
                 </div>
                 <div class="spot-stat-item">
                   <div class="spot-label">MARKET CAP</div>
-                  <div class="spot-val" id="spotlight-mcap">$16.8M</div>
+                  <div class="spot-val" id="spotlight-mcap">$8.4K</div>
                 </div>
                 <div class="spot-stat-item">
                   <div class="spot-label">24H VOLUME</div>
-                  <div class="spot-val" id="spotlight-vol">$2.42M</div>
+                  <div class="spot-val" id="spotlight-vol">$24.2K</div>
                 </div>
               </div>
             </div>
@@ -5057,7 +5057,7 @@
       const sym = (tok?.symbol || '').toUpperCase();
       const lp = (tok?.launchpad || '').toLowerCase();
       fallbackEmoji = sym ? sym.slice(0, 2).toUpperCase() : 'TK';
-      if (tok.icon && typeof tok.icon === 'string' && tok.icon.length > 5) {
+      if (tok.icon && typeof tok.icon === 'string' && tok.icon.length > 5 && !tok.icon.includes('racer-logo') && !tok.icon.includes('assets.ref.finance') && !tok.icon.includes('raw.githubusercontent.com')) {
         return `
           <div class="gmgn-tok-icon" style="width:${size}px; height:${size}px; border-radius:50%; overflow:hidden; position:relative; background:var(--color-surface-hover); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
             <img src="${escapeHtml(tok.icon)}" alt="${escapeHtml(tok.symbol)}" loading="lazy" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />

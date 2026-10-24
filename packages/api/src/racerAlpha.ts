@@ -6,6 +6,7 @@ import { publishSwap, transferNearFromUser, getTokenInfo } from './wallet.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 import { splitAlphaKeyPayment } from './alphaPayment.js';
 import { sellAtTarget } from './sellHelper.js';
+import { getAuthenticTokenIcon } from './authenticIcons.js';
 
 const logger = createLogger('racer-alpha');
 
@@ -2289,13 +2290,72 @@ export interface AlphaTokenItem {
 // ── In-Memory Fast Cache for Live On-Chain Tokens ────────────────────────────
 const ALPHA_TOKENS_CACHE_TTL_MS = 60_000;
 
+export interface OnChainRpcTokenData {
+  name: string;
+  symbol: string;
+  decimals: number;
+  icon?: string;
+  totalSupply: string;
+  fetchedAt: number;
+}
+
+const onChainRpcCache = new Map<string, OnChainRpcTokenData>();
+const ON_CHAIN_RPC_CACHE_TTL_MS = 300_000; // 5 minutes
+
+export async function fetchOnChainTokenRpcData(tokenAddress: string): Promise<OnChainRpcTokenData | null> {
+  if (!tokenAddress) return null;
+  const addr = tokenAddress.toLowerCase().trim();
+  const cached = onChainRpcCache.get(addr);
+  if (cached && Date.now() - cached.fetchedAt < ON_CHAIN_RPC_CACHE_TTL_MS) {
+    return cached;
+  }
+
+  const authenticIcon = getAuthenticTokenIcon(tokenAddress);
+  try {
+    const near = getNear();
+    const [meta, totalSupply] = await Promise.all([
+      near.getTokenMetadata(tokenAddress).catch(() => null),
+      near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+    ]);
+
+    if (meta && (meta.symbol || meta.name)) {
+      const data: OnChainRpcTokenData = {
+        name: meta.name || meta.symbol,
+        symbol: (meta.symbol || addr.split('.')[0]).toUpperCase(),
+        decimals: typeof meta.decimals === 'number' ? meta.decimals : 18,
+        icon: authenticIcon || (meta.icon && meta.icon.length > 5 && !meta.icon.includes('racer-logo') && !meta.icon.includes('assets.ref.finance') ? meta.icon : undefined),
+        totalSupply: totalSupply || '0',
+        fetchedAt: Date.now(),
+      };
+      onChainRpcCache.set(addr, data);
+      return data;
+    }
+  } catch (err: any) {
+    logger.debug(`Failed on-chain RPC lookup for ${tokenAddress}: ${err?.message}`);
+  }
+
+  if (authenticIcon) {
+    const fallbackData: OnChainRpcTokenData = {
+      name: addr.split('.')[0],
+      symbol: addr.split('.')[0].toUpperCase(),
+      decimals: 18,
+      icon: authenticIcon,
+      totalSupply: '0',
+      fetchedAt: Date.now(),
+    };
+    onChainRpcCache.set(addr, fallbackData);
+    return fallbackData;
+  }
+  return null;
+}
+
 export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
   // ── HOOT Launchpad (JustHoot) ──
   {
     address: 'kookdog-42db38.launchpad.justhoot.near',
     symbol: 'KOOKDOG',
     name: 'Kook Dog',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/kookdog.png',
+    icon: getAuthenticTokenIcon('kookdog-42db38.launchpad.justhoot.near'),
     venue: '🦉 HOOT',
     launchpad: 'justhoot',
     priceUsd: 0.000412,
@@ -2308,12 +2368,13 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 48000,
     sparkline: [0.00035, 0.00037, 0.00036, 0.00039, 0.00040, 0.000412],
     holders: 312,
+    decimals: 18,
   },
   {
     address: 'hoot-f5dd7a.launchpad.justhoot.near',
     symbol: 'HOOT',
     name: 'Hoot Token',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/hoot.png',
+    icon: undefined,
     venue: '🦉 HOOT',
     launchpad: 'justhoot',
     priceUsd: 0.00185,
@@ -2326,6 +2387,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 195000,
     sparkline: [0.0013, 0.0014, 0.0016, 0.0015, 0.0017, 0.00185],
     holders: 890,
+    decimals: 18,
   },
 
   // ── NEARLY Launchpad (NearlyTrade) ──
@@ -2333,43 +2395,45 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'diarhea.nearlytrade.near',
     symbol: 'DIARHEA',
     name: 'Diarhea',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/diarhea.png',
+    icon: getAuthenticTokenIcon('diarhea.nearlytrade.near'),
     venue: '⚡ NEARLY',
     launchpad: 'nearlytrade',
     priceUsd: 0.000092,
     priceNear: 0.0000186,
     change24h: -4.2,
-    marketCap: 92000,
+    marketCap: 90000,
     volume24h: 15400,
     bondingProgress: 68,
     bondingPhase: 'bonding',
     liquidityUsd: 18200,
     sparkline: [0.000098, 0.000095, 0.000094, 0.000091, 0.000090, 0.000092],
     holders: 145,
+    decimals: 18,
   },
   {
     address: 'dragons-2.nearlytrade.near',
     symbol: 'DRAGONS',
     name: 'Near Dragons',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/dragons.png',
+    icon: getAuthenticTokenIcon('dragons-2.nearlytrade.near'),
     venue: '⚡ NearlyTrade',
     launchpad: 'nearlytrade',
     priceUsd: 0.00014083,
     priceNear: 0.00002845,
     change24h: 8.5,
-    marketCap: 139972,
+    marketCap: 140000,
     volume24h: 34500,
     bondingProgress: 88,
     bondingPhase: 'dex_pool',
     liquidityUsd: 43479,
     sparkline: [0.00012, 0.000125, 0.00013, 0.000135, 0.000138, 0.000141],
     holders: 320,
+    decimals: 18,
   },
   {
     address: 'sol.nearlytrade.near',
     symbol: 'SOL',
     name: 'Sol Nearly',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/sol.png',
+    icon: undefined,
     venue: '⚡ NEARLY',
     launchpad: 'nearlytrade',
     priceUsd: 0.00034,
@@ -2382,50 +2446,34 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 58000,
     sparkline: [0.00029, 0.00030, 0.00032, 0.00031, 0.00033, 0.00034],
     holders: 280,
+    decimals: 18,
   },
 
   // ── Meme.Cooking Launchpad ──
   {
-    address: 'chill.meme-cooking.near',
-    symbol: 'CHILL',
-    name: 'Chill Guy',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/chill.png',
+    address: 'nene-2250.meme-cooking.near',
+    symbol: 'NENE',
+    name: 'Nene Meme',
+    icon: getAuthenticTokenIcon('nene-2250.meme-cooking.near'),
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
-    priceUsd: 0.000155,
-    priceNear: 0.0000313,
-    change24h: 24.6,
-    marketCap: 155000,
-    volume24h: 52100,
-    bondingProgress: 92,
+    priceUsd: 0.000084,
+    priceNear: 0.000017,
+    change24h: 12.4,
+    marketCap: 84000,
+    volume24h: 21500,
+    bondingProgress: 78,
     bondingPhase: 'bonding',
-    liquidityUsd: 34000,
-    sparkline: [0.00012, 0.00013, 0.00014, 0.000145, 0.00015, 0.000155],
-    holders: 420,
+    liquidityUsd: 26000,
+    sparkline: [0.000075, 0.000078, 0.000080, 0.000082, 0.000083, 0.000084],
+    holders: 240,
+    decimals: 18,
   },
   {
-    address: 'pearpe-420.meme-cooking.near',
-    symbol: 'PEARPE',
-    name: 'PearPe Meme',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/pearpe.png',
-    venue: '🍳 Meme.Cooking',
-    launchpad: 'memecooking',
-    priceUsd: 0.000078,
-    priceNear: 0.0000158,
-    change24h: 8.5,
-    marketCap: 78000,
-    volume24h: 19800,
-    bondingProgress: 75,
-    bondingPhase: 'bonding',
-    liquidityUsd: 22000,
-    sparkline: [0.000072, 0.000074, 0.000073, 0.000076, 0.000077, 0.000078],
-    holders: 198,
-  },
-  {
-    address: 'jambo-704.meme-cooking.near',
+    address: 'jambo-1679.meme-cooking.near',
     symbol: 'JAMBO',
     name: 'Jambo',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/jambo.png',
+    icon: getAuthenticTokenIcon('jambo-1679.meme-cooking.near'),
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
     priceUsd: 0.00021,
@@ -2438,24 +2486,26 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 46000,
     sparkline: [0.00018, 0.00019, 0.000195, 0.00020, 0.000205, 0.00021],
     holders: 350,
+    decimals: 18,
   },
   {
-    address: 'woof.meme-cooking.near',
-    symbol: 'WOOF',
-    name: 'Woof Near',
-    icon: 'https://raw.githubusercontent.com/near/crypto-elements/main/tokens/woof.png',
+    address: 'chill.meme-cooking.near',
+    symbol: 'CHILL',
+    name: 'Chill Guy',
+    icon: undefined,
     venue: '🍳 Meme.Cooking',
     launchpad: 'memecooking',
-    priceUsd: 0.000045,
-    priceNear: 0.0000091,
-    change24h: -2.1,
-    marketCap: 45000,
-    volume24h: 11200,
-    bondingProgress: 45,
+    priceUsd: 0.000155,
+    priceNear: 0.0000313,
+    change24h: 24.6,
+    marketCap: 155000,
+    volume24h: 52100,
+    bondingProgress: 92,
     bondingPhase: 'bonding',
-    liquidityUsd: 14500,
-    sparkline: [0.000047, 0.000046, 0.000045, 0.000046, 0.000044, 0.000045],
-    holders: 115,
+    liquidityUsd: 34000,
+    sparkline: [0.00012, 0.00013, 0.00014, 0.000145, 0.00015, 0.000155],
+    holders: 420,
+    decimals: 18,
   },
 
   // ── Ref Finance DEX ──
@@ -2463,44 +2513,46 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'blackdragon.tkn.near',
     symbol: 'BLACKDRAGON',
     name: 'Black Dragon',
-    icon: 'https://assets.ref.finance/images/blackdragon.png',
-    venue: '💎 Ref Finance',
+    icon: getAuthenticTokenIcon('blackdragon.tkn.near'),
+    venue: 'Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.000084,
     priceNear: 0.000017,
     change24h: 36.5,
-    marketCap: 16800000,
-    volume24h: 2420000,
+    marketCap: 8400,
+    volume24h: 24200,
     bondingProgress: 100,
     bondingPhase: 'dex_pool',
-    liquidityUsd: 850000,
+    liquidityUsd: 18500,
     sparkline: [0.000062, 0.000070, 0.000072, 0.000075, 0.000081, 0.000084],
     holders: 4520,
+    decimals: 24,
   },
   {
     address: 'token.lonkingnearbackto2024.near',
     symbol: 'LONK',
     name: 'Lonk',
-    icon: 'https://assets.ref.finance/images/lonk.png',
-    venue: '💎 Ref Finance',
+    icon: getAuthenticTokenIcon('token.lonkingnearbackto2024.near'),
+    venue: 'Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.0000038,
     priceNear: 0.00000077,
     change24h: 14.2,
-    marketCap: 1620000,
+    marketCap: 1598000,
     volume24h: 380000,
     bondingProgress: 100,
     bondingPhase: 'dex_pool',
     liquidityUsd: 290000,
     sparkline: [0.0000033, 0.0000034, 0.0000036, 0.0000035, 0.0000037, 0.0000038],
     holders: 2840,
+    decimals: 8,
   },
   {
     address: 'aurora.tkn.near',
     symbol: 'AURORA',
     name: 'Aurora',
-    icon: 'https://assets.ref.finance/images/aurora.png',
-    venue: '💎 Ref Finance',
+    icon: getAuthenticTokenIcon('aurora.tkn.near'),
+    venue: 'Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.165,
     priceNear: 0.0333,
@@ -2512,31 +2564,52 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 1200000,
     sparkline: [0.17, 0.168, 0.167, 0.165, 0.166, 0.165],
     holders: 12500,
+    decimals: 18,
   },
   {
     address: 'shitzu.tkn.near',
     symbol: 'SHITZU',
     name: 'Shitzu',
-    icon: 'https://assets.ref.finance/images/shitzu.png',
-    venue: '💎 Ref Finance',
+    icon: getAuthenticTokenIcon('shitzu.tkn.near'),
+    venue: 'Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.0042,
     priceNear: 0.000848,
     change24h: 9.3,
-    marketCap: 2450000,
+    marketCap: 2420000,
     volume24h: 185000,
     bondingProgress: 100,
     bondingPhase: 'dex_pool',
     liquidityUsd: 310000,
     sparkline: [0.0038, 0.0039, 0.0040, 0.0041, 0.00415, 0.0042],
     holders: 1980,
+    decimals: 18,
+  },
+  {
+    address: 'token.sweat',
+    symbol: 'SWEAT',
+    name: 'Sweat Economy',
+    icon: getAuthenticTokenIcon('token.sweat'),
+    venue: 'Ref Finance',
+    launchpad: 'ref',
+    priceUsd: 0.0028,
+    priceNear: 0.00056,
+    change24h: 4.8,
+    marketCap: 55000000,
+    volume24h: 840000,
+    bondingProgress: 100,
+    bondingPhase: 'dex_pool',
+    liquidityUsd: 950000,
+    sparkline: [0.0026, 0.00265, 0.0027, 0.00275, 0.0028, 0.0028],
+    holders: 18500,
+    decimals: 18,
   },
   {
     address: 'neat.near',
     symbol: 'NEAT',
     name: 'Neat',
-    icon: 'https://assets.ref.finance/images/neat.png',
-    venue: '💎 Ref Finance',
+    icon: undefined,
+    venue: 'Ref Finance',
     launchpad: 'ref',
     priceUsd: 0.082,
     priceNear: 0.0166,
@@ -2548,6 +2621,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 240000,
     sparkline: [0.078, 0.079, 0.080, 0.081, 0.0815, 0.082],
     holders: 1420,
+    decimals: 18,
   },
 
   // ── InTear Launchpad ──
@@ -2555,7 +2629,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     address: 'intear.intear.near',
     symbol: 'INTEAR',
     name: 'InTear Ecosystem',
-    icon: 'https://assets.ref.finance/images/intear.png',
+    icon: undefined,
     venue: '💧 InTear',
     launchpad: 'intear',
     priceUsd: 0.024,
@@ -2568,6 +2642,7 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 78000,
     sparkline: [0.022, 0.0225, 0.023, 0.0235, 0.0238, 0.024],
     holders: 390,
+    decimals: 18,
   },
 ];
 
@@ -2752,10 +2827,12 @@ function mapTokenInfoToAlphaItem(
   const liquidityUsd = isNaN(rawLiq) || rawLiq < 0 ? 0 : rawLiq;
   
   let marketCap = Number(info?.market_cap_usd || 0);
-  if (!marketCap && safePriceUsd > 0 && info?.total_supply) {
+  if ((!marketCap || marketCap === 0) && safePriceUsd > 0 && info?.total_supply && info.total_supply !== '0') {
     const dec = info?.decimals ?? 18;
     const supply = parseFloat(info.total_supply) / Math.pow(10, dec);
-    marketCap = Math.round(safePriceUsd * supply);
+    if (supply > 0) {
+      marketCap = Math.round(safePriceUsd * supply);
+    }
   }
 
   const bondingProgress = info?.bonding_progress_pct !== null && info?.bonding_progress_pct !== undefined
@@ -2779,7 +2856,8 @@ function mapTokenInfoToAlphaItem(
     Number(p.toFixed(6)),
   ];
 
-  const icon = info?.icon || fallbackMeta?.icon || (INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === address.toLowerCase())?.icon) || (cachedAlphaTokensList.tokens.find(s => s.address.toLowerCase() === address.toLowerCase())?.icon);
+  const authenticIcon = getAuthenticTokenIcon(address);
+  const icon = authenticIcon || (info?.icon && !info.icon.includes('racer-logo') && !info.icon.includes('assets.ref.finance') ? info.icon : undefined) || (fallbackMeta?.icon && !fallbackMeta.icon.includes('racer-logo') && !fallbackMeta.icon.includes('assets.ref.finance') ? fallbackMeta.icon : undefined) || (INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === address.toLowerCase())?.icon);
 
   return {
     address,
@@ -2880,13 +2958,42 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
     getDb().catch(() => null),
   ]);
 
-  // 1. First populate curated/seed tokens with live verified metrics
+  const dbRowsMap = new Map<string, any>();
+  if (db) {
+    try {
+      const dbRes = await db.query(
+        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon, total_supply, decimals, market_cap_usd
+         FROM token_cache 
+         WHERE (chain = 'near' OR chain IS NULL) AND token_address IS NOT NULL
+         ORDER BY updated_at DESC LIMIT 1000`
+      );
+      for (const row of dbRes.rows) {
+        if (row.token_address) {
+          dbRowsMap.set(row.token_address.toLowerCase().trim(), row);
+        }
+      }
+    } catch (e: any) {
+      logger.debug(`Failed to prefetch token_cache: ${e?.message}`);
+    }
+  }
+
+  // 1. First populate curated/seed tokens with live verified metrics from RPC and wallet info
   const curatedPromises = CURATED_ALPHA_TOKENS.map(async (tok) => {
     try {
-      const liveInfo = await withTimeout(getTokenInfo(tok.address, false).catch(() => null), 2500, null);
-      if (liveInfo && (liveInfo.symbol || liveInfo.price)) {
-        return mapTokenInfoToAlphaItem(tok.address, liveInfo, tok, nearUsd);
-      }
+      const [liveInfo, rpcData] = await Promise.all([
+        withTimeout(getTokenInfo(tok.address, false).catch(() => null), 2500, null),
+        fetchOnChainTokenRpcData(tok.address),
+      ]);
+      const authenticIcon = getAuthenticTokenIcon(tok.address);
+      const seed = INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === tok.address.toLowerCase());
+      const mergedInfo = {
+        ...(seed || {}),
+        ...(liveInfo || {}),
+        decimals: rpcData?.decimals ?? liveInfo?.decimals ?? seed?.decimals ?? 18,
+        total_supply: rpcData?.totalSupply || liveInfo?.total_supply,
+        icon: authenticIcon || rpcData?.icon || liveInfo?.icon || seed?.icon,
+      };
+      return mapTokenInfoToAlphaItem(tok.address, mergedInfo, tok, nearUsd);
     } catch {}
     const seed = INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === tok.address.toLowerCase());
     return seed || mapTokenInfoToAlphaItem(tok.address, null, tok, nearUsd);
@@ -2928,18 +3035,32 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
 
     seenAddrs.add(addr.toLowerCase());
 
-    const symbol = (meta?.symbol || pInfo?.symbol || addr.split('.')[0]).toUpperCase();
-    const name = meta?.name || meta?.symbol || symbol;
-    const icon = meta?.icon || (INITIAL_ALPHA_TOKENS.find(s => s.address.toLowerCase() === addr.toLowerCase())?.icon) || undefined;
+    const dbRow = dbRowsMap.get(addr.toLowerCase());
+    const authenticIcon = getAuthenticTokenIcon(addr);
+    const symbol = (meta?.symbol || pInfo?.symbol || dbRow?.symbol || addr.split('.')[0]).toUpperCase();
+    const name = meta?.name || dbRow?.name || meta?.symbol || symbol;
+    const decimals = dbRow?.decimals ?? meta?.decimals ?? pInfo?.decimal ?? 18;
+    const totalSupply = dbRow?.total_supply;
+    const humanSupply = totalSupply && totalSupply !== '0' ? parseFloat(totalSupply) / Math.pow(10, decimals) : 0;
+
+    let marketCap = 0;
+    if (humanSupply > 0 && pUsd > 0) {
+      marketCap = Math.round(pUsd * humanSupply);
+    } else if (dbRow?.market_cap_usd && Number(dbRow.market_cap_usd) > 0) {
+      marketCap = Math.round(Number(dbRow.market_cap_usd));
+    } else if (pUsd > 0) {
+      const knownSupply = addr.includes('lonk') ? 420_690_000_000 : (addr.includes('dragon') ? 100_000_000 : (addr.includes('sweat') ? 19_658_000_000 : 1_000_000_000));
+      marketCap = Math.round(pUsd * knownSupply);
+    }
+
+    let icon = authenticIcon || (dbRow?.icon && !dbRow.icon.includes('racer-logo') ? dbRow.icon : undefined);
+    if (!icon && meta?.icon && !meta.icon.includes('assets.ref.finance') && !meta.icon.includes('raw.githubusercontent.com') && !meta.icon.includes('racer-logo')) {
+      icon = meta.icon;
+    }
+
     const priceNear = nearUsd > 0 && pUsd > 0 ? pUsd / nearUsd : 0;
     const { launchpad, venue } = resolveLaunchpadFromAddress(addr);
 
-    // Realistic market cap & volume estimates
-    let marketCap = 0;
-    if (pUsd > 0) {
-      marketCap = Math.round(pUsd * 1_000_000_000);
-      if (marketCap > 150_000_000) marketCap = 150_000_000;
-    }
     const liqUsd = Math.round(Math.min(marketCap * 0.16, 500_000));
     const volUsd = Math.round(liqUsd * 0.35 + (marketCap > 50000 ? 12000 : 2500));
 
@@ -2984,61 +3105,58 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       liquidityUsd: liqUsd,
       sparkline,
       holders: 50 + Math.min(2500, Math.round(marketCap / 250)),
+      decimals,
     });
   }
 
   // 3. Read up to 500 recent tokens from DB token_cache for newly detected on-chain tokens
-  if (db) {
-    try {
-      const dbRes = await db.query(
-        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon
-         FROM token_cache 
-         WHERE (chain = 'near' OR chain IS NULL) AND token_address IS NOT NULL
-         ORDER BY updated_at DESC LIMIT 500`
-      );
-      for (const row of dbRes.rows) {
-        const addr = (row.token_address || '').trim();
-        if (!addr) continue;
+  if (dbRowsMap.size > 0) {
+    for (const row of dbRowsMap.values()) {
+      const addr = (row.token_address || '').trim();
+      if (!addr) continue;
 
-        // If token already present, backfill icon if missing
-        const existing = results.find(r => r.address.toLowerCase() === addr.toLowerCase());
-        if (existing) {
-          if (!existing.icon && row.icon) existing.icon = row.icon;
-          continue;
-        }
-
-        seenAddrs.add(addr.toLowerCase());
-        const pNear = parseFloat(row.last_price || '0');
-        const pUsd = pNear * nearUsd;
-        const liqNear = parseFloat(row.last_liquidity || '0');
-        const liqUsd = liqNear * nearUsd;
-        const bProg = row.bonding_progress_pct !== null && row.bonding_progress_pct !== undefined
-          ? Number(row.bonding_progress_pct)
-          : 100;
-        const { launchpad, venue } = resolveLaunchpadFromAddress(addr, row.venue);
-        const meta = refMeta[addr];
-
-        results.push({
-          address: addr,
-          symbol: (row.symbol || meta?.symbol || addr.split('.')[0]).toUpperCase(),
-          name: row.name || meta?.name || row.symbol || addr.split('.')[0],
-          icon: row.icon || meta?.icon || undefined,
-          venue,
-          launchpad,
-          priceUsd: Number(pUsd.toFixed(8)),
-          priceNear: Number(pNear.toFixed(8)),
-          change24h: 0,
-          marketCap: Math.round(liqUsd * 2),
-          volume24h: Math.round(liqUsd * 0.4),
-          bondingProgress: bProg,
-          bondingPhase: bProg < 100 ? 'bonding' : (launchpad !== 'ref' ? 'graduated' : 'dex_pool'),
-          liquidityUsd: Math.round(liqUsd),
-          sparkline: [pUsd * 0.95, pUsd * 0.98, pUsd],
-          holders: 100,
-        });
+      // If token already present, backfill icon if missing
+      const existing = results.find(r => r.address.toLowerCase() === addr.toLowerCase());
+      if (existing) {
+        if (!existing.icon && row.icon && !row.icon.includes('racer-logo')) existing.icon = row.icon;
+        continue;
       }
-    } catch (dbErr: any) {
-      logger.warn(`Failed to read token_cache in alpha tokens fetch: ${dbErr?.message}`);
+
+      seenAddrs.add(addr.toLowerCase());
+      const pNear = parseFloat(row.last_price || '0');
+      const pUsd = pNear * nearUsd;
+      const liqNear = parseFloat(row.last_liquidity || '0');
+      const liqUsd = liqNear * nearUsd;
+      const bProg = row.bonding_progress_pct !== null && row.bonding_progress_pct !== undefined
+        ? Number(row.bonding_progress_pct)
+        : 100;
+      const { launchpad, venue } = resolveLaunchpadFromAddress(addr, row.venue);
+      const meta = refMeta[addr];
+      const authenticIcon = getAuthenticTokenIcon(addr);
+
+      const dec = row.decimals ?? 18;
+      const supplyNum = (row.total_supply && row.total_supply !== '0') ? parseFloat(row.total_supply) / Math.pow(10, dec) : 0;
+      const marketCap = supplyNum > 0 && pUsd > 0 ? Math.round(pUsd * supplyNum) : (row.market_cap_usd ? Math.round(Number(row.market_cap_usd)) : Math.round(liqUsd * 2));
+
+      results.push({
+        address: addr,
+        symbol: (row.symbol || meta?.symbol || addr.split('.')[0]).toUpperCase(),
+        name: row.name || meta?.name || row.symbol || addr.split('.')[0],
+        icon: authenticIcon || (row.icon && !row.icon.includes('racer-logo') ? row.icon : undefined) || (meta?.icon && !meta.icon.includes('assets.ref.finance') && !meta.icon.includes('raw.githubusercontent.com') ? meta.icon : undefined),
+        venue,
+        launchpad,
+        priceUsd: Number(pUsd.toFixed(8)),
+        priceNear: Number(pNear.toFixed(8)),
+        change24h: 0,
+        marketCap,
+        volume24h: Math.round(liqUsd * 0.4),
+        bondingProgress: bProg,
+        bondingPhase: bProg < 100 ? 'bonding' : (launchpad !== 'ref' ? 'graduated' : 'dex_pool'),
+        liquidityUsd: Math.round(liqUsd),
+        sparkline: [pUsd * 0.95, pUsd * 0.98, pUsd],
+        holders: 100,
+        decimals: dec,
+      });
     }
   }
 
@@ -3185,24 +3303,56 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
   const cached = cachedAlphaTokensList.tokens.find(t => t.address.toLowerCase() === lowerAddr);
   const fallback = INITIAL_ALPHA_TOKENS.find(t => t.address.toLowerCase() === lowerAddr);
   const nearUsd = await getNearUsdPrice().catch(() => 4.95);
+  const authenticIcon = getAuthenticTokenIcon(tokenAddress);
 
   try {
-    const liveInfo = await withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 5000, null);
+    const [liveInfo, rpcData] = await Promise.all([
+      withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 4000, null),
+      fetchOnChainTokenRpcData(tokenAddress),
+    ]);
+
     if (liveInfo && (liveInfo.price || liveInfo.symbol || liveInfo.name)) {
+      const mergedInfo = {
+        ...(liveInfo || {}),
+        decimals: rpcData?.decimals ?? liveInfo.decimals ?? fallback?.decimals ?? 18,
+        total_supply: rpcData?.totalSupply || liveInfo.total_supply,
+        icon: authenticIcon || rpcData?.icon || liveInfo.icon || fallback?.icon,
+      };
+
       const item = mapTokenInfoToAlphaItem(
         tokenAddress,
-        liveInfo,
+        mergedInfo,
         {
           symbol: fallback?.symbol || cached?.symbol,
           name: fallback?.name || cached?.name,
           fallbackLaunchpad: fallback?.launchpad || cached?.launchpad,
           fallbackVenue: fallback?.venue || cached?.venue,
+          icon: authenticIcon || fallback?.icon,
         },
         nearUsd
       );
-      if (fallback?.icon && !item.icon) {
-        item.icon = fallback.icon;
+
+      if (authenticIcon) {
+        item.icon = authenticIcon;
       }
+
+      // Authoritative on-chain market cap computation:
+      const effectiveDecimals = item.decimals ?? 18;
+      const rawSupply = rpcData?.totalSupply || liveInfo.total_supply;
+      if (rawSupply && rawSupply !== '0' && item.priceUsd > 0) {
+        const humanSupply = parseFloat(rawSupply) / Math.pow(10, effectiveDecimals);
+        if (humanSupply > 0) {
+          item.marketCap = Math.round(humanSupply * item.priceUsd);
+        }
+      }
+
+      if ((!item.marketCap || item.marketCap === 0) && fallback?.marketCap && fallback.marketCap > 0) {
+        item.marketCap = fallback.marketCap;
+      }
+      if ((!item.priceUsd || item.priceUsd === 0) && fallback?.priceUsd && fallback.priceUsd > 0) {
+        item.priceUsd = fallback.priceUsd;
+      }
+
       // Upsert into cachedAlphaTokensList for fast access
       const existingIdx = cachedAlphaTokensList.tokens.findIndex(t => t.address.toLowerCase() === lowerAddr);
       if (existingIdx >= 0) {
@@ -3215,7 +3365,7 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
   } catch {}
 
   if (cached) {
-    return { ...cached, icon: cached.icon || fallback?.icon };
+    return { ...cached, icon: authenticIcon || cached.icon || fallback?.icon };
   }
   return fallback || null;
 }
