@@ -1404,6 +1404,14 @@
         display: none;
       }
       .header-search-chip { display: none !important; }
+      .btn-vis-mint-cta {
+        height: 28px;
+        padding: 0 8px;
+        font-size: 11px;
+        border-radius: 7px;
+        margin-left: 2px;
+        white-space: nowrap;
+      }
       .btn-chip {
         height: 28px;
         padding: 0 7px;
@@ -2579,12 +2587,12 @@
 
           <!-- Navigation Links -->
           <nav class="nav-links">
-            <a href="/" class="nav-item">Home</a>
-            <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
-            <a href="/alpha" class="nav-item">RacerAlpha</a>
-            <a href="/bubblemap" class="nav-item active">RacerBubble</a>
-            <a href="/fleet" class="nav-item">The Fleet</a>
+            <a href="/" class="nav-item">Overview</a>
+            <a href="/bubblemap" class="nav-item active">Bubble Map</a>
+            <a href="/alpha" class="nav-item">Private Alpha</a>
+            <a href="/fleet" class="nav-item">Fleet Ops</a>
             <a href="/competition" class="nav-item">Arena</a>
+            <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">Telegram ↗</a>
           </nav>
 
           <!-- Right Header Actions -->
@@ -2975,7 +2983,7 @@
       <!-- Header Action Controls -->
       <div class="header-actions">
         <a class="btn-vis-mint-cta" href="https://t.me/racertradingbot" target="_blank" rel="noopener" title="Trade with RacerBot on Telegram">
-          <span>Talk to our bot</span>
+          <span>Bot ↗</span>
         </a>
         <button class="btn-chip header-search-chip" onclick="openHeroSearch()" title="Search any token contract address">
           <span>Search</span>
@@ -5490,27 +5498,27 @@
     <nav class="mobile-drawer-links">
       <a href="/" class="mobile-drawer-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-        <span>Home</span>
-      </a>
-      <a href="/alpha" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-        <span>RacerAlpha (Trading)</span>
+        <span>Overview</span>
       </a>
       <a href="/bubblemap" class="mobile-drawer-link active">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-        <span>RacerBubble Map</span>
+        <span>Bubble Map</span>
+      </a>
+      <a href="/alpha" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        <span>Private Alpha</span>
       </a>
       <a href="/fleet" class="mobile-drawer-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-        <span>The Fleet (Coordination)</span>
+        <span>Fleet Ops</span>
       </a>
       <a href="/competition" class="mobile-drawer-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
-        <span>Competition Arena</span>
+        <span>Arena</span>
       </a>
       <a href="https://t.me/racertradingbot" target="_blank" class="mobile-drawer-link" style="color:var(--color-racer-green);">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-        <span>Launch RacerBot TG ↗</span>
+        <span>Telegram ↗</span>
       </a>
     </nav>
     <div class="mobile-drawer-footer">
