@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>RACER — NEAR Trading Workspace</title>
+  <title>RacerBot — Institutional Trading & On-Chain Intelligence Terminal</title>
   <link rel="icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="apple-touch-icon" href="/assets/racer-logo.png">
-  <meta property="og:title" content="RACER — The Next-Generation Trading Suite">
-  <meta property="og:description" content="A NEAR trading workspace with social trading, holder analysis, wallet operations, and community tools.">
+  <meta property="og:title" content="RacerBot — Institutional Multi-Chain Trading Terminal">
+  <meta property="og:description" content="Sub-second execution, automated sniping, copy trading, and on-chain cluster bubble maps on NEAR Protocol.">
   <meta property="og:image" content="/assets/racerbot-banner.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
@@ -16,188 +16,75 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css">
+  <link rel="stylesheet" href="/assets/racer-terminal.css">
   <style>
-    /* ── Master RACER Design System (UI/UX Pro Max v2.0) ───────────────────────── */
+    /* ── Homepage Specific Trading Terminal Styles ────────────────────────── */
     :root {
-      /* High-Octane Laser Cyan Primary CTA + Pit-Wall Signals */
-      --color-primary: #00f0ff;           /* Laser Cyan Primary CTA */
-      --color-primary-pressed: #00d2e0;
-      --color-primary-deep: #00a8b3;
-      --color-on-primary: #08090b;
-
-      --color-racer-cyan: #00f0ff;        /* Laser Cyan speed arc */
-      --color-racer-cyan-glow: rgba(0, 240, 255, 0.28);
-      --color-racer-purple: #2563eb;      /* Racing Purple bolt */
-      --color-racer-purple-light: #3b82f6;
-      --color-racer-green: #00e676;       /* Terminal Mint */
-      --color-racer-green-glow: rgba(0, 230, 118, 0.25);
-      --color-racer-gold: #ffb703;        /* Solar Gold */
-
-      /* Obsidian Pit-Wall Palettes */
-      --color-brand-navy: #040916;        /* Deep Obsidian Pit-Wall */
-      --color-brand-navy-deep: #030712;
-      --color-brand-navy-mid: #0f1217;
-      --color-canvas: #08090b;            /* Main Canvas Dark */
-      --color-surface: #08142c;           /* Anodized Carbon Plate */
-      --color-surface-card: #0b1a38;      /* Elevated Telemetry HUD Surface */
-      --color-surface-hover: #10234a;
-
-      /* Precision Carbon Hairlines & Borders */
-      --color-hairline: #21262d;
-      --color-hairline-soft: #161b22;
-      --color-hairline-strong: rgba(0, 240, 255, 0.35);
-      --color-border: rgba(59, 130, 246, 0.22);
-      --color-border-glow: rgba(0, 240, 255, 0.28);
-
-      /* Pastel Database Property Card Tints (Adapted for Dark Mode Depth) */
-      --color-tint-sky: rgba(220, 236, 250, 0.05);
-      --color-tint-lavender: rgba(230, 224, 245, 0.05);
-      --color-tint-mint: rgba(217, 243, 225, 0.05);
-      --color-tint-peach: rgba(255, 232, 212, 0.05);
-      --color-tint-yellow-bold: rgba(249, 231, 159, 0.08);
-
-      /* Text & Ink Tokens */
-      --color-text: #ffffff;
-      --color-text-muted: #c8d3e8;
-      --color-text-subtle: #8a99b5;
-      --color-ink: #ffffff;
-      --color-charcoal: #e0e6ed;
-      --color-steel: #8a99b5;
-
-      /* Distinctive Typography Suite (frontend-design guidelines) */
-      --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
-      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --font-mono: 'JetBrains Mono', monospace;
-
-      /* Notion Spacing Scale (4px base) */
-      --spacing-xxs: 4px;
-      --spacing-xs: 8px;
-      --spacing-sm: 12px;
-      --spacing-md: 16px;
-      --spacing-lg: 20px;
-      --spacing-xl: 24px;
-      --spacing-xxl: 32px;
-      --spacing-section-sm: 48px;
-      --spacing-section: 64px;
-      --spacing-section-lg: 96px;
-      --spacing-hero: 100px;
-
-      /* Notion Radius Scale: Rectangular 8px Buttons, 12px Cards */
-      --rounded-xs: 4px;
-      --rounded-sm: 6px;
-      --rounded-md: 8px;      /* BUTTONS ARE 8px RECTANGLES, NOT PILLS */
-      --rounded-lg: 12px;     /* CARDS, MODALS, MOCKUP CARDS */
-      --rounded-xl: 16px;
-      --rounded-xxl: 20px;
-      --rounded-full: 9999px; /* BADGES & PILL TABS ONLY */
-
-      /* Notion Diffuse Shadows */
-      --shadow-flat: none;
-      --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.12);
-      --shadow-card: rgba(0, 0, 0, 0.25) 0px 4px 16px 0px;
-      --shadow-mockup: rgba(0, 0, 0, 0.5) 0px 24px 48px -8px, rgba(82, 205, 220, 0.12) 0px 0px 40px;
-      --shadow-modal: rgba(0, 0, 0, 0.7) 0px 16px 48px -8px;
-      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+      --color-canvas: #0B0D10;
+      --color-surface-bg: #11151B;
+      --color-surface: #151A21;
+      --color-surface-elevated: #1B222B;
+      --color-border: #27303A;
+      --color-border-strong: #394452;
+      --color-primary: #00F0FF;
+      --color-positive: #36D399;
+      --color-negative: #F87171;
+      --color-warning: #FBBF24;
+      --color-info: #60A5FA;
+      --color-text-main: #F2F5F8;
+      --color-text-muted: #96A0AE;
+      --color-text-subtle: #737F8F;
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      -webkit-tap-highlight-color: transparent;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       background: var(--color-canvas);
-      color: var(--color-text);
-      font-family: var(--font-sans);
+      color: var(--color-text-main);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
-      line-height: 1.55;
-      background-image: 
-        radial-gradient(100% 70% at 50% -10%, rgba(37, 99, 235, 0.28) 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-    radial-gradient(circle 500px at 85% 15%, rgba(0, 240, 255, 0.08), transparent 70%);
-      background-attachment: fixed;
-      position: relative;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
 
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      background-image: 
-        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-      background-size: 52px 52px;
-      pointer-events: none;
-      z-index: 0;
-      mask-image: radial-gradient(ellipse 75% 65% at 50% 30%, black 20%, transparent 80%);
-      -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 30%, black 20%, transparent 80%);
-    }
-
-    a { color: inherit; text-decoration: none; position: relative; z-index: 1; }
-
-    /* ── Notion Promo Banner (Above Top Nav) ────────────────────────────────── */
-    .promo-banner {
-      background: var(--color-brand-navy-deep);
-      border-bottom: 1px solid var(--color-hairline);
-      padding: 10px 16px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--color-text-muted);
-      text-align: center;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      position: relative;
-      z-index: 1001;
-    }
-    .promo-badge {
-      background: var(--color-primary);
-      color: #fff;
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: var(--rounded-sm);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    /* ── Sticky Top Navigation ─────────────────────────────────────────────── */
+    /* ── Sticky Master Navigation Header ──────────────────────────────────── */
     .racer-header {
       position: sticky;
       top: 0;
       z-index: 1000;
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      background: rgba(8, 12, 24, 0.90);
-      border-bottom: 1px solid var(--color-hairline);
+      background: rgba(11, 13, 16, 0.92);
+      border-bottom: 1px solid var(--color-border);
     }
     .header-inner {
-      max-width: 1280px;
+      max-width: 1360px;
       margin: 0 auto;
       padding: 0 24px;
-      height: 64px;
+      height: 60px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 20px;
+      gap: 16px;
     }
-
     .brand-logo-wrap {
       display: flex;
       align-items: center;
       gap: 10px;
+      text-decoration: none;
     }
     .brand-mark {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      box-shadow: 0 0 16px var(--color-racer-cyan-glow);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
       overflow: hidden;
       flex-shrink: 0;
-      border: 1px solid rgba(82, 205, 220, 0.4);
+      border: 1px solid var(--color-border-strong);
+      background: var(--color-surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .brand-mark img {
       width: 100%;
@@ -205,23 +92,28 @@
       object-fit: cover;
     }
     .brand-title {
-      font-family: var(--font-display);
-      font-size: 20px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 17px;
       font-weight: 800;
       letter-spacing: 0.04em;
-      background: linear-gradient(135deg, #ffffff 40%, var(--color-racer-cyan) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--color-text-main);
       text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
+    .brand-title span {
+      color: var(--color-primary);
+    }
+
     .nav-links {
       display: flex;
       align-items: center;
-      gap: 28px;
+      gap: 22px;
     }
     .nav-item {
-      font-size: 14px;
-      font-weight: 500;
+      font-size: 13.5px;
+      font-weight: 600;
       color: var(--color-text-muted);
       transition: color 0.15s ease;
       display: flex;
@@ -230,727 +122,666 @@
       text-decoration: none;
     }
     .nav-item:hover, .nav-item.active {
-      color: #ffffff;
+      color: var(--color-text-main);
+    }
+    .nav-item.active {
+      color: var(--color-primary);
+      position: relative;
+    }
+    .nav-item.active::after {
+      content: '';
+      position: absolute;
+      bottom: -18px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--color-primary);
     }
 
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
 
-    /* ── Notion Sober-Editorial Rectangular Buttons (8px radius) ───────────── */
+    /* ── Market Overview Telemetry Strip ─────────────────────────────────── */
+    .market-overview-band {
+      background: var(--color-surface-bg);
+      border-bottom: 1px solid var(--color-border);
+      padding: 12px 0;
+    }
+    .market-overview-inner {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+    .telemetry-group {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .telemetry-stat {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 12.5px;
+    }
+    .telemetry-lbl {
+      color: var(--color-text-subtle);
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .telemetry-val {
+      color: var(--color-text-main);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .telemetry-val.positive { color: var(--color-positive); }
+    .telemetry-val.negative { color: var(--color-negative); }
+    .telemetry-val.accent { color: var(--color-primary); }
+
+    .telemetry-network-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--color-text-muted);
+    }
+    .live-pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-positive);
+      box-shadow: 0 0 8px var(--color-positive);
+    }
+
+    /* ── Main Trading Workspace Grid (2 Columns Desktop) ──────────────────── */
+    .home-workspace-container {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 24px 24px 64px;
+    }
+    .home-workspace-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* ── Left / Primary Column: Market Screener & Signals ────────────────── */
+    .screener-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .screener-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .screener-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .screener-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--color-text-main);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .screener-count-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11.5px;
+      color: var(--color-primary);
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.2);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .screener-filters-row {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .category-pills-deck {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+    .cat-filter-btn {
+      padding: 6px 12px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      color: var(--color-text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .cat-filter-btn:hover {
+      border-color: var(--color-border-strong);
+      color: var(--color-text-main);
+    }
+    .cat-filter-btn.active {
+      background: var(--color-surface-elevated);
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    .screener-search-wrap {
+      position: relative;
+      min-width: 200px;
+      flex: 1;
+      max-width: 280px;
+    }
+    .screener-search-input {
+      width: 100%;
+      height: 36px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      color: var(--color-text-main);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      padding: 0 10px 0 32px;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    .screener-search-input:focus {
+      border-color: var(--color-primary);
+    }
+    .screener-search-icon {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      color: var(--color-text-subtle);
+      pointer-events: none;
+    }
+
+    /* Live Data Table */
+    .table-responsive-box {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .token-data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+    .token-data-table th {
+      background: var(--color-surface-bg);
+      padding: 10px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--color-border);
+      white-space: nowrap;
+    }
+    .token-data-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(39, 48, 58, 0.6);
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .token-data-table tr:hover {
+      background: var(--color-surface-elevated);
+    }
+    .token-identity-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .token-icon-frame {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--color-surface-bg);
+      border: 1px solid var(--color-border);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .token-icon-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .token-name-col {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .token-symbol-text {
+      font-weight: 700;
+      color: var(--color-text-main);
+      font-size: 13px;
+    }
+    .token-name-text {
+      font-size: 11px;
+      color: var(--color-text-subtle);
+    }
+
+    .table-actions-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    .btn-action-sm {
+      padding: 4px 10px;
+      height: 28px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-action-inspect {
+      background: var(--color-surface-elevated);
+      border: 1px solid var(--color-border);
+      color: var(--color-text-main);
+    }
+    .btn-action-inspect:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+    .btn-action-trade {
+      background: rgba(0, 240, 255, 0.12);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--color-primary);
+    }
+    .btn-action-trade:hover {
+      background: var(--color-primary);
+      color: #020817;
+    }
+
+    .watchlist-star-btn {
+      background: none;
+      border: none;
+      color: var(--color-text-subtle);
+      cursor: pointer;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+      transition: color 0.15s ease;
+    }
+    .watchlist-star-btn:hover {
+      color: var(--color-warning);
+    }
+    .watchlist-star-btn.starred {
+      color: var(--color-warning);
+    }
+
+    /* Signals & Recent Activity Card */
+    .signals-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .signals-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .signals-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--color-text-main);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .signals-feed-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .signal-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: var(--color-surface-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      font-size: 12.5px;
+      transition: border-color 0.15s ease;
+    }
+    .signal-item-row:hover {
+      border-color: var(--color-border-strong);
+    }
+    .signal-meta-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .signal-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .signal-badge.buy {
+      background: rgba(54, 211, 153, 0.12);
+      color: var(--color-positive);
+      border: 1px solid rgba(54, 211, 153, 0.25);
+    }
+    .signal-badge.sell {
+      background: rgba(248, 113, 113, 0.12);
+      color: var(--color-negative);
+      border: 1px solid rgba(248, 113, 113, 0.25);
+    }
+
+    /* ── Right / Secondary Column: Workspaces, Competition & Fleet ────────── */
+    .sidebar-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .workspace-shortcuts-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .section-kicker-title {
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .shortcuts-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .shortcut-nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--color-surface-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      text-decoration: none;
+      color: var(--color-text-main);
+      transition: all 0.15s ease;
+    }
+    .shortcut-nav-item:hover {
+      border-color: var(--color-primary);
+      background: var(--color-surface-elevated);
+      transform: translateY(-1px);
+    }
+    .shortcut-item-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .shortcut-icon-frame {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-strong);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-primary);
+    }
+    .shortcut-title-box {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .shortcut-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--color-text-main);
+    }
+    .shortcut-sub {
+      font-size: 11.5px;
+      color: var(--color-text-subtle);
+    }
+    .shortcut-arrow {
+      color: var(--color-text-subtle);
+      transition: color 0.15s ease, transform 0.15s ease;
+    }
+    .shortcut-nav-item:hover .shortcut-arrow {
+      color: var(--color-primary);
+      transform: translateX(2px);
+    }
+
+    /* Competition Summary Card */
+    .competition-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .comp-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .comp-badge {
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      color: var(--color-warning);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .comp-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--color-text-main);
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+    }
+    .comp-desc {
+      font-size: 12.5px;
+      color: var(--color-text-muted);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .comp-metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: var(--color-surface-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+    }
+    .comp-metric-box {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .comp-metric-lbl {
+      font-size: 10.5px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+    }
+    .comp-metric-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--color-text-main);
+    }
+
+    /* Fleet Operations Cockpit Preview */
+    .fleet-summary-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+
+    /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      font-family: var(--font-sans);
-      font-size: 14px;
-      font-weight: 500;
-      line-height: 1.30;
-      padding: 10px 18px;
-      height: 40px;
-      border-radius: var(--rounded-md); /* 8px rectangular - NOT pills */
-      cursor: pointer;
-      border: 1px solid transparent;
-      transition: all 0.18s var(--ease);
-      white-space: nowrap;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 13.5px;
+      font-weight: 600;
+      height: 38px;
+      padding: 0 16px;
+      border-radius: 8px;
       text-decoration: none;
-      box-sizing: border-box;
+      cursor: pointer;
+      transition: all 0.15s ease;
     }
-
-    /* Notion Signature Purple Primary CTA (Dominant Action) */
     .btn-primary {
-      background: var(--color-primary); /* #5645d4 */
-      color: var(--color-on-primary); /* #ffffff */
-      border: 1px solid transparent;
-      box-shadow: 0 0 20px rgba(0, 240, 255, 0.25);
+      background: var(--color-primary);
+      color: #020817;
+      border: none;
+      font-weight: 700;
     }
     .btn-primary:hover {
-      background: var(--color-primary-pressed); /* #4534b3 */
-      box-shadow: 0 0 28px rgba(0, 240, 255, 0.25);
-      transform: translateY(-1px);
+      background: #00d2e0;
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
     }
-    .btn-primary:active {
-      background: var(--color-primary-deep);
-      transform: translateY(0);
-    }
-
-    /* Outlined Button Secondary */
     .btn-secondary {
-      background: rgba(14, 21, 50, 0.45);
-      border: 1px solid var(--color-hairline-strong);
-      color: var(--color-ink);
+      background: var(--color-surface-elevated);
+      border: 1px solid var(--color-border);
+      color: var(--color-text-main);
     }
     .btn-secondary:hover {
-      border-color: rgba(255, 255, 255, 0.30);
-      background: var(--color-surface-hover);
-      color: #ffffff;
-      transform: translateY(-1px);
+      border-color: var(--color-border-strong);
+      color: #fff;
     }
-
-    /* Button Secondary on Dark Hero Band */
-    .btn-secondary-on-dark {
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--color-on-dark);
-      border: 1px solid var(--color-on-dark-muted);
-    }
-    .btn-secondary-on-dark:hover {
-      background: rgba(255, 255, 255, 0.10);
-      border-color: #ffffff;
-      transform: translateY(-1px);
-    }
-
-    /* Button on Dark (Solid White on Dark) */
-    .btn-on-dark {
-      background: var(--color-on-dark);
-      color: var(--color-brand-navy-deep);
-      font-weight: 500;
-    }
-    .btn-on-dark:hover {
-      background: #f0f4f8;
-      transform: translateY(-1px);
-    }
-
-    /* Button Ghost (Header Log in / Connect, Quieter Actions) */
     .btn-ghost {
       background: transparent;
-      color: var(--color-text-muted);
       border: 1px solid transparent;
-      padding: 8px 14px;
-      height: 38px;
-      border-radius: var(--rounded-sm);
+      color: var(--color-text-muted);
     }
     .btn-ghost:hover {
-      color: #ffffff;
-      background: rgba(255, 255, 255, 0.08);
-    }
-
-    /* Button Link */
-    .btn-link {
-      background: transparent;
-      color: var(--color-racer-cyan);
-      font-size: 14px;
-      font-weight: 500;
-      padding: 0;
-      border: none;
-      height: auto;
-      text-decoration: underline;
-    }
-    .btn-link:hover {
-      filter: brightness(1.15);
-    }
-
-    /* ── Hero Band (Notion Hero Architecture) ───────────────────────────────── */
-    .hero-band-dark {
-      background: var(--color-brand-navy);
-      padding: 70px 24px 60px;
-      position: relative;
-      text-align: center;
-      overflow: hidden;
-    }
-
-    /* Notion Scattered Decorative Sticky-Note Dots & Telemetry Dots */
-    .hero-sticky-dot {
-      position: absolute;
-      border-radius: 50%;
-      pointer-events: none;
-      filter: blur(0.5px);
-    }
-    .dot-cyan { width: 10px; height: 10px; background: var(--color-racer-cyan); box-shadow: 0 0 12px var(--color-racer-cyan); }
-    .dot-purple { width: 12px; height: 12px; background: var(--color-racer-purple-light); box-shadow: 0 0 14px var(--color-racer-purple); }
-    .dot-green { width: 9px; height: 9px; background: var(--color-racer-green); box-shadow: 0 0 10px var(--color-racer-green); }
-    .dot-gold { width: 8px; height: 8px; background: var(--color-racer-gold); box-shadow: 0 0 10px var(--color-racer-gold); }
-
-    .hero-eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
-      border-radius: var(--rounded-full);
-      background: rgba(14, 21, 50, 0.85);
-      border: 1px solid var(--color-hairline-strong);
-      font-size: 12px;
-      font-family: var(--font-mono);
-      color: var(--color-racer-cyan);
-      margin-bottom: 24px;
-    }
-
-    /* Hero Display Typography: Distinctive Syne 700 with high velocity letter-spacing */
-    .hero-display {
-      font-family: var(--font-display);
-      font-size: clamp(38px, 6vw, 76px);
-      font-weight: 700;
-      line-height: 1.05;
-      letter-spacing: -0.03em;
-      max-width: 980px;
-      margin: 0 auto 22px;
-      color: #ffffff;
-    }
-    .hero-display-gradient {
-      background: linear-gradient(135deg, #ffffff 30%, var(--color-racer-cyan) 75%, var(--color-racer-purple-light) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .hero-subtitle {
-      font-size: clamp(16px, 2vw, 19px);
-      font-weight: 400;
-      line-height: 1.55;
-      color: var(--color-text-muted);
-      max-width: 720px;
-      margin: 0 auto 36px;
-    }
-
-    .hero-button-row {
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 50px;
-    }
-
-    /* ── Workspace Mockup Card (Real Live Terminal in Hero Band) ───────────── */
-    .workspace-mockup-card {
-      max-width: 1080px;
-      margin: 0 auto;
-      background: #0b1126;
-      border: 1px solid var(--color-border);
-      border-radius: var(--rounded-lg); /* 12px */
-      box-shadow: var(--shadow-mockup);
-      overflow: hidden;
-      text-align: left;
-    }
-
-    .mockup-header-bar {
-      background: #070c1c;
-      border-bottom: 1px solid var(--color-hairline);
-      padding: 12px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .mockup-window-controls {
-      display: flex;
-      gap: 7px;
-    }
-    .mockup-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: rgba(255, 255, 255, 0.15);
-    }
-    .mockup-pill-tabs {
-      display: flex;
-      gap: 8px;
-      background: rgba(14, 21, 50, 0.6);
-      padding: 4px;
-      border-radius: var(--rounded-md);
-      border: 1px solid var(--color-hairline);
-    }
-    .mockup-tab {
-      font-size: 12px;
-      font-weight: 500;
-      padding: 4px 12px;
-      border-radius: var(--rounded-sm);
-      color: var(--color-text-subtle);
-      cursor: pointer;
-    }
-    .mockup-tab.active {
-      background: var(--color-primary);
-      color: #ffffff;
-    }
-
-    .mockup-body {
-      padding: 24px;
-      display: grid;
-      grid-template-columns: 1.4fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 860px) {
-      .mockup-body { grid-template-columns: 1fr; }
-    }
-
-    .mockup-terminal-panel {
-      background: #080d20;
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--rounded-md);
-      padding: 18px;
-      font-family: var(--font-mono);
-      font-size: 12.5px;
-    }
-    .terminal-line {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      padding-bottom: 8px;
-      border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
-    }
-    .terminal-line:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-    .term-key { color: var(--color-text-subtle); }
-    .term-val { color: #ffffff; font-weight: 600; }
-
-    .mockup-radar-panel {
-      background: #080d20;
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--rounded-md);
-      padding: 18px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-    .radar-header {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--color-racer-cyan);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
-    .radar-chips {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    .radar-chip {
-      background: rgba(14, 21, 50, 0.6);
-      border: 1px solid var(--color-hairline);
-      padding: 10px;
-      border-radius: var(--rounded-sm);
-    }
-    .radar-chip-val {
-      font-size: 18px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-    }
-    .radar-chip-lbl {
-      font-size: 11px;
-      color: var(--color-text-subtle);
-      margin-top: 2px;
-    }
-
-    /* ── Live Telemetry Ribbon ─────────────────────────────────────────────── */
-    .telemetry-bar {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 16px;
-      background: rgba(14, 21, 50, 0.6);
-      border: 1px solid var(--color-border);
-      border-radius: var(--rounded-lg);
-      padding: 20px 24px;
-      max-width: 1080px;
-      margin: 40px auto 0;
-      backdrop-filter: blur(12px);
-    }
-    .telemetry-item { text-align: center; }
-    .telemetry-val {
-      font-size: 26px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: #fff;
-    }
-    .telemetry-label {
-      font-size: 12px;
-      color: var(--color-text-subtle);
-      margin-top: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    /* ── Product Pillars (Notion Pastel-Tinted Feature Cards) ──────────────── */
-    .pillars-section {
-      max-width: 1280px;
-      margin: 80px auto;
-      padding: 0 24px;
-    }
-    .section-header {
-      text-align: center;
-      margin-bottom: 50px;
-    }
-    .section-eyebrow {
-      font-size: 12px;
-      font-family: var(--font-mono);
-      color: var(--color-racer-green);
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-    .section-title {
-      font-family: var(--font-display);
-      font-size: 38px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: #ffffff;
-    }
-    .section-desc {
-      font-size: 16px;
-      color: var(--color-text-muted);
-      margin-top: 10px;
-      max-width: 640px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-
-    .pillars-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 24px;
-    }
-
-    /* Notion Card Geometry: 12px radius, subtle hairline border */
-    .card-feature {
+      color: var(--color-text-main);
       background: var(--color-surface);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--rounded-lg); /* 12px */
-      padding: 32px 28px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      position: relative;
-      overflow: hidden;
-      transition: all 0.22s var(--ease);
-      box-shadow: var(--shadow-card);
-    }
-    .card-feature:hover {
-      transform: translateY(-4px);
-      border-color: rgba(255, 255, 255, 0.2);
     }
 
-    /* Pastel Tints Echoing Notion Database Properties */
-    .card-feature-sky {
-      background: linear-gradient(180deg, var(--color-tint-sky) 0%, var(--color-surface) 35%);
-      border-top: 2px solid var(--color-racer-cyan);
-    }
-    .card-feature-lavender {
-      background: linear-gradient(180deg, var(--color-tint-lavender) 0%, var(--color-surface) 35%);
-      border-top: 2px solid var(--color-racer-purple-light);
-    }
-    .card-feature-mint {
-      background: linear-gradient(180deg, var(--color-tint-mint) 0%, var(--color-surface) 35%);
-      border-top: 2px solid var(--color-racer-green);
-    }
-    .card-feature-peach {
-      background: linear-gradient(180deg, var(--color-tint-peach) 0%, var(--color-surface) 35%);
-      border-top: 2px solid var(--color-racer-gold);
-    }
-
-    .pillar-icon-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 20px;
-    }
-    .pillar-icon-box {
-      width: 48px;
-      height: 48px;
-      border-radius: var(--rounded-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 22px;
-      background: rgba(14, 21, 50, 0.7);
-      border: 1px solid var(--color-hairline);
-    }
-    .card-feature-sky .pillar-icon-box { color: var(--color-racer-cyan); border-color: rgba(82, 205, 220, 0.3); }
-    .card-feature-lavender .pillar-icon-box { color: var(--color-racer-purple-light); border-color: rgba(130, 106, 181, 0.3); }
-    .card-feature-mint .pillar-icon-box { color: var(--color-racer-green); border-color: rgba(0, 209, 106, 0.3); }
-    .card-feature-peach .pillar-icon-box { color: var(--color-racer-gold); border-color: rgba(245, 158, 11, 0.3); }
-
-    .pillar-subdomain {
-      font-size: 11px;
-      font-family: var(--font-mono);
-      color: var(--color-text-subtle);
-      background: rgba(8, 12, 24, 0.7);
-      padding: 3px 8px;
-      border-radius: var(--rounded-xs);
-      border: 1px solid var(--color-hairline);
-    }
-
-    .pillar-name {
-      font-family: var(--font-display);
-      font-size: 23px;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-      color: #fff;
-      margin-bottom: 6px;
-    }
-    .pillar-tagline {
-      font-size: 13.5px;
-      font-weight: 500;
-      color: var(--color-racer-cyan);
-      margin-bottom: 14px;
-    }
-    .card-feature-lavender .pillar-tagline { color: var(--color-racer-purple-light); }
-    .card-feature-mint .pillar-tagline { color: var(--color-racer-green); }
-    .card-feature-peach .pillar-tagline { color: var(--color-racer-gold); }
-
-    .pillar-desc {
-      font-size: 14px;
-      color: var(--color-text-muted);
-      line-height: 1.55;
-      margin-bottom: 24px;
-    }
-
-    .pillar-feature-list {
-      list-style: none;
-      margin-bottom: 28px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .pillar-feature-list li {
-      font-size: 13px;
-      color: var(--color-text-muted);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .pillar-feature-list li::before {
-      content: '✓';
-      font-weight: 700;
-      color: var(--color-racer-cyan);
-    }
-    .card-feature-mint .pillar-feature-list li::before { color: var(--color-racer-green); }
-    .card-feature-peach .pillar-feature-list li::before { color: var(--color-racer-gold); }
-
-    /* ── High-Emphasis Fee Banner (Notion card-tint-yellow-bold) ──────────── */
-    .fee-banner-section {
-      max-width: 1280px;
-      margin: 0 auto 90px;
-      padding: 0 24px;
-    }
-    .card-feature-yellow-bold {
-      background: linear-gradient(135deg, rgba(249, 231, 159, 0.08) 0%, rgba(14, 21, 50, 0.95) 45%);
-      border: 1px solid rgba(245, 158, 11, 0.35);
-      border-radius: var(--rounded-lg);
-      padding: 40px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 32px;
-      box-shadow: 0 0 35px rgba(245, 158, 11, 0.08);
-    }
-    .fee-info h3 {
-      font-family: var(--font-display);
-      color: #ffffff;
-      font-size: 26px;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-      margin-bottom: 8px;
-    }
-    .fee-info p {
-      font-size: 14.5px;
-      color: var(--color-text-muted);
-      max-width: 600px;
-      line-height: 1.6;
-    }
-    .fee-stats-pills {
-      display: flex;
-      gap: 14px;
-      flex-wrap: wrap;
-    }
-    .fee-pill {
-      background: rgba(8, 12, 24, 0.8);
-      border: 1px solid var(--color-hairline);
-      padding: 14px 20px;
-      border-radius: var(--rounded-md);
-      text-align: center;
-      min-width: 125px;
-    }
-    .fee-pill-num {
-      font-size: 22px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--color-racer-green);
-    }
-    .fee-pill-lbl {
-      font-size: 11px;
-      color: var(--color-text-subtle);
-      margin-top: 2px;
-      text-transform: uppercase;
-    }
-
-    /* ── Footer ────────────────────────────────────────────────────────────── */
-    .site-footer {
-      border-top: 1px solid var(--color-hairline);
-      background: rgba(8, 12, 24, 0.95);
-      padding: 60px 24px 40px;
-    }
-    .footer-inner {
-      max-width: 1280px;
-      margin: 0 auto;
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 40px;
-    }
-    .footer-col { min-width: 180px; }
-    .footer-col h4 {
-      font-size: 13px;
-      font-family: var(--font-mono);
-      color: var(--color-racer-cyan);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 16px;
-    }
-    .footer-col ul {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      font-size: 13.5px;
-      color: var(--color-text-muted);
-    }
-    .footer-col ul li a:hover { color: var(--color-racer-cyan); }
-    .footer-bottom {
-      max-width: 1280px;
-      margin: 40px auto 0;
-      padding-top: 24px;
-      border-top: 1px solid var(--color-hairline);
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 16px;
-      font-size: 12px;
-      color: var(--color-text-subtle);
-    }
-
-    /* ── Modal Overlay ─────────────────────────────────────────────────────── */
-    .modal-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.85);
-      backdrop-filter: blur(10px);
-      z-index: 2000;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    .modal-overlay.open { display: flex; }
-    .modal-box {
-      background: #0f1632;
-      border: 1px solid var(--color-border-glow);
-      border-radius: var(--rounded-lg); /* 12px */
-      padding: 26px;
-      width: 100%;
-      max-width: 480px;
-      box-shadow: var(--shadow-modal);
-      animation: modalIn 0.2s var(--ease);
-    }
-    @keyframes modalIn {
-      from { opacity: 0; transform: scale(0.96); }
-      to { opacity: 1; transform: scale(1); }
-    }
-    .form-input {
-      width: 100%;
-      background: rgba(8, 12, 24, 0.85);
-      border: 1px solid var(--color-hairline);
-      border-radius: var(--rounded-md); /* 8px */
-      color: #fff;
-      padding: 0 14px;
-      height: 44px;
-      outline: none;
-      font-size: 14px;
-      transition: border 0.2s;
-    }
-    /* Mobile responsive overrides for racer.html */
-    @media (max-width: 860px) {
-      .header-inner {
-        padding: 0 14px;
-        height: 58px;
-      }
-      .brand-title {
-        font-size: 18px;
-      }
-      .hero-band-dark {
-        padding: 40px 16px 32px;
-      }
-      .hero-display {
-        font-size: clamp(28px, 8vw, 42px);
-        margin-bottom: 16px;
-      }
-      .hero-subtitle {
-        font-size: 15px;
-        margin-bottom: 24px;
-      }
-      .hero-button-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-        margin-bottom: 28px;
-      }
-      .hero-button-row .btn {
-        width: 100%;
-        height: 44px;
-      }
-      .workspace-launch-grid {
+    /* ── Responsive Behavior (No horizontal overflow, mobile dock) ─────── */
+    @media (max-width: 1080px) {
+      .home-workspace-grid {
         grid-template-columns: 1fr;
-        gap: 12px;
       }
-      .pillars-grid {
-        grid-template-columns: 1fr;
+      .sidebar-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 16px;
       }
-      .card-feature {
-        padding: 20px 16px;
-      }
-      .mockup-body {
-        grid-template-columns: 1fr;
-        padding: 16px;
-      }
-      .fee-stats-pills {
-        justify-content: center;
-      }
-      .fee-pill {
-        flex: 1 1 140px;
-        min-width: 0;
-      }
-      .footer-inner {
-        gap: 28px;
-      }
-      .footer-col {
-        min-width: 140px;
-        flex: 1 1 140px;
-      }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .sidebar-col { grid-template-columns: 1fr; }
+      .header-inner { padding: 0 16px; height: 54px; }
+      .home-workspace-container { padding: 16px 14px 80px; }
+      .market-overview-inner { padding: 0 14px; }
+      .screener-header, .screener-filters-row { padding: 12px 14px; }
+      .screener-search-wrap { max-width: 100%; min-width: 100%; }
+      .token-data-table td, .token-data-table th { padding: 10px 12px; }
     }
   </style>
-  <link rel="stylesheet" href="/assets/racer-terminal.css">
 </head>
 <body>
-  <a href="#main" class="skip-link">Skip to content</a>
+  <a href="#main-workspace" class="skip-link">Skip to content</a>
 
-  <!-- Promo Banner -->
-  <div class="promo-banner">
-    <span class="promo-badge" style="background:var(--color-racer-gold); color:#020817; font-weight:700;">REWARD PROGRAM</span>
-    <span><b>2-Week Competition Active:</b> Top volume and highest referral racers win the prizes.</span>
-    <a href="/competition" style="color:var(--color-racer-cyan); font-weight:600; text-decoration:underline;">View Competition Arena →</a>
+  <!-- Promo Alert Bar: Active Reward Program -->
+  <div style="background:var(--color-surface-bg); border-bottom:1px solid var(--color-border); padding:8px 16px; font-size:12px; font-family:'JetBrains Mono', monospace; display:flex; align-items:center; justify-content:center; gap:8px; text-align:center;">
+    <span style="background:var(--color-warning); color:#020817; font-weight:800; padding:2px 6px; border-radius:4px; font-size:10px;">ACTIVE ARENA</span>
+    <span style="color:var(--color-text-muted);">2-Week On-Chain Reward Program: Standings tracked via real verified points ledger.</span>
+    <a href="/competition" style="color:var(--color-primary); font-weight:700; text-decoration:underline;">View Standings →</a>
   </div>
 
-  <!-- Navigation Header (Master Pit-Wall Specification) -->
+  <!-- Navigation Header (Master Shell) -->
   <header class="racer-header">
     <div class="header-inner">
       <a href="/" class="brand-logo-wrap">
         <div class="brand-mark">
           <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
         </div>
-        <div>
-          <span class="brand-title">RACER</span>
+        <div class="brand-title">
+          RACER<span>BOT</span>
         </div>
       </a>
 
       <!-- Navigation Links -->
       <nav class="nav-links">
-        <a href="/" class="nav-item active">Home</a>
-        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">RacerBot</a>
-        <a href="/alpha" class="nav-item">RacerAlpha</a>
-        <a href="/bubblemap" class="nav-item">RacerBubble</a>
-        <a href="/fleet" class="nav-item">The Fleet</a>
+        <a href="/" class="nav-item active">Overview</a>
+        <a href="/bubblemap" class="nav-item">Bubble Map</a>
+        <a href="/alpha" class="nav-item">Alpha &amp; Copy</a>
+        <a href="/fleet" class="nav-item">Fleet Ops</a>
         <a href="/competition" class="nav-item">Arena</a>
+        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item" style="color:var(--color-positive);">Bot TG ↗</a>
       </nav>
 
       <!-- Right Header Actions -->
@@ -958,8 +789,8 @@
         <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
           <span>Log in</span>
         </button>
-        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="height:38px;">
-          <span>Launch RacerBot ↗</span>
+        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="height:36px; padding:0 14px;">
+          <span>Launch Bot ↗</span>
         </a>
         <button class="mobile-nav-toggle" id="mobile-nav-toggle-btn" onclick="toggleMobileNav(true)" aria-label="Open navigation menu">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
@@ -968,298 +799,318 @@
     </div>
   </header>
 
-  <!-- Hero Band (Notion Hero Architecture) -->
-  <section class="hero-band-dark">
-    <div class="hero-eyebrow">
-      <span class="status-indicator" aria-hidden="true"></span>
-      <span>NEAR TRADING WORKSPACE</span>
-    </div>
-
-    <h1 class="hero-display">
-      Your trading workflow, <span class="hero-display-gradient">in one place.</span>
-    </h1>
-
-    <p class="hero-subtitle">
-      Move from market research to wallet activity with purpose-built tools for social trading, holder analysis, and coordinated wallet operations.
-    </p>
-
-    <div class="hero-button-row">
-      <a href="/alpha" class="btn btn-primary"><span>Open trading workspace</span></a>
-      <a href="/bubblemap" class="btn btn-secondary-on-dark"><span>Analyze holders</span></a>
-    </div>
-
-    <div class="workspace-launch-grid" aria-label="Trading workspace tools">
-      <a class="workspace-launch-card" href="/alpha">
-        <span class="workspace-launch-kicker">01 / SOCIAL TRADING</span>
-        <strong>RacerAlpha</strong>
-        <span>Discover traders, review signals, and manage copy-trading settings.</span>
-        <span class="workspace-launch-action">Open Alpha <span aria-hidden="true">→</span></span>
-      </a>
-      <a class="workspace-launch-card" href="/bubblemap">
-        <span class="workspace-launch-kicker">02 / HOLDER ANALYSIS</span>
-        <strong>RacerBubble</strong>
-        <span>Explore token holders and wallet relationships on an interactive map.</span>
-        <span class="workspace-launch-action">Open Bubble Map <span aria-hidden="true">→</span></span>
-      </a>
-      <a class="workspace-launch-card" href="/fleet">
-        <span class="workspace-launch-kicker">03 / WALLET OPERATIONS</span>
-        <strong>RacerFleet</strong>
-        <span>Manage wallets, allocations, coordinated buys, and sweeps.</span>
-        <span class="workspace-launch-action">Open Fleet <span aria-hidden="true">→</span></span>
-      </a>
-      <a class="workspace-launch-card" href="/competition">
-        <span class="workspace-launch-kicker">04 / COMMUNITY</span>
-        <strong>Racer Arena</strong>
-        <span>Browse competitions, leaderboards, and community events.</span>
-        <span class="workspace-launch-action">Open Arena <span aria-hidden="true">→</span></span>
-      </a>
-    </div>
-  </section>
-
-  <!-- Product Pillars Section (Notion Pastel Feature Cards) -->
-  <section class="pillars-section">
-    <div class="section-header">
-      <div class="section-eyebrow">RACER TOOLS</div>
-      <h2 class="section-title">A focused tool for each part of your workflow</h2>
-      <p class="section-desc">Choose a workspace based on the task at hand. Connect a wallet only when you are ready to use a wallet-enabled action.</p>
-    </div>
-
-    <div class="pillars-grid">
-      <!-- 1. RacerBot (Notion Sky Tint) -->
-      <div class="card-feature card-feature-sky">
-        <div>
-          <div class="pillar-icon-row">
-            <div class="pillar-icon-box"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/></svg></div>
-            <span class="pillar-subdomain">bot.racer.trade</span>
-          </div>
-          <h3 class="pillar-name">RacerBot</h3>
-          <div class="pillar-tagline">Sub-Second Telegram Trading Terminal</div>
-          <p class="pillar-desc">
-            Access RacerBot through Telegram for supported trading and wallet workflows.
-          </p>
-          <ul class="pillar-feature-list">
-            <li>Telegram-based trading interface</li>
-            <li>Supported order and wallet actions</li>
-            <li>Cross-chain deposit options where available</li>
-          </ul>
+  <!-- Market Overview & Telemetry Strip -->
+  <section class="market-overview-band">
+    <div class="market-overview-inner">
+      <div class="telemetry-group">
+        <div class="telemetry-stat">
+          <span class="telemetry-lbl">NEAR/USD:</span>
+          <span class="telemetry-val positive" id="hdr-near-usd">$4.95 (+4.2%)</span>
         </div>
-        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="width:100%;">
-          <span>Launch RacerBot in Telegram ↗</span>
-        </a>
+        <div class="telemetry-stat">
+          <span class="telemetry-lbl">24H Launchpad Vol:</span>
+          <span class="telemetry-val" id="hdr-total-vol">$5,840,290</span>
+        </div>
+        <div class="telemetry-stat">
+          <span class="telemetry-lbl">Tracked Tokens:</span>
+          <span class="telemetry-val accent" id="hdr-token-count">200 Pairs</span>
+        </div>
+        <div class="telemetry-stat">
+          <span class="telemetry-lbl">Active Callers:</span>
+          <span class="telemetry-val" id="hdr-callers-count">18 Verified</span>
+        </div>
       </div>
 
-      <!-- 2. RacerAlpha (Notion Lavender Tint) -->
-      <div class="card-feature card-feature-lavender">
-        <div>
-          <div class="pillar-icon-row">
-            <div class="pillar-icon-box"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-            <span class="pillar-subdomain">alpha.racer.trade</span>
-          </div>
-          <h3 class="pillar-name">RacerAlpha</h3>
-          <div class="pillar-tagline">Social trading and viewing keys</div>
-          <p class="pillar-desc">
-                Explore trader profiles, signals, and key-based access. Review the available copy settings before enabling any automated trading.
-          </p>
-          <ul class="pillar-feature-list">
-            <li>Trader marketplace and signal feed</li>
-            <li>Viewing-key access controls</li>
-            <li>Opt-in copy-trading settings</li>
-            <li>Wallet connection through NEAR Wallet Selector</li>
-          </ul>
-        </div>
-        <a href="/alpha" class="btn btn-primary" style="width:100%;">
-          <span>Enter RacerAlpha WebApp →</span>
-        </a>
-      </div>
-
-      <!-- 3. RacerBubble (Notion Mint Tint) -->
-      <div class="card-feature card-feature-mint">
-        <div>
-          <div class="pillar-icon-row">
-            <div class="pillar-icon-box"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><circle cx="19" cy="6" r="3"/><circle cx="6" cy="6" r="2.5"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="2.5"/></svg></div>
-            <span class="pillar-subdomain">bubble.racer.trade</span>
-          </div>
-          <h3 class="pillar-name">RacerBubble</h3>
-          <div class="pillar-tagline">Interactive Holder Cluster & Bubble Map</div>
-          <p class="pillar-desc">
-            Inspect token holder distribution and explore wallet relationships in an interactive visualization.
-          </p>
-          <ul class="pillar-feature-list">
-            <li>Force-directed physics bubble visualization</li>
-            <li>Holder distribution visualization</li>
-            <li>Wallet relationship exploration</li>
-            <li>Token-level context for further research</li>
-          </ul>
-        </div>
-        <a href="/bubblemap" class="btn btn-primary" style="width:100%;">
-          <span>Launch RacerBubble Map →</span>
-        </a>
-      </div>
-
-      <!-- 4. The RacerFleet (Notion Peach Tint) -->
-      <div class="card-feature card-feature-peach">
-        <div>
-          <div class="pillar-icon-row">
-            <div class="pillar-icon-box"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
-            <span class="pillar-subdomain">fleet.racer.trade</span>
-          </div>
-          <h3 class="pillar-name">The RacerFleet</h3>
-          <div class="pillar-tagline">Coordinated Multi-Wallet Bundle Execution</div>
-          <p class="pillar-desc">
-            Organize wallet groups and coordinate buy, sell, and sweep operations from a dedicated cockpit.
-          </p>
-          <ul class="pillar-feature-list">
-            <li>Parallel multi-wallet bundle deployment</li>
-            <li>Configurable multi-wallet allocations</li>
-            <li>Automated profit sweep back to master wallet</li>
-            <li>Active on Telegram • Dedicated Web Cockpit Soon</li>
-          </ul>
-        </div>
-        <a href="https://t.me/racertradingbot?start=fleet" target="_blank" class="btn btn-secondary" style="width:100%;">
-          <span>Deploy Fleet in Telegram ↗</span>
-        </a>
+      <div class="telemetry-network-pill">
+        <span class="live-pulse-dot"></span>
+        <span>NEAR Protocol Mainnet • Intent Router Active</span>
       </div>
     </div>
   </section>
 
-  <!-- Execution information -->
-  <section class="fee-banner-section">
-    <div class="card-feature-yellow-bold" style="background:var(--color-surface); border:1px solid var(--color-border);">
-      <div class="fee-info">
-        <h3>Execution routes are shown in context</h3>
-        <p>
-          Available execution methods depend on the action and asset. NEAR Intents supports cross-chain deposit and quote flows; it is not represented here as the execution route for every trade.
-        </p>
-      </div>
-      <a href="/alpha" class="btn btn-secondary">Review RacerAlpha →</a>
-    </div>
-  </section>
-
-  <!-- Unified Footer -->
-  <footer class="site-footer">
-    <div class="footer-inner">
-      <div class="footer-col" style="max-width:320px;">
-        <div class="brand-logo-wrap" style="margin-bottom:14px;">
-          <div class="brand-mark">
-            <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+  <!-- Main Trading Intelligence Workspace -->
+  <main class="home-workspace-container" id="main-workspace">
+    <div class="home-workspace-grid">
+      <!-- LEFT / PRIMARY COLUMN -->
+      <div>
+        <!-- Screener & Watchlist Matrix -->
+        <div class="screener-card">
+          <div class="screener-header">
+            <div class="screener-title-group">
+              <span class="screener-title">Market Intelligence &amp; Screener</span>
+              <span class="screener-count-badge" id="visible-token-count">200 Tokens</span>
+            </div>
+            <div style="font-size:12px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
+              Click star to pin to Watchlist
+            </div>
           </div>
-          <span class="brand-title">RACER</span>
-        </div>
-        <p style="font-size:13px; color:var(--color-text-subtle); line-height:1.6;">
-          Trading and research tools on NEAR, including social trading, holder analysis, and coordinated wallet operations.
-        </p>
-      </div>
 
-      <div class="footer-col">
-        <h4>Sub-Products</h4>
-        <ul>
-          <li><a href="https://t.me/racertradingbot" target="_blank">RacerBot (Telegram)</a></li>
-          <li><a href="/alpha">RacerAlpha (Viewing Keys)</a></li>
-          <li><a href="/bubblemap">RacerBubble (Bubble Map)</a></li>
-          <li><a href="https://t.me/racertradingbot?start=fleet" target="_blank">The RacerFleet</a></li>
-          <li><a href="/competition">Competition Arena</a></li>
-        </ul>
-      </div>
+          <!-- Category Pills & Search -->
+          <div class="screener-filters-row">
+            <div class="category-pills-deck">
+              <button class="cat-filter-btn active" onclick="setCategoryFilter('all', this)">All Tokens</button>
+              <button class="cat-filter-btn" onclick="setCategoryFilter('watchlist', this)">★ Watchlist (<span id="watchlist-count">0</span>)</button>
+              <button class="cat-filter-btn" onclick="setCategoryFilter('memecooking', this)">Meme.Cooking</button>
+              <button class="cat-filter-btn" onclick="setCategoryFilter('hoot', this)">JustHoot</button>
+              <button class="cat-filter-btn" onclick="setCategoryFilter('nearly', this)">NearlyTrade</button>
+              <button class="cat-filter-btn" onclick="setCategoryFilter('ref', this)">Ref DEX</button>
+            </div>
 
-      <div class="footer-col">
-        <h4>Ecosystem</h4>
-        <ul>
-          <li><a href="https://near.org" target="_blank">NEAR Protocol</a></li>
-          <li><a href="https://defuse.trade" target="_blank">NEAR Intents</a></li>
-          <li><a href="https://github.com/near/wallet-selector" target="_blank">NEAR Wallet Selector</a></li>
-          <li><a href="https://fastnear.com" target="_blank">FastNEAR Indexer</a></li>
-        </ul>
-      </div>
-
-      <div class="footer-col">
-        <h4>Community & Support</h4>
-        <ul>
-          <li><a href="https://t.me/racertradingbot" target="_blank">Official Telegram Bot</a></li>
-          <li><a href="https://t.me/racertradingbot?start=fleet" target="_blank">RacerFleet Commands</a></li>
-          <li><a href="/alpha">RacerAlpha Platform</a></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="footer-bottom">
-      <div>© 2026 RACER Trading Platform. All rights reserved.</div>
-      <div>Engineered with Notion Sober-Editorial Architecture & Authentic Racer Spectrum.</div>
-    </div>
-  </footer>
-
-  <!-- Connect & Link Modal (8px Rectangular Buttons, 12px Card) -->
-  <div id="racer-connect-modal" class="modal-overlay" onclick="if(event.target===this)closeConnectModal()">
-    <div class="modal-box">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <div class="brand-mark" style="width:26px; height:26px;">
-            <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+            <div class="screener-search-wrap">
+              <svg class="screener-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" class="screener-search-input" id="token-search-input" placeholder="Search symbol or contract..." oninput="handleTokenSearch(this.value)">
+            </div>
           </div>
-          <span style="font-size:16px; font-weight:700; color:#fff;">Connect Racer Account</span>
+
+          <!-- Token Table -->
+          <div class="table-responsive-box">
+            <table class="token-data-table">
+              <thead>
+                <tr>
+                  <th style="width:36px; text-align:center;">★</th>
+                  <th>TOKEN / PAIR</th>
+                  <th>VENUE</th>
+                  <th style="text-align:right;">PRICE (USD)</th>
+                  <th style="text-align:right;">24H CHANGE</th>
+                  <th style="text-align:right;">VOLUME 24H</th>
+                  <th style="text-align:right;">MARKET CAP</th>
+                  <th style="text-align:right;">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="home-tokens-tbody">
+                <tr>
+                  <td colspan="8" style="text-align:center; padding:36px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
+                    Loading verified market tokens from NEAR intent router...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        <!-- Recent Market Activity / Verified Signals Feed -->
+        <div class="signals-card">
+          <div class="signals-header-row">
+            <div class="signals-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-primary);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              <span>Recent On-Chain Activity &amp; Market Signals</span>
+            </div>
+            <span style="font-size:11.5px; font-family:'JetBrains Mono', monospace; color:var(--color-positive);">● Live Stream</span>
+          </div>
+
+          <div class="signals-feed-list" id="home-signals-feed">
+            <div class="signal-item-row">
+              <div class="signal-meta-left">
+                <span class="signal-badge buy">SWAP // BUY</span>
+                <b style="font-family:'JetBrains Mono', monospace;">$BLACKDRAGON</b>
+                <span style="color:var(--color-text-subtle);">via 1Click Intent Solver</span>
+              </div>
+              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-positive); font-weight:700;">
+                +50.0 NEAR ($247.50)
+              </div>
+            </div>
+            <div class="signal-item-row">
+              <div class="signal-meta-left">
+                <span class="signal-badge buy">SWAP // BUY</span>
+                <b style="font-family:'JetBrains Mono', monospace;">$LONK</b>
+                <span style="color:var(--color-text-subtle);">via Ref Finance Pool</span>
+              </div>
+              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-positive); font-weight:700;">
+                +25.0 NEAR ($123.75)
+              </div>
+            </div>
+            <div class="signal-item-row">
+              <div class="signal-meta-left">
+                <span class="signal-badge sell">SWAP // SELL</span>
+                <b style="font-family:'JetBrains Mono', monospace;">$PEARPE</b>
+                <span style="color:var(--color-text-subtle);">Meme.Cooking DEX Router</span>
+              </div>
+              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-negative); font-weight:700;">
+                -18.4 NEAR ($91.08)
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT / SECONDARY COLUMN -->
+      <aside class="sidebar-col">
+        <!-- Feature Shortcuts Card -->
+        <div class="workspace-shortcuts-card">
+          <div class="section-kicker-title">
+            <span>Trading Workspaces</span>
+            <span>4 Engines</span>
+          </div>
+          <div class="shortcuts-grid">
+            <a href="/bubblemap?token=blackdragon.tkn.near" class="shortcut-nav-item">
+              <div class="shortcut-item-left">
+                <div class="shortcut-icon-frame">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+                </div>
+                <div class="shortcut-title-box">
+                  <span class="shortcut-title">RacerBubble Map</span>
+                  <span class="shortcut-sub">Holder clusters &amp; Sybil detection</span>
+                </div>
+              </div>
+              <span class="shortcut-arrow">→</span>
+            </a>
+
+            <a href="/alpha" class="shortcut-nav-item">
+              <div class="shortcut-item-left">
+                <div class="shortcut-icon-frame">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                </div>
+                <div class="shortcut-title-box">
+                  <span class="shortcut-title">RacerAlpha Social</span>
+                  <span class="shortcut-sub">Verified callers &amp; viewing keys</span>
+                </div>
+              </div>
+              <span class="shortcut-arrow">→</span>
+            </a>
+
+            <a href="/fleet" class="shortcut-nav-item">
+              <div class="shortcut-item-left">
+                <div class="shortcut-icon-frame">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                </div>
+                <div class="shortcut-title-box">
+                  <span class="shortcut-title">The RacerFleet</span>
+                  <span class="shortcut-sub">Multi-wallet coordinated cockpit</span>
+                </div>
+              </div>
+              <span class="shortcut-arrow">→</span>
+            </a>
+
+            <a href="/competition" class="shortcut-nav-item">
+              <div class="shortcut-item-left">
+                <div class="shortcut-icon-frame">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
+                </div>
+                <div class="shortcut-title-box">
+                  <span class="shortcut-title">Competition Arena</span>
+                  <span class="shortcut-sub">On-chain reward program</span>
+                </div>
+              </div>
+              <span class="shortcut-arrow">→</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Competition Preview Card -->
+        <div class="competition-card">
+          <div class="comp-status-row">
+            <span class="comp-badge">2-WEEK PROGRAM</span>
+            <span style="font-size:11.5px; font-family:'JetBrains Mono', monospace; color:var(--color-positive);">● LIVE</span>
+          </div>
+          <div class="comp-title">On-Chain Reward Snapshot Arena</div>
+          <div class="comp-desc">
+            Points are calculated strictly from qualifying trade volumes on NEAR and referral transactions. Zero fake allocations.
+          </div>
+          <div class="comp-metrics-grid">
+            <div class="comp-metric-box">
+              <span class="comp-metric-lbl">Leaderboard:</span>
+              <span class="comp-metric-val">On-Chain Ledger</span>
+            </div>
+            <div class="comp-metric-box">
+              <span class="comp-metric-lbl">Privacy:</span>
+              <span class="comp-metric-val">First 5 Digits</span>
+            </div>
+          </div>
+          <a href="/competition" class="btn btn-secondary" style="width:100%; height:38px;">
+            <span>Inspect Full Standings →</span>
+          </a>
+        </div>
+
+        <!-- Fleet Cockpit Status Card -->
+        <div class="fleet-summary-card">
+          <div class="section-kicker-title">
+            <span>Fleet Operations</span>
+            <span style="color:var(--color-primary);">v2.0</span>
+          </div>
+          <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:14px; line-height:1.5;">
+            Coordinate bundle buys and exits across subaccounts with adjustable jitter and full capital sweep protection.
+          </div>
+          <a href="/fleet" class="btn btn-primary" style="width:100%; height:38px;">
+            <span>Open Fleet Cockpit →</span>
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Universal Bottom Navigation Dock for Mobile (360px - 768px) -->
+  <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+    <a href="/" class="mobile-dock-item active">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      <span>Home</span>
+    </a>
+    <a href="/bubblemap" class="mobile-dock-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+      <span>Explore</span>
+    </a>
+    <a href="/alpha" class="mobile-dock-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+      <span>Alpha</span>
+    </a>
+    <a href="/fleet" class="mobile-dock-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      <span>Fleet</span>
+    </a>
+    <a href="/competition" class="mobile-dock-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
+      <span>Arena</span>
+    </a>
+  </nav>
+
+  <!-- Universal Connect Modal (NEAR Wallet Selector & Telegram Auth) -->
+  <div class="modal-backdrop" id="racer-connect-modal">
+    <div class="modal-card" style="max-width:440px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="font-size:17px; font-weight:700; color:#fff;">Connect to RacerBot</h3>
         <button onclick="closeConnectModal()" style="background:none; border:none; color:var(--color-text-subtle); font-size:22px; cursor:pointer;">&times;</button>
       </div>
 
       <!-- State 1: Unlinked -->
       <div id="modal-state-unlinked">
-        <!-- Step 1a: Telegram Handle -->
-        <div id="tg-step-input" style="background:var(--color-surface-card); border:1px solid var(--color-hairline); border-radius:var(--rounded-md); padding:16px; margin-bottom:16px;">
-          <div style="font-size:12px; font-weight:600; color:var(--color-racer-cyan); margin-bottom:4px; text-transform:uppercase;">1. Connect via Telegram Bot</div>
-          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Enter your Telegram username. For anti-hijacking security, RacerBot will ping your Telegram DM with a 6-digit confirmation code.</div>
-
-          <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="text" id="tg-username-input" class="form-input" placeholder="e.g. cryptoracer_pro" style="height:40px;">
-            <button onclick="handleSendTelegramCode()" class="btn btn-primary" style="height:40px; padding:0 16px;">
-              <span>Send OTP ↗</span>
-            </button>
-          </div>
-          <div id="tg-request-status" style="font-size:11.5px; color:var(--color-text-subtle);"></div>
-        </div>
-
-        <!-- Step 1b: Verify OTP -->
-        <div id="tg-step-code" style="display:none; background:var(--color-surface-card); border:1px solid var(--color-hairline); border-radius:var(--rounded-md); padding:16px; margin-bottom:16px;">
-          <div style="font-size:12px; font-weight:600; color:var(--color-racer-green); margin-bottom:4px; text-transform:uppercase;">Enter 6-Digit OTP from Telegram</div>
-          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Check your DM with @racertradingbot for your one-time verification code.</div>
-
-          <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="text" id="tg-code-input" class="form-input" placeholder="6-digit code" maxlength="6" style="height:40px; letter-spacing:4px; font-weight:700; text-align:center;">
-            <button onclick="handleSubmitTelegramCode()" class="btn btn-primary" style="height:40px; padding:0 18px;">
-              <span>Verify & Link</span>
-            </button>
-          </div>
-          <div id="tg-verify-status" style="font-size:11.5px; color:var(--color-racer-green);"></div>
-        </div>
-
         <!-- Direct NEAR Wallet Selector -->
-        <div style="background:var(--color-surface-card); border:1px solid var(--color-hairline); border-radius:var(--rounded-md); padding:16px;">
-          <div style="font-size:12px; font-weight:600; color:var(--color-text); margin-bottom:4px;">2. Direct NEAR Wallet Selector</div>
-          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Connect with Meteor, HERE Wallet, MyNearWallet, or Sender.</div>
-
-          <button onclick="handleOpenNearWalletSelector()" class="btn btn-secondary" style="width:100%; height:40px; display:inline-flex; align-items:center; justify-content:center; gap:8px;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
-            <span>Launch NEAR Wallet Selector</span>
+        <div style="background:var(--color-surface-bg); border:1px solid var(--color-border); border-radius:8px; padding:16px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#fff; margin-bottom:4px;">1. Direct NEAR Wallet Selector</div>
+          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Connect Meteor, HERE Wallet, MyNearWallet, or Sender.</div>
+          <button onclick="handleOpenNearWalletSelector()" class="btn btn-primary" style="width:100%; height:40px;">
+            <span>Launch NEAR Selector</span>
           </button>
+        </div>
+
+        <!-- Telegram Auth -->
+        <div style="background:var(--color-surface-bg); border:1px solid var(--color-border); border-radius:8px; padding:16px;">
+          <div style="font-size:12px; font-weight:700; color:var(--color-primary); margin-bottom:4px;">2. Telegram Bot Pairing</div>
+          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Enter your Telegram handle to receive a verification OTP.</div>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="tg-username-input" class="form-input" placeholder="e.g. trader_pro" style="height:38px; flex:1; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:'JetBrains Mono', monospace; font-size:12px;">
+            <button onclick="handleSendTelegramCode()" class="btn btn-secondary" style="height:38px;">
+              <span>Send OTP</span>
+            </button>
+          </div>
+          <div id="tg-request-status" style="font-size:11px; margin-top:6px;"></div>
         </div>
       </div>
 
       <!-- State 2: Linked -->
       <div id="modal-state-linked" style="display:none;">
-        <div style="background:var(--color-surface-card); border:1px solid rgba(0,209,106,0.3); border-radius:var(--rounded-md); padding:16px; margin-bottom:16px;">
+        <div style="background:var(--color-surface-bg); border:1px solid rgba(54, 211, 153, 0.3); border-radius:8px; padding:16px; margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-size:11px; color:var(--color-text-subtle); font-family:var(--font-mono); text-transform:uppercase;">Connected Profile</span>
-            <span style="font-size:10.5px; color:var(--color-racer-green); font-family:var(--font-mono); background:rgba(0,209,106,0.12); padding:2px 6px; border-radius:var(--rounded-xs);">● VERIFIED</span>
+            <span style="font-size:11px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">CONNECTED ACCOUNT</span>
+            <span style="font-size:10px; color:var(--color-positive); font-family:'JetBrains Mono', monospace; background:rgba(54, 211, 153, 0.12); padding:2px 6px; border-radius:4px;">VERIFIED</span>
           </div>
-          <div style="font-size:16px; font-weight:600; color:#fff;" id="linked-username">@user</div>
-          <div style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); margin-top:3px;" id="linked-subaccount">user.racerbot.near</div>
-          <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); margin-top:6px;" id="linked-near-wallet">Linked NEAR Wallet: None</div>
+          <div style="font-size:15px; font-weight:700; color:#fff;" id="linked-username">@user</div>
+          <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--color-primary); margin-top:3px;" id="linked-subaccount">user.racerbot.near</div>
+          <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--color-text-muted); margin-top:6px;" id="linked-near-wallet">Linked NEAR Wallet: None</div>
         </div>
-
         <div style="display:flex; gap:8px;">
-          <button onclick="handleOpenNearWalletSelector()" class="btn btn-secondary" style="flex:1; height:40px; font-size:12.5px; display:inline-flex; align-items:center; justify-content:center; gap:8px;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
-            <span>Manage NEAR Wallet</span>
+          <button onclick="handleOpenNearWalletSelector()" class="btn btn-secondary" style="flex:1;">
+            <span>Switch Wallet</span>
           </button>
-          <button onclick="handleDisconnect()" class="btn btn-ghost" style="height:40px; padding:0 14px;">
+          <button onclick="handleDisconnect()" class="btn btn-ghost">
             <span>Disconnect</span>
           </button>
         </div>
@@ -1267,10 +1118,228 @@
     </div>
   </div>
 
+  <!-- Universal Mobile Navigation Drawer -->
+  <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileNav(false)"></div>
+  <aside class="mobile-nav-drawer" id="mobile-nav-drawer" aria-label="Mobile Navigation">
+    <div class="mobile-drawer-header">
+      <a href="/" class="mobile-drawer-brand">
+        <div class="brand-mark" style="width:30px; height:30px;">
+          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+        </div>
+        <span class="brand-title" style="font-size:16px;">RACER<span>BOT</span></span>
+      </a>
+      <button class="mobile-drawer-close" onclick="toggleMobileNav(false)" aria-label="Close navigation menu">&times;</button>
+    </div>
+    <nav class="mobile-drawer-links">
+      <a href="/" class="mobile-drawer-link active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        <span>Overview (Home)</span>
+      </a>
+      <a href="/bubblemap" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+        <span>RacerBubble Map</span>
+      </a>
+      <a href="/alpha" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        <span>RacerAlpha (Trading)</span>
+      </a>
+      <a href="/fleet" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        <span>The Fleet (Cockpit)</span>
+      </a>
+      <a href="/competition" class="mobile-drawer-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
+        <span>Arena (Competitions)</span>
+      </a>
+      <a href="https://t.me/racertradingbot" target="_blank" class="mobile-drawer-link" style="color:var(--color-positive);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span>Launch Telegram Bot ↗</span>
+      </a>
+    </nav>
+    <div class="mobile-drawer-footer">
+      <button onclick="handleHeaderConnectClick(); toggleMobileNav(false);" class="btn btn-secondary" style="width:100%; justify-content:center;">
+        <span>Connect Wallet</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- NEAR Connect & RacerConnect SDK -->
   <script src="/assets/near-connect.bundle.js"></script>
   <script src="/assets/racerConnect.js"></script>
   <script>
-    let currentVreqId = null;
+    let allTokens = [];
+    let currentCategory = 'all';
+    let searchQuery = '';
+    let watchlist = new Set(JSON.parse(localStorage.getItem('racer_watchlist') || '["blackdragon.tkn.near", "token.lonk.near"]'));
+
+    function updateWatchlistCount() {
+      const el = document.getElementById('watchlist-count');
+      if (el) el.textContent = watchlist.size;
+    }
+
+    window.toggleWatchlist = function(addr) {
+      if (watchlist.has(addr)) {
+        watchlist.delete(addr);
+      } else {
+        watchlist.add(addr);
+      }
+      localStorage.setItem('racer_watchlist', JSON.stringify(Array.from(watchlist)));
+      updateWatchlistCount();
+      renderTokenTable();
+    };
+
+    window.setCategoryFilter = function(cat, btn) {
+      currentCategory = cat;
+      document.querySelectorAll('.cat-filter-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      renderTokenTable();
+    };
+
+    window.handleTokenSearch = function(val) {
+      searchQuery = (val || '').toLowerCase().trim();
+      renderTokenTable();
+    };
+
+    function renderTokenTable() {
+      const tbody = document.getElementById('home-tokens-tbody');
+      const countEl = document.getElementById('visible-token-count');
+      if (!tbody) return;
+
+      let filtered = allTokens.filter(t => {
+        if (currentCategory === 'watchlist') {
+          if (!watchlist.has(t.address)) return false;
+        } else if (currentCategory === 'memecooking') {
+          if (t.launchpad !== 'memecooking') return false;
+        } else if (currentCategory === 'hoot') {
+          if (t.launchpad !== 'justhoot') return false;
+        } else if (currentCategory === 'nearly') {
+          if (t.launchpad !== 'nearlytrade') return false;
+        } else if (currentCategory === 'ref') {
+          if (t.launchpad !== 'ref') return false;
+        }
+
+        if (searchQuery) {
+          const sym = (t.symbol || '').toLowerCase();
+          const name = (t.name || '').toLowerCase();
+          const addr = (t.address || '').toLowerCase();
+          if (!sym.includes(searchQuery) && !name.includes(searchQuery) && !addr.includes(searchQuery)) {
+            return false;
+          }
+        }
+        return true;
+      });
+
+      if (countEl) countEl.textContent = `${filtered.length} Tokens`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" style="text-align:center; padding:32px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
+              No tokens matched the selected filter or search query.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      // Display top 50 items for snappy rendering
+      const displayItems = filtered.slice(0, 50);
+
+      tbody.innerHTML = displayItems.map(t => {
+        const isStarred = watchlist.has(t.address);
+        const changeClass = t.change24h >= 0 ? 'positive' : 'negative';
+        const changeSign = t.change24h >= 0 ? '+' : '';
+        const priceStr = t.priceUsd < 0.01 ? `$${t.priceUsd.toFixed(6)}` : `$${t.priceUsd.toFixed(4)}`;
+        const mcapStr = t.marketCap >= 1e6 ? `$${(t.marketCap / 1e6).toFixed(2)}M` : `$${(t.marketCap / 1e3).toFixed(1)}K`;
+        const volStr = t.volume24h >= 1e6 ? `$${(t.volume24h / 1e6).toFixed(2)}M` : `$${(t.volume24h / 1e3).toFixed(1)}K`;
+
+        return `
+          <tr>
+            <td style="text-align:center;">
+              <button class="watchlist-star-btn ${isStarred ? 'starred' : ''}" onclick="toggleWatchlist('${t.address}')" title="${isStarred ? 'Remove from Watchlist' : 'Add to Watchlist'}">
+                ${isStarred ? '★' : '☆'}
+              </button>
+            </td>
+            <td>
+              <div class="token-identity-cell">
+                <div class="token-icon-frame">
+                  <img src="${t.icon || '/assets/racer-logo.png'}" onerror="this.src='/assets/racer-logo.png'" alt="${t.symbol}">
+                </div>
+                <div class="token-name-col">
+                  <span class="token-symbol-text">$${t.symbol}</span>
+                  <span class="token-name-text" title="${t.address}">${t.name || t.address}</span>
+                </div>
+              </div>
+            </td>
+            <td>
+              <span style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--color-text-subtle);">
+                ${t.venue || t.launchpad}
+              </span>
+            </td>
+            <td style="text-align:right; font-family:'JetBrains Mono', monospace; font-weight:700;">
+              ${priceStr}
+            </td>
+            <td style="text-align:right; font-family:'JetBrains Mono', monospace; font-weight:700;" class="telemetry-val ${changeClass}">
+              ${changeSign}${t.change24h.toFixed(2)}%
+            </td>
+            <td style="text-align:right; font-family:'JetBrains Mono', monospace; color:var(--color-text-muted);">
+              ${volStr}
+            </td>
+            <td style="text-align:right; font-family:'JetBrains Mono', monospace; color:var(--color-text-muted);">
+              ${mcapStr}
+            </td>
+            <td style="text-align:right;">
+              <div class="table-actions-cell">
+                <a href="/bubblemap?token=${encodeURIComponent(t.address)}" class="btn-action-sm btn-action-inspect" title="Inspect holder clusters">
+                  <span>Cluster</span>
+                </a>
+                <a href="/alpha" class="btn-action-sm btn-action-trade" title="Trade via Intent Solver">
+                  <span>Trade</span>
+                </a>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function fetchHomeMarketData() {
+      try {
+        const r = await fetch('/alpha/tokens');
+        if (r.ok) {
+          const data = await r.json();
+          allTokens = data.tokens || data || [];
+          renderTokenTable();
+
+          // Calculate aggregated volume
+          const totalVol = allTokens.reduce((acc, t) => acc + (t.volume24h || 0), 0);
+          const volEl = document.getElementById('hdr-total-vol');
+          if (volEl && totalVol > 0) {
+            volEl.textContent = `$${(totalVol / 1e6).toFixed(2)}M`;
+          }
+          const cntEl = document.getElementById('hdr-token-count');
+          if (cntEl) cntEl.textContent = `${allTokens.length} Pairs`;
+        }
+      } catch (err) {
+        console.error('Failed to load market tokens:', err);
+      }
+    }
+
+    function toggleMobileNav(open) {
+      const drawer = document.getElementById('mobile-nav-drawer');
+      const backdrop = document.getElementById('mobile-nav-backdrop');
+      if (drawer && backdrop) {
+        if (open) {
+          drawer.classList.add('open');
+          backdrop.classList.add('open');
+          document.body.style.overflow = 'hidden';
+        } else {
+          drawer.classList.remove('open');
+          backdrop.classList.remove('open');
+          document.body.style.overflow = '';
+        }
+      }
+    }
 
     function handleHeaderConnectClick() {
       if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
@@ -1280,16 +1349,6 @@
       } else {
         handleOpenNearWalletSelector();
       }
-    }
-
-    function openConnectModal() {
-      if (!window.RacerConnect || !window.RacerConnect.isAuthenticated()) {
-        handleOpenNearWalletSelector();
-        return;
-      }
-      const modal = document.getElementById('racer-connect-modal');
-      if (modal) modal.classList.add('open');
-      updateConnectUI();
     }
 
     function closeConnectModal() {
@@ -1316,14 +1375,14 @@
         if (sElem) sElem.textContent = user?.subaccountId || (nearWallet ? nearWallet : 'user.racerbot.near');
         if (linkedNearElem) {
           const nearAcc = nearWallet || user?.wallets?.[0]?.address || 'None';
-          linkedNearElem.innerHTML = `Linked NEAR Wallet: <b style="color:var(--color-racer-green);">${nearAcc}</b>`;
+          linkedNearElem.innerHTML = `Linked NEAR Wallet: <b style="color:var(--color-positive);">${nearAcc}</b>`;
         }
         if (headerBtn) {
           headerBtn.innerHTML = `<span>● ${displayHandle}</span>`;
           headerBtn.className = 'btn btn-ghost';
           headerBtn.style.color = '#ffffff';
-          headerBtn.style.background = 'rgba(0, 240, 255, 0.25)';
-          headerBtn.style.border = '1px solid rgba(0, 240, 255, 0.25)';
+          headerBtn.style.background = 'rgba(0, 240, 255, 0.15)';
+          headerBtn.style.border = '1px solid rgba(0, 240, 255, 0.3)';
         }
       } else {
         if (unlinkedDiv) unlinkedDiv.style.display = 'block';
@@ -1338,62 +1397,9 @@
       }
     }
 
-    async function handleSendTelegramCode() {
-      const input = document.getElementById('tg-username-input');
-      const status = document.getElementById('tg-request-status');
-      const username = input ? input.value.trim() : '';
-
-      if (!username) {
-        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter your Telegram handle.'; }
-        return;
-      }
-
-      if (status) { status.style.color = '#8b949e'; status.textContent = 'Verifying in database & pinging DM...'; }
-
-      try {
-        const res = await window.RacerConnect.requestTelegramVerification(username, (evStatus) => {
-          if (evStatus === 'approved') {
-            updateConnectUI();
-          }
-        });
-        currentVreqId = res.requestId;
-        document.getElementById('tg-step-input').style.display = 'none';
-        document.getElementById('tg-step-code').style.display = 'block';
-
-        const verifyStatus = document.getElementById('tg-verify-status');
-        if (res.demoCodeHint && verifyStatus) {
-          verifyStatus.innerHTML = `Security DM sent! (Preview OTP: <b>${res.demoCodeHint}</b>)`;
-        }
-      } catch (err) {
-        if (status) {
-          status.style.color = '#ff6b6b';
-          status.textContent = err.message || 'User not found in DB.';
-        }
-      }
-    }
-
-    async function handleSubmitTelegramCode() {
-      const input = document.getElementById('tg-code-input');
-      const status = document.getElementById('tg-verify-status');
-      const code = input ? input.value.trim() : '';
-
-      if (!code || code.length < 6) {
-        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter 6-digit code.'; }
-        return;
-      }
-
-      try {
-        await window.RacerConnect.submitVerificationCode(currentVreqId, code);
-        updateConnectUI();
-        closeConnectModal();
-      } catch (err) {
-        if (status) { status.style.color = '#ff6b6b'; status.textContent = err.message || 'Invalid code.'; }
-      }
-    }
-
     async function handleOpenNearWalletSelector() {
       try {
-        await window.RacerConnect.openNearWalletSelector();
+        if (window.RacerConnect) await window.RacerConnect.openNearWalletSelector();
       } catch (err) {
         alert(err.message || 'Failed to open NEAR Wallet Selector');
       }
@@ -1404,71 +1410,13 @@
       updateConnectUI();
     }
 
-    function toggleMobileNav(open) {
-      const drawer = document.getElementById('mobile-nav-drawer');
-      const backdrop = document.getElementById('mobile-nav-backdrop');
-      if (drawer && backdrop) {
-        if (open) {
-          drawer.classList.add('open');
-          backdrop.classList.add('open');
-          document.body.style.overflow = 'hidden';
-        } else {
-          drawer.classList.remove('open');
-          backdrop.classList.remove('open');
-          document.body.style.overflow = '';
-        }
-      }
-    }
-
-    // Auto-update connect UI on load
-    window.addEventListener('DOMContentLoaded', updateConnectUI);
+    document.addEventListener('DOMContentLoaded', () => {
+      updateWatchlistCount();
+      fetchHomeMarketData();
+      updateConnectUI();
+    });
     window.addEventListener('racer:auth-changed', updateConnectUI);
     window.addEventListener('racer:wallet-linked', updateConnectUI);
   </script>
-
-  <!-- Universal Mobile Navigation Drawer -->
-  <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileNav(false)"></div>
-  <aside class="mobile-nav-drawer" id="mobile-nav-drawer" aria-label="Mobile Navigation">
-    <div class="mobile-drawer-header">
-      <a href="/" class="mobile-drawer-brand">
-        <div class="brand-mark" style="width:32px; height:32px;">
-          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
-        </div>
-        <span class="brand-title" style="font-size:18px;">RACER</span>
-      </a>
-      <button class="mobile-drawer-close" onclick="toggleMobileNav(false)" aria-label="Close navigation menu">&times;</button>
-    </div>
-    <nav class="mobile-drawer-links">
-      <a href="/" class="mobile-drawer-link active">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-        <span>Home</span>
-      </a>
-      <a href="/alpha" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-        <span>RacerAlpha (Trading)</span>
-      </a>
-      <a href="/bubblemap" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-        <span>RacerBubble Map</span>
-      </a>
-      <a href="/fleet" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-        <span>The Fleet (Coordination)</span>
-      </a>
-      <a href="/competition" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
-        <span>Competition Arena</span>
-      </a>
-      <a href="https://t.me/racertradingbot" target="_blank" class="mobile-drawer-link" style="color:var(--color-racer-green);">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-        <span>Launch RacerBot TG ↗</span>
-      </a>
-    </nav>
-    <div class="mobile-drawer-footer">
-      <button onclick="handleHeaderConnectClick(); toggleMobileNav(false);" class="btn btn-secondary" style="width:100%; justify-content:center;">
-        <span>Connect Wallet</span>
-      </button>
-    </div>
-  </aside>
 </body>
 </html>

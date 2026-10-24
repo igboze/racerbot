@@ -1,145 +1,151 @@
 ---
-version: alpha
-name: Notion-Racer-Design-System
-description: "Racer high-performance trading suite design system based on Notion's sober-editorial architecture, humanist-geometric typography, 8px rectangular button geometry, 12px card scale, deep navy hero bands with diffuse workspace mockup elevation, and authentic Racer brand color palette."
-sourceUrl: "https://notion.so"
+version: "3.0"
+name: "RacerBot Intelligence Terminal"
+description: "Canonical design system specification for the RacerBot multi-chain trading intelligence and execution platform. Combines a restrained dark terminal aesthetic, high-contrast financial data visualization, precision mechanical controls, tabular monospace typography, and a mobile-first responsive architecture."
 
 colors:
-  # Authentic Racer Brand Spectrum
-  primary: "#5645d4" # Signature Racer/Notion Purple primary CTA
-  primary-pressed: "#4534b3"
-  primary-deep: "#3a2a99"
-  on-primary: "#ffffff"
+  # Backgrounds & Canvases
+  background-main: "#0B0D10"
+  background-secondary: "#11151B"
+  surface-primary: "#151A21"
+  surface-elevated: "#1B222B"
+  surface-hover: "#222B36"
+  surface-active: "#2A3542"
+
+  # Borders & Hairlines
+  border-default: "#27303A"
+  border-strong: "#394452"
+  border-subtle: "rgba(255, 255, 255, 0.06)"
+  border-focus: "#00F0FF"
+
+  # Core Accents
+  brand-accent: "#00F0FF"
+  brand-accent-pressed: "#00D2E0"
+  brand-accent-subtle: "rgba(0, 240, 255, 0.12)"
+  brand-secondary: "#2563EB"
+  brand-secondary-subtle: "rgba(37, 99, 235, 0.15)"
   
-  # Authentic Racer Brand Accents
-  racer-cyan: "#52cddc" # Electric Cyan speed arc
-  racer-cyan-glow: "rgba(82, 205, 220, 0.35)"
-  racer-purple: "#826ab5" # Racing Purple bolt
-  racer-purple-light: "#9d84d6"
-  racer-green: "#00d16a" # Matrix Mint / Terminal Green
-  racer-gold: "#f59e0b" # Solar Gold
+  # Semantic Trading Signals
+  positive: "#36D399"
+  positive-subtle: "rgba(54, 211, 153, 0.12)"
+  negative: "#F87171"
+  negative-subtle: "rgba(248, 113, 113, 0.12)"
+  warning: "#FBBF24"
+  warning-subtle: "rgba(251, 191, 36, 0.12)"
+  info: "#60A5FA"
+  info-subtle: "rgba(96, 165, 250, 0.12)"
 
-  # Notion Hero & Surface Palettes
-  brand-navy: "#080c18" # Deep Cosmic Navy Hero Band
-  brand-navy-deep: "#070f24" # Deeper Navy Promo/Header
-  brand-navy-mid: "#0e1532" # Elevated Glass Surface
-  canvas: "#080c18" # Main Canvas Dark
-  surface: "#11172e" # Card Surface
-  surface-card: "#141c38" # Elevated Card Surface
-  surface-card-hover: "#182245"
-  hairline: "rgba(255, 255, 255, 0.08)"
-  hairline-soft: "rgba(255, 255, 255, 0.04)"
-  hairline-strong: "rgba(82, 205, 220, 0.35)"
-  border: "#1f2b52"
-
-  # Pastel Database Property Card Tints (Adapted for Dark Mode Elevation)
-  card-tint-peach: "rgba(255, 232, 212, 0.06)"
-  card-tint-rose: "rgba(253, 224, 236, 0.06)"
-  card-tint-mint: "rgba(217, 243, 225, 0.06)"
-  card-tint-lavender: "rgba(230, 224, 245, 0.07)"
-  card-tint-sky: "rgba(220, 236, 250, 0.07)"
-  card-tint-yellow: "rgba(254, 247, 214, 0.06)"
-  card-tint-yellow-bold: "rgba(249, 231, 159, 0.12)"
-
-  # Text & Ink
-  on-dark: "#ffffff"
-  on-dark-muted: "#c8d3e8"
-  text-subtle: "#8a99b5"
-  ink: "#ffffff"
-  charcoal: "#e0e6ed"
-  steel: "#8a99b5"
-  muted: "#5d6b82"
+  # Text & Typography
+  text-primary: "#F2F5F8"
+  text-secondary: "#96A0AE"
+  text-muted: "#737F8F"
 
 typography:
-  fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Helvetica, sans-serif"
-  hero-display:
-    fontSize: 76px
-    fontWeight: 600
-    lineHeight: 1.05
-    letterSpacing: -2px
-  display-lg:
-    fontSize: 54px
-    fontWeight: 600
-    lineHeight: 1.10
-    letterSpacing: -1px
-  heading-1:
-    fontSize: 44px
-    fontWeight: 600
-    lineHeight: 1.15
-    letterSpacing: -0.5px
-  heading-2:
-    fontSize: 34px
-    fontWeight: 600
-    lineHeight: 1.20
-    letterSpacing: -0.5px
-  heading-3:
-    fontSize: 26px
-    fontWeight: 600
-    lineHeight: 1.25
-  heading-4:
-    fontSize: 20px
-    fontWeight: 600
-    lineHeight: 1.30
-  heading-5:
-    fontSize: 17px
-    fontWeight: 600
-    lineHeight: 1.40
-  body-md:
-    fontSize: 16px
-    fontWeight: 400
-    lineHeight: 1.55
-  body-sm:
-    fontSize: 14px
-    fontWeight: 400
-    lineHeight: 1.50
-  button-md:
-    fontSize: 14px
-    fontWeight: 500
-    lineHeight: 1.30
-
-rounded:
-  xs: 4px
-  sm: 6px
-  md: 8px # BUTTONS ARE 8px RECTANGLES, NOT PILLS
-  lg: 12px # CARDS & WORKSPACE MOCKUP
-  xl: 16px
-  xxl: 20px
-  full: 9999px # BADGES & PILL TABS ONLY
+  fontFamilySans: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+  fontFamilyMono: "'JetBrains Mono', monospace"
+  
+  scale:
+    page-title: "28px (32px on desktop)"
+    section-title: "20px"
+    card-title: "15px"
+    body-regular: "14px"
+    body-small: "12px"
+    mono-data: "13px (tabular figures)"
+    telemetry-lg: "28px"
 
 spacing:
   base: 4px
-  xxs: 4px
-  xs: 8px
-  sm: 12px
-  md: 16px
-  lg: 20px
-  xl: 24px
-  xxl: 32px
-  section-sm: 48px
-  section: 64px
-  section-lg: 96px
-  hero: 112px
+  scale: [4, 8, 12, 16, 20, 24, 32, 40, 48, 64]
 
-components:
-  button-primary:
-    backgroundColor: "#5645d4"
-    textColor: "#ffffff"
-    rounded: "8px"
-    padding: "10px 18px"
-  button-secondary:
-    backgroundColor: "transparent"
-    textColor: "#ffffff"
-    border: "1px solid rgba(255, 255, 255, 0.16)"
-    rounded: "8px"
-    padding: "10px 18px"
-  card-feature:
-    backgroundColor: "#11172e"
-    rounded: "12px"
-    border: "1px solid rgba(255, 255, 255, 0.08)"
-    padding: "24px"
-  workspace-mockup-card:
-    backgroundColor: "#0d142c"
-    rounded: "12px"
-    border: "1px solid rgba(82, 205, 220, 0.3)"
-    shadow: "rgba(0, 0, 0, 0.45) 0px 24px 48px -8px, rgba(82, 205, 220, 0.15) 0px 0px 40px"
+geometry:
+  radius-control: "6px"
+  radius-button: "8px"
+  radius-card: "10px"
+  radius-modal: "14px"
+  radius-full: "9999px"
+
+elevation:
+  shadow-card: "0 2px 10px rgba(0, 0, 0, 0.4), 0 0 1px #27303A"
+  shadow-elevated: "0 12px 32px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.08)"
 ---
+
+# RACERBOT INTELLIGENCE TERMINAL — PRODUCT DESIGN SYSTEM
+
+## 1. Overview & Visual Direction
+RacerBot is a professional-grade multi-chain trading intelligence and execution platform.
+The aesthetic direction is **Restrained Dark Terminal**:
+- High-contrast financial typography with tabular numbers.
+- Structured, purposeful layouts prioritizing data clarity and transaction predictability.
+- No decorative purple gradient soup, no generic AI-generated SaaS clutter, and **zero tacky emojis** in primary interfaces.
+- One unified application shell uniting all five product routes: Home (`/`), Bubble Map (`/bubblemap`), Alpha (`/alpha`), Fleet (`/fleet`), and Competition (`/competition`).
+
+---
+
+## 2. Color System & Usage Rules
+
+### Surfaces
+- `background-main` (`#0B0D10`): Main application canvas.
+- `background-secondary` (`#11151B`): Shell sidebars, navigation docks, and page wells.
+- `surface-primary` (`#151A21`): Primary cards, graph control toolbars, tables, and modal bodies.
+- `surface-elevated` (`#1B222B`): Flyouts, inspector drawers, dropdowns, and hovered items.
+
+### Borders
+- `border-default` (`#27303A`): 1px structural boundaries between panes and cards.
+- `border-strong` (`#394452`): Form inputs, selected card boundaries, and key control dividers.
+- `border-focus` (`#00F0FF`): Active keyboard focus and primary active tabs.
+
+### Accents & Trading Signals
+- `brand-accent` (`#00F0FF`): Laser cyan used selectively for primary execution buttons, selected navigation, active tabs, and telemetry status dots.
+- `positive` (`#36D399`): Buys, positive PnL percentages, successful transaction badges.
+- `negative` (`#F87171`): Sells, negative PnL percentages, stop-loss triggers, error alerts.
+- `warning` (`#FBBF24`): Sensitive operations (e.g. private key export review), high slippage warnings.
+- `info` (`#60A5FA`): Verified network indicators, transaction hashes, neutral protocol tags.
+
+*Strict Rule*: Do not use every accent color simultaneously. Never communicate state through color alone — always accompany with text or icons.
+
+---
+
+## 3. Typography & Numerical Representation
+- **Sans-Serif (`Plus Jakarta Sans`)**: Used for brand markings, navigation links, section titles, explanatory paragraphs, button labels, and badges.
+- **Monospace (`JetBrains Mono`)**: Mandatory for all wallet addresses (truncated or full), transaction hashes, prices, balances, slippage values, timestamp logs, and tabular data tables.
+- **Numerical Alignment**: Always use `font-variant-numeric: tabular-nums` to prevent jumping numbers during live quote updates.
+
+---
+
+## 4. Component Standards
+
+### Buttons
+- **Primary (`.btn-primary`)**: Solid Laser Cyan (`#00F0FF`) with dark obsidian text (`#020817`), `font-weight: 700`, 8px radius. Min height 42px.
+- **Secondary (`.btn-secondary`)**: Elevated surface (`#1B222B`), 1px `#27303A` border, white text (`#F2F5F8`). Hover transitions to `#222B36`.
+- **Trading Action (`.btn-buy`, `.btn-sell`)**: Solid `#36D399` and `#F87171` respectively with white text and bold typography.
+- **Ghost (`.btn-ghost`)**: Transparent background with hover fill `rgba(0, 240, 255, 0.08)`.
+
+### Form Controls & Inputs
+- Height 42px (min 44px on mobile), `#151A21` background, 1px `#27303A` border, `#F2F5F8` text.
+- Focused state: 1px `#00F0FF` border with subtle cyan focus ring.
+- Never use font-size smaller than 16px on mobile form inputs to eliminate iOS Safari auto-zoom.
+
+### Tables & Data Grids
+- Desktop: Monospace tabular columns, sticky headers with 1px `#27303A` border, clean hover highlight.
+- Mobile: Transform into compact structured cards or provide horizontal touch scroll with sticky first column.
+
+### Modals & Drawers
+- Desktop: Centered dialogs with `#151A21` background, 1px `#27303A` border, subtle blur backdrop (`rgba(11, 13, 16, 0.8)`).
+- Mobile: Ergonomic bottom sheets (`border-radius: 14px 14px 0 0`) with drag handles and safe area bottom padding.
+
+---
+
+## 5. Mobile Interaction Patterns
+- **Application Shell**: Desktop permanent sidebar disappears; replaced by compact sticky top bar + bottom navigation dock (Home, Bubble Map, Alpha, Fleet, Arena).
+- **Touch Targets**: Minimum 44px × 44px for all primary actions.
+- **Single-Handed Operability**: Bottom-aligned primary CTAs, segmented tab switchers, and swipe-dismissible sheets.
+- **Zero Horizontal Overflow**: All tables, code snippets, and metrics grids must reflow or use dedicated card wrappers without breaking viewport width.
+
+---
+
+## 6. Route Architecture
+1. **`/` (Home)**: Market context, trading volume, trending tokens, live activity feed, and instant workspace shortcuts.
+2. **`/bubblemap?token=...`**: Token & wallet intelligence flagship. Direct graph canvas, token header, risk metrics, wallet inspector drawer, cluster legend.
+3. **`/alpha`**: Trader directory, strategy cards, 4-stage copy-trading flow (Configure → Review → Confirm), open positions, and separated Creator Studio.
+4. **`/fleet`**: Multi-wallet cockpit. Wallet matrix, 3-stage coordinated trading (Configure → Review → Execute), capital management (disburse/sweep), sensitive key handling with confirmation gating.
+5. **`/competition`**: Active reward program & snapshot arena. Personal standings, verified wallet leaderboard, prize breakdown, plain-language scoring rules.
