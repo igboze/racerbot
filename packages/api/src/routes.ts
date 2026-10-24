@@ -413,35 +413,48 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const text =
     `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n` +
-    `⬛ <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 🔷 <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})` +
-    (starknetAddress ? `\n✨ <b>${strkBalFormatted}</b> STRK • <b>${ethBalFormatted}</b> ETH` : '') +
-    `\n💰 Total: <b>${totalUsdStr}</b>\n` +
+    `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
+    `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
+    (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n` : '') +
+    `💰 Total: <b>${totalUsdStr}</b>\n` +
     `📍 <code>${subaccount}</code>`;
 
   const keyboard = Markup.inlineKeyboard([
     [
-      cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
+      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
-      cb('🎒 Bags', 'menu_holdings', 'primary'),
+    ],
+    [
+      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
       cb('🎯 Snipe', 'menu_snipe', 'primary'),
-      cb('👥 Copy', 'menu_copy', 'success'),
+      cb('👥 Copy Trade', 'menu_copy', 'success'),
+    ],
+    [
       cb('🔁 DCA', 'menu_dca', 'primary'),
       cb('📈 PnL', 'menu_pnl', 'primary'),
     ],
     [
-      cb('🏎️ Fleet', 'racefleet_menu', 'success'),
+      cb('🏎️ RaceFleet (Beta)', 'racefleet_menu', 'success'),
       cb('🏆 Points', 'menu_points', 'success'),
-      cb('⚙️ Settings', 'menu_settings', 'primary'),
-      cb('📢 Alerts', 'menu_buyalerts', 'primary'),
     ],
     [
-      cb('🎁 RaceDrop', 'racedrop_start', 'primary'),
-      cb('🔑 Key', 'export_prompt'),
-      cb('🔄 Rotate', 'rotate_prompt'),
-      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
+      cb('⚙️ Settings', 'menu_settings', 'primary'),
+      cb('📢 Buy Alerts', 'menu_buyalerts', 'primary'),
+    ],
+    [
+      cb('🎁 Create RaceDrop', 'racedrop_start', 'primary'),
+      cb('🔑 Export Key', 'export_prompt'),
+    ],
+    [
+      cb('🔄 Rotate Key', 'rotate_prompt'),
+    ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
 
@@ -549,33 +562,45 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
   const buttons: any[] = [
     [
-      cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
+      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
       cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
+    ],
+    [
       cb('🔄 Refresh', 'wallet_refresh', 'primary'),
-    ],
-    [
-      cb(`💳 Wallets (${walletsCount})`, 'wallets_menu', 'primary'),
-      cb('🎒 Bags', 'menu_holdings', 'primary'),
       cb('🏎️ RaceDrop', 'racedrop_start', 'primary'),
-    ],
-    [
-      ...(Number(b.wrapNearFormatted) > 0.0001 ? [cb('🔄 Unwrap wNEAR', 'wallet_unwrap', 'primary')] : []),
-      cb('⚙️ Settings', 'menu_settings', 'primary'),
-      cb('🔑 Key', 'export_prompt', 'primary'),
-      cb('🔙 Menu', 'menu_home', 'primary'),
-    ],
-    [
-      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Channel', 'https://t.me/racertrading'),
-      Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ];
 
+  if (Number(b.wrapNearFormatted) > 0.0001) {
+    buttons.push([cb(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR`, 'wallet_unwrap', 'primary')]);
+  }
+
+  buttons.push([
+    cb(`💳 Wallets (${walletsCount})`, 'wallets_menu', 'primary'),
+    cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+  ]);
+
+  buttons.push([
+    cb('⚙️ Settings', 'menu_settings', 'primary'),
+    cb('🔑 Export Key', 'export_prompt', 'primary'),
+  ]);
+  buttons.push([
+    cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+  ]);
+
+  buttons.push([
+    Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+    Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+    Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+  ]);
+
   const text =
     `💼 <b>${escapeHtml(walletDisplayName)}</b> ⭐\n` +
-    `⬛ <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd}) • 🔷 <b>${b.suiBalanceFormatted || '0.00'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})` +
-    (b.starknetAddress ? `\n✨ <b>${b.strkBalanceFormatted || '0'}</b> STRK • <b>${b.ethBalanceFormatted || '0'}</b> ETH` : '') +
-    `\n💰 Total: <b>${totalUsdStr}</b>\n` +
+    `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
+    (Number(b.wrapNearFormatted) > 0.0001 ? `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n` : '') +
+    `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n` +
+    (b.starknetAddress ? `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n` : '') +
+    `💰 Total: <b>${totalUsdStr}</b>\n` +
     `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>` +
     (b.suiAddress ? `\n💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>` : '') +
     (b.starknetAddress ? `\n✨ Starknet: <code>${escapeHtml(b.starknetAddress)}</code>` : '');
@@ -1018,19 +1043,37 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const safeSymbol = sanitizeMd(tokenInfo.symbol || 'TOKEN');
   const safeName = sanitizeMd(tokenInfo.name || 'Token');
 
-  // ── Compact Deep Links & Tools ───────────────────────────────────────────
-  const auditBtn = cb('🛡️ Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary');
-  const chartBtn = isStarknet
-    ? Markup.button.url('📈 Chart', `https://dexscreener.com/starknet/${tokenInfo.address}`)
-    : isSui
-    ? Markup.button.url('📈 Chart', `https://dexscreener.com/sui/${tokenInfo.address}`)
-    : Markup.button.url('📈 Chart', `https://dexscreener.com/near/${tokenInfo.address}`);
-
-  const toolsRow: any[] = [auditBtn, chartBtn];
-  if (!isSui && !isStarknet) {
-    toolsRow.push(cb('🎯 Limit', `lo_start:${getShortTokenKey(tokenInfo.address)}`, 'primary'));
-    toolsRow.push(cb('🔁 DCA', `dca_token:${getShortTokenKey(tokenInfo.address)}`, 'primary'));
-  }
+  // ── Deep links ───────────────────────────────────────────────────────────
+  const linkRows = (() => {
+    if (isStarknet) {
+      const rows: any[] = [];
+      rows.push([
+        Markup.button.url('🔍 Starkscan', `https://starkscan.co/token/${tokenInfo.address}`),
+        Markup.button.url('📈 DexScreener', `https://dexscreener.com/starknet/${tokenInfo.address}`),
+      ]);
+      rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+      return rows;
+    }
+    if (isSui) {
+      const rows: any[] = [];
+      if (tokenInfo.sui_curve_address) {
+        rows.push([Markup.button.url('💧 View on SuiPump', `https://suipump.org/token/${tokenInfo.sui_curve_address}`)]);
+      }
+      rows.push([
+        Markup.button.url('🔍 Suiscan', `https://suiscan.xyz/mainnet/coin/${tokenInfo.sui_coin_type || tokenInfo.address}/txs`),
+        Markup.button.url('📈 DexScreener', `https://dexscreener.com/sui/${tokenInfo.address}`),
+      ]);
+      rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+      return rows;
+    }
+    const links = tokenLinks(tokenInfo.venue, tokenInfo.address, tokenInfo.symbol || undefined, tokenInfo.name || undefined);
+    const rows: any[] = [];
+    if (links.length > 0) rows.push([Markup.button.url(links[0].label, links[0].url)]);
+    if (links.length > 1) rows.push(links.slice(1, 3).map(l => Markup.button.url(l.label, l.url)));
+    if (links.length > 3) rows.push(links.slice(3).map(l => Markup.button.url(l.label, l.url)));
+    rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+    return rows;
+  })();
 
   // -- Price formatting --
   const priceNum = parseFloat(tokenInfo.price || '0');
@@ -1191,15 +1234,16 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     text += `🏎️ *Fleet*: ${fleetFormattedQty} ${safeSymbol} (${fleetPosition.emoji} *${fleetPosition.pnlDisplay}*)\n`;
   }
 
-  // Share deep link
-  let tgShareUrl = '';
+  // ── Buttons ──
+  let shareButtonRow: any[] = [];
   if (userRecord) {
     try {
       const shareCode = await getOrCreateTokenShare(userRecord.id, tokenAddress);
       const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
       const sym = tokenInfo.symbol || 'TOKEN';
       const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Fast 1-click execution on NEAR & SUI`;
-      tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+      const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
+      shareButtonRow = [[Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]];
     } catch (err: any) {
       console.warn('[buildTokenCard] Failed to generate share link:', err?.message);
     }
@@ -1209,83 +1253,202 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const shortKey = getShortTokenKey(tokenInfo.address);
   const isBlocked = safety?.isHoneypot || safety?.isDrained;
 
-  const navRow = [
-    cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
-    ...(tgShareUrl ? [Markup.button.url('📤 Share', tgShareUrl)] : []),
-    cb('🔙 Back', 'menu_home', 'primary'),
-  ];
-
-  const socialRow = [
-    Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
-    Markup.button.url('📢 News', 'https://t.me/racertrading'),
-    Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
-  ];
-
   if (isBlocked) {
     const blockedBtn = [Markup.button.callback(
       safety?.isDrained ? '🚨 Buy Blocked (Drained Liquidity)' : '🚨 Buy Blocked (Honeypot Backdoor)',
       safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
     )];
-    const sellRow = holdsToken && userPosition ? [
-      cb('25%', `sell:${userPosition.id}:25`, 'danger'),
-      cb('50%', `sell:${userPosition.id}:50`, 'danger'),
-      cb('100%', `sell:${userPosition.id}:100`, 'danger'),
-      cb('Sell X', `sell_custom_prompt:${userPosition.id}`, 'danger'),
-    ] : [];
-
-    keyboard = Markup.inlineKeyboard([
-      blockedBtn,
-      ...(sellRow.length > 0 ? [sellRow] : []),
-      toolsRow,
-      navRow,
-      socialRow,
-    ]);
-  } else if (tokenInfo.tradeable) {
-    const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
-    const buyAmounts = parseBuyAmounts(userRecord?.custom_buy_amounts);
-
-    // Row 1: Fixed buy amounts + Buy Custom
-    const buyFixedRow = [
-      ...buyAmounts.map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
-      cb(`Buy X`, `buy_custom_prompt:${shortKey}`, 'success'),
-    ];
-
-    // Row 2: Buy % + Fleet
-    const buyPctRow = [
-      cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
-      cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
-      cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
-      ...(!isSui && !isStarknet ? [cb('🏎️ Fleet', `fleet_cockpit:${shortKey}`, 'success')] : []),
-    ];
-
-    // Row 3: Sell options (if user holds position)
-    const sellRow = holdsToken && userPosition ? [
-      cb('25%', `sell:${userPosition.id}:25`, 'danger'),
-      cb('50%', `sell:${userPosition.id}:50`, 'danger'),
-      cb('100%', `sell:${userPosition.id}:100`, 'danger'),
-      cb('Sell X', `sell_custom_prompt:${userPosition.id}`, 'danger'),
-      cb('Init', `sell_initial:${userPosition.id}`, 'danger'),
-    ] : [];
-
-    // Fleet sell buttons if fleet holds
-    const fleetSellRow = (!isSui && !isStarknet && fleetHoldsToken) ? [
-      cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
-      cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
-    ] : [];
-
-    const rows: any[] = [];
-    if (safety?.isUnlockedRheaPool) {
-      rows.push([Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]);
+    const fleetExitRow = (!isSui && !isStarknet && fleetHoldsToken)
+      ? [
+          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
+          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
+        ]
+      : [];
+    if (holdsToken && userPosition) {
+      text += `⚡ *Exit Position* (Sell Only):\n`;
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        [
+          cb('25%', `sell:${userPosition.id}:25`, 'danger'),
+          cb('50%', `sell:${userPosition.id}:50`, 'danger'),
+          cb('100%', `sell:${userPosition.id}:100`, 'danger'),
+        ],
+        [
+          cb('🔴 Sell X Tokens', `sell_custom_prompt:${userPosition.id}`, 'danger'),
+          cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger'),
+        ],
+        ...(fleetExitRow.length > 0 ? [fleetExitRow] : []),
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else if (fleetHoldsToken) {
+      text += `⚡ *Exit Fleet Position* (Sell Only):\n`;
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        ...(fleetExitRow.length > 0 ? [fleetExitRow] : []),
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else {
+      keyboard = Markup.inlineKeyboard([
+        blockedBtn,
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
     }
-    rows.push(buyFixedRow);
-    rows.push(buyPctRow);
-    if (sellRow.length > 0) rows.push(sellRow);
-    if (fleetSellRow.length > 0) rows.push(fleetSellRow);
-    rows.push(toolsRow);
-    rows.push(navRow);
-    rows.push(socialRow);
+  } else if (tokenInfo.tradeable) {
+    const unlockedRiskRow = safety?.isUnlockedRheaPool
+      ? [[Markup.button.callback('⚠️ Unlocked Liquidity (High Rug Risk)', 'noop_unlocked_risk')]]
+      : [];
 
-    keyboard = Markup.inlineKeyboard(rows);
+    const fleetActionRows: any[] = [];
+    if (!isSui && !isStarknet) {
+      if (fleetHoldsToken && fleetPosition) {
+        fleetActionRows.push([
+          cb(`🏎️ RaceFleet Cockpit (${fleetPosition.emoji} ${fleetPosition.pnlDisplay})`, `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+        fleetActionRows.push([
+          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
+          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
+        ]);
+        fleetActionRows.push([
+          cb('🏎️ Buy More with Fleet', `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+      } else {
+        fleetActionRows.push([
+          cb('🏎️ Buy with RaceFleet (Beta)', `fleet_cockpit:${shortKey}`, 'success'),
+        ]);
+      }
+    }
+
+    const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
+
+    if (holdsToken && userPosition) {
+      text += `⚡ *Manage Position* (Personal & Fleet):\n`;
+      keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
+        // Quick-buy fixed amounts (green)
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        // Custom amount
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        ...fleetActionRows,
+        // Buy % of balance (green)
+        [
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
+        ],
+        // Sell % (red)
+        [
+          cb('25%', `sell:${userPosition.id}:25`, 'danger'),
+          cb('50%', `sell:${userPosition.id}:50`, 'danger'),
+          cb('100%', `sell:${userPosition.id}:100`, 'danger'),
+        ],
+        [
+          cb('🔴 Sell X Tokens', `sell_custom_prompt:${userPosition.id}`, 'danger'),
+          cb('🔴 Sell Initial', `sell_initial:${userPosition.id}`, 'danger'),
+        ],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else if (fleetHoldsToken && fleetPosition) {
+      text += `⚡ *Manage RaceFleet Position*:\n`;
+      keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
+        ...fleetActionRows,
+        // Quick-buy fixed amounts for personal account
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        [
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
+        ],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    } else {
+      text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
+      keyboard = Markup.inlineKeyboard([
+        ...unlockedRiskRow,
+        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
+        ...fleetActionRows,
+        [
+          cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
+          cb(`${defaultBuyPct === 50 ? '✓ ' : ''}50%`, `buy_pct:${shortKey}:50`, 'success'),
+          cb(`${defaultBuyPct === 100 ? '✓ ' : ''}100%`, `buy_pct:${shortKey}:100`, 'success'),
+        ],
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+        ],
+        [
+          cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
+          cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
+      ]);
+    }
   } else {
     const isAwaitingLiquidity =
       tokenInfo.venue === 'intear' ||
@@ -1296,22 +1459,35 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
     if (isAwaitingLiquidity) {
       text += `⏳ *Status*: Awaiting Initial Liquidity on DEX.\n🎯 *Set a Snipe to buy automatically on pool creation!*\n\n`;
-      const snipeRow = [
-        cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success'),
-        ...(!isSui && !isStarknet ? [cb('🏎️ Pre-Snipe', `fleet_cockpit:${shortKey}`, 'success')] : []),
-      ];
       keyboard = Markup.inlineKeyboard([
-        snipeRow,
-        toolsRow,
-        navRow,
-        socialRow,
+        [cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success')],
+        ...(!isSui && !isStarknet ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
+          Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
       ]);
     } else {
       text += '⚠️ Trading venue is not directly supported.';
       keyboard = Markup.inlineKeyboard([
-        toolsRow,
-        navRow,
-        socialRow,
+        ...linkRows,
+        ...shareButtonRow,
+        [
+          Markup.button.callback('🔄 Refresh', `token_refresh:${shortKey}`),
+          Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+        ],
+        [
+          Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+          Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
+          Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
+        ],
       ]);
     }
   }
@@ -1554,11 +1730,21 @@ export function buildSettingsDashboard(user: UserRecord) {
   const buyAmountsStr = buyAmounts.join(', ');
 
   const text =
-    `⚙️ *Trading Settings*\n` +
-    `• Slip: \`${slip}%\` • Buy: \`${buyPct}%\` • Sell: \`${sellPct}%\`\n` +
-    `• Quick: \`${buyAmountsStr}\` • PnL: ${showNetWorth ? '🟢 NetWorth' : '🔴 Hidden'}`;
+    `⚙️ *Trading Settings*\n\n` +
+    `• *Slippage*: \`${slip}%\`\n` +
+    `• *Default Buy*: \`${buyPct}%\`\n` +
+    `• *Default Sell*: \`${sellPct}%\`\n` +
+    `• *Quick Buy Buttons*: \`${buyAmountsStr}\`\n` +
+    `• *Net Worth on PnL*: ${showNetWorth ? '🟢 Shown' : '🔴 Hidden'}`;
 
   const keyboard = Markup.inlineKeyboard([
+    [
+      cb(
+        showNetWorth ? '👁 Net Worth: Shown' : '🙈 Net Worth: Hidden',
+        'set:toggle_show_net_worth',
+        'primary'
+      ),
+    ],
     [
       cb(`${slip === 0.5 ? '✓ ' : ''}0.5%`, 'set:slippage:0.5', 'primary'),
       cb(`${slip === 1 ? '✓ ' : ''}1%`, 'set:slippage:1', 'primary'),
@@ -1582,18 +1768,19 @@ export function buildSettingsDashboard(user: UserRecord) {
       cb(`${buyAmountsStr === '10, 25, 50' ? '✓ ' : ''}10, 25, 50`, 'set:buy_amounts:10,25,50', 'primary'),
     ],
     [
-      cb('💰 Custom Buy', 'prompt:custom_buy_amounts', 'success'),
-      cb('✏️ Slippage', 'prompt:custom_slippage', 'primary'),
-      cb(showNetWorth ? '👁 Net Worth' : '🙈 Hidden', 'set:toggle_show_net_worth', 'primary'),
+      cb('💰 Custom Buy Buttons', 'prompt:custom_buy_amounts', 'success'),
+      cb('✏️ Custom Slippage', 'prompt:custom_slippage', 'primary'),
     ],
     [
-      cb('🔑 Export', 'export_prompt', 'primary'),
-      cb('🔄 Rotate', 'rotate_prompt', 'primary'),
-      cb('🔙 Menu', 'menu_home', 'primary'),
+      cb('🔑 Export Private Key', 'export_prompt', 'primary'),
+      cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
     ],
     [
-      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Channel', 'https://t.me/racertrading'),
+      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+    ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
@@ -1643,9 +1830,14 @@ export async function buildSnipeDashboard(user: UserRecord) {
   }
 
   const text =
-    `🎯 *Snipe Rules*\n` +
-    `• Auto: ${autoBuy ? '🟢 ON' : '🔴 OFF'} (${autoAmt}N) • MinLiq: \`${minLiq}N\` • MaxCap: \`${maxMcapStr}\`${activeText}\n` +
-    `_Tap a rule to toggle or snipe a specific token CA below._`;
+    `🎯 *Snipe Rules*\n\n` +
+    `• *Auto-Buy Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
+    `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
+    `• *Min Liquidity*: \`${minLiq} NEAR\`\n` +
+    `• *Max Market Cap*: \`${maxMcapStr}\`${activeText}\n\n` +
+    `*Targeted Snipes*:\n` +
+    `• 🎯 Snipe a specific token CA\n` +
+    `• 👤 Snipe all launches by a dev wallet`;
 
   const cancelButtons: any[] = activeOrders.map((o) => [
     cb(
@@ -1659,42 +1851,47 @@ export async function buildSnipeDashboard(user: UserRecord) {
     ...cancelButtons,
     [
       cb(
-        autoBuy ? '🟢 Auto-Buy: ON' : '🔴 Auto-Buy: OFF',
+        autoBuy ? 'Auto-Buy Launches: 🟢 Enabled' : 'Auto-Buy Launches: 🔴 Disabled',
         'set:toggle_auto_buy',
         autoBuy ? 'success' : 'danger'
       ),
-      cb(`📋 Orders (${activeOrders.length})`, 'snipe_orders', 'primary'),
     ],
     [
       cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'),
-      cb('👤 Snipe Dev', 'snipe_dev_start', 'success'),
+      cb('👤 Snipe by Dev', 'snipe_dev_start', 'success'),
     ],
     [
-      cb(`Amt: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
+      cb(`📋 My Snipe Orders (${activeOrders.length})`, 'snipe_orders', 'primary'),
+    ],
+    [
+      cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
       cb(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1', 'primary'),
       cb(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2', 'primary'),
       cb(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5', 'primary'),
     ],
     [
-      cb(`Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0', 'primary'),
+      cb(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0', 'primary'),
       cb(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10', 'primary'),
       cb(`${minLiq === 50 ? '✓ ' : ''}50N`, 'set:min_liq:50', 'primary'),
       cb(`${minLiq === 500 ? '✓ ' : ''}500N`, 'set:min_liq:500', 'primary'),
     ],
     [
-      cb(`Cap: ${maxMcap === 25000 ? '✓ ' : ''}25K`, 'set:max_mcap:25000', 'primary'),
-      cb(`${maxMcap === 50000 ? '✓ ' : ''}50K`, 'set:max_mcap:50000', 'primary'),
-      cb(`${maxMcap === 100000 ? '✓ ' : ''}100K`, 'set:max_mcap:100000', 'primary'),
-      cb(`${maxMcap === 0 ? '✓ ' : ''}None`, 'set:max_mcap:0', 'primary'),
+      cb(`Max Mcap: ${maxMcap === 25000 ? '✓ ' : ''}$25K`, 'set:max_mcap:25000', 'primary'),
+      cb(`${maxMcap === 50000 ? '✓ ' : ''}$50K`, 'set:max_mcap:50000', 'primary'),
+      cb(`${maxMcap === 100000 ? '✓ ' : ''}$100K`, 'set:max_mcap:100000', 'primary'),
+      cb(`${maxMcap === 0 ? '✓ ' : ''}No Limit`, 'set:max_mcap:0', 'primary'),
     ],
     [
-      cb('✏️ Custom Amt', 'prompt:custom_auto_buy', 'primary'),
-      cb('✏️ Custom Cap', 'prompt:custom_max_mcap', 'primary'),
-      cb('🔙 Menu', 'menu_home', 'primary'),
+      cb('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy', 'primary'),
+      cb('✏️ Custom Min Liq', 'prompt:custom_min_liq', 'primary'),
+      cb('✏️ Custom Max Mcap', 'prompt:custom_max_mcap', 'primary'),
     ],
     [
-      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
-      Markup.button.url('📢 Channel', 'https://t.me/racertrading'),
+      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+    ],
+    [
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
+      Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
   ]);
@@ -5791,9 +5988,8 @@ export function setupRoutes(bot: Telegraf): void {
         emoji = '⚪';
       }
 
-      const compactSym = displayLabel.length > 7 ? `${displayLabel.slice(0, 6)}…` : displayLabel;
-      const rawLabel = `${emoji} ${compactSym} (${pnlDisplay})`;
-      const cappedLabel = rawLabel.length > 18 ? `${rawLabel.slice(0, 17)}…` : rawLabel;
+      const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
+      const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
 
       return {
         pos,
@@ -5814,8 +6010,8 @@ export function setupRoutes(bot: Telegraf): void {
       return { msg: emptyMsg, keyboard: emptyKeyboard };
     }
 
-    // Pagination: 8 tokens per page (2 per row = 4 rows)
-    const PAGE_SIZE = 8;
+    // Pagination: 6 tokens per page (1 token per row for clear, comfortable reading)
+    const PAGE_SIZE = 6;
     const totalPositions = filteredPositions.length;
     const totalPages = Math.max(1, Math.ceil(totalPositions / PAGE_SIZE));
     const currentPage = Math.min(Math.max(0, page), totalPages - 1);
@@ -5823,12 +6019,8 @@ export function setupRoutes(bot: Telegraf): void {
     const pageItems = filteredPositions.slice(startIdx, startIdx + PAGE_SIZE);
 
     const buttons: any[] = [];
-    for (let i = 0; i < pageItems.length; i += 2) {
-      const row: any[] = [cb(pageItems[i].cappedLabel, `token_detail:${pageItems[i].pos.id}`, pageItems[i].pnlStyle)];
-      if (i + 1 < pageItems.length) {
-        row.push(cb(pageItems[i + 1].cappedLabel, `token_detail:${pageItems[i + 1].pos.id}`, pageItems[i + 1].pnlStyle));
-      }
-      buttons.push(row);
+    for (const item of pageItems) {
+      buttons.push([cb(item.cappedLabel, `token_detail:${item.pos.id}`, item.pnlStyle)]);
     }
 
     // Pagination navigation row
@@ -5856,11 +6048,13 @@ export function setupRoutes(bot: Telegraf): void {
 
     buttons.push([
       Markup.button.callback('🔄 Refresh', `refresh_holdings:${currentPage}`),
-      Markup.button.callback('➕ Import', 'import_token_prompt'),
-      Markup.button.callback('🔙 Back', 'menu_home'),
+      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
     ]);
     buttons.push([
-      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
+      Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+    ]);
+    buttons.push([
+      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ]);
