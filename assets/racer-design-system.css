@@ -1,48 +1,55 @@
-/* ── RACER MASTER DESIGN SYSTEM (UI/UX PRO MAX v3.0) ───────────────────────── */
-/* Designed for High-Octane Web3 Trading: Royal Velocity, Laser Cyan & Deep Abyssal Navy */
+/* ── RACERBOT INTELLIGENCE TERMINAL: MASTER DESIGN SYSTEM ───────────────────── */
+/* Canonical CSS tokens and shared components adhering to DESIGN.md */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 :root {
   color-scheme: dark;
 
-  /* Royal Abyssal Palette (Deep Space, Royal Blue & Laser Cyan) */
-  --color-canvas: #030712;
-  --color-canvas-subtle: #060e22;
-  --color-surface: #08142c;
-  --color-surface-card: #0b1a38;
-  --color-surface-hover: #10234a;
-  --color-surface-active: #152d5e;
-  --color-border: rgba(59, 130, 246, 0.2);
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-focus: #00f0ff;
-  --color-border-glow: rgba(0, 240, 255, 0.35);
+  /* Surfaces & Canvases */
+  --color-canvas: #0B0D10;
+  --color-canvas-subtle: #11151B;
+  --color-surface: #151A21;
+  --color-surface-card: #1B222B;
+  --color-surface-hover: #222B36;
+  --color-surface-active: #2A3542;
 
-  /* Velocity Accents */
-  --color-primary: #00f0ff;
-  --color-primary-pressed: #00d2e0;
+  /* Borders & Dividers */
+  --color-border: #27303A;
+  --color-border-strong: #394452;
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-focus: #00F0FF;
+  --color-border-glow: rgba(0, 240, 255, 0.28);
+
+  /* Primary Brand & Functional Accents */
+  --color-primary: #00F0FF;
+  --color-primary-pressed: #00D2E0;
   --color-on-primary: #020817;
-  --color-racer-cyan: #00f0ff;
+  --color-racer-cyan: #00F0FF;
   --color-racer-cyan-subtle: rgba(0, 240, 255, 0.12);
-  --color-racer-blue: #2563eb;
-  --color-racer-blue-light: #3b82f6;
+  --color-racer-blue: #2563EB;
   --color-racer-blue-subtle: rgba(37, 99, 235, 0.15);
-  --color-racer-gold: #f59e0b;
-  --color-racer-gold-light: #fbbf24;
-  --color-racer-gold-subtle: rgba(245, 158, 11, 0.15);
-  --color-racer-green: #10b981;
-  --color-racer-green-subtle: rgba(16, 185, 129, 0.14);
-  --color-danger: #ef4444;
-  --color-danger-subtle: rgba(239, 68, 68, 0.14);
+
+  /* Semantic Trading Signals */
+  --color-positive: #36D399;
+  --color-positive-subtle: rgba(54, 211, 153, 0.14);
+  --color-negative: #F87171;
+  --color-negative-subtle: rgba(248, 113, 113, 0.14);
+  --color-warning: #FBBF24;
+  --color-warning-subtle: rgba(251, 191, 36, 0.14);
+  --color-info: #60A5FA;
+  --color-info-subtle: rgba(96, 165, 250, 0.14);
+  --color-gold: #F59E0B;
+  --color-gold-subtle: rgba(245, 158, 11, 0.15);
 
   /* High-Contrast Human-Readable Typography */
-  --color-text: #f8fafc;
-  --color-text-muted: #94a3b8;
-  --color-text-subtle: #64748b;
+  --color-text: #F2F5F8;
+  --color-text-muted: #96A0AE;
+  --color-text-subtle: #737F8F;
   --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  /* Spacing Scale (4px base) */
+  /* 4px Base Spacing Scale */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -50,20 +57,21 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-7: 32px;
-  --space-8: 48px;
-  --space-9: 64px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
 
-  /* Modern Precision Geometry */
+  /* Precision Mechanical Radii */
   --radius-xs: 3px;
-  --radius-sm: 5px;
-  --radius-md: 7px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 14px;
   --radius-full: 9999px;
 
-  /* Shadows & Depth */
-  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.45), 0 0 1px rgba(59, 130, 246, 0.2);
-  --shadow-elevated: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.12);
+  /* Depth & Elevation */
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.4), 0 0 1px #27303A;
+  --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.08);
   --motion-fast: 120ms cubic-bezier(0.16, 1, 0.3, 1);
   --motion-base: 180ms cubic-bezier(0.16, 1, 0.3, 1);
   --motion-slow: 280ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -80,53 +88,81 @@ body {
   background-color: var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-family);
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.5;
   min-height: 100vh;
   background-image: 
-    radial-gradient(100% 70% at 50% -10%, rgba(37, 99, 235, 0.28) 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-    radial-gradient(circle 500px at 85% 15%, rgba(0, 240, 255, 0.08), transparent 70%);
+    radial-gradient(90% 60% at 50% -10%, rgba(37, 99, 235, 0.18) 0%, rgba(17, 21, 27, 0.6) 50%, rgba(11, 13, 16, 0.98) 100%);
   background-attachment: fixed;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Tabular Telemetry Numbers ────────────────────────────────────────────── */
-.telemetry-num,
-.tabular-num {
+/* ── Typography Utilities ─────────────────────────────────────────────────── */
+.tabular-num,
+.telemetry-num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 
-/* ── HUD Plates & Cards ─────────────────────────────────────────────────── */
-.hud-plate,
-.racer-card {
+.text-positive { color: var(--color-positive) !important; }
+.text-negative { color: var(--color-negative) !important; }
+.text-warning { color: var(--color-warning) !important; }
+.text-info { color: var(--color-info) !important; }
+.text-muted { color: var(--color-text-muted) !important; }
+.text-cyan { color: var(--color-racer-cyan) !important; }
+
+/* ── Cards & Panels ──────────────────────────────────────────────────────── */
+.racer-card,
+.hud-plate {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  transition: border-color var(--motion-fast), background-color var(--motion-fast), transform var(--motion-fast);
-}
-.hud-plate:hover,
-.racer-card:hover {
-  border-color: rgba(0, 240, 255, 0.35);
-  background: var(--color-surface-card);
+  transition: border-color var(--motion-fast), background var(--motion-fast);
 }
 
-/* ── Clean Precision Buttons (Min 44px Interactive Touch Targets) ────────── */
+.racer-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  gap: 12px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-body {
+  padding: 20px;
+}
+
+/* ── Precision Buttons (Minimum 42px Touch Target) ───────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
+  gap: 8px;
   font-family: var(--font-family);
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.3;
   min-height: 42px;
   height: 42px;
-  padding: 0 18px;
+  padding: 0 16px;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
@@ -135,6 +171,7 @@ body {
   white-space: nowrap;
   letter-spacing: 0.01em;
   touch-action: manipulation;
+  user-select: none;
 }
 
 .btn svg {
@@ -143,25 +180,23 @@ body {
   flex-shrink: 0;
 }
 
-/* Primary CTA: Electric Racer Cyan with Deep Contrast Ink */
+/* Primary Execution Button (Laser Cyan with Dark Obsidian Ink) */
 .btn-primary {
   background: var(--color-primary);
   color: var(--color-on-primary);
   font-weight: 700;
   border: 1px solid var(--color-primary);
-  box-shadow: 0 2px 10px rgba(0, 240, 255, 0.25);
 }
 .btn-primary:hover {
   background: var(--color-primary-pressed);
   border-color: var(--color-primary-pressed);
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 240, 255, 0.35);
 }
 .btn-primary:active {
   transform: translateY(0);
 }
 
-/* Secondary: Deep Royal Navy Glass */
+/* Secondary Button (Elevated Surface) */
 .btn-secondary {
   background: var(--color-surface-card);
   color: var(--color-text);
@@ -169,12 +204,12 @@ body {
 }
 .btn-secondary:hover {
   background: var(--color-surface-hover);
-  border-color: rgba(0, 240, 255, 0.4);
+  border-color: var(--color-border-strong);
   color: #ffffff;
   transform: translateY(-1px);
 }
 
-/* Ghost / Transparent */
+/* Ghost Button */
 .btn-ghost {
   background: transparent;
   color: var(--color-text-muted);
@@ -182,33 +217,31 @@ body {
   padding: 0 12px;
 }
 .btn-ghost:hover {
-  color: var(--color-racer-cyan);
-  background: var(--color-racer-cyan-subtle);
-  border-color: rgba(0, 240, 255, 0.2);
+  color: #ffffff;
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
 }
 
-/* Trading Execution Buttons */
+/* Buy & Sell Actions */
 .btn-buy {
-  background: #10b981;
-  color: #ffffff;
+  background: var(--color-positive);
+  color: #020817;
   font-weight: 700;
-  border: 1px solid #10b981;
+  border: 1px solid var(--color-positive);
 }
 .btn-buy:hover {
-  background: #059669;
-  border-color: #059669;
+  background: #2ec48c;
   transform: translateY(-1px);
 }
 
 .btn-sell {
-  background: #ef4444;
+  background: var(--color-negative);
   color: #ffffff;
   font-weight: 700;
-  border: 1px solid #ef4444;
+  border: 1px solid var(--color-negative);
 }
 .btn-sell:hover {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: #e25858;
   transform: translateY(-1px);
 }
 
@@ -228,7 +261,7 @@ body {
   border-radius: var(--radius-md);
 }
 
-/* ── Badges & Chips ──────────────────────────────────────────────────────── */
+/* ── Badges & Status Chips ───────────────────────────────────────────────── */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -239,7 +272,7 @@ body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: 3px 8px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   line-height: 1.2;
 }
 
@@ -249,39 +282,123 @@ body {
   border: 1px solid rgba(0, 240, 255, 0.3);
 }
 
-.badge-blue {
-  background: var(--color-racer-blue-subtle);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.35);
-}
-
-.badge-gold {
-  background: var(--color-racer-gold-subtle);
-  color: var(--color-racer-gold-light);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-}
-
+.badge-positive,
 .badge-green {
-  background: var(--color-racer-green-subtle);
-  color: var(--color-racer-green);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: var(--color-positive-subtle);
+  color: var(--color-positive);
+  border: 1px solid rgba(54, 211, 153, 0.3);
 }
 
-/* ── Universal Navigation Header ─────────────────────────────────────────── */
+.badge-negative,
+.badge-red {
+  background: var(--color-negative-subtle);
+  color: var(--color-negative);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.badge-warning,
+.badge-gold {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.badge-info,
+.badge-blue {
+  background: var(--color-info-subtle);
+  color: var(--color-info);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+/* ── Form Controls & Inputs ──────────────────────────────────────────────── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.form-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.form-input,
+.form-select {
+  height: 42px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: 14px;
+  padding: 0 12px;
+  transition: border-color var(--motion-fast);
+  outline: none;
+  width: 100%;
+}
+
+.form-input:focus,
+.form-select:focus {
+  border-color: var(--color-border-focus);
+}
+
+/* ── Tables & Data Grids ─────────────────────────────────────────────────── */
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13.5px;
+}
+
+.data-table th {
+  background: var(--color-surface-card);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text);
+}
+
+.data-table tr:hover td {
+  background: var(--color-surface-hover);
+}
+
+/* ── Universal Header ─────────────────────────────────────────────────────── */
 .racer-header {
   position: sticky;
   top: 0;
   z-index: 1000;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  background: rgba(4, 9, 22, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(11, 13, 16, 0.94);
   border-bottom: 1px solid var(--color-border);
 }
+
 .header-inner {
-  max-width: 1320px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 0 20px;
-  height: 64px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -294,30 +411,31 @@ body {
   gap: 10px;
   text-decoration: none;
 }
+
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(37, 99, 235, 0.35));
-  border: 1px solid rgba(0, 240, 255, 0.4);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-border-strong);
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
   flex-shrink: 0;
 }
+
 .brand-mark img {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
+
 .brand-title {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
   letter-spacing: 0.02em;
   color: #ffffff;
-  text-transform: uppercase;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -332,7 +450,7 @@ body {
   gap: 12px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -342,14 +460,14 @@ body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-racer-green);
-  box-shadow: 0 0 6px var(--color-racer-green);
+  background: var(--color-positive);
+  box-shadow: 0 0 6px var(--color-positive);
 }
 
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 .nav-item {
   font-size: 13.5px;
@@ -359,13 +477,10 @@ body {
   padding: 6px 12px;
   border-radius: var(--radius-sm);
   transition: all var(--motion-fast);
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 .nav-item:hover {
   color: #ffffff;
-  background: var(--color-surface);
+  background: var(--color-surface-hover);
 }
 .nav-item.active {
   color: var(--color-racer-cyan);
@@ -379,7 +494,7 @@ body {
   gap: 10px;
 }
 
-/* ── Mobile Navigation Drawer & Hamburger ─────────────────────────────────── */
+/* ── Mobile Navigation (Header Toggle, Drawer & Bottom Dock) ─────────────── */
 .mobile-nav-toggle {
   display: none;
   align-items: center;
@@ -388,25 +503,23 @@ body {
   height: 40px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--color-text);
   cursor: pointer;
   padding: 0;
-  transition: all var(--motion-fast);
   z-index: 1002;
 }
-.mobile-nav-toggle:hover,
-.mobile-nav-toggle:active {
-  border-color: var(--color-racer-cyan);
-  color: var(--color-racer-cyan);
+
+.mobile-bottom-dock {
+  display: none;
 }
 
 .mobile-nav-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(3, 7, 18, 0.82);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(11, 13, 16, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   z-index: 9998;
   opacity: 0;
   visibility: hidden;
@@ -423,7 +536,7 @@ body {
   right: 0;
   bottom: 0;
   width: min(320px, 86vw);
-  background: #060e22;
+  background: var(--color-canvas-subtle);
   border-left: 1px solid var(--color-border);
   z-index: 9999;
   transform: translateX(100%);
@@ -477,7 +590,7 @@ body {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   font-size: 14px;
   font-weight: 600;
@@ -496,33 +609,146 @@ body {
   color: var(--color-racer-cyan);
   flex-shrink: 0;
 }
-.mobile-drawer-footer {
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
+
+/* ── Structured Transaction Review Panel (Configure → Review → Execute) ─── */
+.workflow-step-bar {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.workflow-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle);
+}
+.workflow-step.active {
+  color: var(--color-racer-cyan);
+}
+.workflow-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.workflow-step.active .workflow-step-num {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary);
 }
 
-/* ── Mobile Breakpoints ─────────────────────────────────────────────────── */
+.review-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.review-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+}
+.review-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.review-label {
+  color: var(--color-text-muted);
+}
+.review-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #ffffff;
+}
+
+/* ── Mobile Viewports (≤ 900px and ≤ 768px) ──────────────────────────────── */
 @media (max-width: 900px) {
   .nav-links { display: none !important; }
   .telemetry-rail { display: none !important; }
-  .header-inner { padding: 0 14px; height: 58px; }
   .mobile-nav-toggle { display: inline-flex; }
-  .header-actions .btn:not(.btn-primary-mobile) {
-    padding: 0 10px;
-    font-size: 12px;
-    height: 36px;
-    min-height: 36px;
-  }
+  .header-inner { padding: 0 14px; height: 56px; }
 }
 
-@media (max-width: 600px) {
-  .header-actions .btn-ghost {
-    display: none;
+@media (max-width: 768px) {
+  /* Prevent horizontal scroll */
+  html, body {
+    overflow-x: hidden !important;
   }
-  .brand-title {
-    font-size: 16px;
+
+  /* Form inputs touch protection against iOS Safari auto-zoom */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* Show native mobile bottom navigation dock across all pages */
+  .mobile-bottom-dock {
+    display: grid !important;
+    grid-template-columns: repeat(5, 1fr);
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 999;
+    height: calc(58px + env(safe-area-inset-bottom, 10px));
+    padding-bottom: env(safe-area-inset-bottom, 10px);
+    background: rgba(17, 21, 27, 0.96);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--color-border);
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
+  }
+
+  .mobile-dock-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 100%;
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 6px 2px;
+    text-decoration: none;
+    transition: all var(--motion-fast);
+  }
+
+  .mobile-dock-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .mobile-dock-btn span {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .mobile-dock-btn.active {
+    color: var(--color-racer-cyan);
+  }
+
+  /* Add safe-area padding to bottom of page containers */
+  main,
+  .main-viewport,
+  .container {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 16px)) !important;
   }
 }
