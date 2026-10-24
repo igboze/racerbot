@@ -237,21 +237,27 @@ export interface LeaderboardEntry {
 export async function getPointsLeaderboard(limit = 10): Promise<LeaderboardEntry[]> {
   const db = await getDb();
   const r = await db.query(
-    `SELECT pl.user_id, u.username, u.telegram_id,
+    `SELECT pl.user_id,
+            COALESCE(u.subaccount_id, (SELECT address FROM user_wallets WHERE user_id = u.id AND is_active = TRUE LIMIT 1), u.sui_address, u.starknet_address, u.id::text) AS wallet_address,
             SUM(pl.points)::float AS base,
             (u.created_at < $1::timestamptz) AS early
      FROM points_ledger pl
      JOIN users u ON u.id = pl.user_id
-     GROUP BY pl.user_id, u.username, u.telegram_id, u.created_at
+     GROUP BY pl.user_id, u.subaccount_id, u.sui_address, u.starknet_address, u.created_at, u.id
      ORDER BY (SUM(pl.points) * CASE WHEN u.created_at < $1::timestamptz THEN $2::numeric ELSE 1 END) DESC
      LIMIT $3`,
     [POINTS_CONFIG.EARLY_BIRD_CUTOFF.toISOString(), POINTS_CONFIG.EARLY_BIRD_MULT, limit]
   );
-  return r.rows.map((row: any) => ({
-    userId: row.user_id,
-    label: row.username ? `@${row.username}` : `Trader ${String(row.telegram_id).slice(-4)}`,
-    points: Math.round(row.base * (row.early ? POINTS_CONFIG.EARLY_BIRD_MULT : 1)),
-  }));
+  return r.rows.map((row: any) => {
+    const rawWallet = String(row.wallet_address || '').trim();
+    // Show only the first five digits/characters of the user's wallet address (never Telegram usernames)
+    const firstFive = rawWallet ? rawWallet.slice(0, 5) : 'Trader';
+    return {
+      userId: row.user_id,
+      label: firstFive,
+      points: Math.round(row.base * (row.early ? POINTS_CONFIG.EARLY_BIRD_MULT : 1)),
+    };
+  });
 }
 
 /**

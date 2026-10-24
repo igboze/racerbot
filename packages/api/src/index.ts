@@ -372,8 +372,8 @@ async function main(): Promise<void> {
   // Add monitoring routes
   monitoringRoutes(app);
 
-  app.listen(PORT, () => {
-    logger.info('REST server listening', { port: PORT });
+  app.listen(PORT, '0.0.0.0', () => {
+    logger.info('REST server listening', { port: PORT, host: '0.0.0.0' });
   });
 
   // ── Launch bot (Webhook if PUBLIC_URL set, fallback to long polling) ─────

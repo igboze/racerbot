@@ -16,6 +16,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const assetsDir = path.resolve(__dirname, '..', 'packages', 'api', 'assets');
+const rootAssetsDir = path.resolve(__dirname, '..', 'assets');
 const competitionHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'competition.html');
 const bubblemapHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'bubblemap.html');
 const raceralphaHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'raceralpha.html');
@@ -220,9 +222,12 @@ const server = http.createServer(async (req, res) => {
 
   // 1. Static Assets Delivery (/assets/*)
   if (pathname.startsWith('/assets/')) {
-    const fileName = pathname.replace('/assets/', '');
-    const safeName = path.basename(fileName);
-    const filePath = path.join(assetsDir, safeName);
+    const rawName = pathname.replace('/assets/', '');
+    const safeName = path.basename(rawName);
+    let filePath = path.join(assetsDir, safeName);
+    if (!fs.existsSync(filePath)) {
+      filePath = path.join(rootAssetsDir, safeName);
+    }
 
     if (fs.existsSync(filePath)) {
       const ext = path.extname(safeName).toLowerCase();
@@ -2195,9 +2200,9 @@ const PORT = 3000;
 server.on('error', (err) => {
   console.error('Server error:', err);
 });
-server.listen(PORT, () => {
-  console.log(`RACER Main Ecosystem Hub: http://localhost:${PORT}/`);
-  console.log(`RacerAlpha Social Marketplace: http://localhost:${PORT}/alpha`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`RACER Main Ecosystem Hub: http://localhost:${PORT}/ (Local: http://192.168.0.186:${PORT}/)`);
+  console.log(`RacerAlpha Social Marketplace: http://localhost:${PORT}/alpha (Mobile: http://192.168.0.186:${PORT}/alpha)`);
   console.log(`RacerBubble Map: http://localhost:${PORT}/bubblemap`);
   console.log(`The Fleet Terminal: http://localhost:${PORT}/fleet`);
   console.log(`Competition Arena: http://localhost:${PORT}/competition`);

@@ -5778,6 +5778,16 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  bot.command(['points', 'leaderboard'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const view = await buildPointsView(telegramId);
+      await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(getUserFriendlyError(err)).catch(() => {});
+    }
+  });
+
   // ── Helper: Build Holdings view (text + keyboard) ─────────────────────────
   // forceRefresh=false renders from cache (instant paint); forceRefresh=true
   // pulls live pool prices (background reconcile pass).
