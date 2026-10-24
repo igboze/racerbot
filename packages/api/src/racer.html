@@ -145,10 +145,32 @@
     }
 
     /* ── Market Overview Telemetry Strip ─────────────────────────────────── */
+    .promo-banner-strip {
+      background: rgba(17, 21, 27, 0.95);
+      border-bottom: 1px solid var(--color-border);
+      padding: 7px 16px;
+      font-size: 12.5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .promo-banner-badge {
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--color-warning);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
     .market-overview-band {
       background: var(--color-surface-bg);
       border-bottom: 1px solid var(--color-border);
-      padding: 12px 0;
+      padding: 10px 0;
     }
     .market-overview-inner {
       max-width: 1360px;
@@ -163,26 +185,24 @@
     .telemetry-group {
       display: flex;
       align-items: center;
-      gap: 20px;
+      gap: 24px;
       flex-wrap: wrap;
     }
     .telemetry-stat {
       display: flex;
       align-items: baseline;
       gap: 6px;
-      font-size: 12.5px;
+      font-size: 13px;
     }
     .telemetry-lbl {
-      color: var(--color-text-subtle);
-      font-family: 'JetBrains Mono', monospace;
-      text-transform: uppercase;
-      font-size: 11px;
+      color: var(--color-text-muted);
+      font-size: 12px;
       font-weight: 500;
     }
     .telemetry-val {
       color: var(--color-text-main);
-      font-family: 'JetBrains Mono', monospace;
-      font-weight: 700;
+      font-family: var(--font-mono, 'JetBrains Mono', monospace);
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
     }
     .telemetry-val.positive { color: var(--color-positive); }
@@ -192,13 +212,12 @@
     .telemetry-network-pill {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
       background: var(--color-surface);
       border: 1px solid var(--color-border);
       padding: 4px 10px;
       border-radius: 6px;
-      font-size: 11.5px;
-      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
       color: var(--color-text-muted);
     }
     .live-pulse-dot {
@@ -246,19 +265,19 @@
     }
     .screener-title {
       font-size: 15px;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--color-text-main);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.01em;
     }
     .screener-count-badge {
-      font-family: 'JetBrains Mono', monospace;
+      font-family: var(--font-mono, 'JetBrains Mono', monospace);
       font-size: 11.5px;
       color: var(--color-primary);
-      background: rgba(0, 240, 255, 0.1);
+      background: rgba(0, 240, 255, 0.08);
       border: 1px solid rgba(0, 240, 255, 0.2);
       padding: 2px 8px;
       border-radius: 4px;
+      font-weight: 500;
     }
 
     .screener-filters-row {
@@ -286,7 +305,7 @@
       border-radius: 6px;
       color: var(--color-text-muted);
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
       transition: all 0.15s ease;
@@ -314,7 +333,6 @@
       border: 1px solid var(--color-border);
       border-radius: 6px;
       color: var(--color-text-main);
-      font-family: 'JetBrains Mono', monospace;
       font-size: 12.5px;
       padding: 0 10px 0 32px;
       outline: none;
@@ -326,7 +344,7 @@
     .screener-search-icon {
       position: absolute;
       left: 10px;
-      top: 10px;
+      top: 11px;
       color: var(--color-text-subtle);
       pointer-events: none;
     }
@@ -346,12 +364,9 @@
     .token-data-table th {
       background: var(--color-surface-bg);
       padding: 10px 16px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--color-text-subtle);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-text-muted);
       border-bottom: 1px solid var(--color-border);
       white-space: nowrap;
     }
@@ -770,10 +785,10 @@
   <a href="#main-workspace" class="skip-link">Skip to content</a>
 
   <!-- Promo Alert Bar: Active Reward Program -->
-  <div style="background:var(--color-surface-bg); border-bottom:1px solid var(--color-border); padding:8px 16px; font-size:12px; font-family:'JetBrains Mono', monospace; display:flex; align-items:center; justify-content:center; gap:8px; text-align:center;">
-    <span style="background:var(--color-warning); color:#020817; font-weight:800; padding:2px 6px; border-radius:4px; font-size:10px;">ACTIVE ARENA</span>
+  <div class="promo-banner-strip">
+    <span class="promo-banner-badge">Active Arena</span>
     <span style="color:var(--color-text-muted);">2-Week On-Chain Reward Program: Standings tracked via real verified points ledger.</span>
-    <a href="/competition" style="color:var(--color-primary); font-weight:700; text-decoration:underline;">View Standings →</a>
+    <a href="/competition" style="color:var(--color-primary); font-weight:600; text-decoration:none;">View Standings →</a>
   </div>
 
   <!-- Navigation Header (Master Shell) -->
@@ -792,10 +807,10 @@
       <nav class="nav-links">
         <a href="/" class="nav-item active">Overview</a>
         <a href="/bubblemap" class="nav-item">Bubble Map</a>
-        <a href="/alpha" class="nav-item">Alpha &amp; Copy</a>
+        <a href="/alpha" class="nav-item">Private Alpha</a>
         <a href="/fleet" class="nav-item">Fleet Ops</a>
         <a href="/competition" class="nav-item">Arena</a>
-        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item" style="color:var(--color-positive);">Bot TG ↗</a>
+        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item" style="color:var(--color-positive);">Telegram ↗</a>
       </nav>
 
       <!-- Right Header Actions -->
@@ -882,13 +897,13 @@
               <thead>
                 <tr>
                   <th style="width:36px; text-align:center;">★</th>
-                  <th>TOKEN / PAIR</th>
-                  <th>VENUE</th>
-                  <th style="text-align:right;">PRICE (USD)</th>
-                  <th style="text-align:right;">24H CHANGE</th>
-                  <th style="text-align:right;">VOLUME 24H</th>
-                  <th style="text-align:right;">MARKET CAP</th>
-                  <th style="text-align:right;">ACTIONS</th>
+                  <th>Token / Pair</th>
+                  <th>Venue</th>
+                  <th style="text-align:right;">Price (USD)</th>
+                  <th style="text-align:right;">24h Change</th>
+                  <th style="text-align:right;">24h Volume</th>
+                  <th style="text-align:right;">Market Cap</th>
+                  <th style="text-align:right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="home-tokens-tbody">
@@ -1263,9 +1278,49 @@
         const isStarred = watchlist.has(t.address);
         const changeClass = t.change24h >= 0 ? 'positive' : 'negative';
         const changeSign = t.change24h >= 0 ? '+' : '';
-        const priceStr = t.priceUsd < 0.01 ? `$${t.priceUsd.toFixed(6)}` : `$${t.priceUsd.toFixed(4)}`;
-        const mcapStr = t.marketCap > 0 ? (t.marketCap >= 1e6 ? `$${(t.marketCap / 1e6).toFixed(2)}M` : `$${(t.marketCap / 1e3).toFixed(1)}K`) : '—';
-        const volStr = t.volume24h >= 1e6 ? `$${(t.volume24h / 1e6).toFixed(2)}M` : `$${(t.volume24h / 1e3).toFixed(1)}K`;
+        
+        let priceStr = '$0.00';
+        if (t.priceUsd > 0) {
+          if (t.priceUsd >= 1000) {
+            priceStr = '$' + t.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          } else if (t.priceUsd >= 1) {
+            priceStr = '$' + t.priceUsd.toFixed(2);
+          } else if (t.priceUsd >= 0.01) {
+            priceStr = '$' + t.priceUsd.toFixed(4);
+          } else if (t.priceUsd >= 0.0001) {
+            priceStr = '$' + t.priceUsd.toFixed(6);
+          } else {
+            priceStr = '$' + t.priceUsd.toExponential(2);
+          }
+        }
+
+        let mcapStr = '—';
+        if (t.marketCap > 0) {
+          if (t.marketCap >= 1e12) {
+            mcapStr = '$' + (t.marketCap / 1e12).toFixed(2) + 'T';
+          } else if (t.marketCap >= 1e9) {
+            mcapStr = '$' + (t.marketCap / 1e9).toFixed(2) + 'B';
+          } else if (t.marketCap >= 1e6) {
+            mcapStr = '$' + (t.marketCap / 1e6).toFixed(2) + 'M';
+          } else if (t.marketCap >= 1e3) {
+            mcapStr = '$' + (t.marketCap / 1e3).toFixed(1) + 'K';
+          } else {
+            mcapStr = '$' + Math.round(t.marketCap);
+          }
+        }
+
+        let volStr = '—';
+        if (t.volume24h > 0) {
+          if (t.volume24h >= 1e9) {
+            volStr = '$' + (t.volume24h / 1e9).toFixed(2) + 'B';
+          } else if (t.volume24h >= 1e6) {
+            volStr = '$' + (t.volume24h / 1e6).toFixed(2) + 'M';
+          } else if (t.volume24h >= 1e3) {
+            volStr = '$' + (t.volume24h / 1e3).toFixed(1) + 'K';
+          } else {
+            volStr = '$' + Math.round(t.volume24h);
+          }
+        }
 
         return `
           <tr>
@@ -1290,20 +1345,20 @@
               </div>
             </td>
             <td>
-              <span style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--color-text-subtle);">
+              <span style="font-size:12px; color:var(--color-text-subtle);">
                 ${t.venue || t.launchpad}
               </span>
             </td>
-            <td style="text-align:right; font-family:'JetBrains Mono', monospace; font-weight:700;">
+            <td style="text-align:right; font-family:var(--font-mono, monospace); font-weight:600; font-variant-numeric:tabular-nums;">
               ${priceStr}
             </td>
-            <td style="text-align:right; font-family:'JetBrains Mono', monospace; font-weight:700;" class="telemetry-val ${changeClass}">
+            <td style="text-align:right; font-family:var(--font-mono, monospace); font-weight:600; font-variant-numeric:tabular-nums;" class="telemetry-val ${changeClass}">
               ${changeSign}${t.change24h.toFixed(2)}%
             </td>
-            <td style="text-align:right; font-family:'JetBrains Mono', monospace; color:var(--color-text-muted);">
+            <td style="text-align:right; font-family:var(--font-mono, monospace); color:var(--color-text-muted); font-variant-numeric:tabular-nums;">
               ${volStr}
             </td>
-            <td style="text-align:right; font-family:'JetBrains Mono', monospace; color:var(--color-text-muted);">
+            <td style="text-align:right; font-family:var(--font-mono, monospace); color:var(--color-text-muted); font-variant-numeric:tabular-nums;">
               ${mcapStr}
             </td>
             <td style="text-align:right;">
