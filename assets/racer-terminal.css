@@ -817,6 +817,12 @@ tbody tr:hover {
   }
 }
 
+@media (max-width: 768px) {
+  .nav-links {
+    display: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .container,
   .terminal-container,

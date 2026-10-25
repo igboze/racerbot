@@ -868,13 +868,26 @@
        MOBILE FIRST RESPONSIVE ARCHITECTURE (iPhone SE to S24 Ultra & Tablets)
        ═══════════════════════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
+      .racer-header,
       .site-header {
         height: auto;
         min-height: 54px;
-        padding: max(6px, env(safe-area-inset-top, 0px)) 14px 6px;
+        padding: max(4px, env(safe-area-inset-top, 0px)) 14px 4px;
         gap: 8px;
+        width: 100% !important;
+        max-width: 100vw !important;
       }
-      .brand {
+      .nav-links,
+      .network-badge {
+        display: none !important;
+      }
+      .header-inner {
+        padding: 0 !important;
+        height: 54px !important;
+        width: 100% !important;
+      }
+      .brand,
+      .brand-logo-wrap {
         gap: 8px;
       }
       .brand-logo {

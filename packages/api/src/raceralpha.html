@@ -2692,12 +2692,22 @@
 
       /* Table responsive touch scroll */
       .table-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: auto !important;
         -webkit-overflow-scrolling: touch;
         margin: 0 -4px;
+        box-sizing: border-box !important;
       }
 
       .pos-table {
         min-width: 520px;
+      }
+
+      .deposit-tab-btn {
+        font-size: 11.5px !important;
+        padding: 8px 6px !important;
+        gap: 5px !important;
       }
 
       /* Touch target heights for mobile buttons */
@@ -4236,26 +4246,26 @@
   <!-- Universal Cross-Chain & Multi-Chain Deposit Modal (Powered by NEAR Intents) -->
   <div class="modal-backdrop" id="modal-deposit">
     <div class="modal-window modal-wide">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(0,240,255,0.2), rgba(130,106,181,0.2)); border:1px solid rgba(0,240,255,0.4); display:flex; align-items:center; justify-content:center; color:var(--color-racer-cyan);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0; flex:1;">
+          <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(0,240,255,0.2), rgba(130,106,181,0.2)); border:1px solid rgba(0,240,255,0.4); display:flex; align-items:center; justify-content:center; color:var(--color-racer-cyan); flex-shrink:0;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
           </div>
-          <div>
-            <h3 style="font-family:var(--font-display); font-size:18px; font-weight:800; color:#fff;">Cross-Chain Deposit</h3>
-            <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-racer-green); display:flex; align-items:center; gap:4px;">
-              <span class="live-dot" style="width:6px; height:6px;"></span> Powered by NEAR Intents • 37 Blockchains • 205+ Assets
+          <div style="min-width:0;">
+            <h3 style="font-family:var(--font-display); font-size:17px; font-weight:800; color:#fff; margin:0; line-height:1.2;">Cross-Chain Deposit</h3>
+            <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-racer-green); display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+              <span class="live-dot" style="width:6px; height:6px;"></span> Powered by NEAR Intents • 37 Chains
             </div>
           </div>
         </div>
-        <button onclick="closeDepositModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:20px;">✕</button>
+        <button onclick="closeDepositModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:22px; padding:4px; flex-shrink:0; line-height:1;">✕</button>
       </div>
 
       <!-- Tab Selection: Cross-Chain vs Direct NEAR -->
       <div class="deposit-tab-bar">
         <button class="deposit-tab-btn active" id="tab-btn-crosschain" onclick="switchDepositTab('crosschain')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-          <span>Cross-Chain (NEAR Intents)</span>
+          <span>Cross-Chain Intents</span>
         </button>
         <button class="deposit-tab-btn" id="tab-btn-direct" onclick="switchDepositTab('direct')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4267,15 +4277,15 @@
       <div id="panel-crosschain-deposit" style="display:flex; flex-direction:column; gap:16px;">
         <!-- Step 1: Select Chain -->
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span class="deposit-step-label">Step 1 • Select Source Chain (<span id="chain-count-label">34</span>)</span>
-            <input type="text" id="chain-search-input" placeholder="Search chains..." oninput="filterChains()" style="height:26px; font-size:11.5px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; width:130px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <span class="deposit-step-label">Step 1 • Select Chain (<span id="chain-count-label">34</span>)</span>
+            <input type="text" id="chain-search-input" placeholder="Search..." oninput="filterChains()" style="height:26px; font-size:11.5px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; width:110px;">
           </div>
           <div class="deposit-filter-pills">
             <button class="deposit-pill active" onclick="setChainCategoryFilter('popular', this)">Popular</button>
             <button class="deposit-pill" onclick="setChainCategoryFilter('evm', this)">EVM &amp; L2</button>
             <button class="deposit-pill" onclick="setChainCategoryFilter('alt_l1', this)">Alt-L1</button>
-            <button class="deposit-pill" onclick="setChainCategoryFilter('all', this)">All Chains (34)</button>
+            <button class="deposit-pill" onclick="setChainCategoryFilter('all', this)">All (34)</button>
           </div>
           <div class="chain-select-box" id="deposit-chain-grid">
             <!-- Rendered by JS -->
@@ -4284,9 +4294,9 @@
 
         <!-- Step 2: Select Token -->
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span class="deposit-step-label">Step 2 • Select Deposit Token (<span id="token-chain-title">Solana</span>)</span>
-            <input type="text" id="token-search-input" placeholder="Search tokens..." oninput="filterTokens()" style="height:26px; font-size:11.5px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; width:130px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <span class="deposit-step-label">Step 2 • Select Token (<span id="token-chain-title">Solana</span>)</span>
+            <input type="text" id="token-search-input" placeholder="Search..." oninput="filterTokens()" style="height:26px; font-size:11.5px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; width:110px;">
           </div>
           <div class="token-select-list" id="deposit-token-list">
             <!-- Rendered by JS -->
