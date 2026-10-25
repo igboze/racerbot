@@ -1392,6 +1392,12 @@ export async function buildFleetHoldingsView(telegramId: number, forceRefresh = 
   }
 
   const keyboardButtons: any[] = [];
+  // Top row: Refresh at the top so users can refresh fleet holdings immediately
+  keyboardButtons.push([
+    Markup.button.callback('🔄 Refresh Holdings', 'fleet_holdings_refresh'),
+    Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu'),
+  ]);
+
   for (const t of tokenHoldings) {
     const shortKey = getShortTokenKey(t.tokenAddress);
     keyboardButtons.push([
@@ -1401,11 +1407,7 @@ export async function buildFleetHoldingsView(telegramId: number, forceRefresh = 
   }
 
   keyboardButtons.push([
-    Markup.button.callback('🔄 Refresh Holdings & PnL', 'fleet_holdings_refresh'),
-    Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu'),
-  ]);
-  keyboardButtons.push([
-    Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+    Markup.button.callback('🔙 Main Menu', 'menu_home'),
   ]);
 
   const viewResult = { text, keyboard: Markup.inlineKeyboard(keyboardButtons) };
