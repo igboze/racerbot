@@ -2376,8 +2376,18 @@
     @media (max-width: 992px) {
       /* Prevent horizontal scroll & touch highlight */
       html, body {
+        width: 100% !important;
+        max-width: 100vw !important;
         overflow-x: hidden !important;
         -webkit-tap-highlight-color: transparent;
+      }
+
+      body {
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 100vh !important;
+        width: 100% !important;
+        margin: 0 !important;
       }
 
       /* CRITICAL: Prevent iOS Safari auto-zoom on form inputs */
@@ -2388,16 +2398,32 @@
       /* Hide desktop sidebar on mobile devices */
       .sidebar {
         display: none !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: none !important;
+        pointer-events: none !important;
       }
 
       .app-layout {
+        display: flex !important;
         flex-direction: column !important;
         width: 100% !important;
+        max-width: 100vw !important;
+        min-width: 0 !important;
+        flex: 1 0 auto !important;
+        box-sizing: border-box !important;
       }
 
       /* Sticky Mobile Top App Bar */
       .mobile-top-bar {
-        display: flex;
+        display: flex !important;
+        width: 100% !important;
+        max-width: 100vw !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
         align-items: center;
         justify-content: space-between;
         position: sticky;
@@ -2726,14 +2752,15 @@
 
       /* Fixed Mobile Bottom Navigation Dock */
       .mobile-bottom-dock {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        align-items: center;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 999;
+        display: grid !important;
+        grid-template-columns: repeat(5, 1fr) !important;
+        align-items: center !important;
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 1000 !important;
+        pointer-events: auto !important;
         height: calc(62px + env(safe-area-inset-bottom, 10px));
         padding-bottom: env(safe-area-inset-bottom, 10px);
         background: rgba(11, 14, 19, 0.96);
@@ -2758,6 +2785,9 @@
         transition: all 0.16s ease;
         position: relative;
         text-decoration: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        pointer-events: auto;
       }
 
       .mobile-dock-btn svg {

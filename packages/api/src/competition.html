@@ -898,7 +898,7 @@
         font-size: 12px;
       }
       .container {
-        padding: 20px 14px calc(48px + env(safe-area-inset-bottom, 0px));
+        padding: 20px 14px calc(80px + env(safe-area-inset-bottom, 16px));
       }
       .hero-h1 {
         font-size: clamp(22px, 6.5vw, 32px);
@@ -2102,6 +2102,30 @@
     window.addEventListener('racer:profile-updated', updateModalUI);
     document.addEventListener('DOMContentLoaded', updateModalUI);
   </script>
+
+  <!-- Universal Bottom Navigation Dock for Mobile -->
+  <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+    <a href="/" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      <span>Home</span>
+    </a>
+    <a href="/bubblemap" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+      <span>Explore</span>
+    </a>
+    <a href="/alpha" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+      <span>Alpha</span>
+    </a>
+    <a href="/fleet" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      <span>Fleet</span>
+    </a>
+    <a href="/competition" class="mobile-dock-btn active">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
+      <span>Arena</span>
+    </a>
+  </nav>
 
   <!-- Universal Mobile Navigation Drawer -->
   <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileNav(false)"></div>

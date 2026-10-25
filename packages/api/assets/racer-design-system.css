@@ -547,11 +547,13 @@ body {
   z-index: 9998;
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transition: opacity 0.25s ease, visibility 0.25s ease;
 }
 .mobile-nav-backdrop.open {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
 }
 
 .mobile-nav-drawer {
@@ -723,13 +725,14 @@ body {
   /* Show native mobile bottom navigation dock across all pages */
   .mobile-bottom-dock {
     display: grid !important;
-    grid-template-columns: repeat(5, 1fr);
-    align-items: center;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 999;
+    grid-template-columns: repeat(5, 1fr) !important;
+    align-items: center !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 1000 !important;
+    pointer-events: auto !important;
     height: calc(58px + env(safe-area-inset-bottom, 10px));
     padding-bottom: env(safe-area-inset-bottom, 10px);
     background: rgba(17, 21, 27, 0.96);
@@ -739,35 +742,42 @@ body {
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
   }
 
-  .mobile-dock-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    height: 100%;
-    background: transparent;
-    border: none;
-    color: var(--color-text-muted);
-    cursor: pointer;
-    padding: 6px 2px;
-    text-decoration: none;
-    transition: all var(--motion-fast);
+  .mobile-dock-btn,
+  .mobile-dock-item {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 3px !important;
+    height: 100% !important;
+    background: transparent !important;
+    border: none !important;
+    color: var(--color-text-muted) !important;
+    cursor: pointer !important;
+    padding: 6px 2px !important;
+    text-decoration: none !important;
+    transition: all var(--motion-fast) !important;
+    -webkit-tap-highlight-color: transparent !important;
+    touch-action: manipulation !important;
+    pointer-events: auto !important;
   }
 
-  .mobile-dock-btn svg {
-    width: 18px;
-    height: 18px;
+  .mobile-dock-btn svg,
+  .mobile-dock-item svg {
+    width: 18px !important;
+    height: 18px !important;
   }
 
-  .mobile-dock-btn span {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
+  .mobile-dock-btn span,
+  .mobile-dock-item span {
+    font-size: 10.5px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em !important;
   }
 
-  .mobile-dock-btn.active {
-    color: var(--color-racer-cyan);
+  .mobile-dock-btn.active,
+  .mobile-dock-item.active {
+    color: var(--color-racer-cyan) !important;
   }
 
   /* Add safe-area padding to bottom of page containers */
