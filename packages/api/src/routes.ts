@@ -387,12 +387,14 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     const upgraded = await ensureUserAllWallets(user).catch(() => null);
     if (upgraded) user = upgraded;
     subaccount = user.subaccount_id;
+    suiAddress = user.sui_address || '';
+    starknetAddress = user.starknet_address || '';
     try {
       const b = await getUserBalances(telegramId, forceRefresh);
       nearBalFormatted = b.totalNearFormatted;
-      suiAddress = b.suiAddress || '';
+      suiAddress = b.suiAddress || user.sui_address || '';
       suiBalFormatted = b.suiBalanceFormatted || '0';
-      starknetAddress = b.starknetAddress || '';
+      starknetAddress = b.starknetAddress || user.starknet_address || '';
       strkBalFormatted = b.strkBalanceFormatted || '0';
       ethBalFormatted = b.ethBalanceFormatted || '0';
 
@@ -416,8 +418,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
     `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
     (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n` : '') +
-    `💰 Total: <b>${totalUsdStr}</b>\n` +
-    `📍 <code>${subaccount}</code>`;
+    `💰 Total: <b>${totalUsdStr}</b>\n\n` +
+    `📍 NEAR: <code>${subaccount}</code>` +
+    (suiAddress ? `\n💧 SUI: <code>${suiAddress}</code>` : '') +
+    (starknetAddress ? `\n✨ STRK: <code>${starknetAddress}</code>` : '');
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -438,21 +442,13 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
     [
       cb('🏎️ RaceFleet', 'racefleet_menu', 'success'),
-      cb('🎁 RaceDrop', 'racedrop_start', 'primary'),
-    ],
-    [
       cb('🏆 Points', 'menu_points', 'success'),
-      cb('📢 Alerts', 'menu_buyalerts', 'primary'),
     ],
     [
       cb('⚙️ Settings', 'menu_settings', 'primary'),
-      cb('🔑 Export Key', 'export_prompt'),
     ],
     [
-      cb('🔄 Rotate Key', 'rotate_prompt'),
       Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
-    ],
-    [
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
@@ -600,10 +596,10 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     (Number(b.wrapNearFormatted) > 0.0001 ? `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n` : '') +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n` +
     (b.starknetAddress ? `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n` : '') +
-    `💰 Total: <b>${totalUsdStr}</b>\n` +
+    `💰 Total: <b>${totalUsdStr}</b>\n\n` +
     `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>` +
     (b.suiAddress ? `\n💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>` : '') +
-    (b.starknetAddress ? `\n✨ Starknet: <code>${escapeHtml(b.starknetAddress)}</code>` : '');
+    (b.starknetAddress ? `\n✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>` : '');
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -1772,10 +1768,15 @@ export function buildSettingsDashboard(user: UserRecord) {
       cb('✏️ Slippage', 'prompt:custom_slippage', 'primary'),
     ],
     [
-      cb('🔑 Export Key', 'export_prompt', 'primary'),
-      cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
+      cb('📢 Buy Alerts', 'menu_buyalerts', 'primary'),
+      cb('🎁 RaceDrop', 'racedrop_start', 'primary'),
     ],
     [
+      cb('💳 Wallets', 'wallets_menu', 'primary'),
+      cb('🔑 Export Key', 'export_prompt', 'primary'),
+    ],
+    [
+      cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
       cb('🔙 Main Menu', 'menu_home', 'primary'),
     ],
     [
@@ -3587,7 +3588,10 @@ export function setupRoutes(bot: Telegraf): void {
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.url('➕ Add to Group', addToGroupUrl)],
       [Markup.button.url('📣 Add to Channel', addToChannelUrl)],
-      [cb('🔙 Menu', 'menu_home', 'primary')],
+      [
+        cb('⚙️ Settings', 'menu_settings', 'primary'),
+        cb('🔙 Main Menu', 'menu_home', 'primary'),
+      ],
     ]);
 
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {

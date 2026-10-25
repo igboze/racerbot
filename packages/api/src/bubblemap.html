@@ -1450,7 +1450,7 @@
 
       /* Non-Colliding Safe-Area Floating Controls */
       #quick-buy-bar {
-        bottom: max(14px, calc(10px + env(safe-area-inset-bottom, 0px)));
+        bottom: calc(68px + env(safe-area-inset-bottom, 10px)) !important;
         left: 50%;
         transform: translateX(-50%);
         padding: 3px 6px 3px 10px;
@@ -1468,7 +1468,7 @@
       }
 
       #canvas-hud {
-        bottom: max(58px, calc(52px + env(safe-area-inset-bottom, 0px)));
+        bottom: calc(112px + env(safe-area-inset-bottom, 10px)) !important;
         left: 10px;
         gap: 6px;
         z-index: 25;
@@ -1486,7 +1486,7 @@
       }
 
       #view-controls {
-        bottom: max(58px, calc(52px + env(safe-area-inset-bottom, 0px)));
+        bottom: calc(112px + env(safe-area-inset-bottom, 10px)) !important;
         right: 10px;
         z-index: 25;
       }
@@ -1504,12 +1504,12 @@
         right: 0;
         bottom: 0;
         width: 100%;
-        max-height: 76vh;
+        max-height: 78vh;
         border-radius: 20px 20px 0 0;
         transform: translateY(105%);
         transition: transform 0.32s var(--ease-out-expo), max-height 0.3s ease;
         box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.9);
-        z-index: 50;
+        z-index: 1005;
       }
       #inspector-drawer.open { transform: translateY(0); }
       #inspector-drawer.expanded { max-height: 92vh; }
@@ -1525,7 +1525,7 @@
       }
 
       .inspector-footer {
-        padding: 10px 16px calc(10px + max(10px, env(safe-area-inset-bottom, 0px))) 16px;
+        padding: 10px 16px calc(76px + env(safe-area-inset-bottom, 16px)) 16px !important;
       }
 
       /* Modals Responsive */
