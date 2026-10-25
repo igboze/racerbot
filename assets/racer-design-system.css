@@ -783,7 +783,55 @@ body {
   /* Add safe-area padding to bottom of page containers */
   main,
   .main-viewport,
-  .container {
+  .container,
+  .terminal-container,
+  .home-workspace-container {
     padding-bottom: calc(72px + env(safe-area-inset-bottom, 16px)) !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Universal Native Mobile Modal & Sheet Alignment */
+  .modal-backdrop,
+  .racer-modal-backdrop,
+  .modal-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    z-index: 10000 !important;
+    overflow: hidden !important;
+  }
+
+  .modal-window,
+  .modal-window.modal-wide,
+  .racer-modal-card,
+  .modal-card {
+    border-radius: 22px 22px 0 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: 88vh !important;
+    max-height: 88dvh !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 20px 16px calc(28px + env(safe-area-inset-bottom, 16px)) !important;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9) !important;
+    border-bottom: none !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+  }
+
+  /* Table & Content Horizontal Containment */
+  .table-container,
+  .table-responsive,
+  .table-responsive-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    box-sizing: border-box !important;
   }
 }
+
