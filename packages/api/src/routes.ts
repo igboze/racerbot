@@ -421,7 +421,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const keyboard = Markup.inlineKeyboard([
     [
-      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
+      cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
     ],
     [
@@ -437,22 +437,22 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('📈 PnL', 'menu_pnl', 'primary'),
     ],
     [
-      cb('🏎️ RaceFleet (Beta)', 'racefleet_menu', 'success'),
+      cb('🏎️ RaceFleet', 'racefleet_menu', 'success'),
+      cb('🎁 RaceDrop', 'racedrop_start', 'primary'),
+    ],
+    [
       cb('🏆 Points', 'menu_points', 'success'),
+      cb('📢 Alerts', 'menu_buyalerts', 'primary'),
     ],
     [
       cb('⚙️ Settings', 'menu_settings', 'primary'),
-      cb('📢 Buy Alerts', 'menu_buyalerts', 'primary'),
-    ],
-    [
-      cb('🎁 Create RaceDrop', 'racedrop_start', 'primary'),
       cb('🔑 Export Key', 'export_prompt'),
     ],
     [
       cb('🔄 Rotate Key', 'rotate_prompt'),
+      Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
     ],
     [
-      Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
@@ -562,7 +562,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
   const buttons: any[] = [
     [
-      cb('📥 Deposit (37 Chains)', 'menu_multichain_deposit', 'success'),
+      cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
       cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
     ],
     [
@@ -585,7 +585,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     cb('🔑 Export Key', 'export_prompt', 'primary'),
   ]);
   buttons.push([
-    cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+    cb('🔙 Main Menu', 'menu_home', 'primary'),
   ]);
 
   buttons.push([
@@ -1768,15 +1768,15 @@ export function buildSettingsDashboard(user: UserRecord) {
       cb(`${buyAmountsStr === '10, 25, 50' ? '✓ ' : ''}10, 25, 50`, 'set:buy_amounts:10,25,50', 'primary'),
     ],
     [
-      cb('💰 Custom Buy Buttons', 'prompt:custom_buy_amounts', 'success'),
-      cb('✏️ Custom Slippage', 'prompt:custom_slippage', 'primary'),
+      cb('💰 Custom Buys', 'prompt:custom_buy_amounts', 'success'),
+      cb('✏️ Slippage', 'prompt:custom_slippage', 'primary'),
     ],
     [
-      cb('🔑 Export Private Key', 'export_prompt', 'primary'),
+      cb('🔑 Export Key', 'export_prompt', 'primary'),
       cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
     ],
     [
-      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+      cb('🔙 Main Menu', 'menu_home', 'primary'),
     ],
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -1851,17 +1851,15 @@ export async function buildSnipeDashboard(user: UserRecord) {
     ...cancelButtons,
     [
       cb(
-        autoBuy ? 'Auto-Buy Launches: 🟢 Enabled' : 'Auto-Buy Launches: 🔴 Disabled',
+        autoBuy ? 'Auto-Buy: 🟢 ON' : 'Auto-Buy: 🔴 OFF',
         'set:toggle_auto_buy',
         autoBuy ? 'success' : 'danger'
       ),
+      cb(`📋 Orders (${activeOrders.length})`, 'snipe_orders', 'primary'),
     ],
     [
       cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'),
-      cb('👤 Snipe by Dev', 'snipe_dev_start', 'success'),
-    ],
-    [
-      cb(`📋 My Snipe Orders (${activeOrders.length})`, 'snipe_orders', 'primary'),
+      cb('👤 Snipe Dev', 'snipe_dev_start', 'success'),
     ],
     [
       cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
@@ -1887,7 +1885,7 @@ export async function buildSnipeDashboard(user: UserRecord) {
       cb('✏️ Custom Max Mcap', 'prompt:custom_max_mcap', 'primary'),
     ],
     [
-      cb('🔙 Back to Main Menu', 'menu_home', 'primary'),
+      cb('🔙 Main Menu', 'menu_home', 'primary'),
     ],
     [
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -5730,9 +5728,14 @@ export function setupRoutes(bot: Telegraf): void {
     let positions: PositionRecord[] = await getOpenPositions(user.id).catch(() => []);
 
     const emptyKeyboard = Markup.inlineKeyboard([
-      [cb('🔄 Refresh', 'refresh_holdings:0', 'primary')],
-      [cb('🔙 Back', 'menu_home', 'primary')],
-      [Markup.button.callback('➕ Import Token', 'import_token_prompt')],
+      [
+        cb('🔄 Refresh', 'refresh_holdings:0', 'primary'),
+        cb('➕ Import', 'import_token_prompt', 'primary'),
+      ],
+      [
+        cb('💳 Wallet', 'menu_wallet', 'primary'),
+        cb('🔙 Main Menu', 'menu_home', 'primary'),
+      ],
       [
         Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
         Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
@@ -5988,8 +5991,9 @@ export function setupRoutes(bot: Telegraf): void {
         emoji = '⚪';
       }
 
-      const rawLabel = `${emoji} ${displayLabel} (${pnlDisplay})`;
-      const cappedLabel = rawLabel.length > 28 ? `${rawLabel.slice(0, 27)}…` : rawLabel;
+      const compactSym = displayLabel.length > 8 ? `${displayLabel.slice(0, 7)}…` : displayLabel;
+      const rawLabel = `${emoji} ${compactSym} (${pnlDisplay})`;
+      const cappedLabel = rawLabel.length > 20 ? `${rawLabel.slice(0, 19)}…` : rawLabel;
 
       return {
         pos,
@@ -6010,8 +6014,8 @@ export function setupRoutes(bot: Telegraf): void {
       return { msg: emptyMsg, keyboard: emptyKeyboard };
     }
 
-    // Pagination: 6 tokens per page (1 token per row for clear, comfortable reading)
-    const PAGE_SIZE = 6;
+    // Pagination: 8 tokens per page (2 per row = 4 rows max for clean, non-busy screen)
+    const PAGE_SIZE = 8;
     const totalPositions = filteredPositions.length;
     const totalPages = Math.max(1, Math.ceil(totalPositions / PAGE_SIZE));
     const currentPage = Math.min(Math.max(0, page), totalPages - 1);
@@ -6019,11 +6023,23 @@ export function setupRoutes(bot: Telegraf): void {
     const pageItems = filteredPositions.slice(startIdx, startIdx + PAGE_SIZE);
 
     const buttons: any[] = [];
-    for (const item of pageItems) {
-      buttons.push([cb(item.cappedLabel, `token_detail:${item.pos.id}`, item.pnlStyle)]);
+
+    // 1. REFRESH & ACTION BAR AT THE VERY TOP — users see and tap refresh immediately!
+    buttons.push([
+      Markup.button.callback('🔄 Refresh', `refresh_holdings:${currentPage}`),
+      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
+    ]);
+
+    // 2. TOKEN HOLDINGS GRID (2 per row — slim, dual-column, not covering whole screen width per token)
+    for (let i = 0; i < pageItems.length; i += 2) {
+      const row: any[] = [cb(pageItems[i].cappedLabel, `token_detail:${pageItems[i].pos.id}`, pageItems[i].pnlStyle)];
+      if (i + 1 < pageItems.length) {
+        row.push(cb(pageItems[i + 1].cappedLabel, `token_detail:${pageItems[i + 1].pos.id}`, pageItems[i + 1].pnlStyle));
+      }
+      buttons.push(row);
     }
 
-    // Pagination navigation row
+    // 3. PAGINATION (if multiple pages)
     if (totalPages > 1) {
       const navRow: any[] = [];
       if (currentPage > 0) {
@@ -6046,12 +6062,10 @@ export function setupRoutes(bot: Telegraf): void {
       `💰 Total: \`${totalUsdDisplay}\`\n\n` +
       `_Tap a token below to view details & trade._`;
 
+    // 4. NAVIGATION
     buttons.push([
-      Markup.button.callback('🔄 Refresh', `refresh_holdings:${currentPage}`),
-      Markup.button.callback('➕ Import Token', 'import_token_prompt'),
-    ]);
-    buttons.push([
-      Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
+      cb('💳 Wallet', 'menu_wallet', 'primary'),
+      cb('🔙 Main Menu', 'menu_home', 'primary'),
     ]);
     buttons.push([
       Markup.button.url('💬 Community', 'https://t.me/racerbot_community'),
@@ -6530,14 +6544,15 @@ export function setupRoutes(bot: Telegraf): void {
       // Buy buttons (Green 🟢)
       const detailBuyAmounts = parseBuyAmounts(user?.custom_buy_amounts);
       buttons.push(detailBuyAmounts.map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')));
-      buttons.push([cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')]);
-
-      // Sell Custom & Initial buttons
-      const sellSpecialRow: any[] = [cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger')];
+      
+      const customTradeRow: any[] = [
+        cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success'),
+        cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger'),
+      ];
       if (initialInvestment > 0) {
-        sellSpecialRow.push(cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'));
+        customTradeRow.push(cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'));
       }
-      buttons.push(sellSpecialRow);
+      buttons.push(customTradeRow);
 
       if (!isSuiPos) {
         buttons.push([
@@ -6575,7 +6590,7 @@ export function setupRoutes(bot: Telegraf): void {
           const sym = symbol !== '???' ? symbol : 'TOKEN';
           const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
           const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
-          buttons.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
+          buttons.push([Markup.button.url('📤 Share & Earn 5%', tgShareUrl)]);
         } catch (err: any) {
           console.warn('[token_detail] Failed to generate share link:', err?.message);
         }
