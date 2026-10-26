@@ -14,25 +14,25 @@
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <script src="/assets/racer-config.js"></script>
   <link rel="stylesheet" href="/assets/racer-design-system.css">
   <style>
     /* ── Master RACER Design System (UI/UX Pro Max v2.0) ───────────────────────── */
     :root {
       /* High-Octane Laser Cyan Primary CTA + Pit-Wall Signals */
-      --color-primary: #00f0ff;
-      --color-primary-dark: #00d2e0;
-      --color-racer-blue: #2563eb;
-      --color-racer-blue-light: #3b82f6;              /* Laser Cyan Primary CTA */
-      --color-primary-hover: #00d2e0;
+      --color-primary: #6ACCDC;
+      --color-primary-dark: #8BD9E6;
+      --color-racer-blue: #7860A9;
+      --color-racer-blue-light: #A992D6;              /* Laser Cyan Primary CTA */
+      --color-primary-hover: #8BD9E6;
       --color-on-primary: #08090b;
       --color-canvas-dark: #08090b;          /* Obsidian Pit-Wall Canvas */
-      --color-canvas: #030712;
-      --color-surface-1: #08142c;            /* Anodized Carbon Base Surface */
-      --color-surface-2: #0b1a38;            /* Elevated Telemetry HUD Surface */
-      --color-surface-3: rgba(0, 240, 255, 0.25); /* Border & Glow */
-      --color-surface-light: #10234a;
+      --color-canvas: #0F1320;
+      --color-surface-1: #161B2C;            /* Anodized Carbon Base Surface */
+      --color-surface-2: #1D2338;            /* Elevated Telemetry HUD Surface */
+      --color-surface-3: rgba(106, 204, 220, 0.25); /* Border & Glow */
+      --color-surface-light: #232A42;
       --color-surface-sand: #0f1217;
 
       /* Typography & Ink Ladder */
@@ -40,19 +40,19 @@
       --color-ink-strong: #ffffff;
       --color-ink-soft: #c8d3e8;
       --color-ink-muted: #8b949e;            /* 5.8:1 WCAG AA compliant */
-      --color-ink-tertiary: #00f0ff;
-      --color-hairline: rgba(59, 130, 246, 0.2);
-      --color-hairline-light: rgba(0, 240, 255, 0.25);
-      --color-border: rgba(59, 130, 246, 0.22);
+      --color-ink-tertiary: #6ACCDC;
+      --color-hairline: #2A3149;
+      --color-hairline-light: rgba(106, 204, 220, 0.25);
+      --color-border: #2A3149;
       --color-shadow: rgba(0, 0, 0, 0.7);
 
       /* Racer Functional Accents */
-      --color-racer-cyan: #00f0ff;
-      --color-racer-cyan-glow: rgba(0, 240, 255, 0.28);
-      --color-racer-violet: #826ab5;
-      --color-racer-purple: #826ab5;
-      --color-racer-green: #00e676;
-      --color-gold: #ffb703;
+      --color-racer-cyan: #6ACCDC;
+      --color-racer-cyan-glow: rgba(106, 204, 220, 0.28);
+      --color-racer-violet: #7860A9;
+      --color-racer-purple: #7860A9;
+      --color-racer-green: #34D399;
+      --color-gold: #F0AD4E;
       --color-silver: #c8d3e8;
       --color-bronze: #d97706;
 
@@ -97,7 +97,7 @@
     html, body {
       background-color: var(--color-canvas);
       background-image:
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 240, 255, 0.05), transparent 70%),
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(106, 204, 220, 0.05), transparent 70%),
         linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
         linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
       background-size: 100% 100%, 52px 52px, 52px 52px;
@@ -119,7 +119,7 @@
       content: "";
       position: fixed;
       inset: 0;
-      background: radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.04) 0%, transparent 60%);
+      background: radial-gradient(circle at 50% 0%, rgba(106, 204, 220, 0.04) 0%, transparent 60%);
       pointer-events: none;
       z-index: 0;
     }
@@ -202,7 +202,7 @@
       flex-shrink: 0;
     }
 
-    /* Adyen Buttons (strictly 6px radius, Mint #00d16a voltage) */
+    /* Adyen Buttons (strictly 6px radius, Mint #34D399 voltage) */
     .btn-adyen-primary {
       display: inline-flex;
       align-items: center;
@@ -217,7 +217,7 @@
       font-weight: 500;
       letter-spacing: 0;
       border-radius: var(--radius-md); /* 8px */
-      box-shadow: 0 0 20px rgba(86, 69, 212, 0.35);
+      box-shadow: 0 0 20px rgba(120, 96, 169, 0.35);
       border: none;
       cursor: pointer;
       white-space: nowrap;
@@ -968,7 +968,7 @@
     </div>
   </header>
 
-  <div class="container">
+  <div class="container" id="main" tabindex="-1">
     
     <!-- Adyen Signature Monospace Eyebrow with 8px Square Indicator Dot -->
     <div class="mono-eyebrow-strip">
@@ -978,7 +978,7 @@
 
     <!-- Hero Heading (Gradient Title + Editorial Period) -->
     <h1 class="hero-h1">
-      2-Week <span style="color:var(--color-primary); background:linear-gradient(135deg, #00f0ff 0%, #60a5fa 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">Reward Program</span> &amp; Arena
+      2-Week <span style="color:var(--color-primary); background:linear-gradient(135deg, #6ACCDC 0%, #A992D6 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">Reward Program</span> &amp; Arena
     </h1>
 
     <p class="hero-lead">
@@ -1439,7 +1439,7 @@
       navigator.clipboard.writeText(txt).then(() => {
         const orig = btn.innerText;
         btn.innerText = '';
-        btn.style.color = '#00d16a';
+        btn.style.color = '#34D399';
         setTimeout(() => {
           btn.innerText = orig;
           btn.style.color = '';
@@ -1578,7 +1578,7 @@
       if (statusEl) {
         if (data.status === 'active' || currentMcap >= targetMcap) {
           statusEl.innerText = 'Active Sprint';
-          statusEl.style.color = '#00d16a';
+          statusEl.style.color = '#34D399';
         } else {
           statusEl.innerText = 'Pending Target ($29K)';
           statusEl.style.color = '#f59e0b';
@@ -1690,7 +1690,7 @@
     <div class="racer-modal-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
         <div style="display:flex; align-items:center; gap:8px;">
-          <span style="width:8px; height:8px; background:#00d16a; display:inline-block;"></span>
+          <span style="width:8px; height:8px; background:#34D399; display:inline-block;"></span>
           <span style="font-family:var(--font-mono); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:#fff;">RacerBot Unified Connect</span>
         </div>
         <button onclick="closeConnectModal()" style="background:none; border:none; color:#8c959d; cursor:pointer; font-size:20px; line-height:1;">&times;</button>
@@ -1704,8 +1704,8 @@
 
         <div style="background:#1a2b3b; border:1px solid #2f3e4d; border-radius:6px; padding:16px; margin-bottom:16px; text-align:center;">
           <div id="pairing-spinner" style="display:none; margin-bottom:12px;">
-            <span style="display:inline-block; width:28px; height:28px; border:3px solid rgba(0,209,106,0.2); border-top-color:#00d16a; border-radius:50%; animation:spin 0.8s linear infinite;"></span>
-            <div style="font-size:13px; color:#00d16a; font-weight:500; margin-top:8px;">Waiting for Telegram confirmation...</div>
+            <span style="display:inline-block; width:28px; height:28px; border:3px solid rgba(0,209,106,0.2); border-top-color:#34D399; border-radius:50%; animation:spin 0.8s linear infinite;"></span>
+            <div style="font-size:13px; color:#34D399; font-weight:500; margin-top:8px;">Waiting for Telegram confirmation...</div>
             <div style="font-size:11.5px; color:#8c959d; margin-top:4px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
           </div>
           <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-adyen-primary" style="width:100%; height:44px; font-size:14px; justify-content:center;">
@@ -1719,8 +1719,8 @@
         <div style="background:#1a2b3b; border:1px solid rgba(0,209,106,0.3); border-radius:6px; padding:14px; margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <span style="font-size:12px; color:#8c959d;">Telegram Account</span>
-            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#00d16a; font-weight:600; background:rgba(0,209,106,0.1); padding:2px 6px; border-radius:4px;">
-              <span style="width:5px; height:5px; border-radius:50%; background:#00d16a;"></span> CONNECTED
+            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#34D399; font-weight:600; background:rgba(0,209,106,0.1); padding:2px 6px; border-radius:4px;">
+              <span style="width:5px; height:5px; border-radius:50%; background:#34D399;"></span> CONNECTED
             </span>
           </div>
           <div style="font-weight:600; font-size:15px; color:#fff;" id="linked-username">@user</div>
@@ -1861,7 +1861,7 @@
       opacity: 1;
     }
     .racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
-    .racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+    .racer-toast.success { background: rgba(52, 211, 153, 0.15); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.4); }
     .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
   </style>
 
@@ -1915,6 +1915,7 @@
       const unlinkedDiv = document.getElementById('modal-state-unlinked');
       const linkedDiv = document.getElementById('modal-state-linked');
       const label = document.getElementById('header-connect-label');
+      const headerBtn = document.getElementById('header-connect-btn');
       const depositBtn = document.getElementById('header-deposit-btn');
       if (depositBtn) {
         depositBtn.style.display = (isAuth || nearWallet) ? 'inline-flex' : 'none';
@@ -1930,8 +1931,8 @@
         if (sElem) sElem.textContent = user?.subaccountId || (nearWallet ? nearWallet : 'subaccount.near');
         if (label) label.textContent = '● ' + displayHandle;
         if (headerBtn) {
-          headerBtn.style.background = 'rgba(86, 69, 212, 0.2)';
-          headerBtn.style.borderColor = 'rgba(86, 69, 212, 0.4)';
+          headerBtn.style.background = 'rgba(120, 96, 169, 0.2)';
+          headerBtn.style.borderColor = 'rgba(120, 96, 169, 0.4)';
           headerBtn.style.color = '#ffffff';
         }
       } else {
@@ -1989,7 +1990,7 @@
       const status = document.getElementById('wallet-link-status');
       const accountId = input ? input.value.trim() : '';
       if (!accountId) {
-        if (status) { status.style.color = '#ff6b6b'; status.textContent = 'Please enter an account ID.'; }
+        if (status) { status.style.color = '#FF6B73'; status.textContent = 'Please enter an account ID.'; }
         return;
       }
 
@@ -1997,13 +1998,13 @@
       try {
         await window.RacerConnect.linkSelectorAccount(accountId, 'NEAR Wallet Selector');
         if (status) {
-          status.style.color = '#00d16a';
+          status.style.color = '#34D399';
           status.textContent = ' ' + accountId + ' linked successfully and active in Telegram!';
         }
         if (input) input.value = '';
       } catch (err) {
         if (status) {
-          status.style.color = '#ff6b6b';
+          status.style.color = '#FF6B73';
           status.textContent = 'Error: ' + (err.message || 'Failed to link wallet');
         }
       }

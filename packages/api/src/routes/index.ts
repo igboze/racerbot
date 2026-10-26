@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import path from 'path';
 import fs from 'fs';
+import zlib from 'zlib';
+import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { getTokenInfo, publishSwap } from '../wallet.js';
 import {
@@ -293,6 +295,61 @@ router.post('/auth/wallet-login', async (req, res) => {
   }
 });
 
+
+// ── Fast HTML delivery ────────────────────────────────────────────────────────
+// The web app pages are large (raceralpha.html is ~340 KB) and were served
+// with `no-store` and no compression, so every visit re-downloaded the full
+// file. Pages are now gzipped once (cached per file mtime) and served with
+// an ETag + `no-cache`, so browsers revalidate and get a 304 when unchanged.
+// Deploys still show up immediately because the ETag changes with the file.
+const htmlGzipCache = new Map<string, { mtimeMs: number; raw: Buffer; gz: Buffer; etag: string }>();
+
+function acceptsGzip(res: import('express').Response): boolean {
+  const ae = String((res as any).req?.headers?.['accept-encoding'] || '');
+  return /\bgzip\b/i.test(ae);
+}
+
+export function sendStaticHtml(res: import('express').Response, file: string): void {
+  try {
+    const stat = fs.statSync(file);
+    let entry = htmlGzipCache.get(file);
+    if (!entry || entry.mtimeMs !== stat.mtimeMs) {
+      const raw = fs.readFileSync(file);
+      const gz = zlib.gzipSync(raw, { level: 9 });
+      const etag = `"${createHash('sha1').update(raw).digest('base64url').slice(0, 20)}"`;
+      entry = { mtimeMs: stat.mtimeMs, raw, gz, etag };
+      htmlGzipCache.set(file, entry);
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('ETag', entry.etag);
+    res.setHeader('Vary', 'Accept-Encoding');
+    if ((res as any).req?.headers?.['if-none-match'] === entry.etag) {
+      res.status(304).end();
+      return;
+    }
+    if (acceptsGzip(res)) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.send(entry.gz);
+    } else {
+      res.send(entry.raw);
+    }
+  } catch {
+    res.sendFile(file);
+  }
+}
+
+/** Gzip a dynamically built HTML string when the client supports it. */
+export function sendHtmlBody(res: import('express').Response, html: string): void {
+  res.setHeader('Vary', 'Accept-Encoding');
+  if (acceptsGzip(res)) {
+    res.setHeader('Content-Encoding', 'gzip');
+    res.send(zlib.gzipSync(Buffer.from(html, 'utf8'), { level: 6 }));
+  } else {
+    res.send(html);
+  }
+}
+
 export function serveRacerAlphaHtml(res: import('express').Response): void {
   const htmlPaths = [
     path.resolve(__dirname, 'raceralpha.html'),
@@ -305,9 +362,7 @@ export function serveRacerAlphaHtml(res: import('express').Response): void {
     res.status(404).send('RacerAlpha page not found');
     return;
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(htmlFile);
+  sendStaticHtml(res, htmlFile);
 }
 
 // ── RacerAlpha Endpoints & User Resolution ────────────────────────────────
@@ -1606,11 +1661,7 @@ export function serveFleetHtml(res: import('express').Response): void {
     res.status(404).send('RaceFleet terminal not found');
     return;
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(htmlFile);
+  sendStaticHtml(res, htmlFile);
 }
 
 router.get(['/fleet', '/racefleet'], (_req, res) => {
@@ -1921,11 +1972,7 @@ export function serveRacerHtml(res: import('express').Response): void {
     res.status(404).send('RACER Ecosystem page not found');
     return;
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(htmlFile);
+  sendStaticHtml(res, htmlFile);
 }
 
 
@@ -1941,11 +1988,7 @@ export function serveBubbleMapHtml(res: import('express').Response): void {
     res.status(404).send('Bubble map not found');
     return;
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(htmlFile);
+  sendStaticHtml(res, htmlFile);
 }
 
 
@@ -2011,7 +2054,11 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
 
   let html = fs.readFileSync(htmlFile, 'utf8');
 
-  // Pre-fetch live competition data so the page renders immediately with active stats on first load
+  // Pre-fetch live competition data so the page renders immediately with active stats on first load.
+  // Time-boxed: this runs before ANY byte is sent, so a slow RPC used to hold the whole page.
+  // The page fetches live data itself, so on timeout we just skip the injection.
+  const PREFETCH_BUDGET_MS = 2500;
+  await Promise.race([(async () => {
   try {
     const compId = compIdParam || 'kookdog';
     const tokenAddress = (compId === 'kookdog' || compId === 'kookdog-42db38')
@@ -2019,7 +2066,7 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
       : compId;
 
     const [tokenInfo, comp, snapshotLeaderboard] = await Promise.all([
-      getTokenInfo(tokenAddress, true).catch(() => null),
+      getTokenInfo(tokenAddress, false).catch(() => null),
       getCompetition('kookdog').catch(() => null),
       getSnapshotLeaderboard(30).catch(() => []),
     ]);
@@ -2063,12 +2110,11 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
   } catch (err: any) {
     logger.warn('Failed to pre-inject competition data', { error: err?.message });
   }
+  })(), new Promise<void>((resolve) => setTimeout(resolve, PREFETCH_BUDGET_MS))]);
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.send(html);
+  sendHtmlBody(res, html);
 }
 
 // ── RacerAlpha page (served as static HTML) ───────────────────────────────────
