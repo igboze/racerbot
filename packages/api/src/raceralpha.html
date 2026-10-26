@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="/assets/racer-logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css">
 
   <!-- Early Global Wallet & Modal Bootstrap (guarantees buttons respond immediately) -->
@@ -87,9 +87,9 @@
       --color-text: #f0f6fc;
       --color-text-muted: #9ba8bc;
       --color-text-subtle: #6e7681;
-      --font-display: 'Plus Jakarta Sans', -apple-system, sans-serif;
-      --font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-mono: 'JetBrains Mono', monospace;
+      --font-display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
       --radius-sm: 6px;
       --radius-md: 10px;
@@ -2417,11 +2417,11 @@
         box-sizing: border-box !important;
       }
 
-      /* Sticky Mobile Top App Bar */
+      /* Sticky Mobile Top App Bar (FeedLoop Spec: 56px height, crisp alignment) */
       .mobile-top-bar {
         display: flex !important;
         width: 100% !important;
-        max-width: 100vw !important;
+        max-width: 100% !important;
         box-sizing: border-box !important;
         flex-shrink: 0 !important;
         align-items: center;
@@ -2431,32 +2431,35 @@
         left: 0;
         right: 0;
         z-index: 950;
-        background: rgba(13, 16, 21, 0.96);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border-bottom: 1px solid var(--color-border);
-        padding: 10px 14px;
-        height: 58px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        background: rgba(255, 255, 255, 0.98) !important;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid #E5E7EB !important;
+        padding: 8px 14px;
+        height: 56px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+        overflow: hidden;
       }
 
       .mobile-top-left {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         text-decoration: none;
+        min-width: 0;
+        flex-shrink: 1;
       }
 
       .mobile-brand-halo {
         width: 32px;
         height: 32px;
-        border-radius: var(--radius-md);
-        background: linear-gradient(135deg, rgba(0, 240, 255, 0.25), rgba(130, 106, 181, 0.35));
-        border: 1px solid rgba(0, 240, 255, 0.45);
+        border-radius: 8px;
+        background: #EFF6FF;
+        border: 1px solid #BFDBFE;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: var(--shadow-glow-cyan);
+        flex-shrink: 0;
       }
 
       .mobile-brand-halo img {
@@ -2468,18 +2471,20 @@
       .mobile-brand-text {
         display: flex;
         flex-direction: column;
+        min-width: 0;
       }
 
       .mobile-brand-title {
         font-family: var(--font-display);
-        font-size: 15px;
-        font-weight: 800;
-        color: #ffffff;
-        line-height: 1.1;
+        font-size: 14px;
+        font-weight: 700;
+        color: #111827 !important;
+        line-height: 1.15;
+        white-space: nowrap;
       }
 
       .mobile-brand-title span {
-        color: var(--color-racer-cyan);
+        color: #2563EB !important;
       }
 
       .mobile-brand-pill {
@@ -2488,61 +2493,72 @@
         gap: 4px;
         font-family: var(--font-mono);
         font-size: 9px;
-        color: var(--color-racer-green);
-        letter-spacing: 0.5px;
+        color: #16A34A !important;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
       }
 
       .mobile-top-right {
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-shrink: 0;
       }
 
-      .mobile-header-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        height: 36px;
-        padding: 0 12px;
-        border-radius: var(--radius-md);
-        font-family: var(--font-family);
-        font-size: 12px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: all 0.16s ease;
-      }
-
+      /* Hide duplicate header deposit shortcut on mobile phones (Deposit is primary in thumb bottom dock) */
       .mobile-deposit-shortcut {
-        background: rgba(0, 240, 255, 0.12);
-        border: 1px solid rgba(0, 240, 255, 0.35);
-        color: var(--color-racer-cyan);
-      }
-
-      .mobile-deposit-shortcut:hover, .mobile-deposit-shortcut:active {
-        background: rgba(0, 240, 255, 0.22);
+        display: none !important;
       }
 
       .mobile-wallet-shortcut {
-        background: rgba(130, 106, 181, 0.18);
-        border: 1px solid rgba(130, 106, 181, 0.45);
-        color: #ffffff;
-        max-width: 140px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 38px;
+        min-height: 38px;
+        padding: 0 12px;
+        border-radius: 8px;
+        font-family: var(--font-family);
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+        background: #2563EB !important;
+        border: 1px solid #2563EB !important;
+        color: #FFFFFF !important;
+        max-width: 125px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        box-sizing: border-box;
       }
 
       .mobile-wallet-shortcut.connected {
-        background: rgba(0, 230, 118, 0.14);
-        border-color: rgba(0, 230, 118, 0.5);
-        color: var(--color-racer-green);
+        background: #EFF6FF !important;
+        border-color: #BFDBFE !important;
+        color: #2563EB !important;
+      }
+
+      .mobile-nav-toggle {
+        width: 38px !important;
+        height: 38px !important;
+        min-width: 38px !important;
+        min-height: 38px !important;
+        border-radius: 8px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: #F3F4F6 !important;
+        border: 1px solid #E5E7EB !important;
+        color: #374151 !important;
+        cursor: pointer !important;
       }
 
       /* Viewport Adjustments for safe area & bottom dock */
       .main-viewport {
-        padding: 14px 14px calc(78px + env(safe-area-inset-bottom, 16px)) !important;
+        padding: 12px 14px calc(76px + env(safe-area-inset-bottom, 16px)) !important;
         width: 100% !important;
-        max-width: 100vw !important;
+        max-width: 100% !important;
         box-sizing: border-box !important;
         min-width: 0 !important;
         overflow-x: hidden !important;
@@ -2729,8 +2745,8 @@
       .modal-window,
       .modal-window.modal-wide,
       .racer-modal-card {
-        border-radius: 20px 20px 0 0 !important;
-        max-width: 100vw !important;
+        border-radius: 16px 16px 0 0 !important;
+        max-width: 100% !important;
         width: 100% !important;
         max-height: min(85vh, 85dvh) !important;
         overflow-y: auto !important;
