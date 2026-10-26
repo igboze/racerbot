@@ -513,30 +513,47 @@
       /* Native FeedLoop Bottom Sheet Modals */
       .modal-overlay {
         align-items: flex-end !important;
+        justify-content: center !important;
         padding: 0 !important;
         z-index: 10000 !important;
-        background: rgba(17, 24, 39, 0.5) !important;
+        background: rgba(17, 24, 39, 0.48) !important;
         backdrop-filter: blur(4px) !important;
       }
       .modal-card {
         border-radius: 20px 20px 0 0 !important;
-        max-width: 100% !important;
+        max-width: 100vw !important;
         width: 100% !important;
-        max-height: 88vh !important;
-        max-height: 88dvh !important;
+        max-height: min(85vh, 85dvh) !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
         -webkit-overflow-scrolling: touch !important;
-        padding: 20px 16px calc(28px + env(safe-area-inset-bottom, 16px)) !important;
+        overscroll-behavior: contain !important;
+        padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
         background: #FFFFFF !important;
         border: 1px solid #E5E7EB !important;
         border-bottom: none !important;
+        border-left: none !important;
+        border-right: none !important;
         box-sizing: border-box !important;
         margin: 0 !important;
-        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08) !important;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
         color: #111827 !important;
       }
-      .modal-card h2, .modal-card h3, .modal-title {
+      .modal-card::before {
+        content: '' !important;
+        display: block !important;
+        width: 36px !important;
+        height: 4px !important;
+        background: #D1D5DB !important;
+        border-radius: 2px !important;
+        margin: 0 auto 14px auto !important;
+      }
+      .modal-card h2, .modal-card h3, .modal-title, .modal-card div[style*="font-family:var(--font-display)"] {
         color: #111827 !important;
+        font-size: 18px !important;
+      }
+      .modal-card p {
+        color: #6B7280 !important;
       }
       .modal-close {
         top: 14px !important;
@@ -547,6 +564,45 @@
         border: 1px solid #E5E7EB !important;
         border-radius: 8px !important;
         color: #4B5563 !important;
+      }
+      .modal-card input.terminal-input {
+        min-height: 44px !important;
+        font-size: 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+      }
+      #export-keys-box {
+        background: #F9FAFB !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+        white-space: pre-wrap !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        font-family: var(--font-mono) !important;
+        font-size: 12px !important;
+        max-height: 220px !important;
+        overflow-y: auto !important;
+      }
+      .fleet-table-wrap {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: auto !important;
+        display: block !important;
+        -webkit-overflow-scrolling: touch !important;
+        border-radius: 12px !important;
+        border: 1px solid #E5E7EB !important;
+        background: #FFFFFF !important;
+      }
+      .fleet-table {
+        min-width: 600px !important;
+        width: 100% !important;
       }
     }
     @media (max-width: 500px) {

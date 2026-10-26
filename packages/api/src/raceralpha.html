@@ -2715,38 +2715,210 @@
         min-height: 44px;
       }
 
-      /* Native Slide-Up Bottom Sheet Modals */
+      /* Native Slide-Up Bottom Sheet Modals (FeedLoop Mobile Standards) */
       .modal-backdrop,
       .racer-modal-backdrop {
         align-items: flex-end !important;
+        justify-content: center !important;
         padding: 0 !important;
         z-index: 10000 !important;
+        background: rgba(17, 24, 39, 0.48) !important;
+        backdrop-filter: blur(4px) !important;
       }
 
       .modal-window,
       .modal-window.modal-wide,
       .racer-modal-card {
-        border-radius: 22px 22px 0 0 !important;
-        max-width: 100% !important;
+        border-radius: 20px 20px 0 0 !important;
+        max-width: 100vw !important;
         width: 100% !important;
-        max-height: 86vh !important;
+        max-height: min(85vh, 85dvh) !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain !important;
         padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
         animation: mobileSheetSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
-        box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9) !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
         border-bottom: none !important;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
+        color: #111827 !important;
+        box-sizing: border-box !important;
       }
 
       .modal-window::before,
       .racer-modal-card::before {
         content: '';
         display: block;
-        width: 40px;
+        width: 36px;
         height: 4px;
-        background: rgba(255, 255, 255, 0.28);
+        background: #D1D5DB !important;
         border-radius: 2px;
         margin: 0 auto 14px auto;
+      }
+
+      /* FeedLoop Typography and Elements inside Modals */
+      .modal-window h3,
+      .racer-modal-card h3,
+      #modal-key-title,
+      #modal-key-trader-name {
+        color: #111827 !important;
+      }
+
+      .modal-window label,
+      .modal-window span[style*="color:#fff"],
+      .racer-modal-card span[style*="color:#fff"] {
+        color: #111827 !important;
+      }
+
+      .modal-window span[style*="color:var(--color-text-muted)"],
+      .racer-modal-card span[style*="color:var(--color-text-muted)"],
+      .modal-window span[style*="color:var(--color-text-subtle)"],
+      .racer-modal-card span[style*="color:var(--color-text-subtle)"] {
+        color: #6B7280 !important;
+      }
+
+      /* Modal internal sub-cards */
+      .modal-window div[style*="background:var(--color-surface)"],
+      .racer-modal-card div[style*="background:var(--color-surface)"],
+      .modal-window .quote-box,
+      .modal-window .deposit-status-live {
+        background: #F9FAFB !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        color: #111827 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+
+      /* Deposit Tabs */
+      .deposit-tab-bar {
+        background: #F3F4F6 !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 10px !important;
+        padding: 3px !important;
+      }
+      .deposit-tab-btn {
+        min-height: 44px !important;
+        border-radius: 8px !important;
+        color: #6B7280 !important;
+        font-weight: 600 !important;
+      }
+      .deposit-tab-btn.active {
+        background: #FFFFFF !important;
+        color: #2563EB !important;
+        border: 1px solid #E5E7EB !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+      }
+
+      /* Deposit chain and token grids */
+      .chain-select-box {
+        grid-template-columns: repeat(2, 1fr) !important;
+        max-height: 170px !important;
+        overflow-y: auto !important;
+        gap: 6px !important;
+        padding: 2px !important;
+      }
+      .chain-card-opt {
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        min-height: 44px !important;
+        padding: 6px 8px !important;
+        font-size: 12px !important;
+      }
+      .chain-card-opt.selected {
+        border-color: #2563EB !important;
+        background: #EFF6FF !important;
+        color: #2563EB !important;
+        box-shadow: none !important;
+      }
+
+      .token-select-list {
+        max-height: 150px !important;
+        overflow-y: auto !important;
+      }
+      .token-row-opt {
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        min-height: 44px !important;
+        padding: 8px 10px !important;
+      }
+      .token-row-opt.selected {
+        border-color: #2563EB !important;
+        background: #EFF6FF !important;
+        box-shadow: none !important;
+      }
+
+      .deposit-pill {
+        min-height: 36px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        color: #374151 !important;
+        border-radius: 6px !important;
+        padding: 6px 10px !important;
+      }
+      .deposit-pill.active {
+        background: #2563EB !important;
+        border-color: #2563EB !important;
+        color: #FFFFFF !important;
+      }
+
+      /* Modal Inputs & Buttons */
+      .modal-window input,
+      .racer-modal-card input {
+        min-height: 44px !important;
+        font-size: 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+      }
+
+      .modal-window .btn-primary,
+      .racer-modal-card .btn-primary {
+        min-height: 44px !important;
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+      }
+
+      .modal-window .btn-secondary,
+      .racer-modal-card .btn-secondary {
+        min-height: 44px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        border-radius: 8px !important;
+        color: #374151 !important;
+      }
+
+      /* Long address overflow defense in modals */
+      #active-deposit-address,
+      #deposit-account-id,
+      #deposit-dest-address,
+      .modal-window code,
+      .racer-modal-card code {
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+        white-space: normal !important;
+        max-width: 100% !important;
+        display: block !important;
+      }
+
+      /* Vertical stack for QR container on narrow screens */
+      #deposit-active-card div[style*="display:flex; gap:14px;"] {
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
+        gap: 12px !important;
       }
 
       @keyframes mobileSheetSlideUp {
