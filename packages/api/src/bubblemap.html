@@ -280,6 +280,32 @@
         border: 1px solid var(--color-border);
       }
     }
+
+    /* In-App Toast Notifications */
+    .racer-toast {
+      position: fixed;
+      bottom: calc(72px + env(safe-area-inset-bottom, 8px));
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 999999;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s ease;
+      white-space: nowrap;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+    .racer-toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
+    .racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+    .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
   </style>
 </head>
 <body>
@@ -295,7 +321,7 @@
       <nav class="desktop-nav" aria-label="Main Navigation">
         <a href="/alpha" class="desktop-nav-link">Alpha</a>
         <a href="/fleet" class="desktop-nav-link">Fleet</a>
-        <a href="/bubblemap" class="desktop-nav-link active">Bubble</a>
+        <a href="/bubblemap" class="desktop-nav-link active">Bubble Map</a>
         <a href="/competition" class="desktop-nav-link">Arena</a>
         <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
           <span>RacerBot</span>
@@ -304,7 +330,7 @@
       </nav>
 
       <div class="desktop-actions">
-        <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+        <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
         <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
           <span id="header-connect-label">Connect</span>
         </button>
@@ -1448,6 +1474,23 @@
         if (modal) modal.classList.remove('open');
       };
 
+      function showToast(msg, type = 'info') {
+        let t = document.getElementById('racer-app-toast');
+        if (!t) {
+          t = document.createElement('div');
+          t.id = 'racer-app-toast';
+          t.className = 'racer-toast';
+          document.body.appendChild(t);
+        }
+        t.className = `racer-toast ${type} show`;
+        t.textContent = msg;
+        clearTimeout(t._timer);
+        t._timer = setTimeout(() => {
+          t.classList.remove('show');
+        }, 3200);
+      }
+      window.showToast = showToast;
+
       window.executeQuickBuy = function() {
         const btn = document.getElementById('quick-buy-confirm-btn');
         if (btn) {
@@ -1455,7 +1498,7 @@
           btn.textContent = 'Submitting trade...';
         }
         setTimeout(() => {
-          alert(`Trade submitted for ${selectedQuickBuyAmount} NEAR of ${currentSymbol}.`);
+          showToast(`Trade submitted for ${selectedQuickBuyAmount} NEAR of ${currentSymbol}.`, 'success');
           closeQuickBuyModal();
           if (btn) {
             btn.disabled = false;
@@ -1485,11 +1528,11 @@
       };
       window.copyShareLink = function() {
         navigator.clipboard.writeText(window.location.href).then(() => {
-          alert('Link copied to clipboard');
+          showToast('Link copied to clipboard', 'success');
         });
       };
       window.downloadInfographicCard = function() {
-        alert('Infographic card downloaded');
+        showToast('Infographic card downloaded', 'info');
       };
 
       // Legend Modal
@@ -1505,7 +1548,7 @@
       // Connect & Wallet
       window.handleHeaderConnectClick = function() {
         if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
-          alert(`Connected as ${window.RacerConnect.activeNearWallet || 'user'}`);
+          showToast(`Connected as ${window.RacerConnect.activeNearWallet || 'user'}`, 'info');
         } else {
           const modal = document.getElementById('connect-modal');
           if (modal) modal.classList.add('open');
@@ -1530,7 +1573,7 @@
       window.copyWalletAddress = function() {
         const addrEl = document.getElementById('wallet-addr-display');
         if (addrEl && addrEl.textContent) {
-          navigator.clipboard.writeText(addrEl.textContent).then(() => alert('Address copied'));
+          navigator.clipboard.writeText(addrEl.textContent).then(() => showToast('Address copied', 'success'));
         }
       };
 

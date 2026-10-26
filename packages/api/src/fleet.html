@@ -510,7 +510,7 @@
     <nav class="desktop-nav" aria-label="Main Navigation">
       <a href="/alpha" class="desktop-nav-link">Alpha</a>
       <a href="/fleet" class="desktop-nav-link active">Fleet</a>
-      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble Map</a>
       <a href="/competition" class="desktop-nav-link">Arena</a>
       <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
         <span>RacerBot</span>
@@ -519,7 +519,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -1586,6 +1586,11 @@
       const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
       const label = document.getElementById('header-connect-label');
       const headerBtn = document.getElementById('header-connect-btn');
+      const depositBtn = document.getElementById('header-deposit-btn');
+
+      if (depositBtn) {
+        depositBtn.style.display = (isAuth || nearWallet) ? 'inline-flex' : 'none';
+      }
 
       if (isAuth || nearWallet) {
         const displayHandle = nearWallet || (user && user.username) || 'Connected';
@@ -1596,7 +1601,7 @@
           headerBtn.style.color = '#ffffff';
         }
       } else {
-        if (label) label.textContent = 'Log in';
+        if (label) label.textContent = 'Connect';
         if (headerBtn) {
           headerBtn.style.background = '';
           headerBtn.style.borderColor = '';
@@ -1621,7 +1626,7 @@
     </a>
     <a href="/bubblemap" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-      <span>Bubble</span>
+      <span>Bubble Map</span>
     </a>
     <a href="/fleet" class="mobile-dock-btn active">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -1643,6 +1648,8 @@
         if (input) {
           input.value = token;
           if (typeof setBuyToken === 'function') setBuyToken(token);
+          if (typeof switchTab === 'function') switchTab('buy');
+          if (typeof showToast === 'function') showToast('Loaded token: ' + token, 'info');
         }
       }
     } catch(e) {}
