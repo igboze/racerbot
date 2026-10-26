@@ -1,3 +1,4 @@
+import { isSolanaAddress, getSolanaTokenInfo } from './solana.js';
 import { getNear } from './near.js';
 import { getStarknetProvider, getStarknetReadProvider, STRK_TOKEN_ADDRESS, ETH_TOKEN_ADDRESS, detectStarknetLaunchpad } from './starknet.js';
 
@@ -128,6 +129,10 @@ const inflightSafetyChecks = new Map<string, Promise<TokenSafetyReport>>();
  * 4. Flags or blocks any unauthorized balance deduction, freeze backdoors, or liquidity rugs.
  */
 export async function checkTokenSafety(tokenAddress: string, forceFresh = false): Promise<TokenSafetyReport> {
+  // Solana mints are case-sensitive base58, so they must not be lower-cased.
+  if (isSolanaAddress(tokenAddress.trim())) {
+    return checkSolanaTokenSafety(tokenAddress.trim(), forceFresh);
+  }
   const normAddress = tokenAddress.toLowerCase().trim();
 
   if (!forceFresh) {
@@ -582,4 +587,52 @@ export async function checkStarknetTokenSafety(tokenAddress: string): Promise<To
     };
     return report;
   }
+}
+
+
+// ── Solana token safety (Jupiter audit data, no RPC) ────────────────────────
+/**
+ * - Freeze authority still active: the issuer can freeze holders' token
+ *   accounts, which makes selling impossible. Treated as a honeypot (buys blocked).
+ * - Mint authority still active: the issuer can print unlimited supply. High risk warning.
+ * - Top 10 holders above 50%: concentration warning.
+ * Tokens on pump.fun have both authorities revoked by the launchpad.
+ */
+async function checkSolanaTokenSafety(mint: string, forceFresh: boolean): Promise<TokenSafetyReport> {
+  const cacheKey = `sol:${mint}`;
+  if (!forceFresh) {
+    const cached = safetyCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < SAFETY_CACHE_TTL_MS) return cached.report;
+  }
+  const info = await getSolanaTokenInfo(mint, forceFresh).catch(() => null);
+  const reasons: string[] = [];
+  let risk: TokenSafetyReport['risk'] = 'low';
+  let isHoneypot = false;
+  if (info?.freezeAuthorityDisabled === false) {
+    isHoneypot = true;
+    risk = 'critical';
+    reasons.push('Freeze authority is active: the issuer can freeze your tokens so you cannot sell.');
+  }
+  if (info?.mintAuthorityDisabled === false) {
+    if (risk !== 'critical') risk = 'high';
+    reasons.push('Mint authority is active: the issuer can create unlimited new supply.');
+  }
+  if (info?.topHoldersPct != null && info.topHoldersPct > 50 && info.bondingPhase === 'bonded') {
+    if (risk === 'low') risk = 'medium';
+    reasons.push(`Top 10 holders own ${info.topHoldersPct.toFixed(1)}% of supply.`);
+  }
+  const isPump = info?.launchpad === 'pump.fun';
+  const report: TokenSafetyReport = {
+    tokenAddress: mint,
+    isHoneypot,
+    safe: !isHoneypot,
+    risk,
+    isAuditedLaunchpad: isPump,
+    launchpadName: info?.launchpad || undefined,
+    reasons,
+    dangerousMethods: [],
+    warning: reasons.length > 0 ? reasons.join(' ') : undefined,
+  };
+  safetyCache.set(cacheKey, { at: Date.now(), report });
+  return report;
 }

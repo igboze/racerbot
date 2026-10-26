@@ -87,6 +87,7 @@ import {
   withdrawSuiFunds,
   withdrawStarknetFunds,
   withdrawTokenFunds,
+  withdrawSolanaFunds,
   syncUserTokenDeposits,
   getNearUsdPrice,
   payReferralReward,
@@ -94,6 +95,7 @@ import {
   isStarknetToken,
   ensureUserAllWallets,
   ensureUserStarknetWallet,
+  ensureUserSolanaWallet,
   resetUserStarknetWallet,
   listUserNearWallets,
   switchActiveNearWallet,
@@ -135,6 +137,14 @@ import {
   isValidSuiAddress,
   isValidStarknetAddress,
   withTimeout,
+  isSolanaToken,
+  isSolanaAddress,
+  getSolanaBalance,
+  getSolanaTokenBalance,
+  getSolUsdPrice,
+  getSolanaWalletHoldings,
+  exportSolanaPrivateKey,
+  lamportsToSol,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -211,6 +221,29 @@ export async function replyGroupDmRedirect(
 }
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
+
+/** Adds a "Deposit SOL directly" row at the top of the multichain deposit picker. */
+function withSolanaDirectDepositRow<T extends { text: string; keyboard: any }>(menu: T): T {
+  try {
+    const rows = menu.keyboard?.reply_markup?.inline_keyboard;
+    if (Array.isArray(rows) && !rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_sol_direct'))) {
+      rows.unshift([cb('◎ Deposit SOL directly (Solana wallet)', 'dep_sol_direct', 'success')]);
+    }
+  } catch { /* keep the original menu */ }
+  return menu;
+}
+
+/**
+ * Quick-buy buttons for Solana. NEAR presets (1/5/10) would be far larger in
+ * SOL terms, so Solana uses its own list. Override with SOLANA_BUY_PRESETS="0.1,0.25,0.5,1".
+ */
+export const SOLANA_BUY_PRESETS: number[] = (() => {
+  const parsed = (process.env.SOLANA_BUY_PRESETS || '0.1,0.25,0.5,1')
+    .split(/[,;\s]+/)
+    .map((x) => parseFloat(x))
+    .filter((x) => Number.isFinite(x) && x > 0);
+  return parsed.length > 0 ? parsed.slice(0, 4) : [0.1, 0.25, 0.5, 1];
+})();
 
 export function parseBuyAmounts(raw?: string | null): number[] {
   if (!raw) return [1, 5, 10];
@@ -381,6 +414,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let suiUsdFormatted = '$0';
   let strkBalFormatted = '0';
   let ethBalFormatted = '0';
+  let solAddress = '';
+  let solBalFormatted = '0';
+  let solUsdFormatted = '$0';
   let totalUsdNum = 0;
 
   if (user) {
@@ -402,7 +438,11 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
       const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
       const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
+      solAddress = b.solanaAddress || user.solana_address || '';
+      solBalFormatted = b.solBalanceFormatted || '0';
+      const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
+      solUsdFormatted = solTotalUsdNum >= 1000 ? `$${(solTotalUsdNum / 1000).toFixed(2)}K` : `$${solTotalUsdNum.toFixed(2)}`;
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum;
 
       nearUsdFormatted = nearTotalUsdNum >= 1000 ? `$${(nearTotalUsdNum / 1000).toFixed(2)}K` : `$${nearTotalUsdNum.toFixed(2)}`;
       suiUsdFormatted = suiTotalUsdNum >= 1000 ? `$${(suiTotalUsdNum / 1000).toFixed(2)}K` : `$${suiTotalUsdNum.toFixed(2)}`;
@@ -418,10 +458,12 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
     `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
     (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n` : '') +
+    (solAddress ? `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n` : '') +
     `💰 Total: <b>${totalUsdStr}</b>\n\n` +
     `📍 NEAR: <code>${subaccount}</code>` +
     (suiAddress ? `\n💧 SUI: <code>${suiAddress}</code>` : '') +
-    (starknetAddress ? `\n✨ STRK: <code>${starknetAddress}</code>` : '');
+    (starknetAddress ? `\n✨ STRK: <code>${starknetAddress}</code>` : '') +
+    (solAddress ? `\n◎ SOL: <code>${solAddress}</code>` : '');
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -543,7 +585,8 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
   const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
   const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum;
+  const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
@@ -596,10 +639,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     (Number(b.wrapNearFormatted) > 0.0001 ? `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n` : '') +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n` +
     (b.starknetAddress ? `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n` : '') +
+    (b.solanaAddress ? `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n` : '') +
     `💰 Total: <b>${totalUsdStr}</b>\n\n` +
     `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>` +
     (b.suiAddress ? `\n💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>` : '') +
-    (b.starknetAddress ? `\n✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>` : '');
+    (b.starknetAddress ? `\n✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>` : '') +
+    (b.solanaAddress ? `\n◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>` : '');
 
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
@@ -923,15 +968,16 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const userPosition = userPositions.find(p => p.token_address === tokenAddress);
   const holdsToken = !!userPosition;
 
-  const isStarknet = tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress);
-  const isSui = !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
-  const nativeUnit = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
-  const unitBtn = isStarknet ? 'STRK' : (isSui ? 'SUI' : 'N');
+  const isSolana = tokenInfo.chain === 'solana';
+  const isStarknet = !isSolana && (tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress));
+  const isSui = !isSolana && !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
+  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : 'N');
 
   // Check if user has an active RaceFleet and whether it holds this target token
   let fleet: any = null;
   let fleetPosition: FleetTokenPosition | null = null;
-  if (userRecord && !isSui && !isStarknet) {
+  if (userRecord && !isSui && !isStarknet && !isSolana) {
     try {
       fleet = await getRaceFleetByUserId(userRecord.id).catch(() => null);
       if (fleet && fleet.status === 'active') {
@@ -943,7 +989,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
   const fleetHoldsToken = Boolean(fleetPosition && fleetPosition.totalBalanceHuman > 0.000001);
 
-  const balanceText = isStarknet
+  const balanceText = isSolana
+    ? (b ? `💳 *SOL Wallet Balance*: \`${b.solBalanceFormatted || '0.0000'} SOL\` (\`${b.solBalanceUsd || '$0.00'}\`)\n\n` : '')
+    : isStarknet
     ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
     : (isSui
       ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
@@ -951,7 +999,16 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
-  if (isStarknet) {
+  if (isSolana) {
+    if (tokenInfo.venue === 'pumpfun') {
+      const pct = tokenInfo.bonding_progress_pct;
+      venueText = `💧 *Venue*: pump.fun (Bonding Curve${pct !== null && pct !== undefined ? ` — ${pct.toFixed(1)}% bonded` : ''})`;
+    } else if (tokenInfo.venue === 'pumpswap') {
+      venueText = `💧 *Venue*: PumpSwap (Bonded)`;
+    } else {
+      venueText = `💧 *Venue*: Solana DEX (Jupiter)`;
+    }
+  } else if (isStarknet) {
     if (tokenInfo.venue === 'launchy') {
       const phaseStr = tokenInfo.bonding_phase === 'bonded' ? 'Bonded (Ekubo DEX)' : 'Bonding Curve';
       const progressStr =
@@ -1041,6 +1098,18 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // ── Deep links ───────────────────────────────────────────────────────────
   const linkRows = (() => {
+    if (isSolana) {
+      const rows: any[] = [];
+      if (tokenInfo.launchpad === 'pump.fun') {
+        rows.push([Markup.button.url('💊 View on pump.fun', `https://pump.fun/coin/${tokenInfo.address}`)]);
+      }
+      rows.push([
+        Markup.button.url('🔍 Solscan', `https://solscan.io/token/${tokenInfo.address}`),
+        Markup.button.url('📈 DexScreener', `https://dexscreener.com/solana/${tokenInfo.address}`),
+      ]);
+      rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+      return rows;
+    }
     if (isStarknet) {
       const rows: any[] = [];
       rows.push([
@@ -1138,7 +1207,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // -- Rate footnote --
   const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
   const strkUsdRate = (tokenInfo as any).strk_usd as number | undefined;
-  const rateFooter = isStarknet
+  const solUsdRate = (tokenInfo as any).sol_usd as number | undefined;
+  const rateFooter = isSolana
+    ? (solUsdRate && solUsdRate > 0 ? `_1 SOL ≈ $${solUsdRate.toFixed(2)}_\n` : '')
+    : isStarknet
     ? (strkUsdRate && strkUsdRate > 0 ? `_1 STRK ≈ $${strkUsdRate.toFixed(2)}_\n` : '')
     : (isSui
       ? (tokenInfo.sui_usd ? `_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)}_\n` : '')
@@ -1150,6 +1222,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (safety?.isHoneypot) {
     const dangerText = safety.reasons[0] || 'Malicious backdoor detected.';
     safetyBanner = `🚨 *HONEYPOT*: ${dangerText} (Buying blocked)\n\n`;
+  } else if (isSolana && safety && safety.reasons.length > 0) {
+    safetyBanner = `⚠️ *RISK*: ${sanitizeMd(safety.reasons.join(' '))}\n\n`;
   } else if (safety?.isUnlockedRheaPool) {
     safetyBanner = `⚠️ *HIGH RISK*: Unlocked Liquidity (Creator holds LP)\n\n`;
   } else if (safety?.unlockedLiquidityPct !== undefined && safety.unlockedLiquidityPct > 0) {
@@ -1158,7 +1232,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (safety) {
     const contractType = safety.isAuditedLaunchpad
       ? `🛡️ Audited (${safety.launchpadName || 'Verified'})`
-      : 'NEP-141';
+      : (isSolana ? 'SPL token' : 'NEP-141');
     safetyBanner = `🛡️ *Security*: 🟢 Passed • ${contractType}\n`;
   }
 
@@ -1254,7 +1328,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       safety?.isDrained ? '🚨 Buy Blocked (Drained Liquidity)' : '🚨 Buy Blocked (Honeypot Backdoor)',
       safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
     )];
-    const fleetExitRow = (!isSui && !isStarknet && fleetHoldsToken)
+    const fleetExitRow = (!isSui && !isStarknet && !isSolana && fleetHoldsToken)
       ? [
           cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
           cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
@@ -1325,7 +1399,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       : [];
 
     const fleetActionRows: any[] = [];
-    if (!isSui && !isStarknet) {
+    if (!isSui && !isStarknet && !isSolana) {
       if (fleetHoldsToken && fleetPosition) {
         fleetActionRows.push([
           cb(`🏎️ RaceFleet Cockpit (${fleetPosition.emoji} ${fleetPosition.pnlDisplay})`, `fleet_cockpit:${shortKey}`, 'success'),
@@ -1351,7 +1425,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
-        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
@@ -1374,8 +1448,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1393,7 +1467,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...unlockedRiskRow,
         ...fleetActionRows,
         // Quick-buy fixed amounts for personal account
-        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1403,8 +1477,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1420,7 +1494,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
-        parseBuyAmounts(userRecord?.custom_buy_amounts).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
         [
@@ -1431,8 +1505,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1457,7 +1531,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       text += `⏳ *Status*: Awaiting Initial Liquidity on DEX.\n🎯 *Set a Snipe to buy automatically on pool creation!*\n\n`;
       keyboard = Markup.inlineKeyboard([
         [cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success')],
-        ...(!isSui && !isStarknet ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
+        ...(!isSui && !isStarknet && !isSolana ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
         ...linkRows,
         ...shareButtonRow,
         [
@@ -2273,6 +2347,15 @@ const ORDER_STAGE_LINES: Record<string, string> = {
   deploying_account: '🛡️ Deploying your Starknet Account contract (one-time setup)…',
   executing_swap: '✍️ Signing & submitting swap to Starknet sequencer…',
   confirming_tx: '🚀 Trade submitted to Starknet! Awaiting block confirmation…',
+  // Solana Live Stages
+  routing_solana: '⚡ Routing trade via Jupiter (pump.fun curve, PumpSwap, Raydium, Meteora)…',
+  checking_balance: '💳 Checking your wallet balance…',
+  fetching_quote: '📊 Finding the best route…',
+  checking_token_balance: '💳 Checking your token balance…',
+  signing_and_broadcasting: '✍️ Signing & broadcasting to Solana…',
+  confirming: '🚀 Submitted to Solana! Awaiting confirmation…',
+  recording_position: '📒 Recording your position…',
+  updating_position: '📒 Updating your position…',
 };
 
 function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, orderLabel: string) {
@@ -2302,13 +2385,14 @@ async function executeBuyHelper(
   }
 
   if (amountNear < 0.001) {
-    throw new Error('Minimum buy amount is 0.001 NEAR.');
+    throw new Error(`Minimum buy amount is 0.001 ${isSolanaToken(tokenAddress) ? 'SOL' : 'NEAR'}.`);
   }
 
   const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
-  const isStarknetHint = isStarknetToken(tokenAddress);
+  const isSolanaHint = isSolanaToken(tokenAddress);
+  const isStarknetHint = !isSolanaHint && isStarknetToken(tokenAddress);
 
-  const activeNearWallet = !isSuiHint && !isStarknetHint ? await getActiveWallet(user.id, 'near').catch(() => null) : null;
+  const activeNearWallet = !isSuiHint && !isStarknetHint && !isSolanaHint ? await getActiveWallet(user.id, 'near').catch(() => null) : null;
   const nearAccountToUse = activeNearWallet?.address || user.subaccount_id;
   const activeSuiWallet = isSuiHint || user.sui_address ? await getActiveWallet(user.id, 'sui').catch(() => null) : null;
   const suiAddrToUse = activeSuiWallet?.address || user.sui_address || '';
@@ -2316,7 +2400,7 @@ async function executeBuyHelper(
   // Parallel pre-flight: resolve fast route, wallet balances, USD prices, and honeypot safety audit all in one parallel round-trip!
   const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal, safetyRes] = await Promise.all([
     getFastTokenRoute(tokenAddress).catch(() => null),
-    !isSuiHint && !isStarknetHint && nearAccountToUse
+    !isSuiHint && !isStarknetHint && !isSolanaHint && nearAccountToUse
       ? Promise.all([
           near.getNearBalance(nearAccountToUse).catch(() => null),
           near.getTokenBalance('wrap.near', nearAccountToUse).catch(() => '0'),
@@ -2325,7 +2409,7 @@ async function executeBuyHelper(
     suiAddrToUse
       ? getSuiBalance(suiAddrToUse).catch(() => ({ mist: 0n, formatted: '0' }))
       : Promise.resolve({ mist: 0n, formatted: '0' }),
-    !isSuiHint && !isStarknetHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
+    !isSuiHint && !isStarknetHint && !isSolanaHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
     isSuiHint ? getSuiUsdPrice().catch(() => 0) : Promise.resolve(0),
     checkTokenSafety(tokenAddress).catch(() => null),
   ]);
@@ -2345,6 +2429,54 @@ async function executeBuyHelper(
   }
 
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // ── Solana Trading Path (pump.fun curve + bonded AMMs via Jupiter) ─────────
+  if (info.chain === 'solana' || isSolanaHint) {
+    const solUser = user.solana_address ? user : await ensureUserSolanaWallet(user);
+    if (!solUser.solana_address) {
+      throw new Error('Your Solana wallet is not ready yet. Please send /start and try again.');
+    }
+    const lamports = BigInt(Math.floor(amountNear * 1e9));
+    const solSlippage = Math.max(slippagePct, info.bonding_phase === 'prebonded' ? 5 : 2);
+    const swapResult = await publishSwap({
+      user_id: user.id,
+      chain: 'solana',
+      token_in: 'So11111111111111111111111111111111111111112',
+      token_out: tokenAddress,
+      amount_in: lamports.toString(),
+      min_amount_out: '1',
+      venue: (info.venue as any) || 'jupiter',
+      slippage_pct: solSlippage,
+    }, onProgress);
+
+    if (swapResult.success === false) {
+      throw new Error(swapResult.reason || 'Solana swap failed.');
+    }
+
+    const tokenSym = swapResult.tokenSymbol || info.symbol || 'TOKEN';
+    const tokenName = swapResult.tokenName || info.name || tokenSym;
+    const qty = Number(swapResult.tokenQty ?? 0);
+    const qtyDisplay = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(3)}M` : qty >= 1_000 ? `${(qty / 1_000).toFixed(2)}K` : qty.toFixed(4);
+    const entry = swapResult.priceNear && swapResult.priceNear > 0 ? swapResult.priceNear : parseFloat(info.price) || 0;
+    return {
+      success: true,
+      amountNear,
+      tokenAddress,
+      positionId: swapResult.positionId,
+      tokenName,
+      tokenSymbol: tokenSym,
+      tokenQty: swapResult.tokenQty,
+      priceNear: swapResult.priceNear,
+      nearSpent: swapResult.nearSpent,
+      message:
+        `✅ *Buy Confirmed on Solana!*\n\n` +
+        `🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n` +
+        `📦 Received: \`${qtyDisplay} ${sanitizeMd(tokenSym)}\`\n` +
+        `💸 Spent: \`${amountNear.toFixed(4)} SOL\`\n` +
+        `💵 Entry: \`${entry > 0 ? entry.toExponential(4) : '—'} SOL\`\n` +
+        `🔗 [View on Solscan](https://solscan.io/tx/${swapResult.txHash})`,
+    };
+  }
 
   // ── Starknet Trading Path ──────────────────────────────────────────────────
   if (info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable' || isStarknetHint) {
@@ -2646,6 +2778,17 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
   const info = await getTokenInfo(tokenAddress, false).catch(() => null);
+  if (info?.chain === 'solana' || isSolanaToken(tokenAddress)) {
+    const solUser = await ensureUserSolanaWallet(user);
+    const bal = await getSolanaBalance(solUser.solana_address!, true);
+    // Keep 0.005 SOL for network fees and the token account rent.
+    const spendable = Math.max(0, lamportsToSol(bal.lamports) - 0.005);
+    const amountSol = (spendable * pct) / 100;
+    if (amountSol < 0.001) {
+      throw new Error(`Available balance (${spendable.toFixed(4)} SOL after fee reserve) is too low to buy.`);
+    }
+    return executeBuyHelper(telegramId, tokenAddress, Number(amountSol.toFixed(6)), onProgress);
+  }
   if (info?.chain === 'starknet' || isStarknetToken(tokenAddress)) {
     const balances = await getUserBalances(telegramId);
     const strkBal = parseFloat(balances.strkBalanceFormatted || '0');
@@ -3155,7 +3298,7 @@ export function setupRoutes(bot: Telegraf): void {
       const result = await onboardUser(telegramId, accountReferralCode, username);
 
       // Custom Token Referral Deep Link (/start ref_{refCode}_-{CA})
-      if (customTokenAddress && (isValidNearAccountId(customTokenAddress) || customTokenAddress.startsWith('0x'))) {
+      if (customTokenAddress && (isValidNearAccountId(customTokenAddress) || customTokenAddress.startsWith('0x') || isSolanaAddress(customTokenAddress))) {
         if (refCode) {
           const referrer = await getUserByReferralCode(refCode).catch(() => null);
           if (referrer && referrer.id !== result.userId) {
@@ -3320,8 +3463,8 @@ export function setupRoutes(bot: Telegraf): void {
           }
         }
 
-        const tokenAddress = tokenRaw.startsWith('0x') ? tokenRaw : decodeTelegramAccountId(tokenRaw);
-        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x'))) {
+        const tokenAddress = tokenRaw.startsWith('0x') || isSolanaAddress(tokenRaw) ? tokenRaw : decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x') || isSolanaAddress(tokenAddress))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
             prewarmTradePath(telegramId, tokenAddress).catch(() => {});
@@ -3368,8 +3511,8 @@ export function setupRoutes(bot: Telegraf): void {
       // 2. Direct Token Details Deep Link (/start token_0x... or /start token_pearpe_tkn_near)
       if (isTokenParam && rawPayload) {
         const tokenRaw = rawPayload.startsWith('token_') ? rawPayload.slice(6) : rawPayload.slice(4);
-        const tokenAddress = tokenRaw.startsWith('0x') ? tokenRaw : decodeTelegramAccountId(tokenRaw);
-        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x'))) {
+        const tokenAddress = tokenRaw.startsWith('0x') || isSolanaAddress(tokenRaw) ? tokenRaw : decodeTelegramAccountId(tokenRaw);
+        if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x') || isSolanaAddress(tokenAddress))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
             prewarmTradePath(telegramId, tokenAddress).catch(() => {});
@@ -3692,7 +3835,7 @@ export function setupRoutes(bot: Telegraf): void {
       await replyGroupDmRedirect(ctx, 'Multi-chain deposits');
       return;
     }
-    const menu = buildDepositChainPickerMenu('popular');
+    const menu = withSolanaDirectDepositRow(buildDepositChainPickerMenu('popular'));
     const canEdit = typeof (ctx as any).editMessageText === 'function';
     if (canEdit && ctx.callbackQuery) {
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
@@ -3702,6 +3845,39 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
     }
   };
+
+  // Direct SOL deposit: shows the user's own Solana wallet address (no bridge, no conversion).
+  bot.action('dep_sol_direct', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from!.id;
+    try {
+      let user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await onboardUser(telegramId);
+        user = await getUserByTelegramId(telegramId);
+      }
+      if (!user) throw new Error('Please send /start first.');
+      const solUser = await ensureUserSolanaWallet(user);
+      markUserActiveForDeposit(telegramId);
+      await ctx.reply(
+        `◎ <b>Deposit SOL or Solana tokens</b>\n\n` +
+        `Send SOL (or any SPL token) on the <b>Solana network</b> to your RacerBot wallet:\n\n` +
+        `<code>${escapeHtml(solUser.solana_address || '')}</code>\n\n` +
+        `• Tap the address to copy it.\n` +
+        `• Only send on Solana. Funds sent on another network can be lost.\n` +
+        `• Keep at least 0.01 SOL for network fees and token account rent.`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('🔍 View on Solscan', `https://solscan.io/account/${solUser.solana_address}`)],
+            [cb('💳 Wallet', 'menu_wallet', 'primary'), cb('🔙 Back', 'menu_multichain_deposit', 'primary')],
+          ]),
+        }
+      ).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
 
   bot.command(['deposit', 'multichain'], handleMultichainDeposit);
   bot.action('menu_multichain_deposit', handleMultichainDeposit);
@@ -3713,7 +3889,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const cat = (ctx as any).match[1] as any;
-    const menu = buildDepositChainPickerMenu(cat);
+    const menu = withSolanaDirectDepositRow(buildDepositChainPickerMenu(cat));
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_cat] editMessageText fallback:', err?.message);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
@@ -5821,6 +5997,10 @@ export function setupRoutes(bot: Telegraf): void {
     if (forceRefresh && positions.length > 0) {
       const balanceChecks = await Promise.allSettled(
         positions.map(async (pos) => {
+          // Solana positions are reconciled by syncUserTokenDeposits (one free Jupiter call per wallet).
+          if (pos.chain === 'solana' || isSolanaToken(pos.token_address)) {
+            return { isZero: false, rawBal: pos.quantity_held, verified: false };
+          }
           const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
           const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
           if (isStarknetPos) {
@@ -5938,8 +6118,11 @@ export function setupRoutes(bot: Telegraf): void {
       const currentPrice = info ? parseFloat(info.price) : 0;
       const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
       const isStarknetPos = pos.chain === 'starknet' || isStarknetToken(pos.token_address);
-      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
-      const nativeUsdRate = isStarknetPos
+      const isSolanaPosH = pos.chain === 'solana' || isSolanaToken(pos.token_address);
+      const decimals = info?.decimals ?? (isSolanaPosH ? 6 : isSuiPos ? 9 : 18);
+      const nativeUsdRate = isSolanaPosH
+        ? (info?.sol_usd || info?.near_usd || 150)
+        : isStarknetPos
         ? (info?.strk_usd || 0.12)
         : isSuiPos
         ? (info?.sui_usd || 2.0)
@@ -6300,13 +6483,26 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
-      const isStarknetPos = position.chain === 'starknet' || isStarknetToken(position.token_address);
-      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      const isSolanaPos = position.chain === 'solana' || isSolanaToken(position.token_address);
+      const isStarknetPos = !isSolanaPos && (position.chain === 'starknet' || isStarknetToken(position.token_address));
+      const isSuiPos = !isSolanaPos && (position.chain === 'sui' || isSuiToken(position.token_address));
       // Live on-chain balance check: if user transferred this token out via another wallet,
       // close position in DB immediately and inform user.
       let onChainZero = false;
       let liveRawBal: string | null = null;
-      if (isStarknetPos) {
+      if (isSolanaPos) {
+        const solUser = user.solana_address ? user : await ensureUserSolanaWallet(user).catch(() => user);
+        if (solUser.solana_address) {
+          try {
+            const bal = await withTimeout(getSolanaTokenBalance(solUser.solana_address, position.token_address, true), 4000, 'timeout');
+            if (bal.raw === 0n) {
+              onChainZero = true;
+            } else {
+              liveRawBal = bal.raw.toString();
+            }
+          } catch { /* ignore network error */ }
+        }
+      } else if (isStarknetPos) {
         if (user.starknet_address) {
           try {
             const bal = await Promise.race([
@@ -6413,19 +6609,23 @@ export function setupRoutes(bot: Telegraf): void {
 
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       let currentPrice = info ? parseFloat(info.price) : 0;
-      const nativeUnit = isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR';
-      const liveNativeUsd = isStarknetPos
+      const nativeUnit = isSolanaPos ? 'SOL' : isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR';
+      const liveNativeUsd = isSolanaPos
+        ? (info?.sol_usd || await withTimeout(getSolUsdPrice(), 3000).catch(() => 150))
+        : isStarknetPos
         ? (info?.strk_usd || 0.12)
         : isSuiPos
         ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
         : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
-      const usdRate = isStarknetPos
+      const usdRate = isSolanaPos
+        ? (info?.sol_usd || liveNativeUsd)
+        : isStarknetPos
         ? (info?.strk_usd || liveNativeUsd)
         : isSuiPos
         ? (info?.sui_usd || liveNativeUsd)
         : (info?.near_usd || liveNativeUsd);
 
-      const decimals = info?.decimals ?? (isSuiPos ? 9 : 18);
+      const decimals = info?.decimals ?? (isSolanaPos ? 6 : isSuiPos ? 9 : 18);
       let mcNative = info?.market_cap || 0;
       let mcUsd = info?.market_cap_usd || 0;
       if (mcNative <= 0 && info?.total_supply && info.total_supply !== '0' && currentPrice > 0) {
@@ -6627,7 +6827,7 @@ export function setupRoutes(bot: Telegraf): void {
       // Build keyboard buttons first (needed for both text and image paths)
       const buttons: any[] = [];
       const shortKey = getShortTokenKey(position.token_address);
-      const unitBtn = isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'N';
+      const unitBtn = isSolanaPos ? 'SOL' : isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'N';
 
       // Sell percentage buttons (Red 🔴)
       buttons.push([
@@ -6643,7 +6843,7 @@ export function setupRoutes(bot: Telegraf): void {
       ]);
 
       // Buy buttons (Green 🟢)
-      const detailBuyAmounts = parseBuyAmounts(user?.custom_buy_amounts);
+      const detailBuyAmounts = isSolanaPos ? SOLANA_BUY_PRESETS : parseBuyAmounts(user?.custom_buy_amounts);
       buttons.push(detailBuyAmounts.map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')));
       
       const customTradeRow: any[] = [
@@ -6655,7 +6855,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
       buttons.push(customTradeRow);
 
-      if (!isSuiPos) {
+      if (!isSuiPos && !isSolanaPos) {
         buttons.push([
           cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary'),
           cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary'),
@@ -6664,6 +6864,17 @@ export function setupRoutes(bot: Telegraf): void {
 
       // External explorer & chart links
       const linkRows = (() => {
+        if (isSolanaPos) {
+          const rows: any[] = [];
+          if (info?.launchpad === 'pump.fun') {
+            rows.push([Markup.button.url('💊 View on pump.fun', `https://pump.fun/coin/${position.token_address}`)]);
+          }
+          rows.push([
+            Markup.button.url('🔍 Solscan', `https://solscan.io/token/${position.token_address}`),
+            Markup.button.url('📈 DexScreener', `https://dexscreener.com/solana/${position.token_address}`),
+          ]);
+          return rows;
+        }
         if (isSuiPos) {
           const rows: any[] = [];
           if (info?.sui_curve_address) {
@@ -7894,17 +8105,30 @@ export function setupRoutes(bot: Telegraf): void {
       const isStarknetDest = isValidStarknetAddress(destination) && !destination.endsWith('.near');
       const normToken = (tokenArg || '').toLowerCase();
       const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-      const isExplicitToken = tokenArg && normToken !== 'near' && normToken !== 'sui' && !isStrkOrEth;
+      const isSolDest = isSolanaAddress(destination);
+      const isSolNative = normToken === 'sol' || (!tokenArg && isSolDest);
+      const isExplicitToken = tokenArg && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
 
-      if (isExplicitToken) {
+      if (isSolNative) {
+        const result = await withdrawSolanaFunds(telegramId, destination, amountNum);
+        await ctx.reply(
+          `✅ *SOL Withdrawal Successful!*\n\n` +
+          `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
+          `📬 Destination: \`${result.destination}\`\n\n` +
+          `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (isExplicitToken) {
         const result = await withdrawTokenFunds(telegramId, tokenArg, destination, amountNum);
         const explorerUrl =
-          result.chain === 'starknet'
+          result.chain === 'solana'
+            ? `https://solscan.io/tx/${result.txHash}`
+            : result.chain === 'starknet'
             ? `https://voyager.online/tx/${result.txHash}`
             : result.chain === 'sui'
             ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
             : `https://nearblocks.io/txns/${result.txHash}`;
-        const explorerName = result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+        const explorerName = result.chain === 'solana' ? 'Solscan' : result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
 
         await ctx.reply(
           `✅ *Token Transfer Successful!*\n\n` +
@@ -8329,7 +8553,7 @@ export function setupRoutes(bot: Telegraf): void {
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
-      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
 
       // In-flight guard: reject a duplicate tap while a trade for this token is running.
@@ -8390,7 +8614,7 @@ export function setupRoutes(bot: Telegraf): void {
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
-      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -8446,7 +8670,7 @@ export function setupRoutes(bot: Telegraf): void {
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
-      const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
       userPendingActions.set(telegramId, {
         action: 'buy_custom_near',
         tokenAddress,
@@ -8482,7 +8706,7 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = args[0].trim();
     const isStk = isStarknetToken(tokenAddress);
     const isSui = !isStk && isSuiToken(tokenAddress);
-    const unit = isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+    const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
     const amountVal = parseFloat(args[1] ?? '0');
 
     if (amountVal <= 0) {
@@ -8811,7 +9035,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply('Use /start to set up your wallet first.');
         return;
       }
-      if (!user.starknet_address || !user.starknet_private_key_enc) {
+      if (!user.starknet_address || !user.starknet_private_key_enc || !user.solana_address) {
         const upgraded = await ensureUserAllWallets(user).catch(() => null);
         if (upgraded) user = upgraded;
       }
@@ -8825,7 +9049,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       await ctx.reply(
         `⚠️ *Export Private Keys*\n\n` +
-        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}${user.starknet_address ? ` and *Starknet* (\`${user.starknet_address}\`)` : ''}.\n\n` +
+        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}${user.starknet_address ? ` and *Starknet* (\`${user.starknet_address}\`)` : ''}${user.solana_address ? ` and *Solana* (\`${user.solana_address}\`)` : ''}.\n\n` +
         `Anyone with these keys will have full control over your funds.\n\n` +
         `Are you sure you want to display your private keys?`,
         {
@@ -8858,7 +9082,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.answerCbQuery('Wallet not found.').catch(() => {});
       return;
     }
-    if (!user.starknet_address || !user.starknet_private_key_enc) {
+    if (!user.starknet_address || !user.starknet_private_key_enc || !user.solana_address) {
       const upgraded = await ensureUserAllWallets(user).catch(() => null);
       if (upgraded) user = upgraded;
     }
@@ -8898,6 +9122,13 @@ export function setupRoutes(bot: Telegraf): void {
         } catch {}
       }
 
+      let rawSolanaKey = '';
+      if (user.solana_private_key_enc) {
+        try {
+          rawSolanaKey = exportSolanaPrivateKey(user.solana_private_key_enc, MASTER_KEY);
+        } catch {}
+      }
+
       await ctx.answerCbQuery('Keys decrypted.').catch(() => {});
 
       let keyHtml =
@@ -8916,6 +9147,12 @@ export function setupRoutes(bot: Telegraf): void {
           `<tg-spoiler><code>${rawStarknetKey}</code></tg-spoiler>\n\n`;
       }
 
+      if (user.solana_address && rawSolanaKey) {
+        keyHtml +=
+          `◎ <b>Solana Private Key</b> (<code>${user.solana_address}</code>):\n` +
+          `<tg-spoiler><code>${rawSolanaKey}</code></tg-spoiler>\n\n`;
+      }
+
       keyHtml +=
         `👆 <i>Tap the covered boxes above to uncover and copy your keys.</i>\n\n` +
         `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`;
@@ -8925,7 +9162,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🛡️ *Security Reminder*:\n` +
         `• Keep your private keys confidential.\n` +
-        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), or Argent X / Braavos (Starknet) to manage outside RacerBot.`,
+        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), Argent X / Braavos (Starknet), or Phantom / Solflare (Solana) to manage outside RacerBot.`,
         { parse_mode: 'Markdown' }
       );
 
@@ -10281,7 +10518,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
         const tokenAddress = pending.tokenAddress;
         const isSui = isSuiToken(tokenAddress);
-        const unit = isSui ? 'SUI' : 'NEAR';
+        const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStarknetToken(tokenAddress) ? 'STRK' : isSui ? 'SUI' : 'NEAR';
         const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
         if (!(await tryAcquireInFlight(guardKey))) {
           await ctx.reply('⏳ A trade for this token is already in progress.');
@@ -10767,20 +11004,32 @@ export function setupRoutes(bot: Telegraf): void {
         const isStarknetDest = isValidStarknetAddress(dest) && !dest.endsWith('.near');
         const normToken = (tokenToUse || '').toLowerCase();
         const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-        const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && !isStrkOrEth;
-        const targetDesc = isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
+        const isSolNative = normToken === 'sol' || (!tokenToUse && isSolanaAddress(dest));
+        const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
+        const targetDesc = isSolNative ? 'SOL' : isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
         await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${dest}\`...`, { parse_mode: 'Markdown' });
 
         try {
-          if (isExplicitToken) {
+          if (isSolNative) {
+            const result = await withdrawSolanaFunds(telegramId, dest, amt);
+            await ctx.reply(
+              `✅ *SOL Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else if (isExplicitToken) {
             const result = await withdrawTokenFunds(telegramId, tokenToUse, dest, amt);
             const explorerUrl =
-              result.chain === 'starknet'
+              result.chain === 'solana'
+                ? `https://solscan.io/tx/${result.txHash}`
+                : result.chain === 'starknet'
                 ? `https://voyager.online/tx/${result.txHash}`
                 : result.chain === 'sui'
                 ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
                 : `https://nearblocks.io/txns/${result.txHash}`;
-            const explorerName = result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
+            const explorerName = result.chain === 'solana' ? 'Solscan' : result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
 
             await ctx.reply(
               `✅ *Token Transfer Successful!*\n\n` +
@@ -11608,13 +11857,23 @@ export function setupRoutes(bot: Telegraf): void {
       const isNearDest = isValidNearAccountId(possibleDest);
       const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDest.endsWith('.near');
       const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDest.endsWith('.near');
+      const isSolDest = !isNearDest && isSolanaAddress(possibleDest);
       const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
 
-      if ((isNearDest || isSuiDest || isStarknetDest) && isAmtValid) {
+      if ((isNearDest || isSuiDest || isStarknetDest || isSolDest) && isAmtValid) {
         const amt: number | 'all' = possibleAmtStr === 'all' ? 'all' : parseFloat(possibleAmtStr);
         await ctx.reply(`⏳ Processing withdrawal to \`${possibleDest}\`...`, { parse_mode: 'Markdown' });
         try {
-          if (isStarknetDest && !isNearDest) {
+          if (isSolDest) {
+            const result = await withdrawSolanaFunds(telegramId, possibleDest, amt);
+            await ctx.reply(
+              `✅ *SOL Withdrawal Successful!*\n\n` +
+              `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
+              `📬 Destination: \`${result.destination}\`\n\n` +
+              `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
+              { parse_mode: 'Markdown' }
+            );
+          } else if (isStarknetDest && !isNearDest) {
             const user = await getUserByTelegramId(telegramId);
             const [suiBal, strkBal] = await Promise.all([
               user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
@@ -11667,6 +11926,31 @@ export function setupRoutes(bot: Telegraf): void {
           }
         } catch (err: any) {
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+    }
+
+    // 2a. Solana mint / launchpad link detection (pump.fun, Solscan, GMGN, Birdeye, Jupiter)
+    {
+      const solLink = /(?:pump\.fun\/(?:coin\/)?|solscan\.io\/token\/|gmgn\.ai\/sol\/token\/(?:[A-Za-z0-9]+_)?|birdeye\.so\/token\/|jup\.ag\/(?:swap\/[A-Za-z0-9]+-|tokens\/))([1-9A-HJ-NP-Za-km-z]{32,44})/.exec(rawText);
+      const solPlain = /(?:^|\s)([1-9A-HJ-NP-Za-km-z]{32,44})(?:\s|$)/.exec(rawText);
+      const solCandidate = (solLink?.[1] || solPlain?.[1] || '').trim();
+      if (solCandidate && isSolanaAddress(solCandidate) && !isValidNearAccountId(solCandidate)) {
+        const loadingMsg = await ctx.reply('🔍 Looking up Solana token...').catch(() => null);
+        try {
+          const card = await withTimeout(buildTokenCard(solCandidate, telegramId), 15000, 'The token lookup timed out — please try again');
+          if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+          await sendTokenCard(ctx, card);
+        } catch (err: any) {
+          if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `❌ Solana token not found: ${sanitizeMd(solCandidate)}\n\n` +
+            `This could mean:\n` +
+            `• The address is a wallet, not a token mint\n` +
+            `• The token was created seconds ago and is not indexed yet. Try again in a moment\n\n` +
+            `Error: ${sanitizeMd(err?.message?.slice(0, 100) || 'Unknown error')}`
+          ).catch(() => {});
         }
         return;
       }

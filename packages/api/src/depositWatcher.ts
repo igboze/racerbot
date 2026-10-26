@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { getFreeNear, getSuiBalance, getSuiUsdPrice, getStarknetBalance, createLogger } from '@racerbot/shared';
+import { getFreeNear, getSuiBalance, getSuiUsdPrice, getStarknetBalance, createLogger, getSolanaBalanceFreeOnly, getSolUsdPrice, lamportsToSol } from '@racerbot/shared';
 import { getDb, getUserByTelegramId, getUserById, updateUserLastBalances, type UserRecord } from '@racerbot/db';
 import { getNearUsdPrice, ensureUserSuiWallet, unwrapUserWrapNear } from './wallet.js';
 import { notifyDeposit, notifyTokenDeposit } from './notify.js';
@@ -52,7 +52,7 @@ export function markUserActiveForDeposit(userIdOrTelegramId: string | number): v
  */
 export function recordUserTrade(
   userIdOrTelegramId: string | number,
-  chain: 'near' | 'sui' | 'starknet' = 'near',
+  chain: 'near' | 'sui' | 'starknet' | 'solana' = 'near',
   proceeds = 0
 ): void {
   const key = String(userIdOrTelegramId);
@@ -71,7 +71,7 @@ export function recordUserTrade(
 function getRecentSellProceeds(
   userId: string,
   telegramId: number,
-  chain: 'near' | 'sui' | 'starknet'
+  chain: 'near' | 'sui' | 'starknet' | 'solana'
 ): number {
   const now = Date.now();
   const byUid = tradeCooldownMap.get(userId);
@@ -94,6 +94,51 @@ function formatUSD(val: number): string {
   return `$${val.toFixed(4)}`;
 }
 
+// ── Solana native SOL deposit detection ─────────────────────────────────────
+// Free RPC only (never the paid QuickNode endpoint) and at most one read per
+// user every 20s, so background polling costs no RPC credits.
+const solDepositState = new Map<string, { address: string; lamports: bigint; checkedAt: number }>();
+const SOL_DEPOSIT_POLL_MS = 20_000;
+const SOL_DEPOSIT_MIN_LAMPORTS = 5_000_000n; // 0.005 SOL
+
+async function processSolanaDeposit(user: UserRecord): Promise<void> {
+  const address = user.solana_address;
+  if (!address || !user.telegram_id) return;
+  const prev = solDepositState.get(user.id);
+  if (prev && prev.address === address && Date.now() - prev.checkedAt < SOL_DEPOSIT_POLL_MS) return;
+
+  const lamports = await getSolanaBalanceFreeOnly(address);
+  if (lamports === null) return; // free endpoint unavailable: skip this round, never guess
+  solDepositState.set(user.id, { address, lamports, checkedAt: Date.now() });
+  if (!prev || prev.address !== address) return; // first observation is the baseline
+
+  const delta = lamports - prev.lamports;
+  if (delta < SOL_DEPOSIT_MIN_LAMPORTS) return;
+
+  // Ignore SOL that came back from a sell (manual or TP/SL) instead of an external transfer.
+  const sellProceeds = getRecentSellProceeds(user.id, user.telegram_id, 'solana');
+  if (sellProceeds > 0) return;
+  try {
+    const db = await getDb();
+    const recent = await db.query(
+      `SELECT 1 FROM fills WHERE user_id = $1 AND chain = 'solana' AND created_at > NOW() - INTERVAL '3 minutes' LIMIT 1`,
+      [user.id]
+    );
+    if (recent.rows.length > 0) return;
+  } catch { /* if the check fails, still notify */ }
+
+  const amountSol = lamportsToSol(delta);
+  const solUsd = await getSolUsdPrice().catch(() => 0);
+  logger.info('SOL deposit detected', { telegramId: user.telegram_id, amount: amountSol.toFixed(4) });
+  await notifyDeposit(user.telegram_id, {
+    chain: 'solana',
+    amount: amountSol.toFixed(4),
+    symbol: 'SOL',
+    address,
+    usdValue: solUsd > 0 ? formatUSD(amountSol * solUsd) : undefined,
+  }).catch((err) => logger.warn('Failed to send SOL deposit notify', { error: err.message }));
+}
+
 /**
  * Process deposit detection for a single user.
  */
@@ -107,6 +152,8 @@ async function processUserDeposit(
   const userId = user.id;
   const telegramId = user.telegram_id;
   const subaccount = user.subaccount_id;
+  // Solana runs on its own (throttled, free-RPC-only) schedule.
+  processSolanaDeposit(user).catch(() => {});
   const suiAddr = user.sui_address;
   const starknetAddr = user.starknet_address;
 
@@ -402,7 +449,7 @@ export async function pollUserDeposits(): Promise<void> {
   try {
     const db = await getDb();
     const result = await db.query<UserRecord>(
-      'SELECT id, telegram_id, subaccount_id, sui_address, starknet_address, scoped_key_encrypted, sui_private_key_enc, last_near_balance, last_sui_balance, last_strk_balance, created_at FROM users'
+      'SELECT id, telegram_id, subaccount_id, sui_address, starknet_address, solana_address, scoped_key_encrypted, sui_private_key_enc, last_near_balance, last_sui_balance, last_strk_balance, created_at FROM users'
     );
 
     const allUsers = result.rows;
