@@ -88,8 +88,8 @@
       --color-text: #f0f6fc;
       --color-text-muted: #9ba8bc;
       --color-text-subtle: #6e7681;
-      --font-display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-display: var(--font-sans);
+      --font-family: var(--font-sans);
       --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
       --radius-sm: 6px;
@@ -112,8 +112,8 @@
       min-height: 100vh;
       display: flex;
       background-image: 
-        radial-gradient(100% 70% at 50% -10%, rgba(37, 99, 235, 0.28) 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-    radial-gradient(circle 500px at 85% 15%, rgba(0, 240, 255, 0.08), transparent 70%);
+        none 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
+    none, transparent 70%);
       background-attachment: fixed;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
@@ -131,7 +131,7 @@
       width: 250px;
       min-width: 250px;
       background: rgba(6, 14, 34, 0.96);
-      backdrop-filter: blur(20px);
+      
       border-right: 1px solid var(--color-border);
       display: flex;
       flex-direction: column;
@@ -539,7 +539,7 @@
 
     .racer-modal-backdrop {
       position: fixed; inset: 0; background: rgba(8, 9, 11, 0.88);
-      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+       -webkit-
       z-index: 99999; display: none; align-items: center; justify-content: center; padding: 16px;
     }
     .racer-modal-backdrop.open { display: flex; }
@@ -1223,7 +1223,7 @@
       justify-content: center;
       gap: 12px;
       background: rgba(8, 9, 11, 0.65);
-      backdrop-filter: blur(4px);
+      
     }
 
     .locked-icon-halo {
@@ -2181,7 +2181,7 @@
       right: 0;
       bottom: 0;
       background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(8px);
+      
       z-index: 1000;
       display: none;
       align-items: center;
@@ -2433,8 +2433,8 @@
         right: 0;
         z-index: 950;
         background: rgba(255, 255, 255, 0.98) !important;
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        
+        -webkit-
         border-bottom: 1px solid #E5E7EB !important;
         padding: 8px 14px;
         height: 56px;
@@ -2718,7 +2718,7 @@
       }
 
       .pos-table {
-        min-width: 520px;
+        width: 100%; max-width: 520px;
       }
 
       .deposit-tab-btn {
@@ -2740,7 +2740,7 @@
         padding: 0 !important;
         z-index: 10000 !important;
         background: rgba(17, 24, 39, 0.48) !important;
-        backdrop-filter: blur(4px) !important;
+         !important;
       }
 
       .modal-window,
@@ -2963,8 +2963,8 @@
         height: calc(60px + env(safe-area-inset-bottom, 10px));
         padding-bottom: env(safe-area-inset-bottom, 10px);
         background: rgba(255, 255, 255, 0.96) !important;
-        backdrop-filter: blur(24px);
-        -webkit-backdrop-filter: blur(24px);
+        
+        -webkit-
         border-top: 1px solid #E5E7EB !important;
         box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04) !important;
       }
@@ -3792,10 +3792,10 @@
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                       <span id="intent-routing-badge">Private Intent Solver Shield</span>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(0,240,255,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,240,255,0.25);">ZERO-MEV BATCH</span>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(0,240,255,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,240,255,0.25);">NEAR INTENT ROUTE</span>
                   </div>
                   <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;" id="intent-routing-desc">
-                    Decentralized off-chain intent routed via NEAR Intent Solvers (Defuse network). Free private trading for all wallet users with zero front-running or MEV.
+                    Decentralized off-chain intent routed via NEAR Intent Solvers (Defuse network). Routed privately through NEAR Intents across launchpad bonding curves and DEX pools.
                   </div>
                 </div>
 
@@ -5426,6 +5426,7 @@
 
       fetchUserTokenBalance(tok.address);
       updateRacerAlphaEstimatedOutput();
+      if (typeof updateExecuteButtonText === "function") updateExecuteButtonText();
       renderRacerAlphaTable();
 
       // Restart real-time polling for the newly selected token
@@ -5624,6 +5625,26 @@
       updateRacerAlphaEstimatedOutput();
     }
 
+    
+    function updateExecuteButtonText() {
+      const btn = document.getElementById('btn-alpha-execute');
+      if (!btn) return;
+      const isBuy = selectedRacerAlphaSide === 'BUY';
+      const inputVal = document.getElementById('alpha-trade-amount')?.value || '0';
+      const sym = selectedAlphaToken ? selectedAlphaToken.symbol : 'TOKEN';
+
+      if (isBuy) {
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Buy ${sym} (${inputVal} NEAR)</span>`;
+        btn.style.background = 'var(--color-primary)';
+        btn.style.color = 'var(--color-on-primary)';
+      } else {
+        const pctLabel = isSelectedMaxSell ? '100%' : (currentSellPct ? currentSellPct + '%' : inputVal + ' ' + sym);
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg><span>Sell ${pctLabel}</span>`;
+        btn.style.background = 'var(--color-error)';
+        btn.style.color = '#ffffff';
+      }
+    }
+
     function setRacerAlphaTradeSide(side) {
       selectedRacerAlphaSide = side;
       isSelectedMaxSell = false;
@@ -5740,7 +5761,7 @@
             if (q.supported && q.routing === 'INTENT_SOLVER') {
               if (badge) badge.textContent = 'NEAR Intent Solver Shield Active';
               if (tag) {
-                tag.textContent = 'ZERO-MEV BATCH';
+                tag.textContent = 'NEAR INTENT ROUTE';
                 tag.style.color = 'var(--color-racer-green)';
                 tag.style.background = 'rgba(0,230,118,0.12)';
               }
