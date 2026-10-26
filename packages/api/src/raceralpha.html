@@ -107,10 +107,16 @@
 
     body {
       background-color: var(--color-canvas);
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 240, 255, 0.05), transparent 70%),
+        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+      background-size: 100% 100%, 48px 48px, 48px 48px;
       color: var(--color-text);
       font-family: var(--font-family);
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       background-attachment: fixed;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
@@ -3269,6 +3275,32 @@
   outline: none !important;
   box-shadow: none !important;
 }
+
+/* In-App Toast Notifications */
+.racer-toast {
+  position: fixed;
+  bottom: calc(72px + env(safe-area-inset-bottom, 8px));
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 999999;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.25s ease;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+.racer-toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+.racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
+.racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+.racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
 </style>
 
 </head>
@@ -3285,7 +3317,7 @@
     <nav class="desktop-nav" aria-label="Main Navigation">
       <a href="/alpha" class="desktop-nav-link active">Alpha</a>
       <a href="/fleet" class="desktop-nav-link">Fleet</a>
-      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble Map</a>
       <a href="/competition" class="desktop-nav-link">Arena</a>
       <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
         <span>RacerBot</span>
@@ -3294,7 +3326,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -4639,7 +4671,7 @@
           <span style="font-family:var(--font-mono); font-weight:700; color:var(--color-text); font-size:14px;" id="deposit-modal-balance">0.00 NEAR</span>
         </div>
 
-        <button class="btn-primary" style="width:100%; justify-content:center;" onclick="refreshUserBalance(); alert('Balance refreshed from NEAR RPC!');">
+        <button class="btn-primary" style="width:100%; justify-content:center;" onclick="refreshUserBalance(); showToast('Balance refreshed from NEAR RPC!', 'success');">
           <span>I have sent NEAR • Refresh Balance ↻</span>
         </button>
       </div>
@@ -5960,7 +5992,7 @@
     function copySelectedContract() {
       if (!selectedAlphaToken) return;
       navigator.clipboard.writeText(selectedAlphaToken.address).then(() => {
-        alert(`Copied contract address: ${selectedAlphaToken.address}`);
+        showToast(`Copied: ${selectedAlphaToken.address}`, 'success');
       }).catch(() => {
         prompt('Copy Token Address:', selectedAlphaToken.address);
       });
@@ -5968,13 +6000,13 @@
 
     async function executeRacerAlphaConsoleTrade() {
       if (!selectedAlphaToken) {
-        alert('Please select a token to trade from the list.');
+        showToast('Please select a token to trade from the list.', 'info');
         return;
       }
 
       const inputVal = parseFloat(document.getElementById('alpha-trade-amount')?.value || '0');
       if (!inputVal || inputVal <= 0) {
-        alert(selectedRacerAlphaSide === 'BUY' ? 'Please enter a valid NEAR amount to trade.' : 'Please enter a valid token amount to sell.');
+        showToast(selectedRacerAlphaSide === 'BUY' ? 'Please enter a valid NEAR amount to trade.' : 'Please enter a valid token amount to sell.', 'error');
         return;
       }
 
@@ -6270,7 +6302,7 @@
       const copySelect = document.getElementById('copy-trader-select');
       const traderId = copySelect ? copySelect.value : (currentTrader?.id || '');
       if (!traderId) {
-        alert('Please select an Alpha Caller first.');
+        showToast('Please select an Alpha Caller first.', 'info');
         return;
       }
       openKeyPurchaseModal(traderId, 'copy');
@@ -6384,7 +6416,7 @@
       const copySelect = document.getElementById('copy-trader-select');
       const traderId = copySelect ? copySelect.value : '';
       if (!traderId) {
-        alert('Please select an Alpha Caller first.');
+        showToast('Please select an Alpha Caller first.', 'info');
         return;
       }
 
@@ -6411,16 +6443,16 @@
         const data = await res.json();
         if (!res.ok || !data.success) {
           if (data.requiresKey) {
-            alert('Paid Viewing Key Required:\nYou must hold a key for this Alpha Caller to enable copy trading.');
+            showToast('Paid Viewing Key Required to enable copy trading.', 'error');
             openKeyPurchaseModal(traderId, 'copy');
             return;
           }
           throw new Error(data.error || 'Failed to save copy settings');
         }
 
-        alert('Confidential copy settings saved! You will automatically copy this Alpha Caller privately through NEAR Intents.');
+        showToast('Confidential copy settings saved! You will automatically copy this Alpha Caller privately through NEAR Intents.', 'success');
       } catch (err) {
-        alert('Failed to save copy settings: ' + err.message);
+        showToast('Failed to save copy settings: ' + err.message, 'error');
       }
     }
 
@@ -6543,11 +6575,11 @@
       const btn = document.getElementById('btn-execute-dispatch');
 
       if (!tokenAddress) {
-        alert('Please enter a target token contract address.');
+        showToast('Please enter a target token contract address.', 'error');
         return;
       }
       if (!amountNear || amountNear <= 0) {
-        alert('Please enter a valid trade amount in NEAR.');
+        showToast('Please enter a valid trade amount in NEAR.', 'error');
         return;
       }
 
@@ -6903,7 +6935,7 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert(`5.0 NEAR Platform Entry Fee Settled on-chain to racerbottreasury.near!\nTx: ${data.txHash}`);
+          showToast(`5.0 NEAR Entry Fee Settled on-chain! Tx: ${data.txHash}`, 'success');
           
           // If profile fields are ready, automatically register and open dashboard
           const handleEl = document.getElementById('reg-handle');
@@ -6915,7 +6947,7 @@
             if (step3) step3.scrollIntoView({ behavior: 'smooth' });
           }
         } else {
-          alert('Entry fee settlement failed: ' + (data.error || 'Unknown error'));
+          showToast('Entry fee settlement failed: ' + (data.error || 'Unknown error'), 'error');
           if (btn) {
             btn.disabled = false;
             btn.innerHTML = prevText;
@@ -6923,7 +6955,7 @@
         }
       } catch (err) {
         const msg = err?.message || 'Transaction rejected';
-        alert('Wallet Payment Cancelled / Failed: ' + msg);
+        showToast('Wallet Payment Cancelled / Failed: ' + msg, 'error');
         if (btn) {
           btn.disabled = false;
           btn.innerHTML = prevText;
@@ -7035,12 +7067,12 @@
         });
         const data = await res.json();
         if (data.success) {
-          alert('Tier copy fees updated successfully!');
+          showToast('Tier copy fees updated successfully!', 'success');
         } else {
-          alert('Failed to update pricing: ' + (data.error || 'Unknown error'));
+          showToast('Failed to update pricing: ' + (data.error || 'Unknown error'), 'error');
         }
       } catch (err) {
-        alert('Failed to update pricing: ' + err.message);
+        showToast('Failed to update pricing: ' + err.message, 'error');
       }
     }
 
@@ -7128,8 +7160,10 @@
 
     function copyTerminalLink() {
       const input = document.getElementById('creator-terminal-link');
-      navigator.clipboard.writeText(input.value);
-      alert('Terminal link copied to clipboard!');
+      if (input && input.value) {
+        navigator.clipboard.writeText(input.value);
+        showToast('Terminal link copied to clipboard!', 'success');
+      }
     }
 
     async function generateNewTerminalLink() {
@@ -7141,7 +7175,7 @@
         const data = await res.json();
         if (data.success) {
           document.getElementById('creator-terminal-link').value = data.terminalUrl;
-          alert('New one-time terminal link generated!');
+          showToast('New one-time terminal link generated!', 'success');
         }
       } catch {}
     }
@@ -7453,18 +7487,18 @@
       const amount = parseFloat(amtInput?.value || '0');
 
       if (!currentDepositToken) {
-        alert('Please select a deposit token.');
+        showToast('Please select a deposit token.', 'info');
         return;
       }
 
       if (!amount || amount <= 0) {
-        alert('Please enter a valid deposit amount.');
+        showToast('Please enter a valid deposit amount.', 'error');
         return;
       }
 
       const minAmt = currentDepositToken.minDeposit?.amount || 0.0001;
       if (amount < minAmt) {
-        alert(`Deposit amount is below the solver minimum (${currentDepositToken.minDeposit?.formatted}).`);
+        showToast(`Deposit amount is below solver minimum (${currentDepositToken.minDeposit?.formatted}).`, 'error');
         return;
       }
 
@@ -7492,7 +7526,7 @@
         activeDepositQuote = data;
         renderActiveDepositCard(data);
       } catch (err) {
-        alert('Error: ' + err.message);
+        showToast('Error: ' + err.message, 'error');
       } finally {
         btn.disabled = false;
         btn.innerHTML = '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon><span>Generate 1Click Deposit Address</span>';
@@ -7589,7 +7623,7 @@
       const text = document.getElementById('active-deposit-address')?.textContent;
       if (text && text !== '--') {
         navigator.clipboard.writeText(text);
-        alert('Single-use deposit address copied: ' + text);
+        showToast('Single-use deposit address copied: ' + text, 'success');
       }
     }
 
@@ -7597,7 +7631,7 @@
       const text = document.getElementById('deposit-account-id')?.textContent;
       if (text) {
         navigator.clipboard.writeText(text);
-        alert('Deposit address copied: ' + text);
+        showToast('Deposit address copied: ' + text, 'success');
       }
     }
 
@@ -7689,6 +7723,23 @@
       return headers;
     }
 
+    function showToast(msg, type = 'info') {
+      let t = document.getElementById('racer-app-toast');
+      if (!t) {
+        t = document.createElement('div');
+        t.id = 'racer-app-toast';
+        t.className = 'racer-toast';
+        document.body.appendChild(t);
+      }
+      t.className = `racer-toast ${type} show`;
+      t.textContent = msg;
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => {
+        t.classList.remove('show');
+      }, 3200);
+    }
+    window.showToast = showToast;
+
     function handleHeaderConnectClick() {
       if (window.RacerConnect && (window.RacerConnect.isAuthenticated() || window.RacerConnect.activeNearWallet)) {
         openConnectModal();
@@ -7734,12 +7785,16 @@
       const linkedDiv = document.getElementById('modal-state-linked');
       const label = document.getElementById('header-connect-label');
       const headerBtn = document.getElementById('header-connect-btn');
+      const depositBtn = document.getElementById('header-deposit-btn');
       const sidebarAddr = document.getElementById('sidebar-user-addr');
       const sidebarAvatar = document.getElementById('sidebar-user-avatar');
       const mobileLabel = document.getElementById('mobile-connect-label');
       const mobileBtn = document.getElementById('mobile-header-connect-btn');
 
       const activeAddr = nearWallet || (user && user.subaccountId) || (user && user.username);
+      if (depositBtn) {
+        depositBtn.style.display = activeAddr ? 'inline-flex' : 'none';
+      }
 
       if (activeAddr) {
         if (unlinkedDiv) unlinkedDiv.style.display = 'none';

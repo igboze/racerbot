@@ -58,12 +58,12 @@
 
       /* Precision Mechanical Radius */
       --radius-none: 0px;
-      --radius-sm: 4px;
-      --radius-md: 8px;
-      --radius-lg: 12px;
-      --radius-xl: 12px;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 16px;
       --radius-full: 9999px;
-      --radius: 6px;
+      --radius: 10px;
 
       /* Distinctive Typography Suite (Inter + System Monospace) */
       --font-display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -96,6 +96,11 @@
 
     html, body {
       background-color: var(--color-canvas);
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 240, 255, 0.05), transparent 70%),
+        linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+      background-size: 100% 100%, 52px 52px, 52px 52px;
       color: var(--color-ink-strong);
       font-family: var(--font-sans);
       font-size: 16px;
@@ -114,14 +119,9 @@
       content: "";
       position: fixed;
       inset: 0;
-      background-image: 
-        linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
-      background-size: 52px 52px;
+      background: radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.04) 0%, transparent 60%);
       pointer-events: none;
       z-index: 0;
-      mask-image: none;
-      -webkit-mask-image: none;
     }
 
     a {
@@ -836,7 +836,7 @@
     }
     .host-title {
       font-size: 24px;
-      font-weight: 484; /* Adyen display weight */
+      font-weight: 600;
       color: #ffffff;
       margin-bottom: 10px;
     }
@@ -952,7 +952,7 @@
     <nav class="desktop-nav" aria-label="Main Navigation">
       <a href="/alpha" class="desktop-nav-link">Alpha</a>
       <a href="/fleet" class="desktop-nav-link">Fleet</a>
-      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble Map</a>
       <a href="/competition" class="desktop-nav-link active">Arena</a>
       <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
         <span>RacerBot</span>
@@ -961,7 +961,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -976,7 +976,7 @@
       <span class="mono-eyebrow-text">RACERBOT REWARD PROGRAM • LIVE SNAPSHOT EPOCH</span>
     </div>
 
-    <!-- Hero Heading (Adyen 452 Weight + Mint Underline + Editorial Period) -->
+    <!-- Hero Heading (Gradient Title + Editorial Period) -->
     <h1 class="hero-h1">
       2-Week <span style="color:var(--color-primary); background:linear-gradient(135deg, #00f0ff 0%, #60a5fa 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">Reward Program</span> &amp; Arena
     </h1>
@@ -995,23 +995,25 @@
       </div>
     </div>
 
-    <!-- Navigation Tabs (6px Radius) -->
-    <div class="tabs-strip">
-      <button class="tab-btn active" onclick="switchTab('snapshot')">
-        <span>Snapshot Arena</span>
-        <span class="tab-badge" id="snapshot-count-badge">On-chain standings</span>
-      </button>
-      <button class="tab-btn" onclick="switchTab('sprint')">
-        <span>Volume Sprints</span>
-        <span class="tab-badge">Event listings</span>
-      </button>
-      <button class="tab-btn" onclick="switchTab('formats')">
-        <span>Competition Types</span>
-        <span class="tab-badge">Program formats</span>
-      </button>
-      <button class="tab-btn" onclick="switchTab('host')">
-        <span>Partner With Us</span>
-        <span class="tab-badge">Host an event</span>
+    <!-- Navigation Tabs & Host Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:24px;">
+      <div class="tabs-strip" style="margin-bottom:0;">
+        <button class="tab-btn active" id="btn-tab-snapshot" onclick="switchTab('snapshot')">
+          <span>Snapshot Arena</span>
+          <span class="tab-badge" id="snapshot-count-badge">On-chain standings</span>
+        </button>
+        <button class="tab-btn" id="btn-tab-sprint" onclick="switchTab('sprint')">
+          <span>Volume Sprints</span>
+          <span class="tab-badge">Event listings</span>
+        </button>
+        <button class="tab-btn" id="btn-tab-formats" onclick="switchTab('formats')">
+          <span>Competition Types</span>
+          <span class="tab-badge">Program formats</span>
+        </button>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="openHostModal()" style="gap:6px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Host a competition</span>
       </button>
     </div>
 
@@ -1226,7 +1228,7 @@
           <span class="indicator-dot"></span>
           <span class="mono-eyebrow-text">ENTERPRISE TOURNAMENT SUITE</span>
         </div>
-        <h2 style="font-size: 26px; font-weight: 484; color: #ffffff; margin-bottom: 8px;">
+        <h2 style="font-size: 26px; font-weight: 600; color: #ffffff; margin-bottom: 8px;">
           Available Competition Formats.
         </h2>
         <p style="color: var(--color-ink-soft); font-size: 14px; max-width: 740px;">
@@ -1756,96 +1758,111 @@
   <style>
     @keyframes spin { to { transform: rotate(360deg); } }
     .racer-modal-backdrop {
-      position: fixed; inset: 0; background: rgba(17, 24, 39, 0.5);
-       -webkit-
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       z-index: 99999; display: none; align-items: center; justify-content: center; padding: 16px;
     }
     .racer-modal-backdrop.open { display: flex; }
     .racer-modal-card {
-      background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 12px;
-      width: 100%; max-width: 440px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-      padding: 24px; position: relative; font-family: var(--font-sans); color: #111827;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      width: 100%; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      padding: 24px; position: relative; font-family: var(--font-sans); color: var(--color-text);
       box-sizing: border-box;
+    }
+    .racer-modal-card h3 { color: var(--color-text); }
+    .racer-modal-card p { color: var(--color-text-2); }
+    .racer-modal-card input {
+      min-height: 44px;
+      font-size: 15px;
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-border-input);
+      border-radius: var(--radius-md);
+      color: var(--color-text);
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0 12px;
+    }
+    .racer-modal-card .btn-adyen-primary {
+      min-height: 44px;
+      background: var(--color-primary);
+      color: var(--color-on-primary, #0F1320);
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+    }
+    .racer-modal-card .btn-adyen-secondary {
+      min-height: 44px;
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-border);
+      color: var(--color-text);
+      border-radius: var(--radius-md);
+      cursor: pointer;
     }
 
     @media (max-width: 768px) {
       .racer-modal-backdrop {
-        align-items: flex-end !important;
-        justify-content: center !important;
-        padding: 0 !important;
+        align-items: flex-end;
+        padding: 0;
       }
       .racer-modal-card {
-        border-radius: 16px 16px 0 0 !important;
-        max-width: 100% !important;
-        width: 100% !important;
-        max-height: min(85vh, 85dvh) !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
-        -webkit-overflow-scrolling: touch !important;
-        overscroll-behavior: contain !important;
-        padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
-        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
-        border-bottom: none !important;
-        border-left: none !important;
-        border-right: none !important;
+        border-radius: 16px 16px 0 0;
+        max-width: 100%;
+        width: 100%;
+        max-height: min(85vh, 85dvh);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px));
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.6);
+        border-bottom: none;
+        border-left: none;
+        border-right: none;
       }
       .racer-modal-card::before {
         content: '';
         display: block;
         width: 36px;
         height: 4px;
-        background: #D1D5DB;
+        background: var(--color-border-input);
         border-radius: 2px;
         margin: 0 auto 14px auto;
       }
-      .racer-modal-card h3,
-      .racer-modal-card span[style*="color:#fff"],
-      .racer-modal-card div[style*="color:#fff"] {
-        color: #111827 !important;
-      }
-      .racer-modal-card p,
-      .racer-modal-card span[style*="color:#94a3b8"],
-      .racer-modal-card div[style*="color:#8c959d"],
-      .racer-modal-card span[style*="color:#8c959d"] {
-        color: #6B7280 !important;
-      }
-      .racer-modal-card div[style*="background:#1a2b3b"],
-      .racer-modal-card div[style*="background:var(--color-surface)"] {
-        background: #F9FAFB !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 10px !important;
-        color: #111827 !important;
-      }
-      .racer-modal-card input {
-        min-height: 44px !important;
-        font-size: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
-        color: #111827 !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
-      }
-      .racer-modal-card .btn-adyen-primary {
-        min-height: 44px !important;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-      }
-      .racer-modal-card .btn-adyen-secondary {
-        min-height: 44px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        color: #374151 !important;
-        border-radius: 8px !important;
-      }
       .racer-modal-card #linked-subaccount,
       .racer-modal-card code {
-        word-break: break-all !important;
-        overflow-wrap: anywhere !important;
+        word-break: break-all;
+        overflow-wrap: anywhere;
       }
     }
+
+    /* In-App Toast Notifications */
+    .racer-toast {
+      position: fixed;
+      bottom: calc(72px + env(safe-area-inset-bottom, 8px));
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 999999;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s ease;
+      white-space: nowrap;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .racer-toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
+    .racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+    .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
   </style>
 
   <!-- NEAR Connect & RacerConnect SDK -->
@@ -1898,7 +1915,10 @@
       const unlinkedDiv = document.getElementById('modal-state-unlinked');
       const linkedDiv = document.getElementById('modal-state-linked');
       const label = document.getElementById('header-connect-label');
-      const headerBtn = document.getElementById('header-connect-btn');
+      const depositBtn = document.getElementById('header-deposit-btn');
+      if (depositBtn) {
+        depositBtn.style.display = (isAuth || nearWallet) ? 'inline-flex' : 'none';
+      }
 
       if (isAuth || nearWallet) {
         if (unlinkedDiv) unlinkedDiv.style.display = 'none';
@@ -1917,13 +1937,29 @@
       } else {
         if (unlinkedDiv) unlinkedDiv.style.display = 'block';
         if (linkedDiv) linkedDiv.style.display = 'none';
-        if (label) label.textContent = 'Log in';
+        if (label) label.textContent = 'Connect';
         if (headerBtn) {
           headerBtn.style.background = '';
           headerBtn.style.borderColor = '';
           headerBtn.style.color = '';
         }
       }
+    }
+
+    function showToast(msg, type = 'info') {
+      let t = document.getElementById('racer-app-toast');
+      if (!t) {
+        t = document.createElement('div');
+        t.id = 'racer-app-toast';
+        t.className = 'racer-toast';
+        document.body.appendChild(t);
+      }
+      t.className = `racer-toast ${type} show`;
+      t.textContent = msg;
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => {
+        t.classList.remove('show');
+      }, 3200);
     }
 
     async function handleStartTelegramPairing() {
@@ -1938,10 +1974,11 @@
             window.open(data.deepLink, '_blank');
           } else if (status === 'linked') {
             updateModalUI();
+            showToast('Telegram successfully paired!', 'success');
           }
         });
       } catch (err) {
-        alert(err.message || 'Pairing failed');
+        showToast(err.message || 'Pairing failed', 'error');
         if (spinner) spinner.style.display = 'none';
         if (btn) btn.style.display = 'inline-flex';
       }
