@@ -97,8 +97,8 @@
     html, body {
       background-color: var(--color-canvas);
       background-image: 
-        radial-gradient(100% 70% at 50% -10%, rgba(37, 99, 235, 0.28) 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-        radial-gradient(circle 500px at 85% 15%, rgba(0, 240, 255, 0.08), transparent 70%);
+        none 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
+        none, transparent 70%);
       background-attachment: fixed;
       color: var(--color-ink-strong);
       font-family: var(--font-sans);
@@ -112,9 +112,9 @@
       overflow-x: hidden;
       width: 100%;
       background-image: 
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 96, 169, 0.25), transparent 70%),
-        radial-gradient(circle 600px at 80% 20%, rgba(106, 204, 220, 0.12), transparent 70%),
-        radial-gradient(circle 500px at 20% 60%, rgba(0, 209, 106, 0.08), transparent 70%);
+        none, transparent 70%),
+        none, transparent 70%),
+        none, transparent 70%);
       background-attachment: fixed;
       position: relative;
     }
@@ -129,8 +129,8 @@
       background-size: 52px 52px;
       pointer-events: none;
       z-index: 0;
-      mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
-      -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 80%);
+      mask-image: none;
+      -webkit-mask-image: none;
     }
 
     a {
@@ -146,8 +146,8 @@
       z-index: 50;
       height: 60px;
       background: rgba(0, 18, 34, 0.94);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      
+      -webkit-
       border-bottom: 1px solid var(--color-surface-3);
       display: flex;
       align-items: center;
@@ -2068,7 +2068,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .racer-modal-backdrop {
       position: fixed; inset: 0; background: rgba(17, 24, 39, 0.5);
-      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+       -webkit-
       z-index: 99999; display: none; align-items: center; justify-content: center; padding: 16px;
     }
     .racer-modal-backdrop.open { display: flex; }
