@@ -147,8 +147,39 @@ const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: numbe
 // ── Single-flight deduplication to eliminate cache stampedes and duplicate RPC burns ────
 const inflightTokenInfoRequests = new Map<string, Promise<TokenInfoResult>>();
 
-// ── In-memory user balance cache with 8s TTL ──────────────────────────────────
+// ── In-memory user balance cache with 30s TTL ──────────────────────────────────
 const balanceCache = new Map<number, { data: UserBalances; expiresAt: number }>();
+const inflightUserBalances = new Map<number, Promise<UserBalances>>();
+
+// ── GeckoTerminal / external API cache with 5m TTL ────────────────────────────
+const geckoCache = new Map<string, { at: number; data: any }>();
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+async function fetchGeckoJson(url: string, ttlMs = 300_000): Promise<any> {
+  const cached = geckoCache.get(url);
+  if (cached && Date.now() - cached.at < ttlMs) {
+    return cached.data;
+  }
+  try {
+    const res = await withTimeout(
+      fetch(url, { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => null),
+      2500,
+      null
+    );
+    if (res) {
+      geckoCache.set(url, { at: Date.now(), data: res });
+    }
+    return res || cached?.data || null;
+  } catch {
+    return cached?.data || null;
+  }
+}
 
 // ── Permanent in-memory token metadata cache (never changes for NEP-141) ───────
 const tokenMetaCache = new Map<string, { name: string; symbol: string; decimals: number; totalSupply: string; icon?: string }>();
@@ -995,9 +1026,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     // Fetch live STRK USD price (default ~$0.40)
     let strkUsd = 0.40;
     try {
-      const geckoStrk: any = await fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${STRK_TOKEN_ADDRESS.toLowerCase()}`, {
-        headers: { Accept: 'application/json' },
-      }).then((r) => r.json()).catch(() => null);
+      const geckoStrk = await fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${STRK_TOKEN_ADDRESS.toLowerCase()}`);
       const fetchedPrice = parseFloat(geckoStrk?.data?.attributes?.price_usd || '0');
       if (fetchedPrice > 0) strkUsd = fetchedPrice;
     } catch { /* use default */ }
@@ -1012,12 +1041,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         totalSupply: '1000000000000000000000000000',
       })),
       fetchDexScreenerTokenData(canonicalAddr).catch(() => null),
-      fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`, {
-        headers: { Accept: 'application/json' },
-      }).then((r) => r.json()).catch(() => null) as Promise<any>,
-      fetch(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}/pools`, {
-        headers: { Accept: 'application/json' },
-      }).then((r) => r.json()).catch(() => null) as Promise<any>,
+      fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`),
+      fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}/pools`),
       detectStarknetLaunchpad(canonicalAddr).catch(() => ({
         launchpad: 'none' as const,
         name: 'AVNU Aggregator',
@@ -2537,90 +2562,108 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
     }
   }
 
-  const rawUser = await getUserByTelegramId(telegramId);
-  if (!rawUser) {
-    throw new Error('User not found. Run /start first.');
+  // Deduplicate concurrent inflight balance requests for the same user
+  if (!forceRefresh && inflightUserBalances.has(telegramId)) {
+    return inflightUserBalances.get(telegramId)!;
   }
 
-  const user = await ensureUserAllWallets(rawUser);
-  const subaccountId = user.subaccount_id;
-  const suiAddress = user.sui_address;
-  const starknetAddress = user.starknet_address;
+  const fetchPromise = (async (): Promise<UserBalances> => {
+    try {
+      const rawUser = await getUserByTelegramId(telegramId);
+      if (!rawUser) {
+        throw new Error('User not found. Run /start first.');
+      }
 
-  let nativeNearYocto = '0';
-  let wrapNearYocto = '0';
-  let suiMist = 0n;
-  let strkBal = '0';
-  let ethBal = '0';
+      const user = await ensureUserAllWallets(rawUser);
+      const subaccountId = user.subaccount_id;
+      const suiAddress = user.sui_address;
+      const starknetAddress = user.starknet_address;
 
-  const [nativeRes, wrapRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
-    near.getNearBalance(subaccountId),
-    near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
-    suiAddress ? getSuiBalance(suiAddress) : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
-    starknetAddress ? getStarknetBalance(starknetAddress, forceRefresh) : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
-    getNearUsdPrice(),
-    getSuiUsdPrice(),
-  ]);
+      let nativeNearYocto = '0';
+      let wrapNearYocto = '0';
+      let suiMist = 0n;
+      let strkBal = '0';
+      let ethBal = '0';
 
-  if (nativeRes.status === 'fulfilled') {
-    nativeNearYocto = nativeRes.value;
-  }
-  if (wrapRes.status === 'fulfilled') {
-    wrapNearYocto = wrapRes.value || '0';
-  }
-  if (suiRes.status === 'fulfilled') {
-    suiMist = suiRes.value.mist;
-  }
-  if (starknetRes.status === 'fulfilled') {
-    strkBal = starknetRes.value.strkFormatted || '0';
-    ethBal = starknetRes.value.ethFormatted || '0';
-  }
+      const [nativeRes, wrapRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
+        near.getNearBalance(subaccountId),
+        near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
+        suiAddress
+          ? withTimeout(getSuiBalance(suiAddress), 2000, { mist: 0n, sui: 0, formatted: '0.0000' })
+          : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
+        starknetAddress
+          ? withTimeout(getStarknetBalance(starknetAddress, forceRefresh), 2000, { strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' })
+          : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
+        getNearUsdPrice(),
+        getSuiUsdPrice(),
+      ]);
 
-  const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
-  const suiPrice = suiUsd.status === 'fulfilled' ? suiUsd.value : 2.0;
+      if (nativeRes.status === 'fulfilled') {
+        nativeNearYocto = nativeRes.value;
+      }
+      if (wrapRes.status === 'fulfilled') {
+        wrapNearYocto = wrapRes.value || '0';
+      }
+      if (suiRes.status === 'fulfilled') {
+        suiMist = suiRes.value.mist;
+      }
+      if (starknetRes.status === 'fulfilled') {
+        strkBal = starknetRes.value.strkFormatted || '0';
+        ethBal = starknetRes.value.ethFormatted || '0';
+      }
 
-  const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
-  const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
-  
-  // Subtract storage reserve (0.05 NEAR) from display balance to show spendable amount
-  const storageReserve = 0.05;
-  const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
-  const totalNear = spendableNativeNear + wrapNear;
+      const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
+      const suiPrice = suiUsd.status === 'fulfilled' ? suiUsd.value : 2.0;
 
-  const spendableSui = Number(suiMist) / 1e9;
+      const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
+      const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
+      
+      // Subtract storage reserve (0.05 NEAR) from display balance to show spendable amount
+      const storageReserve = 0.05;
+      const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
+      const totalNear = spendableNativeNear + wrapNear;
 
-  // Format USD values
-  const formatUSD = (val: number, rate: number) => {
-    const usdValue = val * rate;
-    if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
-    if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
-    return `$${usdValue.toFixed(4)}`;
-  };
+      const spendableSui = Number(suiMist) / 1e9;
 
-  const result: UserBalances = {
-    subaccountId,
-    nativeNearYocto,
-    nativeNearFormatted: spendableNativeNear.toFixed(4),
-    nativeNearUsd: formatUSD(spendableNativeNear, nearPrice),
-    wrapNearYocto,
-    wrapNearFormatted: wrapNear.toFixed(4),
-    wrapNearUsd: formatUSD(wrapNear, nearPrice),
-    totalNearFormatted: totalNear.toFixed(4),
-    totalNearUsd: formatUSD(totalNear, nearPrice),
-    nearUsd: nearPrice,
-    suiAddress: suiAddress ?? undefined,
-    suiBalanceMist: suiMist.toString(),
-    suiBalanceFormatted: spendableSui.toFixed(4),
-    suiBalanceUsd: formatUSD(spendableSui, suiPrice),
-    suiUsd: suiPrice,
-    starknetAddress: starknetAddress ?? undefined,
-    strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
-    ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
-    strkUsd: 0.12,
-  };
+      // Format USD values
+      const formatUSD = (val: number, rate: number) => {
+        const usdValue = val * rate;
+        if (usdValue >= 1000) return `$${(usdValue / 1000).toFixed(2)}K`;
+        if (usdValue >= 1) return `$${usdValue.toFixed(2)}`;
+        return `$${usdValue.toFixed(4)}`;
+      };
 
-  balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 8000 });
-  return result;
+      const result: UserBalances = {
+        subaccountId,
+        nativeNearYocto,
+        nativeNearFormatted: spendableNativeNear.toFixed(4),
+        nativeNearUsd: formatUSD(spendableNativeNear, nearPrice),
+        wrapNearYocto,
+        wrapNearFormatted: wrapNear.toFixed(4),
+        wrapNearUsd: formatUSD(wrapNear, nearPrice),
+        totalNearFormatted: totalNear.toFixed(4),
+        totalNearUsd: formatUSD(totalNear, nearPrice),
+        nearUsd: nearPrice,
+        suiAddress: suiAddress ?? undefined,
+        suiBalanceMist: suiMist.toString(),
+        suiBalanceFormatted: spendableSui.toFixed(4),
+        suiBalanceUsd: formatUSD(spendableSui, suiPrice),
+        suiUsd: suiPrice,
+        starknetAddress: starknetAddress ?? undefined,
+        strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
+        ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
+        strkUsd: 0.12,
+      };
+
+      balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });
+      return result;
+    } finally {
+      inflightUserBalances.delete(telegramId);
+    }
+  })();
+
+  inflightUserBalances.set(telegramId, fetchPromise);
+  return fetchPromise;
 }
 
 // ── Lightweight trade-path balance (SPEED) ────────────────────────────────────

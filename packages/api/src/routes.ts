@@ -884,7 +884,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     getTokenInfo(tokenAddress, forceRefresh),
     telegramId ? getUserBalances(telegramId).catch(() => null) : Promise.resolve(null),
     telegramId ? getUserByTelegramId(telegramId).catch(() => null) : Promise.resolve(null),
-    checkTokenSafety(tokenAddress).catch(() => null),
+    withTimeout(checkTokenSafety(tokenAddress), 3500, 'safety check timeout').catch(() => null),
   ]);
 
   if (info.status === 'rejected') {
@@ -11681,20 +11681,18 @@ export function setupRoutes(bot: Telegraf): void {
     const potentialCA = caMatch ? (caMatch[1] || caMatch[0]).trim() : null;
 
     if (potentialCA) {
-      const loadingMsg = await ctx.reply('🔍 Looking up token...').catch(() => null);
+      ctx.sendChatAction('typing').catch(() => {});
       let card;
       try {
         card = await withTimeout(
           buildTokenCard(potentialCA.trim(), telegramId),
-          12000,
+          10000,
           'The RPC request timed out — please try again'
         );
         prewarmTradePath(telegramId, potentialCA.trim()).catch(() => {});
-        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
         await sendTokenCard(ctx, card);
       } catch (err: any) {
         console.warn(`[API] Token lookup failed for ${potentialCA}:`, err?.message || err);
-        if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
         await ctx.reply(
           `❌ Token not found: ${sanitizeMd(potentialCA)}\n\n` +
           `This could mean:\n` +

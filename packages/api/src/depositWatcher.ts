@@ -425,8 +425,9 @@ export async function pollUserDeposits(): Promise<void> {
       }
     }
 
-    // Always poll all active users + a staggered batch of up to 40 idle users
-    const MAX_IDLE_PER_TICK = 40;
+    // Poll all active users + a small staggered batch of up to 5 idle users
+    // This prevents flooding NEAR, SUI, and Starknet RPCs with hundreds of calls every few seconds.
+    const MAX_IDLE_PER_TICK = 5;
     const idleBatch: UserRecord[] = [];
     if (idleUsers.length > 0) {
       const start = idleUserIndex % idleUsers.length;
@@ -448,8 +449,8 @@ export async function pollUserDeposits(): Promise<void> {
     ]);
     const strkUsd = 0.40;
 
-    // Process target users in parallel batches of 10
-    const BATCH_SIZE = 10;
+    // Process target users in parallel batches of 5 to keep RPC connections fast and responsive
+    const BATCH_SIZE = 5;
     for (let i = 0; i < usersToPoll.length; i += BATCH_SIZE) {
       const batch = usersToPoll.slice(i, i + BATCH_SIZE);
 
@@ -471,9 +472,9 @@ export async function pollUserDeposits(): Promise<void> {
 }
 
 /**
- * Start the background deposit watcher polling loop (default 6s interval).
+ * Start the background deposit watcher polling loop (default 12s interval).
  */
-export function startDepositWatcher(intervalMs = 6_000): void {
+export function startDepositWatcher(intervalMs = 12_000): void {
   if (watcherInterval) {
     clearInterval(watcherInterval);
   }
