@@ -1,4 +1,4 @@
-import { getNear } from '@racerbot/shared';
+import { getNear, getSolanaTokenBalance, SOL_MINT } from '@racerbot/shared';
 import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
@@ -41,6 +41,45 @@ export async function sellAtTarget(
   const slippagePct = Number.isFinite(configuredSlippage) && configuredSlippage > 0
     ? Math.min(15, configuredSlippage)
     : user?.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // Solana Chain Execution Route (Jupiter: pump.fun curve and bonded AMMs)
+  if (position.chain === 'solana' || info.chain === 'solana') {
+    let amountIn = sellQty;
+    // For full exits sell the exact on-chain balance, so no dust is left behind.
+    if (percentage >= 100 && user?.solana_address) {
+      const onChain = await getSolanaTokenBalance(user.solana_address, position.token_address, true).catch(() => null);
+      if (onChain && onChain.raw > 0n) amountIn = onChain.raw.toString();
+      if (onChain && onChain.raw === 0n) {
+        await updatePosition({ position_id: positionId, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+        return { success: false, reason: 'zero_quantity' };
+      }
+    }
+    const swapEvent = {
+      type: 'execute_swap' as const,
+      chain: 'solana' as const,
+      user_id: userId,
+      token_in: position.token_address,
+      token_out: SOL_MINT,
+      amount_in: amountIn,
+      min_amount_out: '1',
+      venue: ((info.venue as any) || 'jupiter'),
+      timestamp: Date.now(),
+      slippage_pct: Math.max(slippagePct, info.bonding_phase === 'prebonded' ? 5 : 2),
+    };
+    const swapResult = await publishSwap(swapEvent, onProgress, options);
+    if (swapResult.success === false) {
+      return { success: false, reason: swapResult.reason || 'Solana sell failed.' };
+    }
+    if (percentage >= 99) {
+      await updatePosition({
+        position_id: positionId,
+        status: 'closed',
+        closed_at: new Date(),
+        quantity_held: '0',
+      }).catch(() => {});
+    }
+    return { success: true };
+  }
 
   // Starknet Chain Execution Route
   if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable') {

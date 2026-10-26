@@ -26,6 +26,19 @@ import {
   parseTokenUnits,
   formatTokenUnits,
   generateStarknetWallet,
+  generateSolanaWallet,
+  getSolanaBalance,
+  getSolUsdPrice,
+  lamportsToSol,
+  isSolanaToken,
+  getSolanaTokenInfo,
+  getSolanaWalletHoldings,
+  getSolanaTokenBalanceOnChain,
+  invalidateSolanaBalanceCache,
+  isSolanaAddress,
+  restoreSolanaKeypair,
+  transferSol,
+  transferSolanaToken,
   getStarknetProvider,
   getStarknetAccount,
   getStarknetBalance,
@@ -59,6 +72,7 @@ import {
   updateUserScopedKey,
   updateUserSuiWallet,
   updateUserStarknetWallet,
+  setUserSolanaWalletIfMissing,
   getUserByStarknetAddress,
   getTokenCache,
   findTokenAddressByShortKey,
@@ -293,9 +307,12 @@ export async function getBatchTokenInfo(
       [missing]
     ).then((r: any) => r.rows);
 
-    const nearUsd = await getNearUsdPrice().catch(() => 0);
+    const nearUsdLive = await getNearUsdPrice().catch(() => 0);
+    const solUsdLive = rows.some((r: any) => r.chain === 'solana') ? await getSolUsdPrice().catch(() => 0) : 0;
 
     for (const row of rows) {
+      // Cached prices are stored in the token's native unit (NEAR, SUI, SOL...).
+      const nearUsd = row.chain === 'solana' ? solUsdLive : nearUsdLive;
       const lastPrice = parseFloat(row.last_price || '0');
       const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
       const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
@@ -321,6 +338,7 @@ export async function getBatchTokenInfo(
         tradeable: isTradableVenue(row.venue),
         buy_tax_pct: row.buy_tax_pct != null ? Number(row.buy_tax_pct) : undefined,
         sell_tax_pct: row.sell_tax_pct != null ? Number(row.sell_tax_pct) : undefined,
+        ...(row.chain === 'solana' ? { sol_usd: solUsdLive } : {}),
       };
       tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 30_000 });
       result.set(row.token_address, tokenData);
@@ -668,7 +686,7 @@ export async function fetchTokenTotalTxns(
 
 export interface TokenInfoResult {
   address: string;
-  chain?: 'near' | 'sui' | 'starknet';
+  chain?: 'near' | 'sui' | 'starknet' | 'solana';
   name: string;
   symbol: string;
   decimals: number;
@@ -704,6 +722,11 @@ export interface TokenInfoResult {
   price_in_paired?: string;    // Spot price denominated in paired asset
   liquidity_in_paired?: string;// Liquidity denominated in paired asset
   launchpad?: string;          // Launchpad name if launched via launchpad (e.g. 'Launchy', 'Unruggable Meme')
+  sol_usd?: number;
+  sol_token_program?: string;  // SPL Token or Token-2022 program id
+  sol_mint_authority_disabled?: boolean | null;
+  sol_freeze_authority_disabled?: boolean | null;
+  sol_top_holders_pct?: number | null;
 }
 
 const refPoolFeeCache = new Map<number, number>();
@@ -1016,6 +1039,76 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
   }
 
   const fetchPromise = (async (): Promise<TokenInfoResult> => {
+
+  // ── Solana Token Resolution (Jupiter + pump.fun, no RPC) ────────────────────
+  if (isSolanaToken(tokenAddress)) {
+    const sol = await getSolanaTokenInfo(tokenAddress, forceRefresh);
+    if (!sol) {
+      throw new Error(`Solana token not found: ${tokenAddress}`);
+    }
+    const solUsd = sol.solUsd > 0 ? sol.solUsd : 150;
+    const venue =
+      sol.bondingPhase === 'prebonded' && sol.launchpad === 'pump.fun'
+        ? 'pumpfun'
+        : sol.launchpad === 'pump.fun'
+        ? 'pumpswap'
+        : 'jupiter';
+    const totalSupplyRaw = sol.totalSupply > 0
+      ? BigInt(Math.round(sol.totalSupply)) * 10n ** BigInt(sol.decimals)
+      : 0n;
+    const result: TokenInfoResult = {
+      address: tokenAddress,
+      chain: 'solana',
+      name: sol.name,
+      symbol: sol.symbol,
+      decimals: sol.decimals,
+      total_supply: totalSupplyRaw.toString(),
+      price: sol.priceSol > 0 ? sol.priceSol.toFixed(12) : '0',
+      price_usd: sol.priceUsd > 0 ? sol.priceUsd.toFixed(10) : '0',
+      icon: sol.icon,
+      price_24h_change: sol.priceChange24h,
+      volume_24h_usd: sol.volume24hUsd,
+      liquidity: sol.liquidityUsd > 0 ? (sol.liquidityUsd / solUsd).toFixed(2) : '0',
+      liquidity_usd: sol.liquidityUsd > 0 ? sol.liquidityUsd.toFixed(2) : '0',
+      market_cap: sol.marketCapUsd > 0 ? sol.marketCapUsd / solUsd : 0,
+      market_cap_usd: sol.marketCapUsd,
+      near_usd: solUsd,
+      sol_usd: solUsd,
+      venue,
+      bonding_phase: sol.bondingPhase,
+      bonding_progress_pct: sol.bondingProgressPct,
+      tradeable: true,
+      holders_count: sol.holders,
+      buys_count: sol.buys24h,
+      sells_count: sol.sells24h,
+      trades_timeframe: '24h',
+      total_txns: null,
+      buy_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
+      sell_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
+      launchpad: sol.launchpad || undefined,
+      sol_token_program: sol.tokenProgram,
+      sol_mint_authority_disabled: sol.mintAuthorityDisabled,
+      sol_freeze_authority_disabled: sol.freezeAuthorityDisabled,
+      sol_top_holders_pct: sol.topHoldersPct,
+    };
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    upsertTokenCache({
+      token_address: tokenAddress,
+      chain: 'solana',
+      name: sol.name,
+      symbol: sol.symbol,
+      decimals: sol.decimals,
+      total_supply: totalSupplyRaw.toString(),
+      venue: venue as any,
+      bonding_phase: sol.bondingPhase,
+      bonding_progress_pct: sol.bondingProgressPct ?? undefined,
+      last_price: sol.priceSol,
+      last_liquidity: sol.liquidityUsd > 0 ? sol.liquidityUsd / solUsd : 0,
+      icon: sol.icon,
+    } as any).catch(() => {});
+    return result;
+  }
 
   // ── Starknet Token Resolution (AVNU / Ekubo / Unruggable) ───────────────────
   if (isStarknetToken(tokenAddress)) {
@@ -2027,7 +2120,25 @@ export interface OnboardResult {
   suiPrivateKey?: string;
   starknetAddress?: string;
   starknetPrivateKey?: string;
+  solanaAddress?: string;
+  solanaPrivateKey?: string;
   isExisting: boolean;
+}
+
+/**
+ * Ensures the user has a Solana wallet. Existing users (created before Solana
+ * support) get one generated on their next /start or bot interaction. A wallet
+ * that already exists is NEVER replaced: the DB write only happens when
+ * solana_address is still empty.
+ */
+export async function ensureUserSolanaWallet(user: UserRecord): Promise<UserRecord> {
+  if (user.solana_address && user.solana_private_key_enc) return user;
+  const wallet = generateSolanaWallet(MASTER_KEY);
+  const stored = await setUserSolanaWalletIfMissing(user.id, wallet.address, wallet.encryptedPrivateKey);
+  user.solana_address = stored.address;
+  user.solana_private_key_enc = stored.encryptedPrivateKey;
+  if (stored.created) console.log(`[SOLANA] Created Solana wallet ${stored.address} for existing user ${user.id}`);
+  return user;
 }
 
 /**
@@ -2087,6 +2198,12 @@ export async function resetUserStarknetWallet(userId: string): Promise<Generated
 export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord> {
   let updated = await ensureUserSuiWallet(user);
   updated = await ensureUserStarknetWallet(updated);
+  try {
+    updated = await ensureUserSolanaWallet(updated);
+  } catch (err: any) {
+    // Never block /start for older users if the Solana backfill hits a transient DB error.
+    console.warn(`[SOLANA] ensureUserSolanaWallet failed for user ${updated.id}:`, err?.message);
+  }
   if (updated.subaccount_id) {
     await getActiveWallet(updated.id, 'near').catch(() => null);
   }
@@ -2116,6 +2233,7 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
       subaccountId: updated.subaccount_id,
       suiAddress: updated.sui_address ?? undefined,
       starknetAddress: updated.starknet_address ?? undefined,
+      solanaAddress: updated.solana_address ?? undefined,
       isExisting: true,
     };
   }
@@ -2141,6 +2259,9 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
 
   // Step 2b: Generate Starknet OpenZeppelin wallet
   const starknetWallet = generateStarknetWallet(MASTER_KEY);
+
+  // Step 2c: Generate Solana ed25519 wallet
+  const solanaWallet = generateSolanaWallet(MASTER_KEY);
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -2169,6 +2290,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     sui_private_key_enc: suiWallet.encryptedPrivateKey,
     starknet_address: starknetWallet.address,
     starknet_private_key_enc: starknetWallet.encryptedPrivateKey,
+    solana_address: solanaWallet.address,
+    solana_private_key_enc: solanaWallet.encryptedPrivateKey,
   });
 
   // Generate referral code based on username
@@ -2189,6 +2312,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     suiPrivateKey: suiWallet.privateKeySecret,
     starknetAddress: starknetWallet.address,
     starknetPrivateKey: starknetWallet.privateKeySecret,
+    solanaAddress: user.solana_address || solanaWallet.address,
+    solanaPrivateKey: user.solana_address && user.solana_address !== solanaWallet.address ? undefined : solanaWallet.privateKeySecret,
     isExisting: false,
   };
 }
@@ -2413,7 +2538,7 @@ let directExecutor: any = null;
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
-  chain?: 'near' | 'sui' | 'starknet';
+  chain?: 'near' | 'sui' | 'starknet' | 'solana';
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -2439,7 +2564,11 @@ export async function publishSwap(swapEvent: {
 
   if (result.success !== false) {
     // Record user trade to prevent deposit false positives
-    recordUserTrade(swapEvent.user_id);
+    if (swapEvent.chain === 'solana') {
+      recordUserTrade(swapEvent.user_id, 'solana', Number(result.nearReceived || 0));
+    } else {
+      recordUserTrade(swapEvent.user_id);
+    }
 
     // Invalidate cached token info and balance immediately so user sees fresh on-chain data
     tokenInfoCache.delete(swapEvent.token_in);
@@ -2450,6 +2579,9 @@ export async function publishSwap(swapEvent: {
       }
       if (u?.starknet_address) {
         invalidateStarknetBalanceCache(u.starknet_address);
+      }
+      if (u?.solana_address) {
+        invalidateSolanaBalanceCache(u.solana_address);
       }
     }).catch(() => {});
   }
@@ -2549,6 +2681,11 @@ export interface UserBalances {
   strkBalanceFormatted?: string;
   ethBalanceFormatted?: string;
   strkUsd?: number;
+  solanaAddress?: string;
+  solBalanceLamports?: string;
+  solBalanceFormatted?: string;
+  solBalanceUsd?: string;
+  solUsd?: number;
 }
 
 /**
@@ -2578,6 +2715,7 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
       const subaccountId = user.subaccount_id;
       const suiAddress = user.sui_address;
       const starknetAddress = user.starknet_address;
+      const solanaAddress = user.solana_address;
 
       let nativeNearYocto = '0';
       let wrapNearYocto = '0';
@@ -2597,6 +2735,14 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
         getNearUsdPrice(),
         getSuiUsdPrice(),
       ]);
+      const [solRes, solUsdRes] = await Promise.allSettled([
+        solanaAddress
+          ? withTimeout(getSolanaBalance(solanaAddress, forceRefresh), 3000, null as any)
+          : Promise.resolve(null),
+        getSolUsdPrice(),
+      ]);
+      const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
+      const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
 
       if (nativeRes.status === 'fulfilled') {
         nativeNearYocto = nativeRes.value;
@@ -2653,6 +2799,11 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
         strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
         ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
         strkUsd: 0.12,
+        solanaAddress: solanaAddress ?? undefined,
+        solBalanceLamports: solLamports !== null ? solLamports.toString() : undefined,
+        solBalanceFormatted: solLamports !== null ? lamportsToSol(solLamports).toFixed(4) : '…',
+        solBalanceUsd: solLamports !== null ? formatUSD(lamportsToSol(solLamports), solPrice) : '…',
+        solUsd: solPrice,
       };
 
       balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });
@@ -3004,6 +3155,102 @@ export async function transferNearFromUser(
  * Withdraws native SUI from user's active SUI wallet to any valid external SUI address.
  * Keeps ~0.025 SUI to ensure gas coverage for future transactions.
  */
+/**
+ * Withdraw native SOL. Keeps a small reserve for the network fee.
+ */
+export async function withdrawSolanaFunds(
+  telegramId: number,
+  destination: string,
+  amountSol?: number | 'all',
+): Promise<{ txHash: string; amountWithdrawn: string; destination: string }> {
+  const rawUser = await getUserByTelegramId(telegramId);
+  if (!rawUser) throw new Error('User not found. Run /start first.');
+  const user = await ensureUserSolanaWallet(rawUser);
+  if (!user.solana_address || !user.solana_private_key_enc) {
+    throw new Error('Solana wallet not configured. Please send /start.');
+  }
+  destination = destination.trim();
+  if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
+  if (destination === user.solana_address) throw new Error('Cannot withdraw to your own wallet address.');
+
+  const keypair = restoreSolanaKeypair(user.solana_private_key_enc, MASTER_KEY);
+  const bal = await getSolanaBalance(user.solana_address, true);
+  const feeReserve = 100_000n; // 0.0001 SOL for the network fee
+  if (bal.lamports <= feeReserve) throw new Error('Insufficient SOL balance to withdraw.');
+  const max = bal.lamports - feeReserve;
+  let lamports: bigint;
+  if (!amountSol || amountSol === 'all') {
+    lamports = max;
+  } else {
+    lamports = BigInt(Math.floor(amountSol * 1e9));
+    if (lamports > max) {
+      throw new Error(`Amount exceeds maximum withdrawable balance (${lamportsToSol(max).toFixed(4)} SOL after network fee).`);
+    }
+  }
+  if (lamports <= 0n) throw new Error('Withdrawal amount must be greater than 0.');
+  const sig = await transferSol(keypair, destination, lamports);
+  balanceCache.delete(telegramId);
+  recordUserTrade(user.id, 'solana', 0);
+  return { txHash: sig, amountWithdrawn: lamportsToSol(lamports).toFixed(4), destination };
+}
+
+/**
+ * Withdraw an SPL / Token-2022 token held in the user's Solana wallet.
+ */
+export async function withdrawSolanaTokenFunds(
+  telegramId: number,
+  mint: string,
+  destination: string,
+  amount?: number | 'all' | string,
+): Promise<{ txHash: string; amountWithdrawn: string; symbol: string; tokenAddress: string; destination: string }> {
+  const rawUser = await getUserByTelegramId(telegramId);
+  if (!rawUser) throw new Error('User not found. Run /start first.');
+  const user = await ensureUserSolanaWallet(rawUser);
+  if (!user.solana_address || !user.solana_private_key_enc) {
+    throw new Error('Solana wallet not configured. Please send /start.');
+  }
+  destination = destination.trim();
+  if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
+
+  const holdings = await getSolanaWalletHoldings(user.solana_address, true);
+  const held = holdings.tokens.get(mint);
+  if (!held || held.raw <= 0n) throw new Error('You do not hold this token in your Solana wallet.');
+  if (holdings.lamports < 3_000_000n) {
+    throw new Error('Keep at least 0.003 SOL in your wallet to pay the network fee and the recipient token account rent.');
+  }
+  const info = await getSolanaTokenInfo(mint).catch(() => null);
+  const decimals = held.decimals || info?.decimals || 6;
+  let raw: bigint;
+  if (amount === undefined || amount === 'all' || amount === '' ) {
+    raw = held.raw;
+  } else {
+    const human = typeof amount === 'number' ? amount : parseFloat(String(amount));
+    if (!Number.isFinite(human) || human <= 0) throw new Error('Invalid amount.');
+    raw = BigInt(Math.floor(human * Math.pow(10, decimals)));
+    if (raw > held.raw) raw = held.raw;
+  }
+  const keypair = restoreSolanaKeypair(user.solana_private_key_enc, MASTER_KEY);
+  const sig = await transferSolanaToken(keypair, mint, destination, raw, decimals, held.programId);
+
+  // Keep the bot's position in step with the wallet.
+  const positions = await getOpenPositions(user.id).catch(() => []);
+  const pos = positions.find((p) => p.token_address === mint && p.chain === 'solana');
+  if (pos) {
+    const remaining = held.raw - raw;
+    await updatePosition(remaining <= 0n
+      ? { position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }
+      : { position_id: pos.id, quantity_held: remaining.toString() }).catch(() => {});
+  }
+  balanceCache.delete(telegramId);
+  return {
+    txHash: sig,
+    amountWithdrawn: (Number(raw) / Math.pow(10, decimals)).toFixed(4),
+    symbol: info?.symbol || 'TOKEN',
+    tokenAddress: mint,
+    destination,
+  };
+}
+
 export async function withdrawSuiFunds(
   telegramId: number,
   destination: string,
@@ -3225,7 +3472,7 @@ export async function withdrawTokenFunds(
   symbol: string;
   tokenAddress: string;
   destination: string;
-  chain: 'near' | 'sui' | 'starknet';
+  chain: 'near' | 'sui' | 'starknet' | 'solana';
 }> {
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -3262,6 +3509,12 @@ export async function withdrawTokenFunds(
     if (resolvedFromKey) {
       resolvedAddress = resolvedFromKey;
     }
+  }
+
+  // Solana token (SPL / Token-2022) withdrawals
+  if (matchingPos?.chain === 'solana' || isSolanaToken(resolvedAddress)) {
+    const res = await withdrawSolanaTokenFunds(telegramId, resolvedAddress, destination, amount);
+    return { ...res, chain: 'solana' };
   }
 
   const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
@@ -3949,6 +4202,85 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         }
       } catch (suiErr: any) {
         console.warn(`[DEPOSIT] Sui syncUserTokenDeposits error: ${suiErr?.message}`);
+      }
+    }
+
+    // ── 4b. Reconcile Solana Token Holdings & Discover External Deposits ──────
+    // One Jupiter holdings call per sync (no RPC credits). Unknown mints are
+    // looked up at most 10 per sync to stay inside the free API rate limit.
+    if (user?.solana_address) {
+      try {
+        const solPositions = existingPositions.filter(p => p.chain === 'solana');
+        const holdings = await getSolanaWalletHoldings(user.solana_address, forceRefresh);
+        const solPosMap = new Map(solPositions.map(p => [p.token_address, p]));
+
+        // Existing positions: follow the wallet (sold or sent out elsewhere -> close).
+        for (const pos of solPositions) {
+          const h = holdings.tokens.get(pos.token_address);
+          if (!h || h.raw <= 0n) {
+            // Indexers can lag behind a fresh buy: never close a young position, and
+            // confirm the zero on-chain before closing anything.
+            const openedAt = pos.opened_at ? new Date(pos.opened_at).getTime() : 0;
+            if (Date.now() - openedAt < 10 * 60_000) continue;
+            const onChain = await getSolanaTokenBalanceOnChain(user.solana_address, pos.token_address);
+            if (onChain === null) continue;
+            if (onChain > 0n) {
+              if (pos.quantity_held !== onChain.toString()) {
+                await updatePosition({ position_id: pos.id, quantity_held: onChain.toString() }).catch(() => {});
+              }
+              continue;
+            }
+            await updatePosition({ position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+            console.log(`[DEPOSIT] Closed Solana position ${pos.token_address} (user ${userId}): balance is 0`);
+          } else if (pos.quantity_held !== h.raw.toString()) {
+            await updatePosition({ position_id: pos.id, quantity_held: h.raw.toString() }).catch(() => {});
+          }
+        }
+
+        // New tokens that arrived from outside the bot.
+        const newMints = [...holdings.tokens.values()]
+          .filter(h => h.raw > 0n && !solPosMap.has(h.mint) && h.mint !== 'So11111111111111111111111111111111111111112')
+          .slice(0, 10);
+        if (newMints.length > 0) {
+          const db = await getDb();
+          for (const h of newMints) {
+            const recentClosed = await db.query(
+              `SELECT 1 FROM positions WHERE user_id = $1 AND token_address = $2 AND status = 'closed' AND closed_at > NOW() - INTERVAL '15 minutes' LIMIT 1`,
+              [userId, h.mint]
+            ).catch(() => null);
+            if (recentClosed?.rows?.length) continue;
+
+            const info = await getSolanaTokenInfo(h.mint).catch(() => null);
+            if (!info) continue; // unknown / spam mint with no market: do not add to bags
+            const valueUsd = h.uiAmount * info.priceUsd;
+            if (info.priceUsd > 0 && valueUsd < 0.01) continue; // dust / spam airdrops
+
+            const newPos = await createPosition({
+              user_id: userId,
+              chain: 'solana',
+              token_address: h.mint,
+              quantity_held: h.raw.toString(),
+              avg_entry_price: info.priceSol > 0 ? info.priceSol.toString() : '0',
+            });
+            await db.query(
+              'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
+              [newPos.id]
+            ).catch(() => {});
+            newDepositsCount++;
+            if (user.telegram_id) {
+              notifyTokenDeposit(user.telegram_id, {
+                tokenSymbol: info.symbol || 'TOKEN',
+                tokenName: info.name || undefined,
+                amountFormatted: h.uiAmount >= 1_000_000 ? `${(h.uiAmount / 1_000_000).toFixed(2)}M` : h.uiAmount.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+                address: user.solana_address,
+                chain: 'solana',
+                positionId: newPos.id,
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (solErr: any) {
+        console.warn(`[DEPOSIT] Solana syncUserTokenDeposits error: ${solErr?.message}`);
       }
     }
 

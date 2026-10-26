@@ -11,6 +11,8 @@ export {
   getUserBySubaccount,
   getUserBySuiAddress,
   getUserByStarknetAddress,
+  getUserBySolanaAddress,
+  setUserSolanaWalletIfMissing,
   updateUserScopedKey,
   updateUserSuiWallet,
   updateUserStarknetWallet,
