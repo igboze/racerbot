@@ -9,6 +9,9 @@
   <link rel="icon" type="image/png" href="/assets/racer-logo.png" />
   <link rel="shortcut icon" type="image/png" href="/assets/racer-logo.png" />
   <link rel="apple-touch-icon" href="/assets/racer-logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css" />
   
   <style>
@@ -406,13 +409,13 @@
       }
     }
     @media (max-width: 860px) {
-      body {
+      html, body {
         background: #F9FAFB !important;
         color: #111827 !important;
         padding-bottom: calc(76px + env(safe-area-inset-bottom, 16px)) !important;
         overflow-x: hidden !important;
         width: 100% !important;
-        max-width: 100vw !important;
+        max-width: 100% !important;
       }
       .master-header {
         background: rgba(255, 255, 255, 0.96) !important;
@@ -424,7 +427,7 @@
       }
       .terminal-container {
         width: 100% !important;
-        max-width: 100vw !important;
+        max-width: 100% !important;
         box-sizing: border-box !important;
         padding: 0 14px !important;
       }
@@ -520,8 +523,8 @@
         backdrop-filter: blur(4px) !important;
       }
       .modal-card {
-        border-radius: 20px 20px 0 0 !important;
-        max-width: 100vw !important;
+        border-radius: 16px 16px 0 0 !important;
+        max-width: 100% !important;
         width: 100% !important;
         max-height: min(85vh, 85dvh) !important;
         overflow-y: auto !important;
