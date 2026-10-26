@@ -2,6 +2,8 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
+  --font-sans:            'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display:         'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color-scheme: dark;
 
   /* Part 4.0 & 4.3 Color Tokens (Exact CSS Variables from Brand Guide & Spec) */
@@ -811,4 +813,52 @@ p, .text-body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+
+/* Strict Desktop Suppression of Mobile Dock & Drawers */
+@media (min-width: 768px) {
+  .mobile-bottom-dock,
+  .bottom-tab-bar,
+  .mobile-top-bar,
+  .mobile-nav-drawer,
+  .mobile-nav-backdrop,
+  .mobile-drawer,
+  .mobile-terminal-tabs {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+}
+
+/* Hide duplicate footer links on mobile */
+@media (max-width: 767px) {
+  .footer-links {
+    display: none !important;
+  }
+}
+
+
+button:focus {
+  outline: none !important;
+}
+.alpha-tab-btn:focus,
+.alpha-tab-btn:focus-visible,
+.alpha-tab-btn.active {
+  outline: none !important;
+  box-shadow: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+}
+
+
+body, html, h1, h2, h3, h4, h5, h6,
+.display-title, .text-h1, .text-h2, .text-h3,
+.page-title, button, input, select, textarea, label {
+  font-family: var(--font-sans) !important;
+}
+
+code, kbd, samp, pre, .mono-data, .font-mono {
+  font-family: var(--font-mono) !important;
 }
