@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, type SwapEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, isSolanaAddress, getSolanaTokenInfo, SOL_MINT, type SwapEvent } from '@racerbot/shared';
 import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, getUserById, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -22,6 +22,19 @@ const PRICE_STALENESS_MS = 60_000;
  */
 export async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
+    // Solana: price from the free Jupiter / pump.fun APIs (no RPC credits).
+    if (isSolanaAddress(tokenAddress)) {
+      const info = await getSolanaTokenInfo(tokenAddress, true).catch(() => null);
+      if (info && info.priceSol > 0) {
+        localPriceCache.set(tokenAddress, {
+          price: info.priceSol,
+          marketCap: info.solUsd > 0 ? info.marketCapUsd / info.solUsd : 0,
+          ts: Date.now(),
+        });
+        return true;
+      }
+      return false;
+    }
     const cache = await getTokenCache(tokenAddress);
     if (cache?.chain === 'sui' || cache?.venue === 'suipump' || tokenAddress.includes('::')) {
       const curve = await getSuiPumpCurveState(tokenAddress).catch(() => null);
@@ -233,6 +246,48 @@ export class TriggerEngine {
       'SELECT venue, rhea_pool_id, dcl_pool_id, chain FROM token_cache WHERE token_address = $1',
       [position.token_address]
     ).then(r => r.rows[0]).catch(() => null);
+
+    // Solana Chain Trigger Route
+    if (position.chain === 'solana' || tokenRow?.chain === 'solana' || isSolanaAddress(position.token_address)) {
+      const user = await getUserById(position.user_id).catch(() => null);
+      const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
+      const slippagePct = trigger.type === 'stop_loss' ? Math.max(10.0, userSlip || 10.0) : Math.max(5.0, userSlip || 5.0);
+      const swapEvent = {
+        type: 'execute_swap',
+        chain: 'solana',
+        user_id: position.user_id,
+        token_in: position.token_address,
+        token_out: SOL_MINT,
+        amount_in: amountIn,
+        min_amount_out: '1',
+        venue: 'jupiter',
+        slippage_pct: slippagePct,
+        quoted_at: Date.now(),
+        timestamp: Date.now(),
+        trigger_id: trigger.id,
+        trigger_type: trigger.type,
+      };
+      await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+      await markTriggerFired(trigger.id);
+      await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+        type: 'notify_user',
+        telegram_id: 0,
+        event: 'trigger_fired',
+        data: {
+          user_id: position.user_id,
+          trigger_type: trigger.type,
+          token_address: position.token_address,
+          current_price: currentPrice,
+          target_value: trigger.target_value,
+          entry_price: parseFloat(position.avg_entry_price || '0'),
+          quantity_held: amountIn,
+          sell_pct: sellPct,
+          chain: 'solana',
+          position_id: position.id,
+        },
+      }));
+      return;
+    }
 
     // Sui Chain Trigger Route
     if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {

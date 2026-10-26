@@ -262,4 +262,54 @@ export type {
 } from './activity.js';
 
 
-
+
+// Solana chain (Jupiter routing for pump.fun bonding curves and bonded AMMs)
+export {
+  SOL_MINT,
+  SOL_DECIMALS,
+  LAMPORTS_PER_SOL_BIG,
+  SOLANA_FEE_BPS,
+  SOLANA_SELL_FEE_BPS_HIGH,
+  SOLANA_SELL_FEE_HIGH_USD_THRESHOLD,
+  SOLANA_BPS_DENOMINATOR,
+  SOLANA_MIN_RESERVE_LAMPORTS,
+  DEFAULT_SOLANA_DEV_FEE_WALLET,
+  isSolanaAddress,
+  isSolanaToken,
+  lamportsToSol,
+  solToLamports,
+  solanaRpc,
+  getSolanaPaidRpcCallCount,
+  generateSolanaWallet,
+  restoreSolanaKeypair,
+  restoreSolanaKeypairFromSecret,
+  exportSolanaPrivateKey,
+  getSolUsdPrice,
+  getSolanaWalletHoldings,
+  invalidateSolanaBalanceCache,
+  getSolanaBalance,
+  getSolanaBalanceFreeOnly,
+  getSolanaTokenBalance,
+  getSolanaTokenBalanceOnChain,
+  getSolanaTokenInfo,
+  buildSolanaSwap,
+  solanaSellFeeBps,
+  sendAndConfirmSolanaTransaction,
+  describeSolanaError,
+  getSolanaTxDeltas,
+  transferSol,
+  transferSolanaToken,
+  solscanTxUrl,
+  solscanTokenUrl,
+  solscanAccountUrl,
+  pumpFunTokenUrl,
+} from './solana.js';
+export type {
+  GeneratedSolanaWallet,
+  SolanaTokenHolding,
+  SolanaWalletHoldings,
+  SolanaBalanceResult,
+  SolanaTokenInfo,
+  SolanaSwapBuild,
+  SolanaSendResult,
+} from './solana.js';

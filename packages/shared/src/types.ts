@@ -50,7 +50,10 @@ export type VenueName =
   | 'launchy'
   | 'unruggable'
   | 'jediswap'
-  | 'stark_dex';
+  | 'stark_dex'
+  | 'pumpfun'
+  | 'pumpswap'
+  | 'jupiter';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
   'rhea',
@@ -82,13 +85,16 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'unruggable',
   'jediswap',
   'stark_dex',
+  'pumpfun',
+  'pumpswap',
+  'jupiter',
 ];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
 }
 
-export type SupportedChain = 'near' | 'sui' | 'starknet';
+export type SupportedChain = 'near' | 'sui' | 'starknet' | 'solana';
 
 export interface SwapRequest {
   user_id: string;

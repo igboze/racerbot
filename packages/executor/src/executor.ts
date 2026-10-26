@@ -58,6 +58,7 @@ import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
 import { executeStarknetSwap } from './starknetExecutor.js';
+import { executeSolanaSwap } from './solanaExecutor.js';
 
 // ── Gas limits for swaps ──────────────────────────────────────────────────────
 // ft_transfer_call splits prepaid gas across multiple contracts: the token contract
@@ -546,6 +547,29 @@ export class SwapExecutor {
   private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
+
+    // Route Solana chain trades to SolanaExecutor (Jupiter: pump.fun curve + bonded AMMs).
+    // Must run before the Starknet check below, which matches any non-NEAR address shape.
+    if (event.chain === 'solana' || venue === 'pumpfun' || venue === 'pumpswap' || venue === 'jupiter') {
+      const presignStart = Date.now();
+      const res = await executeSolanaSwap(event, onProgress);
+      timings.presign_ms = Date.now() - presignStart;
+      timings.sign_ms = 0;
+      timings.post_ms = 0;
+      const solIsInput = token_in === 'So11111111111111111111111111111111111111112' || token_in.toLowerCase() === 'sol';
+      return {
+        txHash: res.txHash,
+        success: res.success,
+        positionId: res.positionId,
+        reason: res.reason,
+        tokenName: res.tokenName,
+        tokenSymbol: res.tokenSymbol,
+        tokenQty: res.tokenQty,
+        priceNear: res.priceSol,
+        nearSpent: solIsInput ? res.solAmount : undefined,
+        nearReceived: solIsInput ? undefined : res.solAmount,
+      };
+    }
 
     // Route Starknet chain trades directly to StarknetExecutor
     if (

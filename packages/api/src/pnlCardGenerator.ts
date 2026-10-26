@@ -1,5 +1,6 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
 import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice } from './wallet.js';
+import { getSolUsdPrice } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -95,14 +96,19 @@ export async function generatePNLCardData(
       tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-    const isStarknetPos = position.chain === 'starknet' || isStarknetToken(position.token_address);
-    const isSuiPos     = position.chain === 'sui' || isSuiToken(position.token_address);
-    const liveNativeUsd = isStarknetPos
+    const isSolanaPos  = position.chain === 'solana' || tokenInfo?.chain === 'solana';
+    const isStarknetPos = !isSolanaPos && (position.chain === 'starknet' || isStarknetToken(position.token_address));
+    const isSuiPos     = !isSolanaPos && (position.chain === 'sui' || isSuiToken(position.token_address));
+    const liveNativeUsd = isSolanaPos
+      ? (tokenInfo?.sol_usd || await getSolUsdPrice().catch(() => 150))
+      : isStarknetPos
       ? (tokenInfo?.strk_usd || 0.12)
       : isSuiPos
       ? await getSuiUsdPrice().catch(() => 2.0)
       : await getNearUsdPrice().catch(() => 5.16);
-    const nearUsd      = isStarknetPos
+    const nearUsd      = isSolanaPos
+      ? (tokenInfo?.sol_usd || liveNativeUsd)
+      : isStarknetPos
       ? (tokenInfo?.strk_usd || liveNativeUsd)
       : isSuiPos
       ? (tokenInfo?.sui_usd || liveNativeUsd)
@@ -111,7 +117,7 @@ export async function generatePNLCardData(
     const isExternalDeposit       = position.is_external_deposit || false;
     const externalDepositDetectedAt = position.external_deposit_detected_at;
 
-    const decimals    = tokenInfo?.decimals ?? (isSuiPos ? 9 : 18);
+    const decimals    = tokenInfo?.decimals ?? (isSolanaPos ? 6 : isSuiPos ? 9 : 18);
     const toHuman = (rawStr: string): number => {
       const val = parseFloat(rawStr || '0');
       if (decimals <= 0) return val;
@@ -305,6 +311,9 @@ export async function generatePNLCardData(
       shoremarkets: 'ShoreMarkets',
       kelytra:      'Kelytra',
       avnu:         'AVNU Aggregator',
+      pumpfun:      'pump.fun',
+      pumpswap:     'PumpSwap',
+      jupiter:      'Jupiter',
       ekubo:        'Ekubo Protocol',
       launchy:      'Launchy',
       unruggable:   'Unruggable Meme',
@@ -347,7 +356,7 @@ export async function generatePNLCardData(
       sellFeesPaid,
       tokenPriceChangePct,
       nearUsd,
-      nativeUnit:     isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR',
+      nativeUnit:     isSolanaPos ? 'SOL' : isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR',
       showNetWorth,
       referralCode,
       referralLink,

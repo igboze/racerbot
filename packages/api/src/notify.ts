@@ -62,12 +62,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const targetVal = parseFloat(String(data.target_value || '0'));
       const currentPrice = Number(data.current_price || 0);
       const entryPrice = Number(data.entry_price || 0);
-      const isStarknet = data.chain === 'starknet' || (typeof token === 'string' && token.startsWith('0x') && !token.includes('::'));
-      const isSui = !isStarknet && (data.chain === 'sui' || (typeof token === 'string' && token.includes('::')));
-      const unit = isStarknet ? 'STRK' : isSui ? 'SUI' : 'NEAR';
+      const isSolana = data.chain === 'solana';
+      const isStarknet = !isSolana && (data.chain === 'starknet' || (typeof token === 'string' && token.startsWith('0x') && !token.includes('::')));
+      const isSui = !isSolana && !isStarknet && (data.chain === 'sui' || (typeof token === 'string' && token.includes('::')));
+      const unit = isSolana ? 'SOL' : isStarknet ? 'STRK' : isSui ? 'SUI' : 'NEAR';
 
       let sym = 'TOKEN';
-      let decimals = isStarknet ? 18 : isSui ? 9 : 18;
+      let decimals = isSolana ? 6 : isStarknet ? 18 : isSui ? 9 : 18;
       try {
         const { getTokenInfo } = await import('./wallet.js');
         const info = await getTokenInfo(token, false).catch(() => null);
@@ -328,12 +329,12 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
     case 'deposit_received': {
       const chain = (data.chain as string) || 'near';
       const amount = (data.amount as string) || '0';
-      const symbol = (data.symbol as string) || (chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
+      const symbol = (data.symbol as string) || (chain === 'solana' ? 'SOL' : chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
       const address = (data.address as string) || '';
       const usdValue = (data.usdValue as string) || '';
-      const icon = chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
-      const tokenIcon = chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
-      const chainLabel = chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
+      const icon = chain === 'solana' ? '🟣' : chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
+      const tokenIcon = chain === 'solana' ? '◎' : chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
+      const chainLabel = chain === 'solana' ? 'Solana' : chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
 
       const msg =
         `💰 <b>Deposit Confirmed!</b>\n\n` +
@@ -531,7 +532,7 @@ export function suppressDepositAlert(telegramId: number, chain = 'near', duratio
 export async function notifyDeposit(
   telegramId: number,
   params: {
-    chain: 'near' | 'sui' | 'starknet';
+    chain: 'near' | 'sui' | 'starknet' | 'solana';
     amount: string;
     symbol?: string;
     address: string;
@@ -575,12 +576,12 @@ export async function notifyDeposit(
   lastDepositAlertByUser.set(userChainKey, { timestamp: now, amount: amtNum });
 
   const amount = params.amount;
-  const symbol = params.symbol || (chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
+  const symbol = params.symbol || (chain === 'solana' ? 'SOL' : chain === 'starknet' ? 'STRK' : chain === 'sui' ? 'SUI' : 'NEAR');
   const address = params.address;
   const usdValue = params.usdValue || '';
-  const icon = chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
-  const tokenIcon = chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
-  const chainLabel = chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
+  const icon = chain === 'solana' ? '🟣' : chain === 'starknet' ? '✨' : chain === 'sui' ? '🔷' : '⬛';
+  const tokenIcon = chain === 'solana' ? '◎' : chain === 'starknet' ? '✨' : chain === 'sui' ? '💧' : 'Ⓝ';
+  const chainLabel = chain === 'solana' ? 'Solana' : chain === 'starknet' ? 'Starknet' : chain === 'sui' ? 'SUI' : 'NEAR';
 
   const msg =
     `💰 <b>Deposit Confirmed!</b>\n\n` +
@@ -625,7 +626,7 @@ export async function notifyTokenDeposit(
     tokenName?: string;
     amountFormatted: string;
     address: string;
-    chain?: 'near' | 'sui';
+    chain?: 'near' | 'sui' | 'solana';
     /** Position created for the deposit, so the alert can open its details directly. */
     positionId?: string;
   }
@@ -640,7 +641,7 @@ export async function notifyTokenDeposit(
   recentDepositNotifyCache.set(dedupKey, Date.now());
 
   const chain = params.chain || 'near';
-  const chainLabel = chain === 'sui' ? 'SUI' : 'NEAR';
+  const chainLabel = chain === 'solana' ? 'Solana' : chain === 'sui' ? 'SUI' : 'NEAR';
 
   const msg =
     `💰 <b>Token Deposit Received!</b>\n\n` +
