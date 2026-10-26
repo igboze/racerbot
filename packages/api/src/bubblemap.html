@@ -1622,47 +1622,149 @@
         border-top: 1px solid #E5E7EB !important;
       }
 
-      /* Modals Responsive in FeedLoop Style */
+      /* Modals Responsive in FeedLoop Mobile Standards */
       .modal-overlay {
-        padding: 12px;
-        background: rgba(17, 24, 39, 0.5) !important;
+        align-items: flex-end !important;
+        justify-content: center !important;
+        padding: 0 !important;
+        background: rgba(17, 24, 39, 0.48) !important;
         backdrop-filter: blur(4px) !important;
+        z-index: 10000 !important;
       }
       .modal-card {
-        padding: 20px 16px;
-        border-radius: 16px;
-        max-height: 88vh;
+        border-radius: 20px 20px 0 0 !important;
+        max-width: 100vw !important;
+        width: 100% !important;
+        max-height: min(85vh, 85dvh) !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior: contain !important;
+        padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
         background: #FFFFFF !important;
         border: 1px solid #E5E7EB !important;
+        border-bottom: none !important;
+        border-left: none !important;
+        border-right: none !important;
         color: #111827 !important;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08) !important;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
+        box-sizing: border-box !important;
+        margin: 0 !important;
       }
-      .hero-title {
-        font-size: 20px;
+      .modal-card::before {
+        content: '' !important;
+        display: block !important;
+        width: 36px !important;
+        height: 4px !important;
+        background: #D1D5DB !important;
+        border-radius: 2px !important;
+        margin: 0 auto 14px auto !important;
+      }
+      .modal-close-btn {
+        top: 14px !important;
+        right: 14px !important;
+        min-width: 44px !important;
+        min-height: 44px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: #6B7280 !important;
+        background: #F3F4F6 !important;
+        border-radius: 8px !important;
+        border: 1px solid #E5E7EB !important;
+      }
+      .hero-title, .modal-card h1, .modal-card h2, .modal-card h3 {
+        font-size: 18px !important;
         color: #111827 !important;
       }
-      .hero-subtitle {
-        font-size: 13px;
-        margin-bottom: 14px;
+      .hero-subtitle, .modal-card p {
+        font-size: 13px !important;
+        margin-bottom: 14px !important;
         color: #6B7280 !important;
       }
-      .hero-input {
+      .hero-input,
+      .referral-input {
         min-height: 44px !important;
-        height: 44px;
+        height: 44px !important;
         font-size: 16px !important;
         background: #FFFFFF !important;
         border: 1px solid #D1D5DB !important;
         border-radius: 8px !important;
         color: #111827 !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
       }
       .hero-scan-btn {
         min-height: 44px !important;
-        height: 44px;
-        font-size: 13.5px;
-        font-weight: 600;
+        height: 44px !important;
+        font-size: 13.5px !important;
+        font-weight: 600 !important;
         background: #2563EB !important;
         color: #FFFFFF !important;
         border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+      }
+      .card-share-grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+      }
+      .card-action-btn {
+        min-height: 44px !important;
+        border-radius: 8px !important;
+        font-size: 12.5px !important;
+        font-weight: 600 !important;
+        justify-content: center !important;
+      }
+      .card-modal-footer {
+        display: flex !important;
+        gap: 8px !important;
+        margin-top: 12px !important;
+      }
+      .card-modal-footer .btn-chip {
+        min-height: 44px !important;
+        height: 44px !important;
+        border-radius: 8px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+      }
+      .bundler-pressure-card,
+      .risk-checklist,
+      .legend-grid {
+        background: #F9FAFB !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        color: #111827 !important;
+        box-sizing: border-box !important;
+      }
+      .risk-item {
+        min-height: 44px !important;
+        border-bottom: 1px solid #E5E7EB !important;
+      }
+      .risk-item:last-child {
+        border-bottom: none !important;
+      }
+      .copy-trade-btn, #diag-bot-cta {
+        min-height: 44px !important;
+        height: 44px !important;
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-weight: 600 !important;
+        text-decoration: none !important;
+        margin-top: 12px !important;
+      }
+      .hero-row {
+        min-width: 0 !important;
+      }
+      .hero-wallet-addr {
+        min-width: 0 !important;
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+        white-space: normal !important;
       }
     }
 

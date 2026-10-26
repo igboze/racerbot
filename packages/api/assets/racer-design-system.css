@@ -1109,10 +1109,11 @@ body {
     box-sizing: border-box !important;
   }
 
-  /* ── Universal Native Mobile Bottom Sheets & Modals ─────────────────────── */
+  /* ── Universal Native Mobile Bottom Sheets & Modals (FeedLoop Design) ───── */
   .modal-backdrop,
   .racer-modal-backdrop,
   .modal-overlay {
+    display: none;
     position: fixed !important;
     inset: 0 !important;
     align-items: flex-end !important;
@@ -1120,9 +1121,22 @@ body {
     padding: 0 !important;
     z-index: 10000 !important;
     overflow: hidden !important;
-    background: rgba(17, 24, 39, 0.5) !important;
+    background: rgba(17, 24, 39, 0.48) !important;
     backdrop-filter: blur(4px) !important;
     -webkit-backdrop-filter: blur(4px) !important;
+  }
+
+  .modal-backdrop.open,
+  .racer-modal-backdrop.open,
+  .modal-overlay.open,
+  .modal-overlay:not(.hidden) {
+    display: flex !important;
+  }
+
+  .modal-overlay.hidden,
+  .modal-backdrop:not(.open):not([style*="display: flex"]):not([style*="display:flex"]),
+  .racer-modal-backdrop:not(.open):not([style*="display: flex"]):not([style*="display:flex"]) {
+    display: none !important;
   }
 
   .modal-window,
@@ -1130,32 +1144,140 @@ body {
   .racer-modal-card,
   .modal-card {
     border-radius: 20px 20px 0 0 !important;
-    max-width: 100% !important;
+    max-width: 100vw !important;
     width: 100% !important;
-    max-height: 88vh !important;
-    max-height: 88dvh !important;
+    max-height: min(85vh, 85dvh) !important;
     overflow-y: auto !important;
+    overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch !important;
-    padding: 20px 16px calc(28px + env(safe-area-inset-bottom, 16px)) !important;
+    overscroll-behavior: contain !important;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 16px)) 16px !important;
     background: #FFFFFF !important;
     border: 1px solid #E5E7EB !important;
     border-bottom: none !important;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08) !important;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
     box-sizing: border-box !important;
     margin: 0 !important;
     color: #111827 !important;
   }
 
-  .modal-window h1, .modal-window h2, .modal-window h3,
-  .racer-modal-card h1, .racer-modal-card h2, .racer-modal-card h3,
+  .modal-window::before,
+  .modal-window.modal-wide::before,
+  .racer-modal-card::before,
+  .modal-card::before {
+    content: '' !important;
+    display: block !important;
+    width: 36px !important;
+    height: 4px !important;
+    background: #D1D5DB !important;
+    border-radius: 2px !important;
+    margin: 0 auto 12px auto !important;
+  }
+
+  .modal-window h1, .modal-window h2, .modal-window h3, .modal-window h4,
+  .racer-modal-card h1, .racer-modal-card h2, .racer-modal-card h3, .racer-modal-card h4,
+  .modal-card h1, .modal-card h2, .modal-card h3, .modal-card h4,
   .modal-title {
     color: #111827 !important;
+    font-size: 17px !important;
+    font-weight: 700 !important;
+  }
+
+  .modal-window p,
+  .racer-modal-card p,
+  .modal-card p,
+  .modal-desc {
+    color: #6B7280 !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* Inner cards, sub-panels & options inside modals */
+  .modal-window > div,
+  .racer-modal-card > div,
+  .modal-card > div,
+  .modal-window .tier-option,
+  .modal-card .tier-option,
+  .quote-box,
+  #export-keys-box {
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+  }
+
+  /* Long strings, addresses & keys inside modals */
+  .modal-window code,
+  .racer-modal-card code,
+  .modal-card code,
+  .modal-window pre,
+  .racer-modal-card pre,
+  .modal-card pre,
+  .wallet-addr,
+  .hero-wallet-addr,
+  #active-deposit-address,
+  #deposit-account-id {
+    word-break: break-all !important;
+    overflow-wrap: anywhere !important;
+    white-space: normal !important;
+    max-width: 100% !important;
+    display: inline-block !important;
+  }
+
+  /* Inputs, selects & textareas inside modals */
+  .modal-window input,
+  .racer-modal-card input,
+  .modal-card input,
+  .modal-window select,
+  .racer-modal-card select,
+  .modal-card select,
+  .modal-window textarea,
+  .racer-modal-card textarea,
+  .modal-card textarea {
+    min-height: 44px !important;
+    font-size: 16px !important;
+    background: #FFFFFF !important;
+    border: 1px solid #D1D5DB !important;
+    border-radius: 8px !important;
+    color: #111827 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 0 12px !important;
+  }
+
+  /* Action buttons inside modals */
+  .modal-window button,
+  .racer-modal-card button,
+  .modal-card button,
+  .modal-window .btn,
+  .racer-modal-card .btn,
+  .modal-card .btn {
+    min-height: 44px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Close buttons inside modals */
+  .modal-close,
+  .modal-close-btn,
+  .inspector-close-btn {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #6B7280 !important;
+    background: #F3F4F6 !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 8px !important;
+    cursor: pointer !important;
   }
 
   /* ── Data Tables & Containers Horizontal Smooth Scroll ──────────────────── */
   .table-container,
   .table-responsive,
-  .table-responsive-box {
+  .table-responsive-box,
+  .fleet-table-wrap,
+  .gmgn-table-container {
     width: 100% !important;
     max-width: 100% !important;
     overflow-x: auto !important;
@@ -1164,6 +1286,7 @@ body {
     background: #FFFFFF !important;
     border-radius: 12px !important;
     border: 1px solid #E5E7EB !important;
+    display: block !important;
   }
 
   table {
