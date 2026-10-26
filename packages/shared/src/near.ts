@@ -364,28 +364,19 @@ export class MultiRpcNear {
         return u;
       });
 
-    // Read URLs: When a paid FastNEAR key is active, prioritize FastNEAR Paid as primary!
-    // Free validator nodes serve as resilient fallbacks (never rate-limiting near.org).
-    const readUrls = hasValidKey
-      ? Array.from(new Set([
-          fastnearPaidEndpoint,
-          'https://near.drpc.org',
-          'https://rpc.intea.rs',
-          'https://rpc.shitzuapes.xyz',
-          ...normalizedUrls.filter(u => !u.includes('near.org')),
-        ]))
-      : Array.from(new Set([
-          ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
-          ...normalizedUrls.filter(u => u.includes('intea.rs')),
-          ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
-          ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
-          ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
-          ...normalizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea') && !u.includes('near.org')),
-        ]));
+    // Read URLs: Free validator nodes first (zero credit consumption: Shitzu, Intear, Free FastNEAR),
+    // then paid FastNEAR (primary dedicated RPC), QuickNode, and others
+    const readUrls = Array.from(new Set([
+      ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
+      ...normalizedUrls.filter(u => u.includes('intea.rs')),
+      ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
+      ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
+      ...normalizedUrls.filter(u => !u.includes('fastnear.com') && !u.includes('quicknode') && !u.includes('quiknode.pro') && !u.includes('shitzu') && !u.includes('intea')),
+    ]));
 
-    // Trade URLs: FastNEAR first (primary paid RPC for execution & signing), then QuickNode, then validator nodes.
+    // Trade URLs: FastNEAR first (primary dedicated RPC), QuickNode, Shitzu, Intear, Free FastNEAR
     const tradeUrls = Array.from(new Set([
-      ...(hasValidKey ? [fastnearPaidEndpoint] : []),
       ...normalizedUrls.filter(u => u.includes('fastnear.com') && !u.includes('free.rpc.fastnear.com')),
       ...normalizedUrls.filter(u => u.includes('quiknode.pro') || u.includes('quicknode')),
       ...normalizedUrls.filter(u => u.includes('shitzuapes.xyz')),
@@ -393,6 +384,9 @@ export class MultiRpcNear {
       ...normalizedUrls.filter(u => u.includes('free.rpc.fastnear.com')),
       ...normalizedUrls.filter(u => !u.includes('near.org')),
     ]));
+    if (tradeUrls.length === 0) {
+      tradeUrls.push(...normalizedUrls);
+    }
 
     this.readProviders = readUrls.map((rawUrl, i) => {
       const isQn = rawUrl.includes('quiknode.pro') || rawUrl.includes('quicknode');
@@ -831,17 +825,17 @@ export class MultiRpcNear {
       const hasFree = freeTargets.length > 0;
 
       const launchPrimary = () => {
-        if (hasPaid) {
-          // FastNEAR Paid RPC is primary: zero throttling, full subscription headroom
-          for (const p of paidFnTargets.slice(0, 2)) {
+        if (hasFree) {
+          // Free community validator nodes first: zero credit consumption
+          for (const p of freeTargets.slice(0, 2)) {
             started++;
             const attempt = tryProvider(p, primaryCtrl.signal);
             allAttempts.push(attempt);
             attempt.then(onAttemptDone);
           }
-        } else if (hasFree) {
-          // Free community validator nodes first: race up to 2
-          for (const p of freeTargets.slice(0, 2)) {
+        } else if (hasPaid) {
+          // FastNEAR Paid RPC is primary when no free nodes: zero throttling, full subscription headroom
+          for (const p of paidFnTargets.slice(0, 2)) {
             started++;
             const attempt = tryProvider(p, primaryCtrl.signal);
             allAttempts.push(attempt);
@@ -867,19 +861,21 @@ export class MultiRpcNear {
       };
 
       const launchHedge = () => {
-        if (hasPaid) {
-          // Hedge to QuickNode or free community nodes if paid FastNEAR is delayed
-          const hedgeList = qnTargets.length > 0 ? qnTargets : (fnTargets.length > 0 ? fnTargets : freeTargets);
+        if (hasFree) {
+          // Primary was free validator -> hedge to FastNEAR (paid or standard) or QuickNode
+          const hedgeList = paidFnTargets.length > 0
+            ? paidFnTargets
+            : (fnTargets.length > 0 ? fnTargets : qnTargets);
           for (const p of hedgeList.slice(0, 2)) {
             started++;
             const attempt = tryProvider(p, hedgeCtrl.signal);
             allAttempts.push(attempt);
             attempt.then(onAttemptDone);
           }
-        } else if (hasFree) {
-          // Hedge to FastNEAR, or QuickNode if FastNEAR not available
-          const hedgeList = fnTargets.length > 0 ? fnTargets : qnTargets;
-          for (const p of hedgeList) {
+        } else if (hasPaid) {
+          // Hedge to QuickNode or free community nodes if paid FastNEAR is delayed
+          const hedgeList = qnTargets.length > 0 ? qnTargets : (fnTargets.length > 0 ? fnTargets : freeTargets);
+          for (const p of hedgeList.slice(0, 2)) {
             started++;
             const attempt = tryProvider(p, hedgeCtrl.signal);
             allAttempts.push(attempt);
@@ -903,10 +899,10 @@ export class MultiRpcNear {
 
       launchPrimary();
 
-      const canHedge = hasPaid
+      const canHedge = hasFree
+        ? (paidFnTargets.length > 0 || fnTargets.length > 0 || qnTargets.length > 0)
+        : hasPaid
         ? (qnTargets.length > 0 || fnTargets.length > 0 || freeTargets.length > 0)
-        : hasFree
-        ? (fnTargets.length > 0 || qnTargets.length > 0)
         : (fnTargets.length > 0 && qnTargets.length > 0);
 
       if (canHedge) {
@@ -1231,28 +1227,28 @@ export class MultiRpcNear {
       p => isCommunityFree(p) && p.healthy && !p.circuitBreakerOpen
     );
     if (freeProviders.length > 0) {
-      const freeToTry = freeProviders.slice(0, 2);
-      try {
-        return await Promise.any(freeToTry.map(p => fetchBalanceFromProvider(p, 'optimistic')));
-      } catch {
+      for (const p of freeProviders) {
         try {
-          return await Promise.any(freeToTry.map(p => fetchBalanceFromProvider(p, 'final')));
+          return await fetchBalanceFromProvider(p, 'optimistic');
         } catch {
-          // Free providers failed, fall back to trade providers (FastNEAR)
+          try {
+            return await fetchBalanceFromProvider(p, 'final');
+          } catch {}
         }
       }
     }
 
     // 2. Fallback to trade providers (FastNEAR)
-    try {
-      return await Promise.any(this.tradeProviders.map(p => fetchBalanceFromProvider(p, 'optimistic')));
-    } catch {
+    for (const p of this.tradeProviders) {
       try {
-        return await Promise.any(this.tradeProviders.map(p => fetchBalanceFromProvider(p, 'final')));
+        return await fetchBalanceFromProvider(p, 'optimistic');
       } catch {
-        throw new Error('Failed to fetch NEAR balance from all RPC nodes');
+        try {
+          return await fetchBalanceFromProvider(p, 'final');
+        } catch {}
       }
     }
+    throw new Error('Failed to fetch NEAR balance from all RPC nodes');
   }
 
   /**

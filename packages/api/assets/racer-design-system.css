@@ -712,17 +712,321 @@ body {
 }
 
 @media (max-width: 768px) {
-  /* Prevent horizontal scroll */
-  html, body {
-    overflow-x: hidden !important;
+  /* ══════════════════════════════════════════════════════════════════════════════
+     FEEDLOOP MOBILE DESIGN SYSTEM (Scroll-optimized, Content-first, High-Density)
+     Canonical Specification:
+     • Primary: #2563EB (Interactive, CTAs, Links, Active States)
+     • Secondary: #6B7280 (Metadata, Timestamps, Subtitles, Badges)
+     • Tertiary: #F9FAFB (Background tints, nested containers)
+     • Background: #F9FAFB (Feed canvas)
+     • Surface: #FFFFFF (Post cards, feed items, panels, dialogs)
+     • Success: #16A34A (Buys, positive yields, confirmed states)
+     • Warning: #D97706 (Alerts, slippage warnings)
+     • Error: #DC2626 (Sells, errors, stop-loss triggers)
+     • Info: #2563EB (Protocol indicators, transaction hashes)
+     • Rules:
+       - Uniform cards: 12px radius, consistent 14px-16px padding
+       - Zero heavy shadows: crisp hairline border with subtle 0 1px 3px rgba(0,0,0,0.05) elevation
+       - Minimum 44px touch targets on all interactive controls
+       - High readability typography: tabular figures, high contrast, clean hierarchy
+     ══════════════════════════════════════════════════════════════════════════════ */
+  :root,
+  body {
+    color-scheme: light !important;
+    --color-primary: #2563EB !important;
+    --color-primary-hover: #1D4ED8 !important;
+    --color-primary-pressed: #1E40AF !important;
+    --color-on-primary: #FFFFFF !important;
+    --color-secondary: #6B7280 !important;
+    --color-tertiary: #F9FAFB !important;
+    --color-background: #F9FAFB !important;
+    --color-surface: #FFFFFF !important;
+    --color-surface-card: #FFFFFF !important;
+    --color-surface-bg: #F9FAFB !important;
+    --color-surface-elevated: #FFFFFF !important;
+    --color-surface-hover: #F3F4F6 !important;
+    --color-surface-active: #E5E7EB !important;
+    --color-canvas: #F9FAFB !important;
+    --color-canvas-subtle: #F3F4F6 !important;
+    --color-canvas-dark: #F9FAFB !important;
+    --color-border: #E5E7EB !important;
+    --color-border-strong: #D1D5DB !important;
+    --color-border-subtle: #F3F4F6 !important;
+    --color-border-focus: #2563EB !important;
+    --color-border-glow: rgba(37, 99, 235, 0.15) !important;
+    --color-text: #111827 !important;
+    --color-text-main: #111827 !important;
+    --color-text-muted: #6B7280 !important;
+    --color-text-subtle: #9CA3AF !important;
+    --color-ink: #111827 !important;
+    --color-ink-strong: #111827 !important;
+    --color-ink-muted: #6B7280 !important;
+    --color-ink-soft: #6B7280 !important;
+    --color-success: #16A34A !important;
+    --color-positive: #16A34A !important;
+    --color-positive-subtle: rgba(22, 163, 74, 0.08) !important;
+    --color-warning: #D97706 !important;
+    --color-warning-subtle: rgba(217, 119, 6, 0.08) !important;
+    --color-error: #DC2626 !important;
+    --color-negative: #DC2626 !important;
+    --color-negative-subtle: rgba(220, 38, 38, 0.08) !important;
+    --color-danger: #DC2626 !important;
+    --color-info: #2563EB !important;
+    --color-info-subtle: rgba(37, 99, 235, 0.08) !important;
+    --color-racer-cyan: #2563EB !important;
+    --color-racer-blue: #2563EB !important;
+    --color-gold: #D97706 !important;
+    --color-racer-gold: #D97706 !important;
+    --color-racer-green: #16A34A !important;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+    --shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.08) !important;
+    --radius-xs: 4px !important;
+    --radius-sm: 6px !important;
+    --radius-md: 8px !important;
+    --radius-lg: 12px !important;
+    --radius-xl: 16px !important;
+    --radius-card: 12px !important;
   }
 
-  /* Form inputs touch protection against iOS Safari auto-zoom */
+  /* Canvas and Body: Clean Feed Background */
+  html, body {
+    background: #F9FAFB !important;
+    background-color: #F9FAFB !important;
+    background-image: none !important;
+    color: #111827 !important;
+    overflow-x: hidden !important;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Form inputs touch protection against iOS Safari auto-zoom & 44px min height */
   input, select, textarea {
     font-size: 16px !important;
+    min-height: 44px !important;
+    background: #FFFFFF !important;
+    border: 1px solid #D1D5DB !important;
+    border-radius: 8px !important;
+    color: #111827 !important;
+    box-sizing: border-box !important;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: #2563EB !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
   }
 
-  /* Show native mobile bottom navigation dock across all pages */
+  /* ── FeedLoop Uniform Post Cards & HUD Modules ──────────────────────────── */
+  .racer-card,
+  .hud-plate,
+  .hud-card,
+  .alpha-card,
+  .strategy-card,
+  .trader-card,
+  .position-card,
+  .token-card,
+  .wallet-card,
+  .fleet-card,
+  .screener-card,
+  .leaderboard-card,
+  .stat-card,
+  .hud-module,
+  .card {
+    background: #FFFFFF !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 12px !important;
+    padding: 14px 16px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+    margin-bottom: 12px !important;
+    color: #111827 !important;
+    transition: transform var(--motion-fast), border-color var(--motion-fast) !important;
+  }
+
+  .card-header {
+    background: transparent !important;
+    border-bottom: 1px solid #F3F4F6 !important;
+    padding: 0 0 12px 0 !important;
+    margin-bottom: 12px !important;
+  }
+
+  .card-title {
+    color: #111827 !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em !important;
+  }
+
+  .card-body {
+    padding: 0 !important;
+    color: #374151 !important;
+  }
+
+  /* ── FeedLoop Touch Target Rule (Minimum 44px) ─────────────────────────── */
+  button,
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-buy,
+  .btn-sell,
+  .btn-cta,
+  .btn-header-cta,
+  .btn-vis-mint-cta,
+  .btn-chip,
+  .tab-btn,
+  .pill,
+  .category-pill,
+  .screener-filter-pill,
+  .copy-btn,
+  .tier-option,
+  .mobile-dock-btn,
+  .mobile-dock-item {
+    min-height: 44px !important;
+    min-width: 44px !important;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    cursor: pointer !important;
+  }
+
+  /* Primary CTAs & Interactive Buttons */
+  .btn-primary,
+  .btn-buy,
+  .btn-cta,
+  .btn-header-cta,
+  .btn-vis-mint-cta {
+    background: #2563EB !important;
+    color: #FFFFFF !important;
+    border: 1px solid #2563EB !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+    box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2) !important;
+  }
+  .btn-primary:active,
+  .btn-buy:active,
+  .btn-cta:active {
+    background: #1D4ED8 !important;
+    transform: scale(0.98);
+  }
+
+  .btn-secondary {
+    background: #FFFFFF !important;
+    color: #374151 !important;
+    border: 1px solid #D1D5DB !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+  }
+  .btn-secondary:active {
+    background: #F3F4F6 !important;
+    transform: scale(0.98);
+  }
+
+  .btn-sell {
+    background: #DC2626 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #DC2626 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+  }
+  .btn-sell:active {
+    background: #B91C1C !important;
+    transform: scale(0.98);
+  }
+
+  .btn-ghost {
+    background: transparent !important;
+    color: #4B5563 !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 8px !important;
+  }
+
+  /* Filter Tabs and Category Pills */
+  .category-pill,
+  .screener-filter-pill,
+  .tab-btn {
+    background: #FFFFFF !important;
+    border: 1px solid #E5E7EB !important;
+    color: #6B7280 !important;
+    border-radius: 9999px !important;
+    padding: 0 16px !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+  }
+  .category-pill.active,
+  .screener-filter-pill.active,
+  .tab-btn.active {
+    background: #2563EB !important;
+    color: #FFFFFF !important;
+    border-color: #2563EB !important;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+  }
+
+  /* ── FeedLoop Readability & Typography ─────────────────────────────────── */
+  h1, h2, h3, h4, .hero-h1, .hero-title, .page-title {
+    color: #111827 !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  p, .body-text, .hero-lead, .card-desc {
+    color: #4B5563 !important;
+    line-height: 1.5 !important;
+  }
+
+  .text-muted,
+  .subtext,
+  .stat-label,
+  .hud-label,
+  .timestamp,
+  .meta-label,
+  .telemetry-label {
+    color: #6B7280 !important;
+    font-size: 12px !important;
+  }
+
+  .tabular-num,
+  .telemetry-num,
+  .mono-data,
+  .stat-value {
+    font-family: var(--font-mono) !important;
+    font-variant-numeric: tabular-nums !important;
+    color: #111827 !important;
+    letter-spacing: -0.01em !important;
+  }
+
+  /* Signals */
+  .text-positive, .positive, .signal-buy { color: #16A34A !important; }
+  .text-negative, .negative, .signal-sell { color: #DC2626 !important; }
+  .text-warning, .warning { color: #D97706 !important; }
+  .text-info, .info { color: #2563EB !important; }
+
+  /* ── FeedLoop Sticky Header on Mobile ──────────────────────────────────── */
+  .racer-header,
+  .master-header,
+  .site-header,
+  #header {
+    background: rgba(255, 255, 255, 0.96) !important;
+    border-bottom: 1px solid #E5E7EB !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  }
+  .brand-title,
+  .brand-name,
+  .header-brand {
+    color: #111827 !important;
+  }
+  .brand-mark,
+  .brand-logo-frame {
+    background: #F3F4F6 !important;
+    border: 1px solid #E5E7EB !important;
+  }
+
+  /* ── FeedLoop Fixed Bottom Navigation Dock ──────────────────────────────── */
   .mobile-bottom-dock {
     display: grid !important;
     grid-template-columns: repeat(5, 1fr) !important;
@@ -733,13 +1037,13 @@ body {
     right: 0 !important;
     z-index: 1000 !important;
     pointer-events: auto !important;
-    height: calc(58px + env(safe-area-inset-bottom, 10px));
-    padding-bottom: env(safe-area-inset-bottom, 10px);
-    background: rgba(17, 21, 27, 0.96);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-top: 1px solid var(--color-border);
-    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
+    height: calc(60px + env(safe-area-inset-bottom, 10px)) !important;
+    padding-bottom: env(safe-area-inset-bottom, 10px) !important;
+    background: rgba(255, 255, 255, 0.96) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-top: 1px solid #E5E7EB !important;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04) !important;
   }
 
   .mobile-dock-btn,
@@ -752,7 +1056,7 @@ body {
     height: 100% !important;
     background: transparent !important;
     border: none !important;
-    color: var(--color-text-muted) !important;
+    color: #6B7280 !important;
     cursor: pointer !important;
     padding: 6px 2px !important;
     text-decoration: none !important;
@@ -764,35 +1068,48 @@ body {
 
   .mobile-dock-btn svg,
   .mobile-dock-item svg {
-    width: 18px !important;
-    height: 18px !important;
+    width: 20px !important;
+    height: 20px !important;
+    stroke: #6B7280 !important;
+    transition: stroke var(--motion-fast), transform var(--motion-fast) !important;
   }
 
   .mobile-dock-btn span,
   .mobile-dock-item span {
-    font-size: 10.5px !important;
+    font-size: 11px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.02em !important;
+    letter-spacing: 0.01em !important;
+    color: #6B7280 !important;
   }
 
   .mobile-dock-btn.active,
   .mobile-dock-item.active {
-    color: var(--color-racer-cyan) !important;
+    color: #2563EB !important;
+  }
+  .mobile-dock-btn.active svg,
+  .mobile-dock-item.active svg {
+    stroke: #2563EB !important;
+    transform: translateY(-1px) !important;
+  }
+  .mobile-dock-btn.active span,
+  .mobile-dock-item.active span {
+    color: #2563EB !important;
+    font-weight: 700 !important;
   }
 
-  /* Add safe-area padding to bottom of page containers */
+  /* Safe Area Bottom Padding for all page content */
   main,
   .main-viewport,
   .container,
   .terminal-container,
   .home-workspace-container {
-    padding-bottom: calc(72px + env(safe-area-inset-bottom, 16px)) !important;
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 16px)) !important;
     width: 100% !important;
     max-width: 100vw !important;
     box-sizing: border-box !important;
   }
 
-  /* Universal Native Mobile Modal & Sheet Alignment */
+  /* ── Universal Native Mobile Bottom Sheets & Modals ─────────────────────── */
   .modal-backdrop,
   .racer-modal-backdrop,
   .modal-overlay {
@@ -803,13 +1120,16 @@ body {
     padding: 0 !important;
     z-index: 10000 !important;
     overflow: hidden !important;
+    background: rgba(17, 24, 39, 0.5) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
   }
 
   .modal-window,
   .modal-window.modal-wide,
   .racer-modal-card,
   .modal-card {
-    border-radius: 22px 22px 0 0 !important;
+    border-radius: 20px 20px 0 0 !important;
     max-width: 100% !important;
     width: 100% !important;
     max-height: 88vh !important;
@@ -817,13 +1137,22 @@ body {
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch !important;
     padding: 20px 16px calc(28px + env(safe-area-inset-bottom, 16px)) !important;
-    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.9) !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E5E7EB !important;
     border-bottom: none !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08) !important;
     box-sizing: border-box !important;
     margin: 0 !important;
+    color: #111827 !important;
   }
 
-  /* Table & Content Horizontal Containment */
+  .modal-window h1, .modal-window h2, .modal-window h3,
+  .racer-modal-card h1, .racer-modal-card h2, .racer-modal-card h3,
+  .modal-title {
+    color: #111827 !important;
+  }
+
+  /* ── Data Tables & Containers Horizontal Smooth Scroll ──────────────────── */
   .table-container,
   .table-responsive,
   .table-responsive-box {
@@ -832,6 +1161,23 @@ body {
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
     box-sizing: border-box !important;
+    background: #FFFFFF !important;
+    border-radius: 12px !important;
+    border: 1px solid #E5E7EB !important;
+  }
+
+  table {
+    background: #FFFFFF !important;
+  }
+  th {
+    background: #F9FAFB !important;
+    color: #6B7280 !important;
+    border-bottom: 1px solid #E5E7EB !important;
+  }
+  td {
+    color: #111827 !important;
+    border-bottom: 1px solid #F3F4F6 !important;
   }
 }
+
 

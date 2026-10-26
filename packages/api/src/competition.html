@@ -868,6 +868,10 @@
        MOBILE FIRST RESPONSIVE ARCHITECTURE (iPhone SE to S24 Ultra & Tablets)
        ═══════════════════════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
+      body {
+        background: #F9FAFB !important;
+        color: #111827 !important;
+      }
       .racer-header,
       .site-header {
         height: auto;
@@ -876,6 +880,9 @@
         gap: 8px;
         width: 100% !important;
         max-width: 100vw !important;
+        background: rgba(255, 255, 255, 0.96) !important;
+        border-bottom: 1px solid #E5E7EB !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
       }
       .nav-links,
       .network-badge {
@@ -891,48 +898,70 @@
         gap: 8px;
       }
       .brand-logo {
-        width: 30px;
-        height: 30px;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: #F3F4F6 !important;
+        border: 1px solid #E5E7EB !important;
       }
       .brand-title {
-        font-size: 13.5px;
+        font-size: 14px;
+        color: #111827 !important;
       }
       .brand-subtitle {
         display: none;
       }
       .btn-header-cta {
-        height: 34px;
-        padding: 0 12px;
-        font-size: 12px;
+        min-height: 44px !important;
+        height: 44px;
+        padding: 0 16px;
+        font-size: 13px;
+        font-weight: 600;
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border: 1px solid #2563EB !important;
+        border-radius: 8px;
       }
       .btn-header-sub {
-        height: 34px;
-        padding: 0 10px;
-        font-size: 12px;
+        min-height: 44px !important;
+        height: 44px;
+        padding: 0 14px;
+        font-size: 13px;
+        background: #FFFFFF !important;
+        color: #374151 !important;
+        border: 1px solid #D1D5DB !important;
+        border-radius: 8px;
       }
       .container {
         padding: 20px 14px calc(80px + env(safe-area-inset-bottom, 16px));
+        background: #F9FAFB !important;
       }
       .hero-h1 {
         font-size: clamp(22px, 6.5vw, 32px);
         margin-bottom: 12px;
+        color: #111827 !important;
       }
       .hero-lead {
         font-size: 14px;
         line-height: 22px;
         margin-bottom: 20px;
+        color: #6B7280 !important;
       }
       .privacy-notice {
-        padding: 12px 14px;
+        padding: 14px 16px;
         gap: 10px;
         margin-bottom: 20px;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
       }
       .privacy-text {
-        font-size: 11.5px;
+        font-size: 12px;
         line-height: 1.45;
+        color: #6B7280 !important;
       }
 
-      /* Tabs Strip: Mobile Kinetic Scrolling */
+      /* Tabs Strip: Mobile Kinetic Scrolling with 44px Touch Targets */
       .tabs-strip {
         margin: 0 -14px 20px -14px;
         padding: 0 14px 2px 14px;
@@ -940,37 +969,62 @@
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
         flex-wrap: nowrap;
-        gap: 4px;
+        gap: 8px;
       }
       .tabs-strip::-webkit-scrollbar {
         display: none;
       }
       .tab-btn {
-        padding: 8px 12px;
-        font-size: 11.5px;
+        min-height: 44px !important;
+        padding: 0 18px !important;
+        font-size: 12.5px;
+        font-weight: 600;
         flex-shrink: 0;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 9999px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        color: #6B7280 !important;
+      }
+      .tab-btn.active {
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-color: #2563EB !important;
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
       }
 
-      /* 2x2 Mobile Stat Dashboard */
+      /* 2x2 Mobile Stat Dashboard in FeedLoop Uniform Card Style */
       .stat-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 10px;
         margin-bottom: 20px;
       }
       .stat-card {
-        padding: 14px 12px;
+        padding: 14px 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
       }
       .stat-label {
-        font-size: 9.5px;
+        font-size: 10.5px;
         margin-bottom: 4px;
+        color: #6B7280 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
       }
       .stat-value {
-        font-size: 18px;
+        font-size: 20px;
         line-height: 1.2;
+        color: #111827 !important;
+        font-weight: 700;
       }
       .stat-sub {
-        font-size: 10px;
+        font-size: 11px;
         margin-top: 3px;
+        color: #6B7280 !important;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -978,17 +1032,25 @@
 
       /* Card Content & Search on Mobile */
       .card {
-        padding: 18px 14px;
-        margin-bottom: 18px;
+        padding: 16px 14px !important;
+        margin-bottom: 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
       }
       .card-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
         margin-bottom: 16px;
+        border-bottom: 1px solid #F3F4F6 !important;
+        padding-bottom: 12px !important;
       }
       .card-title {
-        font-size: 15px;
+        font-size: 16px;
+        color: #111827 !important;
+        font-weight: 700;
       }
       .card-actions {
         width: 100%;
@@ -998,11 +1060,17 @@
       }
       .search-input {
         width: 100%;
-        height: 42px;
+        min-height: 44px !important;
+        height: 44px;
         font-size: 16px; /* Prevents iOS auto-zoom on input focus */
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        border-radius: 8px !important;
+        color: #111827 !important;
+        padding: 0 14px 0 36px !important;
       }
 
-      /* ── Native Mobile Card Transformation for Leaderboard Tables ── */
+      /* ── FeedLoop Uniform Post Cards for Leaderboard Feed ── */
       .table-container {
         border: none;
         background: transparent;
@@ -1018,7 +1086,7 @@
       table.data-table tbody {
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
         width: 100%;
       }
       table.data-table tr {
@@ -1026,11 +1094,12 @@
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        background: var(--color-surface-1);
-        border: 1px solid var(--color-surface-3);
-        border-radius: var(--radius-md);
-        padding: 12px 14px;
-        gap: 6px 8px;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        padding: 14px 16px !important;
+        gap: 8px 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
         transition: transform 140ms ease;
       }
       table.data-table tr:hover td {
@@ -1039,6 +1108,7 @@
       table.data-table td {
         padding: 0;
         border: none;
+        color: #111827 !important;
       }
 
       .col-rank {
@@ -1051,8 +1121,9 @@
         min-width: 120px;
       }
       .wallet-addr-text {
-        max-width: 135px;
-        font-size: 12px;
+        max-width: 140px;
+        font-size: 13px;
+        color: #111827 !important;
         display: inline-block;
       }
       .col-points {
@@ -1061,7 +1132,9 @@
         text-align: right !important;
       }
       .col-points .points-cell {
-        font-size: 15px;
+        font-size: 16px;
+        font-weight: 700;
+        color: #16A34A !important;
       }
       .col-tier {
         order: 4;
@@ -1069,43 +1142,60 @@
       }
       .col-events {
         order: 5;
-        font-size: 11px !important;
+        font-size: 11.5px !important;
+        color: #6B7280 !important;
       }
       .col-share {
         order: 6;
         margin-left: auto;
-        font-size: 11px !important;
-        color: var(--color-primary) !important;
+        font-size: 12px !important;
+        color: #2563EB !important;
+        font-weight: 600;
       }
 
       /* Competition Formats & Rules */
       .formats-grid {
         grid-template-columns: 1fr;
-        gap: 14px;
+        gap: 12px;
       }
       .format-card {
-        padding: 18px 16px;
+        padding: 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
       }
       .rules-grid {
         grid-template-columns: 1fr;
         gap: 10px;
       }
       .rule-box {
-        padding: 14px 16px;
+        padding: 14px 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
       }
 
       /* Host Banner */
       .host-banner {
-        padding: 22px 16px;
+        padding: 20px 16px;
         gap: 16px;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
       }
       .host-title {
-        font-size: 20px;
+        font-size: 18px;
+        color: #111827 !important;
       }
       .host-btn {
         width: 100%;
         justify-content: center;
+        min-height: 44px !important;
         height: 46px;
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
+        font-weight: 600;
       }
     }
 

@@ -915,10 +915,13 @@ tbody tr:hover {
   }
 
   .hero-button-row .btn {
-    min-height: 38px;
+    min-height: 44px !important;
     height: auto;
-    padding: 9px 12px !important;
-    font-size: 11px;
+    padding: 10px 16px !important;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .pillars-grid {
