@@ -81,6 +81,22 @@
       flex-direction: column;
     }
 
+    .map-status {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 8px; padding: 24px; text-align: center; pointer-events: none;
+    }
+    .map-status[hidden], .map-status button[hidden] { display: none !important; }
+    .map-status button { pointer-events: auto; margin-top: 4px; min-height: 44px; }
+    .map-status-title { font-size: 15px; font-weight: 700; color: var(--color-text); margin: 0; }
+    .map-status-sub { font-size: 13px; color: var(--color-text-2); margin: 0; max-width: 320px; }
+    .map-status-spinner {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid var(--color-border); border-top-color: var(--color-primary);
+      animation: map-spin 0.8s linear infinite;
+    }
+    .map-status.is-idle .map-status-spinner { display: none; }
+    @keyframes map-spin { to { transform: rotate(360deg); } }
     #canvas-wrap {
       flex: 1;
       width: 100%;
@@ -304,7 +320,7 @@
       opacity: 1;
     }
     .racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
-    .racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+    .racer-toast.success { background: rgba(52, 211, 153, 0.15); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.4); }
     .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
   </style>
 </head>
@@ -400,6 +416,12 @@
         <!-- Canvas -->
         <div id="canvas-wrap">
           <canvas id="canvas"></canvas>
+          <div id="map-status" class="map-status" role="status" aria-live="polite" hidden>
+            <div class="map-status-spinner" aria-hidden="true"></div>
+            <p class="map-status-title" id="map-status-title">Loading holders…</p>
+            <p class="map-status-sub" id="map-status-sub"></p>
+            <button type="button" class="btn btn-secondary btn-sm" id="map-status-retry" hidden>Retry</button>
+          </div>
         </div>
 
         <!-- List View Table Mode (Accessible Table) -->
@@ -855,18 +877,48 @@
 
         currentSymbol = (currentToken.split('.')[0] || 'TOKEN').toUpperCase();
         updateHeaderInfo();
+        setMapStatus('loading');
 
         try {
-          const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`);
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 20000);
+          const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`, { signal: ctrl.signal });
+          clearTimeout(timer);
           if (r.ok) {
             const data = await r.json();
             processData(data);
+            setMapStatus((data?.holders || []).length ? null : 'empty');
           } else {
             renderEmptyState();
+            setMapStatus(r.status === 404 ? 'empty' : 'error');
           }
         } catch (err) {
           console.error('Error fetching bubble data:', err);
           renderEmptyState();
+          setMapStatus('error');
+        }
+      }
+
+      // Loading / empty / error overlay for the map area (it used to stay blank).
+      function setMapStatus(state) {
+        const el = document.getElementById('map-status');
+        if (!el) return;
+        const title = document.getElementById('map-status-title');
+        const sub = document.getElementById('map-status-sub');
+        const retry = document.getElementById('map-status-retry');
+        if (!state) { el.hidden = true; return; }
+        el.hidden = false;
+        el.classList.toggle('is-idle', state !== 'loading');
+        if (retry) { retry.hidden = state !== 'error'; retry.onclick = () => loadData(); }
+        if (state === 'loading') {
+          title.textContent = 'Loading holders…';
+          sub.textContent = 'Mapping wallets and clusters for ' + (currentSymbol || 'this token') + '.';
+        } else if (state === 'empty') {
+          title.textContent = 'No holder data yet';
+          sub.textContent = 'This token has no indexed holders yet. Check the contract address or try again later.';
+        } else {
+          title.textContent = "Couldn't load the bubble map";
+          sub.textContent = 'The data service did not respond. Check your connection and retry.';
         }
       }
 

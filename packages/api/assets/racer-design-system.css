@@ -1,5 +1,5 @@
 /* ── RACER MASTER DESIGN SYSTEM: BRAND GUIDE (DARK THEME) + MINIDASH (PARTS 4 & 5) ───────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Fonts are loaded by a <link> in each page head (an @import here added a second, render-blocking request chain). */
 
 :root {
   --font-sans:            'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -839,7 +839,8 @@ p, .text-body {
 }
 
 
-button:focus {
+/* Remove the mouse-click outline only; keyboard users keep a visible ring. */
+button:focus:not(:focus-visible) {
   outline: none !important;
 }
 .alpha-tab-btn:focus,
@@ -861,4 +862,141 @@ body, html, h1, h2, h3, h4, h5, h6,
 
 code, kbd, samp, pre, .mono-data, .font-mono {
   font-family: var(--font-mono) !important;
+}
+
+
+/* ── Shared shell polish (applies to every Racer page) ─────────────────────── */
+
+/* Keyboard focus ring, brand cyan (design.md: visible focus rings). */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-primary) !important;
+  outline-offset: 2px;
+}
+
+/* Skip link: hidden until focused (it was permanently visible on Arena). */
+.skip-link,
+a[href="#main-content"]:first-child {
+  position: absolute !important;
+  left: 12px;
+  top: -100px;
+  z-index: 10001;
+  padding: 10px 14px;
+  background: var(--color-primary);
+  color: var(--color-on-primary) !important;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  text-decoration: none;
+}
+.skip-link:focus,
+a[href="#main-content"]:first-child:focus {
+  top: 12px;
+}
+
+/* Mobile bottom dock items: one definition for all pages (Home, Fleet and
+   Bubble previously rendered these as underlined default links). */
+.mobile-dock-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--color-text-2, #A3ABC2) !important;
+  text-decoration: none !important;
+  font-size: 11px;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-dock-btn svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.mobile-dock-btn span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mobile-dock-btn.active,
+.mobile-dock-btn[aria-current="page"] {
+  color: var(--color-primary) !important;
+  font-weight: 700;
+}
+
+/* Phones: the bottom dock is the navigation, so the desktop link row in the
+   header is hidden instead of overflowing and clipping ("Arena" was cut off). */
+@media (max-width: 767px) {
+  .desktop-nav {
+    display: none !important;
+  }
+  header,
+  .app-header {
+    max-width: 100vw;
+    overflow-x: clip;
+  }
+}
+
+/* Long addresses and token names never push cards wider than the screen. */
+.mono, code, .telemetry-num {
+  overflow-wrap: anywhere;
+}
+
+/* Flex <body> children must be allowed to shrink, or wide rows (tab bars,
+   filters) stretch the section past the phone screen and clip the text. */
+.page-title-section {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.brand-mark img,
+.mobile-drawer-brand img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+@media (max-width: 767px) {
+  .page-title-section {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  /* Alpha leaderboard filters: 3 even columns instead of running off-screen. */
+  .filters-group {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+  .filters-group .select-filter {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 44px;
+  }
+  /* Scrollable tab strips: hide the scrollbar, keep swipe. */
+  .alpha-tab-bar,
+  .tabs-strip,
+  .tab-bar {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .alpha-tab-bar::-webkit-scrollbar,
+  .tabs-strip::-webkit-scrollbar,
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .alpha-tab-btn,
+  .tabs-strip .tab-btn,
+  .tab-bar .tab-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 }
