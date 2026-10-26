@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Fleet — Multi-Wallet Coordination Engine | RacerBot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>RacerFleet | Manage multiple wallets in one click</title>
   <meta name="description" content="Manage NEAR wallets and coordinate buy, sell, disbursement, and sweep operations from the RacerFleet cockpit." />
   
   <link rel="icon" type="image/png" href="/assets/racer-logo.png" />
@@ -11,7 +11,8 @@
   <link rel="apple-touch-icon" href="/assets/racer-logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="/assets/racer-config.js"></script>
   <link rel="stylesheet" href="/assets/racer-design-system.css" />
   
   <style>
@@ -616,6 +617,32 @@
     }
   </style>
   <link rel="stylesheet" href="/assets/racer-terminal.css">
+<script>
+    function toggleSecurityMenu() {
+      const menu = document.getElementById('security-dropdown');
+      if (menu) {
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+      }
+    }
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('security-dropdown');
+      if (menu && !e.target.closest('.dropdown')) {
+        menu.style.display = 'none';
+      }
+    });
+  </script>
+<script>
+    function updateFleetBubbleLink(val) {
+      const link = document.getElementById('fleet-bubblemap-link');
+      if (!link) return;
+      if (val && val.trim().length > 2) {
+        link.href = '/bubblemap?token=' + encodeURIComponent(val.trim());
+        link.style.display = 'inline-flex';
+      } else {
+        link.style.display = 'none';
+      }
+    }
+  </script>
 </head>
 <body>
   <!-- Universal Racer Master Header -->
@@ -632,7 +659,7 @@
         <span class="telemetry-live-dot"></span>
         <span class="telemetry-text">NEAR MAINNET</span>
         <span class="telemetry-divider">/</span>
-        <span class="telemetry-metric cyan" id="telemetry-latency">—</span>
+        <span class="telemetry-metric cyan" id="telemetry-latency"> - </span>
         <span class="telemetry-divider">/</span>
         <span class="telemetry-metric" id="telemetry-block">NEAR</span>
       </div>
@@ -642,7 +669,7 @@
         <a href="/" class="nav-item">Overview</a>
         <a href="/bubblemap" class="nav-item">Bubble Map</a>
         <a href="/alpha" class="nav-item">Private Alpha</a>
-        <a href="/fleet" class="nav-item active">Fleet Ops</a>
+        <a href="/fleet" class="nav-item active">Fleet Operations</a>
         <a href="/competition" class="nav-item">Arena</a>
         <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">Telegram ↗</a>
       </nav>
@@ -666,63 +693,29 @@
   </header>
 
   <!-- Hero & Cockpit Section -->
-  <section class="fleet-hero">
-    <div class="terminal-container">
-      <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px;">
+    <section class="fleet-hero" style="padding: 32px 0 20px; border-bottom: 1px solid var(--color-border);">
+    <div class="container">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px;">
         <div>
-          <div style="display:inline-flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11px; color:var(--color-primary); letter-spacing:0.08em; margin-bottom:8px;">
-            <span style="display:inline-block; width:6px; height:6px; background:var(--color-primary); border-radius:50%; box-shadow:0 0 8px var(--color-primary);"></span>
-            <span>NEAR WALLET OPERATIONS</span>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <h1 style="font-size:32px; font-weight:700; color:var(--color-text); margin:0;">RacerFleet</h1>
+            <span class="badge" style="background:var(--color-surface-2); border:1px solid var(--color-border); color:var(--color-text-2); font-size:11px; padding:3px 8px; border-radius:4px;">NEAR Mainnet</span>
           </div>
-          <h1 style="font-family:var(--font-display); font-size:36px; font-weight:800; color:var(--color-text); margin:0 0 8px; text-transform:uppercase; letter-spacing:-0.02em;">
-            RaceFleet Command Cockpit
-          </h1>
-          <p style="margin:0; font-size:15px; color:var(--color-text-muted); max-width:680px; line-height:1.5;">
-            Manage wallet groups and coordinate buy, sell, disbursement, and sweep operations. Review the selected wallets and transaction details before submitting.
-          </p>
+          <p style="font-size:15px; color:var(--color-text-2); margin:0;">Manage multiple wallets in one click.</p>
         </div>
-
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-sm" onclick="openDisburseModal()">
-            <span>Disburse Capital</span>
-          </button>
-          <button class="btn btn-sm btn-sweep" onclick="executeSweepFunds()">
-            <span>Sweep 100% Funds</span>
-          </button>
-          <button class="btn btn-ghost btn-sm" onclick="openExportModal()" title="Export access keypairs">
-            <span>Export Keys</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Cockpit HUD Grid -->
-      <div class="hud-grid">
-        <div class="hud-card">
-          <div class="hud-label"><span>Active Fleet Squadron</span></div>
-          <div class="hud-val cyan" id="hud-fleet-tag">Loading fleet…</div>
-          <div class="hud-sub">
-            <span id="hud-status-badge" class="badge-status">LOADING</span> • <span id="hud-fleet-wallets">— Wallets</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-primary" onclick="openDeployModal()">Deploy fleet</button>
+          <div class="dropdown" style="position:relative;">
+            <button class="btn btn-secondary" onclick="toggleSecurityMenu()" aria-label="Security options" style="padding:0 12px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+            </button>
+            <div id="security-dropdown" class="card" style="display:none; position:absolute; right:0; top:48px; width:220px; z-index:100; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4);">
+              <button class="btn btn-ghost" onclick="openExportModal(); toggleSecurityMenu();" style="width:100%; justify-content:flex-start; font-size:13px; color:var(--color-error); padding:8px 12px; height:auto;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-1-1l-3 3m-1 4a6 6 0 1 1-6-6c1.3 0 2.5.4 3.5 1.1l7.5-7.5"></path></svg>
+                <span>Export private keys</span>
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div class="hud-card">
-          <div class="hud-label"><span>Combined Fleet Capital</span></div>
-          <div class="hud-val green"><span id="hud-total-near">—</span> NEAR</div>
-          <div class="hud-sub">
-            <span id="hud-total-usd">—</span> USD Across Wallets
-          </div>
-        </div>
-
-        <div class="hud-card">
-          <div class="hud-label"><span>Available Operations</span></div>
-          <div class="hud-val cyan">BUY · SELL</div>
-          <div class="hud-sub">Configure actions in the tabs below</div>
-        </div>
-
-        <div class="hud-card">
-          <div class="hud-label"><span>Transaction control</span></div>
-          <div class="hud-val green">Review first</div>
-          <div class="hud-sub">Confirm wallet selection and amounts</div>
         </div>
       </div>
     </div>
@@ -983,9 +976,9 @@
   <!-- Deploy Fleet Modal -->
   <div class="modal-overlay" id="modal-deploy">
     <div class="modal-card">
-      <button class="modal-close" onclick="closeDeployModal()">✕</button>
+      <button class="modal-close" onclick="closeDeployModal()"></button>
       <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">
-        Deploy RaceFleet
+        Deploy RacerFleet
       </div>
       <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:20px; line-height:1.5;">
         Choose your squadron size. Real named subaccounts will be generated and registered on NEAR mainnet with independent access keys.
@@ -994,7 +987,7 @@
       <div class="tier-option selected" id="tier-5" onclick="selectTier(5, 2.0)">
         <div>
           <div class="tier-name">Viper Squadron (5 Wallets)</div>
-          <div class="tier-desc">Ideal for launchpad bonding curve entries and light sybil protection.</div>
+          <div class="tier-desc">Ideal for launchpad bonding curve entries and light wallet grouping.</div>
         </div>
         <div class="tier-price">2.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
       </div>
@@ -1010,7 +1003,7 @@
       <div class="tier-option" id="tier-25" onclick="selectTier(25, 7.0)">
         <div>
           <div class="tier-name">Apex Armada (25 Wallets)</div>
-          <div class="tier-desc">Maximum stealth and institutional volume distribution.</div>
+          <div class="tier-desc">Maximum coordinated and institutional volume distribution.</div>
         </div>
         <div class="tier-price">7.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
       </div>
@@ -1029,7 +1022,7 @@
   <!-- Export Private Keys Modal -->
   <div class="modal-overlay" id="modal-export">
     <div class="modal-card" style="max-width:580px;">
-      <button class="modal-close" onclick="closeExportModal()">✕</button>
+      <button class="modal-close" onclick="closeExportModal()"></button>
       <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-danger); margin-bottom:8px;">
         Export Private Access Keys
       </div>
@@ -1157,14 +1150,14 @@
           document.getElementById('fleet-wallets-tbody').innerHTML = `
             <tr>
               <td colspan="6" style="text-align:center; padding:32px;">
-                <div style="font-size:14px; color:var(--color-text); margin-bottom:8px;">You don't have an active RaceFleet squadron.</div>
+                <div style="font-size:14px; color:var(--color-text); margin-bottom:8px;">You don't have an active RacerFleet squadron.</div>
                 <button class="btn btn-primary btn-sm" onclick="openDeployModal()">Deploy 5-Wallet Squadron (2.0 NEAR)</button>
               </td>
             </tr>
           `;
           document.getElementById('fleet-holdings-container').innerHTML = `
             <div style="text-align:center; padding:24px; color:var(--color-text-subtle); font-size:13px;">
-              Deploy your RaceFleet to begin coordinated multi-wallet trading.
+              Deploy your RacerFleet to begin coordinated multi-wallet trading.
             </div>
           `;
         }
@@ -1233,7 +1226,7 @@
 
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0;">
           <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,230,118,0.1); border:1px solid rgba(0,230,118,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;">🐉</div>
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,230,118,0.1); border:1px solid rgba(0,230,118,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;"></div>
             <div>
               <div style="font-weight:700; color:var(--color-text); font-size:14px;">BlackDragon</div>
               <div style="font-size:11px; color:var(--color-text-subtle);">blackdragon.tkn.near</div>
@@ -1345,7 +1338,7 @@
           stream.innerHTML += `<div class="stream-line"><span class="stream-err">Exit error: ${data.error || data.errors?.[0] || 'Unknown error'}</span></div>`;
         }
       } catch (err) {
-        stream.innerHTML += `<div class="stream-line"><span class="stream-err">❌ Network error: ${err.message}</span></div>`;
+        stream.innerHTML += `<div class="stream-line"><span class="stream-err"> Network error: ${err.message}</span></div>`;
       } finally {
         btn.disabled = false;
       }
@@ -1446,7 +1439,7 @@
 
         const data = await res.json();
         if (data.success) {
-          alert(`RaceFleet successfully deployed! ${data.wallets?.length || selectedTierCount} subaccounts active.`);
+          alert(`RacerFleet successfully deployed! ${data.wallets?.length || selectedTierCount} subaccounts active.`);
           closeDeployModal();
           fetchFleetStatus(true);
         } else {
@@ -1539,18 +1532,18 @@
   </script>
 
   <!-- Universal Bottom Navigation Dock for Mobile -->
-  <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+    <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
     <a href="/" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
       <span>Home</span>
     </a>
-    <a href="/bubblemap" class="mobile-dock-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-      <span>Explore</span>
-    </a>
     <a href="/alpha" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
       <span>Alpha</span>
+    </a>
+    <a href="/bubblemap" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+      <span>Bubble</span>
     </a>
     <a href="/fleet" class="mobile-dock-btn active">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -1589,7 +1582,7 @@
       </a>
       <a href="/fleet" class="mobile-drawer-link active">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-        <span>Fleet Ops</span>
+        <span>Fleet Operations</span>
       </a>
       <a href="/competition" class="mobile-drawer-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
@@ -1606,5 +1599,35 @@
       </button>
     </div>
   </aside>
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      if (token) {
+        const input = document.getElementById('buy-target-token');
+        if (input) {
+          input.value = token;
+          if (typeof setBuyToken === 'function') setBuyToken(token);
+        }
+      }
+    } catch(e) {}
+  });
+</script>
+  <footer class="app-footer">
+    <div class="container footer-content">
+      <div class="footer-links">
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer">RacerBot</a>
+        <a href="/alpha">Racer Alpha</a>
+        <a href="/fleet">RacerFleet</a>
+        <a href="/bubblemap">RacerBubble</a>
+        <a href="/competition">Racer Arena</a>
+      </div>
+      <p class="footer-legal">
+        Trading digital assets carries risk. You can lose money. Copy trading does not guarantee results. Past performance does not predict future results.
+      </p>
+      <p class="footer-copy">© 2026 Racer. All rights reserved.</p>
+    </div>
+  </footer>
 </body>
 </html>

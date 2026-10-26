@@ -2,19 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>RacerBot — Competition Arena & On-Chain Snapshot Leaderboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Racer Arena | Trading competitions and points</title>
   <link rel="icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="apple-touch-icon" href="/assets/racer-logo.png">
-  <meta property="og:title" content="RacerBot — On-Chain Trading Competitions & Snapshot Arena">
+  <meta property="og:title" content="RacerBot  -  On-Chain Trading Competitions & Snapshot Arena">
   <meta property="og:description" content="Sub-second execution, automated sniping, and on-chain snapshot leaderboard on NEAR Protocol.">
   <meta property="og:image" content="/assets/racerbot-banner.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="/assets/racer-config.js"></script>
   <link rel="stylesheet" href="/assets/racer-design-system.css">
   <style>
     /* ── Master RACER Design System (UI/UX Pro Max v2.0) ───────────────────────── */
@@ -1221,46 +1222,60 @@
     }
   </style>
   <link rel="stylesheet" href="/assets/racer-terminal.css">
+<script>
+  function openHostModal() {
+    const modal = document.getElementById('host-comp-modal');
+    if (modal) modal.style.display = 'flex';
+  }
+  function closeHostModal() {
+    const modal = document.getElementById('host-comp-modal');
+    if (modal) modal.style.display = 'none';
+  }
+  function handleHostCompSubmit(e) {
+    e.preventDefault();
+    const proj = document.getElementById('host-project-name')?.value || '';
+    const tok = document.getElementById('host-token-contract')?.value || '';
+    const fmtVal = document.getElementById('host-comp-format')?.value || '';
+    const prize = document.getElementById('host-prize-pool')?.value || '';
+    const contact = document.getElementById('host-contact')?.value || '';
+
+    const text = encodeURIComponent(`Hi Racer Arena, I want to host a competition!\nProject: ${proj}\nToken: ${tok}\nFormat: ${fmtVal}\nPrize: ${prize} NEAR\nContact: ${contact}`);
+    window.open(`https://t.me/racertradingbot?text=${text}`, '_blank', 'noopener,noreferrer');
+
+    const form = document.getElementById('host-comp-form');
+    const success = document.getElementById('host-comp-success');
+    if (form) form.style.display = 'none';
+    if (success) success.style.display = 'block';
+  }
+</script>
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
 
   <!-- Top Navigation Header (Master Pit-Wall Specification) -->
-  <header class="racer-header">
-    <div class="header-inner">
-      <a href="/" class="brand-logo-wrap">
-        <div class="brand-mark">
-          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
-        </div>
-        <div>
-          <span class="brand-title">RACER <span>ARENA</span></span>
-        </div>
+    <!-- Shared Shell Header -->
+  <header class="app-header">
+    <a href="/" class="app-brand" aria-label="Racer Home">
+      <img src="/assets/racer-logo.png" alt="Racer logo" onerror="this.src='/assets/logo.png'">
+      <span>Racer</span>
+    </a>
+
+    <nav class="desktop-nav" aria-label="Main Navigation">
+      <a href="/alpha" class="desktop-nav-link">Alpha</a>
+      <a href="/fleet" class="desktop-nav-link">Fleet</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/competition" class="desktop-nav-link active">Arena</a>
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
+        <span>RacerBot</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
       </a>
+    </nav>
 
-      <span class="network-badge">RACER COMMUNITY</span>
-
-      <!-- Navigation Links -->
-      <nav class="nav-links">
-        <a href="/" class="nav-item">Overview</a>
-        <a href="/bubblemap" class="nav-item">Bubble Map</a>
-        <a href="/alpha" class="nav-item">Private Alpha</a>
-        <a href="/fleet" class="nav-item">Fleet Ops</a>
-        <a href="/competition" class="nav-item active">Arena</a>
-        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item">Telegram ↗</a>
-      </nav>
-
-      <!-- Right Header Actions -->
-      <div class="header-actions">
-        <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
-          <span id="header-connect-label">Log in</span>
-        </button>
-        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary btn-sm">
-          <span>Launch RacerBot ↗</span>
-        </a>
-        <button class="mobile-nav-toggle" id="mobile-nav-toggle-btn" onclick="toggleMobileNav(true)" aria-label="Open navigation menu">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
-        </button>
-      </div>
+    <div class="desktop-actions">
+      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
+        <span id="header-connect-label">Connect</span>
+      </button>
     </div>
   </header>
 
@@ -1278,7 +1293,7 @@
     </h1>
 
     <p class="hero-lead">
-      Traders with the highest volume and highest referrals on RacerBot take the grand prizes. Snapshot in 2 weeks — #1st, #2nd, and #3rd highest points take the top rewards.
+      Traders with the highest volume and highest referrals on RacerBot take the grand prizes. Snapshot in 2 weeks  -  #1st, #2nd, and #3rd highest points take the top rewards.
     </p>
 
     <!-- Privacy Callout (Navy Surface-1, Strict Wallet + Points Only) -->
@@ -1332,7 +1347,7 @@
             <span>Total Points</span>
             <span>All-Time</span>
           </div>
-          <div class="stat-value mint" id="stat-total-points">—</div>
+          <div class="stat-value mint" id="stat-total-points"> - </div>
           <div class="stat-sub">Trading volume & sniper executions</div>
         </div>
 
@@ -1341,7 +1356,7 @@
             <span>Active Point Racers</span>
             <span>On-Chain</span>
           </div>
-          <div class="stat-value" id="stat-active-racers">—</div>
+          <div class="stat-value" id="stat-active-racers"> - </div>
           <div class="stat-sub">Snapshot qualifying wallets</div>
         </div>
 
@@ -1350,7 +1365,7 @@
             <span>Top Score</span>
             <span>#1 Leader</span>
           </div>
-          <div class="stat-value gold" id="stat-top-score">—</div>
+          <div class="stat-value gold" id="stat-top-score"> - </div>
           <div class="stat-sub" id="stat-top-wallet">Leading the season</div>
         </div>
       </div>
@@ -1447,8 +1462,8 @@
         </div>
         <div class="stat-card">
           <div class="stat-label">Current Market Cap</div>
-          <div class="stat-value" id="sprint-current-mcap">—</div>
-          <div class="stat-sub" id="sprint-mcap-near">— NEAR</div>
+          <div class="stat-value" id="sprint-current-mcap"> - </div>
+          <div class="stat-sub" id="sprint-mcap-near"> -  NEAR</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Sprint Status</div>
@@ -1543,7 +1558,7 @@
             <div class="format-tags">
               <span class="format-tag">Rolling Snapshots</span>
               <span class="format-tag">Privacy-Safe</span>
-              <span class="format-tag">Sybil-Resistant</span>
+              <span class="format-tag">net-scored</span>
             </div>
           </div>
           <div class="format-footer">
@@ -1562,7 +1577,7 @@
             </div>
             <div class="format-tags">
               <span class="format-tag">Milestone Trigger</span>
-              <span class="format-tag">24h – 48h Sprint</span>
+              <span class="format-tag">24h  -  48h Sprint</span>
               <span class="format-tag">Real-Time SSE</span>
             </div>
           </div>
@@ -1641,7 +1656,7 @@
               Discourages wash trading by scoring participants purely on Net Buy Volume (Total Buys minus Total Sells) during a 7-day period. Top accumulators win the majority of the token liquidity bounty.
             </div>
             <div class="format-tags">
-              <span class="format-tag">Anti-Wash Trading</span>
+              <span class="format-tag">verified Trading</span>
               <span class="format-tag">Net Volume Only</span>
               <span class="format-tag">Holder Friendly</span>
             </div>
@@ -1732,7 +1747,7 @@
     function copyText(txt, btn) {
       navigator.clipboard.writeText(txt).then(() => {
         const orig = btn.innerText;
-        btn.innerText = '✓';
+        btn.innerText = '';
         btn.style.color = '#00d16a';
         setTimeout(() => {
           btn.innerText = orig;
@@ -1755,7 +1770,7 @@
 
     // Assign Tier based on points
     function getTierBadge(points, rank) {
-      if (rank === 1) return '<span class="badge-tier elite">★ Champion</span>';
+      if (rank === 1) return '<span class="badge-tier elite"> Champion</span>';
       if (rank <= 3) return '<span class="badge-tier elite">Top 3 Elite</span>';
       if (points >= 5000) return '<span class="badge-tier diamond">Diamond Racer</span>';
       if (points >= 2000) return '<span class="badge-tier pro">Pro Racer</span>';
@@ -1799,7 +1814,7 @@
         const wallet = item.wallet || item.account_id || 'anonymous.near';
         const pts = item.points ?? item.total_points ?? 0;
         const events = item.events ?? item.event_count ?? 1;
-        const share = totalPoints > 0 ? ((pts / totalPoints) * 100).toFixed(1) + '%' : '—';
+        const share = totalPoints > 0 ? ((pts / totalPoints) * 100).toFixed(1) + '%' : ' - ';
         const tier = item.tier ? `<span class="badge-tier ${item.tier.toLowerCase().includes('grand') || item.tier.toLowerCase().includes('whale') ? 'elite' : item.tier.toLowerCase().includes('diamond') ? 'diamond' : item.tier.toLowerCase().includes('gold') ? 'pro' : 'active'}">${escapeHtml(item.tier)}</span>` : getTierBadge(pts, rank);
 
         let medalHtml = `<span style="color: var(--color-ink-muted);">${rank}</span>`;
@@ -2257,7 +2272,7 @@
         await window.RacerConnect.linkSelectorAccount(accountId, 'NEAR Wallet Selector');
         if (status) {
           status.style.color = '#00d16a';
-          status.textContent = '✓ ' + accountId + ' linked successfully and active in Telegram!';
+          status.textContent = ' ' + accountId + ' linked successfully and active in Telegram!';
         }
         if (input) input.value = '';
       } catch (err) {
@@ -2290,18 +2305,18 @@
   </script>
 
   <!-- Universal Bottom Navigation Dock for Mobile -->
-  <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
+    <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
     <a href="/" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
       <span>Home</span>
     </a>
-    <a href="/bubblemap" class="mobile-dock-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-      <span>Explore</span>
-    </a>
     <a href="/alpha" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
       <span>Alpha</span>
+    </a>
+    <a href="/bubblemap" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+      <span>Bubble</span>
     </a>
     <a href="/fleet" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -2357,5 +2372,72 @@
       </button>
     </div>
   </aside>
+
+  <!-- Host Competition Modal -->
+  <div id="host-comp-modal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeHostModal();">
+    <div class="modal-card" style="max-width:540px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:16px; padding:24px; position:relative;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="font-size:20px; font-weight:700; color:var(--color-text); margin:0;">Host a competition</h3>
+        <button onclick="closeHostModal()" style="background:transparent; border:none; color:var(--color-text-2); cursor:pointer; font-size:20px; padding:4px;">&times;</button>
+      </div>
+      <form id="host-comp-form" onsubmit="handleHostCompSubmit(event)">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Project name</label>
+          <input type="text" id="host-project-name" required placeholder="e.g. Lonk Near" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text);">
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Token contract</label>
+          <input type="text" id="host-token-contract" required placeholder="e.g. lonk.near" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text); font-family:var(--font-mono);">
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Format</label>
+          <select id="host-comp-format" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text);">
+            <option>Market Cap Velocity Sprint</option>
+            <option>Launchpad Sniper Showdown</option>
+            <option>Sponsored Project Cup</option>
+            <option>Net Accumulator Challenge</option>
+            <option>Syndicate and Referral League</option>
+            <option>Snapshot Points Epoch</option>
+          </select>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Prize pool (NEAR)</label>
+            <input type="number" id="host-prize-pool" required placeholder="500" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text); font-family:var(--font-mono);">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Start date</label>
+            <input type="date" id="host-start-date" required style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text);">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label style="display:block; font-size:12px; color:var(--color-text-2); margin-bottom:4px;">Contact (Telegram or email)</label>
+          <input type="text" id="host-contact" required placeholder="@handle or team@project.io" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--color-surface-2); border:1px solid var(--color-border-input); color:var(--color-text);">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; height:44px;">Submit request</button>
+      </form>
+      <div id="host-comp-success" style="display:none; text-align:center; padding:20px 0;">
+        <div style="font-size:16px; font-weight:700; color:var(--color-success); margin-bottom:6px;">Request sent. We will contact you.</div>
+        <p style="font-size:13px; color:var(--color-text-2);">Your application has been received by the Racer Arena team.</p>
+        <button class="btn btn-secondary" onclick="closeHostModal()" style="margin-top:12px;">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <div class="container footer-content">
+      <div class="footer-links">
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer">RacerBot</a>
+        <a href="/alpha">Racer Alpha</a>
+        <a href="/fleet">RacerFleet</a>
+        <a href="/bubblemap">RacerBubble</a>
+        <a href="/competition">Racer Arena</a>
+      </div>
+      <p class="footer-legal">
+        Trading digital assets carries risk. You can lose money. Copy trading does not guarantee results. Past performance does not predict future results. Top wallets may qualify for rewards announced by Racer.
+      </p>
+      <p class="footer-copy">© 2026 Racer. All rights reserved.</p>
+    </div>
+  </footer>
 </body>
 </html>
