@@ -23,17 +23,7 @@
       position: relative;
       overflow: hidden;
     }
-    .fleet-hero::before {
-      content: '';
-      position: absolute;
-      top: -120px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 800px;
-      height: 300px;
-      background: radial-gradient(circle, rgba(0, 240, 255, 0.12) 0%, rgba(8, 9, 11, 0) 70%);
-      pointer-events: none;
-    }
+    .fleet-hero::before { display: none; }
     .hud-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -298,7 +288,7 @@
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.85);
-      backdrop-filter: blur(8px);
+      
       display: none;
       align-items: center;
       justify-content: center;
@@ -521,7 +511,7 @@
         padding: 0 !important;
         z-index: 10000 !important;
         background: rgba(17, 24, 39, 0.48) !important;
-        backdrop-filter: blur(4px) !important;
+         !important;
       }
       .modal-card {
         border-radius: 16px 16px 0 0 !important;
@@ -552,8 +542,7 @@
         border-radius: 2px !important;
         margin: 0 auto 14px auto !important;
       }
-      .modal-card h2, .modal-card h3, .modal-title, .modal-card div[style*="font-family:var(--font-display)"] {
-        color: #111827 !important;
+      .modal-card h2, .modal-card h3, .modal-title, .modal-card div[style*="
         font-size: 18px !important;
       }
       .modal-card p {
@@ -645,6 +634,31 @@
   </script>
 </head>
 <body>
+  <!-- Shared Shell Header -->
+  <header class="app-header">
+    <a href="/" class="app-brand" aria-label="Racer Home">
+      <img src="/assets/racer-logo.png" alt="Racer logo" onerror="this.src='/assets/logo.png'">
+      <span>Racer</span>
+    </a>
+
+    <nav class="desktop-nav" aria-label="Main Navigation">
+      <a href="/alpha" class="desktop-nav-link">Alpha</a>
+      <a href="/fleet" class="desktop-nav-link active">Fleet</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/competition" class="desktop-nav-link">Arena</a>
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
+        <span>RacerBot</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+      </a>
+    </nav>
+
+    <div class="desktop-actions">
+      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
+        <span id="header-connect-label">Connect</span>
+      </button>
+    </div>
+  </header>
   <!-- Universal Racer Master Header -->
   <header class="master-header">
     <div class="header-inner">
