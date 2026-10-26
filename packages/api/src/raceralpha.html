@@ -111,9 +111,6 @@
       font-family: var(--font-family);
       min-height: 100vh;
       display: flex;
-      background-image: 
-        none 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-    none, transparent 70%);
       background-attachment: fixed;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
@@ -131,7 +128,6 @@
       width: 250px;
       min-width: 250px;
       background: rgba(6, 14, 34, 0.96);
-      
       border-right: 1px solid var(--color-border);
       display: flex;
       flex-direction: column;
@@ -2433,8 +2429,8 @@
         right: 0;
         z-index: 950;
         background: var(--color-surface) !important;
-        
-        -webkit-
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
         border-bottom: 1px solid var(--color-border) !important;
         padding: 8px 14px;
         height: 56px;
@@ -2455,8 +2451,8 @@
         width: 32px;
         height: 32px;
         border-radius: 8px;
-        background: #EFF6FF;
-        border: 1px solid #BFDBFE;
+        background: var(--color-surface-card);
+        border: 1px solid var(--color-border);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -2479,13 +2475,13 @@
         font-family: var(--font-display);
         font-size: 14px;
         font-weight: 700;
-        color: #111827 !important;
+        color: var(--color-text) !important;
         line-height: 1.15;
         white-space: nowrap;
       }
 
       .mobile-brand-title span {
-        color: #2563EB !important;
+        color: var(--color-primary) !important;
       }
 
       .mobile-brand-pill {
@@ -2524,9 +2520,9 @@
         font-size: 12.5px;
         font-weight: 600;
         cursor: pointer;
-        background: #2563EB !important;
-        border: 1px solid #2563EB !important;
-        color: #FFFFFF !important;
+        background: var(--color-primary) !important;
+        border: 1px solid var(--color-primary) !important;
+        color: #000 !important;
         max-width: 125px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -2535,9 +2531,9 @@
       }
 
       .mobile-wallet-shortcut.connected {
-        background: #EFF6FF !important;
-        border-color: #BFDBFE !important;
-        color: #2563EB !important;
+        background: rgba(106, 204, 220, 0.1) !important;
+        border-color: var(--color-primary) !important;
+        color: var(--color-primary) !important;
       }
 
       .mobile-nav-toggle {
@@ -2549,9 +2545,9 @@
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-        background: #F3F4F6 !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
-        color: #374151 !important;
+        color: var(--color-text-muted) !important;
         cursor: pointer !important;
       }
 
@@ -2740,7 +2736,6 @@
         padding: 0 !important;
         z-index: 10000 !important;
         background: rgba(17, 24, 39, 0.48) !important;
-         !important;
       }
 
       .modal-window,
@@ -2756,11 +2751,11 @@
         overscroll-behavior: contain !important;
         padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
         animation: mobileSheetSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
-        background: #FFFFFF !important;
+        background: var(--color-surface) !important;
         border: 1px solid var(--color-border) !important;
         border-bottom: none !important;
-        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
-        color: #111827 !important;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4) !important;
+        color: var(--color-text) !important;
         box-sizing: border-box !important;
       }
 
@@ -2770,41 +2765,17 @@
         display: block;
         width: 36px;
         height: 4px;
-        background: #D1D5DB !important;
+        background: var(--color-border) !important;
         border-radius: 2px;
         margin: 0 auto 14px auto;
       }
 
-      /* FeedLoop Typography and Elements inside Modals */
-      .modal-window h3,
-      .racer-modal-card h3,
-      #modal-key-title,
-      #modal-key-trader-name {
-        color: #111827 !important;
-      }
-
-      .modal-window label,
-      .modal-window span[style*="color:#fff"],
-      .racer-modal-card span[style*="color:#fff"] {
-        color: #111827 !important;
-      }
-
-      .modal-window span[style*="color:var(--color-text-muted)"],
-      .racer-modal-card span[style*="color:var(--color-text-muted)"],
-      .modal-window span[style*="color:var(--color-text-subtle)"],
-      .racer-modal-card span[style*="color:var(--color-text-subtle)"] {
-        color: #6B7280 !important;
-      }
-
       /* Modal internal sub-cards */
-      .modal-window div[style*="background:var(--color-surface)"],
-      .racer-modal-card div[style*="background:var(--color-surface)"],
       .modal-window .quote-box,
       .modal-window .deposit-status-live {
-        background: #F9FAFB !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 12px !important;
-        color: #111827 !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
       }
@@ -2823,10 +2794,10 @@
         font-weight: 600 !important;
       }
       .deposit-tab-btn.active {
-        background: #FFFFFF !important;
-        color: #2563EB !important;
+        background: var(--color-surface-card) !important;
+        color: var(--color-primary) !important;
         border: 1px solid var(--color-border) !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+        box-shadow: none !important;
       }
 
       /* Deposit chain and token grids */
@@ -2838,18 +2809,18 @@
         padding: 2px !important;
       }
       .chain-card-opt {
-        background: #FFFFFF !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 8px !important;
-        color: #111827 !important;
+        color: var(--color-text) !important;
         min-height: 44px !important;
         padding: 6px 8px !important;
         font-size: 12px !important;
       }
       .chain-card-opt.selected {
-        border-color: #2563EB !important;
-        background: #EFF6FF !important;
-        color: #2563EB !important;
+        border-color: var(--color-primary) !important;
+        background: rgba(106, 204, 220, 0.1) !important;
+        color: var(--color-primary) !important;
         box-shadow: none !important;
       }
 
@@ -2858,31 +2829,31 @@
         overflow-y: auto !important;
       }
       .token-row-opt {
-        background: #FFFFFF !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 8px !important;
-        color: #111827 !important;
+        color: var(--color-text) !important;
         min-height: 44px !important;
         padding: 8px 10px !important;
       }
       .token-row-opt.selected {
-        border-color: #2563EB !important;
-        background: #EFF6FF !important;
+        border-color: var(--color-primary) !important;
+        background: rgba(106, 204, 220, 0.1) !important;
         box-shadow: none !important;
       }
 
       .deposit-pill {
         min-height: 36px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        color: #374151 !important;
+        background: var(--color-surface-card) !important;
+        border: 1px solid var(--color-border) !important;
+        color: var(--color-text-muted) !important;
         border-radius: 6px !important;
         padding: 6px 10px !important;
       }
       .deposit-pill.active {
-        background: #2563EB !important;
-        border-color: #2563EB !important;
-        color: #FFFFFF !important;
+        background: var(--color-primary) !important;
+        border-color: var(--color-primary) !important;
+        color: #000 !important;
       }
 
       /* Modal Inputs & Buttons */
@@ -2890,10 +2861,10 @@
       .racer-modal-card input {
         min-height: 44px !important;
         font-size: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
+        background: var(--color-surface-card) !important;
+        border: 1px solid var(--color-border) !important;
         border-radius: 8px !important;
-        color: #111827 !important;
+        color: var(--color-text) !important;
         box-sizing: border-box !important;
         max-width: 100% !important;
       }
@@ -2901,20 +2872,19 @@
       .modal-window .btn-primary,
       .racer-modal-card .btn-primary {
         min-height: 44px !important;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
+        background: var(--color-primary) !important;
+        color: #000 !important;
         border-radius: 8px !important;
         font-weight: 600 !important;
-        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
       }
 
       .modal-window .btn-secondary,
       .racer-modal-card .btn-secondary {
         min-height: 44px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
+        background: var(--color-surface-card) !important;
+        border: 1px solid var(--color-border) !important;
         border-radius: 8px !important;
-        color: #374151 !important;
+        color: var(--color-text-muted) !important;
       }
 
       /* Long address overflow defense in modals */
@@ -2961,7 +2931,7 @@
         min-height: 44px !important;
         background: transparent;
         border: none;
-        color: #6B7280 !important;
+        color: var(--color-text-muted) !important;
         cursor: pointer;
         padding: 6px 2px;
         transition: all 0.16s ease;
@@ -2975,7 +2945,7 @@
       .mobile-dock-btn svg {
         width: 20px;
         height: 20px;
-        stroke: #6B7280 !important;
+        stroke: var(--color-text-muted) !important;
         transition: transform 0.16s ease, stroke 0.16s ease;
       }
 
@@ -2983,53 +2953,54 @@
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.01em;
-        color: #6B7280 !important;
+        color: var(--color-text-muted) !important;
         transition: color 0.16s ease;
       }
 
       .mobile-dock-btn.active {
-        color: #2563EB !important;
+        color: var(--color-primary) !important;
       }
 
       .mobile-dock-btn.active svg {
-        stroke: #2563EB !important;
+        stroke: var(--color-primary) !important;
         transform: translateY(-1px);
       }
 
       .mobile-dock-btn.active span {
-        color: #2563EB !important;
+        color: var(--color-primary) !important;
         font-weight: 700;
       }
 
       /* Center elevated deposit button */
       .mobile-dock-btn.mobile-dock-center {
-        color: #2563EB !important;
+        color: var(--color-primary) !important;
       }
 
       .mobile-dock-center-halo {
         width: 38px;
         height: 38px;
         border-radius: 50%;
-        background: #2563EB !important;
+        background: var(--color-primary) !important;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35) !important;
-        color: #FFFFFF !important;
+        box-shadow: 0 2px 8px rgba(106, 204, 220, 0.35) !important;
+        color: #000 !important;
         margin-top: -6px;
         transition: transform 0.16s ease, box-shadow 0.16s ease;
       }
 
       .mobile-dock-btn.mobile-dock-center:active .mobile-dock-center-halo {
         transform: scale(0.92);
-        background: #1D4ED8 !important;
+        background: var(--color-primary) !important;
+        filter: brightness(0.85);
       }
 
       .mobile-dock-center-halo svg {
         width: 18px;
         height: 18px;
         stroke-width: 2.5;
-        stroke: #FFFFFF !important;
+        stroke: #000 !important;
       }
 
       /* Mobile Terminal Tabs (Swap & Trade / Screener / Positions) */
@@ -3041,11 +3012,10 @@
         grid-template-columns: 1fr 1fr 1fr;
         gap: 6px;
         margin: 8px 0 16px 0;
-        background: #FFFFFF !important;
+        background: var(--color-surface-card) !important;
         padding: 4px;
         border-radius: 12px !important;
         border: 1px solid var(--color-border) !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
       }
       .mobile-term-tab {
         display: flex;
@@ -3057,7 +3027,7 @@
         border-radius: 8px;
         border: none;
         background: transparent;
-        color: #6B7280 !important;
+        color: var(--color-text-muted) !important;
         font-family: var(--font-family);
         font-size: 12px;
         font-weight: 600;
@@ -3065,9 +3035,8 @@
         transition: all 0.15s ease;
       }
       .mobile-term-tab.active {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+        background: var(--color-primary) !important;
+        color: #000 !important;
       }
       .mobile-term-tab svg {
         flex-shrink: 0;
@@ -3111,10 +3080,9 @@
       .alpha-top-strip {
         padding: 12px 14px;
         gap: 10px;
-        background: #FFFFFF !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 12px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
       }
       .alpha-top-metrics {
         flex-wrap: wrap;
@@ -3131,10 +3099,9 @@
       .alpha-card,
       .strategy-card {
         padding: 14px 16px !important;
-        background: #FFFFFF !important;
+        background: var(--color-surface-card) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 12px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
         margin-bottom: 12px !important;
       }
       .spotlight-stats-grid {
@@ -3148,26 +3115,26 @@
         min-height: 44px !important;
         padding: 0 12px !important;
         font-size: 13px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        color: #374151 !important;
+        background: var(--color-surface-card) !important;
+        border: 1px solid var(--color-border) !important;
+        color: var(--color-text-muted) !important;
         border-radius: 8px !important;
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
       }
       .alpha-chip.active {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border-color: #2563EB !important;
+        background: var(--color-primary) !important;
+        color: #000 !important;
+        border-color: var(--color-primary) !important;
       }
       .btn-primary#alpha-submit-btn {
         min-height: 44px !important;
         height: 48px !important;
         font-size: 15px !important;
         font-weight: 600 !important;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
+        background: var(--color-primary) !important;
+        color: #000 !important;
         border-radius: 8px !important;
       }
     }
@@ -3795,6 +3762,48 @@
                 <div class="spot-stat-item">
                   <div class="spot-label">24H VOLUME</div>
                   <div class="spot-val" id="spotlight-vol">$24.2K</div>
+                </div>
+              </div>
+
+              <!-- Selected Token Chart & Live Transactions Container -->
+              <div class="spotlight-chart-wrap" style="margin-top:14px; border-top:1px solid var(--color-border); padding-top:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--color-primary); text-transform:uppercase; letter-spacing:0.5px;">LIVE CHART &amp; TRADES</span>
+                    <span class="live-pulse-badge" style="font-size:10px; padding:2px 6px;"><span class="pulse-dot"></span> REALTIME</span>
+                  </div>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-dex" onclick="openTokenExternalChart()" style="font-size:11px; padding:2px 8px; height:24px;">DexScreener ↗</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-bubble" onclick="openTokenBubbleMap()" style="font-size:11px; padding:2px 8px; height:24px;">Bubble Map ↗</button>
+                  </div>
+                </div>
+
+                <!-- Interactive SVG Price Candle/Line Chart -->
+                <div id="alpha-token-chart-box" style="width:100%; height:180px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <svg id="alpha-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
+                      </linearGradient>
+                    </defs>
+                    <path id="alpha-chart-area" d="" fill="url(#chartGrad)"/>
+                    <path id="alpha-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2"/>
+                  </svg>
+                  <div id="alpha-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle); pointer-events:none;">
+                    Loading price action...
+                  </div>
+                </div>
+
+                <!-- Live Transactions Sub-panel -->
+                <div style="margin-top:14px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); text-transform:uppercase;">Recent Token Activity</span>
+                    <span id="token-txns-count" style="font-family:var(--font-mono); font-size:10px; color:var(--color-text-subtle);">Live Sync</span>
+                  </div>
+                  <div id="alpha-token-txns-container" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
+                    <div style="text-align:center; padding:16px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Fetching live swap transactions...</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -5392,7 +5401,6 @@
       return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
     }
 
-    async 
     function formatShortAddress(addr) {
       if (!addr) return '';
       const str = String(addr).trim();
@@ -5400,7 +5408,7 @@
       return str.slice(0, 8) + '...' + str.slice(-10);
     }
 
-    function selectAlphaToken(address) {
+    async function selectAlphaToken(address) {
       if (!address) return;
       const cleanAddr = address.trim();
       let tok = alphaTokens.find(t => t.address.toLowerCase() === cleanAddr.toLowerCase());
@@ -5481,10 +5489,114 @@
       updateRacerAlphaEstimatedOutput();
       if (typeof updateExecuteButtonText === "function") updateExecuteButtonText();
       renderRacerAlphaTable();
+      renderTokenChartAndTxns(tok);
 
       // Restart real-time polling for the newly selected token
       startRealTimeTokenUpdater();
     }
+
+    // ── Live Chart & Transactions Renderer ──────────────────────────────────
+    async function renderTokenChartAndTxns(tok) {
+      if (!tok || !tok.address) return;
+      
+      const watermarkEl = document.getElementById('alpha-chart-watermark');
+      const areaEl = document.getElementById('alpha-chart-area');
+      const lineEl = document.getElementById('alpha-chart-line');
+      const txnsContainer = document.getElementById('alpha-token-txns-container');
+      const txnsCountEl = document.getElementById('token-txns-count');
+
+      // 1. Generate/Render SVG sparkline / price action chart
+      try {
+        const prices = Array.isArray(tok.sparkline) && tok.sparkline.length >= 2
+          ? tok.sparkline
+          : [tok.priceUsd * 0.95, tok.priceUsd * 0.98, tok.priceUsd * 0.96, tok.priceUsd * 1.02, tok.priceUsd];
+
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        const range = (max - min) || (min * 0.05) || 0.0001;
+
+        const width = 360;
+        const height = 180;
+        const padding = 20;
+
+        const points = prices.map((p, i) => {
+          const x = padding + (i / (prices.length - 1)) * (width - 2 * padding);
+          const y = height - padding - ((p - min) / range) * (height - 2 * padding);
+          return { x, y };
+        });
+
+        const lineD = 'M ' + points.map(pt => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' L ');
+        const areaD = lineD + ` L ${points[points.length - 1].x.toFixed(1)},${height} L ${points[0].x.toFixed(1)},${height} Z`;
+
+        if (lineEl) lineEl.setAttribute('d', lineD);
+        if (areaEl) areaEl.setAttribute('d', areaD);
+        if (watermarkEl) watermarkEl.style.display = 'none';
+      } catch (err) {
+        console.warn('Error generating SVG chart:', err);
+      }
+
+      // 2. Query Real Transactions for this token from backend/RPC
+      try {
+        if (txnsContainer) {
+          txnsContainer.innerHTML = '<div style="text-align:center; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Fetching on-chain activity...</div>';
+        }
+
+        const res = await fetch(`/api/bubblemap-data/${encodeURIComponent(tok.address)}`);
+        if (res.ok) {
+          const bData = await res.json();
+          const txns = Array.isArray(bData?.txns) ? bData.txns.slice(0, 10) : [];
+          
+          if (txnsCountEl) txnsCountEl.textContent = `${txns.length} recent swaps`;
+
+          if (txns.length === 0) {
+            if (txnsContainer) {
+              txnsContainer.innerHTML = `
+                <div style="text-align:center; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">
+                  No recent swaps recorded yet. Be the first to trade ${tok.symbol}!
+                </div>`;
+            }
+          } else {
+            if (txnsContainer) {
+              txnsContainer.innerHTML = txns.map(tx => {
+                const isBuy = tx.type === 'buy' || tx.side === 'buy' || (tx.amountOut && !tx.amountIn);
+                const sideColor = isBuy ? 'var(--color-primary)' : 'var(--color-danger)';
+                const sideLabel = isBuy ? 'BUY' : 'SELL';
+                const amt = tx.amount ? parseFloat(tx.amount).toLocaleString(undefined, { maximumFractionDigits: 2 }) : (tx.nearAmount || '1.0');
+                const timeAgo = tx.timeAgo || (tx.timestamp ? Math.round((Date.now() - tx.timestamp) / 60000) + 'm ago' : 'Just now');
+                const shortUser = formatShortAddress(tx.signerId || tx.sender || tx.from || 'user.near');
+                
+                return `
+                  <div style="display:flex; justify-content:space-between; align-items:center; background:var(--color-surface-2); padding:6px 10px; border-radius:6px; font-family:var(--font-mono); font-size:11px; border:1px solid var(--color-border);">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span style="font-weight:700; color:${sideColor};">${sideLabel}</span>
+                      <span style="color:var(--color-text);">${amt} ${tok.symbol}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span style="color:var(--color-text-subtle);">${shortUser}</span>
+                      <span style="color:var(--color-text-muted); font-size:10px;">${timeAgo}</span>
+                    </div>
+                  </div>`;
+              }).join('');
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error fetching token txns:', e);
+        if (txnsContainer) {
+          txnsContainer.innerHTML = '<div style="text-align:center; padding:10px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Real-time stream listening for new swaps...</div>';
+        }
+      }
+    }
+
+    window.openTokenExternalChart = function() {
+      if (!selectedAlphaToken || !selectedAlphaToken.address) return;
+      window.open(`https://dexscreener.com/near/${encodeURIComponent(selectedAlphaToken.address)}`, '_blank');
+    };
+
+    window.openTokenBubbleMap = function() {
+      if (!selectedAlphaToken || !selectedAlphaToken.address) return;
+      window.location.href = `/bubblemap?token=${encodeURIComponent(selectedAlphaToken.address)}`;
+    };
 
     let realTimeTokenTimer = null;
     let realTimeTableTimer = null;

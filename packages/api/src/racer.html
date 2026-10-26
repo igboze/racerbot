@@ -422,7 +422,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -464,17 +464,17 @@
       </div>
     </section>
 
-    <!-- 6.1 Conditional Live Stats Strip (populated live from data, hidden if empty) -->
-    <section id="live-stats-strip" class="stats-strip" style="display:none;">
-      <div id="stat-widget-vol" class="metric-widget" style="display:none;">
+    <!-- 6.1 Conditional Live Stats Strip -->
+    <section id="live-stats-strip" class="stats-strip">
+      <div id="stat-widget-vol" class="metric-widget">
         <span id="stat-vol-val" class="metric-value">—</span>
         <span class="metric-label">Volume Routed</span>
       </div>
-      <div id="stat-widget-trades" class="metric-widget" style="display:none;">
+      <div id="stat-widget-trades" class="metric-widget">
         <span id="stat-trades-val" class="metric-value">—</span>
         <span class="metric-label">Trades</span>
       </div>
-      <div id="stat-widget-traders" class="metric-widget" style="display:none;">
+      <div id="stat-widget-traders" class="metric-widget">
         <span id="stat-traders-val" class="metric-value">—</span>
         <span class="metric-label">Traders</span>
       </div>
@@ -628,6 +628,9 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div id="screener-load-more" style="display:none; text-align:center; padding-top:16px;">
+        <button class="btn btn-secondary btn-sm" onclick="loadMoreTokens()">Load more</button>
       </div>
     </section>
 
@@ -805,8 +808,23 @@
   <script src="/assets/near-connect.bundle.js"></script>
   <script src="/assets/racerConnect.js"></script>
   <script>
+    function showToast(msg, type = 'info') {
+      const t = document.createElement('div');
+      t.style.cssText = 'position:fixed;bottom:calc(72px + env(safe-area-inset-bottom,8px));left:50%;transform:translateX(-50%) translateY(12px);background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text);padding:11px 20px;border-radius:8px;font-size:13px;z-index:10000;opacity:0;transition:opacity 200ms,transform 200ms;max-width:min(400px,90vw);text-align:center;pointer-events:none;white-space:nowrap;';
+      if (type === 'success') t.style.borderColor = 'var(--color-primary)';
+      if (type === 'error') t.style.borderColor = 'var(--color-error)';
+      t.textContent = msg;
+      document.body.appendChild(t);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        t.style.opacity = '1';
+        t.style.transform = 'translateX(-50%) translateY(0)';
+      }));
+      setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, 3500);
+    }
+
     let allTokens = [];
     let currentSearch = '';
+    let itemsShown = 30;
 
     function handleHeaderConnectClick() {
       if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
@@ -882,7 +900,7 @@
       const accId = document.getElementById('account-full-id');
       if (accId && accId.textContent && accId.textContent !== '—') {
         navigator.clipboard.writeText(accId.textContent).then(() => {
-          alert('Account ID copied to clipboard');
+          showToast('Account ID copied', 'success');
         });
       }
     }
@@ -895,23 +913,22 @@
       const headerLabel = document.getElementById('header-connect-label');
       const mobileBtn = document.getElementById('mobile-header-connect-btn');
       const mobileLabel = document.getElementById('mobile-header-connect-label');
+      const depositBtn = document.getElementById('header-deposit-btn');
 
       if (isAuth || nearWallet) {
         const displayHandle = nearWallet || (user && user.username) || 'Connected';
         const truncated = displayHandle.length > 14 ? displayHandle.slice(0, 6) + '...' + displayHandle.slice(-4) : displayHandle;
         if (headerLabel) headerLabel.textContent = truncated;
         if (mobileLabel) mobileLabel.textContent = truncated;
-        if (headerBtn) {
-          headerBtn.className = 'btn btn-secondary btn-sm';
-        }
-        if (mobileBtn) {
-          mobileBtn.className = 'btn btn-secondary btn-sm';
-        }
+        if (headerBtn) headerBtn.className = 'btn btn-secondary btn-sm';
+        if (mobileBtn) mobileBtn.className = 'btn btn-secondary btn-sm';
+        if (depositBtn) depositBtn.style.display = '';
       } else {
         if (headerLabel) headerLabel.textContent = 'Connect';
         if (mobileLabel) mobileLabel.textContent = 'Connect';
         if (headerBtn) headerBtn.className = 'btn btn-primary btn-sm';
         if (mobileBtn) mobileBtn.className = 'btn btn-primary btn-sm';
+        if (depositBtn) depositBtn.style.display = 'none';
       }
     }
 
@@ -919,7 +936,7 @@
       try {
         if (window.RacerConnect) await window.RacerConnect.openNearWalletSelector();
       } catch (err) {
-        alert(err.message || 'Failed to open NEAR Wallet Selector');
+        showToast(err.message || 'Failed to open NEAR Wallet Selector', 'error');
       }
     }
 
@@ -939,15 +956,11 @@
 
           // 6.1 Conditional live stats strip: volume, trades, traders
           const totalVol = allTokens.reduce((acc, t) => acc + (t.volume24h || 0), 0);
-          if (totalVol > 0) {
-            const strip = document.getElementById('live-stats-strip');
-            const volWidget = document.getElementById('stat-widget-vol');
-            const volVal = document.getElementById('stat-vol-val');
-            if (strip && volWidget && volVal) {
-              strip.style.display = 'grid';
-              volWidget.style.display = 'flex';
-              volVal.textContent = `$${(totalVol / 1e6).toFixed(2)}M`;
-            }
+          const volVal = document.getElementById('stat-vol-val');
+          if (volVal && totalVol > 0) {
+            volVal.textContent = totalVol >= 1e6
+              ? `$${(totalVol / 1e6).toFixed(2)}M`
+              : `$${(totalVol / 1e3).toFixed(1)}K`;
           }
         }
       } catch (err) {
@@ -957,12 +970,19 @@
 
     function handleMarketSearch(query) {
       currentSearch = (query || '').toLowerCase().trim();
+      itemsShown = 30;
+      renderMarketTable();
+    }
+
+    function loadMoreTokens() {
+      itemsShown += 20;
       renderMarketTable();
     }
 
     function renderMarketTable() {
       const tbody = document.getElementById('market-tokens-tbody');
       const countEl = document.getElementById('market-pairs-count');
+      const loadMoreEl = document.getElementById('screener-load-more');
       if (!tbody) return;
 
       const filtered = allTokens.filter(t => {
@@ -986,7 +1006,8 @@
         return;
       }
 
-      const displayItems = filtered.slice(0, 30);
+      const displayItems = filtered.slice(0, itemsShown);
+      if (loadMoreEl) loadMoreEl.style.display = filtered.length > itemsShown ? 'block' : 'none';
       tbody.innerHTML = displayItems.map((t, idx) => {
         const changePositive = (t.change24h || 0) >= 0;
         const changeSign = changePositive ? '+' : '';

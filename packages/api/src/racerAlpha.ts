@@ -2827,9 +2827,14 @@ function mapTokenInfoToAlphaItem(
   const liquidityUsd = isNaN(rawLiq) || rawLiq < 0 ? 0 : rawLiq;
   
   let marketCap = Number(info?.market_cap_usd || 0);
-  if ((!marketCap || marketCap === 0) && safePriceUsd > 0 && info?.total_supply && info.total_supply !== '0') {
-    const dec = info?.decimals ?? 18;
-    const supply = parseFloat(info.total_supply) / Math.pow(10, dec);
+  const rpcData = onChainRpcCache.get(address.toLowerCase().trim());
+  const effectiveTotalSupply = rpcData?.totalSupply && rpcData.totalSupply !== '0'
+    ? rpcData.totalSupply
+    : (info?.total_supply && info.total_supply !== '0' ? info.total_supply : null);
+  const effectiveDecimals = rpcData?.decimals ?? info?.decimals ?? 18;
+
+  if (safePriceUsd > 0 && effectiveTotalSupply) {
+    const supply = parseFloat(effectiveTotalSupply) / Math.pow(10, effectiveDecimals);
     if (supply > 0) {
       marketCap = Math.round(safePriceUsd * supply);
     }
