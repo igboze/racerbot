@@ -2,1536 +2,694 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>RacerBot — Institutional Trading & On-Chain Intelligence Terminal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Racer | Trade, analyze, copy and manage wallets on NEAR</title>
+  <meta name="description" content="One account to trade, analyze, copy and manage wallets on NEAR. Racer brings trading, token analytics, copy trading and wallet management together.">
   <link rel="icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="shortcut icon" type="image/png" href="/assets/racer-logo.png">
   <link rel="apple-touch-icon" href="/assets/racer-logo.png">
-  <meta property="og:title" content="RacerBot — Institutional Multi-Chain Trading Terminal">
-  <meta property="og:description" content="Sub-second execution, automated sniping, copy trading, and on-chain cluster bubble maps on NEAR Protocol.">
+  <meta property="og:title" content="Racer | Trade, analyze, copy and manage wallets on NEAR">
+  <meta property="og:description" content="Racer brings trading, token analytics, copy trading and wallet management together on NEAR Protocol.">
   <meta property="og:image" content="/assets/racerbot-banner.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="/assets/racerbot-banner.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/racer-design-system.css">
-  <link rel="stylesheet" href="/assets/racer-terminal.css">
   <style>
-    /* ── Homepage Specific Trading Terminal Styles ────────────────────────── */
-    :root {
-      --color-canvas: #0B0D10;
-      --color-surface-bg: #11151B;
-      --color-surface: #151A21;
-      --color-surface-elevated: #1B222B;
-      --color-border: #27303A;
-      --color-border-strong: #394452;
-      --color-primary: #00F0FF;
-      --color-positive: #36D399;
-      --color-negative: #F87171;
-      --color-warning: #FBBF24;
-      --color-info: #60A5FA;
-      --color-text-main: #F2F5F8;
-      --color-text-muted: #96A0AE;
-      --color-text-subtle: #737F8F;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: var(--color-canvas);
-      color: var(--color-text-main);
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      min-height: 100vh;
-      overflow-x: hidden;
-      line-height: 1.5;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    /* ── Sticky Master Navigation Header ──────────────────────────────────── */
-    .racer-header {
-      position: sticky;
-      top: 0;
-      z-index: 1000;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      background: rgba(11, 13, 16, 0.92);
-      border-bottom: 1px solid var(--color-border);
-    }
-    .header-inner {
-      max-width: 1360px;
+    /* Home-specific Layout & Component Rules */
+    .home-container {
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 0 24px;
-      height: 60px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    .brand-logo-wrap {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      text-decoration: none;
-    }
-    .brand-mark {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      overflow: hidden;
-      flex-shrink: 0;
-      border: 1px solid var(--color-border-strong);
-      background: var(--color-surface);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .brand-mark img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .brand-title {
-      font-family: 'Inter', sans-serif;
-      font-size: 17px;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-      color: var(--color-text-main);
-      text-transform: uppercase;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .brand-title span {
-      color: var(--color-primary);
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 22px;
-    }
-    .nav-item {
-      font-size: 13.5px;
-      font-weight: 600;
-      color: var(--color-text-muted);
-      transition: color 0.15s ease;
-      display: flex;
-      align-items: center;
-      padding: 6px 0;
-      text-decoration: none;
-    }
-    .nav-item:hover, .nav-item.active {
-      color: var(--color-text-main);
-    }
-    .nav-item.active {
-      color: var(--color-primary);
-      position: relative;
-    }
-    .nav-item.active::after {
-      content: '';
-      position: absolute;
-      bottom: -18px;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: var(--color-primary);
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    /* ── Market Overview Telemetry Strip ─────────────────────────────────── */
-    .promo-banner-strip {
-      background: rgba(17, 21, 27, 0.95);
-      border-bottom: 1px solid var(--color-border);
-      padding: 7px 16px;
-      font-size: 12.5px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      text-align: center;
-      line-height: 1.4;
-    }
-    .promo-banner-badge {
-      background: rgba(251, 191, 36, 0.15);
-      color: var(--color-warning);
-      border: 1px solid rgba(251, 191, 36, 0.3);
-      font-weight: 600;
-      padding: 2px 7px;
-      border-radius: 4px;
-      font-size: 11px;
-      white-space: nowrap;
-    }
-    .market-overview-band {
-      background: var(--color-surface-bg);
-      border-bottom: 1px solid var(--color-border);
-      padding: 10px 0;
-    }
-    .market-overview-inner {
-      max-width: 1360px;
-      margin: 0 auto;
-      padding: 0 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 14px;
-    }
-    .telemetry-group {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-    .telemetry-stat {
-      display: flex;
-      align-items: baseline;
-      gap: 6px;
-      font-size: 13px;
-    }
-    .telemetry-lbl {
-      color: var(--color-text-muted);
-      font-size: 12px;
-      font-weight: 500;
-    }
-    .telemetry-val {
-      color: var(--color-text-main);
-      font-family: var(--font-mono, 'JetBrains Mono', monospace);
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-    }
-    .telemetry-val.positive { color: var(--color-positive); }
-    .telemetry-val.negative { color: var(--color-negative); }
-    .telemetry-val.accent { color: var(--color-primary); }
-
-    .telemetry-network-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      color: var(--color-text-muted);
-    }
-    .live-pulse-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--color-positive);
-      box-shadow: 0 0 8px var(--color-positive);
-    }
-
-    /* ── Main Trading Workspace Grid (2 Columns Desktop) ──────────────────── */
-    .home-workspace-container {
-      max-width: 1360px;
-      margin: 0 auto;
-      padding: 24px 24px 64px;
-    }
-    .home-workspace-grid {
-      display: grid;
-      grid-template-columns: 1fr 380px;
-      gap: 24px;
-      align-items: start;
-    }
-
-    /* ── Left / Primary Column: Market Screener & Signals ────────────────── */
-    .screener-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 10px;
-      overflow: hidden;
-      margin-bottom: 24px;
-    }
-    .screener-header {
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--color-border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .screener-title-group {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .screener-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--color-text-main);
-      letter-spacing: 0.01em;
-    }
-    .screener-count-badge {
-      font-family: var(--font-mono, 'JetBrains Mono', monospace);
-      font-size: 11.5px;
-      color: var(--color-primary);
-      background: rgba(0, 240, 255, 0.08);
-      border: 1px solid rgba(0, 240, 255, 0.2);
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-weight: 500;
-    }
-
-    .screener-filters-row {
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--color-border);
-      background: var(--color-surface-bg);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    .category-pills-deck {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      padding-bottom: 2px;
-    }
-    .cat-filter-btn {
-      padding: 6px 12px;
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 6px;
-      color: var(--color-text-muted);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: all 0.15s ease;
-    }
-    .cat-filter-btn:hover {
-      border-color: var(--color-border-strong);
-      color: var(--color-text-main);
-    }
-    .cat-filter-btn.active {
-      background: var(--color-surface-elevated);
-      border-color: var(--color-primary);
-      color: var(--color-primary);
-    }
-
-    .screener-search-wrap {
-      position: relative;
-      min-width: 200px;
-      flex: 1;
-      max-width: 280px;
-    }
-    .screener-search-input {
-      width: 100%;
-      height: 36px;
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 6px;
-      color: var(--color-text-main);
-      font-size: 12.5px;
-      padding: 0 10px 0 32px;
-      outline: none;
-      transition: border-color 0.15s ease;
-    }
-    .screener-search-input:focus {
-      border-color: var(--color-primary);
-    }
-    .screener-search-icon {
-      position: absolute;
-      left: 10px;
-      top: 11px;
-      color: var(--color-text-subtle);
-      pointer-events: none;
-    }
-
-    /* Live Data Table */
-    .table-responsive-box {
-      width: 100%;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-    .token-data-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-      text-align: left;
-    }
-    .token-data-table th {
-      background: var(--color-surface-bg);
-      padding: 10px 16px;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--color-text-muted);
-      border-bottom: 1px solid var(--color-border);
-      white-space: nowrap;
-    }
-    .token-data-table td {
-      padding: 12px 16px;
-      border-bottom: 1px solid rgba(39, 48, 58, 0.6);
-      vertical-align: middle;
-      white-space: nowrap;
-    }
-    .token-data-table tr:hover {
-      background: var(--color-surface-elevated);
-    }
-    .token-identity-cell {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .token-icon-frame {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--color-surface-bg);
-      border: 1px solid var(--color-border);
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .token-icon-frame img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .token-monogram {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--color-text-main);
-      background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
-      text-transform: uppercase;
-      user-select: none;
-    }
-    .token-name-col {
+      padding: 40px 24px 64px 24px;
       display: flex;
       flex-direction: column;
-      gap: 1px;
-    }
-    .token-symbol-text {
-      font-weight: 700;
-      color: var(--color-text-main);
-      font-size: 13px;
-    }
-    .token-name-text {
-      font-size: 11px;
-      color: var(--color-text-subtle);
+      gap: 48px;
+      width: 100%;
     }
 
-    .table-actions-cell {
+    @media (max-width: 767px) {
+      .home-container {
+        padding: 20px 12px 32px 12px;
+        gap: 28px;
+      }
+    }
+
+    /* 6.1 Hero Section */
+    .hero-section {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 16px;
+      max-width: 820px;
+    }
+
+    .hero-title {
+      font-size: 40px;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      color: var(--color-text);
+    }
+
+    .hero-subtitle {
+      font-size: 16px;
+      color: var(--color-text-2);
+      line-height: 1.5;
+      max-width: 640px;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    @media (max-width: 767px) {
+      .hero-title {
+        font-size: 28px;
+        line-height: 34px;
+      }
+      .hero-subtitle {
+        font-size: 14px;
+        line-height: 20px;
+      }
+      .hero-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+      .hero-actions .btn {
+        width: 100%;
+      }
+    }
+
+    /* 6.1 Conditional Live Stats Strip */
+    .stats-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      width: 100%;
+    }
+
+    @media (max-width: 767px) {
+      .stats-strip {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .stats-strip .metric-widget:nth-child(3) {
+        grid-column: span 2;
+      }
+    }
+
+    /* 6.1 Products Grid (4 Cards) */
+    .products-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      width: 100%;
+    }
+
+    .product-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+      box-shadow: var(--shadow-level-1);
+    }
+
+    .product-card:hover {
+      border-color: var(--color-primary);
+      box-shadow: var(--shadow-level-2);
+    }
+
+    .product-card-top {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .product-card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      background: var(--color-primary-tint);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .product-card-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--color-text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .product-card-desc {
+      font-size: 13px;
+      color: var(--color-text-2);
+      line-height: 1.4;
+      min-height: 36px;
+    }
+
+    .product-card-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 16px 0 20px 0;
+    }
+
+    .product-card-features li {
+      font-size: 12px;
+      color: var(--color-text);
       display: flex;
       align-items: center;
       gap: 6px;
-      justify-content: flex-end;
     }
-    .btn-action-sm {
-      padding: 4px 10px;
-      height: 28px;
-      border-radius: 6px;
-      font-size: 11.5px;
-      font-weight: 600;
+
+    .product-card-features li::before {
+      content: "•";
+      color: var(--color-primary);
+      font-weight: bold;
+    }
+
+    .product-card-link {
+      color: var(--color-primary);
+      font-size: 14px;
+      font-weight: 700;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      text-decoration: none;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .btn-action-inspect {
-      background: var(--color-surface-elevated);
-      border: 1px solid var(--color-border);
-      color: var(--color-text-main);
-    }
-    .btn-action-inspect:hover {
-      border-color: var(--color-primary);
-      color: var(--color-primary);
-    }
-    .btn-action-trade {
-      background: rgba(0, 240, 255, 0.12);
-      border: 1px solid rgba(0, 240, 255, 0.3);
-      color: var(--color-primary);
-    }
-    .btn-action-trade:hover {
-      background: var(--color-primary);
-      color: #020817;
     }
 
-    .watchlist-star-btn {
-      background: none;
-      border: none;
-      color: var(--color-text-subtle);
-      cursor: pointer;
-      padding: 4px;
-      display: inline-flex;
-      align-items: center;
-      transition: color 0.15s ease;
-    }
-    .watchlist-star-btn:hover {
-      color: var(--color-warning);
-    }
-    .watchlist-star-btn.starred {
-      color: var(--color-warning);
+    @media (max-width: 1023px) {
+      .products-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
     }
 
-    /* Signals & Recent Activity Card */
-    .signals-card {
+    @media (max-width: 767px) {
+      .products-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .product-card {
+        padding: 16px;
+        box-shadow: none;
+      }
+    }
+
+    /* 6.1 Arena Banner */
+    .arena-banner {
       background: var(--color-surface);
       border: 1px solid var(--color-border);
-      border-radius: 10px;
-      padding: 20px;
-    }
-    .signals-header-row {
+      border-radius: var(--radius-lg);
+      padding: 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 16px;
-    }
-    .signals-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--color-text-main);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .signals-feed-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .signal-item-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 12px;
-      background: var(--color-surface-bg);
-      border: 1px solid var(--color-border);
-      border-radius: 8px;
-      font-size: 12.5px;
-      transition: border-color 0.15s ease;
-    }
-    .signal-item-row:hover {
-      border-color: var(--color-border-strong);
-    }
-    .signal-meta-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .signal-badge {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10.5px;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 4px;
-      text-transform: uppercase;
-    }
-    .signal-badge.buy {
-      background: rgba(54, 211, 153, 0.12);
-      color: var(--color-positive);
-      border: 1px solid rgba(54, 211, 153, 0.25);
-    }
-    .signal-badge.sell {
-      background: rgba(248, 113, 113, 0.12);
-      color: var(--color-negative);
-      border: 1px solid rgba(248, 113, 113, 0.25);
+      gap: 16px;
+      box-shadow: var(--shadow-level-1);
     }
 
-    /* ── Right / Secondary Column: Workspaces, Competition & Fleet ────────── */
-    .sidebar-col {
+    .arena-banner-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .arena-banner-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--color-text);
+    }
+
+    .arena-banner-subtitle {
+      font-size: 14px;
+      color: var(--color-text-2);
+    }
+
+    @media (max-width: 767px) {
+      .arena-banner {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 16px;
+      }
+      .arena-banner .btn {
+        width: 100%;
+      }
+    }
+
+    /* 6.1 How It Works */
+    .how-it-works-section {
       display: flex;
       flex-direction: column;
       gap: 20px;
     }
 
-    .workspace-shortcuts-card {
+    .how-it-works-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .how-step-card {
       background: var(--color-surface);
       border: 1px solid var(--color-border);
-      border-radius: 10px;
+      border-radius: var(--radius-lg);
       padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
-    .section-kicker-title {
+
+    .how-step-number {
       font-size: 12px;
-      font-family: 'JetBrains Mono', monospace;
       font-weight: 700;
-      color: var(--color-text-subtle);
+      color: var(--color-primary);
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
     }
-    .shortcuts-grid {
+
+    .how-step-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--color-text);
+    }
+
+    .how-step-desc {
+      font-size: 13px;
+      color: var(--color-text-2);
+      line-height: 1.4;
+    }
+
+    @media (max-width: 767px) {
+      .how-it-works-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+    }
+
+    /* Live Screener Section */
+    .screener-section {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 16px;
     }
-    .shortcut-nav-item {
+
+    .screener-header-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 14px;
-      background: var(--color-surface-bg);
-      border: 1px solid var(--color-border);
-      border-radius: 8px;
-      text-decoration: none;
-      color: var(--color-text-main);
-      transition: all 0.15s ease;
-    }
-    .shortcut-nav-item:hover {
-      border-color: var(--color-primary);
-      background: var(--color-surface-elevated);
-      transform: translateY(-1px);
-    }
-    .shortcut-item-left {
-      display: flex;
-      align-items: center;
+      flex-wrap: wrap;
       gap: 12px;
     }
-    .shortcut-icon-frame {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
+
+    /* 5.8 Footer */
+    .app-footer {
+      border-top: 1px solid var(--color-border);
       background: var(--color-surface);
-      border: 1px solid var(--color-border-strong);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--color-primary);
-    }
-    .shortcut-title-box {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .shortcut-title {
-      font-size: 13.5px;
-      font-weight: 700;
-      color: var(--color-text-main);
-    }
-    .shortcut-sub {
-      font-size: 11.5px;
-      color: var(--color-text-subtle);
-    }
-    .shortcut-arrow {
-      color: var(--color-text-subtle);
-      transition: color 0.15s ease, transform 0.15s ease;
-    }
-    .shortcut-nav-item:hover .shortcut-arrow {
-      color: var(--color-primary);
-      transform: translateX(2px);
+      padding: 48px 24px 32px 24px;
+      margin-top: auto;
     }
 
-    /* Competition Summary Card */
-    .competition-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 10px;
-      padding: 20px;
-      position: relative;
-      overflow: hidden;
-    }
-    .comp-status-row {
+    .footer-inner {
+      max-width: 1200px;
+      margin: 0 auto;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
+      flex-direction: column;
+      gap: 32px;
     }
-    .comp-badge {
-      background: rgba(251, 191, 36, 0.12);
-      border: 1px solid rgba(251, 191, 36, 0.3);
-      color: var(--color-warning);
-      font-size: 11px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .comp-title {
-      font-size: 16px;
-      font-weight: 800;
-      color: var(--color-text-main);
-      margin-bottom: 6px;
-      letter-spacing: -0.01em;
-    }
-    .comp-desc {
-      font-size: 12.5px;
-      color: var(--color-text-muted);
-      line-height: 1.5;
-      margin-bottom: 16px;
-    }
-    .comp-metrics-grid {
+
+    .footer-links-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 16px;
-      padding: 12px;
-      background: var(--color-surface-bg);
-      border: 1px solid var(--color-border);
-      border-radius: 8px;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 32px;
     }
-    .comp-metric-box {
+
+    .footer-col {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 12px;
     }
-    .comp-metric-lbl {
-      font-size: 10.5px;
-      font-family: 'JetBrains Mono', monospace;
-      color: var(--color-text-subtle);
+
+    .footer-col-title {
+      font-size: 13px;
+      font-weight: 700;
       text-transform: uppercase;
-    }
-    .comp-metric-val {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--color-text-main);
+      letter-spacing: 0.06em;
+      color: var(--color-neutral);
     }
 
-    /* Fleet Operations Cockpit Preview */
-    .fleet-summary-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 10px;
-      padding: 20px;
-    }
-
-    /* Buttons */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      font-family: 'Plus Jakarta Sans', sans-serif;
-      font-size: 13.5px;
-      font-weight: 600;
-      height: 38px;
-      padding: 0 16px;
-      border-radius: 8px;
-      text-decoration: none;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .btn-primary {
-      background: var(--color-primary);
-      color: #020817;
-      border: none;
-      font-weight: 700;
-    }
-    .btn-primary:hover {
-      background: #00d2e0;
-      box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
-    }
-    .btn-secondary {
-      background: var(--color-surface-elevated);
-      border: 1px solid var(--color-border);
-      color: var(--color-text-main);
-    }
-    .btn-secondary:hover {
-      border-color: var(--color-border-strong);
-      color: #fff;
-    }
-    .btn-ghost {
-      background: transparent;
-      border: 1px solid transparent;
-      color: var(--color-text-muted);
-    }
-    .btn-ghost:hover {
-      color: var(--color-text-main);
-      background: var(--color-surface);
-    }
-
-    /* ── Responsive Behavior (No horizontal overflow, mobile dock) ─────── */
-    @media (max-width: 1080px) {
-      .home-workspace-grid {
-        grid-template-columns: 1fr;
-      }
-      .sidebar-col {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-      }
-    }
-
-    .mobile-bottom-dock {
-      display: none;
-    }
-    .mobile-nav-toggle {
-      display: none;
-    }
-
-    @media (max-width: 900px) {
-      .nav-links { display: none !important; }
-      .mobile-nav-toggle {
-        display: inline-flex !important;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        background: var(--color-surface);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-sm);
-        color: var(--color-text-main);
-        cursor: pointer;
-      }
-    }
-
-    @media (max-width: 768px) {
-      /* FeedLoop Mobile Alignment: Light canvas, content-first, 44px touch targets */
-      html, body {
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow-x: hidden !important;
-        background: #F9FAFB !important;
-        color: #111827 !important;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .nav-links { display: none !important; }
-      .sidebar-col { grid-template-columns: 1fr; }
-      .header-inner {
-        padding: 0 14px;
-        height: 54px;
-        background: rgba(255, 255, 255, 0.96) !important;
-      }
-      .racer-header {
-        background: rgba(255, 255, 255, 0.96) !important;
-        border-bottom: 1px solid #E5E7EB !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-      }
-      .brand-title {
-        color: #111827 !important;
-      }
-      .home-workspace-container {
-        padding: 14px 12px calc(80px + env(safe-area-inset-bottom, 16px));
-        background: #F9FAFB !important;
-      }
-      .market-overview-band {
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-        padding: 12px 14px !important;
-        margin-bottom: 12px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-      }
-      .market-overview-inner { padding: 0; }
-      .telemetry-group { flex-wrap: wrap; gap: 8px 14px; }
-      .telemetry-label { color: #6B7280 !important; font-size: 11.5px !important; }
-      .telemetry-val { color: #111827 !important; }
-
-      /* Post cards & Screener in FeedLoop uniform style */
-      .racer-card,
-      .screener-card {
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-        padding: 14px 16px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-        margin-bottom: 12px !important;
-      }
-      .card-header,
-      .screener-header {
-        border-bottom: 1px solid #F3F4F6 !important;
-        padding: 0 0 12px 0 !important;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-        background: transparent !important;
-      }
-      .card-title,
-      .screener-title {
-        color: #111827 !important;
-        font-size: 15px !important;
-        font-weight: 700 !important;
-      }
-      .screener-filters-row {
-        padding: 10px 0 0 0 !important;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-      }
-      .category-pills-row {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-        flex-wrap: nowrap;
-        gap: 8px;
-        padding-bottom: 2px;
-      }
-      .category-pill,
-      .screener-filter-pill {
-        min-height: 44px !important;
-        min-width: 44px !important;
-        padding: 0 16px !important;
-        border-radius: 9999px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        color: #6B7280 !important;
-        font-size: 12.5px !important;
-        font-weight: 600 !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-      }
-      .category-pill.active,
-      .screener-filter-pill.active {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border-color: #2563EB !important;
-        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
-      }
-      .screener-search-wrap {
-        max-width: 100%;
-        min-width: 100%;
-        width: 100%;
-      }
-      .screener-search-input {
-        min-height: 44px !important;
-        height: 44px !important;
-        font-size: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
-        color: #111827 !important;
-        padding: 0 14px 0 36px !important;
-      }
-      .table-responsive-box {
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow-x: auto !important;
-        -webkit-overflow-scrolling: touch !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-      }
-      .token-data-table {
-        min-width: 640px !important;
-        background: #FFFFFF !important;
-      }
-      .token-data-table th {
-        background: #F9FAFB !important;
-        color: #6B7280 !important;
-        border-bottom: 1px solid #E5E7EB !important;
-        padding: 12px 10px;
-        font-size: 11.5px;
-      }
-      .token-data-table td {
-        padding: 12px 10px;
-        font-size: 12.5px;
-        color: #111827 !important;
-        border-bottom: 1px solid #F3F4F6 !important;
-      }
-      .btn-fast-buy,
-      .btn-table-action {
-        min-height: 44px !important;
-        min-width: 44px !important;
-        padding: 0 14px !important;
-        border-radius: 8px !important;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        font-weight: 600 !important;
-      }
-
-      /* FeedLoop Fixed Mobile Bottom Navigation Dock */
-      .mobile-bottom-dock {
-        display: grid !important;
-        grid-template-columns: repeat(5, 1fr) !important;
-        align-items: center !important;
-        position: fixed !important;
-        bottom: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        z-index: 1000 !important;
-        pointer-events: auto !important;
-        height: calc(60px + env(safe-area-inset-bottom, 10px));
-        padding-bottom: env(safe-area-inset-bottom, 10px);
-        background: rgba(255, 255, 255, 0.96) !important;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border-top: 1px solid #E5E7EB !important;
-        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04) !important;
-      }
-
-      .mobile-dock-btn,
-      .mobile-dock-item {
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 3px !important;
-        height: 100% !important;
-        min-height: 44px !important;
-        background: transparent !important;
-        border: none !important;
-        color: #6B7280 !important;
-        cursor: pointer !important;
-        padding: 6px 2px !important;
-        text-decoration: none !important;
-        transition: all 0.16s ease !important;
-        -webkit-tap-highlight-color: transparent !important;
-        touch-action: manipulation !important;
-      }
-
-      .mobile-dock-btn svg,
-      .mobile-dock-item svg {
-        width: 20px !important;
-        height: 20px !important;
-        stroke: #6B7280 !important;
-      }
-
-      .mobile-dock-btn span,
-      .mobile-dock-item span {
-        font-size: 11px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.01em !important;
-        color: #6B7280 !important;
-      }
-
-      .mobile-dock-btn.active,
-      .mobile-dock-item.active {
-        color: #2563EB !important;
-      }
-      .mobile-dock-btn.active svg,
-      .mobile-dock-item.active svg {
-        stroke: #2563EB !important;
-        transform: translateY(-1px) !important;
-      }
-      .mobile-dock-btn.active span,
-      .mobile-dock-item.active span {
-        color: #2563EB !important;
-        font-weight: 700 !important;
-      }
-
-      .mobile-nav-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(17, 24, 39, 0.5);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        z-index: 9998;
-        opacity: 0;
-        visibility: hidden;
-        pointer-events: none;
-        transition: opacity 0.25s ease, visibility 0.25s ease;
-      }
-      .mobile-nav-backdrop.open {
-        opacity: 1;
-        visibility: visible;
-        pointer-events: auto;
-      }
-
-      .mobile-nav-drawer {
-        position: fixed;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        width: min(300px, 80vw);
-        background: #FFFFFF !important;
-        border-left: 1px solid #E5E7EB !important;
-        z-index: 9999;
-        transform: translateX(100%);
-        transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.25s ease;
-        display: flex;
-        flex-direction: column;
-        padding: max(20px, env(safe-area-inset-top, 20px)) 16px max(24px, env(safe-area-inset-bottom, 24px));
-        box-shadow: none !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .mobile-nav-drawer.open {
-        transform: translateX(0) !important;
-        visibility: visible !important;
-        pointer-events: auto !important;
-        box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1) !important;
-      }
-      .mobile-drawer-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding-bottom: 14px;
-        border-bottom: 1px solid #E5E7EB !important;
-        margin-bottom: 16px;
-      }
-      .mobile-drawer-brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        text-decoration: none;
-        color: #111827 !important;
-      }
-      .mobile-drawer-close {
-        background: #F3F4F6 !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: var(--radius-sm);
-        color: #4B5563 !important;
-        min-width: 44px !important;
-        min-height: 44px !important;
-        width: 44px;
-        height: 44px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-        cursor: pointer;
-      }
-      .mobile-drawer-links {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        flex: 1;
-      }
-      .mobile-drawer-link {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 14px;
-        min-height: 44px !important;
-        border-radius: 8px;
-        color: #4B5563 !important;
-        font-size: 14px;
-        font-weight: 600;
-        text-decoration: none;
-        background: transparent;
-        border: 1px solid transparent;
-        transition: all 0.16s ease;
-      }
-      .mobile-drawer-link:hover,
-      .mobile-drawer-link.active {
-        background: #F3F4F6 !important;
-        border-color: #E5E7EB !important;
-        color: #2563EB !important;
-      }
-      .mobile-drawer-footer {
-        padding-top: 16px;
-        border-top: 1px solid #E5E7EB !important;
-      }
-
-      /* Universal FeedLoop Mobile Modal Bottom Sheet for racer.html */
-      .modal-backdrop {
-        display: none;
-        position: fixed !important;
-        inset: 0 !important;
-        align-items: flex-end !important;
-        justify-content: center !important;
-        padding: 0 !important;
-        background: rgba(17, 24, 39, 0.48) !important;
-        backdrop-filter: blur(4px) !important;
-        z-index: 10000 !important;
-      }
-      .modal-backdrop.open {
-        display: flex !important;
-      }
-      .modal-card {
-        border-radius: 16px 16px 0 0 !important;
-        max-width: 100% !important;
-        width: 100% !important;
-        max-height: min(85vh, 85dvh) !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
-        -webkit-overflow-scrolling: touch !important;
-        overscroll-behavior: contain !important;
-        padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 16px)) 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-bottom: none !important;
-        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08) !important;
-        margin: 0 !important;
-        color: #111827 !important;
-      }
-      .modal-card::before {
-        content: '' !important;
-        display: block !important;
-        width: 36px !important;
-        height: 4px !important;
-        background: #D1D5DB !important;
-        border-radius: 2px !important;
-        margin: 0 auto 12px auto !important;
-      }
-      .modal-card h3 {
-        color: #111827 !important;
-        font-size: 17px !important;
-      }
-      .modal-card div[style*="background:var(--color-surface-bg)"] {
-        background: #F9FAFB !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 10px !important;
-      }
-      .modal-card div[style*="color:#fff"] {
-        color: #111827 !important;
-      }
-      .modal-card div[style*="color:var(--color-text-muted)"] {
-        color: #6B7280 !important;
-      }
-      .modal-card input.form-input {
-        min-height: 44px !important;
-        font-size: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
-        color: #111827 !important;
-        padding: 0 12px !important;
-      }
-      .modal-card .btn {
-        min-height: 44px !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-      }
-      .modal-card .btn-primary {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-      }
-      .modal-card .btn-secondary {
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        color: #374151 !important;
-      }
-    }
-
-    /* Base desktop modal styles */
-    .modal-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      z-index: 10000;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    .modal-backdrop.open {
+    .footer-nav-list {
+      list-style: none;
       display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
-    .modal-card {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 14px;
-      width: 100%;
-      max-width: 440px;
-      padding: 24px;
-      position: relative;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
-      box-sizing: border-box;
+
+    .footer-nav-link {
+      font-size: 14px;
+      color: var(--color-text-2);
+      text-decoration: none;
+      transition: color var(--transition-fast);
+    }
+
+    .footer-nav-link:hover {
+      color: var(--color-primary);
+    }
+
+    .footer-legal-bar {
+      border-top: 1px solid var(--color-border);
+      padding-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .footer-risk-text {
+      font-size: 12px;
+      color: var(--color-neutral);
+      line-height: 1.5;
+    }
+
+    .footer-copyright {
+      font-size: 12px;
+      color: var(--color-neutral);
+    }
+
+    @media (max-width: 767px) {
+      .footer-links-grid {
+        grid-template-columns: 1fr;
+        gap: 24px;
+      }
+      .app-footer {
+        padding: 32px 16px calc(72px + env(safe-area-inset-bottom, 16px)) 16px;
+      }
     }
   </style>
 </head>
 <body>
-  <a href="#main-workspace" class="skip-link">Skip to content</a>
 
-  <!-- Promo Alert Bar: Active Reward Program -->
-  <div class="promo-banner-strip">
-    <span class="promo-banner-badge">Active Arena</span>
-    <span style="color:var(--color-text-muted);">2-Week On-Chain Reward Program: Standings tracked via real verified points ledger.</span>
-    <a href="/competition" style="color:var(--color-primary); font-weight:600; text-decoration:none;">View Standings →</a>
-  </div>
+  <!-- Part 5.1 Desktop Shell Top Bar -->
+  <header class="app-header">
+    <a href="/" class="app-brand" aria-label="Racer Home">
+      <img src="/assets/racer-logo.png" alt="Racer logo" onerror="this.src='/assets/logo.png'">
+      <span>Racer</span>
+    </a>
 
-  <!-- Navigation Header (Master Shell) -->
-  <header class="racer-header">
-    <div class="header-inner">
-      <a href="/" class="brand-logo-wrap">
-        <div class="brand-mark">
-          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
-        </div>
-        <div class="brand-title">
-          RACER<span>BOT</span>
-        </div>
+    <nav class="desktop-nav" aria-label="Main Navigation">
+      <a href="/alpha" class="desktop-nav-link">Alpha</a>
+      <a href="/fleet" class="desktop-nav-link">Fleet</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/competition" class="desktop-nav-link">Arena</a>
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
+        <span>RacerBot</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
       </a>
+    </nav>
 
-      <!-- Navigation Links -->
-      <nav class="nav-links">
-        <a href="/" class="nav-item active">Overview</a>
-        <a href="/bubblemap" class="nav-item">Bubble Map</a>
-        <a href="/alpha" class="nav-item">Private Alpha</a>
-        <a href="/fleet" class="nav-item">Fleet Ops</a>
-        <a href="/competition" class="nav-item">Arena</a>
-        <a href="https://t.me/racertradingbot" target="_blank" class="nav-item" style="color:var(--color-positive);">Telegram ↗</a>
-      </nav>
-
-      <!-- Right Header Actions -->
-      <div class="header-actions">
-        <button id="header-connect-btn" onclick="handleHeaderConnectClick()" class="btn btn-ghost">
-          <span>Log in</span>
-        </button>
-        <a href="https://t.me/racertradingbot" target="_blank" class="btn btn-primary" style="height:36px; padding:0 14px;">
-          <span>Launch Bot ↗</span>
-        </a>
-        <button class="mobile-nav-toggle" id="mobile-nav-toggle-btn" onclick="toggleMobileNav(true)" aria-label="Open navigation menu">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
-        </button>
-      </div>
+    <div class="desktop-actions">
+      <button class="btn btn-secondary btn-sm" onclick="openDepositModal()">Deposit</button>
+      <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
+        <span id="header-connect-label">Connect</span>
+      </button>
     </div>
   </header>
 
-  <!-- Market Overview & Telemetry Strip -->
-  <section class="market-overview-band">
-    <div class="market-overview-inner">
-      <div class="telemetry-group">
-        <div class="telemetry-stat">
-          <span class="telemetry-lbl">NEAR/USD:</span>
-          <span class="telemetry-val positive" id="hdr-near-usd">$4.95 (+4.2%)</span>
-        </div>
-        <div class="telemetry-stat">
-          <span class="telemetry-lbl">24H Launchpad Vol:</span>
-          <span class="telemetry-val" id="hdr-total-vol">$5,840,290</span>
-        </div>
-        <div class="telemetry-stat">
-          <span class="telemetry-lbl">Tracked Tokens:</span>
-          <span class="telemetry-val accent" id="hdr-token-count">200 Pairs</span>
-        </div>
-        <div class="telemetry-stat">
-          <span class="telemetry-lbl">Active Callers:</span>
-          <span class="telemetry-val" id="hdr-callers-count">18 Verified</span>
-        </div>
-      </div>
-
-      <div class="telemetry-network-pill">
-        <span class="live-pulse-dot"></span>
-        <span>NEAR Protocol Mainnet • Intent Router Active</span>
-      </div>
+  <!-- Part 5.2 Mobile Top Bar -->
+  <header class="mobile-top-bar">
+    <a href="/" class="app-brand" aria-label="Racer Home">
+      <img src="/assets/racer-logo.png" alt="Racer logo" style="width:28px;height:28px;" onerror="this.src='/assets/logo.png'">
+      <span style="font-size:17px;font-weight:700;">Racer</span>
+    </a>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button id="mobile-header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()" style="height:36px;padding:0 12px;font-size:13px;">
+        <span id="mobile-header-connect-label">Connect</span>
+      </button>
     </div>
-  </section>
+  </header>
 
-  <!-- Main Trading Intelligence Workspace -->
-  <main class="home-workspace-container" id="main-workspace">
-    <div class="home-workspace-grid">
-      <!-- LEFT / PRIMARY COLUMN -->
-      <div>
-        <!-- Screener & Watchlist Matrix -->
-        <div class="screener-card">
-          <div class="screener-header">
-            <div class="screener-title-group">
-              <span class="screener-title">Market Intelligence &amp; Screener</span>
-              <span class="screener-count-badge" id="visible-token-count">200 Tokens</span>
-            </div>
-            <div style="font-size:12px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
-              Click star to pin to Watchlist
-            </div>
+  <!-- Main Home Content -->
+  <main class="home-container">
+
+    <!-- 6.1 Hero Section -->
+    <section class="hero-section">
+      <div class="speed-line-motif" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <h1 class="hero-title">One account to trade, analyze, copy and manage wallets on NEAR.</h1>
+      <p class="hero-subtitle">Racer brings trading, token analytics, copy trading and wallet management together.</p>
+      <div class="hero-actions">
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+          Open RacerBot on Telegram
+        </a>
+        <a href="/bubblemap" class="btn btn-secondary">
+          Explore RacerBubble
+        </a>
+      </div>
+    </section>
+
+    <!-- 6.1 Conditional Live Stats Strip (populated live from data, hidden if empty) -->
+    <section id="live-stats-strip" class="stats-strip" style="display:none;">
+      <div id="stat-widget-vol" class="metric-widget" style="display:none;">
+        <span id="stat-vol-val" class="metric-value">—</span>
+        <span class="metric-label">Volume Routed</span>
+      </div>
+      <div id="stat-widget-trades" class="metric-widget" style="display:none;">
+        <span id="stat-trades-val" class="metric-value">—</span>
+        <span class="metric-label">Trades</span>
+      </div>
+      <div id="stat-widget-traders" class="metric-widget" style="display:none;">
+        <span id="stat-traders-val" class="metric-value">—</span>
+        <span class="metric-label">Traders</span>
+      </div>
+    </section>
+
+    <!-- 6.1 Products Grid (4 Cards) -->
+    <section class="products-grid">
+      <!-- Card 1: RacerBot -->
+      <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="product-card">
+        <div class="product-card-top">
+          <div class="product-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
           </div>
-
-          <!-- Category Pills & Search -->
-          <div class="screener-filters-row">
-            <div class="category-pills-deck">
-              <button class="cat-filter-btn active" onclick="setCategoryFilter('all', this)">All Tokens</button>
-              <button class="cat-filter-btn" onclick="setCategoryFilter('watchlist', this)">★ Watchlist (<span id="watchlist-count">0</span>)</button>
-              <button class="cat-filter-btn" onclick="setCategoryFilter('memecooking', this)">Meme.Cooking</button>
-              <button class="cat-filter-btn" onclick="setCategoryFilter('hoot', this)">JustHoot</button>
-              <button class="cat-filter-btn" onclick="setCategoryFilter('nearly', this)">NearlyTrade</button>
-              <button class="cat-filter-btn" onclick="setCategoryFilter('ref', this)">Ref DEX</button>
-            </div>
-
-            <div class="screener-search-wrap">
-              <svg class="screener-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-              <input type="text" class="screener-search-input" id="token-search-input" placeholder="Search symbol or contract..." oninput="handleTokenSearch(this.value)">
-            </div>
-          </div>
-
-          <!-- Token Table -->
-          <div class="table-responsive-box">
-            <table class="token-data-table">
-              <thead>
-                <tr>
-                  <th style="width:36px; text-align:center;">★</th>
-                  <th>Token / Pair</th>
-                  <th>Venue</th>
-                  <th style="text-align:right;">Price (USD)</th>
-                  <th style="text-align:right;">24h Change</th>
-                  <th style="text-align:right;">24h Volume</th>
-                  <th style="text-align:right;">Market Cap</th>
-                  <th style="text-align:right;">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="home-tokens-tbody">
-                <tr>
-                  <td colspan="8" style="text-align:center; padding:36px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
-                    Loading verified market tokens from NEAR intent router...
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <h3 class="product-card-title">
+            <span>RacerBot</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+          </h3>
+          <p class="product-card-desc">Trade on NEAR from Telegram.</p>
+          <ul class="product-card-features">
+            <li>Sub-second execution</li>
+            <li>Sniping and bonding curves</li>
+            <li>Mobile-first Telegram UI</li>
+          </ul>
         </div>
+        <span class="product-card-link">Open on Telegram ↗</span>
+      </a>
 
-        <!-- Recent Market Activity / Verified Signals Feed -->
-        <div class="signals-card">
-          <div class="signals-header-row">
-            <div class="signals-title">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-primary);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              <span>Recent On-Chain Activity &amp; Market Signals</span>
-            </div>
-            <span style="font-size:11.5px; font-family:'JetBrains Mono', monospace; color:var(--color-positive);">● Live Stream</span>
+      <!-- Card 2: Racer Alpha -->
+      <a href="/alpha" class="product-card">
+        <div class="product-card-top">
+          <div class="product-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
           </div>
+          <h3 class="product-card-title">
+            <span>Racer Alpha</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </h3>
+          <p class="product-card-desc">Confidential trading. Follow top traders and copy their trades privately.</p>
+          <ul class="product-card-features">
+            <li>Verified trader leaderboard</li>
+            <li>Private viewing keys</li>
+            <li>Intent-based DEX terminal</li>
+          </ul>
+        </div>
+        <span class="product-card-link">Open Alpha →</span>
+      </a>
 
-          <div class="signals-feed-list" id="home-signals-feed">
-            <div class="signal-item-row">
-              <div class="signal-meta-left">
-                <span class="signal-badge buy">SWAP // BUY</span>
-                <b style="font-family:'JetBrains Mono', monospace;">$BLACKDRAGON</b>
-                <span style="color:var(--color-text-subtle);">via 1Click Intent Solver</span>
-              </div>
-              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-positive); font-weight:700;">
-                +50.0 NEAR ($247.50)
-              </div>
-            </div>
-            <div class="signal-item-row">
-              <div class="signal-meta-left">
-                <span class="signal-badge buy">SWAP // BUY</span>
-                <b style="font-family:'JetBrains Mono', monospace;">$LONK</b>
-                <span style="color:var(--color-text-subtle);">via Ref Finance Pool</span>
-              </div>
-              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-positive); font-weight:700;">
-                +25.0 NEAR ($123.75)
-              </div>
-            </div>
-            <div class="signal-item-row">
-              <div class="signal-meta-left">
-                <span class="signal-badge sell">SWAP // SELL</span>
-                <b style="font-family:'JetBrains Mono', monospace;">$PEARPE</b>
-                <span style="color:var(--color-text-subtle);">Meme.Cooking DEX Router</span>
-              </div>
-              <div style="font-family:'JetBrains Mono', monospace; color:var(--color-negative); font-weight:700;">
-                -18.4 NEAR ($91.08)
-              </div>
-            </div>
+      <!-- Card 3: RacerFleet -->
+      <a href="/fleet" class="product-card">
+        <div class="product-card-top">
+          <div class="product-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
           </div>
+          <h3 class="product-card-title">
+            <span>RacerFleet</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </h3>
+          <p class="product-card-desc">Manage multiple wallets in one click.</p>
+          <ul class="product-card-features">
+            <li>Parallel bundle execution</li>
+            <li>Instant capital rebalancing</li>
+            <li>Unified fleet dashboard</li>
+          </ul>
+        </div>
+        <span class="product-card-link">Open Fleet →</span>
+      </a>
+
+      <!-- Card 4: RacerBubble -->
+      <a href="/bubblemap" class="product-card">
+        <div class="product-card-top">
+          <div class="product-card-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+          </div>
+          <h3 class="product-card-title">
+            <span>RacerBubble</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </h3>
+          <p class="product-card-desc">Bubble maps and token analytics.</p>
+          <ul class="product-card-features">
+            <li>Interactive cluster graph</li>
+            <li>Insider and whale detection</li>
+            <li>Supply distribution forensics</li>
+          </ul>
+        </div>
+        <span class="product-card-link">Open Bubble →</span>
+      </a>
+    </section>
+
+    <!-- 6.1 Arena Banner -->
+    <section class="arena-banner">
+      <div class="arena-banner-info">
+        <h3 class="arena-banner-title">Racer Arena</h3>
+        <p class="arena-banner-subtitle">Trading competitions and points.</p>
+      </div>
+      <a href="/competition" class="btn btn-primary btn-sm">View leaderboard</a>
+    </section>
+
+    <!-- 6.1 How It Works -->
+    <section class="how-it-works-section">
+      <h2 class="text-h2">How it works</h2>
+      <div class="how-it-works-grid">
+        <div class="how-step-card">
+          <span class="how-step-number">Step 1</span>
+          <h3 class="how-step-title">Open RacerBot on Telegram</h3>
+          <p class="how-step-desc">Start the bot and pair your NEAR account with one click.</p>
+        </div>
+        <div class="how-step-card">
+          <span class="how-step-number">Step 2</span>
+          <h3 class="how-step-title">Fund your account</h3>
+          <p class="how-step-desc">Deposit NEAR directly or transfer cross-chain with instant bridging.</p>
+        </div>
+        <div class="how-step-card">
+          <span class="how-step-number">Step 3</span>
+          <h3 class="how-step-title">Paste a contract and trade</h3>
+          <p class="how-step-desc">Trade tokens, inspect bubble clusters, and copy verified strategies.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Market Screener -->
+    <section class="screener-section">
+      <div class="screener-header-row">
+        <div>
+          <h2 class="text-h2">Active markets</h2>
+          <span id="market-pairs-count" class="text-caption">Loading tokens...</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="text" id="market-search-input" class="form-control" placeholder="Search symbol or contract" style="width:240px;height:36px;font-size:13px;" oninput="handleMarketSearch(this.value)">
         </div>
       </div>
 
-      <!-- RIGHT / SECONDARY COLUMN -->
-      <aside class="sidebar-col">
-        <!-- Feature Shortcuts Card -->
-        <div class="workspace-shortcuts-card">
-          <div class="section-kicker-title">
-            <span>Trading Workspaces</span>
-            <span>4 Engines</span>
-          </div>
-          <div class="shortcuts-grid">
-            <a href="/bubblemap?token=blackdragon.tkn.near" class="shortcut-nav-item">
-              <div class="shortcut-item-left">
-                <div class="shortcut-icon-frame">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-                </div>
-                <div class="shortcut-title-box">
-                  <span class="shortcut-title">RacerBubble Map</span>
-                  <span class="shortcut-sub">Holder clusters &amp; Sybil detection</span>
-                </div>
-              </div>
-              <span class="shortcut-arrow">→</span>
-            </a>
+      <div class="table-container">
+        <table class="data-table" id="market-tokens-table">
+          <thead>
+            <tr>
+              <th style="width:40px;">#</th>
+              <th>Token</th>
+              <th>Venue</th>
+              <th class="text-right">Price</th>
+              <th class="text-right">24h Change</th>
+              <th class="text-right">24h Volume</th>
+              <th class="text-right">Market Cap</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="market-tokens-tbody">
+            <tr>
+              <td colspan="8" style="text-align:center;padding:32px;">
+                <span class="skeleton" style="width:180px;height:20px;"></span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-            <a href="/alpha" class="shortcut-nav-item">
-              <div class="shortcut-item-left">
-                <div class="shortcut-icon-frame">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                </div>
-                <div class="shortcut-title-box">
-                  <span class="shortcut-title">RacerAlpha Social</span>
-                  <span class="shortcut-sub">Verified callers &amp; viewing keys</span>
-                </div>
-              </div>
-              <span class="shortcut-arrow">→</span>
-            </a>
-
-            <a href="/fleet" class="shortcut-nav-item">
-              <div class="shortcut-item-left">
-                <div class="shortcut-icon-frame">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-                </div>
-                <div class="shortcut-title-box">
-                  <span class="shortcut-title">The RacerFleet</span>
-                  <span class="shortcut-sub">Multi-wallet coordinated cockpit</span>
-                </div>
-              </div>
-              <span class="shortcut-arrow">→</span>
-            </a>
-
-            <a href="/competition" class="shortcut-nav-item">
-              <div class="shortcut-item-left">
-                <div class="shortcut-icon-frame">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
-                </div>
-                <div class="shortcut-title-box">
-                  <span class="shortcut-title">Competition Arena</span>
-                  <span class="shortcut-sub">On-chain reward program</span>
-                </div>
-              </div>
-              <span class="shortcut-arrow">→</span>
-            </a>
-          </div>
-        </div>
-
-        <!-- Competition Preview Card -->
-        <div class="competition-card">
-          <div class="comp-status-row">
-            <span class="comp-badge">2-WEEK PROGRAM</span>
-            <span style="font-size:11.5px; font-family:'JetBrains Mono', monospace; color:var(--color-positive);">● LIVE</span>
-          </div>
-          <div class="comp-title">On-Chain Reward Snapshot Arena</div>
-          <div class="comp-desc">
-            Points are calculated strictly from qualifying trade volumes on NEAR and referral transactions. Zero fake allocations.
-          </div>
-          <div class="comp-metrics-grid">
-            <div class="comp-metric-box">
-              <span class="comp-metric-lbl">Leaderboard:</span>
-              <span class="comp-metric-val">On-Chain Ledger</span>
-            </div>
-            <div class="comp-metric-box">
-              <span class="comp-metric-lbl">Privacy:</span>
-              <span class="comp-metric-val">First 5 Digits</span>
-            </div>
-          </div>
-          <a href="/competition" class="btn btn-secondary" style="width:100%; height:38px;">
-            <span>Inspect Full Standings →</span>
-          </a>
-        </div>
-
-        <!-- Fleet Cockpit Status Card -->
-        <div class="fleet-summary-card">
-          <div class="section-kicker-title">
-            <span>Fleet Operations</span>
-            <span style="color:var(--color-primary);">v2.0</span>
-          </div>
-          <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:14px; line-height:1.5;">
-            Coordinate bundle buys and exits across subaccounts with adjustable jitter and full capital sweep protection.
-          </div>
-          <a href="/fleet" class="btn btn-primary" style="width:100%; height:38px;">
-            <span>Open Fleet Cockpit →</span>
-          </a>
-        </div>
-      </aside>
-    </div>
   </main>
 
-  <!-- Universal Bottom Navigation Dock for Mobile (360px - 768px) -->
+  <!-- Part 5.8 Footer -->
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <div class="footer-links-grid">
+        <div class="footer-col">
+          <a href="/" class="app-brand" style="margin-bottom:8px;">
+            <img src="/assets/racer-logo.png" alt="Racer" style="width:24px;height:24px;" onerror="this.src='/assets/logo.png'">
+            <span>Racer</span>
+          </a>
+          <p class="text-body-sm" style="color:var(--color-text-2);max-width:340px;">
+            One account to trade, analyze, copy and manage wallets on NEAR.
+          </p>
+        </div>
+        <div class="footer-col">
+          <span class="footer-col-title">Products</span>
+          <ul class="footer-nav-list">
+            <li><a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="footer-nav-link">RacerBot</a></li>
+            <li><a href="/alpha" class="footer-nav-link">Racer Alpha</a></li>
+            <li><a href="/fleet" class="footer-nav-link">RacerFleet</a></li>
+            <li><a href="/bubblemap" class="footer-nav-link">RacerBubble</a></li>
+            <li><a href="/competition" class="footer-nav-link">Racer Arena</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <span class="footer-col-title">Community</span>
+          <ul class="footer-nav-list">
+            <li><a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="footer-nav-link">Telegram bot</a></li>
+            <li><a href="https://t.me/racerannouncements" target="_blank" rel="noopener noreferrer" class="footer-nav-link">Announcements</a></li>
+            <li><a href="https://x.com/racerbotnear" target="_blank" rel="noopener noreferrer" class="footer-nav-link">X (Twitter)</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-legal-bar">
+        <p class="footer-risk-text">
+          Trading digital assets carries risk. You can lose money. Copy trading does not guarantee results. Past performance does not predict future results.
+        </p>
+        <p class="footer-copyright">
+          © 2026 Racer. All rights reserved.
+        </p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Part 5.2 Mobile Bottom Dock -->
   <nav class="mobile-bottom-dock" aria-label="Mobile Navigation">
     <a href="/" class="mobile-dock-btn active">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
       <span>Home</span>
     </a>
-    <a href="/bubblemap" class="mobile-dock-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-      <span>Explore</span>
-    </a>
     <a href="/alpha" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
       <span>Alpha</span>
+    </a>
+    <a href="/bubblemap" class="mobile-dock-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
+      <span>Bubble</span>
     </a>
     <a href="/fleet" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -1543,382 +701,217 @@
     </a>
   </nav>
 
-  <!-- Universal Connect Modal (NEAR Wallet Selector & Telegram Auth) -->
-  <div class="modal-backdrop" id="racer-connect-modal">
-    <div class="modal-card" style="max-width:440px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h3 style="font-size:17px; font-weight:700; color:#fff;">Connect to RacerBot</h3>
-        <button onclick="closeConnectModal()" style="background:none; border:none; color:var(--color-text-subtle); font-size:22px; cursor:pointer;">&times;</button>
+  <!-- Part 5.3 & 5.4 Connect Modal -->
+  <div id="connect-modal" class="modal-backdrop" onclick="if(event.target===this) closeConnectModal()">
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="connect-modal-title">
+      <div class="sheet-handle"></div>
+      <div class="modal-header">
+        <h3 id="connect-modal-title" class="modal-title">Connect to Racer</h3>
+        <button class="modal-close-btn" onclick="closeConnectModal()" aria-label="Close modal">&times;</button>
       </div>
-
-      <!-- State 1: Unlinked -->
-      <div id="modal-state-unlinked">
-        <!-- Direct NEAR Wallet Selector -->
-        <div style="background:var(--color-surface-bg); border:1px solid var(--color-border); border-radius:8px; padding:16px; margin-bottom:14px;">
-          <div style="font-size:12px; font-weight:700; color:#fff; margin-bottom:4px;">1. Direct NEAR Wallet Selector</div>
-          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Connect Meteor, HERE Wallet, MyNearWallet, or Sender.</div>
-          <button onclick="handleOpenNearWalletSelector()" class="btn btn-primary" style="width:100%; height:40px;">
-            <span>Launch NEAR Selector</span>
-          </button>
+      <div id="connect-modal-body">
+        <p class="text-body-sm" style="color:var(--color-text-2);margin-bottom:20px;">
+          Connect a NEAR wallet or pair your Telegram account.
+        </p>
+        <button class="btn btn-primary btn-full" onclick="handleOpenNearWalletSelector(); closeConnectModal();" style="margin-bottom:12px;">
+          Connect NEAR wallet
+        </button>
+        <div style="display:flex;align-items:center;gap:12px;margin:16px 0;">
+          <div style="flex:1;height:1px;background:var(--color-border);"></div>
+          <span class="text-caption">or</span>
+          <div style="flex:1;height:1px;background:var(--color-border);"></div>
         </div>
-
-        <!-- Telegram Auth -->
-        <div style="background:var(--color-surface-bg); border:1px solid var(--color-border); border-radius:8px; padding:16px;">
-          <div style="font-size:12px; font-weight:700; color:var(--color-primary); margin-bottom:4px;">2. Telegram Bot Pairing</div>
-          <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Enter your Telegram handle to receive a verification OTP.</div>
-          <div style="display:flex; gap:8px;">
-            <input type="text" id="tg-username-input" class="form-input" placeholder="e.g. trader_pro" style="height:38px; flex:1; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:'JetBrains Mono', monospace; font-size:12px;">
-            <button onclick="handleSendTelegramCode()" class="btn btn-secondary" style="height:38px;">
-              <span>Send OTP</span>
-            </button>
-          </div>
-          <div id="tg-request-status" style="font-size:11px; margin-top:6px;"></div>
-        </div>
+        <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-full">
+          Pair with Telegram
+        </a>
       </div>
+    </div>
+  </div>
 
-      <!-- State 2: Linked -->
-      <div id="modal-state-linked" style="display:none;">
-        <div style="background:var(--color-surface-bg); border:1px solid rgba(54, 211, 153, 0.3); border-radius:8px; padding:16px; margin-bottom:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-size:11px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">CONNECTED ACCOUNT</span>
-            <span style="font-size:10px; color:var(--color-positive); font-family:'JetBrains Mono', monospace; background:rgba(54, 211, 153, 0.12); padding:2px 6px; border-radius:4px;">VERIFIED</span>
+  <!-- Part 5.3 Account Details Modal (Connected State) -->
+  <div id="account-modal" class="modal-backdrop" onclick="if(event.target===this) closeAccountModal()">
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <div class="sheet-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">Connected account</h3>
+        <button class="modal-close-btn" onclick="closeAccountModal()" aria-label="Close modal">&times;</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
+          <span class="text-caption">Account ID</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+            <span id="account-full-id" class="mono-data" style="font-size:14px;word-break:break-all;">—</span>
+            <button class="btn btn-ghost btn-sm" onclick="copyAccountId()" style="min-width:auto;padding:0 8px;">Copy</button>
           </div>
-          <div style="font-size:15px; font-weight:700; color:#fff;" id="linked-username">@user</div>
-          <div style="font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--color-primary); margin-top:3px;" id="linked-subaccount">user.racerbot.near</div>
-          <div style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--color-text-muted); margin-top:6px;" id="linked-near-wallet">Linked NEAR Wallet: None</div>
         </div>
-        <div style="display:flex; gap:8px;">
-          <button onclick="handleOpenNearWalletSelector()" class="btn btn-secondary" style="flex:1;">
-            <span>Switch Wallet</span>
-          </button>
-          <button onclick="handleDisconnect()" class="btn btn-ghost">
-            <span>Disconnect</span>
-          </button>
+
+        <div style="background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
+          <span class="text-caption">NEAR Balance</span>
+          <div id="account-balance-val" class="mono-data" style="font-size:20px;font-weight:700;margin-top:4px;">0.00 NEAR</div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-primary" style="flex:1;" onclick="closeAccountModal(); openDepositModal();">Deposit</button>
+          <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="flex:1;">Open RacerBot</a>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--color-border);padding-top:16px;margin-top:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="closeAccountModal(); handleOpenNearWalletSelector();">Switch wallet</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--color-error) !important;" onclick="handleDisconnect(); closeAccountModal();">Disconnect</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Universal Mobile Navigation Drawer -->
-  <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileNav(false)"></div>
-  <aside class="mobile-nav-drawer" id="mobile-nav-drawer" aria-label="Mobile Navigation">
-    <div class="mobile-drawer-header">
-      <a href="/" class="mobile-drawer-brand">
-        <div class="brand-mark" style="width:30px; height:30px;">
-          <img src="/assets/racer-logo.png" alt="Racer" onerror="this.src='/assets/logo.png'">
+  <!-- Part 5.5 Deposit Modal -->
+  <div id="deposit-modal" class="modal-backdrop" onclick="if(event.target===this) closeDepositModal()">
+    <div class="modal-dialog modal-wide" role="dialog" aria-modal="true">
+      <div class="sheet-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">Deposit</h3>
+        <button class="modal-close-btn" onclick="closeDepositModal()" aria-label="Close modal">&times;</button>
+      </div>
+      <div>
+        <div style="display:flex;border-bottom:1px solid var(--color-border);margin-bottom:20px;">
+          <button id="deposit-tab-cross" class="btn-ghost" style="flex:1;height:44px;font-weight:700;border-bottom:2px solid var(--color-primary);" onclick="switchDepositTab('cross')">Cross-chain</button>
+          <button id="deposit-tab-direct" class="btn-ghost" style="flex:1;height:44px;font-weight:500;color:var(--color-text-2) !important;border-bottom:2px solid transparent;" onclick="switchDepositTab('direct')">Direct NEAR</button>
         </div>
-        <span class="brand-title" style="font-size:16px;">RACER<span>BOT</span></span>
-      </a>
-      <button class="mobile-drawer-close" onclick="toggleMobileNav(false)" aria-label="Close navigation menu">&times;</button>
-    </div>
-    <nav class="mobile-drawer-links">
-      <a href="/" class="mobile-drawer-link active">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-        <span>Overview (Home)</span>
-      </a>
-      <a href="/bubblemap" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-        <span>RacerBubble Map</span>
-      </a>
-      <a href="/alpha" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-        <span>RacerAlpha (Trading)</span>
-      </a>
-      <a href="/fleet" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-        <span>The Fleet (Cockpit)</span>
-      </a>
-      <a href="/competition" class="mobile-drawer-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.45 1-1 1H7c-.55 0-1 .45-1 1v1h12v-1c0-.55-.45-1-1-1h-2c-.55 0-1-.45-1-1v-2.34"></path><path d="M18 4H6v7a6 6 0 0 0 12 0V4Z"></path></svg>
-        <span>Arena (Competitions)</span>
-      </a>
-      <a href="https://t.me/racertradingbot" target="_blank" class="mobile-drawer-link" style="color:var(--color-positive);">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-        <span>Launch Telegram Bot ↗</span>
-      </a>
-    </nav>
-    <div class="mobile-drawer-footer">
-      <button onclick="handleHeaderConnectClick(); toggleMobileNav(false);" class="btn btn-secondary" style="width:100%; justify-content:center;">
-        <span>Connect Wallet</span>
-      </button>
-    </div>
-  </aside>
 
-  <!-- NEAR Connect & RacerConnect SDK -->
+        <!-- Cross Chain Step 1 -->
+        <div id="deposit-panel-cross">
+          <p class="text-body-sm" style="color:var(--color-text-2);margin-bottom:14px;">
+            Transfer assets from EVM, Solana or Bitcoin directly to your NEAR account.
+          </p>
+          <a href="/alpha?tab=console" class="btn btn-primary btn-full" onclick="closeDepositModal()">Open Deposit in Console</a>
+        </div>
+
+        <!-- Direct NEAR -->
+        <div id="deposit-panel-direct" style="display:none;">
+          <div style="background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;margin-bottom:16px;">
+            <span class="text-caption">Your Connected Account</span>
+            <div id="deposit-direct-account" class="mono-data" style="font-size:14px;margin-top:4px;">Not connected</div>
+          </div>
+          <p class="text-body-sm" style="color:var(--color-text-2);margin-bottom:16px;">
+            Send NEAR from any exchange or wallet directly to your account address above.
+          </p>
+          <button class="btn btn-primary btn-full" onclick="closeDepositModal()">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/assets/racer-config.js"></script>
   <script src="/assets/near-connect.bundle.js"></script>
   <script src="/assets/racerConnect.js"></script>
   <script>
     let allTokens = [];
-    let currentCategory = 'all';
-    let searchQuery = '';
-    let watchlist = new Set(JSON.parse(localStorage.getItem('racer_watchlist') || '["blackdragon.tkn.near", "token.lonk.near"]'));
-
-    function updateWatchlistCount() {
-      const el = document.getElementById('watchlist-count');
-      if (el) el.textContent = watchlist.size;
-    }
-
-    window.toggleWatchlist = function(addr) {
-      if (watchlist.has(addr)) {
-        watchlist.delete(addr);
-      } else {
-        watchlist.add(addr);
-      }
-      localStorage.setItem('racer_watchlist', JSON.stringify(Array.from(watchlist)));
-      updateWatchlistCount();
-      renderTokenTable();
-    };
-
-    window.setCategoryFilter = function(cat, btn) {
-      currentCategory = cat;
-      document.querySelectorAll('.cat-filter-btn').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
-      renderTokenTable();
-    };
-
-    window.handleTokenSearch = function(val) {
-      searchQuery = (val || '').toLowerCase().trim();
-      renderTokenTable();
-    };
-
-    function renderTokenTable() {
-      const tbody = document.getElementById('home-tokens-tbody');
-      const countEl = document.getElementById('visible-token-count');
-      if (!tbody) return;
-
-      let filtered = allTokens.filter(t => {
-        if (currentCategory === 'watchlist') {
-          if (!watchlist.has(t.address)) return false;
-        } else if (currentCategory === 'memecooking') {
-          if (t.launchpad !== 'memecooking') return false;
-        } else if (currentCategory === 'hoot') {
-          if (t.launchpad !== 'justhoot') return false;
-        } else if (currentCategory === 'nearly') {
-          if (t.launchpad !== 'nearlytrade') return false;
-        } else if (currentCategory === 'ref') {
-          if (t.launchpad !== 'ref') return false;
-        }
-
-        if (searchQuery) {
-          const sym = (t.symbol || '').toLowerCase();
-          const name = (t.name || '').toLowerCase();
-          const addr = (t.address || '').toLowerCase();
-          if (!sym.includes(searchQuery) && !name.includes(searchQuery) && !addr.includes(searchQuery)) {
-            return false;
-          }
-        }
-        return true;
-      });
-
-      if (countEl) countEl.textContent = `${filtered.length} Tokens`;
-
-      if (filtered.length === 0) {
-        tbody.innerHTML = `
-          <tr>
-            <td colspan="8" style="text-align:center; padding:32px; color:var(--color-text-subtle); font-family:'JetBrains Mono', monospace;">
-              No tokens matched the selected filter or search query.
-            </td>
-          </tr>
-        `;
-        return;
-      }
-
-      // Display top 50 items for snappy rendering
-      const displayItems = filtered.slice(0, 50);
-
-      tbody.innerHTML = displayItems.map(t => {
-        const isStarred = watchlist.has(t.address);
-        const changeClass = t.change24h >= 0 ? 'positive' : 'negative';
-        const changeSign = t.change24h >= 0 ? '+' : '';
-        
-        let priceStr = '$0.00';
-        if (t.priceUsd > 0) {
-          if (t.priceUsd >= 1000) {
-            priceStr = '$' + t.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          } else if (t.priceUsd >= 1) {
-            priceStr = '$' + t.priceUsd.toFixed(2);
-          } else if (t.priceUsd >= 0.01) {
-            priceStr = '$' + t.priceUsd.toFixed(4);
-          } else if (t.priceUsd >= 0.0001) {
-            priceStr = '$' + t.priceUsd.toFixed(6);
-          } else {
-            priceStr = '$' + t.priceUsd.toExponential(2);
-          }
-        }
-
-        let mcapStr = '—';
-        if (t.marketCap > 0) {
-          if (t.marketCap >= 1e12) {
-            mcapStr = '$' + (t.marketCap / 1e12).toFixed(2) + 'T';
-          } else if (t.marketCap >= 1e9) {
-            mcapStr = '$' + (t.marketCap / 1e9).toFixed(2) + 'B';
-          } else if (t.marketCap >= 1e6) {
-            mcapStr = '$' + (t.marketCap / 1e6).toFixed(2) + 'M';
-          } else if (t.marketCap >= 1e3) {
-            mcapStr = '$' + (t.marketCap / 1e3).toFixed(1) + 'K';
-          } else {
-            mcapStr = '$' + Math.round(t.marketCap);
-          }
-        }
-
-        let volStr = '—';
-        if (t.volume24h > 0) {
-          if (t.volume24h >= 1e9) {
-            volStr = '$' + (t.volume24h / 1e9).toFixed(2) + 'B';
-          } else if (t.volume24h >= 1e6) {
-            volStr = '$' + (t.volume24h / 1e6).toFixed(2) + 'M';
-          } else if (t.volume24h >= 1e3) {
-            volStr = '$' + (t.volume24h / 1e3).toFixed(1) + 'K';
-          } else {
-            volStr = '$' + Math.round(t.volume24h);
-          }
-        }
-
-        return `
-          <tr>
-            <td style="text-align:center;">
-              <button class="watchlist-star-btn ${isStarred ? 'starred' : ''}" onclick="toggleWatchlist('${t.address}')" title="${isStarred ? 'Remove from Watchlist' : 'Add to Watchlist'}">
-                ${isStarred ? '★' : '☆'}
-              </button>
-            </td>
-            <td>
-              <div class="token-identity-cell">
-                <div class="token-icon-frame">
-                  ${t.icon && t.icon.length > 5 && !t.icon.includes('racer-logo') && !t.icon.includes('assets.ref.finance')
-                    ? `<img src="${t.icon}" alt="${t.symbol}" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
-                       <div class="token-monogram" style="display:none;">${(t.symbol || 'TK').slice(0, 2).toUpperCase()}</div>`
-                    : `<div class="token-monogram">${(t.symbol || 'TK').slice(0, 2).toUpperCase()}</div>`
-                  }
-                </div>
-                <div class="token-name-col">
-                  <span class="token-symbol-text">$${t.symbol}</span>
-                  <span class="token-name-text" title="${t.address}">${t.name || t.address}</span>
-                </div>
-              </div>
-            </td>
-            <td>
-              <span style="font-size:12px; color:var(--color-text-subtle);">
-                ${t.venue || t.launchpad}
-              </span>
-            </td>
-            <td style="text-align:right; font-family:var(--font-mono, monospace); font-weight:600; font-variant-numeric:tabular-nums;">
-              ${priceStr}
-            </td>
-            <td style="text-align:right; font-family:var(--font-mono, monospace); font-weight:600; font-variant-numeric:tabular-nums;" class="telemetry-val ${changeClass}">
-              ${changeSign}${t.change24h.toFixed(2)}%
-            </td>
-            <td style="text-align:right; font-family:var(--font-mono, monospace); color:var(--color-text-muted); font-variant-numeric:tabular-nums;">
-              ${volStr}
-            </td>
-            <td style="text-align:right; font-family:var(--font-mono, monospace); color:var(--color-text-muted); font-variant-numeric:tabular-nums;">
-              ${mcapStr}
-            </td>
-            <td style="text-align:right;">
-              <div class="table-actions-cell">
-                <a href="/bubblemap?token=${encodeURIComponent(t.address)}" class="btn-action-sm btn-action-inspect" title="Inspect holder clusters">
-                  <span>Cluster</span>
-                </a>
-                <a href="/alpha" class="btn-action-sm btn-action-trade" title="Trade via Intent Solver">
-                  <span>Trade</span>
-                </a>
-              </div>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    async function fetchHomeMarketData() {
-      try {
-        const r = await fetch('/alpha/tokens');
-        if (r.ok) {
-          const data = await r.json();
-          allTokens = data.tokens || data || [];
-          renderTokenTable();
-
-          // Calculate aggregated volume
-          const totalVol = allTokens.reduce((acc, t) => acc + (t.volume24h || 0), 0);
-          const volEl = document.getElementById('hdr-total-vol');
-          if (volEl && totalVol > 0) {
-            volEl.textContent = `$${(totalVol / 1e6).toFixed(2)}M`;
-          }
-          const cntEl = document.getElementById('hdr-token-count');
-          if (cntEl) cntEl.textContent = `${allTokens.length} Pairs`;
-        }
-      } catch (err) {
-        console.error('Failed to load market tokens:', err);
-      }
-    }
-
-    function toggleMobileNav(open) {
-      const drawer = document.getElementById('mobile-nav-drawer');
-      const backdrop = document.getElementById('mobile-nav-backdrop');
-      if (drawer && backdrop) {
-        if (open) {
-          drawer.classList.add('open');
-          backdrop.classList.add('open');
-          document.body.style.overflow = 'hidden';
-        } else {
-          drawer.classList.remove('open');
-          backdrop.classList.remove('open');
-          document.body.style.overflow = '';
-        }
-      }
-    }
+    let currentSearch = '';
 
     function handleHeaderConnectClick() {
       if (window.RacerConnect && window.RacerConnect.isAuthenticated()) {
-        const modal = document.getElementById('racer-connect-modal');
+        const modal = document.getElementById('account-modal');
         if (modal) modal.classList.add('open');
-        updateConnectUI();
+        updateAccountModalDetails();
       } else {
-        handleOpenNearWalletSelector();
+        const modal = document.getElementById('connect-modal');
+        if (modal) modal.classList.add('open');
       }
     }
 
     function closeConnectModal() {
-      const modal = document.getElementById('racer-connect-modal');
+      const modal = document.getElementById('connect-modal');
       if (modal) modal.classList.remove('open');
+    }
+
+    function closeAccountModal() {
+      const modal = document.getElementById('account-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function openDepositModal() {
+      const modal = document.getElementById('deposit-modal');
+      if (modal) modal.classList.add('open');
+      const directAcc = document.getElementById('deposit-direct-account');
+      if (directAcc && window.RacerConnect) {
+        directAcc.textContent = window.RacerConnect.activeNearWallet || 'Connect your wallet first';
+      }
+    }
+
+    function closeDepositModal() {
+      const modal = document.getElementById('deposit-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function switchDepositTab(tab) {
+      const crossPanel = document.getElementById('deposit-panel-cross');
+      const directPanel = document.getElementById('deposit-panel-direct');
+      const crossBtn = document.getElementById('deposit-tab-cross');
+      const directBtn = document.getElementById('deposit-tab-direct');
+
+      if (tab === 'cross') {
+        if (crossPanel) crossPanel.style.display = 'block';
+        if (directPanel) directPanel.style.display = 'none';
+        if (crossBtn) { crossBtn.style.borderBottomColor = 'var(--color-primary)'; crossBtn.style.fontWeight = '700'; }
+        if (directBtn) { directBtn.style.borderBottomColor = 'transparent'; directBtn.style.fontWeight = '500'; }
+      } else {
+        if (crossPanel) crossPanel.style.display = 'none';
+        if (directPanel) directPanel.style.display = 'block';
+        if (directBtn) { directBtn.style.borderBottomColor = 'var(--color-primary)'; directBtn.style.fontWeight = '700'; }
+        if (crossBtn) { crossBtn.style.borderBottomColor = 'transparent'; crossBtn.style.fontWeight = '500'; }
+      }
+    }
+
+    function updateAccountModalDetails() {
+      const accId = document.getElementById('account-full-id');
+      const balVal = document.getElementById('account-balance-val');
+      if (window.RacerConnect) {
+        const user = window.RacerConnect.user;
+        const nearWallet = window.RacerConnect.activeNearWallet;
+        const fullId = nearWallet || (user && user.username) || 'Not connected';
+        if (accId) accId.textContent = fullId;
+        if (balVal) {
+          balVal.textContent = (window.RacerConnect.activeBalanceNear !== undefined)
+            ? `${Number(window.RacerConnect.activeBalanceNear).toFixed(2)} NEAR`
+            : '0.00 NEAR';
+        }
+      }
+    }
+
+    function copyAccountId() {
+      const accId = document.getElementById('account-full-id');
+      if (accId && accId.textContent && accId.textContent !== '—') {
+        navigator.clipboard.writeText(accId.textContent).then(() => {
+          alert('Account ID copied to clipboard');
+        });
+      }
     }
 
     function updateConnectUI() {
       const isAuth = window.RacerConnect && window.RacerConnect.isAuthenticated();
       const user = window.RacerConnect ? window.RacerConnect.user : null;
       const nearWallet = window.RacerConnect ? window.RacerConnect.activeNearWallet : null;
-      const unlinkedDiv = document.getElementById('modal-state-unlinked');
-      const linkedDiv = document.getElementById('modal-state-linked');
       const headerBtn = document.getElementById('header-connect-btn');
-      const linkedNearElem = document.getElementById('linked-near-wallet');
+      const headerLabel = document.getElementById('header-connect-label');
+      const mobileBtn = document.getElementById('mobile-header-connect-btn');
+      const mobileLabel = document.getElementById('mobile-header-connect-label');
 
       if (isAuth || nearWallet) {
-        if (unlinkedDiv) unlinkedDiv.style.display = 'none';
-        if (linkedDiv) linkedDiv.style.display = 'block';
         const displayHandle = nearWallet || (user && user.username) || 'Connected';
-        const uElem = document.getElementById('linked-username');
-        if (uElem) uElem.textContent = displayHandle.startsWith('@') || displayHandle.endsWith('.near') ? displayHandle : '@' + displayHandle;
-        const sElem = document.getElementById('linked-subaccount');
-        if (sElem) sElem.textContent = user?.subaccountId || (nearWallet ? nearWallet : 'user.racerbot.near');
-        if (linkedNearElem) {
-          const nearAcc = nearWallet || user?.wallets?.[0]?.address || 'None';
-          linkedNearElem.innerHTML = `Linked NEAR Wallet: <b style="color:var(--color-positive);">${nearAcc}</b>`;
-        }
+        const truncated = displayHandle.length > 14 ? displayHandle.slice(0, 6) + '...' + displayHandle.slice(-4) : displayHandle;
+        if (headerLabel) headerLabel.textContent = truncated;
+        if (mobileLabel) mobileLabel.textContent = truncated;
         if (headerBtn) {
-          headerBtn.innerHTML = `<span>● ${displayHandle}</span>`;
-          headerBtn.className = 'btn btn-ghost';
-          headerBtn.style.color = '#ffffff';
-          headerBtn.style.background = 'rgba(0, 240, 255, 0.15)';
-          headerBtn.style.border = '1px solid rgba(0, 240, 255, 0.3)';
+          headerBtn.className = 'btn btn-secondary btn-sm';
+        }
+        if (mobileBtn) {
+          mobileBtn.className = 'btn btn-secondary btn-sm';
         }
       } else {
-        if (unlinkedDiv) unlinkedDiv.style.display = 'block';
-        if (linkedDiv) linkedDiv.style.display = 'none';
-        if (headerBtn) {
-          headerBtn.innerHTML = `<span>Log in</span>`;
-          headerBtn.className = 'btn btn-ghost';
-          headerBtn.style.color = '';
-          headerBtn.style.background = '';
-          headerBtn.style.border = '';
-        }
+        if (headerLabel) headerLabel.textContent = 'Connect';
+        if (mobileLabel) mobileLabel.textContent = 'Connect';
+        if (headerBtn) headerBtn.className = 'btn btn-primary btn-sm';
+        if (mobileBtn) mobileBtn.className = 'btn btn-primary btn-sm';
       }
     }
 
@@ -1935,11 +928,133 @@
       updateConnectUI();
     }
 
+    // Market data screener table
+    async function fetchMarketData() {
+      try {
+        const r = await fetch('/alpha/tokens');
+        if (r.ok) {
+          const data = await r.json();
+          allTokens = data.tokens || data || [];
+          renderMarketTable();
+
+          // 6.1 Conditional live stats strip: volume, trades, traders
+          const totalVol = allTokens.reduce((acc, t) => acc + (t.volume24h || 0), 0);
+          if (totalVol > 0) {
+            const strip = document.getElementById('live-stats-strip');
+            const volWidget = document.getElementById('stat-widget-vol');
+            const volVal = document.getElementById('stat-vol-val');
+            if (strip && volWidget && volVal) {
+              strip.style.display = 'grid';
+              volWidget.style.display = 'flex';
+              volVal.textContent = `$${(totalVol / 1e6).toFixed(2)}M`;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load market data:', err);
+      }
+    }
+
+    function handleMarketSearch(query) {
+      currentSearch = (query || '').toLowerCase().trim();
+      renderMarketTable();
+    }
+
+    function renderMarketTable() {
+      const tbody = document.getElementById('market-tokens-tbody');
+      const countEl = document.getElementById('market-pairs-count');
+      if (!tbody) return;
+
+      const filtered = allTokens.filter(t => {
+        if (!currentSearch) return true;
+        const sym = (t.symbol || '').toLowerCase();
+        const name = (t.name || '').toLowerCase();
+        const addr = (t.address || '').toLowerCase();
+        return sym.includes(currentSearch) || name.includes(currentSearch) || addr.includes(currentSearch);
+      });
+
+      if (countEl) countEl.textContent = `${filtered.length} active pairs`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" style="text-align:center;padding:32px;color:var(--color-text-2);">
+              No tokens match your search.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      const displayItems = filtered.slice(0, 30);
+      tbody.innerHTML = displayItems.map((t, idx) => {
+        const changePositive = (t.change24h || 0) >= 0;
+        const changeSign = changePositive ? '+' : '';
+        const changeArrow = changePositive ? '▲' : '▼';
+        const changeClass = changePositive ? 'chip-pos' : 'chip-neg';
+
+        let priceStr = '$0.00';
+        if (t.priceUsd > 0) {
+          if (t.priceUsd >= 1) priceStr = '$' + t.priceUsd.toFixed(2);
+          else if (t.priceUsd >= 0.001) priceStr = '$' + t.priceUsd.toFixed(4);
+          else priceStr = '$' + t.priceUsd.toFixed(6);
+        }
+
+        let volStr = '—';
+        if (t.volume24h > 0) {
+          if (t.volume24h >= 1e6) volStr = '$' + (t.volume24h / 1e6).toFixed(2) + 'M';
+          else if (t.volume24h >= 1e3) volStr = '$' + (t.volume24h / 1e3).toFixed(1) + 'K';
+          else volStr = '$' + Math.round(t.volume24h);
+        }
+
+        let mcapStr = '—';
+        if (t.marketCap > 0) {
+          if (t.marketCap >= 1e6) mcapStr = '$' + (t.marketCap / 1e6).toFixed(2) + 'M';
+          else if (t.marketCap >= 1e3) mcapStr = '$' + (t.marketCap / 1e3).toFixed(1) + 'K';
+          else mcapStr = '$' + Math.round(t.marketCap);
+        }
+
+        return `
+          <tr>
+            <td class="mono-sm" style="color:var(--color-neutral);">${idx + 1}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:28px;height:28px;border-radius:var(--radius-full);background:var(--chip-neutral-bg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;overflow:hidden;flex-shrink:0;">
+                  ${t.icon && t.icon.length > 5
+                    ? `<img src="${t.icon}" alt="${t.symbol}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';">`
+                    : (t.symbol || 'TK').slice(0, 2).toUpperCase()}
+                </div>
+                <div style="display:flex;flex-direction:column;">
+                  <span style="font-weight:700;color:var(--color-text);">${t.symbol || 'TOKEN'}</span>
+                  <span class="mono-sm" style="color:var(--color-neutral);font-size:11px;">${(t.address || '').slice(0, 16)}</span>
+                </div>
+              </div>
+            </td>
+            <td style="font-size:13px;color:var(--color-text-2);">${t.venue || t.launchpad || 'Ref DEX'}</td>
+            <td class="mono-data text-right">${priceStr}</td>
+            <td class="text-right">
+              <span class="chip ${changeClass}" style="display:inline-flex;">
+                ${changeSign}${(t.change24h || 0).toFixed(2)}% ${changeArrow}
+              </span>
+            </td>
+            <td class="mono-sm text-right">${volStr}</td>
+            <td class="mono-sm text-right">${mcapStr}</td>
+            <td class="text-right">
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
+                <a href="/bubblemap?token=${encodeURIComponent(t.address)}" class="btn btn-secondary btn-sm" style="min-width:auto;height:32px;padding:0 10px;font-size:12px;">Analyze</a>
+                <a href="/alpha?tab=console&token=${encodeURIComponent(t.address)}" class="btn btn-primary btn-sm" style="min-width:auto;height:32px;padding:0 10px;font-size:12px;">Trade</a>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
-      updateWatchlistCount();
-      fetchHomeMarketData();
+      fetchMarketData();
       updateConnectUI();
     });
+
     window.addEventListener('racer:auth-changed', updateConnectUI);
     window.addEventListener('racer:wallet-linked', updateConnectUI);
   </script>
