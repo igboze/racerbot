@@ -413,7 +413,7 @@
     <nav class="desktop-nav" aria-label="Main Navigation">
       <a href="/alpha" class="desktop-nav-link">Alpha</a>
       <a href="/fleet" class="desktop-nav-link">Fleet</a>
-      <a href="/bubblemap" class="desktop-nav-link">Bubble</a>
+      <a href="/bubblemap" class="desktop-nav-link">Bubble Map</a>
       <a href="/competition" class="desktop-nav-link">Arena</a>
       <a href="https://t.me/racertradingbot" target="_blank" rel="noopener noreferrer" class="desktop-nav-link">
         <span>RacerBot</span>
@@ -578,18 +578,18 @@
       <div class="how-it-works-grid">
         <div class="how-step-card">
           <span class="how-step-number">Step 1</span>
-          <h3 class="how-step-title">Open RacerBot on Telegram</h3>
-          <p class="how-step-desc">Start the bot and pair your NEAR account with one click.</p>
+          <h3 class="how-step-title">Connect your account</h3>
+          <p class="how-step-desc">Connect directly with NEAR Wallet Selector or pair your Telegram account to trade across web and mobile.</p>
         </div>
         <div class="how-step-card">
           <span class="how-step-number">Step 2</span>
-          <h3 class="how-step-title">Fund your account</h3>
-          <p class="how-step-desc">Deposit NEAR directly or transfer cross-chain with instant bridging.</p>
+          <h3 class="how-step-title">Discover on-chain alpha</h3>
+          <p class="how-step-desc">Scan real-time tokens across Meme.Cooking, JustHoot, Ref Finance, and inspect cluster bubble maps for insider flows.</p>
         </div>
         <div class="how-step-card">
           <span class="how-step-number">Step 3</span>
-          <h3 class="how-step-title">Paste a contract and trade</h3>
-          <p class="how-step-desc">Trade tokens, inspect bubble clusters, and copy verified strategies.</p>
+          <h3 class="how-step-title">Trade, copy, or launch fleets</h3>
+          <p class="how-step-desc">Execute sub-second sniper trades, copy verified traders privately, or deploy multi-wallet fleet bundles with one click.</p>
         </div>
       </div>
     </section>
@@ -692,7 +692,7 @@
     </a>
     <a href="/bubblemap" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"></circle><circle cx="19" cy="6" r="3"></circle><circle cx="6" cy="6" r="2.5"></circle></svg>
-      <span>Bubble</span>
+      <span>Bubble Map</span>
     </a>
     <a href="/fleet" class="mobile-dock-btn">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -993,9 +993,9 @@
         return sym.includes(currentSearch) || name.includes(currentSearch) || addr.includes(currentSearch);
       });
 
-      if (countEl) countEl.textContent = `${filtered.length} active pairs`;
-
       if (filtered.length === 0) {
+        if (countEl) countEl.textContent = '0 active pairs';
+        if (loadMoreEl) loadMoreEl.style.display = 'none';
         tbody.innerHTML = `
           <tr>
             <td colspan="8" style="text-align:center;padding:32px;color:var(--color-text-2);">
@@ -1007,7 +1007,18 @@
       }
 
       const displayItems = filtered.slice(0, itemsShown);
-      if (loadMoreEl) loadMoreEl.style.display = filtered.length > itemsShown ? 'block' : 'none';
+      if (countEl) {
+        countEl.textContent = filtered.length > displayItems.length
+          ? `Showing ${displayItems.length} of ${filtered.length} active pairs`
+          : `${filtered.length} active pairs`;
+      }
+      if (loadMoreEl) {
+        loadMoreEl.style.display = filtered.length > displayItems.length ? 'block' : 'none';
+        const loadBtn = loadMoreEl.querySelector('button');
+        if (loadBtn) {
+          loadBtn.textContent = `Load more (+20) • Showing ${displayItems.length} of ${filtered.length}`;
+        }
+      }
       tbody.innerHTML = displayItems.map((t, idx) => {
         const changePositive = (t.change24h || 0) >= 0;
         const changeSign = changePositive ? '+' : '';
