@@ -114,9 +114,10 @@ const DANGEROUS_METHOD_PATTERNS = [
   'emergency_stop',
 ];
 
-// In-memory safety cache with 15-minute TTL to keep trade paths fast
+// In-memory safety cache with 2-hour TTL to keep token lookups and cards instant
 const safetyCache = new Map<string, { at: number; report: TokenSafetyReport }>();
-const SAFETY_CACHE_TTL_MS = 15 * 60_000;
+const SAFETY_CACHE_TTL_MS = 2 * 60 * 60_000;
+const inflightSafetyChecks = new Map<string, Promise<TokenSafetyReport>>();
 
 /**
  * Perform a comprehensive safety and honeypot inspection on any token.
@@ -136,6 +137,26 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
     }
   }
 
+  // Deduplicate concurrent inflight safety inspections onto one promise
+  if (!forceFresh && inflightSafetyChecks.has(normAddress)) {
+    return inflightSafetyChecks.get(normAddress)!;
+  }
+
+  const checkPromise = (async (): Promise<TokenSafetyReport> => {
+    try {
+      const report = await doCheckTokenSafety(normAddress);
+      safetyCache.set(normAddress, { at: Date.now(), report });
+      return report;
+    } finally {
+      inflightSafetyChecks.delete(normAddress);
+    }
+  })();
+
+  inflightSafetyChecks.set(normAddress, checkPromise);
+  return checkPromise;
+}
+
+async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyReport> {
   // ── SUI Tokens (Must contain '::') ───────────────────────────────────────
   if (normAddress.includes('::')) {
     const isSuiPump = normAddress.includes('::suipump::');
