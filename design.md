@@ -1,167 +1,264 @@
 ---
-version: "3.0"
-name: "RacerBot Intelligence Terminal"
-description: "Canonical design system specification for the RacerBot multi-chain trading intelligence and execution platform. Combines a restrained dark terminal aesthetic, high-contrast financial data visualization, precision mechanical controls, tabular monospace typography, and a mobile-first responsive architecture."
+name: "Racer Design System"
+description: "Canonical design system specification for Racer on NEAR. Dark theme only, high-contrast financial data visualization, DM Sans and JetBrains Mono typography, and MiniDash responsive architecture."
 
 colors:
-  # Backgrounds & Canvases
-  background-main: "#0B0D10"
-  background-secondary: "#11151B"
-  surface-primary: "#151A21"
-  surface-elevated: "#1B222B"
-  surface-hover: "#222B36"
-  surface-active: "#2A3542"
-
-  # Borders & Hairlines
-  border-default: "#27303A"
-  border-strong: "#394452"
-  border-subtle: "rgba(255, 255, 255, 0.06)"
-  border-focus: "#00F0FF"
-
-  # Core Accents
-  brand-accent: "#00F0FF"
-  brand-accent-pressed: "#00D2E0"
-  brand-accent-subtle: "rgba(0, 240, 255, 0.12)"
-  brand-secondary: "#2563EB"
-  brand-secondary-subtle: "rgba(37, 99, 235, 0.15)"
-  
-  # Semantic Trading Signals
-  positive: "#36D399"
-  positive-subtle: "rgba(54, 211, 153, 0.12)"
-  negative: "#F87171"
-  negative-subtle: "rgba(248, 113, 113, 0.12)"
-  warning: "#FBBF24"
-  warning-subtle: "rgba(251, 191, 36, 0.12)"
-  info: "#60A5FA"
-  info-subtle: "rgba(96, 165, 250, 0.12)"
-
-  # Text & Typography
-  text-primary: "#F2F5F8"
-  text-secondary: "#96A0AE"
-  text-muted: "#737F8F"
+  bg: "#0F1320"
+  surface: "#161B2C"
+  surface-2: "#1D2338"
+  border: "#2A3149"
+  border-input: "#6B7490"
+  text: "#F1F4FA"
+  text-2: "#A3ABC2"
+  neutral: "#6B7490"
+  primary: "#6ACCDC"
+  primary-hover: "#8BD9E6"
+  primary-tint: "rgba(106, 204, 220, 0.12)"
+  on-primary: "#0F1320"
+  brand-purple: "#7860A9"
+  purple-text: "#A992D6"
+  success: "#34D399"
+  warning: "#F0AD4E"
+  error: "#FF6B73"
+  error-solid: "#DF2935"
+  chip-pos-bg: "#0E2A24"
+  chip-neg-bg: "#33171D"
+  chip-warn-bg: "#33260F"
+  chip-neutral-bg: "#1D2338"
+  viz-purple: "#A992D6"
+  viz-teal: "#4F818D"
 
 typography:
-  fontFamilySans: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-  fontFamilyMono: "'JetBrains Mono', monospace"
-  
-  scale:
-    page-title: "28px (32px on desktop)"
-    section-title: "20px"
-    card-title: "15px"
-    body-regular: "14px"
-    body-small: "12px"
-    mono-data: "13px (tabular figures)"
-    telemetry-lg: "28px"
+  display:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "40px"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "-0.02em"
+  headline:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "32px"
+    fontWeight: 700
+    lineHeight: 1.2
+  title:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "24px"
+    fontWeight: 700
+    lineHeight: 1.2
+  subtitle:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "18px"
+    fontWeight: 700
+    lineHeight: 1.3
+  body:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.5
+  body-small:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.5
+  caption:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "12px"
+    fontWeight: 500
+    lineHeight: 1.4
+  overline:
+    fontFamily: "'DM Sans', system-ui, sans-serif"
+    fontSize: "10px"
+    fontWeight: 700
+    lineHeight: 1.4
+  mono-data:
+    fontFamily: "'JetBrains Mono', monospace"
+    fontSize: "16px"
+    fontWeight: 500
+    lineHeight: 1.4
+  mono-small:
+    fontFamily: "'JetBrains Mono', monospace"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.4
+
+rounded:
+  xs: "4px"
+  sm: "6px"
+  md: "8px"
+  lg: "12px"
+  xl: "16px"
+  full: "9999px"
 
 spacing:
-  base: 4px
-  scale: [4, 8, 12, 16, 20, 24, 32, 40, 48, 64]
+  xs: "4px"
+  sm: "8px"
+  md: "12px"
+  lg: "16px"
+  xl: "20px"
+  2xl: "24px"
+  3xl: "32px"
+  4xl: "40px"
+  5xl: "48px"
 
-geometry:
-  radius-control: "6px"
-  radius-button: "8px"
-  radius-card: "10px"
-  radius-modal: "14px"
-  radius-full: "9999px"
-
-elevation:
-  shadow-card: "0 2px 10px rgba(0, 0, 0, 0.4), 0 0 1px #27303A"
-  shadow-elevated: "0 12px 32px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 240, 255, 0.08)"
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
+    rounded: "{rounded.md}"
+    height: "44px"
+    padding: "0 20px"
+  button-primary-hover:
+    backgroundColor: "{colors.primary-hover}"
+    textColor: "{colors.on-primary}"
+    rounded: "{rounded.md}"
+  button-secondary:
+    backgroundColor: "transparent"
+    textColor: "{colors.text}"
+    rounded: "{rounded.md}"
+    height: "44px"
+    padding: "0 20px"
+  input:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.md}"
+    height: "44px"
+    padding: "0 14px"
+  card:
+    backgroundColor: "{colors.surface}"
+    rounded: "{rounded.lg}"
+    padding: "20px"
 ---
 
-# RACERBOT INTELLIGENCE TERMINAL — PRODUCT DESIGN SYSTEM
+## Overview
 
-## 1. Overview & Visual Direction
-RacerBot is a professional-grade multi-chain trading intelligence and execution platform.
-The aesthetic direction is **Restrained Dark Terminal**:
-- High-contrast financial typography with tabular numbers.
-- Structured, purposeful layouts prioritizing data clarity and transaction predictability.
-- No decorative purple gradient soup, no generic AI-generated SaaS clutter, and **zero tacky emojis** in primary interfaces.
-- One unified application shell uniting all five product routes: Home (`/`), Bubble Map (`/bubblemap`), Alpha (`/alpha`), Fleet (`/fleet`), and Competition (`/competition`).
+Racer is a parent trading and analytics suite on NEAR Protocol comprising five sub-products:
+1. **Racer Home** (`/`): Unified product discovery and market screener.
+2. **Racer Alpha** (`/alpha`): Confidential trading, viewing keys, copy trading, and Creator Studio.
+3. **RacerFleet** (`/fleet`): Parallel multi-wallet management, bundling, disbursements, and sweeps.
+4. **RacerBubble** (`/bubblemap`): Interactive D3-powered bubble map and token cluster analytics.
+5. **Racer Arena** (`/competition`): On-chain trading competitions, volume sprints, and reward epochs.
 
----
-
-## 2. Color System & Usage Rules
-
-### Surfaces
-- `background-main` (`#0B0D10`): Main application canvas.
-- `background-secondary` (`#11151B`): Shell sidebars, navigation docks, and page wells.
-- `surface-primary` (`#151A21`): Primary cards, graph control toolbars, tables, and modal bodies.
-- `surface-elevated` (`#1B222B`): Flyouts, inspector drawers, dropdowns, and hovered items.
-
-### Borders
-- `border-default` (`#27303A`): 1px structural boundaries between panes and cards.
-- `border-strong` (`#394452`): Form inputs, selected card boundaries, and key control dividers.
-- `border-focus` (`#00F0FF`): Active keyboard focus and primary active tabs.
-
-### Accents & Trading Signals
-- `brand-accent` (`#00F0FF`): Laser cyan used selectively for primary execution buttons, selected navigation, active tabs, and telemetry status dots.
-- `positive` (`#36D399`): Buys, positive PnL percentages, successful transaction badges.
-- `negative` (`#F87171`): Sells, negative PnL percentages, stop-loss triggers, error alerts.
-- `warning` (`#FBBF24`): Sensitive operations (e.g. private key export review), high slippage warnings.
-- `info` (`#60A5FA`): Verified network indicators, transaction hashes, neutral protocol tags.
-
-*Strict Rule*: Do not use every accent color simultaneously. Never communicate state through color alone — always accompany with text or icons.
-
----
-
-## 3. Typography & Numerical Representation
-- **Sans-Serif (`Plus Jakarta Sans`)**: Used for brand markings, navigation links, section titles, explanatory paragraphs, button labels, and badges.
-- **Monospace (`JetBrains Mono`)**: Mandatory for all wallet addresses (truncated or full), transaction hashes, prices, balances, slippage values, timestamp logs, and tabular data tables.
-- **Numerical Alignment**: Always use `font-variant-numeric: tabular-nums` to prevent jumping numbers during live quote updates.
+The visual direction is **Calm Dark Precision**:
+- Grounded in logo Navy (`#0F1320`), with brand Cyan (`#6ACCDC`) as the single interactive action color.
+- High-contrast tabular numbers, 44px touch targets, non-nested cards, and dark elevation with 1px border definitions over fuzzy drop shadows.
+- No generic SaaS patterns, no neon glow, and zero UI emojis.
 
 ---
 
-## 4. Component Standards
+## Colors
+
+The color palette is derived directly from the authoritative Racer logo badge:
+
+### Ground & Surfaces
+- `bg` (`#0F1320`): Core brand navy canvas across all pages.
+- `surface` (`#161B2C`): Cards, panels, toolbars, modal windows, table containers.
+- `surface-2` (`#1D2338`): Hover table rows, popovers, tooltips, neutral chips, elevated drawers.
+
+### Borders & Dividing Lines
+- `border` (`#2A3149`): 1px structural dividing lines and card outlines.
+- `border-input` (`#6B7490`): Interactive form inputs, select dropdowns, and button outlines.
+
+### Action & Accents
+- `primary` (`#6ACCDC`): Brand cyan. The **ONLY** action color across buttons, links, active navigation tabs, selected chips, and focus rings.
+- `primary-hover` (`#8BD9E6`): Hover state for primary cyan buttons.
+- `on-primary` (`#0F1320`): Navy text on cyan fills for guaranteed 9.9:1 contrast.
+- `brand-purple` (`#7860A9`): Accent for "You" chips, Pro tier badges, same-owner bubble clusters, and equity fills.
+- `purple-text` (`#A992D6`): Purple text, lines, and icons on dark backgrounds.
+- `viz-teal` (`#4F818D`): Muted logo mid-tone for DEX pools and LP nodes.
+
+### Status & Trading Signals
+- `success` (`#34D399`): Positive changes, buys, confirmed states (`+` and `▲`).
+- `warning` (`#F0AD4E`): High slippage warnings, caution notes, whale bubbles.
+- `error` (`#FF6B73`): Negative changes, sells, bundler clusters (`-` and `▼`).
+- `error-solid` (`#DF2935`): Destructive action buttons (disconnect, sweep, emergency exit).
+
+---
+
+## Typography
+
+- **Headings & Body UI**: Google Font **DM Sans** (weights 400, 500, 700). Letter spacing -0.02em on Display, normal elsewhere.
+- **Financial & Tabular Data**: Google Font **JetBrains Mono** (weights 400, 500) with `font-variant-numeric: tabular-nums`. Right-aligned in data tables.
+- **Hierarchy Scale**:
+  - Display: 40px / 700 (28px on mobile).
+  - Headline (H1): 32px / 700 (22px on mobile).
+  - Title (H2): 24px / 700 (17px on mobile).
+  - Subhead (H3): 18px / 700.
+  - Body: 16px / 400 (13px on mobile).
+  - Body small: 14px / 400 (12px on mobile).
+  - Caption: 12px / 500 (11px on mobile).
+  - Overline: 10px / 700 uppercase.
+  - Mono Data: 13px - 22px / 500.
+
+---
+
+## Layout
+
+- **Desktop Shell**: Sticky 60px top bar (`#161B2C`) with 32px Racer logo, center navigation (Alpha, Fleet, Bubble, Arena, RacerBot ↗), Deposit button, and unified wallet chip. Max container width 1200px centered with 24px side padding.
+- **Mobile Shell**: Sticky 56px top bar (28px logo + wallet trigger) and 56px fixed bottom dock (Home, Alpha, Bubble, Fleet, Arena) with `padding-bottom: env(safe-area-inset-bottom)`.
+- **Responsive Breakpoints**:
+  - Mobile: 0 - 767px (12px side padding, 2-column widget grid with 8px gap).
+  - Tablet: 768px - 1023px (Single main column, side panels shift to bottom sheets).
+  - Desktop: 1024px+ (Multi-column flex layout with sticky 360px/380px inspector panels).
+- Tables transform into structured card lists on mobile; zero horizontal page scrolling allowed.
+
+---
+
+## Elevation & Depth
+
+- Dark mode flat architecture prioritizing crisp 1px borders (`#2A3149`) over blurred drop shadows.
+- **Level 0 (Flat)**: Cards, table rows, and page canvas.
+- **Level 2 (Popovers & Tooltips)**: `--color-surface-2` with 1px border and `box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4)`.
+- **Level 3 (Modals & Bottom Sheets)**: `--color-surface` with 1px border, `box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5)`, and `rgba(5, 8, 16, 0.7)` backdrop overlay.
+
+---
+
+## Shapes
+
+- **Radius Scale**:
+  - `4px`: Status chips, checkboxes, small indicators.
+  - `6px`: Filter chips, tooltips.
+  - `8px`: Buttons, text inputs, table wrappers.
+  - `12px`: Content cards, panels, popover menus.
+  - `16px`: Modal dialogs, bottom sheets (top corners), hero accents.
+  - `9999px`: Avatars, status dots, toggle pills.
+- Speed-line motif: static 3-line horizontal gradient fading from cyan to transparent in hero and empty states. No animation.
+
+---
+
+## Components
 
 ### Buttons
-- **Primary (`.btn-primary`)**: Solid Laser Cyan (`#00F0FF`) with dark obsidian text (`#020817`), `font-weight: 700`, 8px radius. Min height 42px.
-- **Secondary (`.btn-secondary`)**: Elevated surface (`#1B222B`), 1px `#27303A` border, white text (`#F2F5F8`). Hover transitions to `#222B36`.
-- **Trading Action (`.btn-buy`, `.btn-sell`)**: Solid `#36D399` and `#F87171` respectively with white text and bold typography.
-- **Ghost (`.btn-ghost`)**: Transparent background with hover fill `rgba(0, 240, 255, 0.08)`.
+- Height 44px on all platforms for primary actions; min-width 100px.
+- Primary: Cyan fill (`#6ACCDC`), Navy text (`#0F1320`), hover `#8BD9E6`.
+- Secondary: Transparent fill, 1px `#6B7490` border, white text (`#F1F4FA`).
+- Disabled: 40% opacity with visible tooltip/helper explanation.
 
-### Form Controls & Inputs
-- Height 42px (min 44px on mobile), `#151A21` background, 1px `#27303A` border, `#F2F5F8` text.
-- Focused state: 1px `#00F0FF` border with subtle cyan focus ring.
-- Never use font-size smaller than 16px on mobile form inputs to eliminate iOS Safari auto-zoom.
+### Form Inputs
+- Height 44px, 14px horizontal padding, `#161B2C` background, 1px `#6B7490` border.
+- Focus: 2px cyan border with 4px subtle glow ring (`rgba(106, 204, 220, 0.2)`).
 
-### Tables & Data Grids
-- Desktop: Monospace tabular columns, sticky headers with 1px `#27303A` border, clean hover highlight.
-- Mobile: Transform into compact structured cards or provide horizontal touch scroll with sticky first column.
+### Metric Widgets (MiniDash)
+- Large bold JetBrains Mono number at top, secondary label below (12px, `#A3ABC2`), optional trend arrow chip.
+- Spans 1 cell in mobile 2-column grid; charts and tables span 2 columns.
 
-### Modals & Drawers
-- Desktop: Centered dialogs with `#151A21` background, 1px `#27303A` border, subtle blur backdrop (`rgba(11, 13, 16, 0.8)`).
-- Mobile: Ergonomic bottom sheets (`border-radius: 14px 14px 0 0`) with drag handles and safe area bottom padding.
-
----
-
-## 5. Mobile Interaction Patterns (FeedLoop Design System)
-
-FeedLoop is a scroll-optimized, content-first mobile design system built for feeds and discovery platforms. It emphasizes readability at speed, with compact spacing that maximizes content density without sacrificing clarity.
-
-### FeedLoop Palette (Mobile Viewports ≤ 768px)
-- **Primary** (`#2563EB`): Blue — interactive elements, links, CTAs, active bottom dock items.
-- **Secondary** (`#6B7280`): Gray — metadata, timestamps, subheaders, badges.
-- **Tertiary** (`#F9FAFB`): Light — background tints and subtle wells.
-- **Background** (`#F9FAFB`): Clean feed canvas.
-- **Surface** (`#FFFFFF`): Post cards, modules, drawer panels, modal sheets.
-- **Success** (`#16A34A`): Buys, positive yields, confirmed signals.
-- **Warning** (`#D97706`): Cautionary alerts, high slippage.
-- **Error** (`#DC2626`): Sells, negative yields, stop-loss triggers.
-- **Info** (`#2563EB`): Protocol indicators, verified network badges.
-
-### FeedLoop Do's and Don'ts
-- **Do keep post cards visually uniform**: Consistent padding (14px–16px) and uniform 12px card radius across all feeds and modules.
-- **Don't add heavy shadows to feed cards**: Rely on crisp 1px `#E5E7EB` hairline borders and subtle elevation (`0 1px 3px rgba(0, 0, 0, 0.05)`).
-- **Do maintain a minimum touch target of 44px**: All buttons, tabs, category pills, form inputs, and bottom dock items meet or exceed 44px × 44px.
-- **Do optimize for scroll speed & readability**: Tabular numbers (`font-variant-numeric: tabular-nums`), high contrast text (`#111827`), compact vertical gaps (10px–12px), zero horizontal page overflow.
-- **Universal Mobile Dock**: 5-column navigation dock (Home, Bubble Map, Alpha, Fleet, Arena) with clean `#FFFFFF` backdrop, `#E5E7EB` border, and `#2563EB` active indicators.
+### Bottom Sheets & Modals
+- Desktop: 480px - 640px modal with focus trap, ESC dismiss, and backdrop tap close.
+- Mobile: Bottom sheet with drag handle, 90vh max height, and pinned CTAs above the bottom dock.
 
 ---
 
-## 6. Route Architecture
-1. **`/` (Home)**: Market context, trading volume, trending tokens, live activity feed, and instant workspace shortcuts.
-2. **`/bubblemap?token=...`**: Token & wallet intelligence flagship. Direct graph canvas, token header, risk metrics, wallet inspector drawer, cluster legend.
-3. **`/alpha`**: Trader directory, strategy cards, 4-stage copy-trading flow (Configure → Review → Confirm), open positions, and separated Creator Studio.
-4. **`/fleet`**: Multi-wallet cockpit. Wallet matrix, 3-stage coordinated trading (Configure → Review → Execute), capital management (disburse/sweep), sensitive key handling with confirmation gating.
-5. **`/competition`**: Active reward program & snapshot arena. Personal standings, verified wallet leaderboard, prize breakdown, plain-language scoring rules.
+## Do's and Don'ts
+
+### Do's
+- **Do** use `#6ACCDC` cyan exclusively for interactive actions.
+- **Do** pair every red/green value with an explicit sign and directional arrow (`+` / `▲`, `-` / `▼`).
+- **Do** format all financial figures in JetBrains Mono with `tabular-nums`.
+- **Do** enforce 44px minimum height for buttons and touch targets.
+- **Do** provide a 3-step review flow (Review -> Pending -> Confirmed) before executing any transaction.
+
+### Don'ts
+- **Don't** use blue (`#0052FF`, `#2563EB`) or light themes.
+- **Don't** use emojis as interface icons. Use inline SVG icons exclusively.
+- **Don't** use em dashes (`—`) or en dashes (`–`) in UI copy.
+- **Don't** hardcode fake statistics, sample traders, or speculative claims.
+- **Don't** use generic buzzwords ("institutional", "bank-grade", "zero-leak", "stealth").
