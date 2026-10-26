@@ -59,8 +59,8 @@
       /* Precision Mechanical Radius */
       --radius-none: 0px;
       --radius-sm: 4px;
-      --radius-md: 6px;
-      --radius-lg: 8px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
       --radius-xl: 12px;
       --radius-full: 9999px;
       --radius: 6px;
@@ -96,14 +96,10 @@
 
     html, body {
       background-color: var(--color-canvas);
-      background-image: 
-        none 0%, rgba(6, 14, 34, 0.6) 50%, rgba(3, 7, 18, 0.98) 100%),
-        none, transparent 70%);
-      background-attachment: fixed;
       color: var(--color-ink-strong);
       font-family: var(--font-sans);
       font-size: 16px;
-      font-weight: 484;
+      font-weight: 400;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
@@ -111,11 +107,6 @@
       min-height: 100dvh;
       overflow-x: hidden;
       width: 100%;
-      background-image: 
-        none, transparent 70%),
-        none, transparent 70%),
-        none, transparent 70%);
-      background-attachment: fixed;
       position: relative;
     }
 
@@ -146,8 +137,8 @@
       z-index: 50;
       height: 60px;
       background: rgba(0, 18, 34, 0.94);
-      
-      -webkit-
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--color-surface-3);
       display: flex;
       align-items: center;
@@ -251,7 +242,7 @@
       color: #ffffff;
       font-family: var(--font-sans);
       font-size: 15px;
-      font-weight: 484;
+      font-weight: 500;
       border-radius: var(--radius-md);
       border: 1px solid var(--color-surface-3);
       cursor: pointer;
@@ -332,7 +323,7 @@
 
     .hero-lead {
       font-size: clamp(15px, 1.8vw, 19px);
-      font-weight: 496; /* Adyen heading-md weight */
+      font-weight: 500;
       line-height: 27px;
       letter-spacing: 0;
       color: var(--color-ink-muted);
@@ -865,107 +856,11 @@
       width: 100%;
     }
 
-    /* ═══════════════════════════════════════════════════════════════════════════
-       MOBILE FIRST RESPONSIVE ARCHITECTURE (iPhone SE to S24 Ultra & Tablets)
-       ═══════════════════════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
-      html, body {
-        width: 100% !important;
-        max-width: 100% !important;
-        overflow-x: hidden !important;
-        background: #F9FAFB !important;
-        color: #111827 !important;
-      }
-      .racer-header,
-      .site-header {
-        height: auto;
-        min-height: 54px;
-        padding: max(4px, env(safe-area-inset-top, 0px)) 14px 4px;
-        gap: 8px;
-        width: 100% !important;
-        max-width: 100% !important;
-        background: rgba(255, 255, 255, 0.96) !important;
-        border-bottom: 1px solid #E5E7EB !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-      }
-      .nav-links,
-      .network-badge {
-        display: none !important;
-      }
-      .header-inner {
-        padding: 0 !important;
-        height: 54px !important;
-        width: 100% !important;
-      }
-      .brand,
-      .brand-logo-wrap {
-        gap: 8px;
-      }
-      .brand-logo {
-        width: 32px;
-        height: 32px;
-        border-radius: 8px;
-        background: #F3F4F6 !important;
-        border: 1px solid #E5E7EB !important;
-      }
-      .brand-title {
-        font-size: 14px;
-        color: #111827 !important;
-      }
-      .brand-subtitle {
-        display: none;
-      }
-      .btn-header-cta {
-        min-height: 44px !important;
-        height: 44px;
-        padding: 0 16px;
-        font-size: 13px;
-        font-weight: 600;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border: 1px solid #2563EB !important;
-        border-radius: 8px;
-      }
-      .btn-header-sub {
-        min-height: 44px !important;
-        height: 44px;
-        padding: 0 14px;
-        font-size: 13px;
-        background: #FFFFFF !important;
-        color: #374151 !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px;
-      }
-      .container {
-        padding: 20px 14px calc(80px + env(safe-area-inset-bottom, 16px));
-        background: #F9FAFB !important;
-      }
-      .hero-h1 {
-        font-size: clamp(22px, 6.5vw, 32px);
-        margin-bottom: 12px;
-        color: #111827 !important;
-      }
-      .hero-lead {
-        font-size: 14px;
-        line-height: 22px;
-        margin-bottom: 20px;
-        color: #6B7280 !important;
-      }
-      .privacy-notice {
-        padding: 14px 16px;
-        gap: 10px;
-        margin-bottom: 20px;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-      }
-      .privacy-text {
-        font-size: 12px;
-        line-height: 1.45;
-        color: #6B7280 !important;
-      }
-
-      /* Tabs Strip: Mobile Kinetic Scrolling with 44px Touch Targets */
+      .container { padding: 20px 14px calc(80px + env(safe-area-inset-bottom, 16px)); }
+      .nav-links, .network-badge { display: none; }
+      .hero-h1 { font-size: clamp(22px, 6.5vw, 32px); margin-bottom: 12px; }
+      .hero-lead { font-size: 14px; line-height: 22px; margin-bottom: 20px; }
       .tabs-strip {
         margin: 0 -14px 20px -14px;
         padding: 0 14px 2px 14px;
@@ -975,250 +870,44 @@
         flex-wrap: nowrap;
         gap: 8px;
       }
-      .tabs-strip::-webkit-scrollbar {
-        display: none;
-      }
-      .tab-btn {
-        min-height: 44px !important;
-        padding: 0 18px !important;
-        font-size: 12.5px;
-        font-weight: 600;
-        flex-shrink: 0;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        border-radius: 9999px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        color: #6B7280 !important;
-      }
-      .tab-btn.active {
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border-color: #2563EB !important;
-        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
-      }
-
-      /* 2x2 Mobile Stat Dashboard in FeedLoop Uniform Card Style */
-      .stat-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-        margin-bottom: 20px;
-      }
-      .stat-card {
-        padding: 14px 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-      }
-      .stat-label {
-        font-size: 10.5px;
-        margin-bottom: 4px;
-        color: #6B7280 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
-      .stat-value {
-        font-size: 20px;
-        line-height: 1.2;
-        color: #111827 !important;
-        font-weight: 700;
-      }
-      .stat-sub {
-        font-size: 11px;
-        margin-top: 3px;
-        color: #6B7280 !important;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      /* Card Content & Search on Mobile */
-      .card {
-        padding: 16px 14px !important;
-        margin-bottom: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-      }
-      .card-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 12px;
-        margin-bottom: 16px;
-        border-bottom: 1px solid #F3F4F6 !important;
-        padding-bottom: 12px !important;
-      }
-      .card-title {
-        font-size: 16px;
-        color: #111827 !important;
-        font-weight: 700;
-      }
-      .card-actions {
-        width: 100%;
-      }
-      .search-box {
-        width: 100%;
-      }
-      .search-input {
-        width: 100%;
-        min-height: 44px !important;
-        height: 44px;
-        font-size: 16px; /* Prevents iOS auto-zoom on input focus */
-        background: #FFFFFF !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
-        color: #111827 !important;
-        padding: 0 14px 0 36px !important;
-      }
-
-      /* ── FeedLoop Uniform Post Cards for Leaderboard Feed ── */
-      .table-container {
-        border: none;
-        background: transparent;
-        overflow: visible;
-      }
-      table.data-table {
-        display: block;
-        width: 100%;
-      }
-      table.data-table thead {
-        display: none;
-      }
-      table.data-table tbody {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        width: 100%;
-      }
+      .tabs-strip::-webkit-scrollbar { display: none; }
+      .tab-btn { min-height: 44px; padding: 0 18px; font-size: 12.5px; flex-shrink: 0; }
+      .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
+      .stat-value { font-size: 20px; }
+      .card { padding: 16px 14px; margin-bottom: 16px; }
+      .card-header { flex-direction: column; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+      .card-actions, .search-box { width: 100%; }
+      .search-input { width: 100%; min-height: 44px; height: 44px; font-size: 16px; }
+      .table-container { border: none; background: transparent; overflow: visible; }
+      table.data-table { display: block; width: 100%; }
+      table.data-table thead { display: none; }
+      table.data-table tbody { display: flex; flex-direction: column; gap: 10px; width: 100%; }
       table.data-table tr {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-        padding: 14px 16px !important;
-        gap: 8px 12px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-        transition: transform 140ms ease;
+        display: flex; flex-wrap: wrap; align-items: center;
+        justify-content: space-between; padding: 14px 16px; gap: 8px 12px;
+        border-radius: var(--radius-md); transition: transform 140ms ease;
       }
-      table.data-table tr:hover td {
-        background: transparent;
-      }
-      table.data-table td {
-        padding: 0;
-        border: none;
-        color: #111827 !important;
-      }
-
-      .col-rank {
-        order: 1;
-        flex-shrink: 0;
-      }
-      .col-wallet {
-        order: 2;
-        flex: 1;
-        min-width: 120px;
-      }
-      .wallet-addr-text {
-        max-width: 140px;
-        font-size: 13px;
-        color: #111827 !important;
-        display: inline-block;
-      }
-      .col-points {
-        order: 3;
-        flex-shrink: 0;
-        text-align: right !important;
-      }
-      .col-points .points-cell {
-        font-size: 16px;
-        font-weight: 700;
-        color: var(--color-primary) !important;
-      }
-      .col-tier {
-        order: 4;
-        flex-shrink: 0;
-      }
-      .col-events {
-        order: 5;
-        font-size: 11.5px !important;
-        color: #6B7280 !important;
-      }
-      .col-share {
-        order: 6;
-        margin-left: auto;
-        font-size: 12px !important;
-        color: #2563EB !important;
-        font-weight: 600;
-      }
-
-      /* Competition Formats & Rules */
-      .formats-grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-      .format-card {
-        padding: 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-      }
-      .rules-grid {
-        grid-template-columns: 1fr;
-        gap: 10px;
-      }
-      .rule-box {
-        padding: 14px 16px !important;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-      }
-
-      /* Host Banner */
-      .host-banner {
-        padding: 20px 16px;
-        gap: 16px;
-        background: #FFFFFF !important;
-        border: 1px solid #E5E7EB !important;
-        border-radius: 12px !important;
-      }
-      .host-title {
-        font-size: 18px;
-        color: #111827 !important;
-      }
-      .host-btn {
-        width: 100%;
-        justify-content: center;
-        min-height: 44px !important;
-        height: 46px;
-        background: #2563EB !important;
-        color: #FFFFFF !important;
-        border-radius: 8px !important;
-        font-weight: 600;
-      }
+      table.data-table td { padding: 0; border: none; }
+      .col-rank { order: 1; flex-shrink: 0; }
+      .col-wallet { order: 2; flex: 1; min-width: 120px; }
+      .wallet-addr-text { max-width: 140px; font-size: 13px; display: inline-block; }
+      .col-points { order: 3; flex-shrink: 0; text-align: right; }
+      .col-points .points-cell { font-size: 16px; font-weight: 700; }
+      .col-tier { order: 4; flex-shrink: 0; }
+      .col-events { order: 5; font-size: 11.5px; }
+      .col-share { order: 6; margin-left: auto; font-size: 12px; font-weight: 600; }
+      .formats-grid { grid-template-columns: 1fr; gap: 12px; }
+      .rules-grid { grid-template-columns: 1fr; gap: 10px; }
+      .host-banner { padding: 20px 16px; gap: 16px; }
+      .host-btn { width: 100%; justify-content: center; min-height: 44px; height: 46px; font-weight: 600; }
+      .btn-header-cta, .btn-header-sub { min-height: 44px; height: 44px; }
     }
 
-    /* Smallest Mobile Devices (< 380px: iPhone SE, Galaxy Fold outer screen) */
     @media (max-width: 380px) {
-      .btn-header-sub .btn-text {
-        display: none;
-      }
-      .btn-header-sub {
-        padding: 0 8px;
-        width: 34px;
-        justify-content: center;
-      }
-      .wallet-addr-text {
-        max-width: 95px;
-      }
-      .stat-value {
-        font-size: 15px;
-      }
+      .btn-header-sub .btn-text { display: none; }
+      .btn-header-sub { padding: 0 8px; width: 34px; justify-content: center; }
+      .wallet-addr-text { max-width: 95px; }
+      .stat-value { font-size: 15px; }
     }
   </style>
   <link rel="stylesheet" href="/assets/racer-terminal.css">
@@ -1321,8 +1010,8 @@
         <span class="tab-badge">Program formats</span>
       </button>
       <button class="tab-btn" onclick="switchTab('host')">
-        <span>Host a Competition</span>
-        <span class="tab-badge">For organizers</span>
+        <span>Partner With Us</span>
+        <span class="tab-badge">Host an event</span>
       </button>
     </div>
 
