@@ -1533,6 +1533,73 @@ export async function sendTokenCard(ctx: any, card: { text: string; keyboard: an
 }
 
 /**
+ * Deliver the position "details" view for a tapped holding.
+ *
+ * Previous behaviour swallowed every send error (`.catch(() => {})`), so any
+ * Telegram rejection (Markdown entity error, caption over 1024 chars, editing
+ * a photo message as text) left the user tapping a button that "did nothing".
+ * This tries each rendering in order and always ends with something visible.
+ */
+export async function deliverTokenDetail(
+  ctx: any,
+  msg: string,
+  buttons: any[],
+  image: Buffer | null,
+): Promise<void> {
+  const markup = Markup.inlineKeyboard(buttons);
+  const plain = msg.replace(/[*_`]/g, '');
+  const cbMsg = ctx.callbackQuery?.message;
+  const sourceIsPhoto = !!cbMsg?.photo;
+
+  // 1. Photo card (Telegram caption limit is 1024 chars).
+  if (image && msg.length <= 1024) {
+    for (const opts of [
+      { caption: msg, parse_mode: 'Markdown' as const, reply_markup: markup.reply_markup },
+      { caption: plain, reply_markup: markup.reply_markup },
+    ]) {
+      try {
+        await ctx.replyWithPhoto({ source: image }, opts);
+        await ctx.deleteMessage().catch(() => {});
+        return;
+      } catch (err: any) {
+        console.warn('[token_detail] Photo send failed:', err?.description || err?.message);
+      }
+    }
+  }
+
+  // 2. Edit the tapped message in place (only possible for text messages).
+  if (!sourceIsPhoto && typeof ctx.editMessageText === 'function') {
+    try {
+      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...markup });
+      return;
+    } catch (err: any) {
+      const desc = String(err?.description || err?.message || '');
+      if (desc.includes('message is not modified')) return;
+      console.warn('[token_detail] Edit failed, sending new message:', desc);
+    }
+  }
+
+  // 3. New message, Markdown then plain text.
+  try {
+    await ctx.reply(msg, { parse_mode: 'Markdown', ...markup });
+    return;
+  } catch (err: any) {
+    console.warn('[token_detail] Markdown reply failed:', err?.description || err?.message);
+  }
+  try {
+    await ctx.reply(plain, markup);
+  } catch (err: any) {
+    console.error('[token_detail] Plain reply failed:', err?.description || err?.message);
+    // Last resort: keep only callback buttons, in case a URL button
+    // (e.g. a launchpad link Telegram considers invalid) is what was rejected.
+    const callbackOnly = buttons
+      .map((row: any[]) => (Array.isArray(row) ? row.filter((b: any) => b && !b.url) : []))
+      .filter((row: any[]) => row.length > 0);
+    await ctx.reply(plain, Markup.inlineKeyboard(callbackOnly)).catch(() => ctx.reply(plain).catch(() => {}));
+  }
+}
+
+/**
  * Build a rich, comprehensive Deep Contract & Honeypot Audit card.
  */
 export async function buildDeepAuditCard(tokenAddress: string): Promise<{ text: string; keyboard: any }> {
@@ -5796,7 +5863,9 @@ export function setupRoutes(bot: Telegraf): void {
               const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
               let rawBig = 0n;
               try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
-              const isZero = rawBig === 0n || clean === '0' || rawBig < 1000000n;
+              // Decimals-aware dust is handled later by the holdings dust filter;
+              // a raw `< 1e6` cutoff here closed real low-decimal balances (USDC etc.).
+              const isZero = rawBig === 0n;
               return { isZero, rawBal: clean, verified: true };
             } catch {
               // Never assume zero on error/timeout!
@@ -6212,7 +6281,22 @@ export function setupRoutes(bot: Telegraf): void {
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
-        await ctx.reply('Position not found. Please try again.').catch(() => {});
+        // The position may have been closed or re-created by a background
+        // deposit sync since the holdings list was drawn. Fall back to the
+        // plain token card instead of a dead end.
+        const stale = await getPositionById(positionId).catch(() => null);
+        if (stale && stale.user_id === user.id) {
+          try {
+            const card = await withTimeout(buildTokenCard(stale.token_address, telegramId), 10000, 'token card timeout');
+            await sendTokenCard(ctx, card);
+            return;
+          } catch (cardErr: any) {
+            console.warn('[token_detail] Fallback token card failed:', cardErr?.message);
+          }
+        }
+        await ctx.reply('This token is no longer in your holdings. Tap below to refresh.', {
+          ...Markup.inlineKeyboard([[cb('🎒 Refresh Holdings', 'refresh_holdings', 'primary')]]),
+        }).catch(() => {});
         return;
       }
 
@@ -6260,7 +6344,10 @@ export function setupRoutes(bot: Telegraf): void {
             const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
             let rawBig = 0n;
             try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
-            if (rawBig === 0n || clean === '0' || rawBig < 1000000n) {
+            // Only a true zero closes the position here. A fixed raw threshold
+            // (the old `< 1e6`) wrongly closed small balances of low-decimal
+            // tokens (e.g. 0.5 USDC = 500000 raw) that were sent into the wallet.
+            if (rawBig === 0n) {
               onChainZero = true;
             } else {
               liveRawBal = clean;
@@ -6303,10 +6390,20 @@ export function setupRoutes(bot: Telegraf): void {
         }).catch(() => {});
       }
 
-       const [info, fills, triggers] = await Promise.all([
-         getTokenInfo(position.token_address, false).catch(() => null),
-         getFillsByPosition(positionId).catch(() => []),
-         getTriggersByPosition(positionId).catch(() => []),
+      // Every network call below is time-boxed. Tokens that arrive by external
+      // deposit are often uncached/unlisted, so an unbounded token discovery
+      // (plus the PNL card's forced refresh) could stall the handler long past
+      // the 15s middleware limit and the tap looked like it did nothing.
+      const pnlCardPromise = withTimeout(generatePNLCard(positionId, showNetWorth), 9000, 'pnl card timeout')
+        .catch((err: any) => {
+          console.warn('[token_detail] PNL card skipped:', err?.message || err);
+          return null;
+        });
+
+      const [info, fills, triggers] = await Promise.all([
+        withTimeout(getTokenInfo(position.token_address, false), 6000, 'token info timeout').catch(() => null),
+        getFillsByPosition(positionId).catch(() => []),
+        getTriggersByPosition(positionId).catch(() => []),
       ]);
 
       const slTrigger = triggers.find(t => t.type === 'stop_loss');
@@ -6320,8 +6417,8 @@ export function setupRoutes(bot: Telegraf): void {
       const liveNativeUsd = isStarknetPos
         ? (info?.strk_usd || 0.12)
         : isSuiPos
-        ? await getSuiUsdPrice().catch(() => 2.0)
-        : await getNearUsdPrice().catch(() => 5.16);
+        ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
+        : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
       const usdRate = isStarknetPos
         ? (info?.strk_usd || liveNativeUsd)
         : isSuiPos
@@ -6441,7 +6538,7 @@ export function setupRoutes(bot: Telegraf): void {
       let pnlCardText: string | null = null;
       let cardData: any = null;
       try {
-        const pnlCard = await generatePNLCard(positionId, showNetWorth);
+        const pnlCard = await pnlCardPromise;
         if (pnlCard) {
           cardData = pnlCard.data;
           pnlCardImage = pnlCard.image;
@@ -6589,7 +6686,7 @@ export function setupRoutes(bot: Telegraf): void {
       // Share Token (Earn 5% Fees)
       if (!isSuiPos) {
         try {
-          const shareCode = await getOrCreateTokenShare(user.id, position.token_address);
+          const shareCode = await withTimeout(getOrCreateTokenShare(user.id, position.token_address), 3000, 'share code timeout');
           const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
           const sym = symbol !== '???' ? symbol : 'TOKEN';
           const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on NEAR DEXs`;
@@ -6619,25 +6716,7 @@ export function setupRoutes(bot: Telegraf): void {
         msg += `\n${pnlCardText}`;
       }
 
-      // If image was generated, send it as a new message with caption and keyboard
-      if (pnlCardImage) {
-        await ctx.replyWithPhoto(
-          { source: pnlCardImage },
-          {
-            caption: msg,
-            parse_mode: 'Markdown',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup
-          }
-        ).catch(() => {
-          // Fallback to text if image send fails
-          ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
-        });
-        // Delete the original message to avoid clutter
-        await ctx.deleteMessage().catch(() => {});
-        return;
-      }
-
-      await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }).catch(() => {});
+      await deliverTokenDetail(ctx, msg, buttons, pnlCardImage);
     } catch (err: any) {
       console.error('[token_detail] Error loading token details:', err?.message || err);
       await ctx.reply('Error loading token details. Please try again.').catch(() => {});

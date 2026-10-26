@@ -61,28 +61,28 @@
   <style>
     /* ── Racer Brand & Confidential Trading Design System ─────────────────── */
     :root {
-      --color-canvas: #030712;
-      --color-canvas-subtle: #060e22;
-      --color-surface: #08142c;
-      --color-surface-card: #0b1a38;
-      --color-surface-hover: #10234a;
-      --color-surface-active: #152d5e;
-      --color-border: rgba(59, 130, 246, 0.22);
+      --color-canvas: #0F1320;
+      --color-canvas-subtle: #131829;
+      --color-surface: #161B2C;
+      --color-surface-card: #1D2338;
+      --color-surface-hover: #232A42;
+      --color-surface-active: #2A3149;
+      --color-border: #2A3149;
       --color-border-subtle: rgba(255, 255, 255, 0.08);
-      --color-border-glow: rgba(0, 240, 255, 0.25);
+      --color-border-glow: rgba(106, 204, 220, 0.25);
 
       /* Racer Velocity Palette */
-      --color-primary: #00f0ff;
-      --color-primary-pressed: #00d2e0;
-      --color-racer-cyan: #00f0ff;
-      --color-racer-cyan-glow: rgba(0, 240, 255, 0.25);
-      --color-racer-purple: #2563eb;
-      --color-racer-purple-light: #3b82f6;
-      --color-racer-purple-glow: rgba(37, 99, 235, 0.28);
-      --color-racer-green: #00e676;
-      --color-racer-green-glow: rgba(0, 230, 118, 0.25);
-      --color-racer-gold: #ffb703;
-      --color-danger: #ff4d4d;
+      --color-primary: #6ACCDC;
+      --color-primary-pressed: #8BD9E6;
+      --color-racer-cyan: #6ACCDC;
+      --color-racer-cyan-glow: rgba(106, 204, 220, 0.25);
+      --color-racer-purple: #7860A9;
+      --color-racer-purple-light: #A992D6;
+      --color-racer-purple-glow: rgba(120, 96, 169, 0.28);
+      --color-racer-green: #34D399;
+      --color-racer-green-glow: rgba(52, 211, 153, 0.25);
+      --color-racer-gold: #F0AD4E;
+      --color-danger: #FF6B73;
 
       /* Typography */
       --color-text: #f0f6fc;
@@ -99,8 +99,8 @@
       --radius-full: 9999px;
 
       --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.6);
-      --shadow-glow-cyan: 0 0 24px rgba(0, 240, 255, 0.22);
-      --shadow-glow-purple: 0 0 20px rgba(37, 99, 235, 0.22);
+      --shadow-glow-cyan: 0 0 24px rgba(106, 204, 220, 0.22);
+      --shadow-glow-purple: 0 0 20px rgba(120, 96, 169, 0.22);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -108,7 +108,7 @@
     body {
       background-color: var(--color-canvas);
       background-image: 
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 240, 255, 0.05), transparent 70%),
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(106, 204, 220, 0.05), transparent 70%),
         linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
         linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
       background-size: 100% 100%, 48px 48px, 48px 48px;
@@ -159,8 +159,8 @@
       width: 36px;
       height: 36px;
       border-radius: var(--radius-md);
-      background: linear-gradient(135deg, rgba(0, 240, 255, 0.2), rgba(130, 106, 181, 0.3));
-      border: 1px solid rgba(0, 240, 255, 0.4);
+      background: linear-gradient(135deg, rgba(106, 204, 220, 0.2), rgba(120, 96, 169, 0.3));
+      border: 1px solid rgba(106, 204, 220, 0.4);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -234,10 +234,10 @@
     }
 
     .nav-item-btn.active {
-      background: rgba(130, 106, 181, 0.16);
-      border-color: rgba(130, 106, 181, 0.4);
+      background: rgba(120, 96, 169, 0.16);
+      border-color: rgba(120, 96, 169, 0.4);
       color: #ffffff;
-      box-shadow: 0 0 16px rgba(130, 106, 181, 0.2);
+      box-shadow: 0 0 16px rgba(120, 96, 169, 0.2);
     }
 
     .nav-item-btn.active svg {
@@ -261,7 +261,7 @@
 
     .confidential-card {
       background: linear-gradient(145deg, rgba(21, 25, 33, 0.9), rgba(15, 18, 23, 0.9));
-      border: 1px solid rgba(130, 106, 181, 0.3);
+      border: 1px solid rgba(120, 96, 169, 0.3);
       border-radius: var(--radius-md);
       padding: 12px 14px;
     }
@@ -296,8 +296,8 @@
       font-size: 10px;
       font-family: var(--font-mono);
       color: var(--color-racer-cyan);
-      background: rgba(0, 240, 255, 0.08);
-      border: 1px solid rgba(0, 240, 255, 0.2);
+      background: rgba(106, 204, 220, 0.08);
+      border: 1px solid rgba(106, 204, 220, 0.2);
       padding: 3px 8px;
       border-radius: var(--radius-full);
     }
@@ -469,14 +469,14 @@
       justify-content: center;
       gap: 8px;
       transition: all 0.16s ease;
-      box-shadow: 0 2px 14px rgba(0, 240, 255, 0.3);
+      box-shadow: 0 2px 14px rgba(106, 204, 220, 0.3);
       text-decoration: none;
       white-space: nowrap;
     }
 
     .btn-primary:hover {
       background: #33f3ff;
-      box-shadow: 0 4px 20px rgba(0, 240, 255, 0.5);
+      box-shadow: 0 4px 20px rgba(106, 204, 220, 0.5);
       transform: translateY(-1px);
     }
 
@@ -506,8 +506,8 @@
     }
 
     .btn-wallet-connect {
-      background: rgba(130, 106, 181, 0.16);
-      border: 1px solid rgba(130, 106, 181, 0.45);
+      background: rgba(120, 96, 169, 0.16);
+      border: 1px solid rgba(120, 96, 169, 0.45);
       color: #ffffff;
       font-family: var(--font-family);
       font-size: 13px;
@@ -521,22 +521,22 @@
       justify-content: center;
       gap: 8px;
       transition: all 0.16s ease;
-      box-shadow: 0 0 14px rgba(130, 106, 181, 0.2);
+      box-shadow: 0 0 14px rgba(120, 96, 169, 0.2);
       white-space: nowrap;
     }
 
     .btn-wallet-connect:hover {
-      background: rgba(130, 106, 181, 0.28);
+      background: rgba(120, 96, 169, 0.28);
       border-color: var(--color-racer-purple-light);
-      box-shadow: 0 0 20px rgba(130, 106, 181, 0.4);
+      box-shadow: 0 0 20px rgba(120, 96, 169, 0.4);
       transform: translateY(-1px);
     }
 
     .btn-wallet-connect.connected {
-      background: rgba(0, 230, 118, 0.12);
-      border-color: rgba(0, 230, 118, 0.45);
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.45);
       color: var(--color-primary);
-      box-shadow: 0 0 12px rgba(0, 230, 118, 0.25);
+      box-shadow: 0 0 12px rgba(52, 211, 153, 0.25);
     }
 
     .racer-modal-backdrop {
@@ -575,7 +575,7 @@
 
     .search-box:focus-within {
       border-color: var(--color-racer-cyan);
-      box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+      box-shadow: 0 0 12px rgba(106, 204, 220, 0.2);
     }
 
     .search-box input {
@@ -666,15 +666,15 @@
       left: 0;
       right: 0;
       height: 2px;
-      background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.4), transparent);
+      background: linear-gradient(90deg, transparent, rgba(106, 204, 220, 0.4), transparent);
       opacity: 0;
       transition: opacity 0.2s ease;
     }
 
     .trader-card:hover {
       transform: translateY(-3px);
-      border-color: rgba(0, 240, 255, 0.35);
-      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 240, 255, 0.12);
+      border-color: rgba(106, 204, 220, 0.35);
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.7), 0 0 20px rgba(106, 204, 220, 0.12);
     }
 
     .trader-card:hover::before {
@@ -702,7 +702,7 @@
       border-radius: var(--radius-md);
       position: relative;
       overflow: hidden;
-      border: 1.5px solid rgba(130, 106, 181, 0.4);
+      border: 1.5px solid rgba(120, 96, 169, 0.4);
       background: #151921;
       flex-shrink: 0;
     }
@@ -763,9 +763,9 @@
       font-weight: 600;
       padding: 3px 10px;
       border-radius: var(--radius-full);
-      background: rgba(130, 106, 181, 0.16);
+      background: rgba(120, 96, 169, 0.16);
       color: var(--color-racer-purple-light);
-      border: 1px solid rgba(130, 106, 181, 0.3);
+      border: 1px solid rgba(120, 96, 169, 0.3);
       white-space: nowrap;
     }
 
@@ -773,8 +773,8 @@
       width: 26px;
       height: 26px;
       border-radius: 50%;
-      background: rgba(130, 106, 181, 0.12);
-      border: 1px solid rgba(130, 106, 181, 0.3);
+      background: rgba(120, 96, 169, 0.12);
+      border: 1px solid rgba(120, 96, 169, 0.3);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -783,8 +783,8 @@
     }
 
     .lock-pill-btn.unlocked {
-      background: rgba(0, 230, 118, 0.12);
-      border-color: rgba(0, 230, 118, 0.3);
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.3);
       color: var(--color-primary);
     }
 
@@ -896,7 +896,7 @@
     /* ── Bottom Banner (Image 1) ─────────────────────────────────────────── */
     .bottom-promo-banner {
       background: linear-gradient(135deg, rgba(21, 25, 33, 0.95), rgba(30, 25, 45, 0.95));
-      border: 1px solid rgba(130, 106, 181, 0.4);
+      border: 1px solid rgba(120, 96, 169, 0.4);
       border-radius: var(--radius-xl);
       padding: 24px 32px;
       display: flex;
@@ -904,7 +904,7 @@
       justify-content: space-between;
       flex-wrap: wrap;
       gap: 20px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 32px rgba(130, 106, 181, 0.15);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 32px rgba(120, 96, 169, 0.15);
       position: relative;
     }
 
@@ -918,8 +918,8 @@
       width: 54px;
       height: 54px;
       border-radius: var(--radius-lg);
-      background: linear-gradient(135deg, rgba(130, 106, 181, 0.3), rgba(0, 240, 255, 0.2));
-      border: 1px solid rgba(130, 106, 181, 0.5);
+      background: linear-gradient(135deg, rgba(120, 96, 169, 0.3), rgba(106, 204, 220, 0.2));
+      border: 1px solid rgba(120, 96, 169, 0.5);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -1019,7 +1019,7 @@
       width: 64px;
       height: 64px;
       border-radius: var(--radius-lg);
-      border: 2px solid rgba(0, 240, 255, 0.4);
+      border: 2px solid rgba(106, 204, 220, 0.4);
       background: #151921;
       overflow: hidden;
     }
@@ -1059,8 +1059,8 @@
       font-family: var(--font-mono);
       font-weight: 600;
       color: var(--color-primary);
-      background: rgba(0, 230, 118, 0.1);
-      border: 1px solid rgba(0, 230, 118, 0.25);
+      background: rgba(52, 211, 153, 0.1);
+      border: 1px solid rgba(52, 211, 153, 0.25);
       padding: 2px 8px;
       border-radius: var(--radius-full);
       display: inline-flex;
@@ -1146,7 +1146,7 @@
     }
 
     .tf-btn.active {
-      background: rgba(0, 240, 255, 0.15);
+      background: rgba(106, 204, 220, 0.15);
       color: var(--color-racer-cyan);
     }
 
@@ -1232,8 +1232,8 @@
       width: 52px;
       height: 52px;
       border-radius: 50%;
-      background: rgba(130, 106, 181, 0.2);
-      border: 1px solid rgba(130, 106, 181, 0.4);
+      background: rgba(120, 96, 169, 0.2);
+      border: 1px solid rgba(120, 96, 169, 0.4);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -1291,8 +1291,8 @@
 
     .tier-card.selected {
       border-color: var(--color-racer-cyan);
-      background: rgba(0, 240, 255, 0.04);
-      box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+      background: rgba(106, 204, 220, 0.04);
+      box-shadow: 0 0 20px rgba(106, 204, 220, 0.15);
     }
 
     .tier-card-top {
@@ -1381,8 +1381,8 @@
       align-items: center;
       gap: 6px;
       padding: 3px 8px;
-      background: rgba(0, 230, 118, 0.1);
-      border: 1px solid rgba(0, 230, 118, 0.25);
+      background: rgba(52, 211, 153, 0.1);
+      border: 1px solid rgba(52, 211, 153, 0.25);
       border-radius: 20px;
       font-size: 11px;
       color: var(--color-primary);
@@ -1464,7 +1464,7 @@
       color: #ffffff;
     }
     .alpha-cat-pill.active {
-      background: rgba(0, 230, 118, 0.15);
+      background: rgba(52, 211, 153, 0.15);
       border-color: var(--color-primary);
       color: var(--color-primary);
     }
@@ -1533,7 +1533,7 @@
       background: rgba(255, 255, 255, 0.03);
     }
     .alpha-table tbody tr.active-row {
-      background: rgba(0, 240, 255, 0.06);
+      background: rgba(106, 204, 220, 0.06);
       border-left: 2px solid var(--color-racer-cyan);
     }
     .alpha-table td {
@@ -1617,9 +1617,9 @@
       border: 1px solid rgba(187, 134, 252, 0.3);
     }
     .alpha-venue-badge.intear {
-      background: rgba(0, 240, 255, 0.12);
-      color: #00f0ff;
-      border: 1px solid rgba(0, 240, 255, 0.3);
+      background: rgba(106, 204, 220, 0.12);
+      color: #6ACCDC;
+      border: 1px solid rgba(106, 204, 220, 0.3);
     }
     .alpha-venue-badge.onetokenhub {
       background: rgba(245, 158, 11, 0.14);
@@ -1643,9 +1643,9 @@
     }
 
     @keyframes pulseDot {
-      0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7); }
-      70% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 5px rgba(0, 230, 118, 0); }
-      100% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0); }
+      0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7); }
+      70% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 0 5px rgba(52, 211, 153, 0); }
+      100% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
     }
     .pulse-dot {
       width: 6px;
@@ -1663,18 +1663,18 @@
       font-family: var(--font-mono);
       font-weight: 700;
       color: var(--color-primary);
-      background: rgba(0, 230, 118, 0.1);
+      background: rgba(52, 211, 153, 0.1);
       padding: 2px 7px;
       border-radius: 12px;
-      border: 1px solid rgba(0, 230, 118, 0.25);
+      border: 1px solid rgba(52, 211, 153, 0.25);
       letter-spacing: 0.4px;
     }
     @keyframes flashGreen {
-      0% { background: rgba(0, 230, 118, 0.35); color: #fff; }
+      0% { background: rgba(52, 211, 153, 0.35); color: #fff; }
       100% { background: transparent; }
     }
     @keyframes flashRed {
-      0% { background: rgba(255, 77, 77, 0.35); color: #fff; }
+      0% { background: rgba(255, 107, 115, 0.35); color: #fff; }
       100% { background: transparent; }
     }
     .price-flash-up {
@@ -1731,8 +1731,8 @@
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: rgba(0, 230, 118, 0.12);
-      border: 1px solid rgba(0, 230, 118, 0.3);
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.3);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -1854,7 +1854,7 @@
       transition: all 0.15s ease;
     }
     .alpha-chip:hover {
-      background: rgba(0, 240, 255, 0.12);
+      background: rgba(106, 204, 220, 0.12);
       color: #ffffff;
       border-color: var(--color-racer-cyan);
     }
@@ -1889,7 +1889,7 @@
       cursor: pointer;
     }
     .slip-chip.active {
-      background: rgba(0, 230, 118, 0.15);
+      background: rgba(52, 211, 153, 0.15);
       border-color: var(--color-primary);
       color: var(--color-primary);
     }
@@ -1984,8 +1984,8 @@
       padding: 2px 7px;
       border-radius: var(--radius-sm);
     }
-    .side-pill.long { background: rgba(0, 230, 118, 0.15); color: var(--color-primary); }
-    .side-pill.short { background: rgba(255, 77, 77, 0.15); color: var(--color-danger); }
+    .side-pill.long { background: rgba(52, 211, 153, 0.15); color: var(--color-primary); }
+    .side-pill.short { background: rgba(255, 107, 115, 0.15); color: var(--color-danger); }
 
     .slider-group {
       display: flex;
@@ -2068,8 +2068,8 @@
       position: relative;
     }
     .creator-step-card.active {
-      border-color: rgba(0, 240, 255, 0.4);
-      box-shadow: 0 0 24px rgba(0, 240, 255, 0.08);
+      border-color: rgba(106, 204, 220, 0.4);
+      box-shadow: 0 0 24px rgba(106, 204, 220, 0.08);
     }
     .creator-step-header {
       display: flex;
@@ -2081,8 +2081,8 @@
       font-size: 11px;
       font-weight: 700;
       color: var(--color-racer-cyan);
-      background: rgba(0, 240, 255, 0.12);
-      border: 1px solid rgba(0, 240, 255, 0.3);
+      background: rgba(106, 204, 220, 0.12);
+      border: 1px solid rgba(106, 204, 220, 0.3);
       padding: 3px 8px;
       border-radius: var(--radius-full);
     }
@@ -2172,7 +2172,7 @@
     }
 
     .key-holder-item:hover {
-      border-color: rgba(0, 240, 255, 0.3);
+      border-color: rgba(106, 204, 220, 0.3);
     }
 
     /* Modal Backdrop */
@@ -2276,7 +2276,7 @@
     }
 
     .deposit-pill.active, .deposit-pill:hover {
-      background: rgba(0, 240, 255, 0.12);
+      background: rgba(106, 204, 220, 0.12);
       border-color: var(--color-racer-cyan);
       color: #fff;
     }
@@ -2305,14 +2305,14 @@
     }
 
     .chain-card-opt:hover {
-      border-color: rgba(0, 240, 255, 0.4);
+      border-color: rgba(106, 204, 220, 0.4);
       background: var(--color-surface-hover);
     }
 
     .chain-card-opt.selected {
       border-color: var(--color-racer-cyan);
-      background: rgba(0, 240, 255, 0.1);
-      box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+      background: rgba(106, 204, 220, 0.1);
+      box-shadow: 0 0 12px rgba(106, 204, 220, 0.2);
     }
 
     .token-select-list {
@@ -2337,19 +2337,19 @@
     }
 
     .token-row-opt:hover {
-      border-color: rgba(0, 240, 255, 0.4);
+      border-color: rgba(106, 204, 220, 0.4);
       background: var(--color-surface-hover);
     }
 
     .token-row-opt.selected {
       border-color: var(--color-primary);
-      background: rgba(0, 230, 118, 0.1);
-      box-shadow: 0 0 12px rgba(0, 230, 118, 0.18);
+      background: rgba(52, 211, 153, 0.1);
+      box-shadow: 0 0 12px rgba(52, 211, 153, 0.18);
     }
 
     .quote-box {
       background: linear-gradient(135deg, rgba(21, 25, 33, 0.9), rgba(15, 23, 42, 0.9));
-      border: 1px solid rgba(0, 240, 255, 0.3);
+      border: 1px solid rgba(106, 204, 220, 0.3);
       border-radius: var(--radius-lg);
       padding: 14px 16px;
       display: flex;
@@ -3299,7 +3299,7 @@
   opacity: 1;
 }
 .racer-toast.info { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); }
-.racer-toast.success { background: rgba(0, 230, 118, 0.15); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); }
+.racer-toast.success { background: rgba(52, 211, 153, 0.15); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.4); }
 .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
 </style>
 
@@ -3338,8 +3338,8 @@
     <p style="font-family:var(--font-sans) !important; font-size:14px; color:var(--color-text-2); margin:0 0 16px; text-align:left;">Confidential trading. Follow top traders and copy their trades privately.</p>
     
     <div class="alpha-tab-bar" style="display:flex; gap:12px; border-bottom:1px solid var(--color-border); overflow-x:auto; margin-bottom:20px; justify-content:flex-start;">
-      <button class="alpha-tab-btn" id="tab-btn-leaderboard" onclick="switchNav('leaderboard')">Leaderboard</button>
-      <button class="alpha-tab-btn active" id="tab-btn-terminal" onclick="switchNav('terminal')">Console</button>
+      <button class="alpha-tab-btn active" id="tab-btn-leaderboard" onclick="switchNav('leaderboard')">Leaderboard</button>
+      <button class="alpha-tab-btn" id="tab-btn-terminal" onclick="switchNav('terminal')">Console</button>
       <button class="alpha-tab-btn" id="tab-btn-mykeys" onclick="switchNav('mykeys')">My keys</button>
       <button class="alpha-tab-btn" id="tab-btn-creator" onclick="switchNav('creator')">Creator Studio</button>
     </div>
@@ -3355,9 +3355,9 @@
       <!-- VIEW 1: Leaderboard / Discover Traders (Image 1) -->
       <section id="view-leaderboard">
         <!-- Trading Console Fast Action Banner -->
-        <div class="bottom-promo-banner" style="margin-bottom:16px; background:linear-gradient(135deg, rgba(0, 240, 255, 0.08), rgba(0, 230, 118, 0.06)); border:1px solid rgba(0, 240, 255, 0.3);">
+        <div class="bottom-promo-banner" style="margin-bottom:16px; background:linear-gradient(135deg, rgba(106, 204, 220, 0.08), rgba(52, 211, 153, 0.06)); border:1px solid rgba(106, 204, 220, 0.3);">
           <div class="banner-left">
-            <div class="banner-icon-box" style="background:rgba(0, 240, 255, 0.15); border-color:rgba(0, 240, 255, 0.3); color:var(--color-racer-cyan);">
+            <div class="banner-icon-box" style="background:rgba(106, 204, 220, 0.15); border-color:rgba(106, 204, 220, 0.3); color:var(--color-racer-cyan);">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
             </div>
             <div class="banner-text-col">
@@ -3909,7 +3909,7 @@
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                       <span id="intent-routing-badge">Private Intent Solver Shield</span>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(0,240,255,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,240,255,0.25);">NEAR INTENT ROUTE</span>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">NEAR INTENT ROUTE</span>
                   </div>
                   <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;" id="intent-routing-desc">
                     Decentralized off-chain intent routed via NEAR Intent Solvers (Defuse network). Routed privately through NEAR Intents across launchpad bonding curves and DEX pools.
@@ -3940,7 +3940,7 @@
                 </div>
 
                 <!-- Dynamic Gating State Card -->
-                <div id="copy-key-paywall-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(255,183,3,0.3); background:rgba(255,183,3,0.06);">
+                <div id="copy-key-paywall-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(240, 173, 78,0.3); background:rgba(240, 173, 78,0.06);">
                   <div style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--color-racer-gold);">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                     <span>Paid Viewing Key Required to Copy Trade</span>
@@ -3953,7 +3953,7 @@
                   </button>
                 </div>
 
-                <div id="copy-key-active-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(0,230,118,0.3); background:rgba(0,230,118,0.06);">
+                <div id="copy-key-active-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(52, 211, 153,0.3); background:rgba(52, 211, 153,0.06);">
                   <div style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--color-text);">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                     <span id="copy-key-active-title">Viewing Key Active  -  Subscribed</span>
@@ -4088,7 +4088,7 @@
 
         <!-- ONBOARDING & GATING PANEL: For Traders applying to become Creators -->
         <div id="creator-onboarding-panel" style="display:flex; flex-direction:column; gap:24px;">
-          <div class="bottom-promo-banner" style="background:linear-gradient(135deg, rgba(130, 106, 181, 0.15), rgba(0, 240, 255, 0.08)); border-color:rgba(0, 240, 255, 0.3);">
+          <div class="bottom-promo-banner" style="background:linear-gradient(135deg, rgba(120, 96, 169, 0.15), rgba(106, 204, 220, 0.08)); border-color:rgba(106, 204, 220, 0.3);">
             <div class="banner-left">
               <div class="brand-logo-halo" style="width:40px; height:40px;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--color-racer-cyan);"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
@@ -4180,7 +4180,7 @@
                 <span class="step-number-pill">STEP 3</span>
                 <h3 style="font-family:var(--font-display); font-size:17px; font-weight:700; color:#fff;">Configure Your Follower Copy Fees</h3>
               </div>
-              <span class="strategy-tag" style="color:var(--color-text); border-color:rgba(0, 230, 118, 0.4);">Custom Monetization</span>
+              <span class="strategy-tag" style="color:var(--color-text); border-color:rgba(52, 211, 153, 0.4);">Custom Monetization</span>
             </div>
             <p style="font-size:12.5px; color:var(--color-text-muted);">Define the exact prices followers will pay you to decrypt your trades and automatically copy trade your positions.</p>
 
@@ -4394,7 +4394,7 @@
                   <button class="btn-secondary" onclick="copyTerminalLink()" style="padding:0 12px;">Copy</button>
                 </div>
 
-                <button class="btn-primary" style="margin-top:10px; width:100%; justify-content:center; background:linear-gradient(135deg, #00f0ff, #7928ca); color:#fff; font-weight:700; border:none; box-shadow:0 0 16px rgba(0,240,255,0.35); padding:10px;" onclick="switchNav('terminal')">
+                <button class="btn-primary" style="margin-top:10px; width:100%; justify-content:center; background:linear-gradient(135deg, #6ACCDC, #7928ca); color:#fff; font-weight:700; border:none; box-shadow:0 0 16px rgba(106, 204, 220,0.35); padding:10px;" onclick="switchNav('terminal')">
                   <span>Launch Creator Trading Console</span>
                 </button>
 
@@ -4520,7 +4520,7 @@
     <div class="modal-window modal-wide">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
         <div style="display:flex; align-items:center; gap:10px; min-width:0; flex:1;">
-          <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(0,240,255,0.2), rgba(130,106,181,0.2)); border:1px solid rgba(0,240,255,0.4); display:flex; align-items:center; justify-content:center; color:var(--color-racer-cyan); flex-shrink:0;">
+          <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(106, 204, 220,0.2), rgba(120, 96, 169,0.2)); border:1px solid rgba(106, 204, 220,0.4); display:flex; align-items:center; justify-content:center; color:var(--color-racer-cyan); flex-shrink:0;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
           </div>
           <div style="min-width:0;">
@@ -4787,13 +4787,26 @@
       try {
         const res = await fetch('/alpha/traders', { headers: getAuthHeaders() });
         const data = await res.json();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         if (data.success && Array.isArray(data.traders)) {
           allTraders = data.traders;
           renderTradersGrid(allTraders);
           populateTerminalSelect(allTraders);
+        } else {
+          throw new Error(data.error || 'Unexpected response');
         }
       } catch (err) {
         console.error('Failed to load traders:', err);
+        // Previously the grid stayed blank on failure. Show a clear, retryable state.
+        const container = document.getElementById('traders-grid-container');
+        if (container && !allTraders.length) {
+          container.innerHTML = `
+            <div role="status" style="grid-column: 1 / -1; padding: 48px 24px; text-align: center; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); display: flex; flex-direction: column; align-items: center; gap: 12px;">
+              <p style="font-size: 15px; color: var(--color-text); font-weight: 700;">Couldn't load the leaderboard</p>
+              <p style="font-size: 13px; color: var(--color-text-muted);">Check your connection and try again.</p>
+              <button onclick="fetchTraders()" class="btn-primary" style="padding: 10px 24px; font-size: 13.5px; min-height: 44px;">Retry</button>
+            </div>`;
+        }
       }
     }
 
@@ -4805,12 +4818,12 @@
       if (!traders || traders.length === 0) {
         container.innerHTML = `
           <div style="grid-column: 1 / -1; padding: 64px 24px; text-align: center; background: var(--color-surface); border: 1px dashed var(--color-border); border-radius: var(--radius-lg); display: flex; flex-direction: column; align-items: center; gap: 16px; margin: 12px 0;">
-            <div style="width: 56px; height: 56px; border-radius: 50%; background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.3); display: flex; align-items: center; justify-content: center; color: var(--color-racer-cyan);">
+            <div style="width: 56px; height: 56px; border-radius: 50%; background: rgba(106, 204, 220, 0.1); border: 1px solid rgba(106, 204, 220, 0.3); display: flex; align-items: center; justify-content: center; color: var(--color-racer-cyan);">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
             </div>
             <div style="max-width: 480px;">
-              <h3 style="font-family: var(--font-display); font-size: 19px; color: #fff; margin-bottom: 6px;">Live Social Marketplace Clean Slate</h3>
-              <p style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">All dummy seed personas have been purged. Only traders with verified cumulative volume of <b>$10,000 USD</b> and <b>5.0 NEAR</b> platform registration can open public channels.</p>
+              <h3 style="font-family: var(--font-display); font-size: 19px; color: #fff; margin-bottom: 6px;">No verified traders yet</h3>
+              <p style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">Traders appear here once they reach <b>$10,000 USD</b> verified volume and register with <b>5.0 NEAR</b>. Be one of the first.</p>
             </div>
             <button onclick="switchNav('creator')" class="btn-primary" style="padding: 10px 24px; font-size: 13.5px; margin-top: 4px;">
               <span>Open Creator Studio &amp; Apply Now</span>
@@ -4928,8 +4941,8 @@
 
       const pathD = `M ${coords.join(' L ')}`;
       const areaD = `M 0,${height} L ${coords.join(' L ')} L ${width},${height} Z`;
-      const strokeColor = pnlPct >= 0 ? '#00e676' : '#ff4d4d';
-      const fillColor = pnlPct >= 0 ? 'rgba(0, 230, 118, 0.12)' : 'rgba(255, 77, 77, 0.12)';
+      const strokeColor = pnlPct >= 0 ? '#34D399' : '#FF6B73';
+      const fillColor = pnlPct >= 0 ? 'rgba(52, 211, 153, 0.12)' : 'rgba(255, 107, 115, 0.12)';
 
       return `
         <svg class="sparkline-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
@@ -5081,17 +5094,17 @@
         <svg class="main-svg-chart" viewBox="0 0 ${width} ${height}">
           <defs>
             <linearGradient id="chart-area-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#00e676" stop-opacity="0.32"/>
-              <stop offset="100%" stop-color="#00e676" stop-opacity="0.0"/>
+              <stop offset="0%" stop-color="#34D399" stop-opacity="0.32"/>
+              <stop offset="100%" stop-color="#34D399" stop-opacity="0.0"/>
             </linearGradient>
           </defs>
           <line x1="20" y1="40" x2="${width - 20}" y2="40" stroke="#1f2530" stroke-dasharray="4,4" />
           <line x1="20" y1="90" x2="${width - 20}" y2="90" stroke="#1f2530" stroke-dasharray="4,4" />
           <line x1="20" y1="140" x2="${width - 20}" y2="140" stroke="#1f2530" stroke-dasharray="4,4" />
           <path d="${areaStr}" fill="url(#chart-area-grad)" />
-          <path d="${pathStr}" fill="none" stroke="#00e676" stroke-width="2.5" stroke-linecap="round" />
-          <circle cx="${lastPoint.x}" cy="${lastPoint.y}" r="5" fill="#00e676" stroke="#08090b" stroke-width="2" />
-          <rect x="${lastPoint.x - 36}" y="${lastPoint.y - 30}" width="72" height="22" rx="4" fill="#00e676" />
+          <path d="${pathStr}" fill="none" stroke="#34D399" stroke-width="2.5" stroke-linecap="round" />
+          <circle cx="${lastPoint.x}" cy="${lastPoint.y}" r="5" fill="#34D399" stroke="#08090b" stroke-width="2" />
+          <rect x="${lastPoint.x - 36}" y="${lastPoint.y - 30}" width="72" height="22" rx="4" fill="#34D399" />
           <text x="${lastPoint.x}" y="${lastPoint.y - 15}" fill="#08090b" font-size="11" font-weight="700" font-family="'JetBrains Mono', monospace" text-anchor="middle">+${points[points.length - 1]}%</text>
         </svg>
       `;
@@ -5222,7 +5235,7 @@
         }
 
         feedback.style.display = 'block';
-        feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+        feedback.style.background = 'rgba(52, 211, 153, 0.15)';
         feedback.style.color = 'var(--color-primary)';
         const txBadge = onChainTxHash 
           ? `<br><span style="font-size:11px;">Tx Hash: <a href="https://nearblocks.io/txns/${onChainTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline;">${onChainTxHash.slice(0, 12)}...</a></span>`
@@ -5241,7 +5254,7 @@
         }, 1500);
       } catch (err) {
         feedback.style.display = 'block';
-        feedback.style.background = 'rgba(255, 77, 77, 0.15)';
+        feedback.style.background = 'rgba(255, 107, 115, 0.15)';
         feedback.style.color = 'var(--color-danger)';
         feedback.textContent = `${err.message}`;
       } finally {
@@ -5510,7 +5523,7 @@
         const unitBadge = document.getElementById('alpha-trade-unit');
         if (unitBadge) {
           unitBadge.textContent = tok.symbol;
-          unitBadge.style.color = '#ff6b6b';
+          unitBadge.style.color = '#FF6B73';
         }
         const input = document.getElementById('alpha-trade-amount');
         if (input) input.placeholder = `Amount of ${tok.symbol}`;
@@ -5872,7 +5885,7 @@
         if (btnExec) btnExec.textContent = `Execute Confidential SELL & Broadcast`;
         if (unitBadge) {
           unitBadge.textContent = sym;
-          unitBadge.style.color = '#ff6b6b';
+          unitBadge.style.color = '#FF6B73';
         }
         if (amountInput) {
           amountInput.placeholder = `Amount of ${sym}`;
@@ -5960,7 +5973,7 @@
               if (tag) {
                 tag.textContent = 'NEAR INTENT ROUTE';
                 tag.style.color = 'var(--color-primary)';
-                tag.style.background = 'rgba(0,230,118,0.12)';
+                tag.style.background = 'rgba(52, 211, 153,0.12)';
               }
               const outText = selectedRacerAlphaSide === 'BUY'
                 ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}`
@@ -5974,7 +5987,7 @@
               if (tag) {
                 tag.textContent = 'SHIELDED ROUTER';
                 tag.style.color = 'var(--color-primary)';
-                tag.style.background = 'rgba(0,230,118,0.12)';
+                tag.style.background = 'rgba(52, 211, 153,0.12)';
               }
               const outText = selectedRacerAlphaSide === 'BUY'
                 ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`)
@@ -6029,7 +6042,7 @@
       }
       if (feedback) {
         feedback.style.display = 'block';
-        feedback.style.background = 'rgba(0, 240, 255, 0.1)';
+        feedback.style.background = 'rgba(106, 204, 220, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
         const dispatchDesc = isBuy 
           ? `Routing private <b>BUY</b> of <b>${inputVal} NEAR</b> for <b>${escapeHtml(selectedAlphaToken.symbol)}</b>`
@@ -6077,8 +6090,8 @@
         if ((!res.ok || !data.success) && isStorageError(data.error)) {
           if (btn) btn.innerHTML = '<span>Registering wallet with token contract...</span>';
           if (feedback) {
-            feedback.style.background = 'rgba(255, 183, 3, 0.12)';
-            feedback.style.color = '#ffb703';
+            feedback.style.background = 'rgba(240, 173, 78, 0.12)';
+            feedback.style.color = '#F0AD4E';
             feedback.innerHTML = `<b>Registering your wallet</b> with the <b>${escapeHtml(selectedAlphaToken.symbol)}</b> token contract  -  this only happens once per token. Retrying trade...`;
           }
           // Small delay to let the registration propagate on-chain
@@ -6097,7 +6110,7 @@
           if (btn) btn.innerHTML = '<span>Please confirm Intent Transfer in your wallet...</span>';
           if (feedback) {
             feedback.style.display = 'block';
-            feedback.style.background = 'rgba(0, 240, 255, 0.15)';
+            feedback.style.background = 'rgba(106, 204, 220, 0.15)';
             feedback.style.color = 'var(--color-racer-cyan)';
             feedback.innerHTML = `<span>Please approve confidential transfer of <b>${amtNear} NEAR</b> to stealth solver in your connected wallet...</span>`;
           }
@@ -6146,7 +6159,7 @@
           const txLink = `<br><a href="https://nearblocks.io/txns/${walletTxHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${walletTxHash.slice(0, 10)}...) ↗</a>`;
 
           if (feedback) {
-            feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+            feedback.style.background = 'rgba(52, 211, 153, 0.15)';
             feedback.style.color = 'var(--color-primary)';
             feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>Decentralized Private Intent (Defuse Solver)</b><br><span style="font-size:11px; color:var(--color-racer-cyan);">Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>${txLink}`;
           }
@@ -6179,7 +6192,7 @@
           : '';
 
         if (feedback) {
-          feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+          feedback.style.background = 'rgba(52, 211, 153, 0.15)';
           feedback.style.color = 'var(--color-primary)';
           feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${txLink}`;
         }
@@ -6190,7 +6203,7 @@
         loadTerminalData();
       } catch (err) {
         if (feedback) {
-          feedback.style.background = 'rgba(255, 77, 77, 0.15)';
+          feedback.style.background = 'rgba(255, 107, 115, 0.15)';
           feedback.style.color = 'var(--color-danger)';
           // Show a clean message without internal jargon for storage errors
           const msg = err.message || 'Execution error';
@@ -6587,7 +6600,7 @@
       btn.innerHTML = '<span>Executing via Stealth Relayer...</span>';
       if (feedback) {
         feedback.style.display = 'block';
-        feedback.style.background = 'rgba(0, 240, 255, 0.1)';
+        feedback.style.background = 'rgba(106, 204, 220, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
         feedback.textContent = 'Dispatching confidential trade order to launchpad...';
       }
@@ -6611,7 +6624,7 @@
         }
 
         if (feedback) {
-          feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+          feedback.style.background = 'rgba(52, 211, 153, 0.15)';
           feedback.style.color = 'var(--color-primary)';
           feedback.innerHTML = `<b>Confidential ${side} Executed!</b><br>Venue: <b>${escapeHtml(data.venue)}</b> • <b>${data.autoCopyFillsCount} subscriber copy-fills</b> triggered synchronously.<br><span style="font-size:10.5px; color:var(--color-text-subtle);">Tx: ${data.txHash}</span>`;
         }
@@ -6620,7 +6633,7 @@
         refreshUserBalance();
       } catch (err) {
         if (feedback) {
-          feedback.style.background = 'rgba(255, 77, 77, 0.15)';
+          feedback.style.background = 'rgba(255, 107, 115, 0.15)';
           feedback.style.color = 'var(--color-danger)';
           feedback.textContent = 'Error: ' + err.message;
         }
@@ -6641,7 +6654,7 @@
       if (onboardingPanel) onboardingPanel.style.display = 'flex';
       if (badgeEl) {
         badgeEl.innerHTML = `
-          <span class="active-pill" style="font-size:11px; background:rgba(0,240,255,0.1); border-color:rgba(0,240,255,0.3); color:var(--color-racer-cyan);">
+          <span class="active-pill" style="font-size:11px; background:rgba(106, 204, 220,0.1); border-color:rgba(106, 204, 220,0.3); color:var(--color-racer-cyan);">
             CREATOR AUDIT &amp; GATING
           </span>
         `;
@@ -6661,7 +6674,7 @@
 
           if (badgeEl) {
             badgeEl.innerHTML = `
-              <span class="active-pill" style="font-size:11px; background:rgba(0,230,118,0.15); border-color:rgba(0,230,118,0.4); color:var(--color-text);">
+              <span class="active-pill" style="font-size:11px; background:rgba(52, 211, 153,0.15); border-color:rgba(52, 211, 153,0.4); color:var(--color-text);">
                 <span class="live-dot" style="width:6px; height:6px;"></span> VERIFIED CREATOR
               </span>
               <span style="font-family:var(--font-mono); font-size:12px; color:var(--color-text-muted);">@${escapeHtml(data.trader.handle)}.near</span>
@@ -6723,7 +6736,7 @@
 
           if (badgeEl) {
             badgeEl.innerHTML = `
-              <span class="active-pill" style="font-size:11px; background:rgba(0,240,255,0.1); border-color:rgba(0,240,255,0.3); color:var(--color-racer-cyan);">
+              <span class="active-pill" style="font-size:11px; background:rgba(106, 204, 220,0.1); border-color:rgba(106, 204, 220,0.3); color:var(--color-racer-cyan);">
                 CREATOR AUDIT &amp; GATING
               </span>
             `;
@@ -6776,16 +6789,16 @@
             if (step1Pill) {
               step1Pill.textContent = 'RPC Verified ($10K+)';
               step1Pill.style.color = 'var(--color-primary)';
-              step1Pill.style.background = 'rgba(0, 230, 118, 0.15)';
-              step1Pill.style.borderColor = 'rgba(0, 230, 118, 0.4)';
+              step1Pill.style.background = 'rgba(52, 211, 153, 0.15)';
+              step1Pill.style.borderColor = 'rgba(52, 211, 153, 0.4)';
             }
             if (auditFeedback) {
-              const onChainNote = data.verifiedOnChain ? `<span style="display:inline-block; margin-left:4px; padding:2px 6px; font-size:10px; font-family:var(--font-mono); background:rgba(0, 240, 255, 0.15); color:var(--color-racer-cyan); border-radius:4px; border:1px solid rgba(0, 240, 255, 0.3);">RPC ON-CHAIN VERIFIED</span>` : '';
+              const onChainNote = data.verifiedOnChain ? `<span style="display:inline-block; margin-left:4px; padding:2px 6px; font-size:10px; font-family:var(--font-mono); background:rgba(106, 204, 220, 0.15); color:var(--color-racer-cyan); border-radius:4px; border:1px solid rgba(106, 204, 220, 0.3);">RPC ON-CHAIN VERIFIED</span>` : '';
               auditFeedback.innerHTML = `<span style="color:var(--color-text); font-weight:700;">Wallet Verified &amp; Qualified:</span> True on-chain trading volume of <b>$${volUsd.toLocaleString(undefined, {minimumFractionDigits: 2})}</b> meets the $10,000 qualification standard via direct NEAR RPC audit! ${onChainNote} Settle the 5.0 NEAR platform entry fee below to activate your Alpha Caller channel.`;
             }
             const s1Card = document.getElementById('step1-volume-card');
             const s2Card = document.getElementById('step2-fee-card');
-            if (s1Card) s1Card.style.borderColor = 'rgba(0, 230, 118, 0.4)';
+            if (s1Card) s1Card.style.borderColor = 'rgba(52, 211, 153, 0.4)';
             if (s2Card) {
               s2Card.classList.add('active');
               s2Card.style.borderColor = 'var(--color-racer-cyan)';
@@ -6794,11 +6807,11 @@
             if (step1Pill) {
               step1Pill.textContent = `RPC Audited: ${progress}% ($10K req)`;
               step1Pill.style.color = 'var(--color-racer-gold)';
-              step1Pill.style.background = 'rgba(255, 183, 3, 0.12)';
-              step1Pill.style.borderColor = 'rgba(255, 183, 3, 0.3)';
+              step1Pill.style.background = 'rgba(240, 173, 78, 0.12)';
+              step1Pill.style.borderColor = 'rgba(240, 173, 78, 0.3)';
             }
             if (auditFeedback) {
-              const onChainNote = data.verifiedOnChain ? `<span style="display:inline-block; margin-left:4px; padding:2px 6px; font-size:10px; font-family:var(--font-mono); background:rgba(0, 240, 255, 0.15); color:var(--color-racer-cyan); border-radius:4px; border:1px solid rgba(0, 240, 255, 0.3);">RPC LIVE AUDIT</span>` : '';
+              const onChainNote = data.verifiedOnChain ? `<span style="display:inline-block; margin-left:4px; padding:2px 6px; font-size:10px; font-family:var(--font-mono); background:rgba(106, 204, 220, 0.15); color:var(--color-racer-cyan); border-radius:4px; border:1px solid rgba(106, 204, 220, 0.3);">RPC LIVE AUDIT</span>` : '';
               auditFeedback.innerHTML = addr 
                 ? `Active wallet: <code style="color:var(--color-racer-cyan);">${escapeHtml(addr)}</code> ${onChainNote}. Verified on-chain volume: <b>$${volUsd.toLocaleString(undefined, {minimumFractionDigits: 2})}</b> (${(data.volumeNear || 0).toFixed(2)} NEAR across ${data.tradeCount || 0} transactions). Execute trades on NEAR launchpads or swap via Racer Terminal to reach $10,000.`
                 : `Connect your NEAR wallet to audit on-chain volume directly via NEAR RPC.`;
@@ -6827,8 +6840,8 @@
             if (step2Pill) {
               step2Pill.textContent = 'Entry Fee Settled';
               step2Pill.style.color = 'var(--color-primary)';
-              step2Pill.style.background = 'rgba(0, 230, 118, 0.15)';
-              step2Pill.style.borderColor = 'rgba(0, 230, 118, 0.4)';
+              step2Pill.style.background = 'rgba(52, 211, 153, 0.15)';
+              step2Pill.style.borderColor = 'rgba(52, 211, 153, 0.4)';
             }
             if (btnPayFee) {
               btnPayFee.disabled = true;
@@ -6987,7 +7000,7 @@
 
       if (feedback) {
         feedback.style.display = 'block';
-        feedback.style.background = 'rgba(0, 240, 255, 0.1)';
+        feedback.style.background = 'rgba(106, 204, 220, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
         feedback.textContent = 'Verifying $10,000 trading audit and settling channel credentials...';
       }
@@ -7018,7 +7031,7 @@
             localStorage.setItem('racer_custom_username_' + addr, handle);
           }
           if (feedback) {
-            feedback.style.background = 'rgba(0, 230, 118, 0.15)';
+            feedback.style.background = 'rgba(52, 211, 153, 0.15)';
             feedback.style.color = 'var(--color-primary)';
             feedback.textContent = 'Creator Channel successfully opened and verified! Launching dashboard...';
           }
@@ -7028,7 +7041,7 @@
           }, 900);
         } else {
           if (feedback) {
-            feedback.style.background = 'rgba(255, 77, 77, 0.15)';
+            feedback.style.background = 'rgba(255, 107, 115, 0.15)';
             feedback.style.color = 'var(--color-danger)';
             feedback.textContent = 'Registration failed: ' + (data.error || 'Qualification criteria not met.');
           }
@@ -7039,7 +7052,7 @@
         }
       } catch (err) {
         if (feedback) {
-          feedback.style.background = 'rgba(255, 77, 77, 0.15)';
+          feedback.style.background = 'rgba(255, 107, 115, 0.15)';
           feedback.style.color = 'var(--color-danger)';
           feedback.textContent = 'Network error: ' + err.message;
         }
@@ -7091,7 +7104,7 @@
       if (!handle && !displayName && !bio) {
         if (feedbackEl) {
           feedbackEl.style.display = 'block';
-          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.background = 'rgba(255, 107, 115,0.12)';
           feedbackEl.style.color = 'var(--color-danger)';
           feedbackEl.textContent = 'Please fill in at least one field to update.';
         }
@@ -7102,7 +7115,7 @@
       if (handle && !/^[a-z0-9_. - -]{3,30}$/i.test(handle)) {
         if (feedbackEl) {
           feedbackEl.style.display = 'block';
-          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.background = 'rgba(255, 107, 115,0.12)';
           feedbackEl.style.color = 'var(--color-danger)';
           feedbackEl.textContent = 'Handle must be 3 - 30 characters: lowercase letters, numbers, _ or . only.';
         }
@@ -7111,7 +7124,7 @@
 
       if (feedbackEl) {
         feedbackEl.style.display = 'block';
-        feedbackEl.style.background = 'rgba(0,240,255,0.08)';
+        feedbackEl.style.background = 'rgba(106, 204, 220,0.08)';
         feedbackEl.style.color = 'var(--color-racer-cyan)';
         feedbackEl.textContent = 'Saving profile changes…';
       }
@@ -7135,7 +7148,7 @@
             updateWalletUI();
           }
           if (feedbackEl) {
-            feedbackEl.style.background = 'rgba(0,230,118,0.12)';
+            feedbackEl.style.background = 'rgba(52, 211, 153,0.12)';
             feedbackEl.style.color = 'var(--color-primary)';
             feedbackEl.textContent = `Profile updated! Your handle @${handle || '(unchanged)'} is tied to your wallet.`;
           }
@@ -7143,14 +7156,14 @@
           setTimeout(() => loadCreatorStudio(), 800);
         } else {
           if (feedbackEl) {
-            feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+            feedbackEl.style.background = 'rgba(255, 107, 115,0.12)';
             feedbackEl.style.color = 'var(--color-danger)';
             feedbackEl.textContent = '' + (data.error || 'Failed to update profile.');
           }
         }
       } catch (err) {
         if (feedbackEl) {
-          feedbackEl.style.background = 'rgba(255,77,77,0.12)';
+          feedbackEl.style.background = 'rgba(255, 107, 115,0.12)';
           feedbackEl.style.color = 'var(--color-danger)';
           feedbackEl.textContent = 'Network error: ' + err.message;
         }
@@ -7873,7 +7886,7 @@
       const statusDiv = document.getElementById('wallet-link-status');
       const accountId = input.value.trim();
       if (!accountId) {
-        if (statusDiv) { statusDiv.textContent = 'Please enter a valid NEAR address.'; statusDiv.style.color = '#ff4d4d'; }
+        if (statusDiv) { statusDiv.textContent = 'Please enter a valid NEAR address.'; statusDiv.style.color = '#FF6B73'; }
         return;
       }
       try {
@@ -7889,7 +7902,7 @@
         if (statusDiv) { statusDiv.textContent = 'Successfully connected!'; statusDiv.style.color = 'var(--color-primary)'; }
         setTimeout(closeConnectModal, 1000);
       } catch (err) {
-        if (statusDiv) { statusDiv.textContent = 'Error: ' + err.message; statusDiv.style.color = '#ff4d4d'; }
+        if (statusDiv) { statusDiv.textContent = 'Error: ' + err.message; statusDiv.style.color = '#FF6B73'; }
       }
     }
 
@@ -7990,7 +8003,7 @@
         <!-- Option 3: Telegram Pair -->
         <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:14px; text-align:center;">
           <div id="pairing-spinner" style="display:none; margin-bottom:10px;">
-            <span style="display:inline-block; width:26px; height:26px; border:3px solid rgba(0,240,255,0.2); border-top-color:var(--color-racer-cyan); border-radius:50%; animation:spin 0.8s linear infinite;"></span>
+            <span style="display:inline-block; width:26px; height:26px; border:3px solid rgba(106, 204, 220,0.2); border-top-color:var(--color-racer-cyan); border-radius:50%; animation:spin 0.8s linear infinite;"></span>
             <div style="font-size:13px; color:var(--color-racer-cyan); font-weight:600; margin-top:6px;">Waiting for Telegram confirmation...</div>
             <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
           </div>
@@ -8002,10 +8015,10 @@
 
       <!-- State B: Connected -->
       <div id="modal-state-linked" style="display:none;">
-        <div style="background:var(--color-surface); border:1px solid rgba(0,230,118,0.3); border-radius:8px; padding:14px; margin-bottom:16px;">
+        <div style="background:var(--color-surface); border:1px solid rgba(52, 211, 153,0.3); border-radius:8px; padding:14px; margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <span style="font-size:11.5px; color:var(--color-text-muted); font-family:var(--font-mono);">ACTIVE ACCOUNT</span>
-            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--color-text); font-weight:600; background:rgba(0,230,118,0.1); padding:2px 8px; border-radius:4px;">
+            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--color-text); font-weight:600; background:rgba(52, 211, 153,0.1); padding:2px 8px; border-radius:4px;">
               <span class="live-dot" style="width:5px; height:5px;"></span> CONNECTED
             </span>
           </div>
@@ -8017,7 +8030,7 @@
           <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-primary" style="flex:1; height:40px; font-size:13px; justify-content:center;">
             <span>Switch Wallet</span>
           </button>
-          <button onclick="handleDisconnect()" class="btn-secondary" style="height:40px; font-size:13px; padding:0 14px; color:var(--color-danger); border-color:rgba(255,77,77,0.3);">
+          <button onclick="handleDisconnect()" class="btn-secondary" style="height:40px; font-size:13px; padding:0 14px; color:var(--color-danger); border-color:rgba(255, 107, 115,0.3);">
             <span>Disconnect</span>
           </button>
         </div>

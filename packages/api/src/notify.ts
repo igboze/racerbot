@@ -612,6 +612,12 @@ export async function notifyDeposit(
  */
 const recentDepositNotifyCache = new Map<string, number>();
 
+// Token symbols come from untrusted on-chain metadata; unescaped `<` or `&`
+// makes Telegram reject the whole HTML message.
+function escHtml(s: string): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export async function notifyTokenDeposit(
   telegramId: number,
   params: {
@@ -620,6 +626,8 @@ export async function notifyTokenDeposit(
     amountFormatted: string;
     address: string;
     chain?: 'near' | 'sui';
+    /** Position created for the deposit, so the alert can open its details directly. */
+    positionId?: string;
   }
 ): Promise<void> {
   if (!_bot || !telegramId) return;
@@ -636,20 +644,22 @@ export async function notifyTokenDeposit(
 
   const msg =
     `💰 <b>Token Deposit Received!</b>\n\n` +
-    `🪙 <b>+${params.amountFormatted} $${params.tokenSymbol}</b>\n` +
-    `<u>${chainLabel}</u>: <code>${params.address}</code>\n\n` +
+    `🪙 <b>+${escHtml(params.amountFormatted)} $${escHtml(params.tokenSymbol)}</b>\n` +
+    `<u>${chainLabel}</u>: <code>${escHtml(params.address)}</code>\n\n` +
     `Tracked and ready in your bags.`;
+
+  const keyboard: any[][] = [];
+  if (params.positionId) {
+    keyboard.push([{ text: '📊 View Token Details', callback_data: `token_detail:${params.positionId}`, style: 'primary' }]);
+  }
+  keyboard.push([
+    { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
+    { text: '💳 Wallet', callback_data: 'menu_wallet' },
+  ]);
 
   await _bot.telegram.sendMessage(telegramId, msg, {
     parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
-          { text: '💳 Wallet', callback_data: 'menu_wallet' },
-        ],
-      ],
-    },
+    reply_markup: { inline_keyboard: keyboard } as any,
   }).catch((err) => {
     console.error(`[NOTIFY] Error sending token deposit notification to ${telegramId}:`, err.message);
   });

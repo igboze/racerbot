@@ -295,5 +295,23 @@ export function tokenLinks(
       url: info.tokenPage ? info.tokenPage(tokenAddress) : info.website,
     });
   }
-  return links;
+  // Telegram rejects the WHOLE inline keyboard if any URL button is invalid.
+  // NEAR account "domains" (e.g. https://gaypad.j1-racing.near) and localhost
+  // are not public web hosts, so drop them rather than break the card.
+  return links.filter(l => isTelegramSafeUrl(l.url));
+}
+
+/** True when a URL is a public http(s) URL Telegram will accept on a button. */
+export function isTelegramSafeUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.near') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      return false;
+    }
+    return host.includes('.');
+  } catch {
+    return false;
+  }
 }

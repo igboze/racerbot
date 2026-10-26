@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="/assets/racer-logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <script src="/assets/racer-config.js"></script>
   <link rel="stylesheet" href="/assets/racer-design-system.css" />
   
@@ -117,7 +117,7 @@
     .tab-btn.active {
       color: var(--color-primary);
       border-bottom-color: var(--color-primary);
-      background: rgba(0, 240, 255, 0.05);
+      background: rgba(106, 204, 220, 0.05);
     }
 
     .form-group {
@@ -172,7 +172,7 @@
       color: var(--color-text);
     }
     .amt-chip.active {
-      background: rgba(0, 240, 255, 0.12);
+      background: rgba(106, 204, 220, 0.12);
       border-color: var(--color-primary);
       color: var(--color-primary);
       font-weight: 700;
@@ -209,14 +209,14 @@
       font-weight: 600;
     }
     .badge-status.active {
-      background: rgba(0, 230, 118, 0.12);
+      background: rgba(52, 211, 153, 0.12);
       color: var(--color-primary);
-      border: 1px solid rgba(0, 230, 118, 0.3);
+      border: 1px solid rgba(52, 211, 153, 0.3);
     }
     .badge-status.offline {
-      background: rgba(255, 77, 77, 0.12);
+      background: rgba(255, 107, 115, 0.12);
       color: var(--color-danger);
-      border: 1px solid rgba(255, 77, 77, 0.3);
+      border: 1px solid rgba(255, 107, 115, 0.3);
     }
 
     .fleet-table-wrap {
@@ -261,7 +261,7 @@
     }
 
     .action-stream {
-      background: #050608;
+      background: #0F1320;
       border: 1px solid var(--color-border);
       border-radius: var(--radius-md);
       padding: 14px;
@@ -329,7 +329,7 @@
     }
     .tier-option:hover, .tier-option.selected {
       border-color: var(--color-primary);
-      background: rgba(0, 240, 255, 0.04);
+      background: rgba(106, 204, 220, 0.04);
     }
     .tier-name {
       font-weight: 700;
@@ -350,12 +350,12 @@
     }
 
     .btn-sweep {
-      background: rgba(255, 183, 3, 0.1);
-      border: 1px solid rgba(255, 183, 3, 0.4);
+      background: rgba(240, 173, 78, 0.1);
+      border: 1px solid rgba(240, 173, 78, 0.4);
       color: var(--color-racer-gold);
     }
     .btn-sweep:hover {
-      background: rgba(255, 183, 3, 0.2);
+      background: rgba(240, 173, 78, 0.2);
     }
 
     @media (max-width: 860px) {
@@ -967,7 +967,7 @@
         These keys grant direct, unrestricted control over your fleet's on-chain subaccounts. Never share them or paste them into untrusted apps.
       </p>
 
-      <div id="export-keys-box" style="background:#050608; border:1px solid var(--color-border); border-radius:var(--radius-md); padding:14px; font-family:var(--font-mono); font-size:12px; color:var(--color-text-muted); max-height:260px; overflow-y:auto; margin-bottom:18px;">
+      <div id="export-keys-box" style="background:#0F1320; border:1px solid var(--color-border); border-radius:var(--radius-md); padding:14px; font-family:var(--font-mono); font-size:12px; color:var(--color-text-muted); max-height:260px; overflow-y:auto; margin-bottom:18px;">
         Loading keys...
       </div>
 
@@ -1307,7 +1307,7 @@
       container.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--color-border-subtle);">
           <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,240,255,0.1); border:1px solid rgba(0,240,255,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;">🪙</div>
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(106, 204, 220,0.1); border:1px solid rgba(106, 204, 220,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;">🪙</div>
             <div>
               <div style="font-weight:700; color:var(--color-text); font-size:14px;">NEAR Protocol</div>
               <div style="font-size:11px; color:var(--color-text-subtle);">Gas &amp; Native Asset</div>
@@ -1321,7 +1321,7 @@
 
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0;">
           <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:28px; height:28px; border-radius:50%; background:rgba(0,230,118,0.1); border:1px solid rgba(0,230,118,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;"></div>
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(52, 211, 153,0.1); border:1px solid rgba(52, 211, 153,0.3); display:flex; align-items:center; justify-content:center; font-size:12px;"></div>
             <div>
               <div style="font-weight:700; color:var(--color-text); font-size:14px;">BlackDragon</div>
               <div style="font-size:11px; color:var(--color-text-subtle);">blackdragon.tkn.near</div>
@@ -1596,8 +1596,8 @@
         const displayHandle = nearWallet || (user && user.username) || 'Connected';
         if (label) label.textContent = '● ' + displayHandle;
         if (headerBtn) {
-          headerBtn.style.background = 'rgba(0, 240, 255, 0.12)';
-          headerBtn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+          headerBtn.style.background = 'rgba(106, 204, 220, 0.12)';
+          headerBtn.style.borderColor = 'rgba(106, 204, 220, 0.4)';
           headerBtn.style.color = '#ffffff';
         }
       } else {

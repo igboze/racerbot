@@ -3765,6 +3765,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                 amountFormatted: humanBalance >= 1_000_000 ? `${(humanBalance / 1_000_000).toFixed(2)}M` : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
                 address: subaccountId,
                 chain: 'near',
+                positionId: newPos.id,
               }).catch(() => {});
             }
           }).catch(() => {});
@@ -3897,6 +3898,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                     : humanBalance.toLocaleString('en-US', { maximumFractionDigits: 4 }),
                   address: user.sui_address,
                   chain: 'sui',
+                  positionId: newPos.id,
                 }).catch(() => {});
               }
             }
