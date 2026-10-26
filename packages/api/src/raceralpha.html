@@ -2760,7 +2760,7 @@
         }
       }
 
-      /* Fixed Mobile Bottom Navigation Dock */
+      /* FeedLoop Fixed Mobile Bottom Navigation Dock */
       .mobile-bottom-dock {
         display: grid !important;
         grid-template-columns: repeat(5, 1fr) !important;
@@ -2771,13 +2771,13 @@
         right: 0 !important;
         z-index: 1000 !important;
         pointer-events: auto !important;
-        height: calc(62px + env(safe-area-inset-bottom, 10px));
+        height: calc(60px + env(safe-area-inset-bottom, 10px));
         padding-bottom: env(safe-area-inset-bottom, 10px);
-        background: rgba(11, 14, 19, 0.96);
+        background: rgba(255, 255, 255, 0.96) !important;
         backdrop-filter: blur(24px);
         -webkit-backdrop-filter: blur(24px);
-        border-top: 1px solid var(--color-border);
-        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+        border-top: 1px solid #E5E7EB !important;
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.04) !important;
       }
 
       .mobile-dock-btn {
@@ -2785,11 +2785,12 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        gap: 3px;
         height: 100%;
+        min-height: 44px !important;
         background: transparent;
         border: none;
-        color: var(--color-text-muted);
+        color: #6B7280 !important;
         cursor: pointer;
         padding: 6px 2px;
         transition: all 0.16s ease;
@@ -2803,64 +2804,61 @@
       .mobile-dock-btn svg {
         width: 20px;
         height: 20px;
-        transition: transform 0.16s ease, color 0.16s ease;
+        stroke: #6B7280 !important;
+        transition: transform 0.16s ease, stroke 0.16s ease;
       }
 
       .mobile-dock-btn span {
-        font-size: 10.5px;
+        font-size: 11px;
         font-weight: 600;
-        letter-spacing: 0.2px;
+        letter-spacing: 0.01em;
+        color: #6B7280 !important;
         transition: color 0.16s ease;
       }
 
       .mobile-dock-btn.active {
-        color: var(--color-racer-cyan);
+        color: #2563EB !important;
       }
 
       .mobile-dock-btn.active svg {
-        transform: translateY(-2px);
-        filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.6));
+        stroke: #2563EB !important;
+        transform: translateY(-1px);
       }
 
-      .mobile-dock-btn.active::after {
-        content: '';
-        position: absolute;
-        bottom: env(safe-area-inset-bottom, 10px);
-        width: 16px;
-        height: 2px;
-        background: var(--color-racer-cyan);
-        border-radius: 2px;
-        box-shadow: 0 0 8px var(--color-racer-cyan);
+      .mobile-dock-btn.active span {
+        color: #2563EB !important;
+        font-weight: 700;
       }
 
       /* Center elevated deposit button */
       .mobile-dock-btn.mobile-dock-center {
-        color: #ffffff;
+        color: #2563EB !important;
       }
 
       .mobile-dock-center-halo {
-        width: 36px;
-        height: 36px;
+        width: 38px;
+        height: 38px;
         border-radius: 50%;
-        background: linear-gradient(135deg, var(--color-racer-cyan), var(--color-racer-purple));
+        background: #2563EB !important;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 0 14px rgba(0, 240, 255, 0.45);
-        color: #0b0e13;
-        margin-top: -8px;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35) !important;
+        color: #FFFFFF !important;
+        margin-top: -6px;
         transition: transform 0.16s ease, box-shadow 0.16s ease;
       }
 
       .mobile-dock-btn.mobile-dock-center:active .mobile-dock-center-halo {
         transform: scale(0.92);
+        background: #1D4ED8 !important;
       }
 
       .mobile-dock-center-halo svg {
         width: 18px;
         height: 18px;
         stroke-width: 2.5;
-        stroke: #0b0e13;
+        stroke: #FFFFFF !important;
       }
 
       /* Mobile Terminal Tabs (Swap & Trade / Screener / Positions) */
@@ -2872,31 +2870,33 @@
         grid-template-columns: 1fr 1fr 1fr;
         gap: 6px;
         margin: 8px 0 16px 0;
-        background: var(--color-surface);
+        background: #FFFFFF !important;
         padding: 4px;
-        border-radius: var(--radius-md);
-        border: 1px solid var(--color-border);
+        border-radius: 12px !important;
+        border: 1px solid #E5E7EB !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
       }
       .mobile-term-tab {
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 6px;
+        min-height: 44px !important;
         padding: 10px 4px;
-        border-radius: var(--radius-sm);
+        border-radius: 8px;
         border: none;
         background: transparent;
-        color: var(--color-text-muted);
+        color: #6B7280 !important;
         font-family: var(--font-family);
-        font-size: 11.5px;
-        font-weight: 700;
+        font-size: 12px;
+        font-weight: 600;
         cursor: pointer;
         transition: all 0.15s ease;
       }
       .mobile-term-tab.active {
-        background: rgba(0, 240, 255, 0.14);
-        color: var(--color-racer-cyan);
-        box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
       }
       .mobile-term-tab svg {
         flex-shrink: 0;
@@ -2936,10 +2936,14 @@
         display: none !important;
       }
 
-      /* Top strip metrics wrapping on mobile */
+      /* Top strip metrics wrapping on mobile in FeedLoop style */
       .gmgn-top-strip {
         padding: 12px 14px;
         gap: 10px;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
       }
       .gmgn-top-metrics {
         flex-wrap: wrap;
@@ -2950,9 +2954,17 @@
         display: none;
       }
 
-      /* Touch targets for trade column */
-      .gmgn-token-spotlight {
-        padding: 14px;
+      /* Touch targets & cards for trade column */
+      .gmgn-token-spotlight,
+      .gmgn-card,
+      .alpha-card,
+      .strategy-card {
+        padding: 14px 16px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #E5E7EB !important;
+        border-radius: 12px !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+        margin-bottom: 12px !important;
       }
       .spotlight-stats-grid {
         grid-template-columns: repeat(2, 1fr) !important;
@@ -2962,12 +2974,30 @@
         gap: 6px;
       }
       .gmgn-chip {
-        padding: 10px 0;
-        font-size: 12px;
+        min-height: 44px !important;
+        padding: 0 12px !important;
+        font-size: 13px !important;
+        background: #FFFFFF !important;
+        border: 1px solid #D1D5DB !important;
+        color: #374151 !important;
+        border-radius: 8px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .gmgn-chip.active {
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-color: #2563EB !important;
       }
       .btn-primary#gmgn-submit-btn {
+        min-height: 44px !important;
         height: 48px !important;
         font-size: 15px !important;
+        font-weight: 600 !important;
+        background: #2563EB !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
       }
     }
   </style>

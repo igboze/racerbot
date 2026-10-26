@@ -135,11 +135,27 @@ The aesthetic direction is **Restrained Dark Terminal**:
 
 ---
 
-## 5. Mobile Interaction Patterns
-- **Application Shell**: Desktop permanent sidebar disappears; replaced by compact sticky top bar + bottom navigation dock (Home, Bubble Map, Alpha, Fleet, Arena).
-- **Touch Targets**: Minimum 44px × 44px for all primary actions.
-- **Single-Handed Operability**: Bottom-aligned primary CTAs, segmented tab switchers, and swipe-dismissible sheets.
-- **Zero Horizontal Overflow**: All tables, code snippets, and metrics grids must reflow or use dedicated card wrappers without breaking viewport width.
+## 5. Mobile Interaction Patterns (FeedLoop Design System)
+
+FeedLoop is a scroll-optimized, content-first mobile design system built for feeds and discovery platforms. It emphasizes readability at speed, with compact spacing that maximizes content density without sacrificing clarity.
+
+### FeedLoop Palette (Mobile Viewports ≤ 768px)
+- **Primary** (`#2563EB`): Blue — interactive elements, links, CTAs, active bottom dock items.
+- **Secondary** (`#6B7280`): Gray — metadata, timestamps, subheaders, badges.
+- **Tertiary** (`#F9FAFB`): Light — background tints and subtle wells.
+- **Background** (`#F9FAFB`): Clean feed canvas.
+- **Surface** (`#FFFFFF`): Post cards, modules, drawer panels, modal sheets.
+- **Success** (`#16A34A`): Buys, positive yields, confirmed signals.
+- **Warning** (`#D97706`): Cautionary alerts, high slippage.
+- **Error** (`#DC2626`): Sells, negative yields, stop-loss triggers.
+- **Info** (`#2563EB`): Protocol indicators, verified network badges.
+
+### FeedLoop Do's and Don'ts
+- **Do keep post cards visually uniform**: Consistent padding (14px–16px) and uniform 12px card radius across all feeds and modules.
+- **Don't add heavy shadows to feed cards**: Rely on crisp 1px `#E5E7EB` hairline borders and subtle elevation (`0 1px 3px rgba(0, 0, 0, 0.05)`).
+- **Do maintain a minimum touch target of 44px**: All buttons, tabs, category pills, form inputs, and bottom dock items meet or exceed 44px × 44px.
+- **Do optimize for scroll speed & readability**: Tabular numbers (`font-variant-numeric: tabular-nums`), high contrast text (`#111827`), compact vertical gaps (10px–12px), zero horizontal page overflow.
+- **Universal Mobile Dock**: 5-column navigation dock (Home, Bubble Map, Alpha, Fleet, Arena) with clean `#FFFFFF` backdrop, `#E5E7EB` border, and `#2563EB` active indicators.
 
 ---
 
