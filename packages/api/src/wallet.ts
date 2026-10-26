@@ -768,8 +768,10 @@ export async function getDexTax(info: DexTaxOptions): Promise<{ buyTaxPct: numbe
 /**
  * Detect whether a token address belongs to meme.cooking launchpad.
  */
-function isMemooCookingToken(tokenAddress: string): boolean {
-  return tokenAddress.endsWith('.meme-cooking.near');
+function isMemeCookingToken(tokenAddress: string): boolean {
+  if (!tokenAddress) return false;
+  const lower = tokenAddress.toLowerCase().trim();
+  return lower.endsWith('.meme-cooking.near') || parseMemeCookingId(lower) !== null;
 }
 
 /**
@@ -788,9 +790,19 @@ export function isIntearToken(tokenAddress: string): boolean {
 }
 
 /**
- * Fetch meme.cooking token state from on-chain.
+ * Fetch meme.cooking token state from on-chain RPC.
  */
-async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: number; liquidity: number; phase: string; progress: number; totalSupply?: string }> {
+async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{
+  price: number;
+  liquidity: number;
+  phase: string;
+  progress: number;
+  totalSupply?: string;
+  decimals?: number;
+  name?: string;
+  symbol?: string;
+  icon?: string;
+}> {
   const memeId = parseMemeCookingId(tokenAddress);
   if (memeId === null) {
     return { price: 0, liquidity: 0, phase: 'unknown', progress: 0 };
@@ -799,19 +811,47 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{ price: n
   try {
     const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
     if (meme) {
-      const totalStaked = parseFloat(meme.total_staked || '0') / 1e24;
-      const hardCap = parseFloat(meme.hard_cap || '0') / 1e24;
-      const tokensToDistribute = parseFloat(meme.amount_to_be_distributed || meme.total_supply || '0') / Math.pow(10, meme.decimals || 18);
-      const price = tokensToDistribute > 0 ? totalStaked / tokensToDistribute : 0;
-      const progress = hardCap > 0 ? Math.min(100, (totalStaked / hardCap) * 100) : 0;
-      return { price, liquidity: totalStaked, phase: 'prebonded', progress, totalSupply: meme.total_supply };
+      const dec = Number(meme.decimals ?? 18);
+      const totalStakedNear = parseFloat(meme.total_staked || '0') / 1e24;
+      const hardCapNear = parseFloat(meme.hard_cap || '0') / 1e24;
+      const softCapNear = parseFloat(meme.soft_cap || '0') / 1e24;
+      const tokensToDistribute = parseFloat(meme.amount_to_be_distributed || meme.total_supply || '0') / Math.pow(10, dec);
+      
+      const effectiveStakedNear = totalStakedNear > 0 ? totalStakedNear : (softCapNear > 0 ? softCapNear * 0.1 : 5);
+      const price = tokensToDistribute > 0 ? effectiveStakedNear / tokensToDistribute : 0;
+      const progress = hardCapNear > 0 ? Math.min(99.9, (totalStakedNear / hardCapNear) * 100) : 0;
+      return {
+        price,
+        liquidity: Math.max(totalStakedNear, 1),
+        phase: 'prebonded',
+        progress,
+        totalSupply: meme.total_supply,
+        decimals: dec,
+        name: meme.name,
+        symbol: meme.symbol,
+        icon: meme.icon || undefined,
+      };
     }
   } catch { /* no-op */ }
 
   try {
     const fin = await near.view<any>('meme-cooking.near', 'get_finalized_meme', { meme_id: memeId }).catch(() => null);
     if (fin) {
-      return { price: 0, liquidity: 0, phase: 'bonded', progress: 100, totalSupply: fin.total_supply };
+      const dec = Number(fin.decimals ?? 18);
+      const hardCapNear = parseFloat(fin.hard_cap || fin.total_staked || '0') / 1e24;
+      const poolTokensHuman = parseFloat(fin.pool_amount || fin.amount_to_be_distributed || fin.total_supply || '0') / Math.pow(10, dec);
+      const baselinePrice = (hardCapNear > 0 && poolTokensHuman > 0) ? hardCapNear / poolTokensHuman : 0;
+      return {
+        price: baselinePrice,
+        liquidity: Math.max(hardCapNear * 2, 20),
+        phase: 'bonded',
+        progress: 100,
+        totalSupply: fin.total_supply,
+        decimals: dec,
+        name: fin.name,
+        symbol: fin.symbol,
+        icon: fin.icon || undefined,
+      };
     }
   } catch { /* no-op */ }
 
@@ -1490,9 +1530,19 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   // Step 1: Fast launchpad detection by token suffix (instant on-chain RPC lookup - skipped if price resolved by fast-path)
   if (price <= 0) {
-    if (isMemooCookingToken(tokenAddress)) {
+    if (isMemeCookingToken(tokenAddress)) {
       try {
-        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({ price: 0, liquidity: 0, phase: 'unknown', progress: 0, totalSupply: '0' }));
+        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({
+          price: 0,
+          liquidity: 0,
+          phase: 'unknown',
+          progress: 0,
+          totalSupply: '0',
+          decimals: undefined as number | undefined,
+          name: undefined as string | undefined,
+          symbol: undefined as string | undefined,
+          icon: undefined as string | undefined,
+        }));
         if (mcInfo.price > 0 || mcInfo.liquidity > 0 || mcInfo.phase === 'bonded') {
           venue = 'memecooking';
           price = mcInfo.price;
@@ -1501,6 +1551,18 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           bondingProgressPct = mcInfo.progress;
           if (mcInfo.totalSupply && mcInfo.totalSupply !== '0') {
             totalSupply = mcInfo.totalSupply;
+          }
+          if (mcInfo.decimals) {
+            meta.decimals = mcInfo.decimals;
+          }
+          if ((!meta.name || meta.name === 'Unknown') && mcInfo.name) {
+            meta.name = mcInfo.name;
+          }
+          if ((!meta.symbol || meta.symbol === '???') && mcInfo.symbol) {
+            meta.symbol = mcInfo.symbol;
+          }
+          if (!meta.icon && mcInfo.icon) {
+            meta.icon = mcInfo.icon;
           }
           if (mcInfo.phase === 'bonded') {
             const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);

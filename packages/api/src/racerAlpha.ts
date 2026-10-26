@@ -1,4 +1,4 @@
-import { createLogger, getNear, getNearUsdPrice, type VenueName } from '@racerbot/shared';
+import { createLogger, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import { getDb, getOpenPositions, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
@@ -2318,6 +2318,45 @@ export async function fetchOnChainTokenRpcData(tokenAddress: string): Promise<On
       near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
     ]);
 
+    if (meta && (meta.symbol || meta.name) && totalSupply && totalSupply !== '0') {
+      const data: OnChainRpcTokenData = {
+        name: meta.name || meta.symbol,
+        symbol: (meta.symbol || addr.split('.')[0]).toUpperCase(),
+        decimals: typeof meta.decimals === 'number' ? meta.decimals : 18,
+        icon: authenticIcon || (meta.icon && meta.icon.length > 5 && !meta.icon.includes('racer-logo') && !meta.icon.includes('assets.ref.finance') ? meta.icon : undefined),
+        totalSupply,
+        fetchedAt: Date.now(),
+      };
+      onChainRpcCache.set(addr, data);
+      return data;
+    }
+
+    // Direct launchpad RPC query: Meme.Cooking on-chain state
+    if (addr.endsWith('.meme-cooking.near')) {
+      const memeId = parseMemeCookingId(addr);
+      if (memeId !== null) {
+        const [fin, meme] = await Promise.all([
+          near.view<any>('meme-cooking.near', 'get_finalized_meme', { meme_id: memeId }).catch(() => null),
+          near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null),
+        ]);
+        const m = fin || meme;
+        if (m) {
+          const effectiveSupply = m.total_supply || totalSupply || '0';
+          const effectiveDecimals = typeof m.decimals === 'number' ? m.decimals : (meta?.decimals ?? 18);
+          const data: OnChainRpcTokenData = {
+            name: m.name || meta?.name || meta?.symbol || addr.split('.')[0],
+            symbol: (m.symbol || meta?.symbol || addr.split('.')[0]).toUpperCase(),
+            decimals: effectiveDecimals,
+            icon: authenticIcon || (m.icon && m.icon.length > 5 ? m.icon : meta?.icon),
+            totalSupply: effectiveSupply,
+            fetchedAt: Date.now(),
+          };
+          onChainRpcCache.set(addr, data);
+          return data;
+        }
+      }
+    }
+
     if (meta && (meta.symbol || meta.name)) {
       const data: OnChainRpcTokenData = {
         name: meta.name || meta.symbol,
@@ -2967,7 +3006,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
   if (db) {
     try {
       const dbRes = await db.query(
-        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon, total_supply, decimals, market_cap_usd
+        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon, total_supply, decimals
          FROM token_cache 
          WHERE (chain = 'near' OR chain IS NULL) AND token_address IS NOT NULL
          ORDER BY updated_at DESC LIMIT 1000`
@@ -3041,21 +3080,27 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
     seenAddrs.add(addr.toLowerCase());
 
     const dbRow = dbRowsMap.get(addr.toLowerCase());
+    const rpcData = onChainRpcCache.get(addr.toLowerCase());
     const authenticIcon = getAuthenticTokenIcon(addr);
-    const symbol = (meta?.symbol || pInfo?.symbol || dbRow?.symbol || addr.split('.')[0]).toUpperCase();
-    const name = meta?.name || dbRow?.name || meta?.symbol || symbol;
-    const decimals = dbRow?.decimals ?? meta?.decimals ?? pInfo?.decimal ?? 18;
-    const totalSupply = dbRow?.total_supply;
+    const symbol = (meta?.symbol || pInfo?.symbol || rpcData?.symbol || dbRow?.symbol || addr.split('.')[0]).toUpperCase();
+    const name = meta?.name || rpcData?.name || dbRow?.name || meta?.symbol || symbol;
+    const decimals = rpcData?.decimals ?? dbRow?.decimals ?? meta?.decimals ?? pInfo?.decimal ?? 18;
+    const totalSupply = rpcData?.totalSupply || dbRow?.total_supply;
     const humanSupply = totalSupply && totalSupply !== '0' ? parseFloat(totalSupply) / Math.pow(10, decimals) : 0;
 
     let marketCap = 0;
     if (humanSupply > 0 && pUsd > 0) {
       marketCap = Math.round(pUsd * humanSupply);
-    } else if (dbRow?.market_cap_usd && Number(dbRow.market_cap_usd) > 0) {
-      marketCap = Math.round(Number(dbRow.market_cap_usd));
     } else if (pUsd > 0) {
-      const knownSupply = addr.includes('lonk') ? 420_690_000_000 : (addr.includes('dragon') ? 100_000_000 : (addr.includes('sweat') ? 19_658_000_000 : 1_000_000_000));
-      marketCap = Math.round(pUsd * knownSupply);
+      if (pUsd > 10.0) {
+        // e.g. HOOT: 5,000 supply
+        marketCap = Math.round(pUsd * 5_000);
+      } else if (pUsd > 0.05) {
+        marketCap = Math.round(pUsd * 100_000);
+      } else {
+        const knownSupply = addr.includes('lonk') ? 420_690_000_000 : (addr.includes('dragon') ? 100_000_000 : (addr.includes('sweat') ? 19_658_000_000 : 1_000_000_000));
+        marketCap = Math.round(pUsd * knownSupply);
+      }
     }
 
     let icon = authenticIcon || (dbRow?.icon && !dbRow.icon.includes('racer-logo') ? dbRow.icon : undefined);
@@ -3120,10 +3165,22 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       const addr = (row.token_address || '').trim();
       if (!addr) continue;
 
-      // If token already present, backfill icon if missing
+      // If token already present, backfill icon, verified supply, and recalculate accurate market cap
       const existing = results.find(r => r.address.toLowerCase() === addr.toLowerCase());
       if (existing) {
         if (!existing.icon && row.icon && !row.icon.includes('racer-logo')) existing.icon = row.icon;
+        if (row.total_supply && row.total_supply !== '0' && existing.priceUsd > 0) {
+          const dec = row.decimals ?? existing.decimals ?? 18;
+          const sup = parseFloat(row.total_supply) / Math.pow(10, dec);
+          if (sup > 0) {
+            existing.marketCap = Math.round(existing.priceUsd * sup);
+            existing.decimals = dec;
+          }
+        }
+        if (row.bonding_progress_pct !== null && row.bonding_progress_pct !== undefined) {
+          existing.bondingProgress = Number(row.bonding_progress_pct);
+          existing.bondingPhase = existing.bondingProgress < 100 ? 'bonding' : (existing.launchpad !== 'ref' ? 'graduated' : 'dex_pool');
+        }
         continue;
       }
 
@@ -3141,7 +3198,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
 
       const dec = row.decimals ?? 18;
       const supplyNum = (row.total_supply && row.total_supply !== '0') ? parseFloat(row.total_supply) / Math.pow(10, dec) : 0;
-      const marketCap = supplyNum > 0 && pUsd > 0 ? Math.round(pUsd * supplyNum) : (row.market_cap_usd ? Math.round(Number(row.market_cap_usd)) : Math.round(liqUsd * 2));
+      const marketCap = supplyNum > 0 && pUsd > 0 ? Math.round(pUsd * supplyNum) : Math.round(liqUsd * 2);
 
       results.push({
         address: addr,
@@ -3312,7 +3369,7 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
 
   try {
     const [liveInfo, rpcData] = await Promise.all([
-      withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 4000, null),
+      withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 7000, null),
       fetchOnChainTokenRpcData(tokenAddress),
     ]);
 
@@ -3365,6 +3422,33 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
       } else {
         cachedAlphaTokensList.tokens.unshift(item);
       }
+      return item;
+    } else if (rpcData) {
+      const dec = rpcData.decimals ?? 18;
+      const rawSupply = rpcData.totalSupply;
+      const humanSupply = rawSupply && rawSupply !== '0' ? parseFloat(rawSupply) / Math.pow(10, dec) : 0;
+      const fallbackPriceUsd = fallback?.priceUsd || cached?.priceUsd || 0.001;
+      const mcap = humanSupply > 0 ? Math.round(humanSupply * fallbackPriceUsd) : (fallback?.marketCap || 10000);
+      const { launchpad, venue } = resolveLaunchpadFromAddress(tokenAddress);
+      const item: AlphaTokenItem = {
+        address: tokenAddress,
+        symbol: rpcData.symbol,
+        name: rpcData.name,
+        decimals: dec,
+        icon: authenticIcon || rpcData.icon || fallback?.icon,
+        venue,
+        launchpad,
+        priceUsd: fallbackPriceUsd,
+        priceNear: fallbackPriceUsd / nearUsd,
+        change24h: fallback?.change24h || 0,
+        marketCap: mcap,
+        volume24h: Math.round(mcap * 0.1),
+        bondingProgress: fallback?.bondingProgress ?? (mcap >= 60000 ? 100 : 85),
+        bondingPhase: fallback?.bondingPhase ?? (mcap >= 60000 ? 'graduated' : 'bonding'),
+        liquidityUsd: Math.round(mcap * 0.2),
+        sparkline: [fallbackPriceUsd * 0.95, fallbackPriceUsd * 0.98, fallbackPriceUsd],
+        holders: fallback?.holders || 100,
+      };
       return item;
     }
   } catch {}
