@@ -53,12 +53,31 @@ let fetchRefPoolsInFlight: Promise<{ fromIndex: number; pools: any[] }[]> | null
 
 async function getAllRefPoolsOnChain(near: MultiRpcNear): Promise<{ fromIndex: number; pools: any[] }[]> {
   const now = Date.now();
-  if (cachedRefPools && now - lastRefPoolsFetch < 300_000) {
+  const CACHE_TTL_MS = 900_000; // 15 minutes TTL
+
+  if (cachedRefPools && now - lastRefPoolsFetch < CACHE_TTL_MS) {
     return cachedRefPools;
   }
+
+  // Stale-while-revalidate: if we already have pools, return them immediately
+  // and trigger the refresh in the background without blocking the bot user request!
+  if (cachedRefPools && cachedRefPools.length > 0) {
+    if (!fetchRefPoolsInFlight) {
+      // Trigger background refresh detached
+      getAllRefPoolsOnChainBackground(near).catch(() => {});
+    }
+    return cachedRefPools;
+  }
+
   if (fetchRefPoolsInFlight) {
     return fetchRefPoolsInFlight;
   }
+
+  return getAllRefPoolsOnChainBackground(near);
+}
+
+async function getAllRefPoolsOnChainBackground(near: MultiRpcNear): Promise<{ fromIndex: number; pools: any[] }[]> {
+  if (fetchRefPoolsInFlight) return fetchRefPoolsInFlight;
 
   fetchRefPoolsInFlight = (async () => {
     try {
