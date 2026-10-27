@@ -2297,33 +2297,16 @@ async function fetchHoldersForToken(token: string): Promise<Array<{ account: str
   const cached = getCached<Array<{ account: string; amount: string }>>(cacheKey);
   if (cached) return cached;
 
-  const fastNearKey = process.env.FASTNEAR_API_KEY || '';
-  if (fastNearKey) {
-    try {
-      const r = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(token)}/top`, {
-        headers: { 'Authorization': `Bearer ${fastNearKey}` },
-      });
-      if (r.ok) {
-        const d: any = await r.json();
-        const accounts = d.accounts || d.tokens || d.holders || [];
-        if (accounts.length > 0) {
-          const result = accounts.map((a: any) => ({
-            account: a.account_id || a.account,
-            amount: a.balance || a.amount,
-          }));
-          setCached(cacheKey, result, 120_000);
-          return result;
-        }
-      }
-    } catch (err: any) {
-      logger.warn('FastNear top holders error', { token, error: err.message });
-    }
-  }
-
-  // Fallback to NearBlocks
+  // Query NearBlocks holders with standard timeout and user agent
   try {
     const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`;
-    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const resp = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+      },
+      signal: AbortSignal.timeout(5000),
+    });
     if (resp.ok) {
       const data: any = await resp.json();
       const raw = data.holders || data.data || [];
@@ -2342,7 +2325,6 @@ async function fetchHoldersForToken(token: string): Promise<Array<{ account: str
 
   // No real holder data available — return empty rather than fabricate fake accounts
   return [];
-
 }
 
 // ── Token transfers aggregator (detects wallet-to-wallet movements) ─────────
@@ -2361,77 +2343,77 @@ async function fetchTransfersForToken(token: string): Promise<Array<{
   const transfers: Array<{ from: string; to: string; amount: string; cause: string; tx: string; timestamp: string }> = [];
   const seen = new Set<string>();
 
-  // 1. Fetch action logs directly from the token contract (up to 3 pages)
-  try {
-    for (let page = 1; page <= 3; page++) {
-      const url = `https://api.nearblocks.io/v1/account/${encodeURIComponent(token)}/txns?page=${page}&per_page=50`;
-      const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
-      if (!resp.ok) break;
-      const data: any = await resp.json();
-      const txns = data.txns || [];
-      if (txns.length === 0) break;
+  const headers = {
+    'Accept': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+  };
 
-      for (const t of txns) {
-        for (const act of (t.actions || [])) {
-          const method = act.method;
-          if (method === 'ft_transfer' || method === 'ft_transfer_call' || method === 'ft_resolve_transfer') {
-            try {
-              const args = typeof act.args === 'string' ? JSON.parse(act.args || '{}') : (act.args || {});
-              const from = args.sender_id || t.predecessor_account_id || t.signer_account_id;
-              const to = args.receiver_id;
-              const amount = args.amount || '0';
-              if (from && to && from !== to) {
-                const sig = `${from}->${to}:${t.transaction_hash}`;
-                if (!seen.has(sig)) {
-                  seen.add(sig);
-                  transfers.push({
-                    from,
-                    to,
-                    amount: amount.toString(),
-                    cause: method,
-                    tx: t.transaction_hash || '',
-                    timestamp: t.block_timestamp || Date.now().toString(),
-                  });
-                }
-              }
-            } catch {}
-          }
+  // Run FT transfers and account direct actions in parallel with bounded timeouts (4s max)
+  const [ftsResult, acctResult] = await Promise.allSettled([
+    fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=50`, {
+      headers,
+      signal: AbortSignal.timeout(4000),
+    }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+    fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(token)}/txns?page=1&per_page=50`, {
+      headers,
+      signal: AbortSignal.timeout(4000),
+    }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+  ]);
+
+  // 1. Process FT transfers
+  if (ftsResult.status === 'fulfilled' && ftsResult.value) {
+    const data = ftsResult.value as any;
+    for (const t of (data.txns || [])) {
+      const from = t.involved_account_id;
+      const to = t.affected_account_id;
+      const amount = t.delta_amount || '0';
+      if (from && to && from !== to) {
+        const sig = `${from}->${to}:${t.transaction_hash}`;
+        if (!seen.has(sig)) {
+          seen.add(sig);
+          transfers.push({
+            from,
+            to,
+            amount: amount.toString(),
+            cause: t.cause || 'TRANSFER',
+            tx: t.transaction_hash || '',
+            timestamp: t.block_timestamp || Date.now().toString(),
+          });
         }
       }
     }
-  } catch (err: any) {
-    logger.warn('NearBlocks account txns error', { token, error: err.message });
   }
 
-  // 2. Fallback / supplement with ft txns endpoint if available
-  try {
-    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=50`;
-    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (resp.ok) {
-      const data: any = await resp.json();
-      const txns = data.txns || [];
-      for (const t of txns) {
-        const from = t.involved_account_id;
-        const to = t.affected_account_id;
-        const amount = t.delta_amount || '0';
-        if (from && to && from !== to) {
-          const sig = `${from}->${to}:${t.transaction_hash}`;
-          if (!seen.has(sig)) {
-            seen.add(sig);
-            transfers.push({
-              from,
-              to,
-              amount: amount.toString(),
-              cause: t.cause || 'TRANSFER',
-              tx: t.transaction_hash || '',
-              timestamp: t.block_timestamp || Date.now().toString(),
-            });
-          }
+  // 2. Process direct action logs
+  if (acctResult.status === 'fulfilled' && acctResult.value) {
+    const data = acctResult.value as any;
+    for (const t of (data.txns || [])) {
+      for (const act of (t.actions || [])) {
+        const method = act.method;
+        if (method === 'ft_transfer' || method === 'ft_transfer_call' || method === 'ft_resolve_transfer') {
+          try {
+            const args = typeof act.args === 'string' ? JSON.parse(act.args || '{}') : (act.args || {});
+            const from = args.sender_id || t.predecessor_account_id || t.signer_account_id;
+            const to = args.receiver_id;
+            const amount = args.amount || '0';
+            if (from && to && from !== to) {
+              const sig = `${from}->${to}:${t.transaction_hash}`;
+              if (!seen.has(sig)) {
+                seen.add(sig);
+                transfers.push({
+                  from,
+                  to,
+                  amount: amount.toString(),
+                  cause: method,
+                  tx: t.transaction_hash || '',
+                  timestamp: t.block_timestamp || Date.now().toString(),
+                });
+              }
+            }
+          } catch {}
         }
       }
     }
-  } catch (err: any) {
-    logger.warn('NearBlocks fts txns error', { token, error: err.message });
   }
 
   setCached(cacheKey, transfers, 120_000);
@@ -2452,8 +2434,7 @@ router.get('/holders/:token', async (req, res) => {
   }
 });
 
-
-// ── Transfers endpoint ───────────────────────────────────────// ── Sybil & Common Funder / Cross-Wallet Identity Tracing ──────────────────
+// ── Sybil & Common Funder / Cross-Wallet Identity Tracing ──────────────────
 export interface IdentityLink {
   from: string;
   to: string;
@@ -2479,7 +2460,11 @@ export interface IdentityCluster {
   isBundler: boolean;
 }
 
-async function fetchIdentityTracesForHolders(token: string, holders: Array<{ account: string; amount: string }>): Promise<{
+async function fetchIdentityTracesForHolders(
+  token: string,
+  holders: Array<{ account: string; amount: string }>,
+  transfers: Array<{ from: string; to: string; amount: string; cause: string; tx: string; timestamp: string }> = []
+): Promise<{
   identityLinks: IdentityLink[];
   identityClusters: IdentityCluster[];
 }> {
@@ -2491,17 +2476,44 @@ async function fetchIdentityTracesForHolders(token: string, holders: Array<{ acc
   const holderSet = new Set(holders.map(h => h.account));
   const funderToWallets = new Map<string, Array<{ account: string; initialNear?: string; txHash?: string }>>();
 
-  // Top holders to inspect (first 25 holders)
-  const topHolders = holders.slice(0, 25);
-  const realAddresses = topHolders.filter(h => h.account.includes('.') || h.account.length === 64);
+  // 1. Immediate link derivation from transfers between known holders
+  const seenPeerLinks = new Set<string>();
+  for (const tx of transfers) {
+    if (holderSet.has(tx.from) && holderSet.has(tx.to) && tx.from !== tx.to) {
+      const linkKey = `${tx.from}->${tx.to}`;
+      if (!seenPeerLinks.has(linkKey)) {
+        seenPeerLinks.add(linkKey);
+        identityLinks.push({
+          from: tx.from,
+          to: tx.to,
+          type: 'historical_transfer',
+          token: 'FT',
+          amount: tx.amount,
+          detail: `Direct peer transfer detected (${tx.cause})`,
+          tx: tx.tx,
+          timestamp: tx.timestamp,
+        });
+      }
+    }
+  }
+
+  // 2. Light gas funder inspection for top 4 holders max with strict 2.5s timeout
+  const topHolders = holders.slice(0, 4);
+  const realAddresses = topHolders.filter(
+    h => (h.account.includes('.') || h.account.length === 64) && !h.account.includes('ref-finance') && !h.account.includes('wrap.near')
+  );
 
   if (realAddresses.length > 0) {
     try {
       const scannedResults = await Promise.allSettled(
-        realAddresses.slice(0, 15).map(async (h) => {
+        realAddresses.map(async (h) => {
           try {
-            const r = await fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(h.account)}/txns?page=1&per_page=15`, {
-              headers: { 'Accept': 'application/json' },
+            const r = await fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(h.account)}/txns?page=1&per_page=10`, {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+              },
+              signal: AbortSignal.timeout(2500),
             });
             if (r.ok) {
               const data: any = await r.json();
@@ -2520,21 +2532,32 @@ async function fetchIdentityTracesForHolders(token: string, holders: Array<{ acc
             const predecessor = t.predecessor_account_id;
             const receiver = t.receiver_account_id;
 
-            // 1. Direct peer interactions between holders (excluding the token contract itself)
+            // Direct peer interactions
             if (receiver && receiver !== account && receiver !== token && holderSet.has(receiver)) {
-              identityLinks.push({
-                from: account,
-                to: receiver,
-                type: 'historical_transfer',
-                token: 'NEAR',
-                detail: `Direct inter-wallet transaction (${signer === account ? 'Outbound' : 'Inbound'})`,
-                tx: t.transaction_hash || '',
-                timestamp: t.block_timestamp || Date.now().toString(),
-              });
+              const linkKey = `${account}->${receiver}`;
+              if (!seenPeerLinks.has(linkKey)) {
+                seenPeerLinks.add(linkKey);
+                identityLinks.push({
+                  from: account,
+                  to: receiver,
+                  type: 'historical_transfer',
+                  token: 'NEAR',
+                  detail: `Direct inter-wallet transaction (${signer === account ? 'Outbound' : 'Inbound'})`,
+                  tx: t.transaction_hash || '',
+                  timestamp: t.block_timestamp || Date.now().toString(),
+                });
+              }
             }
 
-            // 2. Gas / Inbound Funder identification
-            if (predecessor && predecessor !== account && predecessor !== 'system' && predecessor !== token && !predecessor.includes('ref-finance') && !predecessor.includes('wrap.near')) {
+            // Gas / Inbound Funder identification
+            if (
+              predecessor &&
+              predecessor !== account &&
+              predecessor !== 'system' &&
+              predecessor !== token &&
+              !predecessor.includes('ref-finance') &&
+              !predecessor.includes('wrap.near')
+            ) {
               if (!funderToWallets.has(predecessor)) {
                 funderToWallets.set(predecessor, []);
               }
@@ -2646,15 +2669,16 @@ async function fetchIdentityTracesForHolders(token: string, holders: Array<{ acc
 router.get('/bubblemap-data/:token', async (req, res) => {
   try {
     const { token } = req.params;
-    const [holders, rawTxns, meta] = await Promise.all([
-      fetchHoldersForToken(token),
-      fetchTransfersForToken(token),
+    const [holders, txns, meta] = await Promise.all([
+      fetchHoldersForToken(token).catch(() => []),
+      fetchTransfersForToken(token).catch(() => []),
       getTokenInfo(token, true).catch(() => null),
     ]);
 
-    const txns = rawTxns;
-
-    const { identityLinks, identityClusters } = await fetchIdentityTracesForHolders(token, holders);
+    const { identityLinks, identityClusters } = await fetchIdentityTracesForHolders(token, holders, txns).catch(() => ({
+      identityLinks: [],
+      identityClusters: [],
+    }));
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -2685,11 +2709,12 @@ router.get('/account-balance/:token/:account', async (req, res) => {
       return;
     }
 
-    const fastNearKey = process.env.FASTNEAR_API_KEY || '';
+    const fastNearKey = (process.env.FASTNEAR_API_KEY || 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0').trim();
     if (fastNearKey) {
       try {
         const r = await fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(account)}/ft`, {
           headers: { 'Authorization': `Bearer ${fastNearKey}` },
+          signal: AbortSignal.timeout(4000),
         });
         if (r.ok) {
           const d: any = await r.json();
@@ -2722,17 +2747,22 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       return;
     }
 
-    const fastNearKey = process.env.FASTNEAR_API_KEY || '';
+    const fastNearKey = (process.env.FASTNEAR_API_KEY || 'b8c6be9e4b3b911625033a9d3798db5d96ad50e8b04a3950159757bcb5cdc8f0').trim();
     let otherTokens: Array<{ contract_id: string; symbol: string; balance: string }> = [];
     let txns: any[] = [];
 
-    // Parallel fetch FT balances and recent account txns
+    // Parallel fetch FT balances and recent account txns with bounded timeouts
     const [ftRes, txnsRes] = await Promise.allSettled([
       fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(account)}/ft${fastNearKey ? `?api_key=${fastNearKey}` : ''}`, {
         headers: fastNearKey ? { 'Authorization': `Bearer ${fastNearKey}` } : {},
+        signal: AbortSignal.timeout(4000),
       }),
       fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(account)}/txns?page=1&per_page=40`, {
-        headers: { 'Accept': 'application/json' },
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+        },
+        signal: AbortSignal.timeout(4000),
       }),
     ]);
 

@@ -634,7 +634,10 @@
             <div class="map-status-spinner" aria-hidden="true"></div>
             <p class="map-status-title" id="map-status-title">Loading holders…</p>
             <p class="map-status-sub" id="map-status-sub"></p>
-            <button type="button" class="btn btn-secondary btn-sm" id="map-status-retry" hidden>Retry</button>
+            <div style="display:flex;gap:8px;margin-top:8px;justify-content:center;">
+              <button type="button" class="btn btn-secondary btn-sm" id="map-status-retry" hidden>Retry</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="map-status-scan-alt" onclick="openTokenScannerModal()" hidden>Scan Another</button>
+            </div>
           </div>
         </div>
 
@@ -1463,7 +1466,7 @@
 
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 22000);
+          const timer = setTimeout(() => ctrl.abort(), 35000);
           const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`, { signal: ctrl.signal });
           clearTimeout(timer);
           if (r.ok) {
@@ -1487,10 +1490,12 @@
         const title = document.getElementById('map-status-title');
         const sub = document.getElementById('map-status-sub');
         const retry = document.getElementById('map-status-retry');
+        const scanAlt = document.getElementById('map-status-scan-alt');
         if (!state) { el.hidden = true; return; }
         el.hidden = false;
         el.classList.toggle('is-idle', state !== 'loading');
         if (retry) { retry.hidden = state !== 'error' && state !== 'idle'; retry.onclick = () => (state === 'idle' ? openTokenScannerModal() : loadData()); }
+        if (scanAlt) { scanAlt.hidden = state !== 'error'; }
         if (state === 'loading') {
           title.textContent = 'Loading holder distribution…';
           sub.textContent = 'Mapping wallet networks and cabal clusters for ' + (currentSymbol || 'this token') + '.';
