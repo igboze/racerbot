@@ -2292,39 +2292,94 @@ function setCached<T>(key: string, data: T, ttlMs = 120_000): void {
 }
 
 // ── FastNEAR / NearBlocks holders aggregator ────────────────────────────────
-async function fetchHoldersForToken(token: string): Promise<Array<{ account: string; amount: string }>> {
+async function fetchHoldersForToken(token: string): Promise<Array<{ account: string; address: string; amount: string; pct: number }>> {
   const cacheKey = `holders:${token}`;
-  const cached = getCached<Array<{ account: string; amount: string }>>(cacheKey);
+  const cached = getCached<Array<{ account: string; address: string; amount: string; pct: number }>>(cacheKey);
   if (cached) return cached;
 
-  // Query NearBlocks holders with standard timeout and user agent
-  try {
-    const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`;
-    const resp = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (resp.ok) {
-      const data: any = await resp.json();
-      const raw = data.holders || data.data || [];
-      if (raw.length > 0) {
-        const result = raw.map((h: any) => ({
-          account: h.account,
-          amount: h.amount,
-        }));
-        setCached(cacheKey, result, 120_000);
-        return result;
+  let rawHolders: Array<{ account: string; amount: string }> = [];
+
+  // 1. FastNEAR Paid API top holders (/v1/ft/:token/top)
+  const fastNearKey = (process.env.FASTNEAR_API_KEY || 'REDACTED').trim();
+  if (fastNearKey) {
+    try {
+      const resp = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(token)}/top`, {
+        headers: {
+          'Authorization': `Bearer ${fastNearKey}`,
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const accounts = data.accounts || [];
+        if (accounts.length > 0) {
+          rawHolders = accounts.map((a: any) => ({
+            account: a.account_id,
+            amount: a.balance || '0',
+          }));
+        }
       }
+    } catch (err: any) {
+      logger.warn('FastNEAR top holders error', { token, error: err.message });
     }
-  } catch (err: any) {
-    logger.warn('NearBlocks holders fallback error', { token, error: err.message });
   }
 
-  // No real holder data available — return empty rather than fabricate fake accounts
-  return [];
+  // 2. NearBlocks holders fallback
+  if (rawHolders.length === 0) {
+    try {
+      const url = `https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`;
+      const resp = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const raw = data.holders || data.data || [];
+        if (raw.length > 0) {
+          rawHolders = raw.map((h: any) => ({
+            account: h.account,
+            amount: h.amount || '0',
+          }));
+        }
+      }
+    } catch (err: any) {
+      logger.warn('NearBlocks holders fallback error', { token, error: err.message });
+    }
+  }
+
+  if (rawHolders.length === 0) {
+    return [];
+  }
+
+  // Calculate percentages across holders
+  let totalHoldersSupply = 0n;
+  for (const h of rawHolders) {
+    try {
+      totalHoldersSupply += BigInt(h.amount || '0');
+    } catch {}
+  }
+
+  const result = rawHolders.map((h) => {
+    let pct = 0;
+    if (totalHoldersSupply > 0n) {
+      try {
+        pct = Number((BigInt(h.amount || '0') * 10000n) / totalHoldersSupply) / 100;
+      } catch {}
+    }
+    return {
+      account: h.account,
+      address: h.account,
+      amount: h.amount,
+      pct,
+    };
+  });
+
+  setCached(cacheKey, result, 120_000);
+  return result;
 }
 
 // ── Token transfers aggregator (detects wallet-to-wallet movements) ─────────
@@ -2680,6 +2735,17 @@ router.get('/bubblemap-data/:token', async (req, res) => {
       identityClusters: [],
     }));
 
+    const m = meta as any;
+    const normalizedMeta = m ? {
+      ...m,
+      symbol: m.symbol || m.name || '',
+      priceUsd: m.price_usd !== undefined ? Number(m.price_usd) : Number(m.priceUsd || 0),
+      priceChange24h: m.price_24h_change !== undefined ? Number(m.price_24h_change) : Number(m.priceChange24h || 0),
+      marketCap: m.market_cap_usd !== undefined ? Number(m.market_cap_usd) : Number(m.market_cap || m.marketCap || 0),
+      volume24h: m.volume_24h_usd !== undefined ? Number(m.volume_24h_usd) : Number(m.volume24h || 0),
+      liquidity: m.liquidity_usd !== undefined ? Number(m.liquidity_usd) : Number(m.liquidity || 0),
+    } : null;
+
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -2689,7 +2755,7 @@ router.get('/bubblemap-data/:token', async (req, res) => {
       txns,
       identityLinks,
       identityClusters,
-      meta,
+      meta: normalizedMeta,
     });
   } catch (err: any) {
     logger.warn('BubbleMap data error', { error: err.message });
