@@ -16,6 +16,13 @@ import {
   getSuiTokenSupply,
   checkTokenSafety,
   publishActivityEvent,
+  isSolanaToken,
+  getSolanaBalance,
+  getSolanaTokenInfo,
+  solToLamports,
+  lamportsToSol,
+  SOL_MINT,
+  SOLANA_MIN_RESERVE_LAMPORTS,
   type SwapEvent,
   type AutoBuySignal,
   type NotifyUserEvent,
@@ -557,6 +564,24 @@ export class SwapExecutor {
       timings.sign_ms = 0;
       timings.post_ms = 0;
       const solIsInput = token_in === 'So11111111111111111111111111111111111111112' || token_in.toLowerCase() === 'sol';
+      // Fail loudly: background flows (TP/SL, DCA, limit, copy, snipe, fleet)
+      // rely on a thrown error to send 'trade_failed' and re-arm triggers.
+      if (!res.success) {
+        throw new Error(res.reason || (solIsInput ? 'Solana buy failed' : 'Solana sell failed'));
+      }
+      if (event.notify_user !== false) {
+        await this.notifyUser(user_id, 'solana_trade_confirmed', {
+          side: solIsInput ? 'buy' : 'sell',
+          tokenAddress: solIsInput ? token_out : token_in,
+          tokenName: res.tokenName,
+          tokenSymbol: res.tokenSymbol,
+          tokenQty: res.tokenQty,
+          priceSol: res.priceSol,
+          solAmount: res.solAmount,
+          positionId: res.positionId,
+          txHash: res.txHash,
+        }).catch((err: any) => console.warn('[EXECUTOR] Failed to send Solana confirmation:', err?.message));
+      }
       return {
         txHash: res.txHash,
         success: res.success,
@@ -3357,6 +3382,11 @@ export class SwapExecutor {
       }
     };
 
+    // Solana snipes and auto-buys use their own path (Jupiter routes every launch phase).
+    if (signal.chain === 'solana' || isSolanaToken(token_address)) {
+      return this.autoBuySolana(signal, finalizeSnipe);
+    }
+
     // PRIORITY PATH: rug checks, pool resolution and the user lookup are
     // independent reads — run them concurrently so the snipe fires with the
     // lowest possible latency after the detector signal.
@@ -3534,6 +3564,79 @@ export class SwapExecutor {
       const isFatal = /insufficient balance|invalid amount|invalid account/i.test(err?.message ?? '');
       await finalizeSnipe(false, { error: err.message ?? 'execute_error', permanent: isFatal });
       return { success: false, reason: err.message };
+    }
+  }
+
+  /**
+   * Solana auto-buy / snipe. amount_near carries the SOL amount for Solana
+   * signals. Blocks tokens with an active freeze authority (sell can be frozen),
+   * clamps to the spendable balance and keeps a small SOL reserve for fees.
+   */
+  private async autoBuySolana(
+    signal: AutoBuySignal,
+    finalizeSnipe: (success: boolean, opts?: { error?: string; permanent?: boolean; txHash?: string | null }) => Promise<void>,
+  ): Promise<{ success: boolean; reason?: string }> {
+    const { user_id, token_address, amount_near } = signal;
+    const isSnipe = !!signal.snipe_order_id;
+
+    const [user, safety, info] = await Promise.all([
+      getUserById(user_id).catch(() => null),
+      checkTokenSafety(token_address).catch(() => null),
+      getSolanaTokenInfo(token_address).catch(() => null),
+    ]);
+    if (!user?.solana_address) {
+      await finalizeSnipe(false, { error: 'solana_wallet_not_found', permanent: true });
+      return { success: false, reason: 'solana_wallet_not_found' };
+    }
+    if (safety?.isHoneypot) {
+      const reason = `honeypot_backdoor: ${safety.reasons?.[0] || 'freeze authority is active'}`;
+      await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
+      await finalizeSnipe(false, { error: reason, permanent: true });
+      return { success: false, reason };
+    }
+
+    const wanted = solToLamports(Number(amount_near));
+    if (wanted <= 0n) {
+      await finalizeSnipe(false, { error: 'invalid_amount', permanent: true });
+      return { success: false, reason: 'invalid_amount' };
+    }
+    const bal = await getSolanaBalance(user.solana_address, true).catch(() => null);
+    const spendable = bal ? (bal.lamports > SOLANA_MIN_RESERVE_LAMPORTS ? bal.lamports - SOLANA_MIN_RESERVE_LAMPORTS : 0n) : wanted;
+    const amount = wanted > spendable ? spendable : wanted;
+    if (amount < 1_000_000n) {
+      const reason = `Insufficient balance. Wallet has ${bal ? lamportsToSol(bal.lamports).toFixed(4) : '0'} SOL (keep at least 0.005 SOL for fees).`;
+      await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
+      await finalizeSnipe(false, { error: reason, permanent: true });
+      return { success: false, reason };
+    }
+
+    // New launches move fast: snipes default to at least 15% slippage, like NEAR.
+    const userSlippage = Number(user.slippage_pct ?? 2);
+    const slippagePct = isSnipe || info?.bondingPhase === 'prebonded' ? Math.max(userSlippage, 15) : Math.max(userSlippage, 2);
+
+    const swapEvent: SwapEvent = {
+      type: 'execute_swap',
+      chain: 'solana',
+      user_id,
+      token_in: SOL_MINT,
+      token_out: token_address,
+      amount_in: amount.toString(),
+      min_amount_out: '1',
+      venue: 'jupiter',
+      slippage_pct: slippagePct,
+      is_snipe: isSnipe,
+      timestamp: Date.now(),
+    };
+
+    try {
+      const r = await this.execute(swapEvent);
+      await finalizeSnipe(r.success, r.success ? { txHash: r.txHash ?? null } : { error: r.reason ?? 'execute_returned_failure' });
+      return { success: r.success, reason: r.reason };
+    } catch (err: any) {
+      const msg = err?.message ?? 'execute_error';
+      const isFatal = /insufficient sol|insufficient balance|invalid amount|wallet not set up/i.test(msg);
+      await finalizeSnipe(false, { error: msg, permanent: isFatal });
+      throw err; // index.ts sends the trade_failed notice
     }
   }
 

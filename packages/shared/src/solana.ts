@@ -85,6 +85,13 @@ const JUPITER_API_KEY = (process.env.JUPITER_API_KEY || '').trim();
 /** With a key: api.jup.ag (higher limits). Without: the free keyless lite API. */
 const JUPITER_BASE = (process.env.JUPITER_API_BASE || (JUPITER_API_KEY ? 'https://api.jup.ag' : 'https://lite-api.jup.ag')).replace(/\/+$/, '');
 const PUMP_API_BASE = (process.env.PUMPFUN_API_BASE || 'https://frontend-api-v3.pump.fun').replace(/\/+$/, '');
+// pump.fun's public API sits behind a CDN that expects browser-like headers.
+const PUMP_HEADERS: Record<string, string> = {
+  accept: 'application/json',
+  origin: 'https://pump.fun',
+  referer: 'https://pump.fun/',
+  'user-agent': 'Mozilla/5.0 (compatible; RacerBot/1.0)',
+};
 
 /** Priority fee level for swaps: medium | high | veryHigh (Jupiter computeUnitPricePercentile). */
 const PRIORITY_LEVEL = (process.env.SOLANA_PRIORITY_LEVEL || 'high').trim();
@@ -339,6 +346,47 @@ export async function getSolUsdPrice(): Promise<number> {
   }
 }
 
+/** Converts a human token amount (e.g. "1250.5") to raw base units without float drift. */
+export function solanaUiToRaw(ui: number | string, decimals: number): bigint {
+  const n = typeof ui === 'number' ? ui : Number(ui);
+  if (!Number.isFinite(n) || n <= 0) return 0n;
+  const d = Math.max(0, Math.min(18, Math.floor(decimals)));
+  // toFixed avoids exponent notation for normal ranges; trim to the token's precision.
+  const [whole, frac = ''] = n.toFixed(Math.min(d, 18)).split('.');
+  return BigInt(whole + frac.padEnd(d, '0').slice(0, d));
+}
+
+const tokenPriceCache = new TtlCache<number>(10_000, 20_000);
+
+/**
+ * USD prices for many mints in as few Jupiter calls as possible (50 per call).
+ * Mints Jupiter does not know are left out of the result. Used by background
+ * engines (limit orders, fleet orders) so polling many tokens stays cheap.
+ */
+export async function getSolanaPricesUsd(mints: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const missing: string[] = [];
+  for (const m of new Set(mints)) {
+    const hit = tokenPriceCache.peek(m);
+    if (hit !== undefined) out.set(m, hit);
+    else missing.push(m);
+  }
+  for (let i = 0; i < missing.length; i += 50) {
+    const chunk = missing.slice(i, i + 50);
+    try {
+      const j = await jupiterGet<any>(`/price/v3?ids=${chunk.join(',')}`, 'read', 6000);
+      for (const m of chunk) {
+        const p = Number(j?.[m]?.usdPrice);
+        if (p > 0) {
+          out.set(m, p);
+          await tokenPriceCache.get(m, async () => p, true);
+        }
+      }
+    } catch { /* leave missing; callers fall back per token */ }
+  }
+  return out;
+}
+
 // ── Balances (free APIs first, RPC fallback) ────────────────────────────────
 
 export interface SolanaTokenHolding {
@@ -536,7 +584,7 @@ const tokenInfoCache = new TtlCache<SolanaTokenInfo | null>(15_000, 5000);
 
 async function fetchPumpCoin(mint: string): Promise<any | null> {
   try {
-    const coin = await fetchJson<any>(`${PUMP_API_BASE}/coins-v2/${mint}`, { timeoutMs: 5000 });
+    const coin = await fetchJson<any>(`${PUMP_API_BASE}/coins-v2/${mint}`, { timeoutMs: 5000, headers: PUMP_HEADERS });
     return coin && coin.mint === mint ? coin : null;
   } catch {
     return null;
@@ -643,6 +691,63 @@ export async function getSolanaTokenInfo(mint: string, force = false): Promise<S
       solUsd,
     };
   }, force);
+}
+
+// ── pump.fun launch feed (free HTTP API, no RPC) ─────────────────────────────
+
+export interface PumpLaunch {
+  mint: string;
+  creator: string;
+  name: string;
+  symbol: string;
+  createdAt: number; // ms
+  complete: boolean;
+}
+
+function toLaunch(c: any): PumpLaunch | null {
+  if (!c || typeof c.mint !== 'string' || typeof c.creator !== 'string') return null;
+  return {
+    mint: c.mint,
+    creator: c.creator,
+    name: String(c.name || ''),
+    symbol: String(c.symbol || ''),
+    createdAt: Number(c.created_timestamp || 0),
+    complete: Boolean(c.complete),
+  };
+}
+
+/**
+ * Newest pump.fun launches across ALL creators (newest first). One call covers
+ * every watched deployer at once, so deployer snipes scale without extra calls.
+ * pump.fun launches roughly one coin every few seconds, so 50 covers minutes.
+ */
+export async function getPumpLatestLaunches(limit = 50): Promise<PumpLaunch[]> {
+  const list = await fetchJson<any[]>(
+    `${PUMP_API_BASE}/coins?offset=0&limit=${Math.min(Math.max(limit, 1), 50)}&sort=created_timestamp&order=DESC&includeNsfw=true`,
+    { timeoutMs: 5000, headers: PUMP_HEADERS },
+  );
+  return (Array.isArray(list) ? list : []).map(toLaunch).filter((x): x is PumpLaunch => !!x);
+}
+
+/** Coins created by one wallet on pump.fun, newest first (fallback / catch-up path). */
+export async function getPumpLaunchesByCreator(creator: string, limit = 20): Promise<PumpLaunch[]> {
+  const res = await fetchJson<any>(
+    `${PUMP_API_BASE}/coins-v2/user-created-coins/${creator}?offset=0&limit=${Math.min(Math.max(limit, 1), 50)}&includeNsfw=true`,
+    { timeoutMs: 6000, headers: PUMP_HEADERS },
+  );
+  const coins = Array.isArray(res?.coins) ? res.coins : Array.isArray(res) ? res : [];
+  return coins
+    .map(toLaunch)
+    .filter((x: PumpLaunch | null): x is PumpLaunch => !!x)
+    .sort((a: PumpLaunch, b: PumpLaunch) => b.createdAt - a.createdAt);
+}
+
+/** True once the token can be bought: a live pump.fun curve, or a priced token Jupiter can route. */
+export async function isSolanaTokenTradable(mint: string): Promise<boolean> {
+  const info = await getSolanaTokenInfo(mint, true).catch(() => null);
+  if (!info) return false;
+  if (info.launchpad === 'pump.fun' && info.bondingPhase === 'prebonded') return true;
+  return info.priceUsd > 0 && (info.liquidityUsd > 0 || info.launchpad === 'pump.fun');
 }
 
 // ── Swap building (Jupiter /build, zero RPC) ─────────────────────────────────
@@ -1032,6 +1137,145 @@ export async function transferSolanaToken(
   if (!res.confirmed) throw new Error(res.error || 'Token transfer failed.');
   invalidateSolanaBalanceCache(keypair.publicKey.toBase58());
   return res.signature;
+}
+
+// ── Multi-wallet helpers (RaceFleet) ────────────────────────────────────────
+
+/**
+ * Native SOL balance of many wallets via getMultipleAccounts. Chunks of 10:
+ * the free public RPC (publicnode) rejects more than 10 accounts per call.
+ */
+export async function getSolanaLamportsMulti(addresses: string[]): Promise<Map<string, bigint>> {
+  const out = new Map<string, bigint>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < addresses.length; i += 10) chunks.push(addresses.slice(i, i + 10));
+  await Promise.all(chunks.map(async (chunk) => {
+    const r = await solanaRpc<any>('getMultipleAccounts', [chunk, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: 'confirmed' }], { timeoutMs: 8000 });
+    const values: any[] = r?.value || [];
+    chunk.forEach((addr, j) => out.set(addr, BigInt(String(values[j]?.lamports ?? 0))));
+  }));
+  return out;
+}
+
+/** Rent-exempt minimum for a plain system account (0 data bytes). */
+export const SOLANA_RENT_EXEMPT_MIN_LAMPORTS = 890_880n;
+
+const BATCH_CU_PRICE = 50_000; // micro-lamports per CU
+/** Explicit CU limit for n system transfers (each uses ~150 CU), so the fee is known exactly. */
+function batchCuLimit(n: number): number {
+  return 1_000 + 300 * n;
+}
+/** Exact network fee (base + priority) of a batch with `signatures` signers and `n` transfers. */
+function batchFeeLamports(signatures: number, n: number): bigint {
+  return 5000n * BigInt(signatures) + BigInt(Math.ceil((BATCH_CU_PRICE * batchCuLimit(n)) / 1_000_000));
+}
+
+async function sendLegacyBatch(payer: Keypair, signers: Keypair[], instructions: TransactionInstruction[]): Promise<SolanaSendResult> {
+  const { blockhash, lastValidBlockHeight } = await latestBlockhash();
+  const msg = new TransactionMessage({
+    payerKey: payer.publicKey,
+    recentBlockhash: blockhash,
+    instructions: [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: batchCuLimit(instructions.length) }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BATCH_CU_PRICE }),
+      ...instructions,
+    ],
+  }).compileToV0Message();
+  const tx = new VersionedTransaction(msg);
+  const uniq = new Map<string, Keypair>();
+  for (const k of [payer, ...signers]) uniq.set(k.publicKey.toBase58(), k);
+  tx.sign([...uniq.values()]);
+  return sendAndConfirmSolanaTransaction(tx, lastValidBlockHeight);
+}
+
+/**
+ * Sends SOL from one wallet to many (10 transfers per transaction to stay
+ * under the 1232-byte limit). Returns per-recipient success.
+ */
+export async function sendSolToMany(
+  from: Keypair,
+  transfers: Array<{ to: string; lamports: bigint }>,
+): Promise<{ sent: Array<{ to: string; lamports: bigint; signature: string }>; failed: Array<{ to: string; error: string }> }> {
+  const sent: Array<{ to: string; lamports: bigint; signature: string }> = [];
+  const failed: Array<{ to: string; error: string }> = [];
+  const valid = transfers.filter((t) => t.lamports > 0n && isSolanaAddress(t.to));
+  for (let i = 0; i < valid.length; i += 10) {
+    const batch = valid.slice(i, i + 10);
+    try {
+      const res = await sendLegacyBatch(
+        from,
+        [],
+        batch.map((t) => SystemProgram.transfer({ fromPubkey: from.publicKey, toPubkey: new PublicKey(t.to), lamports: t.lamports })),
+      );
+      if (res.confirmed) batch.forEach((t) => sent.push({ ...t, signature: res.signature }));
+      else batch.forEach((t) => failed.push({ to: t.to, error: res.error || 'not confirmed' }));
+    } catch (err: any) {
+      batch.forEach((t) => failed.push({ to: t.to, error: err?.message || 'send failed' }));
+    }
+  }
+  invalidateSolanaBalanceCache(from.publicKey.toBase58());
+  return { sent, failed };
+}
+
+/**
+ * Moves ALL native SOL from many wallets into one destination, leaving each
+ * source at exactly 0 (a system account may hold 0 or at least the rent
+ * minimum, never dust in between).
+ *
+ * When the fee payer (the user's main wallet) can cover fees, it pays them and
+ * 6 sources are swept per transaction. Otherwise every source pays its own
+ * exact fee in its own transaction.
+ */
+export async function sweepSolFromMany(
+  sources: Keypair[],
+  destination: string,
+  feePayer: Keypair,
+): Promise<{ sweptLamports: bigint; walletsSwept: number; failed: number }> {
+  const payerAddr = feePayer.publicKey.toBase58();
+  const balances = await getSolanaLamportsMulti([...sources.map((k) => k.publicKey.toBase58()), payerAddr]);
+  const dest = new PublicKey(destination);
+  let sweptLamports = 0n;
+  let walletsSwept = 0;
+  let failed = 0;
+
+  const batches = Math.ceil(sources.length / 6);
+  const payerCanFund = (balances.get(payerAddr) ?? 0n) >= batchFeeLamports(7, 6) * BigInt(Math.max(1, batches)) + SOLANA_RENT_EXEMPT_MIN_LAMPORTS;
+  if (!payerCanFund) {
+    // Self-paid: each wallet sends its balance minus its own exact fee.
+    for (const k of sources) {
+      const bal = balances.get(k.publicKey.toBase58()) ?? 0n;
+      const fee = batchFeeLamports(1, 1);
+      if (bal <= fee) continue;
+      try {
+        const res = await sendLegacyBatch(k, [], [SystemProgram.transfer({ fromPubkey: k.publicKey, toPubkey: dest, lamports: bal - fee })]);
+        if (res.confirmed) { sweptLamports += bal - fee; walletsSwept++; } else failed++;
+      } catch { failed++; }
+    }
+    invalidateSolanaBalanceCache(destination);
+    return { sweptLamports, walletsSwept, failed };
+  }
+
+  const withFunds = sources.filter((k) => (balances.get(k.publicKey.toBase58()) ?? 0n) > 0n);
+  for (let i = 0; i < withFunds.length; i += 6) {
+    const batch = withFunds.slice(i, i + 6);
+    const ixs = batch.map((k) =>
+      SystemProgram.transfer({ fromPubkey: k.publicKey, toPubkey: dest, lamports: balances.get(k.publicKey.toBase58())! }),
+    );
+    try {
+      const res = await sendLegacyBatch(feePayer, batch, ixs);
+      if (res.confirmed) {
+        for (const k of batch) sweptLamports += balances.get(k.publicKey.toBase58())!;
+        walletsSwept += batch.length;
+      } else {
+        failed += batch.length;
+      }
+    } catch {
+      failed += batch.length;
+    }
+  }
+  invalidateSolanaBalanceCache(destination);
+  invalidateSolanaBalanceCache(feePayer.publicKey.toBase58());
+  return { sweptLamports, walletsSwept, failed };
 }
 
 // ── Links ───────────────────────────────────────────────────────────────────

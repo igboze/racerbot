@@ -46,6 +46,16 @@ import {
   withdrawFunds,
 } from './wallet.js';
 import { getShortTokenKey } from './routes.js';
+import {
+  isSolanaFleetToken,
+  executeSolanaFleetBundleBuy,
+  executeSolanaFleetBundleSell,
+  buildSolanaFleetCockpit,
+  buildSolanaFleetHoldingsSection,
+  exportSolanaFleetKeys,
+  getSolanaFleetBalances,
+  getSolanaFleetTokenPosition,
+} from './solanaFleet.js';
 
 const logger = createLogger('race_fleet');
 
@@ -493,6 +503,12 @@ export async function executeFleetBundleBuy(
   amountNearPerWallet: number,
   slippagePct = 3.0
 ): Promise<FleetBundleBuyResult> {
+  // Solana tokens trade from the fleet's Solana wallets (amount is SOL per wallet).
+  if (isSolanaFleetToken(tokenAddress)) {
+    const r = await executeSolanaFleetBundleBuy(fleetId, tokenAddress, amountNearPerWallet, slippagePct);
+    invalidateFleetCache(fleetId);
+    return r;
+  }
   const wallets = await getRaceFleetWallets(fleetId);
   const near = getNear();
   const info = await getTokenInfo(tokenAddress, false);
@@ -732,6 +748,11 @@ export async function executeFleetBundleSell(
   sellPct: number = 100,
   slippagePct = 3.0
 ): Promise<FleetBundleSellResult> {
+  if (isSolanaFleetToken(tokenAddress)) {
+    const r = await executeSolanaFleetBundleSell(fleetId, tokenAddress, sellPct, slippagePct);
+    invalidateFleetCache(fleetId);
+    return r;
+  }
   const wallets = await getRaceFleetWallets(fleetId);
   const near = getNear();
   const info = await getTokenInfo(tokenAddress, false);
@@ -914,6 +935,8 @@ export async function exportFleetKeys(telegramId: number): Promise<{
       privateKey: pk,
     };
   });
+  // Solana fleet wallets (base58 secret keys, import into Phantom / Solflare).
+  exported.push(...(await exportSolanaFleetKeys(fleet.id).catch(() => [])));
 
   return {
     success: true,
@@ -952,6 +975,12 @@ export async function getFleetTokenPosition(fleetId: string, tokenAddress: strin
 
   const fleet = await getRaceFleetById(fleetId);
   if (!fleet) return null;
+
+  if (isSolanaFleetToken(tokenAddress)) {
+    const solPos = await getSolanaFleetTokenPosition(fleet, tokenAddress).catch(() => null);
+    fleetPositionCache.set(cacheKey, { at: Date.now(), data: solPos });
+    return solPos;
+  }
 
   const wallets = await getRaceFleetWallets(fleetId);
   const near = getNear();
@@ -1059,6 +1088,10 @@ export async function buildFleetCockpit(
     return buildFleetPromoCard();
   }
 
+  if (isSolanaFleetToken(tokenAddress)) {
+    return buildSolanaFleetCockpit(fleet, tokenAddress, getShortTokenKey(tokenAddress));
+  }
+
   const [balances, info, fleetPos] = await Promise.all([
     getFleetBalances(fleet.id, tokenAddress),
     getTokenInfo(tokenAddress, false),
@@ -1142,7 +1175,10 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
     return buildFleetPromoCard();
   }
 
-  const balances = await getFleetBalances(fleet.id);
+  const [balances, solBalances] = await Promise.all([
+    getFleetBalances(fleet.id),
+    getSolanaFleetBalances(fleet).catch(() => null),
+  ]);
   const isExpired = new Date(fleet.expires_at).getTime() <= Date.now();
   const statusEmoji = isExpired ? '🔴 Expired' : '🟢 Active';
   const expiresAtFormatted = new Date(fleet.expires_at).toLocaleDateString('en-US', {
@@ -1159,8 +1195,9 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
     `Fleet ID: <code>${fleet.fleet_tag}</code>\n` +
     `Active Fleet Size: <b>${fleet.wallet_count} Named Wallets</b>\n` +
     `Total Fleet NEAR: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n` +
-    `Average per Wallet: <b>${(balances.totalNear / fleet.wallet_count).toFixed(2)} NEAR</b>\n\n` +
-    `<i>All fleet subaccounts are live on NEAR mainnet with independent nonces for parallel execution.</i>`;
+    `Average per Wallet: <b>${(balances.totalNear / fleet.wallet_count).toFixed(2)} NEAR</b>\n` +
+    (solBalances ? `◎ Total Fleet SOL: <b>${solBalances.totalSol.toFixed(4)} SOL</b> (${solBalances.wallets.length} Solana wallets)\n` : '') +
+    `\n<i>Paste any NEAR or Solana token and tap 🏎️ Fleet to bundle trade. NEAR subaccounts and Solana wallets run in parallel.</i>`;
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -1168,15 +1205,20 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
       Markup.button.callback('💳 View All Wallets', 'fleet_wallets_list'),
     ],
     [
-      Markup.button.callback('📥 Distribute from Main', 'fleet_fund_prompt'),
-      Markup.button.callback('📤 Sweep to Main', 'fleet_sweep_prompt'),
+      Markup.button.callback('📥 Distribute NEAR', 'fleet_fund_prompt'),
+      Markup.button.callback('📤 Sweep NEAR', 'fleet_sweep_prompt'),
+    ],
+    [
+      Markup.button.callback('📥 Distribute SOL', 'fleet_fund_sol_prompt'),
+      Markup.button.callback('📤 Sweep SOL', 'fleet_sweep_sol'),
     ],
     [
       Markup.button.callback('📋 Active Orders', 'fleet_orders_list'),
       Markup.button.callback('🔑 Export Fleet Keys', 'fleet_export_keys'),
     ],
     [
-      Markup.button.callback('🔄 Renew Subscription (2 NEAR)', 'fleet_renew_prompt'),
+      Markup.button.callback('🔄 Renew (2 NEAR)', 'fleet_renew_prompt'),
+      Markup.button.callback('🔄 Renew (pay in SOL)', 'fleet_renew_sol_prompt'),
     ],
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),
@@ -1391,6 +1433,9 @@ export async function buildFleetHoldingsView(telegramId: number, forceRefresh = 
     }
   }
 
+  const solSection = await buildSolanaFleetHoldingsSection(fleet).catch(() => ({ text: '', rows: [] as { symbol: string; mint: string }[] }));
+  text += solSection.text;
+
   const keyboardButtons: any[] = [];
   // Top row: Refresh at the top so users can refresh fleet holdings immediately
   keyboardButtons.push([
@@ -1402,6 +1447,14 @@ export async function buildFleetHoldingsView(telegramId: number, forceRefresh = 
     const shortKey = getShortTokenKey(t.tokenAddress);
     keyboardButtons.push([
       Markup.button.callback(`🏎️ ${t.symbol} Cockpit`, `fleet_cockpit:${shortKey}`),
+      Markup.button.callback(`🔴 Dump 100%`, `fleet_sell:${shortKey}:100`),
+    ]);
+  }
+
+  for (const s of solSection.rows) {
+    const shortKey = getShortTokenKey(s.mint);
+    keyboardButtons.push([
+      Markup.button.callback(`🏎️ ${s.symbol} Cockpit ◎`, `fleet_cockpit:${shortKey}`),
       Markup.button.callback(`🔴 Dump 100%`, `fleet_sell:${shortKey}:100`),
     ]);
   }
@@ -1429,7 +1482,8 @@ export function buildFleetPromoCard(): { text: string; keyboard: any } {
     `• <b>Autonomous Volume Maker</b>: Generate organic volume loops.\n` +
     `• <b>1-Click Distribute & Sweep</b>: Effortless fund balance management.\n` +
     `• <b>Named Wallets</b>: Promotes the bot across all NEAR explorers.\n\n` +
-    `💰 <b>Subscription</b>: <code>${RACEFLEET_MONTHLY_FEE_NEAR} NEAR / month</code>\n` +
+    `💰 <b>Subscription</b>: <code>${RACEFLEET_MONTHLY_FEE_NEAR} NEAR / month</code> (or the same value in SOL)\n` +
+    `◎ <b>Solana</b>: every fleet also gets the same number of Solana wallets for pump.fun and DEX bundles.\n` +
     `<i>(Selling & Sweeping funds are NEVER blocked even if expired)</i>`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -1440,6 +1494,10 @@ export function buildFleetPromoCard(): { text: string; keyboard: any } {
     [
       Markup.button.callback('🚀 Deploy Fleet (15 Wallets)', 'fleet_deploy:15'),
       Markup.button.callback('🚀 Deploy Fleet (20 Wallets)', 'fleet_deploy:20'),
+    ],
+    [
+      Markup.button.callback('◎ Pay in SOL (5 Wallets)', 'fleet_deploy_sol:5'),
+      Markup.button.callback('◎ Pay in SOL (10 Wallets)', 'fleet_deploy_sol:10'),
     ],
     [
       Markup.button.callback('🔙 Back to Main Menu', 'menu_home'),

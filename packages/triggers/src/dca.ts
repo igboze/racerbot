@@ -7,6 +7,15 @@ import {
   isTradableVenue,
   getSuiPumpCurveState,
   getSuiRouterQuote,
+  isSolanaToken,
+  getSolanaTokenInfo,
+  getSolanaBalanceFreeOnly,
+  getSolanaTokenBalance,
+  solanaUiToRaw,
+  solToLamports,
+  lamportsToSol,
+  SOL_MINT,
+  SOLANA_MIN_RESERVE_LAMPORTS,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -34,7 +43,97 @@ const redis = createRedis(REDIS_URL);
  *  4. Advance the DB record (next_run_at, executed_orders)
  *  5. Notify user via NOTIFY_USER channel
  */
+/**
+ * Solana DCA tick. Amounts are human units: buys in SOL, sells in whole
+ * tokens (converted to raw base units here with the mint's decimals).
+ * Price guards compare against the price in SOL per token.
+ */
+async function executeSolanaDcaOrder(order: DcaOrderRecord): Promise<void> {
+  const info = await getSolanaTokenInfo(order.token_address).catch(() => null);
+  if (!info) {
+    await failDcaOrderTick(order.id, 'Token not found on Solana');
+    return;
+  }
+
+  if ((order.min_price !== null || order.max_price !== null) && info.priceSol > 0) {
+    const spot = info.priceSol;
+    if (order.max_price !== null && order.side === 'buy' && spot > order.max_price) {
+      await failDcaOrderTick(order.id, `Price guard: ${spot.toExponential(4)} SOL > max ${order.max_price}`);
+      return;
+    }
+    if (order.min_price !== null && order.side === 'sell' && spot < order.min_price) {
+      await failDcaOrderTick(order.id, `Price guard: ${spot.toExponential(4)} SOL < min ${order.min_price}`);
+      return;
+    }
+  }
+
+  const user = await getUserById(order.user_id).catch(() => null);
+  if (!user) {
+    await updateDcaOrderStatus(order.id, 'cancelled');
+    return;
+  }
+  const owner = user.solana_address;
+  if (!owner) {
+    await failDcaOrderTick(order.id, 'Solana wallet not set up. Send /start.');
+    return;
+  }
+  const userSlip = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+  const slippagePct = Math.max(userSlip, info.bondingPhase === 'prebonded' ? 5 : 2);
+
+  let amountIn: bigint;
+  let amountLabel: string;
+  if (order.side === 'buy') {
+    amountIn = solToLamports(Number(order.amount_per_order));
+    if (amountIn <= 0n) {
+      await failDcaOrderTick(order.id, 'Invalid SOL amount');
+      return;
+    }
+    // Cheap pre-check (free RPC only) so we do not announce a fill that cannot happen.
+    const bal = await getSolanaBalanceFreeOnly(owner);
+    if (bal !== null && bal < amountIn + SOLANA_MIN_RESERVE_LAMPORTS) {
+      await failDcaOrderTick(order.id, `Insufficient SOL (${lamportsToSol(bal).toFixed(4)} SOL)`);
+      return;
+    }
+    amountLabel = `${Number(order.amount_per_order).toFixed(3)} SOL`;
+  } else {
+    const wanted = solanaUiToRaw(Number(order.amount_per_order), info.decimals);
+    const bal = await getSolanaTokenBalance(owner, order.token_address, true).catch(() => null);
+    if (bal && bal.raw <= 0n) {
+      await failDcaOrderTick(order.id, 'No tokens left to sell');
+      return;
+    }
+    // Sell what is left when the wallet holds less than one tick.
+    amountIn = bal && bal.raw < wanted ? bal.raw : wanted;
+    if (amountIn <= 0n) {
+      await failDcaOrderTick(order.id, 'Invalid token amount');
+      return;
+    }
+    const human = Number(amountIn) / Math.pow(10, info.decimals);
+    amountLabel = `${formatTokenAmount(human, 0)} ${info.symbol}`;
+  }
+
+  const swapEvent: SwapEvent = {
+    type: 'execute_swap',
+    chain: 'solana',
+    user_id: order.user_id,
+    token_in: order.side === 'buy' ? SOL_MINT : order.token_address,
+    token_out: order.side === 'buy' ? order.token_address : SOL_MINT,
+    amount_in: amountIn.toString(),
+    min_amount_out: '1',
+    venue: 'jupiter',
+    slippage_pct: slippagePct,
+    timestamp: Date.now(),
+    notify_user: false,
+  } as SwapEvent;
+
+  await publishDcaTick(order, swapEvent, info.symbol || order.token_address.slice(0, 8), amountLabel);
+}
+
 async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
+  if (isSolanaToken(order.token_address)) {
+    await executeSolanaDcaOrder(order);
+    return;
+  }
   const near = getNear();
   const db = await getDb();
 
@@ -199,6 +298,16 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
     } as SwapEvent;
   }
 
+  const tokenSymbol = tokenCache.symbol || order.token_address.slice(0, 12);
+  const nativeSymbol = isSui ? 'SUI' : 'NEAR';
+  const amountLabel = order.side === 'buy'
+    ? `${order.amount_per_order.toFixed(isSui ? 3 : 2)} ${nativeSymbol}`
+    : `${formatTokenAmount(order.amount_per_order, tokenCache.decimals ?? (isSui ? 9 : 18))} ${tokenSymbol}`;
+  await publishDcaTick(order, swapEvent, tokenSymbol, amountLabel);
+}
+
+/** Publishes the swap, advances the schedule and DMs the user. Shared by every chain. */
+async function publishDcaTick(order: DcaOrderRecord, swapEvent: any, tokenSymbol: string, amountLabel: string): Promise<void> {
   // -- Publish swap to executor --
   await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
@@ -206,14 +315,9 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
   const updated = await advanceDcaOrder(order.id);
 
   // -- Notify user --
-  const tokenSymbol = tokenCache.symbol || order.token_address.slice(0, 12);
   const totalOrdersDisplay = order.total_orders === 0 ? '∞' : order.total_orders.toString();
   const progressBar = buildProgressBar(updated.executed_orders, order.total_orders);
   const sideLabel = order.side === 'buy' ? 'Accumulating 🟢' : 'De-Risking 🔴';
-  const nativeSymbol = isSui ? 'SUI' : 'NEAR';
-  const amountLabel = order.side === 'buy'
-    ? `${order.amount_per_order.toFixed(isSui ? 3 : 2)} ${nativeSymbol}`
-    : `${formatTokenAmount(order.amount_per_order, tokenCache.decimals ?? (isSui ? 9 : 18))} ${tokenSymbol}`;
 
   let notifyMsg =
     `🔁 *DCA Order Filled (${updated.executed_orders}/${totalOrdersDisplay})*\n\n` +

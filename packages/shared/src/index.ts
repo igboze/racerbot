@@ -303,6 +303,15 @@ export {
   solscanTokenUrl,
   solscanAccountUrl,
   pumpFunTokenUrl,
+  solanaUiToRaw,
+  getSolanaPricesUsd,
+  getPumpLatestLaunches,
+  getPumpLaunchesByCreator,
+  isSolanaTokenTradable,
+  getSolanaLamportsMulti,
+  sendSolToMany,
+  sweepSolFromMany,
+  SOLANA_RENT_EXEMPT_MIN_LAMPORTS,
 } from './solana.js';
 export type {
   GeneratedSolanaWallet,
@@ -312,4 +321,5 @@ export type {
   SolanaTokenInfo,
   SolanaSwapBuild,
   SolanaSendResult,
+  PumpLaunch,
 } from './solana.js';

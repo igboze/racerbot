@@ -10,6 +10,7 @@ import {
   isCoreToken,
   isAuditedLaunchpadToken,
   isIntearToken,
+  isSolanaAddress,
   type TokenDetectedEvent,
   type PoolCreatedEvent,
   type PriceUpdateEvent,
@@ -29,6 +30,7 @@ import {
   recordSnipeTrigger,
 } from '@racerbot/db';
 import { initCopyTradeDetector, checkCopyTradeReceipt } from './copyTrade.js';
+import { startSolanaCopyTrader } from './solanaCopyTrade.js';
 
 const logger = createLogger('detector');
 
@@ -109,6 +111,11 @@ async function main() {
   // Initialize copy-trade wallet tracker (refreshes every 60s from DB)
   await initCopyTradeDetector().catch(err =>
     logger.error('Copy-trade detector init failed (non-fatal)', err as Error)
+  );
+
+  // Solana copy trading / wallet tracker (polls followed wallets on free RPC only)
+  await startSolanaCopyTrader().catch(err =>
+    logger.error('Solana copy-trade watcher init failed (non-fatal)', err as Error)
   );
 
   // Initialize active group buy alert tracked tokens (refreshes every 10s from DB)
@@ -1426,7 +1433,8 @@ async function refreshTriggerTokenPrices(): Promise<void> {
  */
 async function pollActiveTokenSnipes(): Promise<void> {
   try {
-    const activeTokens = await getDistinctActiveSnipeTokens().catch(() => []);
+    // Solana mints are watched by the triggers service (solanaSnipe.ts).
+    const activeTokens = (await getDistinctActiveSnipeTokens().catch(() => [] as string[])).filter((t) => !isSolanaAddress(t));
     if (activeTokens.length === 0) return;
 
     const now = Date.now();
