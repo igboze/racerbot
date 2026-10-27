@@ -139,6 +139,8 @@ import {
   withTimeout,
   isSolanaToken,
   isSolanaAddress,
+  extractSolanaCandidate,
+  resolveSolanaPairToMint,
   getSolanaBalance,
   getSolanaTokenBalance,
   getSolUsdPrice,
@@ -12373,13 +12375,24 @@ export function setupRoutes(bot: Telegraf): void {
 
     // 2a. Solana mint / launchpad link detection (pump.fun, Solscan, GMGN, Birdeye, Jupiter)
     {
-      const solLink = /(?:pump\.fun\/(?:coin\/)?|solscan\.io\/token\/|gmgn\.ai\/sol\/token\/(?:[A-Za-z0-9]+_)?|birdeye\.so\/token\/|jup\.ag\/(?:swap\/[A-Za-z0-9]+-|tokens\/))([1-9A-HJ-NP-Za-km-z]{32,44})/.exec(rawText);
-      const solPlain = /(?:^|\s)([1-9A-HJ-NP-Za-km-z]{32,44})(?:\s|$)/.exec(rawText);
-      const solCandidate = (solLink?.[1] || solPlain?.[1] || '').trim();
-      if (solCandidate && isSolanaAddress(solCandidate) && !isValidNearAccountId(solCandidate)) {
+      const found = extractSolanaCandidate(rawText);
+      const solCandidate = found?.address || '';
+      if (solCandidate && !isValidNearAccountId(solCandidate)) {
         const loadingMsg = await ctx.reply('🔍 Looking up Solana token...').catch(() => null);
         try {
-          const card = await withTimeout(buildTokenCard(solCandidate, telegramId), 15000, 'The token lookup timed out — please try again');
+          // Links from DexScreener, Photon, Axiom and similar carry the pool
+          // address: turn it into the token mint first. Any other address that
+          // is not a known token gets the same pool lookup as a fallback.
+          let mint = solCandidate;
+          if (found?.maybePair) mint = (await resolveSolanaPairToMint(solCandidate)) || solCandidate;
+          let card;
+          try {
+            card = await withTimeout(buildTokenCard(mint, telegramId), 15000, 'The token lookup timed out — please try again');
+          } catch (firstErr) {
+            const fromPair = mint === solCandidate && !found?.maybePair ? await resolveSolanaPairToMint(solCandidate) : null;
+            if (!fromPair) throw firstErr;
+            card = await withTimeout(buildTokenCard(fromPair, telegramId), 15000, 'The token lookup timed out — please try again');
+          }
           if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
           await sendTokenCard(ctx, card);
         } catch (err: any) {

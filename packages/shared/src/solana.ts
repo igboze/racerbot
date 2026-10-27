@@ -36,6 +36,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { encrypt, decrypt } from './crypto.js';
+import { createRedis, type RedisClient } from './redis.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -188,7 +189,71 @@ let jupiterTradeWaiting = 0;
 /** A read that cannot get a Jupiter slot within this time gives up (callers fall back or retry later). */
 const JUPITER_READ_MAX_WAIT_MS = Number(process.env.JUPITER_READ_MAX_WAIT_MS || 15_000);
 
+// All services (API, executor, triggers, detector) usually leave from the same
+// IP and share one Jupiter allowance, so the spacing is enforced across them
+// through Redis when it is available. Trades reserve the next free slot (they
+// queue); reads only take a slot that is free right now, so trades go first.
+const JUP_SLOT_LUA = `
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local nxt = tonumber(redis.call('GET', KEYS[1]) or '0')
+local slot = math.max(now, nxt)
+if slot - now > tonumber(ARGV[2]) then return -1 end
+redis.call('SET', KEYS[1], tostring(slot + tonumber(ARGV[1])), 'PX', 60000)
+return slot - now`;
+const JUP_BACKOFF_LUA = `
+local t = redis.call('TIME')
+local until_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) + tonumber(ARGV[1])
+local nxt = tonumber(redis.call('GET', KEYS[1]) or '0')
+if until_ms > nxt then redis.call('SET', KEYS[1], tostring(until_ms), 'PX', 60000) end
+return 1`;
+let jupRedis: RedisClient | null = null;
+let jupRedisDisabledUntil = 0;
+
+function jupiterRedis(): RedisClient | null {
+  if (jupRedis || !process.env.REDIS_URL || Date.now() < jupRedisDisabledUntil) return jupRedis;
+  try {
+    jupRedis = createRedis(process.env.REDIS_URL);
+  } catch {
+    jupRedisDisabledUntil = Date.now() + 60_000;
+  }
+  return jupRedis;
+}
+
+/** Wait (ms) before this call may use Jupiter, -1 when a read must try again later, null when Redis is unavailable. */
+async function globalJupiterSlot(priority: 'trade' | 'read'): Promise<number | null> {
+  const r = jupiterRedis();
+  if (!r) return null;
+  try {
+    const res = await Promise.race([
+      r.eval(JUP_SLOT_LUA, 1, 'racer:jupiter:next_slot', String(JUPITER_MIN_INTERVAL_MS), priority === 'trade' ? '600000' : '0'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('redis slow')), 400)),
+    ]);
+    return Number(res);
+  } catch {
+    // Redis trouble never blocks trading: fall back to this process's own pacing for a minute.
+    jupRedisDisabledUntil = Date.now() + 60_000;
+    jupRedis = null;
+    return null;
+  }
+}
+
 async function jupiterSlot(priority: 'trade' | 'read'): Promise<void> {
+  if (Date.now() >= jupRedisDisabledUntil && process.env.REDIS_URL) {
+    const started = Date.now();
+    for (;;) {
+      const wait = await globalJupiterSlot(priority);
+      if (wait === null) break; // use the local limiter below
+      if (wait >= 0) {
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        return;
+      }
+      if (Date.now() - started > JUPITER_READ_MAX_WAIT_MS) {
+        throw new Error('Jupiter is busy (free tier rate limit). Try again shortly.');
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
   if (priority === 'trade') jupiterTradeWaiting++;
   const started = Date.now();
   try {
@@ -224,7 +289,10 @@ async function jupiterGet<T = any>(path: string, priority: 'trade' | 'read' = 'r
     } catch (err: any) {
       lastErr = err;
       if (err?.status === 429) {
-        jupiterNextSlot = Date.now() + 2500 * (attempt + 1);
+        const backoff = 2500 * (attempt + 1);
+        jupiterNextSlot = Date.now() + backoff;
+        // Tell the other services too, so they all back off together.
+        jupiterRedis()?.eval(JUP_BACKOFF_LUA, 1, 'racer:jupiter:next_slot', String(backoff)).catch(() => {});
         continue;
       }
       throw err;
@@ -766,6 +834,82 @@ export async function getSolanaTokenInfo(mint: string, force = false): Promise<S
   }, force);
 }
 
+// ── Token detection from pasted text and links ─────────────────────────────
+
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY7cDXd9yKZbJw8x';
+/** Quote-side mints that are never the token a user means when they paste a link. */
+const QUOTE_MINTS = new Set([SOL_MINT, USDC_MINT, USDT_MINT]);
+const B58 = '1-9A-HJ-NP-Za-km-z';
+const PLAIN_ADDR_RE = new RegExp(`(?:^|[\\s:=(\\[])([${B58}]{32,44})(?=$|[\\s.,;:!?)\\]])`, 'g');
+const URL_RE = /https?:\/\/[^\s<>"']+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s<>"']+/gi;
+const URL_ADDR_RE = new RegExp(`(?:^|[\\/?=&_\\-#.])([${B58}]{32,44})(?=$|[\\/?=&_\\-#.])`, 'g');
+/** DexScreener and similar sites lowercase the address in their links, so base58 rules do not apply. */
+const URL_ANY_ADDR_RE = /(?:^|[\/?=&_\-#.])([A-Za-z0-9]{32,44})(?=$|[\/?=&_\-#.])/g;
+/** Sites whose links usually carry a pool (pair) address instead of the token mint. */
+const PAIR_LINK_HOSTS = /dexscreener\.com|photon-sol|tinyastro\.io|axiom\.trade|geckoterminal\.com|dextools\.io|birdeye\.so\/pool/i;
+
+/**
+ * Finds the Solana address a user means in pasted text: a bare mint
+ * (also "CA: <mint>" or with trailing punctuation) or any link that carries
+ * one (pump.fun, DexScreener, Birdeye, GMGN, Photon, Axiom, BullX, Jupiter,
+ * Raydium, Solscan...). In links the last non-SOL/USDC/USDT address wins
+ * (e.g. Raydium "inputMint=SOL&outputMint=<mint>").
+ * `maybePair` is true when the link usually holds a pool address.
+ */
+export function extractSolanaCandidate(text: string): { address: string; maybePair: boolean } | null {
+  if (!text) return null;
+  for (const url of text.match(URL_RE) || []) {
+    const pairHost = PAIR_LINK_HOSTS.test(url);
+    let last: string | null = null;
+    for (const m of url.matchAll(pairHost ? URL_ANY_ADDR_RE : URL_ADDR_RE)) {
+      // Pool links: any 32-44 char id (possibly lowercased) that is not a plain word.
+      const ok = pairHost ? /\d/.test(m[1]) || isSolanaAddress(m[1]) : isSolanaAddress(m[1]);
+      if (ok && !QUOTE_MINTS.has(m[1])) last = m[1];
+    }
+    if (last) return { address: last, maybePair: pairHost };
+  }
+  for (const m of text.matchAll(PLAIN_ADDR_RE)) {
+    if (isSolanaAddress(m[1]) && !QUOTE_MINTS.has(m[1])) return { address: m[1], maybePair: false };
+  }
+  return null;
+}
+
+const pairMintCache = new TtlCache<string | null>(10 * 60_000, 2000);
+
+/**
+ * Resolves a DEX pool (pair) address to its token mint with the free
+ * DexScreener API (no key, no RPC). Returns null when it is not a known pool.
+ */
+export async function resolveSolanaPairToMint(address: string): Promise<string | null> {
+  if (!/^[A-Za-z0-9]{32,44}$/.test(address)) return null;
+  return pairMintCache.get(address, async () => {
+    try {
+      // DexScreener accepts lowercased ids. A pool id resolves directly; a
+      // (lowercased) token id is found through search.
+      const j = await fetchJson<any>(`https://api.dexscreener.com/latest/dex/pairs/solana/${address}`, { timeoutMs: 5000 });
+      let pair = j?.pair || (Array.isArray(j?.pairs) ? j.pairs[0] : null);
+      if (!pair) {
+        const sj = await fetchJson<any>(`https://api.dexscreener.com/latest/dex/search?q=${address}`, { timeoutMs: 5000 });
+        const low = address.toLowerCase();
+        const hit = (Array.isArray(sj?.pairs) ? sj.pairs : []).find((p: any) => p?.chainId === 'solana' &&
+          [p?.pairAddress, p?.baseToken?.address, p?.quoteToken?.address].some((a: any) => String(a || '').toLowerCase() === low));
+        if (!hit) return null;
+        for (const t of [hit.baseToken, hit.quoteToken]) {
+          if (String(t?.address || '').toLowerCase() === low && isSolanaAddress(t.address)) return t.address;
+        }
+        pair = hit;
+      }
+      const base = String(pair.baseToken?.address || '');
+      const quote = String(pair.quoteToken?.address || '');
+      const mint = QUOTE_MINTS.has(base) && quote && !QUOTE_MINTS.has(quote) ? quote : base;
+      return isSolanaAddress(mint) && !QUOTE_MINTS.has(mint) ? mint : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 // ── pump.fun launch feed (free HTTP API, no RPC) ─────────────────────────────
 
 export interface PumpLaunch {
@@ -1186,7 +1330,7 @@ export async function sendAndConfirmManySolana(
   let lastRebroadcast = Date.now();
   let lastHeightCheck = 0;
   while (items.some((it) => !it.done) && Date.now() - started < 75_000) {
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, confirmPollDelay(started)));
     const pending = items.filter((it) => !it.done);
     // Chunks of 10 keep every free endpoint happy (some cap list sizes).
     await Promise.all(Array.from({ length: Math.ceil(pending.length / 10) }, (_, c) => pending.slice(c * 10, c * 10 + 10)).map(async (chunk) => {
@@ -1235,6 +1379,15 @@ export function solanaSellFeeBps(proceedsLamports: bigint, solUsd: number): bigi
 }
 
 // ── Broadcast & confirmation ────────────────────────────────────────────────
+
+/**
+ * Most swaps land within 1 to 3 seconds, so the first checks come quickly
+ * (one cheap free-RPC call each), then slow down to spare the free endpoints.
+ */
+function confirmPollDelay(startedAt: number): number {
+  const elapsed = Date.now() - startedAt;
+  return elapsed < 8_000 ? 500 : elapsed < 20_000 ? 1_000 : 1_500;
+}
 
 async function broadcastFree(serialized: string): Promise<string | null> {
   const results = await Promise.allSettled(
@@ -1307,7 +1460,7 @@ export async function sendAndConfirmSolanaTransaction(
   const HARD_TIMEOUT_MS = 75_000;
 
   while (Date.now() - started < HARD_TIMEOUT_MS) {
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, confirmPollDelay(started)));
     try {
       const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: false }], { timeoutMs: 5000, allowPaid: false });
       const s = st?.value?.[0];
@@ -1354,6 +1507,12 @@ export async function sendAndConfirmSolanaTransaction(
 export function describeSolanaError(err: any): string {
   const s = typeof err === 'string' ? err : JSON.stringify(err);
   if (/"Custom":6001|SlippageToleranceExceeded|0x1771/.test(s)) return 'Price moved more than your slippage setting. Try again or raise slippage.';
+  const rent = /InsufficientFundsForRent[^0-9]*(\d+)/.exec(s);
+  if (rent) {
+    return rent[1] === '0'
+      ? 'This would leave your wallet with less than 0.00089 SOL, which Solana does not allow. Send everything ("all") or leave a little more.'
+      : 'The receiving wallet is new and needs at least 0.00089 SOL in its first transfer. Please send a larger amount.';
+  }
   if (/InsufficientFunds|"Custom":1\b|0x1\b/.test(s)) return 'Insufficient SOL to cover the trade, fees and rent.';
   return `Transaction failed on-chain: ${s.slice(0, 160)}`;
 }
@@ -1407,6 +1566,35 @@ async function latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHei
   return { blockhash: r.value.blockhash, lastValidBlockHeight: Number(r.value.lastValidBlockHeight) };
 }
 
+const SOL_TRANSFER_CU_LIMIT = 1_300;
+const SOL_TRANSFER_CU_PRICE = 50_000; // micro-lamports per CU
+/**
+ * Exact network fee of a plain SOL transfer sent by transferSol (base fee plus
+ * a capped priority fee). Lets "withdraw all" leave the wallet at exactly 0:
+ * Solana refuses to leave a wallet with dust below the rent minimum.
+ */
+export const SOLANA_TRANSFER_FEE_LAMPORTS = 5000n + BigInt(Math.ceil((SOL_TRANSFER_CU_PRICE * SOL_TRANSFER_CU_LIMIT) / 1_000_000));
+
+/**
+ * Refuses destinations where funds would be lost: token mints, token accounts
+ * and programs. Plain wallets (and addresses with no account yet) pass.
+ * Returns whether the destination account already exists and its lamports.
+ */
+export async function checkSolanaWithdrawDestination(destination: string): Promise<{ exists: boolean; lamports: bigint }> {
+  if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
+  const r = await solanaRpc<any>('getMultipleAccounts', [[destination], { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: 'confirmed' }], { timeoutMs: 6000 });
+  const acc = r?.value?.[0];
+  if (!acc) return { exists: false, lamports: 0n };
+  const owner = String(acc.owner || '');
+  if (owner === TOKEN_PROGRAM_ID || owner === TOKEN_2022_PROGRAM_ID) {
+    throw new Error('That address is a token (mint or token account), not a wallet. Funds sent there would be lost. Please use a wallet address.');
+  }
+  if (acc.executable) {
+    throw new Error('That address is a program, not a wallet. Funds sent there would be lost. Please use a wallet address.');
+  }
+  return { exists: true, lamports: BigInt(String(acc.lamports ?? 0)) };
+}
+
 /** Sends native SOL. Returns the signature once confirmed. */
 export async function transferSol(keypair: Keypair, to: string, lamports: bigint): Promise<string> {
   if (!isSolanaAddress(to)) throw new Error('Invalid Solana destination address.');
@@ -1416,7 +1604,9 @@ export async function transferSol(keypair: Keypair, to: string, lamports: bigint
     payerKey: keypair.publicKey,
     recentBlockhash: blockhash,
     instructions: [
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+      // Explicit limit so the fee is known exactly (SOLANA_TRANSFER_FEE_LAMPORTS).
+      ComputeBudgetProgram.setComputeUnitLimit({ units: SOL_TRANSFER_CU_LIMIT }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: SOL_TRANSFER_CU_PRICE }),
       SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: new PublicKey(to), lamports }),
     ],
   }).compileToV0Message();
@@ -1436,6 +1626,8 @@ export async function transferSolanaToken(
   rawAmount: bigint,
   decimals: number,
   tokenProgramId: string,
+  /** Close the (now empty) source token account and return its ~0.002 SOL rent to the sender. */
+  closeSourceIfEmptied = false,
 ): Promise<string> {
   if (!isSolanaAddress(to)) throw new Error('Invalid Solana destination address.');
   if (rawAmount <= 0n) throw new Error('Amount must be greater than 0.');
@@ -1477,7 +1669,23 @@ export async function transferSolanaToken(
   const msg = new TransactionMessage({
     payerKey: keypair.publicKey,
     recentBlockhash: blockhash,
-    instructions: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }), createIdempotent, transferChecked],
+    instructions: [
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+      createIdempotent,
+      transferChecked,
+      // Classic SPL only: Token-2022 accounts can hold withheld fees that block closing.
+      ...(closeSourceIfEmptied && programId.toBase58() === TOKEN_PROGRAM_ID
+        ? [new TransactionInstruction({
+            programId,
+            keys: [
+              { pubkey: sourceAta, isSigner: false, isWritable: true },
+              { pubkey: keypair.publicKey, isSigner: false, isWritable: true },
+              { pubkey: keypair.publicKey, isSigner: true, isWritable: false },
+            ],
+            data: Buffer.from([9]), // CloseAccount
+          })]
+        : []),
+    ],
   }).compileToV0Message();
   const tx = new VersionedTransaction(msg);
   tx.sign([keypair]);
