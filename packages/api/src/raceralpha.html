@@ -3871,7 +3871,7 @@
                     <span style="font-size:11px; color:var(--color-text-subtle);"><span id="alpha-balance-label">NEAR Balance:</span> <b id="alpha-wallet-balance" style="color:var(--color-text); font-family:var(--font-mono); font-weight:700;">-- Ⓝ</b></span>
                   </div>
                   <div style="position:relative;">
-                    <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="updateRacerAlphaEstimatedOutput()" style="width:100%; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-weight:700;">
+                    <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();" style="width:100%; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-weight:700;">
                     <span id="alpha-trade-unit" style="position:absolute; right:12px; top:11px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700; text-transform:uppercase; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;">NEAR</span>
                   </div>
                   
@@ -5806,6 +5806,8 @@
       }
     }
 
+    let currentSellPct = null;
+
     function setRacerAlphaSellPercent(pct) {
       const input = document.getElementById('alpha-trade-amount');
       if (!input) return;
@@ -5814,15 +5816,18 @@
       if (rawBalBig <= 0n) {
         input.value = '0';
         isSelectedMaxSell = false;
+        currentSellPct = null;
         updateRacerAlphaEstimatedOutput();
         return;
       }
 
       if (pct >= 1.0) {
         isSelectedMaxSell = true;
+        currentSellPct = 100;
         input.value = selectedTokenBalance.formatted;
       } else {
         isSelectedMaxSell = false;
+        currentSellPct = Math.round(pct * 100);
         const dec = selectedTokenBalance.decimals || 18;
         const factorBig = BigInt(Math.floor(pct * 10000));
         const targetRaw = (rawBalBig * factorBig) / 10000n;
@@ -5840,16 +5845,26 @@
       const btn = document.getElementById('btn-alpha-execute');
       if (!btn) return;
       const isBuy = selectedRacerAlphaSide === 'BUY';
-      const inputVal = document.getElementById('alpha-trade-amount')?.value || '0';
-      const sym = selectedAlphaToken ? selectedAlphaToken.symbol : 'TOKEN';
+      const input = document.getElementById('alpha-trade-amount');
+      const rawVal = input ? input.value.trim() : '';
+      const numVal = parseFloat(rawVal);
+      const sym = (selectedAlphaToken && selectedAlphaToken.symbol) ? escapeHtml(selectedAlphaToken.symbol) : 'TOKEN';
 
       if (isBuy) {
-        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Buy ${sym} (${inputVal} NEAR)</span>`;
+        const amtLabel = (rawVal && !isNaN(numVal) && numVal > 0) ? ` (${rawVal} NEAR)` : '';
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Buy ${sym}${amtLabel}</span>`;
         btn.style.background = 'var(--color-primary)';
         btn.style.color = 'var(--color-on-primary)';
       } else {
-        const pctLabel = isSelectedMaxSell ? '100%' : (currentSellPct ? currentSellPct + '%' : inputVal + ' ' + sym);
-        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg><span>Sell ${pctLabel}</span>`;
+        let amtLabel = '';
+        if (isSelectedMaxSell) {
+          amtLabel = ' (100% MAX)';
+        } else if (currentSellPct) {
+          amtLabel = ` (${currentSellPct}%)`;
+        } else if (rawVal && !isNaN(numVal) && numVal > 0) {
+          amtLabel = ` (${rawVal} ${sym})`;
+        }
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg><span>Sell ${sym}${amtLabel}</span>`;
         btn.style.background = 'var(--color-error)';
         btn.style.color = '#ffffff';
       }
@@ -5858,6 +5873,7 @@
     function setRacerAlphaTradeSide(side) {
       selectedRacerAlphaSide = side;
       isSelectedMaxSell = false;
+      currentSellPct = null;
       const btnBuy = document.getElementById('alpha-trade-btn-buy');
       const btnSell = document.getElementById('alpha-trade-btn-sell');
       const btnExec = document.getElementById('btn-alpha-label');
@@ -5911,6 +5927,7 @@
 
     function setRacerAlphaAmount(amt) {
       isSelectedMaxSell = false;
+      currentSellPct = null;
       const input = document.getElementById('alpha-trade-amount');
       if (input) input.value = amt;
       updateRacerAlphaEstimatedOutput();
@@ -5924,6 +5941,7 @@
 
     let intentQuoteDebounce = null;
     function updateRacerAlphaEstimatedOutput() {
+      updateExecuteButtonText();
       const estEl = document.getElementById('alpha-est-tokens');
       const inputVal = parseFloat(document.getElementById('alpha-trade-amount')?.value || '0');
       if (!estEl || !selectedAlphaToken) return;
@@ -6034,7 +6052,6 @@
 
       const btn = document.getElementById('btn-alpha-execute');
       const feedback = document.getElementById('alpha-trade-feedback');
-      const prevText = btn ? btn.innerHTML : '';
 
       if (btn) {
         btn.disabled = true;
@@ -6216,7 +6233,7 @@
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.innerHTML = prevText;
+          updateExecuteButtonText();
         }
       }
     }
