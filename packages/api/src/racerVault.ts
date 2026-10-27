@@ -120,6 +120,72 @@ export async function getVaultBalance(userAccountId: string, token: string = 'ne
 }
 
 /**
+ * Ensure RACER_VAULT_CONTRACT_ID is registered for NEP-141 storage on tokenAddress.
+ * Two-tier registration:
+ * 1. Router contract account self-registers using ROUTER_CONTRACT_PRIVATE_KEY.
+ * 2. Fallback: payerAccountId (user subaccount) registers RACER_VAULT_CONTRACT_ID.
+ */
+export async function ensureRouterStorage(
+  tokenAddress: string,
+  fallbackPayerAccountId?: string
+): Promise<boolean> {
+  if (!tokenAddress || tokenAddress === 'near') return true;
+  const routerId = RACER_VAULT_CONTRACT_ID;
+  const near = getNear();
+
+  const isRegistered = await near.checkStorageRegistered(routerId, tokenAddress).catch(() => false);
+  if (isRegistered) {
+    return true;
+  }
+
+  logger.info(`Ensuring storage registration for router ${routerId} on token ${tokenAddress}...`);
+
+  const bounds = await near.view<any>(tokenAddress, 'storage_balance_bounds', {}).catch(() => null);
+  const deposit = bounds?.min ? BigInt(bounds.min) : BigInt('1250000000000000000000'); // 0.00125 NEAR
+
+  const routerKey = process.env.ROUTER_CONTRACT_PRIVATE_KEY;
+  if (routerKey) {
+    try {
+      const keyPair = KeyPair.fromString(routerKey as any);
+      await near.addKey(routerId, keyPair);
+      await near.signAndSendTransactionAll(routerId, tokenAddress, [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: routerId, registration_only: true },
+          BigInt('30000000000000'),
+          deposit
+        ),
+      ]);
+      near.markStorageRegistered(routerId, tokenAddress);
+      logger.info(`Router ${routerId} successfully self-registered on ${tokenAddress}`);
+      return true;
+    } catch (selfErr: any) {
+      logger.warn(`Router self-registration on ${tokenAddress} failed: ${selfErr.message}`);
+    }
+  }
+
+  if (fallbackPayerAccountId) {
+    try {
+      await near.signAndSendTransactionAll(fallbackPayerAccountId, tokenAddress, [
+        transactions.functionCall(
+          'storage_deposit',
+          { account_id: routerId, registration_only: true },
+          BigInt('30000000000000'),
+          deposit
+        ),
+      ]);
+      near.markStorageRegistered(routerId, tokenAddress);
+      logger.info(`Payer ${fallbackPayerAccountId} successfully registered router ${routerId} on ${tokenAddress}`);
+      return true;
+    } catch (payerErr: any) {
+      logger.warn(`Payer registration of router on ${tokenAddress} failed: ${payerErr.message}`);
+    }
+  }
+
+  return false;
+}
+
+/**
  * Deposit NEAR into a user's isolated vault sub-ledger
  */
 export async function depositNearToVault(
@@ -445,6 +511,43 @@ export async function planVaultHops(params: {
       };
     }
 
+    if (rhea && rhea.isDcl && rhea.poolId) {
+      const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
+      const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
+      return {
+        venue: 'Dcl',
+        hops: [{
+          dcl_pool_id: String(rhea.poolId),
+          token_in: tokenIn,
+          token_out: tokenOut,
+          min_amount_out: '0',
+        }],
+        tokenIn,
+        tokenOut,
+        expectedOut: '0',
+        minAmountOut: '0',
+      };
+    }
+
+    const directDcl = await near.findDclPoolId(WRAP_NEAR, params.tokenAddress).catch(() => null);
+    if (directDcl) {
+      const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
+      const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
+      return {
+        venue: 'Dcl',
+        hops: [{
+          dcl_pool_id: directDcl,
+          token_in: tokenIn,
+          token_out: tokenOut,
+          min_amount_out: '0',
+        }],
+        tokenIn,
+        tokenOut,
+        expectedOut: '0',
+        minAmountOut: '0',
+      };
+    }
+
     // Pre-bonded auction on meme-cooking.near
     const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
     const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
@@ -474,6 +577,23 @@ export async function planVaultHops(params: {
         venue: 'RefAmm',
         hops: [{
           pool_id: rhea.poolId,
+          token_in: tokenIn,
+          token_out: tokenOut,
+          min_amount_out: '0',
+        }],
+        tokenIn,
+        tokenOut,
+        expectedOut: '0',
+        minAmountOut: '0',
+      };
+    }
+    if (rhea && rhea.isDcl && rhea.poolId) {
+      const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
+      const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
+      return {
+        venue: 'Dcl',
+        hops: [{
+          dcl_pool_id: String(rhea.poolId),
           token_in: tokenIn,
           token_out: tokenOut,
           min_amount_out: '0',
@@ -727,6 +847,35 @@ export async function executeShieldedVaultIntent(params: {
     near.addKey(userAccountId, keyPair),
   ]);
 
+  if (planned.venue === 'GenericFtCall' && planned.custom_contract === 'meme-cooking.near') {
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId,
+      tokenIn: planned.tokenIn,
+      tokenOut: planned.tokenOut,
+      amountInFormatted: String(numNear),
+      reason: 'Token is in the Meme.Cooking pre-bonding auction phase. Atomic shielded swap requires bonded Ref/DCL pool liquidity.',
+    };
+  }
+
+  // Shielded router guarantee: Ensure router contract and user subaccount have storage deposit registered
+  // on tokenOut (and tokenIn) before executing intent to eliminate "zero_tokens_received" registration errors
+  await Promise.all([
+    ensureRouterStorage(planned.tokenOut, userAccountId).catch(e =>
+      logger.warn(`Router storage registration warning on tokenOut (${planned.tokenOut}): ${e?.message}`)
+    ),
+    ensureRouterStorage(planned.tokenIn, userAccountId).catch(e =>
+      logger.warn(`Router storage registration warning on tokenIn (${planned.tokenIn}): ${e?.message}`)
+    ),
+    near.ensureStorageDeposit(userAccountId, planned.tokenOut).catch(e =>
+      logger.warn(`User storage deposit warning on tokenOut (${planned.tokenOut}): ${e?.message}`)
+    ),
+    near.ensureStorageDeposit(userAccountId, 'wrap.near').catch(e =>
+      logger.warn(`User storage deposit warning on wrap.near: ${e?.message}`)
+    ),
+  ]);
+
   const intentPayload: ShieldedIntentPayload = {
     user: userAccountId,
     venue: planned.venue,
@@ -845,7 +994,10 @@ export async function executeShieldedVaultIntent(params: {
               isSlippageRefund = true;
               failReason = 'Slippage breach: full refund returned to user';
             } else if (ev.event === 'swap_failed') {
-              failReason = ev.data?.reason || 'Venue swap failed';
+              const r = ev.data?.reason || 'Venue swap failed';
+              failReason = r === 'zero_tokens_received'
+                ? 'zero_tokens_received (0 tokens received from venue - liquidity temporarily unavailable or slippage limit exceeded; refunded to vault)'
+                : r;
             } else if (ev.event === 'ref_withdraw_failed') {
               failReason = 'Withdrawal from venue failed; credited to vault ledger';
             } else if (ev.event === 'withdraw_failed') {

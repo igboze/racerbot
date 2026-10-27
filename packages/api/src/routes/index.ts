@@ -986,8 +986,12 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
         } else {
           logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
           if (isPrivateTrade) {
+            let reasonText = vaultRes.reason || 'Transaction could not be shielded';
+            if (reasonText.includes('zero_tokens_received')) {
+              reasonText = '0 tokens received from venue (liquidity temporarily unavailable or slippage limit exceeded; funds safely refunded)';
+            }
             res.status(400).json({
-              error: `Shielded router execution failed: ${vaultRes.reason || 'Transaction could not be shielded'}. Unshielded trade was blocked to protect your wallet privacy.`,
+              error: `Shielded router execution failed: ${reasonText}. Unshielded trade was blocked to protect your wallet privacy.`,
             });
             return;
           }
