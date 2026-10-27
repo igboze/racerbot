@@ -66,12 +66,23 @@
   --font-display:         'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono:            'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Motion */
-  --transition-fast:      150ms ease-out;
-  --transition-modal:     220ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Hallmark Z-Index Hierarchy */
+  --z-base:               1;
+  --z-raised:             10;
+  --z-dropdown:           100;
+  --z-sticky:             200;
+  --z-modal-backdrop:     9998;
+  --z-modal:              9999;
+  --z-toast:              10000;
+
+  /* Motion (Hardware-accelerated transforms & fades, never transition: all) */
+  --transition-instant:   100ms ease;
+  --transition-fast:      150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal:    200ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-modal:     240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Base Reset & Layout Constraints */
+/* Base Reset & Layout Constraints (Hallmark Floor Rules 1 & 2) */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -79,19 +90,16 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
+  overflow-x: clip; /* Hallmark Floor Rule 2: clip, never hidden */
   background-color: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
+  font-display: swap;
+  font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -99,6 +107,7 @@ html, body {
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -121,20 +130,22 @@ body {
 .speed-line-motif span:nth-child(2) { width: 75%; }
 .speed-line-motif span:nth-child(3) { width: 50%; }
 
-/* Typography Scales */
-h1, h2, h3, h4, .font-display {
+/* Typography Scales (Hallmark Compliant) */
+h1, h2, h3, h4, h5, h6, .font-display, .page-title, .modal-title, .display-title {
   font-family: var(--font-display);
   font-weight: 700;
   line-height: 1.2;
-  letter-spacing: 0;
+  letter-spacing: -0.015em;
   color: var(--color-text);
+  text-wrap: balance; /* Hallmark Rule: Balanced headline wrapping */
+  font-synthesis: none;
 }
 
 .display-title {
   font-size: 40px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
 }
 
 h1, .text-h1 {
@@ -153,13 +164,13 @@ h3, .text-h3 {
 }
 
 p, .text-body {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 400;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .text-body-sm {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 400;
   line-height: 1.5;
 }
@@ -171,23 +182,28 @@ p, .text-body {
   color: var(--color-text-2);
 }
 
-.text-mono {
+/* Tabular Numerics across all financial, balance, price, and metric elements */
+.text-mono,
+.mono,
+.mono-data,
+.mono-sm,
+.telemetry-num,
+.numeric,
+code, kbd, samp, pre,
+td.mono, td.numeric {
   font-family: var(--font-mono) !important;
   font-variant-numeric: tabular-nums !important;
+  font-feature-settings: "tnum" 1, "cv01" 1, "cv02" 1;
 }
 
 .mono-data {
-  font-family: var(--font-mono) !important;
-  font-weight: 500;
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 15px;
 }
 
 .mono-sm {
-  font-family: var(--font-mono) !important;
-  font-weight: 400;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: 12.5px;
 }
 
 /* Mobile Typography Overrides (< 768px) */
@@ -325,12 +341,11 @@ p, .text-body {
   left: 0;
   right: 0;
   width: 100%;
-  max-width: 100vw;
   height: calc(56px + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
-  z-index: 9999;
+  z-index: var(--z-sticky, 200);
   justify-content: space-around;
   align-items: center;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
@@ -345,7 +360,7 @@ p, .text-body {
   }
 }
 
-/* Part 4.7 Buttons */
+/* Part 4.7 Buttons (Hallmark 8-State Architecture) */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -357,42 +372,58 @@ p, .text-body {
   min-width: 100px;
   border-radius: var(--radius-md);
   font-family: var(--font-family);
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14.5px;
+  font-weight: 650;
   text-decoration: none;
   cursor: pointer;
   border: 1px solid transparent;
   outline: none;
-  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  user-select: none;
+  position: relative;
+  /* Hallmark Transition Rule: explicit hardware-accelerated properties, never transition: all */
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              transform var(--transition-instant);
   touch-action: manipulation;
   white-space: nowrap;
 }
 
+/* Button Active Press (Hallmark Tactile Feedback) */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline: 2px solid var(--color-primary) !important;
+  outline-offset: 2px !important;
 }
 
 .btn-primary {
   background-color: var(--color-primary);
   color: var(--color-on-primary) !important;
   border-color: var(--color-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .btn-primary:hover:not(:disabled) {
   background-color: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
+  box-shadow: 0 2px 10px rgba(106, 204, 220, 0.25);
 }
 
 .btn-secondary {
-  background-color: transparent;
+  background-color: var(--color-surface);
   color: var(--color-text) !important;
-  border: 1px solid var(--color-border-input);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--color-surface-2);
-  border-color: var(--color-text-2);
+  border-color: var(--color-border-input);
+  color: #FFFFFF !important;
 }
 
 .btn-ghost {
@@ -403,16 +434,20 @@ p, .text-body {
 
 .btn-ghost:hover:not(:disabled) {
   background-color: var(--color-primary-tint);
+  color: var(--color-primary-hover) !important;
 }
 
 .btn-destructive {
   background-color: var(--color-error-solid);
   color: #FFFFFF !important;
   border-color: var(--color-error-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .btn-destructive:hover:not(:disabled) {
   background-color: #B91C1C;
+  border-color: #B91C1C;
+  box-shadow: 0 2px 10px rgba(223, 41, 53, 0.3);
 }
 
 .btn-sm {
@@ -427,21 +462,43 @@ p, .text-body {
   width: 44px;
   height: 44px;
   min-width: 44px;
+  min-height: 44px;
   padding: 0;
   border-radius: var(--radius-md);
 }
 
 .btn:disabled, .btn.disabled {
-  opacity: 0.4 !important;
+  opacity: 0.5 !important;
   cursor: not-allowed !important;
-  pointer-events: none;
+  pointer-events: none !important;
+  transform: none !important;
+}
+
+/* Loading State: fixed dimension with smooth spinner */
+.btn.loading {
+  color: transparent !important;
+  pointer-events: none !important;
+  cursor: wait !important;
+}
+.btn.loading::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.6s linear infinite;
+}
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
 }
 
 .btn-full {
   width: 100% !important;
 }
 
-/* Part 4.7 Form Inputs */
+/* Part 4.7 Form Inputs (Hallmark Accessible Controls) */
 .form-group {
   display: flex;
   flex-direction: column;
@@ -450,38 +507,47 @@ p, .text-body {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
-  color: var(--color-text);
+  color: var(--color-text-2);
   display: flex;
   justify-content: space-between;
 }
 
 .form-control,
-.input {
+.input,
+.terminal-input {
   height: 44px;
+  min-height: 44px;
   padding: 0 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-input);
   background-color: var(--color-surface);
   color: var(--color-text);
   font-family: var(--font-family);
-  font-size: 15px;
+  font-size: 14.5px;
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   width: 100%;
 }
 
 @media (max-width: 767px) {
-  .form-control, .input {
+  .form-control, .input, .terminal-input {
     font-size: 16px !important; /* Prevents iOS auto-zoom */
   }
 }
 
+.form-control:hover:not(:disabled):not(:focus),
+.input:hover:not(:disabled):not(:focus),
+.terminal-input:hover:not(:disabled):not(:focus) {
+  border-color: var(--color-text-2);
+}
+
 .form-control:focus,
-.input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 4px rgba(106, 204, 220, 0.2);
+.input:focus,
+.terminal-input:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px rgba(106, 204, 220, 0.2) !important;
 }
 
 .form-control.input-error {
@@ -547,7 +613,7 @@ p, .text-body {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-instant);
 }
 
 .chip-filter:hover {
@@ -575,7 +641,7 @@ p, .text-body {
   display: none;
 }
 
-/* Part 4.7 Cards & Widgets */
+/* Part 4.7 Cards & Widgets (Single Containment Rung) */
 .card {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -666,7 +732,7 @@ p, .text-body {
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--color-text-2);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-2);
@@ -694,48 +760,82 @@ p, .text-body {
   text-align: right;
 }
 
-/* Modals and Sheets (Level 3 Elevation on Dark) */
-.modal-backdrop {
+/* ── Hallmark Unified Modals & Sheets (Concentric Elevation & Hardware Blur) ── */
+.modal-backdrop,
+.racer-modal-backdrop,
+.modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 8, 16, 0.7);
-  z-index: 9998;
+  background: rgba(10, 15, 28, 0.82) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  z-index: var(--z-modal-backdrop, 9998) !important;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transition: opacity var(--transition-fast), visibility var(--transition-fast);
 }
 
-.modal-backdrop.open {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
+.modal-backdrop.open,
+.racer-modal-backdrop.open,
+.modal-overlay.open,
+.modal-overlay[style*="display: flex"],
+.modal-overlay[style*="display:flex"] {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  display: flex !important;
 }
 
-.modal-dialog {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-level-3);
+/* Concentric Modal Window / Dialog / Card */
+.modal-dialog,
+.modal-window,
+.racer-modal-card,
+.modal-card,
+.modal-box {
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-xl) !important; /* 16px outer radius */
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
   width: 100%;
   max-width: 480px;
-  max-height: 90vh;
+  max-height: min(90vh, 90dvh);
   overflow-y: auto;
-  padding: 24px;
+  padding: 24px !important;
   position: relative;
   transform: translateY(12px) scale(0.98);
-  transition: transform var(--transition-modal);
+  transition: transform var(--transition-modal), opacity var(--transition-fast);
+  color: var(--color-text);
+  box-sizing: border-box;
 }
 
-.modal-dialog.modal-wide {
+.modal-dialog.modal-wide,
+.modal-window.modal-wide {
   max-width: 640px;
 }
 
-.modal-backdrop.open .modal-dialog {
-  transform: translateY(0) scale(1);
+.modal-backdrop.open .modal-dialog,
+.modal-backdrop.open .modal-window,
+.racer-modal-backdrop.open .racer-modal-card,
+.modal-overlay.open .modal-card,
+.modal-overlay[style*="display: flex"] .modal-card,
+.modal-overlay[style*="display:flex"] .modal-card {
+  transform: translateY(0) scale(1) !important;
+}
+
+/* Concentric Inner Elements (inner = outer - padding -> 12px) */
+.modal-dialog .card,
+.modal-window .quote-box,
+.modal-window .deposit-status-live,
+.modal-card .tier-option,
+.racer-modal-card .card {
+  border-radius: var(--radius-lg, 12px) !important;
+  border: 1px solid var(--color-border) !important;
+  background: var(--color-surface-2) !important;
 }
 
 .modal-header {
@@ -743,51 +843,88 @@ p, .text-body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 20px;
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .modal-title {
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--color-text);
+  margin: 0;
 }
 
-.modal-close-btn {
+/* Modal Close Button: accessible 44x44px touch target */
+.modal-close-btn,
+.modal-close {
   width: 44px;
   height: 44px;
-  display: flex;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--color-text-2);
   cursor: pointer;
   border-radius: var(--radius-md);
+  font-size: 20px;
+  line-height: 1;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.modal-close-btn:hover {
+.modal-close-btn:hover,
+.modal-close:hover {
   background: var(--color-surface-2);
   color: var(--color-text);
+  border-color: var(--color-border);
 }
 
-/* Mobile Bottom Sheet */
+.modal-close-btn:focus-visible,
+.modal-close:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Mobile Bottom Sheet (Hallmark Mobile Pattern) */
 @media (max-width: 767px) {
-  .modal-backdrop {
+  .modal-backdrop,
+  .racer-modal-backdrop,
+  .modal-overlay {
     align-items: flex-end !important;
+    justify-content: center !important;
+    padding: 0 !important;
   }
-  .modal-dialog {
+  .modal-dialog,
+  .modal-window,
+  .racer-modal-card,
+  .modal-card,
+  .modal-box {
     max-width: 100% !important;
+    width: 100% !important;
     border-radius: 16px 16px 0 0 !important;
     border-bottom: none !important;
-    padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 16px)) 16px !important;
+    max-height: min(85vh, 85dvh) !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 20px calc(24px + env(safe-area-inset-bottom, 16px)) 20px !important;
     transform: translateY(100%) !important;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.7) !important;
   }
-  .modal-backdrop.open .modal-dialog {
+  .modal-backdrop.open .modal-dialog,
+  .modal-backdrop.open .modal-window,
+  .racer-modal-backdrop.open .racer-modal-card,
+  .modal-overlay.open .modal-card,
+  .modal-overlay[style*="display: flex"] .modal-card,
+  .modal-overlay[style*="display:flex"] .modal-card {
     transform: translateY(0) !important;
   }
   .sheet-handle {
     width: 36px;
     height: 4px;
-    background: var(--color-border);
+    background: var(--color-border-input);
     border-radius: var(--radius-full);
     margin: 0 auto 16px auto;
     display: block;
@@ -942,7 +1079,7 @@ a[href="#main-content"]:first-child:focus {
   }
   header,
   .app-header {
-    max-width: 100vw;
+    width: 100%;
     overflow-x: clip;
   }
 }

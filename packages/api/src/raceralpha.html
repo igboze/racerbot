@@ -118,7 +118,7 @@
       display: flex;
       flex-direction: column;
       background-attachment: fixed;
-      overflow-x: hidden;
+      overflow-x: clip;
       -webkit-font-smoothing: antialiased;
     }
 
@@ -224,7 +224,7 @@
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
       text-decoration: none;
       text-align: left;
     }
@@ -446,7 +446,7 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
     }
 
     .btn-icon:hover {
@@ -470,7 +470,7 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 100ms ease;
       box-shadow: 0 2px 14px rgba(106, 204, 220, 0.3);
       text-decoration: none;
       white-space: nowrap;
@@ -497,7 +497,7 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
       text-decoration: none;
       white-space: nowrap;
     }
@@ -522,7 +522,7 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 100ms ease;
       box-shadow: 0 0 14px rgba(120, 96, 169, 0.2);
       white-space: nowrap;
     }
@@ -542,14 +542,19 @@
     }
 
     .racer-modal-backdrop {
-      position: fixed; inset: 0; background: rgba(8, 9, 11, 0.88);
-       -webkit-
+      position: fixed; inset: 0;
+      background: rgba(10, 15, 28, 0.82);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       z-index: 99999; display: none; align-items: center; justify-content: center; padding: 16px;
     }
     .racer-modal-backdrop.open { display: flex; }
     .racer-modal-card {
-      background: #0f1217; border: 1px solid var(--color-border); border-radius: var(--radius-lg);
-      width: 100%; max-width: 440px; box-shadow: 0 24px 60px rgba(0,0,0,0.85);
+      background: var(--color-surface, #161B2C);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-xl, 16px);
+      width: 100%; max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
       padding: 24px; position: relative; font-family: var(--font-family); color: #fff;
     }
 
@@ -622,7 +627,7 @@
       padding: 9px 14px;
       outline: none;
       cursor: pointer;
-      transition: all 0.16s ease;
+      transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
     }
 
     .select-filter:hover, .select-filter:focus {
@@ -656,7 +661,7 @@
       flex-direction: column;
       gap: 16px;
       cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
       position: relative;
       overflow: hidden;
     }
@@ -991,7 +996,7 @@
       padding: 6px 14px;
       border-radius: var(--radius-md);
       cursor: pointer;
-      transition: all 0.16s;
+      transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease;
     }
 
     .back-btn:hover {
@@ -1139,7 +1144,7 @@
       padding: 4px 10px;
       border-radius: var(--radius-sm);
       cursor: pointer;
-      transition: all 0.16s;
+      transition: background-color 0.16s ease, color 0.16s ease;
     }
 
     .tf-btn.active, .tf-btn:hover {
@@ -1283,7 +1288,7 @@
       flex-direction: column;
       gap: 10px;
       cursor: pointer;
-      transition: all 0.16s ease;
+      transition: border-color 0.16s ease, background-color 0.16s ease;
       position: relative;
     }
 
@@ -1456,7 +1461,7 @@
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -1823,7 +1828,7 @@
       gap: 6px;
       background: rgba(255, 255, 255, 0.04);
       color: var(--color-text-muted);
-      transition: all 0.15s ease;
+      transition: background-color 0.15s ease, color 0.15s ease;
     }
     .alpha-mode-tab.buy.active {
       background: var(--color-primary);
@@ -1853,7 +1858,7 @@
       padding: 4px 0;
       cursor: pointer;
       text-align: center;
-      transition: all 0.15s ease;
+      transition: background-color 0.15s ease, color 0.15s ease;
     }
     .alpha-chip:hover {
       background: rgba(106, 204, 220, 0.12);
@@ -2177,16 +2182,14 @@
       border-color: rgba(106, 204, 220, 0.3);
     }
 
-    /* Modal Backdrop */
+    /* Modal Backdrop (Hallmark Spec) */
     .modal-backdrop {
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.8);
-      
-      z-index: 1000;
+      inset: 0;
+      background: rgba(10, 15, 28, 0.82);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 10000;
       display: none;
       align-items: center;
       justify-content: center;
@@ -2194,16 +2197,16 @@
     }
 
     .modal-window {
-      background: #0f1217;
+      background: var(--color-surface, #161B2C);
       border: 1px solid var(--color-border);
-      border-radius: var(--radius-xl);
+      border-radius: var(--radius-xl, 16px);
       max-width: 480px;
       width: 100%;
       padding: 28px;
       display: flex;
       flex-direction: column;
       gap: 20px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
       position: relative;
     }
 
@@ -2236,7 +2239,7 @@
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: all 0.2s ease;
+      transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
     }
 
     .deposit-tab-btn.active {
@@ -2274,7 +2277,7 @@
       color: var(--color-text-muted);
       cursor: pointer;
       white-space: nowrap;
-      transition: all 0.16s ease;
+      transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease;
     }
 
     .deposit-pill.active, .deposit-pill:hover {
@@ -2303,7 +2306,7 @@
       cursor: pointer;
       font-size: 12.5px;
       color: var(--color-text);
-      transition: all 0.16s;
+      transition: border-color 0.16s ease, background-color 0.16s ease;
     }
 
     .chain-card-opt:hover {
@@ -2335,7 +2338,7 @@
       border: 1px solid var(--color-border);
       border-radius: var(--radius-md);
       cursor: pointer;
-      transition: all 0.16s;
+      transition: border-color 0.16s ease, background-color 0.16s ease;
     }
 
     .token-row-opt:hover {
@@ -2382,8 +2385,7 @@
       /* Prevent horizontal scroll & touch highlight */
       html, body {
         width: 100% !important;
-        max-width: 100vw !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
         -webkit-tap-highlight-color: transparent;
       }
 
@@ -2416,7 +2418,7 @@
         display: flex !important;
         flex-direction: column !important;
         width: 100% !important;
-        max-width: 100vw !important;
+        max-width: 100% !important;
         min-width: 0 !important;
         flex: 1 0 auto !important;
         box-sizing: border-box !important;
@@ -2566,7 +2568,7 @@
         max-width: 100% !important;
         box-sizing: border-box !important;
         min-width: 0 !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
       }
 
       /* Hide redundant desktop top header right buttons on mobile */
@@ -2736,14 +2738,16 @@
         min-height: 44px;
       }
 
-      /* Native Slide-Up Bottom Sheet Modals (FeedLoop Mobile Standards) */
+      /* Native Slide-Up Bottom Sheet Modals (Hallmark Mobile Standards) */
       .modal-backdrop,
       .racer-modal-backdrop {
         align-items: flex-end !important;
         justify-content: center !important;
         padding: 0 !important;
         z-index: 10000 !important;
-        background: rgba(17, 24, 39, 0.48) !important;
+        background: rgba(10, 15, 28, 0.82) !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
       }
 
       .modal-window,
@@ -2754,7 +2758,7 @@
         width: 100% !important;
         max-height: min(85vh, 85dvh) !important;
         overflow-y: auto !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain !important;
         padding: 16px 18px calc(24px + env(safe-area-inset-bottom, 16px)) !important;
@@ -2942,7 +2946,7 @@
         color: var(--color-text-muted) !important;
         cursor: pointer;
         padding: 6px 2px;
-        transition: all 0.16s ease;
+        transition: color 0.16s ease, background-color 0.16s ease;
         position: relative;
         text-decoration: none;
         -webkit-tap-highlight-color: transparent;
@@ -3040,7 +3044,7 @@
         font-size: 12px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: background-color 0.15s ease, color 0.15s ease;
       }
       .mobile-term-tab.active {
         background: var(--color-primary) !important;
@@ -3168,7 +3172,7 @@
   padding: 12px 18px;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease-out;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 .alpha-tab-btn:hover {
   color: var(--color-text);
@@ -3259,7 +3263,7 @@
   padding: 10px 18px;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease-out;
+  transition: color 0.15s ease, border-color 0.15s ease;
   box-shadow: none !important;
 }
 .alpha-tab-btn:hover {
@@ -3292,7 +3296,7 @@
   z-index: 999999;
   opacity: 0;
   pointer-events: none;
-  transition: all 0.25s ease;
+  transition: opacity 200ms ease, transform 200ms ease;
   white-space: nowrap;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
