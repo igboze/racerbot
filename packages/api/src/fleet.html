@@ -106,7 +106,7 @@
       font-weight: 600;
       cursor: pointer;
       border-bottom: 2px solid transparent;
-      transition: all var(--duration-fast);
+      transition: color var(--duration-fast), border-color var(--duration-fast);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -165,7 +165,7 @@
       font-size: 11px;
       padding: 4px 10px;
       cursor: pointer;
-      transition: all var(--duration-fast);
+      transition: background-color var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast);
     }
     .token-chip:hover, .amt-chip:hover {
       border-color: var(--color-primary);
@@ -283,12 +283,13 @@
     .stream-ok { color: var(--color-primary); font-weight: 600; }
     .stream-err { color: var(--color-danger); }
 
-    /* Modal Styles */
+    /* Modal Styles (Hallmark Spec) */
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.85);
-      
+      background: rgba(10, 15, 28, 0.82);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -296,24 +297,42 @@
       padding: 20px;
     }
     .modal-card {
-      background: var(--color-surface-card);
-      border: 1px solid var(--color-border-glow);
-      border-radius: var(--radius-xl);
+      background: var(--color-surface, #161B2C);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-xl, 16px);
       max-width: 520px;
       width: 100%;
       padding: 28px;
-      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.8);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
       position: relative;
     }
     .modal-close {
       position: absolute;
-      top: 20px;
-      right: 20px;
+      top: 16px;
+      right: 16px;
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       background: transparent;
-      border: none;
-      color: var(--color-text-subtle);
-      font-size: 20px;
+      border: 1px solid transparent;
+      color: var(--color-text-2, #A3ABC2);
+      font-size: 22px;
       cursor: pointer;
+      border-radius: var(--radius-md, 8px);
+      transition: background-color var(--transition-fast, 150ms ease), color var(--transition-fast, 150ms ease), border-color var(--transition-fast, 150ms ease);
+    }
+    .modal-close:hover {
+      background: var(--color-surface-2, #1D2338);
+      color: var(--color-text, #F1F4FA);
+      border-color: var(--color-border, #2A3149);
+    }
+    .modal-close:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
     }
     .tier-option {
       background: var(--color-surface);
@@ -322,7 +341,7 @@
       padding: 16px;
       margin-bottom: 12px;
       cursor: pointer;
-      transition: all var(--duration-fast);
+      transition: background-color var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast);
       display: flex;
       justify-content: space-between;
       align-items: center;

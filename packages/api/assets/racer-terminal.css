@@ -157,12 +157,18 @@ a {
 .btn,
 .btn-adyen-primary,
 .btn-adyen-secondary {
-  min-height: 40px;
-  height: 40px;
-  border-radius: 7px;
+  min-height: 44px;
+  height: 44px;
+  border-radius: var(--radius-md, 8px);
   box-shadow: none;
   font-weight: 650;
-  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  transition: transform 100ms ease, border-color var(--transition-fast, 150ms ease), background-color var(--transition-fast, 150ms ease), color var(--transition-fast, 150ms ease), box-shadow var(--transition-fast, 150ms ease);
+}
+
+.btn:active:not(:disabled),
+.btn-adyen-primary:active:not(:disabled),
+.btn-adyen-secondary:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn-primary,
@@ -228,9 +234,8 @@ a {
 .hero-band-dark,
 .band-hero-dark {
   background-image:
-    radial-gradient(ellipse 56% 62% at 82% 4%, rgba(0, 128, 255, 0.12), transparent 72%),
-    radial-gradient(ellipse 38% 48% at 95% 2%, rgba(255, 20, 147, 0.055), transparent 74%),
-    radial-gradient(ellipse 42% 56% at 58% 100%, rgba(0, 255, 255, 0.04), transparent 76%);
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(106, 204, 220, 0.07), transparent 75%),
+    linear-gradient(180deg, rgba(22, 27, 44, 0.4) 0%, rgba(15, 19, 32, 0.95) 100%);
 }
 
 .hero-display,
@@ -645,20 +650,22 @@ tbody tr:hover {
 
 .modal-overlay,
 .racer-modal-backdrop {
-  background: rgba(3, 6, 9, 0.78);
+  background: rgba(10, 15, 28, 0.82) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
 }
 
 .modal-box,
 .racer-modal-card {
-  background: #101822;
-  border-color: #293746;
-  border-radius: 12px;
-  box-shadow: var(--shadow-elevated);
+  background: var(--color-surface, #161B2C) !important;
+  border-color: var(--color-border, #2A3149) !important;
+  border-radius: var(--radius-xl, 16px) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 3px;
+  outline: 2px solid var(--color-primary) !important;
+  outline-offset: 2px !important;
 }
 
 @media (min-width: 1080px) {

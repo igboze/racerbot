@@ -110,7 +110,7 @@
       -moz-osx-font-smoothing: grayscale;
       min-height: 100vh;
       min-height: 100dvh;
-      overflow-x: hidden;
+      overflow-x: clip;
       width: 100%;
       position: relative;
     }
@@ -247,7 +247,7 @@
       border: 1px solid var(--color-surface-3);
       cursor: pointer;
       white-space: nowrap;
-      transition: all var(--dur-fast) var(--ease-adyen);
+      transition: background-color var(--dur-fast) var(--ease-adyen), border-color var(--dur-fast) var(--ease-adyen), color var(--dur-fast) var(--ease-adyen), transform 100ms ease;
     }
     .btn-adyen-secondary:hover {
       background-color: var(--color-surface-2);
@@ -385,7 +385,7 @@
       border-bottom: 2px solid transparent;
       cursor: pointer;
       white-space: nowrap;
-      transition: all var(--dur-fast) var(--ease-adyen);
+      transition: color var(--dur-fast) var(--ease-adyen), border-color var(--dur-fast) var(--ease-adyen), background-color var(--dur-fast) var(--ease-adyen);
       flex-shrink: 0;
       border-radius: var(--radius-md) var(--radius-md) 0 0;
     }
@@ -641,7 +641,7 @@
       border-radius: var(--radius-md);
       font-size: 11px;
       line-height: 1;
-      transition: all var(--dur-fast) var(--ease-adyen);
+      transition: color var(--dur-fast) var(--ease-adyen), border-color var(--dur-fast) var(--ease-adyen), background-color var(--dur-fast) var(--ease-adyen);
       flex-shrink: 0;
     }
     .copy-btn:hover {
@@ -723,7 +723,7 @@
       flex-direction: column;
       justify-content: space-between;
       position: relative;
-      transition: all var(--dur-fast) var(--ease-adyen);
+      transition: border-color var(--dur-fast) var(--ease-adyen), background-color var(--dur-fast) var(--ease-adyen), transform 120ms ease;
     }
     .format-card:hover {
       border-color: rgba(255, 255, 255, 0.3);
@@ -914,11 +914,17 @@
 <script>
   function openHostModal() {
     const modal = document.getElementById('host-comp-modal');
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+      modal.style.display = 'flex';
+      modal.classList.add('open');
+    }
   }
   function closeHostModal() {
     const modal = document.getElementById('host-comp-modal');
-    if (modal) modal.style.display = 'none';
+    if (modal) {
+      modal.classList.remove('open');
+      modal.style.display = 'none';
+    }
   }
   function handleHostCompSubmit(e) {
     e.preventDefault();
@@ -1852,7 +1858,7 @@
       z-index: 999999;
       opacity: 0;
       pointer-events: none;
-      transition: all 0.25s ease;
+      transition: opacity 200ms ease, transform 200ms ease;
       white-space: nowrap;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     }
@@ -2102,10 +2108,11 @@
 
   <!-- Host Competition Modal -->
   <div id="host-comp-modal" class="modal-backdrop" style="display:none;" onclick="if(event.target===this) closeHostModal();">
-    <div class="modal-card" style="max-width:540px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:16px; padding:24px; position:relative;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h3 style="font-size:20px; font-weight:700; color:var(--color-text); margin:0;">Host a competition</h3>
-        <button onclick="closeHostModal()" style="background:transparent; border:none; color:var(--color-text-2); cursor:pointer; font-size:20px; padding:4px;">&times;</button>
+    <div class="modal-dialog" style="max-width:540px;">
+      <div class="sheet-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">Host a competition</h3>
+        <button class="modal-close-btn" onclick="closeHostModal()" aria-label="Close modal">&times;</button>
       </div>
       <form id="host-comp-form" onsubmit="handleHostCompSubmit(event)">
         <div class="form-group" style="margin-bottom:12px;">
