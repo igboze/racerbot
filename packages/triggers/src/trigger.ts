@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, isSolanaAddress, getSolanaTokenInfo, SOL_MINT, type SwapEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, isSolanaAddress, SOL_MINT, type SwapEvent } from '@racerbot/shared';
+import { refreshSolanaMarkets, getSolanaMarket } from './solanaMarket.js';
 import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, getUserById, type PositionRecord } from '@racerbot/db';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -20,20 +21,20 @@ const PRICE_STALENESS_MS = 60_000;
  * Fallback price refresh straight from the venue's live pool state.
  * Returns true and updates localPriceCache on success.
  */
+/** Copies the shared Solana market entry into the trigger price cache (price in SOL, market cap in SOL). */
+function syncSolanaIntoCache(mint: string): boolean {
+  const m = getSolanaMarket(mint);
+  if (!m || m.priceSol <= 0) return false;
+  localPriceCache.set(mint, { price: m.priceSol, marketCap: m.mcapSol, ts: m.ts });
+  return true;
+}
+
 export async function refreshTokenPrice(tokenAddress: string): Promise<boolean> {
   try {
-    // Solana: price from the free Jupiter / pump.fun APIs (no RPC credits).
+    // Solana: batched Jupiter price (no RPC credits), shared with limit orders.
     if (isSolanaAddress(tokenAddress)) {
-      const info = await getSolanaTokenInfo(tokenAddress, true).catch(() => null);
-      if (info && info.priceSol > 0) {
-        localPriceCache.set(tokenAddress, {
-          price: info.priceSol,
-          marketCap: info.solUsd > 0 ? info.marketCapUsd / info.solUsd : 0,
-          ts: Date.now(),
-        });
-        return true;
-      }
-      return false;
+      await refreshSolanaMarkets([tokenAddress], true);
+      return syncSolanaIntoCache(tokenAddress);
     }
     const cache = await getTokenCache(tokenAddress);
     if (cache?.chain === 'sui' || cache?.venue === 'suipump' || tokenAddress.includes('::')) {
@@ -120,12 +121,25 @@ export class TriggerEngine {
     // One stale-price refresh per unique token per cycle (deduplicated)
     const refreshedThisCycle = new Set<string>();
     const staleTokens = new Set<string>();
+    const solanaTokens = new Set<string>();
     for (const trigger of activeTriggers) {
       const position = positionById.get(trigger.position_id);
       if (!position || position.status === 'closed') continue;
+      // Solana has no detector price feed: refresh every Solana token every few
+      // seconds with one batched call, so stop-losses act on fresh prices.
+      if (isSolanaAddress(position.token_address)) {
+        solanaTokens.add(position.token_address);
+        continue;
+      }
       const cached = localPriceCache.get(position.token_address);
       if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
         staleTokens.add(position.token_address);
+      }
+    }
+    if (solanaTokens.size > 0) {
+      await refreshSolanaMarkets([...solanaTokens]).catch(() => {});
+      for (const mint of solanaTokens) {
+        if (syncSolanaIntoCache(mint)) refreshedThisCycle.add(mint);
       }
     }
     await Promise.all([...staleTokens].map(async (tokenAddress) => {

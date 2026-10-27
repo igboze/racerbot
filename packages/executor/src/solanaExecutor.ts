@@ -8,6 +8,7 @@ import {
   restoreSolanaKeypair,
   getSolanaBalance,
   getSolanaTokenBalance,
+  getSolanaTokenBalanceOnChain,
   getSolanaTokenInfo,
   getSolUsdPrice,
   buildSolanaSwap,
@@ -25,6 +26,7 @@ import {
   getOpenPositions,
   createPosition,
   recordFee,
+  updatePosition,
 } from '@racerbot/db';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
@@ -168,22 +170,32 @@ export async function executeSolanaSwap(
   // ── SELL ────────────────────────────────────────────────────────────────
   const mint = token_in;
   if (!isSolInput(token_out)) throw new Error('Solana sells must output SOL');
-  const sellRaw = BigInt(amount_in);
+  let sellRaw = BigInt(amount_in);
   if (sellRaw <= 0n) throw new Error('Sell amount must be greater than 0');
 
   onProgress?.('checking_token_balance');
-  const [tokenBal, solBal, info, solUsd] = await Promise.all([
-    getSolanaTokenBalance(owner, mint, true),
+  // Exact balance straight from the token accounts (one free RPC call). The
+  // Jupiter holdings index is only a fallback: it is rate-limited and can lag.
+  const [onChainRaw, solBal, info, solUsd] = await Promise.all([
+    getSolanaTokenBalanceOnChain(owner, mint),
     getSolanaBalance(owner, true),
     getSolanaTokenInfo(mint),
     getSolUsdPrice(),
   ]);
-  const decimals = info?.decimals ?? tokenBal.decimals ?? 6;
-  if (tokenBal.raw < sellRaw) {
-    const have = (Number(tokenBal.raw) / Math.pow(10, decimals)).toFixed(4);
-    const want = (Number(sellRaw) / Math.pow(10, decimals)).toFixed(4);
-    throw new Error(`Insufficient token balance. You have ${have} ${info?.symbol || 'tokens'}, tried to sell ${want}.`);
+  const balRaw = onChainRaw !== null
+    ? onChainRaw
+    : (await getSolanaTokenBalance(owner, mint, true).catch(() => null))?.raw ?? null;
+  const decimals = info?.decimals ?? 6;
+  if (balRaw !== null && balRaw <= 0n) {
+    // Nothing left (sold elsewhere or sent out): close the position so TP/SL stops retrying.
+    const open = await getOpenPositions(user.id).catch(() => []);
+    const pos = open.find((p) => p.token_address === mint && p.chain === 'solana');
+    if (pos) await updatePosition({ position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+    throw new Error(`No ${info?.symbol || 'tokens'} left in your Solana wallet to sell.`);
   }
+  // The bot's record can be slightly above the wallet (transfers, token taxes):
+  // sell what is really there instead of failing (critical for stop-losses).
+  if (balRaw !== null && balRaw < sellRaw) sellRaw = balRaw;
   if (solBal.lamports < 1_000_000n) {
     throw new Error(`Insufficient SOL for network fees. You have ${lamportsToSol(solBal.lamports).toFixed(4)} SOL, need at least 0.001 SOL.`);
   }
