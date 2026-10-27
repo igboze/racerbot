@@ -612,8 +612,18 @@
           <button class="btn btn-secondary btn-icon" onclick="fitToScreen()" aria-label="Fit to screen" style="font-size:16px;">⊙</button>
         </div>
 
-        <!-- Legend Trigger bottom-left -->
-        <div class="canvas-hud-bottom-left">
+        <!-- Holding Size Spectrum & Legend bottom-left -->
+        <div class="canvas-hud-bottom-left" style="display:flex;align-items:center;gap:8px;">
+          <div class="holding-spectrum-bar" style="background:rgba(22,27,44,0.9);backdrop-filter:blur(8px);border:1px solid var(--color-border);border-radius:var(--radius-full);padding:6px 12px;display:flex;align-items:center;gap:10px;font-size:11px;">
+            <span style="font-weight:700;color:var(--color-text-2);text-transform:uppercase;font-size:10px;letter-spacing:0.5px;">Holdings:</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#F59E0B;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;display:inline-block;box-shadow:0 0 6px #F59E0B;"></span>&gt;10%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#EA580C;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#EA580C;display:inline-block;"></span>5-10%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#A855F7;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#A855F7;display:inline-block;"></span>2-5%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#3B82F6;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#3B82F6;display:inline-block;"></span>0.75-2%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#10B981;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#10B981;display:inline-block;"></span>0.25-0.75%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#6366F1;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#6366F1;display:inline-block;"></span>0.08-0.25%</span>
+            <span style="display:flex;align-items:center;gap:3px;color:#94A3B8;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:#94A3B8;display:inline-block;"></span>&lt;0.08%</span>
+          </div>
           <button class="btn btn-secondary btn-sm" onclick="openLegendModal()">Legend</button>
         </div>
 
@@ -852,6 +862,20 @@
             </div>
           </div>
 
+          <!-- Connected Wallets: Token Transfers & Shared Funding -->
+          <div id="wallet-connections-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:14px;">🔗</span>
+                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Connected Wallets &amp; Traces</span>
+              </div>
+              <span id="wallet-connections-count" class="chip chip-neutral" style="font-size:10px;height:20px;padding:0 6px;">0 links</span>
+            </div>
+            <div id="wallet-connections-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
+              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click a bubble to view connections</div>
+            </div>
+          </div>
+
           <!-- Cluster Information -->
           <div id="wallet-cluster-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:none;">
             <span class="text-caption" style="color:var(--color-purple-text);">Cluster Membership</span>
@@ -1076,46 +1100,75 @@
         <h3 class="modal-title">Bubble Map Legend</h3>
         <button class="modal-close-btn" onclick="closeLegendModal()" aria-label="Close modal">&times;</button>
       </div>
-      <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);background:var(--color-error);border:1px solid var(--color-bg);"></span>
-          <span><b>Bundler / Insider:</b> Coordinated launch cluster</span>
+      <div style="display:flex;flex-direction:column;gap:14px;font-size:13px;max-height:70vh;overflow-y:auto;padding-right:4px;">
+        <div>
+          <div style="font-weight:700;color:var(--color-text);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Token Holding Size Spectrum</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#F59E0B;box-shadow:0 0 6px #F59E0B;"></span>
+              <span><b>Whale (&gt;10%):</b> Dominant mega-holder</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#EA580C;"></span>
+              <span><b>Large (5% – 10%):</b> Major supply holder</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#A855F7;"></span>
+              <span><b>Significant (2% – 5%):</b> Substantial holder</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#3B82F6;"></span>
+              <span><b>Medium (0.75% – 2%):</b> Active retail investor</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#10B981;"></span>
+              <span><b>Moderate (0.25% – 0.75%):</b> Normal community holder</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#6366F1;"></span>
+              <span><b>Small (0.08% – 0.25%):</b> Smaller balance holder</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#94A3B8;"></span>
+              <span><b>Micro (&lt;0.08%):</b> Smallest retail dust</span>
+            </div>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);background:var(--color-warning);border:1px solid var(--color-bg);"></span>
-          <span><b>Whale:</b> Top large holder (&gt;5% supply)</span>
+
+        <div style="border-top:1px solid var(--color-border);padding-top:12px;">
+          <div style="font-weight:700;color:var(--color-text);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Special Wallet Roles</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#06B6D4;border:2px solid #FFFFFF;"></span>
+              <span><b>Dev / Creator:</b> Token deployer (👑 badge)</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#2DD4BF;"></span>
+              <span><b>DEX Liquidity Pool:</b> Ref Finance AMM pool (💧 badge)</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#FF4D4D;"></span>
+              <span><b>Bundler / Cabal:</b> Coordinated launch cluster (⚠️ hazard ring)</span>
+            </div>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);background:var(--color-brand-purple);border:1px solid var(--color-bg);"></span>
-          <span><b>Same-Owner Cluster:</b> Shared gas funder / controller</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);background:var(--viz-teal);border:1px solid var(--color-bg);"></span>
-          <span><b>DEX Pool / LP:</b> Automated market maker liquidity</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);background:var(--color-neutral);border:1px solid var(--color-bg);"></span>
-          <span><b>Retail:</b> Organic medium and small holders</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:16px;height:16px;border-radius:var(--radius-full);border:2px dashed var(--color-error);"></span>
-          <span><b>Active Seller Ring:</b> Holder dumping on-chain</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:24px;height:2px;background:var(--color-purple-text);border-top:1px dashed var(--color-purple-text);"></span>
-          <span><b>Gas Funder Link:</b> Pre-launch transfer connection</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:24px;height:2px;background:var(--color-neutral);"></span>
-          <span><b>Historical Transfer:</b> Direct wallet-to-wallet transfer</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:12px;height:12px;border-radius:var(--radius-full);background:var(--color-error);"></span>
-          <span><b>Outflow Comet:</b> Sell transaction in flight</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="width:12px;height:12px;border-radius:var(--radius-full);background:var(--color-success);"></span>
-          <span><b>Inflow Comet:</b> Buy transaction in flight</span>
+
+        <div style="border-top:1px solid var(--color-border);padding-top:12px;">
+          <div style="font-weight:700;color:var(--color-text);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Connected Wallet Lines &amp; Traces</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:24px;height:3px;background:#10B981;border-radius:2px;box-shadow:0 0 6px #10B981;"></span>
+              <span><b>Token Transfers:</b> Emerald line with animated energy comet indicating direct transfers between holders</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:24px;height:2px;border-top:2px dashed #A855F7;"></span>
+              <span><b>Shared Gas Funder:</b> Electric purple dashed line showing wallets funded by the same deployer/source</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="width:24px;height:2px;border-top:2px dashed #FF4D4D;"></span>
+              <span><b>Cabal Entity:</b> Crimson dashed line connecting coordinated insider wallets</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1179,6 +1232,7 @@
       let rawIdentityLinks = [];
       let rawIdentityClusters = [];
       let rawTxns = [];
+      let graphLinks = [];
       let tokenMeta = null;
       let selectedBubble = null;
       let hoveredBubble = null;
@@ -1205,21 +1259,127 @@
       const ctx = canvas.getContext('2d');
       const wrap = document.getElementById('canvas-wrap');
 
-      // Theme Palette
+      // Theme Palette & 7-Tier Holding Size Spectrum
       const PALETTE = {
         bg: '#0F1320',
         surface: '#161B2C',
         border: '#2A3149',
-        bundler: '#FF6B73',
-        whale: '#F0AD4E',
-        cluster: '#A992D6',
-        dexPool: '#38BDF8',
-        retail: '#6B7490',
-        dev: '#6ACCDC',
+        bundler: '#FF4D4D',
+        whale: '#F59E0B',
+        cluster: '#C084FC',
+        dexPool: '#2DD4BF',
+        dev: '#06B6D4',
         purpleText: '#A992D6',
         success: '#34D399',
         error: '#FF6B73'
       };
+
+      // 7-Tier Holding Size Color Spectrum (Holding % directly determines color)
+      function getHoldingTierInfo(pct, isDev, isPool, isBundler, clusterId) {
+        if (isDev) {
+          return { color: '#06B6D4', category: 'Dev / Creator', tierName: 'Dev Wallet', tierBadge: '👑' };
+        }
+        if (isPool) {
+          return { color: '#2DD4BF', category: 'Liquidity Pool', tierName: 'DEX Pool', tierBadge: '💧' };
+        }
+        if (isBundler) {
+          return { color: '#FF4D4D', category: 'Bundler / Cabal', tierName: 'Bundler Cabal', tierBadge: '⚠️' };
+        }
+        if (clusterId) {
+          return { color: '#C084FC', category: 'Sybil Cluster', tierName: 'Coordinated Cluster', tierBadge: '🔗' };
+        }
+
+        if (pct >= 10.0) {
+          return { color: '#F59E0B', category: 'Whale (>10%)', tierName: 'Whale (>10%)', tierBadge: '🐋' };
+        }
+        if (pct >= 5.0) {
+          return { color: '#EA580C', category: 'Large Holder (5-10%)', tierName: 'Large (5-10%)', tierBadge: '🦈' };
+        }
+        if (pct >= 2.0) {
+          return { color: '#A855F7', category: 'Significant Holder (2-5%)', tierName: 'Major (2-5%)', tierBadge: '🟣' };
+        }
+        if (pct >= 0.75) {
+          return { color: '#3B82F6', category: 'Medium Holder (0.75-2%)', tierName: 'Medium (0.75-2%)', tierBadge: '🔵' };
+        }
+        if (pct >= 0.25) {
+          return { color: '#10B981', category: 'Moderate Holder (0.25-0.75%)', tierName: 'Moderate (0.25-0.75%)', tierBadge: '🟢' };
+        }
+        if (pct >= 0.08) {
+          return { color: '#6366F1', category: 'Small Holder (0.08-0.25%)', tierName: 'Small (0.08-0.25%)', tierBadge: '🔷' };
+        }
+        return { color: '#94A3B8', category: 'Micro Holder (<0.08%)', tierName: 'Micro (<0.08%)', tierBadge: '⚪' };
+      }
+
+      // Render connected traces for selected wallet
+      function renderWalletConnections(bubble) {
+        const countEl = document.getElementById('wallet-connections-count');
+        const listEl = document.getElementById('wallet-connections-list');
+        if (!countEl || !listEl || !bubble) return;
+
+        const addrLower = (bubble.address || '').toLowerCase();
+        const connected = graphLinks.filter(l => {
+          const s = (l.source?.address || '').toLowerCase();
+          const t = (l.target?.address || '').toLowerCase();
+          return s === addrLower || t === addrLower;
+        });
+
+        countEl.textContent = `${connected.length} link${connected.length === 1 ? '' : 's'}`;
+        if (connected.length === 0) {
+          listEl.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No on-chain transfer connections or shared funder traces detected with other top holders.</div>';
+          return;
+        }
+
+        listEl.innerHTML = connected.slice(0, 15).map(link => {
+          const sAddr = link.source?.address || '';
+          const tAddr = link.target?.address || '';
+          const isSource = sAddr.toLowerCase() === addrLower;
+          const other = isSource ? link.target : link.source;
+          const otherAddr = other?.address || (isSource ? tAddr : sAddr);
+          const shortOther = otherAddr.length > 14 ? (otherAddr.slice(0, 6) + '…' + otherAddr.slice(-4)) : otherAddr;
+
+          let badgeText = '';
+          let typeColor = link.color || '#38BDF8';
+          let icon = '🔗';
+
+          if (link.type === 'token_transfer') {
+            typeColor = '#10B981';
+            if (isSource) {
+              icon = '➡️';
+              badgeText = `Sent ${formatCompactNumber(link.amount || 0)} ${currentSymbol}`;
+            } else {
+              icon = '⬅️';
+              badgeText = `Received ${formatCompactNumber(link.amount || 0)} ${currentSymbol}`;
+            }
+          } else if (link.type === 'common_funder') {
+            typeColor = '#A855F7';
+            icon = '⚡';
+            badgeText = `Same Gas Funder (${link.funder || 'Deployer'})`;
+          } else if (link.type === 'cluster') {
+            typeColor = link.color || '#FF4D4D';
+            icon = '⚠️';
+            badgeText = 'Coordinated Cabal Link';
+          } else {
+            typeColor = '#38BDF8';
+            icon = '🔄';
+            badgeText = 'Historical Transfer';
+          }
+
+          return `
+            <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-left:3px solid ${typeColor};border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+              <div style="display:flex;flex-direction:column;min-width:0;flex:1;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:12px;">${icon}</span>
+                  <span style="font-size:11px;font-weight:700;color:var(--color-text);">${badgeText}</span>
+                </div>
+                <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);margin-top:2px;">Peer: ${shortOther}</span>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="selectBubbleByAddress('${otherAddr}')" style="min-width:auto;height:24px;padding:0 8px;font-size:11px;color:${typeColor};border:1px solid ${typeColor}44;" title="Inspect connected wallet">
+                View ➔
+              </button>
+            </div>
+          `;
+        }).join('');
+      }
 
       // Color Shading Helpers for 3D Sphere Spherical Gradients
       function adjustColor(hex, factor) {
@@ -1383,39 +1543,23 @@
         let bundlerSells = 0;
         let retailSells = 0;
 
-        // Map cluster memberships for instant lookup
+        // Map cluster memberships for instant lookup (supports both c.wallets and c.addresses)
         const addressToClusterMap = new Map();
         rawIdentityClusters.forEach(c => {
-          (c.addresses || []).forEach(addr => addressToClusterMap.set(addr.toLowerCase(), c.clusterId));
+          const members = c.wallets || c.addresses || [];
+          members.forEach(addr => addressToClusterMap.set(addr.toLowerCase(), c.id || c.clusterId));
         });
 
         holders.forEach((h, idx) => {
           const addrLower = (h.address || '').toLowerCase();
           const isPool = addrLower.includes('ref-finance') || addrLower.includes('pool') || addrLower.includes('v2.ref-finance');
           const isDev = h.isDev || (!isPool && (idx === 0 || (tokenMeta?.creator && addrLower === tokenMeta.creator.toLowerCase())));
-          const isWhale = (h.pct || 0) >= 5 && !isPool && !isDev;
+          const isWhale = (h.pct || 0) >= 10 && !isPool && !isDev;
           const clusterId = addressToClusterMap.get(addrLower) || null;
           const isBundler = (h.isBundler || (clusterId && idx < 4 && (h.sellCount || 0) > 0)) && !isPool && !isDev;
 
-          let color = PALETTE.retail;
-          let category = 'Retail';
-
-          if (isPool) {
-            color = PALETTE.dexPool;
-            category = 'DEX Pool';
-          } else if (isDev) {
-            color = PALETTE.dev;
-            category = 'Dev Wallet';
-          } else if (isBundler) {
-            color = PALETTE.bundler;
-            category = 'Bundler / Cabal';
-          } else if (isWhale) {
-            color = PALETTE.whale;
-            category = 'Whale';
-          } else if (clusterId) {
-            color = PALETTE.cluster;
-            category = 'Cluster Member';
-          }
+          // Holding Size Spectrum Resolution
+          const tier = getHoldingTierInfo(h.pct || 0, isDev, isPool, isBundler, clusterId);
 
           if (isBundler) bundlerSells += (h.sellCount || 0);
           else retailSells += (h.sellCount || 0);
@@ -1428,11 +1572,14 @@
             pct: h.pct || (100 / (holders.length || 1)),
             amount: h.amount || '0',
             rank: idx + 1,
-            color: color,
-            category: category,
+            color: tier.color,
+            rawColor: tier.color,
+            category: tier.category,
+            tierName: tier.tierName,
+            tierBadge: tier.tierBadge,
             isPool: isPool,
             isDev: isDev,
-            isWhale: isWhale,
+            isWhale: (h.pct || 0) >= 5,
             isBundler: isBundler,
             clusterId: clusterId,
             sellCount: h.sellCount || 0,
@@ -1448,6 +1595,114 @@
           };
           bubbles.push(b);
           bubbleMap.set(b.address, b);
+          bubbleMap.set(b.address.toLowerCase(), b);
+        });
+
+        // Construct graphLinks (Token Transfers, Shared Gas Funder, Cabal Clusters)
+        graphLinks = [];
+        const seenLinks = new Set();
+
+        // 1. Direct Token Transfers between holders
+        (rawTxns || []).forEach(tx => {
+          const from = (tx.from || tx.sender || '').toLowerCase();
+          const to = (tx.to || tx.receiver || '').toLowerCase();
+          if (!from || !to || from === to) return;
+          if (from.includes('wrap.near') || to.includes('wrap.near')) return;
+
+          const b1 = bubbleMap.get(from);
+          const b2 = bubbleMap.get(to);
+          if (b1 && b2) {
+            const key = `tx:${from}->${to}`;
+            if (!seenLinks.has(key)) {
+              seenLinks.add(key);
+              graphLinks.push({
+                type: 'token_transfer',
+                source: b1,
+                target: b2,
+                amount: tx.amount || '0',
+                cause: tx.cause || 'Transfer',
+                tx: tx.tx || '',
+                label: `Transferred ${formatCompactNumber(tx.amount || 0)} ${currentSymbol}`,
+                color: '#10B981',
+                seed: Math.random() * 10
+              });
+            }
+          }
+        });
+
+        // 2. Shared Gas Funder & Cross-Wallet Identity Traces
+        (rawIdentityLinks || []).forEach(link => {
+          const from = (link.from || '').toLowerCase();
+          const to = (link.to || '').toLowerCase();
+          if (!from || !to || from === to) return;
+
+          const b1 = bubbleMap.get(from);
+          const b2 = bubbleMap.get(to);
+          if (b1 && b2) {
+            const pairKey = [from, to].sort().join('<->');
+            if (link.type === 'common_funder') {
+              const key = `cf:${pairKey}`;
+              if (!seenLinks.has(key)) {
+                seenLinks.add(key);
+                graphLinks.push({
+                  type: 'common_funder',
+                  source: b1,
+                  target: b2,
+                  funder: link.funder || 'Common Deployer',
+                  detail: link.detail || `Both funded by ${link.funder}`,
+                  label: `Same Gas Source: ${link.funder || 'Deployer'}`,
+                  color: '#A855F7',
+                  seed: Math.random() * 10
+                });
+              }
+            } else if (link.type === 'historical_transfer') {
+              const key = `ht:${pairKey}`;
+              if (!seenLinks.has(key)) {
+                seenLinks.add(key);
+                graphLinks.push({
+                  type: 'historical_transfer',
+                  source: b1,
+                  target: b2,
+                  detail: link.detail || 'Direct Transfer',
+                  label: 'Direct On-Chain Transfer',
+                  color: '#38BDF8',
+                  seed: Math.random() * 10
+                });
+              }
+            }
+          }
+        });
+
+        // 3. Coordinated Sybil Cabal Clusters
+        (rawIdentityClusters || []).forEach(c => {
+          const members = c.wallets || c.addresses || [];
+          const isBundler = c.isBundler || c.riskFactor === 'HIGH';
+          const clusterColor = isBundler ? '#FF4D4D' : '#C084FC';
+
+          for (let i = 0; i < members.length; i++) {
+            const b1 = bubbleMap.get(members[i].toLowerCase());
+            if (!b1) continue;
+            for (let j = i + 1; j < members.length; j++) {
+              const b2 = bubbleMap.get(members[j].toLowerCase());
+              if (!b2) continue;
+
+              const pairKey = [members[i].toLowerCase(), members[j].toLowerCase()].sort().join('<->');
+              const key = `cluster:${pairKey}`;
+              if (!seenLinks.has(key)) {
+                seenLinks.add(key);
+                graphLinks.push({
+                  type: 'cluster',
+                  source: b1,
+                  target: b2,
+                  clusterId: c.id,
+                  funder: c.funder,
+                  label: isBundler ? 'Bundler Cabal Link' : 'Sybil Entity Link',
+                  color: clusterColor,
+                  seed: Math.random() * 10
+                });
+              }
+            }
+          }
         });
 
         // Compute metrics
@@ -1772,30 +2027,136 @@
         ctx.translate(panX, panY);
         ctx.scale(zoom, zoom);
 
-        // 1. Draw Cluster & Sybil Filaments (Connecting Coordinated Wallets)
-        if (showSybilTraces && rawIdentityClusters.length > 0) {
-          rawIdentityClusters.forEach(c => {
-            const addrs = c.addresses || [];
-            const isBundlerCluster = c.riskFactor === 'HIGH';
-            ctx.strokeStyle = isBundlerCluster ? 'rgba(255, 107, 115, 0.45)' : 'rgba(169, 146, 214, 0.45)';
-            ctx.lineWidth = 1.6;
-            ctx.setLineDash([5, 5]);
-            ctx.lineDashOffset = -simulationTime * 25;
+        // 1. Draw Connected Wallets (Token Transfers, Shared Gas Funder, Coordinated Cabals)
+        const activeBubble = selectedBubble || hoveredBubble;
 
-            for (let i = 0; i < addrs.length; i++) {
-              const b1 = bubbleMap.get(addrs[i]);
-              if (!b1) continue;
-              for (let j = i + 1; j < addrs.length; j++) {
-                const b2 = bubbleMap.get(addrs[j]);
-                if (!b2) continue;
-                ctx.beginPath();
-                ctx.moveTo(b1.x, b1.y);
-                ctx.lineTo(b2.x, b2.y);
-                ctx.stroke();
+        if (showAllTraces && graphLinks.length > 0) {
+          for (let i = 0; i < graphLinks.length; i++) {
+            const link = graphLinks[i];
+            const b1 = link.source;
+            const b2 = link.target;
+            if (!b1 || !b2) continue;
+            if (hideDust && (b1.pct < 0.05 || b2.pct < 0.05)) continue;
+
+            const isConnectedToActive = activeBubble && (b1 === activeBubble || b2 === activeBubble);
+            
+            // If active bubble is selected/hovered, dim unconnected links
+            let alpha = isConnectedToActive ? 0.95 : (activeBubble ? 0.12 : 0.45);
+            let lineWidth = isConnectedToActive ? 3.0 : (link.type === 'token_transfer' ? 2.0 : 1.5);
+
+            ctx.save();
+            ctx.lineWidth = lineWidth;
+
+            if (link.type === 'token_transfer') {
+              // Direct token transfer: Emerald glow (#10B981)
+              ctx.strokeStyle = `rgba(16, 185, 129, ${alpha})`;
+              if (isConnectedToActive) {
+                ctx.shadowColor = '#10B981';
+                ctx.shadowBlur = 10;
               }
+              ctx.beginPath();
+              ctx.moveTo(b1.x, b1.y);
+              ctx.lineTo(b2.x, b2.y);
+              ctx.stroke();
+
+              // Animated flowing energy particle (comet) moving from sender to receiver
+              const cometProgress = (simulationTime * 0.7 + (link.seed || 0)) % 1.0;
+              const cometX = b1.x + (b2.x - b1.x) * cometProgress;
+              const cometY = b1.y + (b2.y - b1.y) * cometProgress;
+
+              ctx.beginPath();
+              ctx.arc(cometX, cometY, isConnectedToActive ? 3.5 : 2.5, 0, Math.PI * 2);
+              ctx.fillStyle = isConnectedToActive ? '#34D399' : 'rgba(52, 211, 153, 0.85)';
+              ctx.shadowColor = '#34D399';
+              ctx.shadowBlur = 8;
+              ctx.fill();
+
+            } else if (link.type === 'common_funder') {
+              // Shared gas funder / deployer link: Electric purple dashed line (#A855F7)
+              ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
+              ctx.setLineDash([6, 5]);
+              ctx.lineDashOffset = -simulationTime * 18;
+              if (isConnectedToActive) {
+                ctx.shadowColor = '#A855F7';
+                ctx.shadowBlur = 10;
+              }
+              ctx.beginPath();
+              ctx.moveTo(b1.x, b1.y);
+              ctx.lineTo(b2.x, b2.y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+            } else if (link.type === 'cluster') {
+              // Coordinated Cabal / Sybil Cluster: Crimson hazard (#FF4D4D) or Violet (#C084FC)
+              const col = link.color || '#C084FC';
+              ctx.strokeStyle = isConnectedToActive ? col : `${col}77`;
+              ctx.setLineDash([4, 4]);
+              ctx.lineDashOffset = simulationTime * 20;
+              if (isConnectedToActive) {
+                ctx.shadowColor = col;
+                ctx.shadowBlur = 10;
+              }
+              ctx.beginPath();
+              ctx.moveTo(b1.x, b1.y);
+              ctx.lineTo(b2.x, b2.y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+            } else if (link.type === 'historical_transfer') {
+              // Historical transfer: Sky Blue (#38BDF8)
+              ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`;
+              ctx.beginPath();
+              ctx.moveTo(b1.x, b1.y);
+              ctx.lineTo(b2.x, b2.y);
+              ctx.stroke();
             }
-            ctx.setLineDash([]);
-          });
+
+            ctx.restore();
+          }
+
+          // Draw connection tooltip badges at midpoints for links connected to activeBubble
+          if (activeBubble) {
+            for (let i = 0; i < graphLinks.length; i++) {
+              const link = graphLinks[i];
+              const b1 = link.source;
+              const b2 = link.target;
+              if (!b1 || !b2) continue;
+              if (b1 !== activeBubble && b2 !== activeBubble) continue;
+
+              const midX = (b1.x + b2.x) / 2;
+              const midY = (b1.y + b2.y) / 2;
+
+              let badgeText = link.label || 'Connected';
+              if (link.type === 'token_transfer') {
+                const isOutbound = (b1 === activeBubble);
+                const counterparty = isOutbound ? b2.address : b1.address;
+                const shortAddr = counterparty.length > 12 ? (counterparty.slice(0, 5) + '…' + counterparty.slice(-3)) : counterparty;
+                badgeText = isOutbound ? `Sent ${formatCompactNumber(link.amount || 0)} ${currentSymbol} ➔ ${shortAddr}` : `Received ${formatCompactNumber(link.amount || 0)} ${currentSymbol} 🠔 ${shortAddr}`;
+              }
+
+              ctx.save();
+              ctx.font = '600 10px "JetBrains Mono", monospace';
+              const textWidth = ctx.measureText(badgeText).width;
+              const pillW = textWidth + 16;
+              const pillH = 20;
+
+              // Pill background
+              ctx.fillStyle = 'rgba(15, 19, 32, 0.94)';
+              ctx.strokeStyle = link.color || '#6ACCDC';
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              ctx.roundRect(midX - pillW / 2, midY - pillH / 2, pillW, pillH, 10);
+              ctx.fill();
+              ctx.stroke();
+
+              // Pill text
+              ctx.fillStyle = '#FFFFFF';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(badgeText, midX, midY + 1);
+              ctx.restore();
+            }
+          }
         }
 
         // 2. Render Bubbles with 3D Spherical Gradients, Glowing Halos, and Badges
@@ -1803,21 +2164,9 @@
           const b = bubbles[i];
           if (hideDust && b.pct < 0.05) continue;
 
-          // Category Glowing Aura / Halo
+          // Holding Tier & Category Glowing Aura / Halo
           const auraGrad = ctx.createRadialGradient(b.x, b.y, b.radius * 0.7, b.x, b.y, b.radius * 1.45);
-          if (b.isDev) {
-            auraGrad.addColorStop(0, 'rgba(106, 204, 220, 0.40)');
-          } else if (b.isBundler) {
-            auraGrad.addColorStop(0, 'rgba(255, 107, 115, 0.40)');
-          } else if (b.isWhale) {
-            auraGrad.addColorStop(0, 'rgba(240, 173, 78, 0.35)');
-          } else if (b.clusterId) {
-            auraGrad.addColorStop(0, 'rgba(169, 146, 214, 0.35)');
-          } else if (b.isPool) {
-            auraGrad.addColorStop(0, 'rgba(56, 189, 248, 0.30)');
-          } else {
-            auraGrad.addColorStop(0, 'rgba(107, 116, 144, 0.15)');
-          }
+          auraGrad.addColorStop(0, `${b.color}55`);
           auraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
           ctx.beginPath();
@@ -1826,39 +2175,39 @@
           ctx.fill();
 
           // Outer Role Rings
-          if (b.isWhale) {
-            // Golden dashed orbit ring
+          if (b.isDev) {
+            // Cyan double ring for Creator / Dev
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = '#F0AD4E';
-            ctx.lineWidth = 1.6;
-            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = '#06B6D4';
+            ctx.lineWidth = 2.2;
             ctx.stroke();
-            ctx.setLineDash([]);
-          } else if (b.isBundler) {
-            // Crimson hazard ring
+          } else if (b.isPool) {
+            // Teal double ring for DEX Pool
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.radius + 3.5, 0, Math.PI * 2);
-            ctx.strokeStyle = '#FF6B73';
+            ctx.strokeStyle = '#2DD4BF';
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+          } else if (b.isBundler) {
+            // Crimson hazard rotating dashed ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius + 3.5, 0, Math.PI * 2);
+            ctx.strokeStyle = '#FF4D4D';
             ctx.lineWidth = 1.8;
             ctx.setLineDash([3, 3]);
             ctx.lineDashOffset = simulationTime * 15;
             ctx.stroke();
             ctx.setLineDash([]);
-          } else if (b.isDev) {
-            // Cyan double ring
+          } else if (b.pct >= 10.0) {
+            // Golden dashed orbit ring for Whale (>10%)
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 3.5, 0, Math.PI * 2);
-            ctx.strokeStyle = '#6ACCDC';
-            ctx.lineWidth = 2.0;
+            ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = '#F59E0B';
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([4, 4]);
             ctx.stroke();
-          } else if (b.isPool) {
-            // Teal double ring
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 3, 0, Math.PI * 2);
-            ctx.strokeStyle = '#38BDF8';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
+            ctx.setLineDash([]);
           }
 
           // Active seller pulsating dashed ring
@@ -1873,7 +2222,7 @@
             ctx.setLineDash([]);
           }
 
-          // 3D Spherical Radial Gradient Body
+          // 3D Spherical Radial Gradient Body (Determined by holding size tier)
           const sphereGrad = ctx.createRadialGradient(
             b.x - b.radius * 0.35,
             b.y - b.radius * 0.35,
@@ -1906,24 +2255,32 @@
           if (b === selectedBubble) {
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.radius + 5, 0, Math.PI * 2);
-            ctx.strokeStyle = '#6ACCDC';
-            ctx.lineWidth = 2.8;
+            ctx.strokeStyle = '#38BDF8';
+            ctx.lineWidth = 3.0;
+            ctx.shadowColor = '#38BDF8';
+            ctx.shadowBlur = 12;
             ctx.stroke();
+            ctx.shadowBlur = 0;
           } else if (b === hoveredBubble) {
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(106, 204, 220, 0.7)';
-            ctx.lineWidth = 1.8;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+            ctx.lineWidth = 2.0;
             ctx.stroke();
           }
 
           // Labels & Badges
-          if (b.isDev && b.radius >= 20) {
-            // Dev Crown Badge
+          const showRoleBadge = (b.isDev || b.isPool || b.isBundler || b.pct >= 10) && b.radius >= 20;
+          if (showRoleBadge) {
             ctx.font = '12px "DM Sans", sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('👑', b.x, b.y - b.radius * 0.5);
+            let emoji = b.tierBadge || '💎';
+            if (b.isDev) emoji = '👑';
+            else if (b.isPool) emoji = '💧';
+            else if (b.isBundler) emoji = '⚠️';
+            else if (b.pct >= 10) emoji = '🐋';
+            ctx.fillText(emoji, b.x, b.y - b.radius * 0.45);
           }
 
           if (b.radius >= 15) {
@@ -1933,17 +2290,17 @@
             ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
             ctx.shadowBlur = 4;
             ctx.font = '700 11px "JetBrains Mono", monospace';
-            const textY = (b.isDev && b.radius >= 20) ? (b.y + 4) : b.y;
+            const textY = showRoleBadge ? (b.y + 5) : b.y;
             ctx.fillText(`${b.pct.toFixed(1)}%`, b.x, textY);
             ctx.shadowBlur = 0;
           }
 
           // Address snippet on large bubbles
           if (b.radius >= 28) {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
             ctx.font = '9px "JetBrains Mono", monospace';
             const shortAddr = b.address.length > 12 ? (b.address.slice(0, 5) + '…' + b.address.slice(-3)) : b.address;
-            ctx.fillText(shortAddr, b.x, b.y + b.radius * 0.45);
+            ctx.fillText(shortAddr, b.x, b.y + b.radius * 0.5);
           }
         }
 
@@ -1980,7 +2337,7 @@
         if (sellsEl) sellsEl.textContent = `${b.sellCount} sells`;
         if (chipEl) {
           chipEl.textContent = b.category;
-          chipEl.className = b.isBundler ? 'chip chip-neg' : (b.isDev ? 'chip chip-pos' : (b.isWhale ? 'chip chip-warn' : 'chip chip-neutral'));
+          chipEl.className = b.isBundler ? 'chip chip-neg' : (b.isDev ? 'chip chip-pos' : (b.pct >= 10 ? 'chip chip-warn' : 'chip chip-neutral'));
         }
         if (expLink) expLink.href = `https://nearblocks.io/address/${encodeURIComponent(b.address)}`;
 
@@ -1989,6 +2346,9 @@
         if (drawer && window.innerWidth < 1024) {
           drawer.classList.add('sheet-half');
         }
+
+        // Render Connected Wallets (Transfers & Funding)
+        renderWalletConnections(b);
 
         // Fetch Deep Wallet Forensics & Trade Speed
         fetchWalletForensics(b.address);
@@ -2017,15 +2377,15 @@
           const res = await fetch(`/api/wallet-forensics/${encodeURIComponent(account)}?currentToken=${encodeURIComponent(currentToken)}`);
           if (!res.ok) throw new Error('Failed to fetch forensics');
           const data = await res.json();
-          const stats = data?.stats || {};
+          const stats = data?.stats || data || {};
           const otherTokens = data?.otherTokens || [];
           const pastTrades = data?.pastTrades || [];
 
           // Speed Classification & Hazard
           if (speedBadge) {
             speedBadge.textContent = stats.speedClassification || 'Inactive';
-            if (stats.hazardLevel === 'CRITICAL' || stats.hazardLevel === 'HIGH') speedBadge.className = 'chip chip-neg';
-            else if (stats.hazardLevel === 'MODERATE') speedBadge.className = 'chip chip-warn';
+            if (stats.hazardLevel === 'Extreme Sell Hazard' || stats.hazardLevel === 'CRITICAL' || stats.hazardLevel === 'HIGH') speedBadge.className = 'chip chip-neg';
+            else if (stats.hazardLevel === 'High Dump Hazard' || stats.hazardLevel === 'MODERATE') speedBadge.className = 'chip chip-warn';
             else speedBadge.className = 'chip chip-pos';
           }
           if (avgHoldEl) avgHoldEl.textContent = stats.avgHoldStr || '—';
@@ -2039,23 +2399,32 @@
             hazardBar.style.backgroundColor = stats.hazardColor || '#34D399';
           }
 
-          // Other Tokens Held List
+          // Other Tokens Held List with computed hold duration
           if (otherTokensCount) otherTokensCount.textContent = `${otherTokens.length} token${otherTokens.length === 1 ? '' : 's'}`;
           if (otherTokensList) {
             if (otherTokens.length === 0) {
-              otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No other FT tokens found</div>';
+              otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No other FT tokens held</div>';
             } else {
-              otherTokensList.innerHTML = otherTokens.slice(0, 15).map(t => `
-                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.04);border-radius:var(--radius-md);padding:6px 10px;">
-                  <div style="display:flex;flex-direction:column;min-width:0;">
-                    <span style="font-weight:700;font-size:12px;color:var(--color-text);">${t.symbol}</span>
-                    <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">${t.contract_id}</span>
+              otherTokensList.innerHTML = otherTokens.slice(0, 20).map(t => {
+                const holdDuration = t.holdDurationStr || 'Holding';
+                const isShortHold = t.holdDurationMinutes && t.holdDurationMinutes < 60;
+                return `
+                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+                    <div style="display:flex;flex-direction:column;min-width:0;flex:1;">
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-weight:700;font-size:12px;color:var(--color-text);">${t.symbol}</span>
+                        <span class="chip ${isShortHold ? 'chip-warn' : 'chip-neutral'}" style="font-size:10px;height:18px;padding:0 5px;font-weight:600;">
+                          ⏱️ ${holdDuration}
+                        </span>
+                      </div>
+                      <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="${t.contract_id}">${t.contract_id}</span>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" onclick="openBubbleMap('${t.contract_id}')" style="min-width:auto;height:24px;padding:0 8px;font-size:11px;color:var(--color-primary);border:1px solid rgba(106,204,220,0.2);" title="Scan this token in RacerBubble">
+                      Scan ↗
+                    </button>
                   </div>
-                  <button class="btn btn-ghost btn-sm" onclick="openBubbleMap('${t.contract_id}')" style="min-width:auto;height:24px;padding:0 6px;font-size:11px;color:var(--color-primary);" title="Scan this token in RacerBubble">
-                    Scan ↗
-                  </button>
-                </div>
-              `).join('');
+                `;
+              }).join('');
             }
           }
 
@@ -2065,17 +2434,29 @@
             if (pastTrades.length === 0) {
               tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No recent dump trades recorded</div>';
             } else {
-              tradesList.innerHTML = pastTrades.slice(0, 10).map(tr => `
-                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.04);border-radius:var(--radius-md);padding:6px 10px;">
-                  <div style="display:flex;flex-direction:column;">
-                    <span style="font-size:12px;font-weight:600;color:var(--color-text);">${tr.token}</span>
-                    <span style="font-size:10px;color:var(--color-text-2);">Sold: ${tr.soldAt ? new Date(tr.soldAt).toLocaleDateString() : 'Recent'}</span>
+              tradesList.innerHTML = pastTrades.slice(0, 15).map(tr => {
+                const holdStr = tr.holdDurationStr || tr.holdStr || '—';
+                const isInstant = tr.isInstantDump || (tr.holdDurationMinutes && tr.holdDurationMinutes <= 5);
+                const isQuick = tr.isQuickDump || (tr.holdDurationMinutes && tr.holdDurationMinutes <= 30);
+                const chipClass = isInstant ? 'chip-neg' : (isQuick ? 'chip-warn' : 'chip-pos');
+                const badgeIcon = isInstant ? '⚡' : (isQuick ? '🔥' : '💎');
+                const dateStr = tr.soldAt ? new Date(tr.soldAt).toLocaleDateString() : 'Recent';
+
+                return `
+                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+                    <div style="display:flex;flex-direction:column;min-width:0;">
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--color-text);">${tr.symbol || tr.token}</span>
+                        <span style="font-size:10px;color:var(--color-text-2);">${tr.exitType || 'Exit'}</span>
+                      </div>
+                      <span style="font-size:10px;color:var(--color-text-2);">Sold: ${dateStr}</span>
+                    </div>
+                    <span class="chip ${chipClass}" style="font-size:10px;height:20px;padding:0 6px;font-weight:700;white-space:nowrap;">
+                      ${badgeIcon} Held ${holdStr}
+                    </span>
                   </div>
-                  <span class="chip ${tr.isQuickDump ? 'chip-neg' : 'chip-neutral'}" style="font-size:10px;height:20px;padding:0 6px;">
-                    ${tr.isQuickDump ? '⚡ ' : '⏱️ '}${tr.holdStr}
-                  </span>
-                </div>
-              `).join('');
+                `;
+              }).join('');
             }
           }
         } catch (e) {
