@@ -1,4 +1,4 @@
-import type { TokenInfoResult } from './wallet.js';
+import { type TokenInfoResult, formatCryptoPrice } from './wallet.js';
 
 export interface BadgeInfo {
   type: 'pass' | 'fail' | 'warn' | 'info';
@@ -36,28 +36,15 @@ export function toTokenInfoCardData(
   safetyCheck?: { isHoneypot?: boolean; isDrained?: boolean; isUnlockedRheaPool?: boolean; isAuditedLaunchpad?: boolean; reasons?: string[] } | null
 ): TokenInfoCardData {
   const priceNum = parseFloat(info.price || '0');
-  let priceNear: string | undefined = undefined;
-  if (priceNum > 0) {
-    if (priceNum >= 1) priceNear = priceNum.toFixed(4);
-    else if (priceNum >= 0.0001) priceNear = priceNum.toFixed(6);
-    else if (priceNum >= 0.00000001) priceNear = priceNum.toFixed(8);
-    else priceNear = priceNum.toExponential(4);
-  }
+  const priceNear = priceNum > 0 ? formatCryptoPrice(priceNum, '') : undefined;
 
   const effectiveNearUsd = nearUsd || info.near_usd || null;
   const priceUsdNum = parseFloat((info as any).price_usd || '0');
   let priceUsd: string | undefined = undefined;
   if (priceUsdNum > 0) {
-    if (priceUsdNum >= 1) priceUsd = '$' + priceUsdNum.toFixed(2);
-    else if (priceUsdNum >= 0.0001) priceUsd = '$' + priceUsdNum.toFixed(6);
-    else if (priceUsdNum >= 0.00000001) priceUsd = '$' + priceUsdNum.toFixed(8);
-    else priceUsd = '$' + priceUsdNum.toExponential(4);
+    priceUsd = formatCryptoPrice(priceUsdNum, '$');
   } else if (priceNum > 0 && effectiveNearUsd && effectiveNearUsd > 0) {
-    const calcUsd = priceNum * effectiveNearUsd;
-    if (calcUsd >= 1) priceUsd = '$' + calcUsd.toFixed(2);
-    else if (calcUsd >= 0.0001) priceUsd = '$' + calcUsd.toFixed(6);
-    else if (calcUsd >= 0.00000001) priceUsd = '$' + calcUsd.toFixed(8);
-    else priceUsd = '$' + calcUsd.toExponential(4);
+    priceUsd = formatCryptoPrice(priceNum * effectiveNearUsd, '$');
   }
 
   // Market Cap
