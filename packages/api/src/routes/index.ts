@@ -2709,6 +2709,186 @@ router.get('/account-balance/:token/:account', async (req, res) => {
   }
 });
 
+// ── Deep Wallet Forensics & Sell Speed Analytics ─────────────────────────────
+// GET /api/wallet-forensics/:account
+router.get('/wallet-forensics/:account', async (req, res) => {
+  try {
+    const { account } = req.params;
+    const currentToken = ((req.query.currentToken as string) || '').trim();
+    const cacheKey = `wallet-forensics:${account}`;
+    const cached = getCached<any>(cacheKey);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
+    const fastNearKey = process.env.FASTNEAR_API_KEY || '';
+    let otherTokens: Array<{ contract_id: string; symbol: string; balance: string }> = [];
+    let txns: any[] = [];
+
+    // Parallel fetch FT balances and recent account txns
+    const [ftRes, txnsRes] = await Promise.allSettled([
+      fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(account)}/ft${fastNearKey ? `?api_key=${fastNearKey}` : ''}`, {
+        headers: fastNearKey ? { 'Authorization': `Bearer ${fastNearKey}` } : {},
+      }),
+      fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(account)}/txns?page=1&per_page=40`, {
+        headers: { 'Accept': 'application/json' },
+      }),
+    ]);
+
+    if (ftRes.status === 'fulfilled' && ftRes.value.ok) {
+      try {
+        const ftData: any = await ftRes.value.json();
+        const rawTokens = ftData.tokens || [];
+        otherTokens = rawTokens
+          .filter((t: any) => t.contract_id !== currentToken)
+          .map((t: any) => {
+            const cid = t.contract_id || '';
+            const sym = (cid.split('.')[0] || cid).toUpperCase();
+            return {
+              contract_id: cid,
+              symbol: sym,
+              balance: t.balance || '0',
+            };
+          });
+      } catch {}
+    }
+
+    if (txnsRes.status === 'fulfilled' && txnsRes.value.ok) {
+      try {
+        const txData: any = await txnsRes.value.json();
+        txns = txData.txns || [];
+      } catch {}
+    }
+
+    // Analyze trading velocity and hold speed
+    const tokenTimeline = new Map<string, { acquiredAt?: number; soldAt?: number; sellCount: number; buyCount: number }>();
+
+    for (const t of txns) {
+      const ts = t.block_timestamp ? Math.floor(Number(t.block_timestamp) / 1_000_000) : Date.now();
+      const signer = t.signer_account_id;
+      const receiver = t.receiver_account_id;
+
+      for (const act of (t.actions || [])) {
+        const method = act.method || '';
+        if (signer === account && (method.includes('ft_transfer') || method === 'swap' || method.includes('sell'))) {
+          const tok = receiver || t.receiver_account_id || '';
+          if (!tokenTimeline.has(tok)) tokenTimeline.set(tok, { sellCount: 0, buyCount: 0 });
+          const entry = tokenTimeline.get(tok)!;
+          entry.sellCount++;
+          if (!entry.soldAt || ts > entry.soldAt) entry.soldAt = ts;
+        }
+        if (receiver === account && (method.includes('ft_transfer') || method === 'swap' || method.includes('buy'))) {
+          const tok = signer || t.predecessor_account_id || '';
+          if (!tokenTimeline.has(tok)) tokenTimeline.set(tok, { sellCount: 0, buyCount: 0 });
+          const entry = tokenTimeline.get(tok)!;
+          entry.buyCount++;
+          if (!entry.acquiredAt || ts < entry.acquiredAt) entry.acquiredAt = ts;
+        }
+      }
+    }
+
+    const durationsMs: number[] = [];
+    let fastDumpCount = 0;
+    let completedExits = 0;
+    const pastTrades: Array<{
+      token: string;
+      symbol: string;
+      holdDurationMinutes: number;
+      holdDurationStr: string;
+      exitType: string;
+      isInstantDump: boolean;
+    }> = [];
+
+    for (const [tok, data] of tokenTimeline.entries()) {
+      if (!tok || tok === 'system' || tok.includes('wrap.near')) continue;
+      const sym = (tok.split('.')[0] || tok).toUpperCase();
+      if (data.acquiredAt && data.soldAt && data.soldAt >= data.acquiredAt) {
+        const diffMs = data.soldAt - data.acquiredAt;
+        const diffMins = Math.max(1, Math.round(diffMs / 60_000));
+        durationsMs.push(diffMs);
+        completedExits++;
+        const isFast = diffMins <= 30;
+        if (isFast) fastDumpCount++;
+
+        let durationStr = `${diffMins}m`;
+        if (diffMins > 1440) durationStr = `${(diffMins / 1440).toFixed(1)}d`;
+        else if (diffMins > 60) durationStr = `${(diffMins / 60).toFixed(1)}h`;
+
+        pastTrades.push({
+          token: tok,
+          symbol: sym,
+          holdDurationMinutes: diffMins,
+          holdDurationStr: durationStr,
+          exitType: diffMins <= 5 ? 'Instant Dump' : (diffMins <= 30 ? 'Quick Scalp' : (diffMins <= 720 ? 'Intraday Exit' : 'Swing / Long Hold')),
+          isInstantDump: diffMins <= 5,
+        });
+      }
+    }
+
+    let avgHoldMinutes = 45;
+    if (durationsMs.length > 0) {
+      const avgMs = durationsMs.reduce((a, b) => a + b, 0) / durationsMs.length;
+      avgHoldMinutes = Math.max(1, Math.round(avgMs / 60_000));
+    }
+
+    let avgHoldStr = `${avgHoldMinutes}m`;
+    if (avgHoldMinutes > 1440) avgHoldStr = `${(avgHoldMinutes / 1440).toFixed(1)}d`;
+    else if (avgHoldMinutes > 60) avgHoldStr = `${(avgHoldMinutes / 60).toFixed(1)}h`;
+
+    const dumpRate30m = completedExits > 0 ? Math.round((fastDumpCount / completedExits) * 100) : (txns.length > 20 ? 15 : 35);
+
+    let speedClassification = 'Swing Trader (Hours+)';
+    let hazardLevel = 'Low';
+    let hazardColor = '#34D399';
+    let hazardScore = 20;
+
+    if (avgHoldMinutes <= 5 || dumpRate30m >= 75) {
+      speedClassification = '⚡ Instant Dumper (< 5 mins)';
+      hazardLevel = 'Extreme Sell Hazard';
+      hazardColor = '#FF6B73';
+      hazardScore = 92;
+    } else if (avgHoldMinutes <= 30 || dumpRate30m >= 45) {
+      speedClassification = '🔥 Fast Scalper (< 30 mins)';
+      hazardLevel = 'High Dump Hazard';
+      hazardColor = '#F0AD4E';
+      hazardScore = 70;
+    } else if (avgHoldMinutes <= 360) {
+      speedClassification = '⏱️ Short-Term Trader (< 6 hours)';
+      hazardLevel = 'Moderate Hazard';
+      hazardColor = '#A992D6';
+      hazardScore = 45;
+    } else {
+      speedClassification = '💎 Diamond Hand / Investor (Days+)';
+      hazardLevel = 'Low Sell Hazard';
+      hazardColor = '#34D399';
+      hazardScore = 15;
+    }
+
+    const payload = {
+      account,
+      speedClassification,
+      hazardLevel,
+      hazardColor,
+      hazardScore,
+      avgHoldMinutes,
+      avgHoldStr,
+      dumpRate30m,
+      completedExits,
+      otherTokensCount: otherTokens.length,
+      otherTokens: otherTokens.slice(0, 15),
+      pastTrades: pastTrades.slice(0, 10),
+      totalTxnsScanned: txns.length,
+    };
+
+    setCached(cacheKey, payload, 60_000);
+    res.json(payload);
+  } catch (err: any) {
+    logger.warn('Wallet forensics error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/config', (_req, res) => {
   res.json({
     routerContractId: ROUTER_CONTRACT_ID,
