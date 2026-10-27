@@ -1667,33 +1667,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      // 1. Fetch real top holders via FastNEAR
+      // 1. Fetch real top holders from NearBlocks with timeout
       let holders = [];
       try {
-        const r = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(token)}/top`, {
-          headers: { 'Authorization': `Bearer ${FASTNEAR_KEY}` },
+        const r = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+          },
+          signal: AbortSignal.timeout(4500),
         });
         if (r.ok) {
           const d = await r.json();
-          const raw = d.accounts || [];
-          holders = raw.map(a => ({ account: a.account_id || a.account, amount: a.balance || a.amount }));
+          const raw = d.holders || d.data || [];
+          holders = raw.map(h => ({ account: h.account, amount: h.amount }));
         }
       } catch (err) {
-        console.warn('FastNear holder fetch error:', err.message);
-      }
-
-      // Fallback to NearBlocks if FastNEAR returned empty
-      if (holders.length === 0) {
-        try {
-          const r = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/holders?page=1&per_page=100`, {
-            headers: { 'Accept': 'application/json' },
-          });
-          if (r.ok) {
-            const d = await r.json();
-            const raw = d.holders || d.data || [];
-            holders = raw.map(h => ({ account: h.account, amount: h.amount }));
-          }
-        } catch {}
+        console.warn('NearBlocks holders fetch error:', err.message);
       }
 
       // 2. Fetch real on-chain transfers from NearBlocks
@@ -1701,7 +1691,11 @@ const server = http.createServer(async (req, res) => {
       const seen = new Set();
       try {
         const r = await fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(token)}/txns?page=1&per_page=50`, {
-          headers: { 'Accept': 'application/json' },
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (compatible; RacerBot/1.0; +https://racer.trade)',
+          },
+          signal: AbortSignal.timeout(4000),
         });
         if (r.ok) {
           const d = await r.json();
