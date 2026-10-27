@@ -5,6 +5,7 @@ import { TriggerEngine, localPriceCache, triggerRedis } from './trigger.js';
 import { runDcaEngine } from './dca.js';
 import { runLimitOrderEngine } from './limitOrder.js';
 import { runScheduledSnipeEngine } from './scheduledSnipe.js';
+import { runSolanaSnipeEngine } from './solanaSnipe.js';
 import { TRIGGER_INTERVAL_MS, PARENT_ACCOUNT } from './config.js';
 
 const logger = createLogger('triggers');
@@ -27,6 +28,9 @@ async function main(): Promise<void> {
 
   // Start Scheduled Snipe Watchdog Engine concurrently
   runScheduledSnipeEngine().catch(err => logger.error('Scheduled snipe engine failed to start', err));
+
+  // Solana snipes (token + pump.fun deployer) — free HTTP APIs only, no RPC
+  runSolanaSnipeEngine().catch(err => logger.error('Solana snipe engine failed to start', err));
 
   // Subscribe to price updates from detector — warm local cache
   // This is the only price data source in the trigger hot path

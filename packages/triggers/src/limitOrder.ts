@@ -5,6 +5,17 @@ import {
   createLogger,
   getNear,
   isTradableVenue,
+  isSolanaToken,
+  getSolanaTokenInfo,
+  getSolanaPricesUsd,
+  getSolUsdPrice,
+  getSolanaBalanceFreeOnly,
+  getSolanaTokenBalance,
+  lamportsToSol,
+  solToLamports,
+  solanaUiToRaw,
+  SOL_MINT,
+  SOLANA_MIN_RESERVE_LAMPORTS,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -32,6 +43,55 @@ const redis = createRedis(REDIS_URL);
 const POLL_INTERVAL_MS = 4000;
 const PRICE_STALENESS_MS = 60_000;
 
+// ── Solana market data ──────────────────────────────────────────────────────
+// Solana orders compare price in SOL per token and market cap in USD (what
+// pump.fun, DexScreener and the wizard show). Prices for every Solana token
+// with an open order come from ONE batched Jupiter call per refresh (50 mints
+// per call), so the free API limit is respected and no RPC is used.
+
+const SOLANA_REFRESH_MS = Number(process.env.SOLANA_LIMIT_REFRESH_MS || 8000);
+const SOLANA_SUPPLY_TTL_MS = 10 * 60_000;
+export const solanaMarketCache = new Map<string, { priceSol: number; mcapUsd: number; ts: number }>();
+const solanaSupplyCache = new Map<string, { supply: number; decimals: number; ts: number }>();
+let lastSolanaRefresh = 0;
+
+export async function refreshSolanaMarkets(mints: string[], force = false): Promise<void> {
+  const unique = [...new Set(mints.filter((m) => isSolanaToken(m)))];
+  if (unique.length === 0) return;
+  if (!force && Date.now() - lastSolanaRefresh < SOLANA_REFRESH_MS) return;
+  lastSolanaRefresh = Date.now();
+  const [prices, solUsd] = await Promise.all([
+    getSolanaPricesUsd(unique).catch(() => new Map<string, number>()),
+    getSolUsdPrice(),
+  ]);
+  for (const mint of unique) {
+    let sup = solanaSupplyCache.get(mint);
+    let priceUsd = prices.get(mint) ?? 0;
+    if (!sup || Date.now() - sup.ts > SOLANA_SUPPLY_TTL_MS || priceUsd <= 0) {
+      const info = await getSolanaTokenInfo(mint).catch(() => null);
+      if (info) {
+        sup = { supply: info.totalSupply, decimals: info.decimals, ts: Date.now() };
+        solanaSupplyCache.set(mint, sup);
+        if (priceUsd <= 0 && info.priceUsd > 0) priceUsd = info.priceUsd;
+      }
+    }
+    if (priceUsd > 0 && solUsd > 0) {
+      solanaMarketCache.set(mint, {
+        priceSol: priceUsd / solUsd,
+        mcapUsd: sup && sup.supply > 0 ? priceUsd * sup.supply : 0,
+        ts: Date.now(),
+      });
+    }
+  }
+}
+
+/** Current Solana price (SOL/token) and USD market cap, or null if unknown or stale. */
+export function getSolanaMarket(mint: string): { priceSol: number; mcapUsd: number } | null {
+  const hit = solanaMarketCache.get(mint);
+  if (!hit || Date.now() - hit.ts > PRICE_STALENESS_MS) return null;
+  return hit;
+}
+
 export async function runLimitOrderEngine(): Promise<void> {
   logger.info('Starting limit order engine...', { pollInterval: POLL_INTERVAL_MS });
 
@@ -52,6 +112,11 @@ export async function runLimitOrderEngine(): Promise<void> {
 
       // 2. Fetch all active limit orders
       const activeOrders = await getActiveLimitOrders();
+      const fleetOrdersPrefetch = await getActiveRaceFleetOrders().catch(() => []);
+      await refreshSolanaMarkets([
+        ...activeOrders.map((o) => o.token_address),
+        ...fleetOrdersPrefetch.map((o) => o.token_address),
+      ]).catch((err) => logger.warn('Solana market refresh failed', { error: err?.message }));
 
       if (activeOrders.length > 0) {
         // Evaluate active orders
@@ -64,8 +129,8 @@ export async function runLimitOrderEngine(): Promise<void> {
         }
       }
 
-      // 3. Fetch all active RaceFleet orders
-      const fleetOrders = await getActiveRaceFleetOrders().catch(() => []);
+      // 3. Evaluate active RaceFleet orders
+      const fleetOrders = fleetOrdersPrefetch;
       for (const fOrder of fleetOrders) {
         try {
           await evaluateFleetOrder(fOrder);
@@ -83,20 +148,33 @@ export async function runLimitOrderEngine(): Promise<void> {
   }
 }
 
-export async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
-  // Ensure token price is cached and fresh
-  let cached = localPriceCache.get(order.token_address);
-  if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
-    await refreshTokenPrice(order.token_address);
-    cached = localPriceCache.get(order.token_address);
+/** Price (native per token) and market cap for an order's token. Solana mcap is USD. */
+async function getOrderMarket(tokenAddress: string): Promise<{ price: number; mcap: number } | null> {
+  if (isSolanaToken(tokenAddress)) {
+    let m = getSolanaMarket(tokenAddress);
+    if (!m) {
+      await refreshSolanaMarkets([tokenAddress], true).catch(() => {});
+      m = getSolanaMarket(tokenAddress);
+    }
+    return m && m.priceSol > 0 ? { price: m.priceSol, mcap: m.mcapUsd } : null;
   }
+  let cached = localPriceCache.get(tokenAddress);
+  if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
+    await refreshTokenPrice(tokenAddress);
+    cached = localPriceCache.get(tokenAddress);
+  }
+  if (!cached || !cached.price || cached.price <= 0) return null;
+  return { price: cached.price, mcap: cached.marketCap || 0 };
+}
 
-  if (!cached || !cached.price || cached.price <= 0) {
+export async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void> {
+  const market = await getOrderMarket(order.token_address);
+  if (!market) {
     return; // Cannot evaluate without price
   }
 
-  const currentPrice = cached.price;
-  const currentMcap = cached.marketCap || 0;
+  const currentPrice = market.price;
+  const currentMcap = market.mcap;
   const target = Number(order.target_value);
 
   let isTriggered = false;
@@ -153,7 +231,106 @@ export async function evaluateLimitOrder(order: LimitOrderRecord): Promise<void>
   await executeLimitOrder(lockedOrder, currentPrice, currentMcap);
 }
 
+/** Sends a limit-order notification (fill or failure) to the user. */
+async function notifyLimit(user: { id: string; telegram_id: number }, event: 'limit_order_fill' | 'limit_order_failed', data: Record<string, unknown>): Promise<void> {
+  await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+    type: 'notify_user',
+    telegram_id: user.telegram_id,
+    event,
+    data: { user_id: user.id, ...data },
+  }));
+}
+
+/**
+ * Solana limit order execution. amount_input is SOL for both sides (buy: SOL
+ * to spend; sell: SOL worth of tokens to sell, capped at the balance), or
+ * sell_pct of holdings when set.
+ */
+async function executeSolanaLimitOrder(order: LimitOrderRecord, user: any, currentPrice: number, currentMcap: number): Promise<void> {
+  const owner: string | null = user.solana_address || null;
+  const info = await getSolanaTokenInfo(order.token_address).catch(() => null);
+  const symbol = info?.symbol || order.token_address.slice(0, 8);
+  if (!owner) {
+    await markLimitOrderFailed(order.id, 'Solana wallet not set up');
+    await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: order.side, reason: 'Solana wallet not set up. Send /start.' });
+    return;
+  }
+  const slippagePct = Math.max(
+    Number(order.max_slippage_pct) || 3,
+    info?.bondingPhase === 'prebonded' ? 5 : 2,
+    order.side === 'sell' && order.trigger_condition === 'lte' ? 10 : 0,
+  );
+
+  let amountIn: bigint;
+  if (order.side === 'buy') {
+    amountIn = solToLamports(Number(order.amount_input));
+    const bal = await getSolanaBalanceFreeOnly(owner);
+    if (bal !== null && bal < amountIn + SOLANA_MIN_RESERVE_LAMPORTS) {
+      const reason = `Insufficient balance: needed ${(Number(order.amount_input) + 0.005).toFixed(3)} SOL, had ${lamportsToSol(bal).toFixed(3)} SOL`;
+      await markLimitOrderFailed(order.id, reason);
+      await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: 'buy', reason });
+      return;
+    }
+  } else {
+    const bal = await getSolanaTokenBalance(owner, order.token_address, true).catch(() => null);
+    const raw = bal?.raw ?? 0n;
+    if (raw <= 0n) {
+      const reason = `No ${symbol} balance in wallet to sell`;
+      await markLimitOrderFailed(order.id, reason);
+      await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: 'sell', reason });
+      return;
+    }
+    amountIn = raw;
+    if (order.sell_pct && order.sell_pct > 0 && order.sell_pct < 100) {
+      amountIn = (raw * BigInt(Math.round(order.sell_pct * 100))) / 10000n;
+    } else if (!order.sell_pct && order.amount_input > 0 && currentPrice > 0) {
+      const decimals = info?.decimals ?? bal?.decimals ?? 6;
+      const wanted = solanaUiToRaw(Number(order.amount_input) / currentPrice, decimals);
+      if (wanted > 0n && wanted < raw) amountIn = wanted;
+    }
+    if (amountIn <= 0n) {
+      await markLimitOrderFailed(order.id, 'Sell quantity computed to 0');
+      return;
+    }
+  }
+
+  const swapEvent: SwapEvent = {
+    type: 'execute_swap',
+    chain: 'solana',
+    user_id: order.user_id,
+    token_in: order.side === 'buy' ? SOL_MINT : order.token_address,
+    token_out: order.side === 'buy' ? order.token_address : SOL_MINT,
+    amount_in: amountIn.toString(),
+    min_amount_out: '1',
+    venue: 'jupiter',
+    slippage_pct: slippagePct,
+    timestamp: Date.now(),
+    notify_user: true,
+  } as SwapEvent;
+
+  await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+  await markLimitOrderFilled(order.id, 'submitted', currentPrice);
+  await notifyLimit(user, 'limit_order_fill', {
+    order_id: order.id,
+    symbol,
+    side: order.side,
+    ...(order.side === 'buy' ? { amount_input: order.amount_input } : { sell_pct: order.sell_pct }),
+    current_price: currentPrice,
+    current_mcap: currentMcap,
+    unit: 'SOL',
+  });
+}
+
 export async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, currentMcap: number): Promise<void> {
+  if (isSolanaToken(order.token_address)) {
+    const solUser = await getUserById(order.user_id).catch(() => null);
+    if (!solUser) {
+      await markLimitOrderFailed(order.id, 'User account not found');
+      return;
+    }
+    await executeSolanaLimitOrder(order, solUser, currentPrice, currentMcap);
+    return;
+  }
   const near = getNear();
 
   const user = await getUserById(order.user_id).catch(() => null);
@@ -365,19 +542,13 @@ export async function executeLimitOrder(order: LimitOrderRecord, currentPrice: n
 }
 
 async function evaluateFleetOrder(order: RaceFleetOrderRecord): Promise<void> {
-  // Ensure token price is cached and fresh
-  let cached = localPriceCache.get(order.token_address);
-  if (!cached || Date.now() - cached.ts > PRICE_STALENESS_MS) {
-    await refreshTokenPrice(order.token_address);
-    cached = localPriceCache.get(order.token_address);
-  }
-
-  if (!cached || !cached.price || cached.price <= 0) {
+  const market = await getOrderMarket(order.token_address);
+  if (!market) {
     return;
   }
 
-  const currentPrice = cached.price;
-  const currentMcap = cached.marketCap || 0;
+  const currentPrice = market.price;
+  const currentMcap = market.mcap;
   let isTriggered = false;
   let triggerReason = '';
 

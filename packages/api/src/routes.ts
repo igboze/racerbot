@@ -145,6 +145,9 @@ import {
   getSolanaWalletHoldings,
   exportSolanaPrivateKey,
   lamportsToSol,
+  getSolanaTokenInfo,
+  solanaUiToRaw,
+  SOL_MINT,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -181,6 +184,14 @@ import {
   type FleetTokenPosition,
   RACEFLEET_MONTHLY_FEE_NEAR,
 } from './raceFleet.js';
+import {
+  deployRaceFleetWithSol,
+  renewRaceFleetWithSol,
+  distributeSolToFleet,
+  sweepSolanaFleet,
+  getSolanaFleetBalances,
+  getFleetFeeInSol,
+} from './solanaFleet.js';
 import {
   createRaceFleetOrder,
   getRaceFleetByUserId,
@@ -295,7 +306,7 @@ interface PendingAction {
     // RaceDrop wizard
     | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
     // RaceFleet wizard
-    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount'
+    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount'
     | 'deposit_custom_token' | 'deposit_custom_amount';
   tokenAddress?: string;
   positionId?: string;
@@ -977,7 +988,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // Check if user has an active RaceFleet and whether it holds this target token
   let fleet: any = null;
   let fleetPosition: FleetTokenPosition | null = null;
-  if (userRecord && !isSui && !isStarknet && !isSolana) {
+  if (userRecord && !isSui && !isStarknet) {
     try {
       fleet = await getRaceFleetByUserId(userRecord.id).catch(() => null);
       if (fleet && fleet.status === 'active') {
@@ -1328,7 +1339,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       safety?.isDrained ? '🚨 Buy Blocked (Drained Liquidity)' : '🚨 Buy Blocked (Honeypot Backdoor)',
       safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
     )];
-    const fleetExitRow = (!isSui && !isStarknet && !isSolana && fleetHoldsToken)
+    const fleetExitRow = (!isSui && !isStarknet && fleetHoldsToken)
       ? [
           cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
           cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
@@ -1399,7 +1410,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       : [];
 
     const fleetActionRows: any[] = [];
-    if (!isSui && !isStarknet && !isSolana) {
+    if (!isSui && !isStarknet) {
       if (fleetHoldsToken && fleetPosition) {
         fleetActionRows.push([
           cb(`🏎️ RaceFleet Cockpit (${fleetPosition.emoji} ${fleetPosition.pnlDisplay})`, `fleet_cockpit:${shortKey}`, 'success'),
@@ -1448,8 +1459,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1477,8 +1488,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1505,8 +1516,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isSolana ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isSolana ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -1531,7 +1542,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       text += `⏳ *Status*: Awaiting Initial Liquidity on DEX.\n🎯 *Set a Snipe to buy automatically on pool creation!*\n\n`;
       keyboard = Markup.inlineKeyboard([
         [cb('🎯 Snipe Token', `snipe_token_quick:${shortKey}`, 'success')],
-        ...(!isSui && !isStarknet && !isSolana ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
+        ...(!isSui && !isStarknet ? [[cb('🏎️ Pre-Snipe with Fleet', `fleet_cockpit:${shortKey}`, 'success')]] : []),
         ...linkRows,
         ...shareButtonRow,
         [
@@ -1966,7 +1977,7 @@ export async function buildSnipeDashboard(user: UserRecord) {
           const timing = o.execute_after && new Date(o.execute_after) > new Date()
             ? ` (⏰ ${formatUtcTime(new Date(o.execute_after))})`
             : '';
-          return `• 🟢 ${target} — *${o.amount_near} NEAR*${timing}`;
+          return `• 🟢 ${target} — *${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}*${timing}`;
         })
         .join('\n');
   }
@@ -2074,11 +2085,13 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
     text += `*Your Tracked & Copied Wallets:*\n`;
     for (const t of targets.slice(0, 15)) {
       const statusIcon = t.status === 'active' ? '🟢' : t.status === 'paused' ? '⏸️' : '⏹️';
-      const modeTag = t.track_only ? '[👀 TRACKER]' : `[⚡ ${t.buy_amount_near}N COPY]`;
-      const budgetText = t.max_daily_budget_near ? ` | Cap: ${t.max_daily_budget_near}N/day` : '';
+      const cUnit = snipeUnit(t.target_wallet);
+      const cShort = cUnit === 'SOL' ? ' SOL' : 'N';
+      const modeTag = t.track_only ? '[👀 TRACKER]' : `[⚡ ${t.buy_amount_near}${cShort} COPY]`;
+      const budgetText = t.max_daily_budget_near ? ` | Cap: ${t.max_daily_budget_near}${cShort}/day` : '';
       const sellText = t.track_only ? '' : ` | Sells: ${t.copy_sells ? '✅' : '❌'}`;
-      text += `\n${statusIcon} \`${t.target_wallet}\` \`${modeTag}\`\n`;
-      text += `   ${t.track_only ? '🔔 Alerts only (No auto-buy)' : `💰 ${t.buy_amount_near} NEAR per buy${sellText}${budgetText}`}\n`;
+      text += `\n${statusIcon} \`${t.target_wallet}\` \`${modeTag}\`${cUnit === 'SOL' ? ' ◎' : ''}\n`;
+      text += `   ${t.track_only ? '🔔 Alerts only (No auto-buy)' : `💰 ${t.buy_amount_near} ${cUnit} per buy${sellText}${budgetText}`}\n`;
     }
     if (targets.length > 15) {
       text += `\n_...and ${targets.length - 15} more targets_\n`;
@@ -2110,6 +2123,11 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
 }
 
 // ── Helper: Build DCA Dashboard ──────────────────────────────────────────────
+/** Native unit for a snipe / copy target: SOL for Solana addresses, NEAR otherwise. */
+function snipeUnit(addr: string): string {
+  return isSolanaAddress(addr) ? 'SOL' : 'NEAR';
+}
+
 export async function buildDcaDashboard(user: UserRecord) {
   const orders = await getDcaOrdersByUser(user.id).catch(() => []);
   const activeOrders = orders.filter(o => o.status === 'active');
@@ -2131,7 +2149,8 @@ export async function buildDcaDashboard(user: UserRecord) {
       const tokenDisplay = o.token_address.length > 20 ? o.token_address.slice(0, 10) + '…' + o.token_address.slice(-6) : o.token_address;
       const progressText = o.total_orders === 0 ? `${o.executed_orders} fills (∞)` : `${o.executed_orders}/${o.total_orders}`;
       text += `\n${statusIcon} ${sideText} \`${tokenDisplay}\`\n`;
-      text += `   💵 ${o.amount_per_order} ${o.side === 'buy' ? 'NEAR' : 'tokens'} every ${formatDcaInterval(o.interval_seconds)} (${progressText})\n`;
+      const dcaNative = isSolanaToken(o.token_address) ? 'SOL' : 'NEAR';
+      text += `   💵 ${o.amount_per_order} ${o.side === 'buy' ? dcaNative : 'tokens'} every ${formatDcaInterval(o.interval_seconds)} (${progressText})\n`;
       if (o.last_error) {
         text += `   ⚠️ _Last tick note_: \`${o.last_error.slice(0, 40)}\`\n`;
       }
@@ -4142,8 +4161,8 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `👥 *Add Target Wallet*\n\n` +
-      `Enter the NEAR wallet address to copy or track:\n` +
-      `_e.g. \`trader.near\` or a 64-char hex_\n\n` +
+      `Enter the wallet address to copy or track:\n` +
+      `_e.g. \`trader.near\`, a 64-char hex, or a Solana wallet_\n\n` +
       `In the next step, you can choose *⚡ Auto-Copy* or *👀 Wallet Tracker* mode.`,
       {
         parse_mode: 'Markdown',
@@ -4154,7 +4173,12 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(/^copy_mode:(copy|track):([^:]+)(?::([^:]+))?$/, async (ctx) => {
     const mode = ctx.match![1];
-    const wallet = ctx.match![2];
+    // Solana wallets travel as short keys (t_...) to fit Telegram's 64-byte callback limit.
+    const wallet = resolveTokenAddressFromKey(ctx.match![2]);
+    if (/^t_[0-9a-f]{8,}/.test(wallet) && !wallet.includes('.')) {
+      await ctx.answerCbQuery('Session expired. Please add the wallet again.').catch(() => {});
+      return;
+    }
     const referrerId = ctx.match![3] || null;
     const telegramId = ctx.from!.id;
 
@@ -4206,9 +4230,17 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 5 * 60_000,
       });
       await ctx.answerCbQuery().catch(() => {});
+      const copyIsSol = isSolanaAddress(wallet);
+      if (copyIsSol && !user.solana_address) {
+        await ctx.reply('❌ Your Solana wallet is not ready yet. Send /start and try again.');
+        return;
+      }
       await ctx.reply(
-        `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
-        `Reply with a number (e.g. \`2\`):\n_Allowed range: 0.1 – 10,000 NEAR_`,
+        copyIsSol
+          ? `✅ Target wallet: \`${wallet}\` (Solana)\n\n💰 *How much SOL should I spend each time this wallet buys?*\n\n` +
+            `Reply with a number (e.g. \`0.2\`):\n_Allowed range: 0.01 – 1,000 SOL_`
+          : `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
+            `Reply with a number (e.g. \`2\`):\n_Allowed range: 0.1 – 10,000 NEAR_`,
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
@@ -4335,7 +4367,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(
       `🔁 *DCA Order Setup (Step 1/3)*\n\n` +
       `Enter the token Contract Address (CA):\n` +
-      `_e.g. \`wrap.near\` or \`token.near\`_`,
+      `_e.g. \`token.near\` on NEAR, or a Solana mint address_`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([[cb('🔙 Cancel', 'menu_dca', 'primary')]]),
@@ -4348,14 +4380,15 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenCA = resolveTokenAddressFromKey(rawTokenParam);
     const shortKey = getShortTokenKey(tokenCA);
     await ctx.answerCbQuery().catch(() => {});
+    const dcaNative = isSolanaToken(tokenCA) ? 'SOL' : 'NEAR';
     await ctx.reply(
       `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
       `Choose a direction:`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${shortKey}`, 'success')],
-          [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${shortKey}`, 'danger')],
+          [cb(`🟢 Accumulate (Buy with ${dcaNative})`, `dca_choose_side:buy:${shortKey}`, 'success')],
+          [cb(`🔴 De-Risk (Sell to ${dcaNative})`, `dca_choose_side:sell:${shortKey}`, 'danger')],
           [cb('🔙 Cancel', 'menu_dca', 'primary')],
         ]),
       }
@@ -4374,9 +4407,14 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 5 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => {});
+    const isSolDca = isSolanaToken(tokenCA);
     const promptMsg = side === 'buy'
-      ? `💰 *How much NEAR should be spent on each order?*\n\nReply with a number (e.g. \`1\` or \`5\`):`
-      : `💰 *How many tokens should be sold on each order?*\n\nReply with raw token quantity (e.g. \`1000\`):`;
+      ? (isSolDca
+        ? `💰 *How much SOL should be spent on each order?*\n\nReply with a number (e.g. \`0.1\` or \`0.5\`):`
+        : `💰 *How much NEAR should be spent on each order?*\n\nReply with a number (e.g. \`1\` or \`5\`):`)
+      : (isSolDca
+        ? `💰 *How many tokens should be sold on each order?*\n\nReply with the token amount (e.g. \`250000\`):`
+        : `💰 *How many tokens should be sold on each order?*\n\nReply with raw token quantity (e.g. \`1000\`):`);
     await ctx.reply(promptMsg, { parse_mode: 'Markdown' });
   });
 
@@ -4454,7 +4492,7 @@ export function setupRoutes(bot: Telegraf): void {
       : o.target_value;
     return `${side} • ${token}\n` +
       `  Condition: ${cond} ${dir} ${targetDisplay}\n` +
-      `  Amount: ${o.amount_input} NEAR • Expires: ${expiry}\n` +
+      `  Amount: ${o.amount_input} ${isSolanaToken(o.token_address) ? 'SOL' : 'NEAR'} • Expires: ${expiry}\n` +
       `  Status: ${o.status}`;
   }
 
@@ -4500,7 +4538,7 @@ export function setupRoutes(bot: Telegraf): void {
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [cb('💲 Price (NEAR per token)', `lo_cond:price:${shortKey}`, 'primary')],
+          [cb(`💲 Price (${isSolanaToken(tokenCA) ? 'SOL' : 'NEAR'} per token)`, `lo_cond:price:${shortKey}`, 'primary')],
           [cb('📊 Market Cap (USD)', `lo_cond:market_cap:${shortKey}`, 'primary')],
           [cb('📈 % Change (from current)', `lo_cond:percent_change:${shortKey}`, 'primary')],
           [cb('🔙 Back', `lo_start:${shortKey}`, 'primary')],
@@ -4528,8 +4566,11 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
 
     const dip = pending.loSide === 'buy' ? 'drops to' : 'rises to';
+    const loIsSol = isSolanaToken(tokenCA);
     const condLabels: Record<string, string> = {
-      price: 'Reply with the *price in NEAR* per token.\n_e.g._ `0.0005` _means trigger when price ' + dip + ' 0.0005 NEAR_',
+      price: loIsSol
+        ? 'Reply with the *price in SOL* per token.\n_e.g._ `0.0000004` _means trigger when price ' + dip + ' 0.0000004 SOL_'
+        : 'Reply with the *price in NEAR* per token.\n_e.g._ `0.0005` _means trigger when price ' + dip + ' 0.0005 NEAR_',
       market_cap: 'Reply with the *market cap in USD* that should trigger.\n_e.g._ `50000` _for $50k market cap_',
       percent_change: 'Reply with the *% change* from current price.\n_e.g._ `-20` _for -20% dip,_ `+50` _for +50% pump_',
     };
@@ -4565,8 +4606,12 @@ export function setupRoutes(bot: Telegraf): void {
 
     // Resolve current price and mcap for reference and directional determination
     const tokenInfo = await getTokenInfo(pending.loTokenAddress!, false).catch(() => null);
+    const loIsSolana = isSolanaToken(pending.loTokenAddress!);
     const currentPrice = tokenInfo?.price ? parseFloat(tokenInfo.price) : 0;
-    const currentMcap = (tokenInfo as any)?.market_cap ? parseFloat((tokenInfo as any).market_cap) : ((tokenInfo as any)?.marketCap ? parseFloat((tokenInfo as any).marketCap) : 0);
+    // Solana orders are evaluated against the USD market cap (what the wizard asks for).
+    const currentMcap = loIsSolana
+      ? Number((tokenInfo as any)?.market_cap_usd || 0)
+      : (tokenInfo as any)?.market_cap ? parseFloat((tokenInfo as any).market_cap) : ((tokenInfo as any)?.marketCap ? parseFloat((tokenInfo as any).marketCap) : 0);
 
     // Determine condition direction from side + condition type
     let triggerCondition: 'lte' | 'gte' = 'lte';
@@ -4600,7 +4645,7 @@ export function setupRoutes(bot: Telegraf): void {
       const order = await createLimitOrder({
         user_id: user.id,
         token_address: pending.loTokenAddress!,
-        chain: 'near',
+        chain: loIsSolana ? 'solana' : 'near',
         side: pending.loSide!,
         target_type: targetType,
         trigger_condition: triggerCondition,
@@ -4624,7 +4669,7 @@ export function setupRoutes(bot: Telegraf): void {
         `🪙 *Token*: \`${order.token_address}\`\n` +
         `📊 *Direction*: ${order.side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n` +
         `📐 *Trigger*: ${condLabel} ${dirLabel} \`${targetValDisplay}\`\n` +
-        `💰 *Amount*: \`${order.amount_input} NEAR\`\n` +
+        `💰 *Amount*: \`${order.amount_input} ${loIsSolana ? 'SOL' : 'NEAR'}\`\n` +
         `⏰ *Expires*: ${expiryLabel}\n\n` +
         `RacerBot polls prices every 4 seconds. You'll get a DM when triggered.`,
         {
@@ -4672,7 +4717,7 @@ export function setupRoutes(bot: Telegraf): void {
       const dir = o.trigger_condition === 'lte' ? '≤' : '≥';
       const token = o.token_address.length > 20 ? o.token_address.slice(0, 8) + '…' : o.token_address;
       const expiry = o.expires_at ? new Date(o.expires_at).toLocaleDateString() : 'GTC';
-      text += `${i + 1}. ${side} \`${token}\`\n   ${cond} ${dir} \`${o.target_value}\` • \`${o.amount_input} NEAR\` • ${expiry}\n\n`;
+      text += `${i + 1}. ${side} \`${token}\`\n   ${cond} ${dir} \`${o.target_value}\` • \`${o.amount_input} ${isSolanaToken(o.token_address) ? 'SOL' : 'NEAR'}\` • ${expiry}\n\n`;
       buttons.push([cb(`❌ Cancel #${i + 1} (${side} ${token})`, `lo_cancel:${o.id}`, 'danger')]);
     });
     buttons.push([cb('🔙 Back', 'menu_home', 'primary')]);
@@ -4859,8 +4904,9 @@ export function setupRoutes(bot: Telegraf): void {
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) { await ctx.answerCbQuery('No active RaceFleet').catch(() => {}); return; }
 
+    const fUnit = snipeUnit(tokenAddress);
     await ctx.answerCbQuery(`Firing bundle buy across ${fleet.wallet_count} wallets...`).catch(() => {});
-    const executingMsg = await ctx.reply(`🏎️ <b>Firing Coordinated Bundle Buy...</b>\n\nSpending <b>${amt} NEAR per wallet</b> across ${fleet.wallet_count} fleet wallets.\n<i>Broadcasting parallel on-chain transactions...</i>`, { parse_mode: 'HTML' });
+    const executingMsg = await ctx.reply(`🏎️ <b>Firing Coordinated Bundle Buy...</b>\n\nSpending <b>${amt} ${fUnit} per wallet</b> across ${fleet.wallet_count} fleet wallets.\n<i>Broadcasting parallel on-chain transactions...</i>`, { parse_mode: 'HTML' });
 
     try {
       const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
@@ -4871,7 +4917,7 @@ export function setupRoutes(bot: Telegraf): void {
           `✅ <b>RaceFleet Bundle Buy Executed!</b>\n\n` +
           `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
           `📦 <b>Successful Swaps</b>: <b>${res.successCount}/${fleet.wallet_count} Wallets</b>\n` +
-          `💰 <b>Total Spent</b>: <b>${res.totalSpentNear} NEAR</b> (~${amt} N / wallet)\n` +
+          `💰 <b>Total Spent</b>: <b>${res.totalSpentNear} ${fUnit}</b> (~${amt} ${fUnit} / wallet)\n` +
           (res.failCount > 0 ? `⚠️ <b>Failed</b>: ${res.failCount} wallets (insufficient balance or slippage)\n\n` : '\n') +
           `<i>All transactions signed with independent keys and broadcast in parallel.</i>`,
           {
@@ -4910,7 +4956,9 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.reply(
       `🏎️ <b>Custom Fleet Buy for</b> <code>${tokenAddress}</code>\n\n` +
-      `Reply with the amount in NEAR to spend <b>per wallet</b> (e.g. <code>0.75</code> or <code>3.5</code>):\n\n` +
+      (isSolanaAddress(tokenAddress)
+        ? `Reply with the amount in SOL to spend <b>per wallet</b> (e.g. <code>0.05</code> or <code>0.2</code>):\n\n`
+        : `Reply with the amount in NEAR to spend <b>per wallet</b> (e.g. <code>0.75</code> or <code>3.5</code>):\n\n`) +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -4934,7 +4982,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     await ctx.reply(
       `➗ <b>Split Total Budget for</b> <code>${tokenAddress}</code>\n\n` +
-      `Reply with the <b>total NEAR</b> you want to spend across your entire fleet (e.g. <code>20</code>):\n` +
+      `Reply with the <b>total ${snipeUnit(tokenAddress)}</b> you want to spend across your entire fleet (e.g. <code>${isSolanaAddress(tokenAddress) ? '1' : '20'}</code>):\n` +
       `<i>The bot will automatically divide it equally among all your active fleet wallets.</i>\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
@@ -4956,15 +5004,20 @@ export function setupRoutes(bot: Telegraf): void {
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) return;
 
-    await ctx.answerCbQuery('Executing Protected Fleet Snipe (1 N each + 50% TP / 15% SL)...').catch(() => {});
-    const loadingMsg = await ctx.reply(`🏎️ <b>Executing Protected Fleet Snipe...</b>\n\n1. Buying 1.0 NEAR per wallet across ${fleet.wallet_count} wallets\n2. Attaching automated +50% Take Profit\n3. Attaching automated -15% Stop Loss`, { parse_mode: 'HTML' });
+    const spUnit = snipeUnit(tokenAddress);
+    const spAmt = spUnit === 'SOL' ? 0.1 : 1.0;
+    await ctx.answerCbQuery(`Executing Protected Fleet Snipe (${spAmt} ${spUnit} each + 50% TP / 15% SL)...`).catch(() => {});
+    const loadingMsg = await ctx.reply(`🏎️ <b>Executing Protected Fleet Snipe...</b>\n\n1. Buying ${spAmt} ${spUnit} per wallet across ${fleet.wallet_count} wallets\n2. Attaching automated +50% Take Profit\n3. Attaching automated -15% Stop Loss`, { parse_mode: 'HTML' });
 
     try {
-      const buyRes = await executeFleetBundleBuy(fleet.id, tokenAddress, 1.0, 3.0);
+      const buyRes = await executeFleetBundleBuy(fleet.id, tokenAddress, spAmt, 3.0);
       if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
 
       if (buyRes.success) {
-        // Automatically create TP/SL protection order in DB
+        // TP/SL is measured from the entry price, so it must be stored (target_value);
+        // without it the trigger engine can never fire the order.
+        const entryInfo = await getTokenInfo(tokenAddress, true).catch(() => null);
+        const entryPrice = entryInfo?.price ? parseFloat(String(entryInfo.price)) : 0;
         await createRaceFleetOrder({
           fleet_id: fleet.id,
           user_id: user.id,
@@ -4973,13 +5026,14 @@ export function setupRoutes(bot: Telegraf): void {
           sl_percent: 15.0,
           tp_percent: 50.0,
           sell_pct: 100,
+          ...(entryPrice > 0 ? { target_value: entryPrice } : {}),
         }).catch((err) => console.warn('Failed to record fleet TP/SL order:', err?.message));
 
         await ctx.reply(
           `🛡️ <b>Protected Fleet Position Opened!</b>\n\n` +
           `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
           `📦 <b>Filled</b>: <b>${buyRes.successCount}/${fleet.wallet_count} Wallets</b>\n` +
-          `💰 <b>Total Spent</b>: <b>${buyRes.totalSpentNear} NEAR</b>\n\n` +
+          `💰 <b>Total Spent</b>: <b>${buyRes.totalSpentNear} ${spUnit}</b>\n\n` +
           `🎯 <b>Active Protection Guard:</b>\n` +
           `• <b>Take Profit</b>: +50% (Sells 100% across fleet)\n` +
           `• <b>Stop Loss</b>: -15% (Emergency exit across fleet)\n\n` +
@@ -5018,7 +5072,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!fleet) return;
 
     await ctx.answerCbQuery(`Selling ${pct}% across all ${fleet.wallet_count} fleet wallets...`).catch(() => {});
-    const statusMsg = await ctx.reply(`🔴 <b>Executing Coordinated Bundle Sell (${pct}%)...</b>\n\n<i>Swapping tokens back to NEAR in parallel...</i>`, { parse_mode: 'HTML' });
+    const statusMsg = await ctx.reply(`🔴 <b>Executing Coordinated Bundle Sell (${pct}%)...</b>\n\n<i>Swapping tokens back to ${snipeUnit(tokenAddress)} in parallel...</i>`, { parse_mode: 'HTML' });
 
     try {
       const res = await executeFleetBundleSell(fleet.id, tokenAddress, pct, 3.0);
@@ -5033,7 +5087,7 @@ export function setupRoutes(bot: Telegraf): void {
           {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-              [Markup.button.callback('📤 Sweep Funds to Main Wallet', 'fleet_sweep_prompt')],
+              [Markup.button.callback('📤 Sweep Funds to Main Wallet', isSolanaAddress(tokenAddress) ? 'fleet_sweep_sol' : 'fleet_sweep_prompt')],
               [Markup.button.callback('🏎️ Back to Fleet Cockpit', `fleet_cockpit:${shortKey}`)],
             ]),
           }
@@ -5108,12 +5162,21 @@ export function setupRoutes(bot: Telegraf): void {
     for (const w of balances.wallets) {
       listText += `• <b>W${w.walletIndex}</b>: <code>${w.accountId}</code>\n  💰 <b>${w.balanceNear.toFixed(3)} NEAR</b>\n`;
     }
-    listText += `\nTotal: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})`;
+    listText += `\nTotal: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n`;
+    const solBal = await getSolanaFleetBalances(fleet).catch(() => null);
+    if (solBal && solBal.wallets.length > 0) {
+      listText += `\n◎ <b>Solana Fleet Wallets</b>\n`;
+      for (const w of solBal.wallets) {
+        listText += `• <b>W${w.walletIndex}</b>: <code>${w.address}</code>\n  💰 <b>${w.sol.toFixed(4)} SOL</b>\n`;
+      }
+      listText += `\nTotal: <b>${solBal.totalSol.toFixed(4)} SOL</b>`;
+    }
 
     await ctx.reply(listText, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('📥 Distribute from Main', 'fleet_fund_prompt'), Markup.button.callback('📤 Sweep to Main', 'fleet_sweep_prompt')],
+        [Markup.button.callback('📥 Distribute NEAR', 'fleet_fund_prompt'), Markup.button.callback('📤 Sweep NEAR', 'fleet_sweep_prompt')],
+        [Markup.button.callback('📥 Distribute SOL', 'fleet_fund_sol_prompt'), Markup.button.callback('📤 Sweep SOL', 'fleet_sweep_sol')],
         [Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')],
       ]),
     });
@@ -5129,16 +5192,26 @@ export function setupRoutes(bot: Telegraf): void {
         let exportText = `🔑 <b>RaceFleet Private Keys Export</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
         exportText += `⚠️ <i>NEVER share these private keys with anyone. Anyone with these keys can withdraw from your fleet subaccounts.</i>\n\n`;
 
+        // NEAR + Solana keys can exceed Telegram's 4096-char limit: send in parts.
+        const parts: string[] = [];
         for (const w of res.wallets) {
-          exportText += `Account: <code>${w.accountId}</code>\nKey: <code>${w.privateKey}</code>\n\n`;
+          const isSol = isSolanaAddress(w.accountId);
+          const entry = `${isSol ? '◎ ' : ''}Account: <code>${w.accountId}</code>\nKey: <code>${w.privateKey}</code>\n\n`;
+          if (exportText.length + entry.length > 3500) {
+            parts.push(exportText);
+            exportText = '';
+          }
+          exportText += entry;
         }
+        parts.push(exportText);
 
-        await ctx.reply(exportText, {
-          parse_mode: 'HTML',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')],
-          ]),
-        });
+        for (let i = 0; i < parts.length; i++) {
+          const isLast = i === parts.length - 1;
+          await ctx.reply(parts[i], {
+            parse_mode: 'HTML',
+            ...(isLast ? Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')]]) : {}),
+          });
+        }
       } else {
         await ctx.reply(`❌ Could not export keys: ${res.reason}`);
       }
@@ -5193,7 +5266,7 @@ export function setupRoutes(bot: Telegraf): void {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
           [
-            Markup.button.callback('💵 Target Price (USD)', `fleet_lo_cond:${shortKey}:${side}:price`),
+            Markup.button.callback(isSolanaAddress(tokenAddress) ? '💲 Target Price (SOL)' : '💵 Target Price (USD)', `fleet_lo_cond:${shortKey}:${side}:price`),
             Markup.button.callback('📊 Target Market Cap (USD)', `fleet_lo_cond:${shortKey}:${side}:market_cap`),
           ],
           [Markup.button.callback('« Cancel', `fleet_cockpit:${shortKey}`)],
@@ -5219,10 +5292,13 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 180_000,
     });
 
-    const metric = condType === 'price' ? 'Price ($)' : 'Market Cap ($)';
+    const loSol = isSolanaAddress(tokenAddress);
+    const metric = condType === 'price' ? (loSol ? 'Price (SOL per token)' : 'Price ($)') : 'Market Cap ($)';
     await ctx.reply(
       `🎯 <b>Enter Target ${metric}</b>\n\n` +
-      `Reply with the target value in USD (e.g. <code>${condType === 'price' ? '0.0045' : '150000'}</code>):\n\n` +
+      (condType === 'price' && loSol
+        ? `Reply with the target price in SOL per token (e.g. <code>0.0000004</code>):\n\n`
+        : `Reply with the target value in USD (e.g. <code>${condType === 'price' ? '0.0045' : '150000'}</code>):\n\n`) +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -5250,7 +5326,7 @@ export function setupRoutes(bot: Telegraf): void {
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('⚡ Run 1-Click Volume Bump (0.1 N each)', `fleet_volume_bump:${shortKey}`)],
+          [Markup.button.callback(isSolanaAddress(tokenAddress) ? '⚡ Run 1-Click Volume Bump (0.02 SOL each)' : '⚡ Run 1-Click Volume Bump (0.1 N each)', `fleet_volume_bump:${shortKey}`)],
           [Markup.button.callback('« Back to Cockpit', `fleet_cockpit:${shortKey}`)],
         ]),
       }
@@ -5268,18 +5344,20 @@ export function setupRoutes(bot: Telegraf): void {
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) return;
 
+    const vbUnit = snipeUnit(tokenAddress);
+    const vbAmt = vbUnit === 'SOL' ? 0.02 : 0.1;
     await ctx.answerCbQuery('Generating volume bump...').catch(() => {});
-    const msg = await ctx.reply(`🌊 <b>Running Volume Bump across ${fleet.wallet_count} wallets...</b>\n\nBuying 0.1 NEAR per wallet to activate transaction count on-chain.`, { parse_mode: 'HTML' });
+    const msg = await ctx.reply(`🌊 <b>Running Volume Bump across ${fleet.wallet_count} wallets...</b>\n\nBuying ${vbAmt} ${vbUnit} per wallet to activate transaction count on-chain.`, { parse_mode: 'HTML' });
 
     try {
-      const res = await executeFleetBundleBuy(fleet.id, tokenAddress, 0.1, 3.0);
+      const res = await executeFleetBundleBuy(fleet.id, tokenAddress, vbAmt, 3.0);
       if (msg) await ctx.deleteMessage(msg.message_id).catch(() => {});
       if (res.success) {
         await ctx.reply(
           `✅ <b>Volume Bump Complete!</b>\n\n` +
           `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
           `📦 <b>Swaps Executed</b>: <b>${res.successCount}/${fleet.wallet_count} Wallets</b>\n` +
-          `💰 <b>Volume Generated</b>: <b>${res.totalSpentNear} NEAR</b>\n\n` +
+          `💰 <b>Volume Generated</b>: <b>${res.totalSpentNear} ${vbUnit}</b>\n\n` +
           `<i>Transactions are recorded on-chain, boosting pair activity!</i>`,
           {
             parse_mode: 'HTML',
@@ -5316,7 +5394,7 @@ export function setupRoutes(bot: Telegraf): void {
     let text = `📋 <b>RaceFleet Active Orders (${orders.length})</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     for (const o of orders.slice(0, 10)) {
       const typeLabel = o.order_type === 'limit_buy' ? '🟢 Limit Buy' : o.order_type === 'limit_sell' ? '🔴 Limit Sell' : '🛡️ TP/SL';
-      text += `• ${typeLabel} <code>${o.token_address}</code>\n  Trigger: <code>${o.trigger_condition || 'auto'} ${o.target_value || ''}</code> | Amt: ${o.amount_per_wallet} N/wallet\n`;
+      text += `• ${typeLabel} <code>${o.token_address}</code>\n  Trigger: <code>${o.trigger_condition || 'auto'} ${o.target_value || ''}</code> | Amt: ${o.amount_per_wallet} ${snipeUnit(o.token_address) === 'SOL' ? 'SOL' : 'N'}/wallet\n`;
     }
 
     await ctx.reply(text, {
@@ -5363,6 +5441,163 @@ export function setupRoutes(bot: Telegraf): void {
       );
     } catch (err: any) {
       await ctx.reply(`❌ Renewal error: ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  // ── RaceFleet on Solana: pay in SOL, distribute, sweep, renew ─────────────
+
+  bot.action(/^fleet_deploy_sol:(\d+)$/, async (ctx) => {
+    const count = parseInt((ctx as any).match[1], 10) || 5;
+    const telegramId = ctx.from!.id;
+    const feeSol = await getFleetFeeInSol().catch(() => null);
+    await ctx.answerCbQuery().catch(() => {});
+    if (!feeSol) {
+      await ctx.reply('❌ Price feed unavailable right now. Please try again in a minute.');
+      return;
+    }
+    await ctx.reply(
+      `◎ <b>Deploy RaceFleet (pay in SOL)</b>\n\n` +
+      `Fleet size: <b>${count} Solana wallets</b>\n` +
+      `Subscription: <b>${feeSol} SOL</b> for 30 days (same value as ${RACEFLEET_MONTHLY_FEE_NEAR} NEAR)\n\n` +
+      `<i>Paid from your main Solana wallet. Solana fleet wallets cost nothing to create.</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback(`✅ Pay ${feeSol} SOL & Deploy`, `fleet_deploy_sol_ok:${count}`)],
+          [Markup.button.callback('« Cancel', 'racefleet_menu')],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^fleet_deploy_sol_ok:(\d+)$/, async (ctx) => {
+    const count = parseInt((ctx as any).match[1], 10) || 5;
+    const telegramId = ctx.from!.id;
+    if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_deploy_sol', 'buy')))) {
+      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery('Paying subscription in SOL...').catch(() => {});
+    const loading = await ctx.reply('⏳ <b>Paying subscription and creating your Solana fleet wallets...</b>', { parse_mode: 'HTML' }).catch(() => null);
+    try {
+      const res = await deployRaceFleetWithSol(telegramId, count);
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
+      if (res.success && res.fleet) {
+        await ctx.reply(
+          `🚀 <b>RaceFleet Deployed on Solana!</b>\n\n` +
+          `🏷 <b>Fleet Tag</b>: <code>${res.fleet.fleet_tag}</code>\n` +
+          `◎ <b>Solana Wallets</b>: <b>${res.wallets?.length ?? count}</b>\n` +
+          `💳 <b>Paid</b>: ${res.feeSol} SOL\n` +
+          `📅 <b>Active Until</b>: ${new Date(res.fleet.expires_at).toLocaleDateString()}\n\n` +
+          `💡 <i>Next: tap <b>[📥 Distribute SOL]</b> to fund the fleet, then open any Solana token and tap 🏎️ Fleet.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('📥 Distribute SOL', 'fleet_fund_sol_prompt')],
+              [Markup.button.callback('🏎️ Open Fleet Dashboard', 'racefleet_menu')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(`❌ <b>Deployment Failed:</b>\n\n${res.reason || 'Unknown error'}`, { parse_mode: 'HTML' });
+      }
+    } catch (err: any) {
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
+      await ctx.reply(`❌ Deployment error: ${getUserFriendlyError(err)}`);
+    } finally {
+      releaseInFlight(inFlightKey(telegramId, 'fleet_deploy_sol', 'buy'));
+    }
+  });
+
+  bot.action('fleet_fund_sol_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    userPendingActions.set(telegramId, { action: 'fleet_fund_sol_amt', expiresAt: Date.now() + 180_000 });
+    await ctx.reply(
+      `📥 <b>Fund Your Solana Fleet</b>\n\n` +
+      `Reply with the total SOL from your main Solana wallet to split equally across your fleet (e.g. <code>1</code>).\n` +
+      `<i>Each wallet needs at least 0.002 SOL, plus ~0.004 SOL beside each buy for token-account rent and fees.</i>\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('fleet_sweep_sol', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_sweep_sol', 'buy')))) {
+      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery('Sweeping Solana fleet to main wallet...').catch(() => {});
+    const statusMsg = await ctx.reply('⏳ <b>Sweeping all Solana fleet SOL back to your main wallet...</b>', { parse_mode: 'HTML' }).catch(() => null);
+    try {
+      const res = await sweepSolanaFleet(telegramId);
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (res.success) {
+        await ctx.reply(
+          `🧹 <b>Solana Fleet Sweep Complete!</b>\n\n` +
+          `💰 <b>Total Swept</b>: <b>${res.totalSweptSol} SOL</b>\n` +
+          `📦 <b>Wallets Swept</b>: <b>${res.successCount}</b>${res.failCount ? ` (⚠️ ${res.failCount} failed, try again)` : ''}\n\n` +
+          `<i>Tokens stay in the fleet wallets. Sell them first with 🔴 Dump to turn them into SOL.</i>`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Open Main Wallet', 'menu_wallet')],
+              [Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu')],
+            ]),
+          }
+        );
+      } else {
+        await ctx.reply(res.reason ? `⚠️ ${res.reason}` : '⚠️ No SOL to sweep (Solana fleet wallets are already empty).');
+      }
+    } catch (err: any) {
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      await ctx.reply(`❌ Sweep failed: ${getUserFriendlyError(err)}`);
+    } finally {
+      releaseInFlight(inFlightKey(telegramId, 'fleet_sweep_sol', 'buy'));
+    }
+  });
+
+  bot.action('fleet_renew_sol_prompt', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const feeSol = await getFleetFeeInSol().catch(() => null);
+    if (!feeSol) {
+      await ctx.reply('❌ Price feed unavailable right now. Please try again in a minute.');
+      return;
+    }
+    await ctx.reply(
+      `🔄 <b>Renew RaceFleet (pay in SOL)</b>\n\n` +
+      `Fee: <b>${feeSol} SOL</b> (same value as ${RACEFLEET_MONTHLY_FEE_NEAR} NEAR) for 30 more days.\n\n` +
+      `<i>Paid from your main Solana wallet.</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback(`✅ Confirm & Pay ${feeSol} SOL`, 'fleet_renew_sol_confirm')],
+          [Markup.button.callback('« Cancel', 'racefleet_menu')],
+        ]),
+      }
+    );
+  });
+
+  bot.action('fleet_renew_sol_confirm', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_renew_sol', 'buy')))) {
+      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery('Processing SOL renewal...').catch(() => {});
+    try {
+      const res = await renewRaceFleetWithSol(telegramId);
+      if (res.success && res.expiresAt) {
+        await ctx.reply(
+          `🎉 <b>RaceFleet Renewed!</b>\n\nPaid: ${res.feeSol} SOL\nNew Expiry Date: <b>${new Date(res.expiresAt).toLocaleDateString()}</b>`,
+          { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🏎️ Open Fleet Dashboard', 'racefleet_menu')]]) }
+        );
+      } else {
+        await ctx.reply(`❌ Renewal failed: ${res.reason || 'Unknown error'}`);
+      }
+    } finally {
+      releaseInFlight(inFlightKey(telegramId, 'fleet_renew_sol', 'buy'));
     }
   });
 
@@ -5511,7 +5746,7 @@ export function setupRoutes(bot: Telegraf): void {
       execute_after: executeAfter,
     });
 
-    if (user) {
+    if (user && !isSolanaAddress(tokenAddress)) {
       prewarmStorageDeposit(user, tokenAddress).catch(() => {});
     }
 
@@ -5526,7 +5761,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🎯 *Scheduled Snipe Armed!*\n\n` +
         `🪙 Token: \`${tokenAddress}\`\n` +
-        `💰 Amount: \`${amt} NEAR\`\n` +
+        `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n` +
         `⏰ Trigger Time: \`${timeStr}\` (${diffText})\n\n` +
         `• The bot will *NOT* buy before this time, bypassing high launch dynamic fees.\n` +
         `• At the scheduled time, the bot will automatically execute your buy on the pool.\n` +
@@ -5549,7 +5784,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (info?.tradeable) {
       const triggerId = await recordSnipeTrigger(order.id, tokenAddress, info.venue ?? '').catch(() => null);
       const procMsg = await ctx.reply(
-        `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} NEAR\` now...`,
+        `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} ${snipeUnit(tokenAddress)}\` now...`,
         { parse_mode: 'Markdown' }
       ).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
@@ -5574,7 +5809,7 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply(
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${tokenAddress}\`\n` +
-            `💰 Amount: \`${amt} NEAR\`\n\n` +
+            `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n\n` +
             `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
             { parse_mode: 'Markdown' }
           ).catch(() => {});
@@ -5587,7 +5822,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🎯 *Snipe Armed!*\n\n` +
         `🪙 Token: \`${tokenAddress}\`\n` +
-        `💰 Amount: \`${amt} NEAR\`\n\n` +
+        `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n\n` +
         `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.`,
         {
           parse_mode: 'Markdown',
@@ -5663,7 +5898,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(
       `🕒 *Enter Scheduled Time (UTC)*\n\n` +
       `🪙 Token: \`${tokenAddress}\`\n` +
-      `💰 Amount: \`${finalAmt} NEAR\`\n` +
+      `💰 Amount: \`${finalAmt} ${snipeUnit(tokenAddress)}\`\n` +
       `Current Time: \`${currentUtc}\`\n\n` +
       `Reply with the exact time in UTC when you want the snipe to trigger.\n\n` +
       `*Accepted formats:*\n` +
@@ -5702,7 +5937,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.reply(
       `🎯 *Snipe by Token CA*\n\n` +
       `Reply with the token contract address:\n` +
-      `_e.g. \`token.nearlytrade.near\`_\n\n` +
+      `_e.g. \`token.nearlytrade.near\` on NEAR, or a Solana mint_\n\n` +
       `• Already tradable → buys *immediately*\n` +
       `• Not launched yet → stays *armed* until live\n\n` +
       `Type /cancel to abort.`,
@@ -5726,12 +5961,15 @@ export function setupRoutes(bot: Telegraf): void {
     }
     userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress, expiresAt: Date.now() + 120_000 });
     await ctx.answerCbQuery().catch(() => {});
-    const meta = await near.getTokenMetadata(tokenAddress).catch(() => null);
+    const quickIsSol = isSolanaAddress(tokenAddress);
+    const meta = quickIsSol
+      ? await getSolanaTokenInfo(tokenAddress).catch(() => null)
+      : await near.getTokenMetadata(tokenAddress).catch(() => null);
     const sym = meta?.symbol || tokenAddress;
     await ctx.reply(
       `🎯 *Snipe ${sanitizeMd(sym)}*\n\n` +
       `Contract: \`${tokenAddress}\`\n\n` +
-      `Reply with the amount in NEAR to snipe (e.g. \`2.5\`):\n` +
+      `Reply with the amount in ${quickIsSol ? 'SOL' : 'NEAR'} to snipe (e.g. \`${quickIsSol ? '0.25' : '2.5'}\`):\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     );
@@ -5753,8 +5991,8 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(
       `👤 *Snipe by Deployer*\n\n` +
-      `Reply with the dev's NEAR wallet address:\n` +
-      `_e.g. \`someuser.near\`_\n\n` +
+      `Reply with the dev's wallet address:\n` +
+      `_e.g. \`someuser.near\`, or a Solana wallet (pump.fun launches)_\n\n` +
       `Every new token from that wallet\n` +
       `will be auto-bought until you cancel.\n\n` +
       `Type /cancel to abort.`,
@@ -5796,7 +6034,7 @@ export function setupRoutes(bot: Telegraf): void {
         ? ` · ⏰ ${formatUtcTime(new Date(o.execute_after))}`
         : '';
       const err = o.status === 'failed' && o.last_error ? `\n   └ _${o.last_error.slice(0, 60)}_` : '';
-      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} NEAR*${timing}${extra}${err}`;
+      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}*${timing}${extra}${err}`;
     });
 
     const buttons: any[] = [];
@@ -5867,7 +6105,7 @@ export function setupRoutes(bot: Telegraf): void {
       `🎯 *Snipe Order Details*\n\n` +
       `• *Status*: ${statusText[o.status] ?? o.status}\n` +
       `• *${targetLabel}*: \`${targetVal}\`\n` +
-      `• *Amount*: \`${o.amount_near} NEAR\`\n` +
+      `• *Amount*: \`${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}\`\n` +
       `• *Trigger Timing*: \`${timingStr}\`\n` +
       `• *Type*: \`${o.snipe_type}\`\n` +
       `• *Created*: ${dateStr}${errText}\n\n` +
@@ -6855,7 +7093,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
       buttons.push(customTradeRow);
 
-      if (!isSuiPos && !isSolanaPos) {
+      if (!isSuiPos) {
         buttons.push([
           cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary'),
           cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary'),
@@ -8892,19 +9130,26 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       const query = args[0].trim();
+      const querySol = isSolanaAddress(query);
+      // Solana: never fall back to the NEAR auto-buy amount; the user must name the SOL size.
+      if (querySol && !args[1]) {
+        await ctx.reply('Usage for Solana: /snipe <mint> <amount_sol>\nExample: /snipe <mint> 0.25');
+        return;
+      }
       const amountNear = parseFloat(args[1] ?? user.auto_buy_amount_near?.toString() ?? '1');
+      const unit = querySol ? 'SOL' : 'NEAR';
 
       if (amountNear <= 0) {
         await ctx.reply('Specify amount: /snipe <token> <amount_near>');
         return;
       }
 
-      const isCA = query.includes('.near') || query.length === 64;
+      const isCA = querySol || query.includes('.near') || query.length === 64;
 
       if (isCA) {
         const info = await getTokenInfo(query, false).catch(() => null);
         if (info?.tradeable) {
-          await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} NEAR...`, { parse_mode: 'Markdown' });
+          await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} ${unit}...`, { parse_mode: 'Markdown' });
           try {
             const res = await executeBuyHelper(telegramId, query, amountNear);
             await ctx.reply(res.message, {
@@ -8925,11 +9170,11 @@ export function setupRoutes(bot: Telegraf): void {
                 amount_near: amountNear,
               }).catch(() => null);
               if (order) {
-                prewarmStorageDeposit(user, query).catch(() => {});
+                if (!querySol) prewarmStorageDeposit(user, query).catch(() => {});
                 await ctx.reply(
                   `🎯 *Snipe Armed!*\n\n` +
                   `🪙 Token: \`${query}\`\n` +
-                  `💰 Amount: \`${amountNear} NEAR\`\n\n` +
+                  `💰 Amount: \`${amountNear} ${unit}\`\n\n` +
                   `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
                   { parse_mode: 'Markdown' }
                 );
@@ -8952,11 +9197,11 @@ export function setupRoutes(bot: Telegraf): void {
             token_address: query,
             amount_near: amountNear,
           });
-          prewarmStorageDeposit(user, query).catch(() => {});
+          if (!querySol) prewarmStorageDeposit(user, query).catch(() => {});
           await ctx.reply(
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${query}\`\n` +
-            `💰 Amount: \`${amountNear} NEAR\`\n\n` +
+            `💰 Amount: \`${amountNear} ${unit}\`\n\n` +
             `The token is not tradable yet — your snipe order is armed and will fire automatically the instant liquidity appears! No need to watch the chart.`,
             {
               parse_mode: 'Markdown',
@@ -10808,6 +11053,21 @@ export function setupRoutes(bot: Telegraf): void {
 
       // ── Targeted snipe FSM ──────────────────────────────────────────────
 
+      if (pending.action === 'snipe_token_ca' && isSolanaAddress(rawText.trim())) {
+        // Solana mint (case-sensitive). It may not exist yet: then the order stays armed.
+        const ca = rawText.trim();
+        const solMeta = await getSolanaTokenInfo(ca).catch(() => null);
+        userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress: ca, expiresAt: Date.now() + 120_000 });
+        await ctx.reply(
+          (solMeta
+            ? `🪙 Token found on Solana: *${sanitizeMd(solMeta.name)}* (${sanitizeMd(solMeta.symbol)})\n\n`
+            : `🪙 Solana mint \`${ca}\` is not live yet. Your snipe will stay armed until it can be bought.\n\n`) +
+          `Reply with the amount in SOL to snipe (e.g. \`0.25\`):\nType /cancel to abort.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
       if (pending.action === 'snipe_token_ca') {
         const ca = rawText.toLowerCase();
         if (!isValidNearAccountId(ca)) {
@@ -10831,13 +11091,18 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'snipe_token_amount' && pending.tokenAddress) {
         const amt = parseFloat(rawText);
-        if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR. Snipe setup cancelled.');
+        const tokUnit = snipeUnit(pending.tokenAddress);
+        if (isNaN(amt) || amt <= 0 || (tokUnit === 'SOL' && amt < 0.001)) {
+          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${tokUnit}${tokUnit === 'SOL' ? ' (min 0.001)' : ''}. Snipe setup cancelled.`);
           return;
         }
         const user = await getUserByTelegramId(telegramId);
         if (!user) {
           await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+        if (tokUnit === 'SOL' && !user.solana_address) {
+          await ctx.reply('❌ Your Solana wallet is not ready yet. Send /start and try again.');
           return;
         }
         const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
@@ -10864,7 +11129,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(
           `⏱ *Select Snipe Trigger Timing*\n\n` +
           `🪙 Token: \`${tokenAddress}\`\n` +
-          `💰 Amount: \`${amt} NEAR\`\n` +
+          `💰 Amount: \`${amt} ${tokUnit}\`\n` +
           `Current Time: \`${currentUtc}\`\n\n` +
           `When should the bot execute your snipe?\n\n` +
           `• *⚡ Immediate on Liquidity*: Executes as soon as trading/liquidity is live.\n` +
@@ -10923,6 +11188,18 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      if (pending.action === 'snipe_dev_addr' && isSolanaAddress(rawText.trim())) {
+        const dev = rawText.trim();
+        userPendingActions.set(telegramId, { action: 'snipe_dev_amount', deployerAddress: dev, expiresAt: Date.now() + 120_000 });
+        await ctx.reply(
+          `👤 Solana deployer: \`${dev}\`\n\n` +
+          `Every new *pump.fun* coin this wallet launches will be bought.\n\n` +
+          `Reply with the amount in SOL per launch (e.g. \`0.2\`):\nType /cancel to abort.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
       if (pending.action === 'snipe_dev_addr') {
         const dev = rawText.toLowerCase();
         if (!isValidNearAccountId(dev)) {
@@ -10940,13 +11217,18 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'snipe_dev_amount' && pending.deployerAddress) {
         const amt = parseFloat(rawText);
-        if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR. Snipe setup cancelled.');
+        const devUnit = snipeUnit(pending.deployerAddress);
+        if (isNaN(amt) || amt <= 0 || (devUnit === 'SOL' && amt < 0.001)) {
+          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${devUnit}. Snipe setup cancelled.`);
           return;
         }
         const user = await getUserByTelegramId(telegramId);
         if (!user) {
           await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+        if (devUnit === 'SOL' && !user.solana_address) {
+          await ctx.reply('❌ Your Solana wallet is not ready yet. Send /start and try again.');
           return;
         }
         const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
@@ -10963,7 +11245,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(
           `👤 *Deployer Snipe Armed!*\n\n` +
           `🧑‍💻 Deployer: \`${pending.deployerAddress}\`\n` +
-          `💰 Amount per launch: \`${amt} NEAR\`\n\n` +
+          `💰 Amount per launch: \`${amt} ${devUnit}\`\n\n` +
           `Every new token launched by this wallet will be auto-bought the moment it's detected.`,
           {
             parse_mode: 'Markdown',
@@ -11397,21 +11679,55 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       if (pending.action === 'dca_token') {
-        const tokenCA = rawText.trim().toLowerCase();
-        if (!isValidNearAccountId(tokenCA)) {
-          await ctx.reply('❌ Invalid contract address. Please enter a valid NEAR token address (e.g. `wrap.near` or `token.near`).');
+        const trimmedCA = rawText.trim();
+        // Solana mints are case-sensitive base58: never lowercase them.
+        const isSolDca = isSolanaAddress(trimmedCA);
+        const tokenCA = isSolDca ? trimmedCA : trimmedCA.toLowerCase();
+        if (!isSolDca && !isValidNearAccountId(tokenCA)) {
+          await ctx.reply('❌ Invalid contract address. Please enter a NEAR token address (e.g. `token.near`) or a Solana mint address.');
           return;
         }
+        if (isSolDca) {
+          const solInfo = await getSolanaTokenInfo(tokenCA).catch(() => null);
+          if (!solInfo) {
+            await ctx.reply('❌ Token not found on Solana. Check the mint address and try again.');
+            return;
+          }
+        }
         userPendingActions.delete(telegramId);
+        const dcaNative = isSolDca ? 'SOL' : 'NEAR';
+        const dcaKey = getShortTokenKey(tokenCA);
         await ctx.reply(
           `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
-          `Choose whether to accumulate (buy with NEAR) or take-profit / de-risk (sell to NEAR):`,
+          `Choose whether to accumulate (buy with ${dcaNative}) or take-profit / de-risk (sell to ${dcaNative}):`,
           {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-              [cb('🟢 Accumulate (Buy with NEAR)', `dca_choose_side:buy:${tokenCA}`, 'success')],
-              [cb('🔴 De-Risk (Sell to NEAR)', `dca_choose_side:sell:${tokenCA}`, 'danger')],
+              [cb(`🟢 Accumulate (Buy with ${dcaNative})`, `dca_choose_side:buy:${dcaKey}`, 'success')],
+              [cb(`🔴 De-Risk (Sell to ${dcaNative})`, `dca_choose_side:sell:${dcaKey}`, 'danger')],
               [cb('🔙 Cancel', 'menu_dca', 'primary')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      if (pending.action === 'copy_wallet' && isSolanaAddress(rawText.trim())) {
+        const wallet = rawText.trim();
+        const walletKey = getShortTokenKey(wallet);
+        const refIdParam = pending.copyReferrerId ? `:${pending.copyReferrerId}` : '';
+        userPendingActions.delete(telegramId);
+        await ctx.reply(
+          `🎯 *Target Wallet (Solana)*: \`${wallet}\`\n\n` +
+          `Choose how you would like to follow this wallet:\n\n` +
+          `• *⚡ Auto-Copy*: Mirror its buys and sells on Solana (pump.fun, PumpSwap, Raydium, Meteora, Orca and more) with your SOL budget.\n` +
+          `• *👀 Wallet Tracker*: Get alerts whenever this wallet trades, with 1-click buy buttons and no auto-buying.`,
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${walletKey}${refIdParam}`, 'success')],
+              [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${walletKey}${refIdParam}`, 'primary')],
+              [cb('🔙 Cancel', 'menu_copy', 'primary')],
             ]),
           }
         );
@@ -11445,8 +11761,10 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'copy_amount') {
         const amt = parseFloat(rawText);
-        if (isNaN(amt) || amt < 0.1 || amt > 10000) {
-          await ctx.reply('❌ Invalid amount. Must be between 0.1 and 10,000 NEAR.');
+        const copyUnit = snipeUnit(pending.copyWallet || '');
+        const [minAmt, maxAmt] = copyUnit === 'SOL' ? [0.01, 1000] : [0.1, 10000];
+        if (isNaN(amt) || amt < minAmt || amt > maxAmt) {
+          await ctx.reply(`❌ Invalid amount. Must be between ${minAmt} and ${maxAmt.toLocaleString('en-US')} ${copyUnit}.`);
           return;
         }
         userPendingActions.set(telegramId, {
@@ -11457,8 +11775,8 @@ export function setupRoutes(bot: Telegraf): void {
           expiresAt: Date.now() + 5 * 60_000,
         });
         await ctx.reply(
-          `✅ Buy amount: \`${amt} NEAR\` per trade\n\n🛡️ *Set a daily spending cap* (optional safety limit).\n\n` +
-          `Reply with max NEAR per day (e.g. \`20\`), or \`skip\` for unlimited:`,
+          `✅ Buy amount: \`${amt} ${copyUnit}\` per trade\n\n🛡️ *Set a daily spending cap* (optional safety limit).\n\n` +
+          `Reply with max ${copyUnit} per day (e.g. \`${copyUnit === 'SOL' ? '2' : '20'}\`), or \`skip\` for unlimited:`,
           { parse_mode: 'Markdown' }
         );
         return;
@@ -11467,7 +11785,8 @@ export function setupRoutes(bot: Telegraf): void {
       if (pending.action === 'copy_daily_budget') {
         const isSkip = rawText.trim().toLowerCase() === 'skip';
         const budget = isSkip ? null : parseFloat(rawText);
-        if (!isSkip && (isNaN(budget!) || budget! < 0.1)) {
+        const budgetUnit = snipeUnit(pending.copyWallet || '');
+        if (!isSkip && (isNaN(budget!) || budget! < (budgetUnit === 'SOL' ? 0.01 : 0.1))) {
           await ctx.reply('❌ Invalid budget. Must be a positive number or "skip".');
           return;
         }
@@ -11486,10 +11805,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(
           `🏎️ *Copy Trade Setup Complete!*\n\n` +
           `🎯 *Target*: \`${target.target_wallet}\`\n` +
-          `💰 *Buy Amount*: \`${target.buy_amount_near} NEAR\` per trade\n` +
-          `🛡️ *Daily Cap*: ${budget !== null ? `\`${budget} NEAR\`` : 'Unlimited'}\n` +
-          `📊 *Sell Mirroring*: ✅ On\n\n` +
-          `RacerBot will now automatically copy every swap this wallet makes on NEAR DEXes. You'll get a DM for every fill.\n\n` +
+          `💰 *Buy Amount*: \`${target.buy_amount_near} ${budgetUnit}\` per trade\n` +
+          `🛡️ *Daily Cap*: ${budget !== null ? `\`${budget} ${budgetUnit}\`` : 'Unlimited'}\n` +
+          `📊 *Sell Mirroring*: ✅ On${budgetUnit === 'SOL' ? ' (same % the wallet sells)' : ''}\n\n` +
+          `RacerBot will now automatically copy every swap this wallet makes on ${budgetUnit === 'SOL' ? 'Solana' : 'NEAR DEXes'}. You'll get a DM for every fill.\n\n` +
           `🏆 *Season 1*: You earn +25 pts per copy fill + 1.5 pts per NEAR copied!`,
           {
             parse_mode: 'Markdown',
@@ -11512,8 +11831,9 @@ export function setupRoutes(bot: Telegraf): void {
           dcaAmount: amt,
           expiresAt: Date.now() + 5 * 60_000,
         });
+        const dcaNativeAmt = isSolanaToken(pending.dcaTokenAddress || '') ? 'SOL' : 'NEAR';
         await ctx.reply(
-          `✅ Amount per order: \`${amt} ${pending.dcaSide === 'buy' ? 'NEAR' : 'tokens'}\`\n\n` +
+          `✅ Amount per order: \`${amt} ${pending.dcaSide === 'buy' ? dcaNativeAmt : 'tokens'}\`\n\n` +
           `⏱️ *Choose interval between orders:*`,
           {
             parse_mode: 'Markdown',
@@ -11545,11 +11865,12 @@ export function setupRoutes(bot: Telegraf): void {
         userPendingActions.delete(telegramId);
         const intervalHuman = formatDcaInterval(order.interval_seconds);
         const totalDisplay = order.total_orders === 0 ? '∞ (unlimited)' : `${order.total_orders} orders`;
+        const dcaNativeDone = isSolanaToken(order.token_address) ? 'SOL' : 'NEAR';
         await ctx.reply(
           `🔁 *DCA Order Created!*\n\n` +
           `🪙 *Token*: \`${order.token_address}\`\n` +
-          `📊 *Mode*: ${order.side === 'buy' ? '🟢 Accumulate (Buy with NEAR)' : '🔴 De-Risk (Sell to NEAR)'}\n` +
-          `💵 *Amount per tick*: \`${order.amount_per_order} ${order.side === 'buy' ? 'NEAR' : 'tokens'}\`\n` +
+          `📊 *Mode*: ${order.side === 'buy' ? `🟢 Accumulate (Buy with ${dcaNativeDone})` : `🔴 De-Risk (Sell to ${dcaNativeDone})`}\n` +
+          `💵 *Amount per tick*: \`${order.amount_per_order} ${order.side === 'buy' ? dcaNativeDone : 'tokens'}\`\n` +
           `⏱️ *Interval*: ${intervalHuman}\n` +
           `🔢 *Total orders*: ${totalDisplay}\n` +
           `🕐 *First execution*: in ${intervalHuman}\n\n` +
@@ -11581,8 +11902,8 @@ export function setupRoutes(bot: Telegraf): void {
         const valDisplay = isPercent ? (val > 0 ? `+${val}%` : `${val}%`) : `${val}`;
         await ctx.reply(
           `✅ Target ${condLabel}: \`${valDisplay}\`\n\n` +
-          `💰 *How much NEAR ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
-          `Reply with a number (e.g. \`5\` for 5 NEAR):`,
+          `💰 *How much ${isSolanaToken(pending.loTokenAddress || '') ? 'SOL' : 'NEAR'} ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
+          `Reply with a number (e.g. \`${isSolanaToken(pending.loTokenAddress || '') ? '0.5' : '5'}\`):`,
           { parse_mode: 'Markdown' }
         );
         return;
@@ -11637,8 +11958,9 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'lo_amount') {
         const amt = parseFloat(rawText);
+        const loUnit = isSolanaToken(pending.loTokenAddress || '') ? 'SOL' : 'NEAR';
         if (isNaN(amt) || amt < 0.01) {
-          await ctx.reply('❌ Invalid amount. Must be ≥ 0.01 NEAR.');
+          await ctx.reply(`❌ Invalid amount. Must be ≥ 0.01 ${loUnit}.`);
           return;
         }
         userPendingActions.set(telegramId, {
@@ -11648,7 +11970,7 @@ export function setupRoutes(bot: Telegraf): void {
         });
         const shortKey = getShortTokenKey(pending.loTokenAddress!);
         await ctx.reply(
-          `✅ Amount: \`${amt} NEAR\`\n\n` +
+          `✅ Amount: \`${amt} ${loUnit}\`\n\n` +
           `⏰ *When should this order expire?*`,
           {
             parse_mode: 'Markdown',
@@ -11664,8 +11986,9 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'fleet_custom_buy') {
         const amt = parseFloat(rawText);
+        const fcUnit = snipeUnit(pending.fleetTokenAddress || '');
         if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR.');
+          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${fcUnit}.`);
           return;
         }
         userPendingActions.delete(telegramId);
@@ -11675,14 +11998,14 @@ export function setupRoutes(bot: Telegraf): void {
         if (!fleet) { await ctx.reply('❌ No active RaceFleet found.'); return; }
 
         const tokenAddress = pending.fleetTokenAddress!;
-        const statusMsg = await ctx.reply(`🏎️ Executing bundle buy: \`${amt} NEAR\` across ${fleet.wallet_count} fleet wallets...`, { parse_mode: 'Markdown' });
+        const statusMsg = await ctx.reply(`🏎️ Executing bundle buy: \`${amt} ${fcUnit}\` per wallet across ${fleet.wallet_count} fleet wallets...`, { parse_mode: 'Markdown' });
         try {
           const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
           if (res.success) {
             await ctx.reply(
               `✅ *RaceFleet Bundle Buy Successful!*\n\n` +
               `📦 Executed: \`${res.successCount}/${fleet.wallet_count} Wallets\`\n` +
-              `💰 Total Spent: \`${res.totalSpentNear} NEAR\` (~${amt} N / wallet)\n` +
+              `💰 Total Spent: \`${res.totalSpentNear} ${fcUnit}\` (~${amt} ${fcUnit} / wallet)\n` +
               (res.failCount > 0 ? `⚠️ Failed: \`${res.failCount} wallets\` (Low balance/slippage)\n\n` : '\n') +
               `All swaps executed in parallel with independent nonces.`,
               {
@@ -11704,8 +12027,9 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'fleet_split_buy') {
         const totalBudget = parseFloat(rawText);
+        const fsUnit = snipeUnit(pending.fleetTokenAddress || '');
         if (isNaN(totalBudget) || totalBudget <= 0) {
-          await ctx.reply('❌ Invalid budget. Must be a positive number in NEAR.');
+          await ctx.reply(`❌ Invalid budget. Must be a positive number in ${fsUnit}.`);
           return;
         }
         userPendingActions.delete(telegramId);
@@ -11716,14 +12040,14 @@ export function setupRoutes(bot: Telegraf): void {
 
         const perWallet = parseFloat((totalBudget / fleet.wallet_count).toFixed(4));
         const tokenAddress = pending.fleetTokenAddress!;
-        await ctx.reply(`🏎️ Splitting \`${totalBudget} NEAR\` (\`${perWallet} N\` / wallet) across ${fleet.wallet_count} wallets...`, { parse_mode: 'Markdown' });
+        await ctx.reply(`🏎️ Splitting \`${totalBudget} ${fsUnit}\` (\`${perWallet} ${fsUnit}\` / wallet) across ${fleet.wallet_count} wallets...`, { parse_mode: 'Markdown' });
         try {
           const res = await executeFleetBundleBuy(fleet.id, tokenAddress, perWallet, 3.0);
           if (res.success) {
             await ctx.reply(
               `✅ *RaceFleet Split Buy Successful!*\n\n` +
               `📦 Executed: \`${res.successCount}/${fleet.wallet_count} Wallets\`\n` +
-              `💰 Total Spent: \`${res.totalSpentNear} NEAR\` (\`${perWallet} N / wallet\`)\n\n` +
+              `💰 Total Spent: \`${res.totalSpentNear} ${fsUnit}\` (\`${perWallet} ${fsUnit} / wallet\`)\n\n` +
               `Coordinated parallel execution confirmed.`,
               {
                 parse_mode: 'Markdown',
@@ -11774,6 +12098,33 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
+      if (pending.action === 'fleet_fund_sol_amt') {
+        const totalSol = parseFloat(rawText);
+        if (isNaN(totalSol) || totalSol <= 0) {
+          await ctx.reply('❌ Invalid amount. Must be a positive number in SOL.');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        await ctx.reply(`⏳ Distributing \`${totalSol} SOL\` equally across your Solana fleet wallets...`, { parse_mode: 'Markdown' });
+        try {
+          const res = await distributeSolToFleet(telegramId, totalSol);
+          if (res.success) {
+            await ctx.reply(
+              `✅ *Solana Fleet Funded!*\n\n` +
+              `💰 Per wallet: \`${res.perWalletSol?.toFixed(4)} SOL\`\n` +
+              `📦 Wallets funded: \`${res.walletCount}\`${res.failed ? ` (⚠️ ${res.failed} failed)` : ''}\n\n` +
+              `Open any Solana token and tap 🏎️ Fleet to bundle trade.`,
+              { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[cb('🏎️ Fleet Dashboard', 'racefleet_menu', 'success')]]) }
+            );
+          } else {
+            await ctx.reply(`❌ Failed to fund fleet: ${res.reason}`);
+          }
+        } catch (err: any) {
+          await ctx.reply(`❌ Error funding fleet: ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
       if (pending.action === 'fleet_lo_target_value') {
         const val = parseFloat(rawText);
         if (isNaN(val) || val <= 0) {
@@ -11787,10 +12138,13 @@ export function setupRoutes(bot: Telegraf): void {
           expiresAt: Date.now() + 5 * 60_000,
         });
         const condLabel = pending.fleetLoConditionType === 'price' ? 'Price' : 'Market Cap';
+        const flUnit = snipeUnit(pending.fleetTokenAddress || '');
         await ctx.reply(
           `✅ Target ${condLabel}: \`${val}\`\n\n` +
-          `💰 *How much NEAR to spend per fleet wallet when triggered?*\n\n` +
-          `Reply with a number (e.g. \`1.5\` for 1.5 NEAR per wallet):`,
+          (pending.fleetSide === 'sell'
+            ? `💰 *Sell size*: reply with any number to confirm (the whole fleet bag is sold when triggered):`
+            : `💰 *How much ${flUnit} to spend per fleet wallet when triggered?*\n\n` +
+              `Reply with a number (e.g. \`${flUnit === 'SOL' ? '0.1' : '1.5'}\` ${flUnit} per wallet):`),
           { parse_mode: 'Markdown' }
         );
         return;
@@ -11798,8 +12152,9 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'fleet_lo_amount') {
         const amt = parseFloat(rawText);
+        const flAmtUnit = snipeUnit(pending.fleetTokenAddress || '');
         if (isNaN(amt) || amt < 0.01) {
-          await ctx.reply('❌ Invalid amount. Must be ≥ 0.01 NEAR.');
+          await ctx.reply(`❌ Invalid amount. Must be ≥ 0.01 ${flAmtUnit}.`);
           return;
         }
         const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -11832,7 +12187,7 @@ export function setupRoutes(bot: Telegraf): void {
             `🏎 *Fleet*: \`${fleet.fleet_tag}\` (${fleet.wallet_count} Wallets)\n` +
             `📊 *Direction*: ${order.order_type === 'limit_buy' ? '🟢 Buy Dip' : '🔴 Take Profit'}\n` +
             `📐 *Trigger*: ${targetType === 'mcap' ? 'Market Cap' : 'Price'} ${triggerCondition === 'lte' ? '≤' : '≥'} \`${order.target_value}\`\n` +
-            `💰 *Amount*: \`${order.amount_per_wallet} NEAR / wallet\` (Total: \`${(order.amount_per_wallet * fleet.wallet_count).toFixed(2)} NEAR\`)\n\n` +
+            `💰 *Amount*: \`${order.amount_per_wallet} ${flAmtUnit} / wallet\` (Total: \`${(order.amount_per_wallet * fleet.wallet_count).toFixed(flAmtUnit === 'SOL' ? 3 : 2)} ${flAmtUnit}\`)\n\n` +
             `When triggered, all ${fleet.wallet_count} wallets will execute simultaneously.`,
             {
               parse_mode: 'Markdown',

@@ -5,6 +5,7 @@ import {
   createLogger,
   getNear,
   isIntearToken,
+  isSolanaAddress,
   type AutoBuySignal,
 } from '@racerbot/shared';
 import {
@@ -55,7 +56,8 @@ export async function runScheduledSnipeEngine(): Promise<void> {
 
   while (true) {
     try {
-      const activeTokens = await getDistinctActiveSnipeTokens().catch(() => []);
+      // Solana mints are handled by solanaSnipe.ts; never probe them on NEAR.
+      const activeTokens = (await getDistinctActiveSnipeTokens().catch(() => [] as string[])).filter((t) => !isSolanaAddress(t));
       if (activeTokens.length > 0) {
         const now = Date.now();
         await Promise.all(

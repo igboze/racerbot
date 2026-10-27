@@ -60,3 +60,19 @@ describe('solana: fees match NEAR', () => {
     expect(solToLamports(0.25)).toBe(250_000_000n);
   });
 });
+
+import { solanaUiToRaw } from './solana.js';
+
+describe('solanaUiToRaw', () => {
+  it('converts human amounts without float drift', () => {
+    expect(solanaUiToRaw(1250.5, 6)).toBe(1_250_500_000n);
+    expect(solanaUiToRaw('0.1', 9)).toBe(100_000_000n);
+    expect(solanaUiToRaw(0.3, 6)).toBe(300_000n);
+    expect(solanaUiToRaw(250000, 6)).toBe(250_000_000_000n);
+  });
+  it('returns 0 for invalid or non-positive input', () => {
+    expect(solanaUiToRaw(-1, 6)).toBe(0n);
+    expect(solanaUiToRaw(NaN, 6)).toBe(0n);
+    expect(solanaUiToRaw('abc', 6)).toBe(0n);
+  });
+});
