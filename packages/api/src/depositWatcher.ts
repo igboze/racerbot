@@ -442,23 +442,30 @@ export async function checkUserDepositNow(telegramIdOrUserId: number | string): 
  * Active users (interacted in last 30m) are checked every tick (every 6s);
  * idle users are staggered in batches to maintain zero API credit consumption.
  */
+let cachedAllUsers: UserRecord[] = [];
+let lastUsersFetch = 0;
+
 export async function pollUserDeposits(): Promise<void> {
   if (isPolling) return;
   isPolling = true;
 
   try {
-    const db = await getDb();
-    const result = await db.query<UserRecord>(
-      'SELECT id, telegram_id, subaccount_id, sui_address, starknet_address, solana_address, scoped_key_encrypted, sui_private_key_enc, last_near_balance, last_sui_balance, last_strk_balance, created_at FROM users'
-    );
+    const now = Date.now();
+    if (now - lastUsersFetch > 60_000 || cachedAllUsers.length === 0) {
+      const db = await getDb();
+      const result = await db.query<UserRecord>(
+        'SELECT id, telegram_id, subaccount_id, sui_address, starknet_address, solana_address, scoped_key_encrypted, sui_private_key_enc, last_near_balance, last_sui_balance, last_strk_balance, created_at FROM users'
+      );
+      cachedAllUsers = result.rows || [];
+      lastUsersFetch = now;
+    }
 
-    const allUsers = result.rows;
+    const allUsers = cachedAllUsers;
     if (!allUsers || allUsers.length === 0) {
       isPolling = false;
       return;
     }
 
-    const now = Date.now();
     const activeUsers: UserRecord[] = [];
     const idleUsers: UserRecord[] = [];
 

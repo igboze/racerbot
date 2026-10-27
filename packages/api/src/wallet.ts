@@ -2267,25 +2267,28 @@ export async function resetUserStarknetWallet(userId: string): Promise<Generated
 }
 
 /**
- * Ensures user record has all multi-chain wallets initialized (NEAR, SUI, and Starknet).
+ * Ensures user record has all multi-chain wallets initialized (NEAR, SUI, Starknet, and Solana).
  */
 export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord> {
-  let updated = await ensureUserSuiWallet(user);
-  updated = await ensureUserStarknetWallet(updated);
-  try {
-    updated = await ensureUserSolanaWallet(updated);
-  } catch (err: any) {
-    // Never block /start for older users if the Solana backfill hits a transient DB error.
-    console.warn(`[SOLANA] ensureUserSolanaWallet failed for user ${updated.id}:`, err?.message);
+  // FAST PATH: If user already has all wallet addresses populated, return immediately
+  if (user.subaccount_id && user.sui_address && user.starknet_address && user.solana_address) {
+    return user;
   }
-  if (updated.subaccount_id) {
-    await getActiveWallet(updated.id, 'near').catch(() => null);
+
+  let updated = user;
+  if (!updated.sui_address || !updated.sui_private_key_enc) {
+    updated = await ensureUserSuiWallet(updated);
   }
-  if (updated.sui_address) {
-    await getActiveWallet(updated.id, 'sui').catch(() => null);
+  if (!updated.starknet_address || !updated.starknet_private_key_enc) {
+    updated = await ensureUserStarknetWallet(updated);
   }
-  if (updated.starknet_address) {
-    await getActiveWallet(updated.id, 'starknet').catch(() => null);
+  if (!updated.solana_address || !updated.solana_private_key_enc) {
+    try {
+      updated = await ensureUserSolanaWallet(updated);
+    } catch (err: any) {
+      // Never block /start for older users if the Solana backfill hits a transient DB error.
+      console.warn(`[SOLANA] ensureUserSolanaWallet failed for user ${updated.id}:`, err?.message);
+    }
   }
   return updated;
 }
@@ -2765,7 +2768,11 @@ export interface UserBalances {
 /**
  * Fetch native NEAR, wrap.near, SUI, and Starknet (STRK/ETH) balances for user's account with caching & parallel requests.
  */
-export async function getUserBalances(telegramId: number, forceRefresh = false): Promise<UserBalances> {
+export async function getUserBalances(
+  telegramId: number,
+  forceRefresh = false,
+  preloadedUser?: UserRecord | null
+): Promise<UserBalances> {
   if (!forceRefresh) {
     const cached = balanceCache.get(telegramId);
     if (cached && Date.now() < cached.expiresAt) {
@@ -2780,7 +2787,7 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
 
   const fetchPromise = (async (): Promise<UserBalances> => {
     try {
-      const rawUser = await getUserByTelegramId(telegramId);
+      const rawUser = preloadedUser || (await getUserByTelegramId(telegramId));
       if (!rawUser) {
         throw new Error('User not found. Run /start first.');
       }
@@ -2798,16 +2805,16 @@ export async function getUserBalances(telegramId: number, forceRefresh = false):
       let ethBal = '0';
 
       const [nativeRes, wrapRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
-        near.getNearBalance(subaccountId),
-        near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }),
+        withTimeout(near.getNearBalance(subaccountId), 2500, '0'),
+        withTimeout(near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
         suiAddress
           ? withTimeout(getSuiBalance(suiAddress), 2000, { mist: 0n, sui: 0, formatted: '0.0000' })
           : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
         starknetAddress
           ? withTimeout(getStarknetBalance(starknetAddress, forceRefresh), 2000, { strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' })
           : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
-        getNearUsdPrice(),
-        getSuiUsdPrice(),
+        withTimeout(getNearUsdPrice(), 2500, 4.9),
+        withTimeout(getSuiUsdPrice(), 2500, 2.0),
       ]);
       const [solRes, solUsdRes] = await Promise.allSettled([
         solanaAddress
