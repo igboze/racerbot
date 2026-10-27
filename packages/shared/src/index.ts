@@ -308,6 +308,7 @@ export {
   getPumpLatestLaunches,
   getPumpLaunchesByCreator,
   isSolanaTokenTradable,
+  getPumpCoinState,
   getSolanaLamportsMulti,
   sendSolToMany,
   sweepSolFromMany,
