@@ -297,6 +297,156 @@
       }
     }
 
+    /* Live Token Analytics Ribbon */
+    .token-analytics-ribbon {
+      position: absolute;
+      top: 56px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(22, 27, 44, 0.90);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 8px 14px;
+      z-index: 9;
+      overflow-x: auto;
+      scrollbar-width: none;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    }
+    .token-analytics-ribbon::-webkit-scrollbar { display: none; }
+    .hud-pill {
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+      padding: 4px 10px;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+      flex-shrink: 0;
+    }
+    .hud-pill:hover {
+      background: rgba(106, 204, 220, 0.12);
+      border-color: rgba(106, 204, 220, 0.4);
+      transform: translateY(-1px);
+    }
+    .hud-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--color-text);
+      line-height: 1.2;
+    }
+    .hud-sub {
+      font-size: 10px;
+      color: var(--color-text-2);
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hud-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--color-border);
+      flex-shrink: 0;
+    }
+    .hud-stat {
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .hud-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-text-2);
+      line-height: 1.1;
+      margin-bottom: 2px;
+    }
+    .hud-val {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--color-text);
+      line-height: 1.2;
+    }
+
+    /* Onboarding & Scanner Modal Styles */
+    .scanner-feature-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 640px) {
+      .scanner-feature-grid {
+        grid-template-columns: 1fr;
+      }
+      .token-analytics-ribbon {
+        top: 48px;
+        left: 8px;
+        right: 8px;
+        padding: 6px 10px;
+        gap: 10px;
+      }
+    }
+    .scanner-feature-card {
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .scanner-feature-icon {
+      font-size: 20px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .scanner-feature-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-bottom: 3px;
+    }
+    .scanner-feature-desc {
+      font-size: 11px;
+      color: var(--color-text-2);
+      line-height: 1.4;
+    }
+    .benchmark-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      font-family: var(--font-sans);
+      color: var(--color-text);
+      transition: all 150ms ease;
+    }
+    .benchmark-pill:hover {
+      background: rgba(106, 204, 220, 0.12);
+      border-color: rgba(106, 204, 220, 0.5);
+      transform: translateY(-1px);
+    }
+    .benchmark-pill-sym {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .benchmark-pill-tag {
+      font-size: 10px;
+      color: var(--color-text-2);
+    }
+
+
     /* In-App Toast Notifications */
     .racer-toast {
       position: fixed;
@@ -373,6 +523,10 @@
         <button type="submit" class="btn btn-primary btn-sm" style="height:40px;">Scan</button>
       </form>
 
+      <button type="button" class="btn btn-secondary btn-sm" onclick="openTokenScannerModal()" style="height:40px;display:inline-flex;align-items:center;gap:6px;font-weight:600;">
+        <span>🔎 Scan Token</span>
+      </button>
+
       <div class="bubble-trending-row">
         <span class="text-caption" style="margin-right:2px;">Trending:</span>
         <button type="button" class="chip chip-filter" onclick="openBubbleMap('blackdragon.tkn.near')">BLACKDRAGON</button>
@@ -399,6 +553,56 @@
           <button id="traces-btn" class="chip chip-filter active" onclick="toggleTraces()">Traces</button>
           <button id="dust-toggle-btn" class="chip chip-filter" onclick="toggleDustFilter()">Hide dust (&lt;0.05%)</button>
           <button class="chip chip-filter" onclick="resetView()">Reset</button>
+        </div>
+
+        <!-- Live Token Analytics Ribbon -->
+        <div id="token-analytics-ribbon" class="token-analytics-ribbon">
+          <div class="hud-pill" onclick="openTokenScannerModal()" title="Click to change or scan token">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span id="hud-token-symbol" class="hud-title">SELECT TOKEN</span>
+              <span style="font-size:10px;color:var(--color-primary);">▾</span>
+            </div>
+            <span id="hud-token-ca" class="hud-sub mono-sm">Click to scan contract</span>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="hud-stat">
+            <span class="hud-label">Price</span>
+            <span id="hud-price-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">24h Chg</span>
+            <span id="hud-chg-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Mkt Cap</span>
+            <span id="hud-mcap-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">24h Vol</span>
+            <span id="hud-vol-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Liquidity</span>
+            <span id="hud-liq-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="hud-stat">
+            <span class="hud-label">Top 10 Supply</span>
+            <span id="hud-top10-val" class="hud-val mono-data">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Cabal / Bundler</span>
+            <span id="hud-bundle-val" class="hud-val mono-data" style="color:var(--color-error);">—</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">Dev Status</span>
+            <span id="hud-dev-val" class="hud-val mono-sm">—</span>
+          </div>
+          <div class="hud-divider"></div>
+          <div class="hud-stat">
+            <span class="hud-label">Forensic Risk</span>
+            <span id="hud-risk-badge" class="chip chip-neutral" style="font-size:11px;height:22px;padding:0 8px;">—</span>
+          </div>
         </div>
 
         <!-- Zoom HUD bottom-right -->
@@ -587,6 +791,67 @@
             </div>
           </div>
 
+          <!-- Deep Wallet Forensics: Trading Velocity & Exit Speed -->
+          <div id="wallet-forensics-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:15px;">⚡</span>
+                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Trading Velocity &amp; Speed</span>
+              </div>
+              <span id="wallet-speed-badge" class="chip chip-neutral" style="font-size:11px;font-weight:700;">Analyzing...</span>
+            </div>
+
+            <div class="widget-grid-2col" style="gap:8px;">
+              <div style="background:rgba(0,0,0,0.2);padding:8px 10px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.04);">
+                <span class="text-caption" style="font-size:10px;">Avg Hold Duration</span>
+                <div id="wallet-avg-hold" class="mono-data" style="font-size:14px;font-weight:700;margin-top:2px;">—</div>
+              </div>
+              <div style="background:rgba(0,0,0,0.2);padding:8px 10px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.04);">
+                <span class="text-caption" style="font-size:10px;">Quick Dump (&lt;30m)</span>
+                <div id="wallet-dump-rate" class="mono-data" style="font-size:14px;font-weight:700;margin-top:2px;">—</div>
+              </div>
+            </div>
+
+            <!-- Hazard Meter -->
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span class="text-caption" style="font-size:11px;">Dump Hazard Rating</span>
+                <span id="wallet-hazard-label" class="mono-sm" style="font-size:11px;font-weight:700;color:var(--color-text-2);">—</span>
+              </div>
+              <div style="height:6px;background:var(--color-bg);border-radius:var(--radius-full);overflow:hidden;">
+                <div id="wallet-hazard-bar" style="height:100%;width:0%;background:var(--color-primary);transition:width 0.4s ease, background-color 0.4s ease;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Other Tokens Held (FastNEAR) -->
+          <div id="wallet-other-tokens-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:14px;">💼</span>
+                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Other Tokens Held</span>
+              </div>
+              <span id="wallet-other-tokens-count" class="chip chip-neutral" style="font-size:10px;height:20px;padding:0 6px;">0 tokens</span>
+            </div>
+            <div id="wallet-other-tokens-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
+              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click bubble to scan</div>
+            </div>
+          </div>
+
+          <!-- Past Trades Timeline -->
+          <div id="wallet-trades-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:14px;">⏱️</span>
+                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Recent Trades &amp; Hold Time</span>
+              </div>
+              <span id="wallet-trades-count" class="mono-sm" style="font-size:11px;color:var(--color-text-2);">0 events</span>
+            </div>
+            <div id="wallet-trades-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
+              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click bubble to scan</div>
+            </div>
+          </div>
+
           <!-- Cluster Information -->
           <div id="wallet-cluster-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:none;">
             <span class="text-caption" style="color:var(--color-purple-text);">Cluster Membership</span>
@@ -629,6 +894,103 @@
         <span>Arena</span>
       </a>
     </nav>
+  </div>
+
+  <!-- Onboarding / Token Scanner Modal -->
+  <div id="token-scanner-modal" class="modal-backdrop" onclick="if(event.target===this) closeTokenScannerModal()">
+    <div class="modal-dialog modal-wide" role="dialog" aria-modal="true" style="max-width: 640px;">
+      <div class="sheet-handle"></div>
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="width:40px;height:40px;border-radius:var(--radius-md);background:linear-gradient(135deg,#6ACCDC,#7860A9);display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 4px 16px rgba(106,204,220,0.25);">
+            🔮
+          </div>
+          <div>
+            <h3 class="modal-title" style="margin:0;font-size:18px;font-weight:700;">RacerBubble Token Intelligence</h3>
+            <span class="chip chip-neutral" style="font-size:10px;height:18px;padding:0 6px;margin-top:2px;">NEAR Holder Forensics &amp; Cabal Map</span>
+          </div>
+        </div>
+        <button class="modal-close-btn" onclick="closeTokenScannerModal()" aria-label="Close modal">&times;</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <p class="text-body-sm" style="color:var(--color-text-2);margin:0;line-height:1.5;">
+          Enter any NEAR token contract address to analyze on-chain holder distribution, reveal coordinated sniper cabals, monitor dev wallet dumps, and track holder selling speeds.
+        </p>
+
+        <!-- 4 Use Case Cards -->
+        <div class="scanner-feature-grid">
+          <div class="scanner-feature-card">
+            <div class="scanner-feature-icon">🕸️</div>
+            <div>
+              <div class="scanner-feature-title">Cabal &amp; Sybil Clusters</div>
+              <div class="scanner-feature-desc">Reveals multi-wallet snipers and wallets funded by the same deployer or gas wallet.</div>
+            </div>
+          </div>
+          <div class="scanner-feature-card">
+            <div class="scanner-feature-icon">⚡</div>
+            <div>
+              <div class="scanner-feature-title">Wallet Velocity &amp; Speed</div>
+              <div class="scanner-feature-desc">Calculates average hold time: identifies instant paper-hands (&lt;5m) vs scalpers vs diamond hands.</div>
+            </div>
+          </div>
+          <div class="scanner-feature-card">
+            <div class="scanner-feature-icon">👑</div>
+            <div>
+              <div class="scanner-feature-title">Dev &amp; Whale Tracking</div>
+              <div class="scanner-feature-desc">Alerts when deployer dumps, flags creator contracts, and tracks top 10 supply locks.</div>
+            </div>
+          </div>
+          <div class="scanner-feature-card">
+            <div class="scanner-feature-icon">🛡️</div>
+            <div>
+              <div class="scanner-feature-title">Forensic Risk Score</div>
+              <div class="scanner-feature-desc">Real-time 0–100 safety score scanning bundler control, liquidity depth, and dump risk.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scan Form -->
+        <form class="scanner-modal-form" onsubmit="handleScannerModalSubmit(event)" style="display:flex;flex-direction:column;gap:8px;">
+          <label class="form-label" style="font-size:12px;font-weight:600;margin:0;">Scan Contract Address (CA)</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="modal-token-input" class="form-control input-mono" placeholder="e.g. blackdragon.tkn.near, lonk.tkn.near" autocomplete="off" style="height:44px;font-size:14px;flex:1;">
+            <button type="submit" class="btn btn-primary" style="height:44px;padding:0 20px;font-weight:700;">Scan Now</button>
+          </div>
+        </form>
+
+        <!-- Benchmark Pills -->
+        <div>
+          <span class="text-caption" style="display:block;margin-bottom:8px;font-weight:600;">Or explore verified benchmark tokens:</span>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('blackdragon.tkn.near')">
+              <span class="benchmark-pill-sym">BLACKDRAGON</span>
+              <span class="benchmark-pill-tag">DeFi / Meme</span>
+            </button>
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('lonk.tkn.near')">
+              <span class="benchmark-pill-sym">LONK</span>
+              <span class="benchmark-pill-tag">Meme</span>
+            </button>
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('gear.tkn.near')">
+              <span class="benchmark-pill-sym">GEAR</span>
+              <span class="benchmark-pill-tag">Ecosystem</span>
+            </button>
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('shitzu.tkn.near')">
+              <span class="benchmark-pill-sym">SHITZU</span>
+              <span class="benchmark-pill-tag">Community</span>
+            </button>
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('token.sweat')">
+              <span class="benchmark-pill-sym">SWEAT</span>
+              <span class="benchmark-pill-tag">Move-to-earn</span>
+            </button>
+            <button type="button" class="benchmark-pill" onclick="selectBenchmarkToken('wrap.near')">
+              <span class="benchmark-pill-sym">wNEAR</span>
+              <span class="benchmark-pill-tag">Native Wrap</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Quick Buy Review Modal (Part 5.7 & 6.2) -->
@@ -814,8 +1176,10 @@
       // Global State
       let bubbles = [];
       let bubbleMap = new Map();
-      let transferLinks = [];
-      let clusters = [];
+      let rawIdentityLinks = [];
+      let rawIdentityClusters = [];
+      let rawTxns = [];
+      let tokenMeta = null;
       let selectedBubble = null;
       let hoveredBubble = null;
       let draggedBubble = null;
@@ -832,27 +1196,81 @@
       let simulationTime = 0;
       let selectedQuickBuyAmount = 5;
 
+      // Do NOT default to one token; let user scan or pick via modal if not in query params
       const initialParams = new URLSearchParams(location.search);
-      let currentToken = (initialParams.get('token') || 'blackdragon.tkn.near').trim();
-      let currentSymbol = (currentToken.split('.')[0] || 'TOKEN').toUpperCase();
+      let currentToken = (initialParams.get('token') || initialParams.get('ca') || '').trim();
+      let currentSymbol = currentToken ? (currentToken.split('.')[0] || 'TOKEN').toUpperCase() : '';
 
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
       const wrap = document.getElementById('canvas-wrap');
 
-      // Colors from Part 4.3 (Dark Theme Palette)
+      // Theme Palette
       const PALETTE = {
         bg: '#0F1320',
         surface: '#161B2C',
         border: '#2A3149',
         bundler: '#FF6B73',
         whale: '#F0AD4E',
-        cluster: '#7860A9',
-        dexPool: '#4F818D',
+        cluster: '#A992D6',
+        dexPool: '#38BDF8',
         retail: '#6B7490',
+        dev: '#6ACCDC',
         purpleText: '#A992D6',
         success: '#34D399',
         error: '#FF6B73'
+      };
+
+      // Color Shading Helpers for 3D Sphere Spherical Gradients
+      function adjustColor(hex, factor) {
+        if (!hex || !hex.startsWith('#')) return hex;
+        let c = hex.replace('#', '');
+        if (c.length === 3) c = c.split('').map(x => x + x).join('');
+        let num = parseInt(c, 16);
+        let r = Math.min(255, Math.max(0, ((num >> 16) & 0xFF) + factor));
+        let g = Math.min(255, Math.max(0, ((num >> 8) & 0xFF) + factor));
+        let b = Math.min(255, Math.max(0, (num & 0xFF) + factor));
+        return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+      }
+
+      function formatCompactNumber(n) {
+        const num = Number(n);
+        if (isNaN(num)) return '—';
+        if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+        if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+        if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
+        return num.toFixed(2);
+      }
+
+      // Modal Controls
+      window.openTokenScannerModal = function() {
+        const modal = document.getElementById('token-scanner-modal');
+        if (modal) modal.classList.add('open');
+        const input = document.getElementById('modal-token-input');
+        if (input) {
+          input.value = currentToken || '';
+          setTimeout(() => input.focus(), 120);
+        }
+      };
+
+      window.closeTokenScannerModal = function() {
+        const modal = document.getElementById('token-scanner-modal');
+        if (modal) modal.classList.remove('open');
+      };
+
+      window.handleScannerModalSubmit = function(e) {
+        if (e) e.preventDefault();
+        const input = document.getElementById('modal-token-input');
+        const val = (input?.value || '').trim();
+        if (val) {
+          closeTokenScannerModal();
+          openBubbleMap(val);
+        }
+      };
+
+      window.selectBenchmarkToken = function(ca) {
+        closeTokenScannerModal();
+        openBubbleMap(ca);
       };
 
       window.openBubbleMap = function(token) {
@@ -873,7 +1291,11 @@
       };
 
       async function loadData() {
-        if (!currentToken) return;
+        if (!currentToken) {
+          setMapStatus('idle');
+          openTokenScannerModal();
+          return;
+        }
 
         currentSymbol = (currentToken.split('.')[0] || 'TOKEN').toUpperCase();
         updateHeaderInfo();
@@ -881,7 +1303,7 @@
 
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 20000);
+          const timer = setTimeout(() => ctrl.abort(), 22000);
           const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`, { signal: ctrl.signal });
           clearTimeout(timer);
           if (r.ok) {
@@ -899,7 +1321,6 @@
         }
       }
 
-      // Loading / empty / error overlay for the map area (it used to stay blank).
       function setMapStatus(state) {
         const el = document.getElementById('map-status');
         if (!el) return;
@@ -909,16 +1330,22 @@
         if (!state) { el.hidden = true; return; }
         el.hidden = false;
         el.classList.toggle('is-idle', state !== 'loading');
-        if (retry) { retry.hidden = state !== 'error'; retry.onclick = () => loadData(); }
+        if (retry) { retry.hidden = state !== 'error' && state !== 'idle'; retry.onclick = () => (state === 'idle' ? openTokenScannerModal() : loadData()); }
         if (state === 'loading') {
-          title.textContent = 'Loading holders…';
-          sub.textContent = 'Mapping wallets and clusters for ' + (currentSymbol || 'this token') + '.';
+          title.textContent = 'Loading holder distribution…';
+          sub.textContent = 'Mapping wallet networks and cabal clusters for ' + (currentSymbol || 'this token') + '.';
         } else if (state === 'empty') {
           title.textContent = 'No holder data yet';
-          sub.textContent = 'This token has no indexed holders yet. Check the contract address or try again later.';
+          sub.textContent = 'This token has no indexed holders yet. Check the contract address or try again.';
+          if (retry) retry.textContent = 'Scan Another';
+        } else if (state === 'idle') {
+          title.textContent = 'Scan a token to begin';
+          sub.textContent = 'Enter any NEAR token CA or pick a benchmark token to analyze holder clusters and wallet exit speed.';
+          if (retry) { retry.hidden = false; retry.textContent = 'Scan Token'; }
         } else {
           title.textContent = "Couldn't load the bubble map";
-          sub.textContent = 'The data service did not respond. Check your connection and retry.';
+          sub.textContent = 'The indexer service did not respond. Check your connection and retry.';
+          if (retry) retry.textContent = 'Retry';
         }
       }
 
@@ -929,11 +1356,11 @@
         const buySym = document.getElementById('quick-buy-token-symbol');
         const searchInput = document.getElementById('bubble-token-input');
 
-        if (symEl) symEl.textContent = currentSymbol;
-        if (contEl) contEl.textContent = currentToken;
-        if (avText) avText.textContent = currentSymbol.slice(0, 2);
-        if (buySym) buySym.textContent = currentSymbol;
-        if (searchInput && !searchInput.value) searchInput.value = currentToken;
+        if (symEl) symEl.textContent = currentSymbol || '—';
+        if (contEl) contEl.textContent = currentToken || '—';
+        if (avText) avText.textContent = (currentSymbol || 'TK').slice(0, 2);
+        if (buySym) buySym.textContent = currentSymbol || 'TOKEN';
+        if (searchInput && currentToken) searchInput.value = currentToken;
 
         // Cross product links
         const tradeLink = document.getElementById('link-trade-console');
@@ -944,8 +1371,10 @@
 
       function processData(data) {
         const holders = data?.holders || [];
-        const txns = data?.txns || [];
-        const identityClusters = data?.identityClusters || [];
+        rawTxns = data?.txns || [];
+        rawIdentityLinks = data?.identityLinks || [];
+        rawIdentityClusters = data?.identityClusters || [];
+        tokenMeta = data?.meta || {};
 
         bubbles = [];
         bubbleMap.clear();
@@ -954,20 +1383,44 @@
         let bundlerSells = 0;
         let retailSells = 0;
 
+        // Map cluster memberships for instant lookup
+        const addressToClusterMap = new Map();
+        rawIdentityClusters.forEach(c => {
+          (c.addresses || []).forEach(addr => addressToClusterMap.set(addr.toLowerCase(), c.clusterId));
+        });
+
         holders.forEach((h, idx) => {
-          const isPool = (h.address || '').toLowerCase().includes('ref-finance') || (h.address || '').toLowerCase().includes('pool');
-          const isWhale = (h.pct || 0) >= 5 && !isPool;
-          const isBundler = (h.isBundler || idx < 3) && !isPool;
+          const addrLower = (h.address || '').toLowerCase();
+          const isPool = addrLower.includes('ref-finance') || addrLower.includes('pool') || addrLower.includes('v2.ref-finance');
+          const isDev = h.isDev || (!isPool && (idx === 0 || (tokenMeta?.creator && addrLower === tokenMeta.creator.toLowerCase())));
+          const isWhale = (h.pct || 0) >= 5 && !isPool && !isDev;
+          const clusterId = addressToClusterMap.get(addrLower) || null;
+          const isBundler = (h.isBundler || (clusterId && idx < 4 && (h.sellCount || 0) > 0)) && !isPool && !isDev;
 
           let color = PALETTE.retail;
           let category = 'Retail';
 
-          if (isPool) { color = PALETTE.dexPool; category = 'DEX Pool'; }
-          else if (isBundler) { color = PALETTE.bundler; category = 'Bundler'; }
-          else if (isWhale) { color = PALETTE.whale; category = 'Whale'; }
+          if (isPool) {
+            color = PALETTE.dexPool;
+            category = 'DEX Pool';
+          } else if (isDev) {
+            color = PALETTE.dev;
+            category = 'Dev Wallet';
+          } else if (isBundler) {
+            color = PALETTE.bundler;
+            category = 'Bundler / Cabal';
+          } else if (isWhale) {
+            color = PALETTE.whale;
+            category = 'Whale';
+          } else if (clusterId) {
+            color = PALETTE.cluster;
+            category = 'Cluster Member';
+          }
 
           if (isBundler) bundlerSells += (h.sellCount || 0);
           else retailSells += (h.sellCount || 0);
+
+          const r = Math.max(16, Math.min(68, Math.sqrt(h.pct || (100 / (holders.length || 1))) * 18));
 
           const b = {
             id: h.address,
@@ -978,13 +1431,20 @@
             color: color,
             category: category,
             isPool: isPool,
+            isDev: isDev,
+            isWhale: isWhale,
             isBundler: isBundler,
+            clusterId: clusterId,
             sellCount: h.sellCount || 0,
             x: 0,
             y: 0,
-            vx: 0,
-            vy: 0,
-            radius: 20
+            vx: (Math.random() - 0.5) * 1.5,
+            vy: (Math.random() - 0.5) * 1.5,
+            radius: r,
+            targetRadius: r,
+            mass: Math.sqrt(r),
+            seedX: Math.random() * 200,
+            seedY: Math.random() * 200
           };
           bubbles.push(b);
           bubbleMap.set(b.address, b);
@@ -1002,11 +1462,14 @@
         const rEl = document.getElementById('stat-retail-sells-val');
 
         if (hEl) hEl.textContent = holdersCount || '—';
-        if (sEl) sEl.textContent = identityClusters.length || '0';
-        if (cEl) cEl.textContent = identityClusters.length || '0';
+        if (sEl) sEl.textContent = rawIdentityClusters.length || '0';
+        if (cEl) cEl.textContent = rawIdentityClusters.length || '0';
         if (tEl) tEl.textContent = `${top10WhalePct.toFixed(1)}%`;
         if (bEl) bEl.textContent = `${bundlerSells} sells`;
         if (rEl) rEl.textContent = `${retailSells} sells`;
+
+        // Update Live Token Analytics Ribbon & Risk Score
+        updateAnalyticsRibbon(data, top10WhalePct);
 
         // Render List View Table
         renderHoldersTable();
@@ -1015,6 +1478,108 @@
         initPhysics();
         resizeCanvas();
         startRenderLoop();
+      }
+
+      function updateAnalyticsRibbon(data, top10WhalePct) {
+        const meta = data?.meta || {};
+        const bundlers = bubbles.filter(b => b.isBundler);
+        const bundlerPct = bundlers.reduce((acc, b) => acc + b.pct, 0);
+        const devBubble = bubbles.find(b => b.isDev);
+        const devDumped = devBubble && (devBubble.sellCount > 0);
+
+        // Calculate dynamic forensic risk score (0 - 100)
+        let riskScore = 95;
+        if (top10WhalePct > 65) riskScore -= 25;
+        else if (top10WhalePct > 45) riskScore -= 15;
+
+        if (bundlerPct > 20) riskScore -= 30;
+        else if (bundlerPct > 5) riskScore -= 15;
+
+        if (rawIdentityClusters.length >= 4) riskScore -= 20;
+        else if (rawIdentityClusters.length >= 1) riskScore -= 10;
+
+        if (devDumped) riskScore -= 25;
+        riskScore = Math.max(12, Math.min(99, riskScore));
+
+        // Update Ribbon Elements
+        const hudSym = document.getElementById('hud-token-symbol');
+        const hudCa = document.getElementById('hud-token-ca');
+        const hudPrice = document.getElementById('hud-price-val');
+        const hudChg = document.getElementById('hud-chg-val');
+        const hudMcap = document.getElementById('hud-mcap-val');
+        const hudVol = document.getElementById('hud-vol-val');
+        const hudLiq = document.getElementById('hud-liq-val');
+        const hudTop10 = document.getElementById('hud-top10-val');
+        const hudBundle = document.getElementById('hud-bundle-val');
+        const hudDev = document.getElementById('hud-dev-val');
+        const hudRisk = document.getElementById('hud-risk-badge');
+
+        if (hudSym) hudSym.textContent = currentSymbol;
+        if (hudCa) hudCa.textContent = currentToken;
+        if (hudPrice) hudPrice.textContent = meta.priceUsd ? `$${Number(meta.priceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}` : '$0.00';
+        
+        if (hudChg) {
+          const chg = Number(meta.priceChange24h || 0);
+          hudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+          hudChg.style.color = chg >= 0 ? 'var(--color-success)' : 'var(--color-error)';
+        }
+        if (hudMcap) hudMcap.textContent = meta.marketCap ? `$${formatCompactNumber(meta.marketCap)}` : '—';
+        if (hudVol) hudVol.textContent = meta.volume24h ? `$${formatCompactNumber(meta.volume24h)}` : '—';
+        if (hudLiq) hudLiq.textContent = meta.liquidity ? `$${formatCompactNumber(meta.liquidity)}` : '—';
+        if (hudTop10) hudTop10.textContent = `${top10WhalePct.toFixed(1)}%`;
+        if (hudBundle) {
+          hudBundle.textContent = `${bundlerPct.toFixed(1)}% (${bundlers.length})`;
+          hudBundle.style.color = bundlerPct > 10 ? 'var(--color-error)' : (bundlerPct > 0 ? 'var(--color-warning)' : 'var(--color-text)');
+        }
+        if (hudDev) {
+          if (!devBubble) {
+            hudDev.textContent = 'Unidentified';
+            hudDev.style.color = 'var(--color-text-2)';
+          } else if (devDumped) {
+            hudDev.textContent = `⚠️ Sold ${devBubble.sellCount}x`;
+            hudDev.style.color = 'var(--color-error)';
+          } else {
+            hudDev.textContent = `100% Held (${devBubble.pct.toFixed(1)}%)`;
+            hudDev.style.color = 'var(--color-success)';
+          }
+        }
+        if (hudRisk) {
+          if (riskScore >= 75) {
+            hudRisk.className = 'chip chip-pos';
+            hudRisk.textContent = `Safe (${riskScore})`;
+          } else if (riskScore >= 45) {
+            hudRisk.className = 'chip chip-warn';
+            hudRisk.textContent = `Caution (${riskScore})`;
+          } else {
+            hudRisk.className = 'chip chip-neg';
+            hudRisk.textContent = `High Risk (${riskScore})`;
+          }
+        }
+
+        // Sync Inspector Token Summary Card
+        const panelPrice = document.getElementById('panel-token-price');
+        const panelChg = document.getElementById('panel-token-change');
+        const riskScoreNum = document.getElementById('risk-score-num');
+        const riskScoreBadge = document.getElementById('risk-score-badge');
+        const riskDiag = document.getElementById('risk-diagnostic-text');
+
+        if (panelPrice && meta.priceUsd) panelPrice.textContent = `$${Number(meta.priceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+        if (panelChg) {
+          const chg = Number(meta.priceChange24h || 0);
+          panelChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}% ${chg >= 0 ? '▲' : '▼'}`;
+          panelChg.className = chg >= 0 ? 'chip chip-pos' : 'chip chip-neg';
+        }
+        if (riskScoreNum) riskScoreNum.textContent = riskScore;
+        if (riskScoreBadge) {
+          if (riskScore >= 75) { riskScoreBadge.className = 'chip chip-pos'; riskScoreBadge.textContent = 'Low Risk'; }
+          else if (riskScore >= 45) { riskScoreBadge.className = 'chip chip-warn'; riskScoreBadge.textContent = 'Moderate Risk'; }
+          else { riskScoreBadge.className = 'chip chip-neg'; riskScoreBadge.textContent = 'High Danger'; }
+        }
+        if (riskDiag) {
+          if (riskScore >= 75) riskDiag.textContent = `Healthy holder decentralization. Top 10 hold ${top10WhalePct.toFixed(1)}%. Low cabal/bundler concentration.`;
+          else if (riskScore >= 45) riskDiag.textContent = `Moderate concentration risk. Top 10 hold ${top10WhalePct.toFixed(1)}% with ${rawIdentityClusters.length} identified wallet clusters.`;
+          else riskDiag.textContent = `CRITICAL DANGER: Coordinated cluster activity or dev dumping detected (${bundlerPct.toFixed(1)}% bundler/cluster weight).`;
+        }
       }
 
       function renderEmptyState() {
@@ -1039,7 +1604,7 @@
           <tr>
             <td class="mono-sm">${b.rank}</td>
             <td class="mono-sm">${b.address}</td>
-            <td><span class="chip chip-neutral">${b.category}</span></td>
+            <td><span class="chip ${b.isBundler ? 'chip-neg' : (b.isDev ? 'chip-pos' : (b.isWhale ? 'chip-warn' : 'chip-neutral'))}">${b.category}</span></td>
             <td class="mono-data text-right">${b.pct.toFixed(2)}%</td>
             <td class="mono-sm text-right">${b.sellCount}</td>
             <td class="text-right">
@@ -1049,6 +1614,9 @@
         `).join('');
       }
 
+      // ─────────────────────────────────────────────────────────────
+      // Fluid Multi-Body Physics Engine (Verlet + Brownian Fluid Drift)
+      // ─────────────────────────────────────────────────────────────
       function initPhysics() {
         const W = canvas.width || 800;
         const H = canvas.height || 600;
@@ -1056,11 +1624,12 @@
         const centerY = H / 2;
 
         bubbles.forEach((b, i) => {
-          b.radius = Math.max(14, Math.min(60, Math.sqrt(b.pct) * 16));
-          const angle = i * 0.8;
-          const dist = 30 + Math.sqrt(i) * 55;
+          const angle = i * 0.785;
+          const dist = 20 + Math.sqrt(i) * 58;
           b.x = centerX + Math.cos(angle) * dist;
           b.y = centerY + Math.sin(angle) * dist;
+          b.vx = (Math.random() - 0.5) * 1.5;
+          b.vy = (Math.random() - 0.5) * 1.5;
         });
       }
 
@@ -1074,7 +1643,7 @@
       function startRenderLoop() {
         if (animFrameId) cancelAnimationFrame(animFrameId);
 
-        function loop(timestamp) {
+        function loop() {
           updatePhysics();
           render();
           animFrameId = requestAnimationFrame(loop);
@@ -1086,22 +1655,116 @@
         simulationTime += 0.016;
         const W = canvas.width;
         const H = canvas.height;
+        if (!W || !H || bubbles.length === 0) return;
+
         const cx = W / 2;
         const cy = H / 2;
 
-        for (const b of bubbles) {
+        // Map cluster centers for magnetic spring attraction
+        const clusterCenters = new Map();
+        if (showSybilTraces) {
+          for (let i = 0; i < bubbles.length; i++) {
+            const b = bubbles[i];
+            if (b.clusterId) {
+              if (!clusterCenters.has(b.clusterId)) {
+                clusterCenters.set(b.clusterId, { sumX: 0, sumY: 0, count: 0 });
+              }
+              const c = clusterCenters.get(b.clusterId);
+              c.sumX += b.x;
+              c.sumY += b.y;
+              c.count++;
+            }
+          }
+        }
+
+        // Apply forces to each bubble
+        for (let i = 0; i < bubbles.length; i++) {
+          const b = bubbles[i];
           if (b === draggedBubble) continue;
-          b.x += Math.cos(simulationTime + b.rank) * 0.2;
-          b.y += Math.sin(simulationTime + b.rank) * 0.2;
+
+          // 1. Center Attractor Gravity (soft inward pull)
+          let fx = (cx - b.x) * 0.00065;
+          let fy = (cy - b.y) * 0.00065;
+
+          // 2. Liquid Brownian drift (natural, undulating fluid buoyancy)
+          fx += Math.sin(simulationTime * 0.75 + b.seedX) * 0.045;
+          fy += Math.cos(simulationTime * 0.65 + b.seedY) * 0.045;
+
+          // 3. Cluster spring attraction (pulls cabal wallets toward each other)
+          if (showSybilTraces && b.clusterId && clusterCenters.has(b.clusterId)) {
+            const c = clusterCenters.get(b.clusterId);
+            if (c.count > 1) {
+              const clusterCx = c.sumX / c.count;
+              const clusterCy = c.sumY / c.count;
+              fx += (clusterCx - b.x) * 0.0022;
+              fy += (clusterCy - b.y) * 0.0022;
+            }
+          }
+
+          // Damping and integration
+          b.vx = (b.vx + fx) * 0.915; // Viscous liquid friction
+          b.vy = (b.vy + fy) * 0.915;
+          b.x += b.vx;
+          b.y += b.vy;
+        }
+
+        // 4. Pairwise Elastic Multi-Body Collision Relaxation & Electrostatic Repulsion
+        const len = bubbles.length;
+        for (let i = 0; i < len; i++) {
+          const b1 = bubbles[i];
+          for (let j = i + 1; j < len; j++) {
+            const b2 = bubbles[j];
+            const dx = b2.x - b1.x;
+            const dy = b2.y - b1.y;
+            const dist = Math.hypot(dx, dy) || 0.001;
+            const minDist = b1.radius + b2.radius + 6; // 6px breathing room
+
+            if (dist < minDist) {
+              const overlap = (minDist - dist) / dist;
+              const pushForce = overlap * 0.28;
+              const totalMass = b1.mass + b2.mass;
+              const r1 = b2.mass / totalMass;
+              const r2 = b1.mass / totalMass;
+
+              if (b1 !== draggedBubble) {
+                b1.x -= dx * pushForce * r1;
+                b1.y -= dy * pushForce * r1;
+                b1.vx -= dx * pushForce * 0.1 * r1;
+                b1.vy -= dy * pushForce * 0.1 * r1;
+              }
+              if (b2 !== draggedBubble) {
+                b2.x += dx * pushForce * r2;
+                b2.y += dy * pushForce * r2;
+                b2.vx += dx * pushForce * 0.1 * r2;
+                b2.vy += dy * pushForce * 0.1 * r2;
+              }
+            } else if (dist < minDist * 2.2) {
+              // Gentle spatial repulsion prevents overcrowding
+              const softRepulse = (1 - dist / (minDist * 2.2)) * 0.035;
+              const nx = dx / dist;
+              const ny = dy / dist;
+              if (b1 !== draggedBubble) {
+                b1.vx -= nx * softRepulse;
+                b1.vy -= ny * softRepulse;
+              }
+              if (b2 !== draggedBubble) {
+                b2.vx += nx * softRepulse;
+                b2.vy += ny * softRepulse;
+              }
+            }
+          }
         }
       }
 
+      // ─────────────────────────────────────────────────────────────
+      // High-End Canvas Rendering Engine (3D Spheres, Badges, Halos)
+      // ─────────────────────────────────────────────────────────────
       function render() {
         const W = canvas.width;
         const H = canvas.height;
         ctx.clearRect(0, 0, W, H);
 
-        // Dark Theme Canvas Ground (#0F1320)
+        // Dark Canvas Ground (#0F1320)
         ctx.fillStyle = PALETTE.bg;
         ctx.fillRect(0, 0, W, H);
 
@@ -1109,60 +1772,187 @@
         ctx.translate(panX, panY);
         ctx.scale(zoom, zoom);
 
-        // Render Bubbles with 1px --color-bg stroke
-        for (const b of bubbles) {
+        // 1. Draw Cluster & Sybil Filaments (Connecting Coordinated Wallets)
+        if (showSybilTraces && rawIdentityClusters.length > 0) {
+          rawIdentityClusters.forEach(c => {
+            const addrs = c.addresses || [];
+            const isBundlerCluster = c.riskFactor === 'HIGH';
+            ctx.strokeStyle = isBundlerCluster ? 'rgba(255, 107, 115, 0.45)' : 'rgba(169, 146, 214, 0.45)';
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([5, 5]);
+            ctx.lineDashOffset = -simulationTime * 25;
+
+            for (let i = 0; i < addrs.length; i++) {
+              const b1 = bubbleMap.get(addrs[i]);
+              if (!b1) continue;
+              for (let j = i + 1; j < addrs.length; j++) {
+                const b2 = bubbleMap.get(addrs[j]);
+                if (!b2) continue;
+                ctx.beginPath();
+                ctx.moveTo(b1.x, b1.y);
+                ctx.lineTo(b2.x, b2.y);
+                ctx.stroke();
+              }
+            }
+            ctx.setLineDash([]);
+          });
+        }
+
+        // 2. Render Bubbles with 3D Spherical Gradients, Glowing Halos, and Badges
+        for (let i = 0; i < bubbles.length; i++) {
+          const b = bubbles[i];
           if (hideDust && b.pct < 0.05) continue;
 
+          // Category Glowing Aura / Halo
+          const auraGrad = ctx.createRadialGradient(b.x, b.y, b.radius * 0.7, b.x, b.y, b.radius * 1.45);
+          if (b.isDev) {
+            auraGrad.addColorStop(0, 'rgba(106, 204, 220, 0.40)');
+          } else if (b.isBundler) {
+            auraGrad.addColorStop(0, 'rgba(255, 107, 115, 0.40)');
+          } else if (b.isWhale) {
+            auraGrad.addColorStop(0, 'rgba(240, 173, 78, 0.35)');
+          } else if (b.clusterId) {
+            auraGrad.addColorStop(0, 'rgba(169, 146, 214, 0.35)');
+          } else if (b.isPool) {
+            auraGrad.addColorStop(0, 'rgba(56, 189, 248, 0.30)');
+          } else {
+            auraGrad.addColorStop(0, 'rgba(107, 116, 144, 0.15)');
+          }
+          auraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
           ctx.beginPath();
-          ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-          ctx.fillStyle = b.color;
+          ctx.arc(b.x, b.y, b.radius * 1.45, 0, Math.PI * 2);
+          ctx.fillStyle = auraGrad;
           ctx.fill();
 
-          // 1px --color-bg stroke so overlapping bubbles stay readable (Section 4.3)
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = PALETTE.bg;
-          ctx.stroke();
-
-          // Active seller ring
-          if (b.sellCount > 0 && !b.isPool) {
+          // Outer Role Rings
+          if (b.isWhale) {
+            // Golden dashed orbit ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = '#F0AD4E';
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([4, 4]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else if (b.isBundler) {
+            // Crimson hazard ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius + 3.5, 0, Math.PI * 2);
+            ctx.strokeStyle = '#FF6B73';
+            ctx.lineWidth = 1.8;
+            ctx.setLineDash([3, 3]);
+            ctx.lineDashOffset = simulationTime * 15;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else if (b.isDev) {
+            // Cyan double ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius + 3.5, 0, Math.PI * 2);
+            ctx.strokeStyle = '#6ACCDC';
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+          } else if (b.isPool) {
+            // Teal double ring
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.radius + 3, 0, Math.PI * 2);
-            ctx.strokeStyle = PALETTE.error;
+            ctx.strokeStyle = '#38BDF8';
             ctx.lineWidth = 1.5;
-            ctx.setLineDash([3, 3]);
+            ctx.stroke();
+          }
+
+          // Active seller pulsating dashed ring
+          if (b.sellCount > 0 && !b.isPool) {
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius + 5.5, 0, Math.PI * 2);
+            ctx.strokeStyle = '#FF6B73';
+            ctx.lineWidth = 1.8;
+            ctx.setLineDash([4, 4]);
+            ctx.lineDashOffset = -simulationTime * 20;
             ctx.stroke();
             ctx.setLineDash([]);
           }
 
-          // Selection / Hover highlight ring
+          // 3D Spherical Radial Gradient Body
+          const sphereGrad = ctx.createRadialGradient(
+            b.x - b.radius * 0.35,
+            b.y - b.radius * 0.35,
+            b.radius * 0.05,
+            b.x,
+            b.y,
+            b.radius
+          );
+          sphereGrad.addColorStop(0, adjustColor(b.color, 65));
+          sphereGrad.addColorStop(0.35, b.color);
+          sphereGrad.addColorStop(1, adjustColor(b.color, -55));
+
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+          ctx.fillStyle = sphereGrad;
+          ctx.fill();
+
+          // Dark boundary stroke
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = PALETTE.bg;
+          ctx.stroke();
+
+          // Specular Glint (Top-left glass reflection)
+          ctx.beginPath();
+          ctx.arc(b.x - b.radius * 0.32, b.y - b.radius * 0.32, b.radius * 0.26, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+          ctx.fill();
+
+          // Hover / Selection Highlight
           if (b === selectedBubble) {
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
+            ctx.arc(b.x, b.y, b.radius + 5, 0, Math.PI * 2);
             ctx.strokeStyle = '#6ACCDC';
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 2.8;
             ctx.stroke();
           } else if (b === hoveredBubble) {
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 3, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(106, 205, 220, 0.6)';
-            ctx.lineWidth = 1.5;
+            ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(106, 204, 220, 0.7)';
+            ctx.lineWidth = 1.8;
             ctx.stroke();
           }
 
-          // Label
-          if (b.radius >= 16) {
+          // Labels & Badges
+          if (b.isDev && b.radius >= 20) {
+            // Dev Crown Badge
+            ctx.font = '12px "DM Sans", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('👑', b.x, b.y - b.radius * 0.5);
+          }
+
+          if (b.radius >= 15) {
             ctx.fillStyle = '#FFFFFF';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            ctx.shadowBlur = 4;
             ctx.font = '700 11px "JetBrains Mono", monospace';
-            ctx.fillText(`${b.pct.toFixed(1)}%`, b.x, b.y);
+            const textY = (b.isDev && b.radius >= 20) ? (b.y + 4) : b.y;
+            ctx.fillText(`${b.pct.toFixed(1)}%`, b.x, textY);
+            ctx.shadowBlur = 0;
+          }
+
+          // Address snippet on large bubbles
+          if (b.radius >= 28) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.font = '9px "JetBrains Mono", monospace';
+            const shortAddr = b.address.length > 12 ? (b.address.slice(0, 5) + '…' + b.address.slice(-3)) : b.address;
+            ctx.fillText(shortAddr, b.x, b.y + b.radius * 0.45);
           }
         }
 
         ctx.restore();
       }
 
-      // Bubble Selection & Inspector
+      // ─────────────────────────────────────────────────────────────
+      // Bubble Selection & Deep Wallet Forensics
+      // ─────────────────────────────────────────────────────────────
       window.selectBubbleByAddress = function(addr) {
         const b = bubbleMap.get(addr);
         if (b) selectBubble(b);
@@ -1180,8 +1970,6 @@
         const rankEl = document.getElementById('wallet-rank-val');
         const balEl = document.getElementById('wallet-balance-val');
         const sellsEl = document.getElementById('wallet-sells-val');
-        const exitPct = document.getElementById('wallet-exit-pct');
-        const exitBar = document.getElementById('wallet-exit-bar');
         const chipEl = document.getElementById('wallet-category-chip');
         const expLink = document.getElementById('wallet-explorer-link');
 
@@ -1192,14 +1980,110 @@
         if (sellsEl) sellsEl.textContent = `${b.sellCount} sells`;
         if (chipEl) {
           chipEl.textContent = b.category;
-          chipEl.className = b.isBundler ? 'chip chip-neg' : (b.category === 'Whale' ? 'chip chip-warn' : 'chip chip-neutral');
+          chipEl.className = b.isBundler ? 'chip chip-neg' : (b.isDev ? 'chip chip-pos' : (b.isWhale ? 'chip chip-warn' : 'chip chip-neutral'));
         }
         if (expLink) expLink.href = `https://nearblocks.io/address/${encodeURIComponent(b.address)}`;
 
-        // Expand mobile sheet on selection to half state
+        // Expand mobile bottom sheet to half state on selection
         const drawer = document.getElementById('inspector-drawer');
         if (drawer && window.innerWidth < 1024) {
           drawer.classList.add('sheet-half');
+        }
+
+        // Fetch Deep Wallet Forensics & Trade Speed
+        fetchWalletForensics(b.address);
+      }
+
+      async function fetchWalletForensics(account) {
+        const speedBadge = document.getElementById('wallet-speed-badge');
+        const avgHoldEl = document.getElementById('wallet-avg-hold');
+        const dumpRateEl = document.getElementById('wallet-dump-rate');
+        const hazardLabel = document.getElementById('wallet-hazard-label');
+        const hazardBar = document.getElementById('wallet-hazard-bar');
+        const otherTokensCount = document.getElementById('wallet-other-tokens-count');
+        const otherTokensList = document.getElementById('wallet-other-tokens-list');
+        const tradesCount = document.getElementById('wallet-trades-count');
+        const tradesList = document.getElementById('wallet-trades-list');
+
+        if (speedBadge) { speedBadge.className = 'chip chip-neutral'; speedBadge.textContent = 'Scanning...'; }
+        if (avgHoldEl) avgHoldEl.textContent = '—';
+        if (dumpRateEl) dumpRateEl.textContent = '—';
+        if (hazardLabel) hazardLabel.textContent = 'Analyzing...';
+        if (hazardBar) { hazardBar.style.width = '20%'; hazardBar.style.backgroundColor = '#6B7490'; }
+        if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:12px;">Querying FastNEAR FT portfolio...</div>';
+        if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:12px;">Checking NearBlocks trade history...</div>';
+
+        try {
+          const res = await fetch(`/api/wallet-forensics/${encodeURIComponent(account)}?currentToken=${encodeURIComponent(currentToken)}`);
+          if (!res.ok) throw new Error('Failed to fetch forensics');
+          const data = await res.json();
+          const stats = data?.stats || {};
+          const otherTokens = data?.otherTokens || [];
+          const pastTrades = data?.pastTrades || [];
+
+          // Speed Classification & Hazard
+          if (speedBadge) {
+            speedBadge.textContent = stats.speedClassification || 'Inactive';
+            if (stats.hazardLevel === 'CRITICAL' || stats.hazardLevel === 'HIGH') speedBadge.className = 'chip chip-neg';
+            else if (stats.hazardLevel === 'MODERATE') speedBadge.className = 'chip chip-warn';
+            else speedBadge.className = 'chip chip-pos';
+          }
+          if (avgHoldEl) avgHoldEl.textContent = stats.avgHoldStr || '—';
+          if (dumpRateEl) dumpRateEl.textContent = `${stats.dumpRate30m ?? 0}%`;
+          if (hazardLabel) {
+            hazardLabel.textContent = `${stats.hazardLevel || 'LOW'} (${stats.hazardScore ?? 0}/100)`;
+            hazardLabel.style.color = stats.hazardColor || '#34D399';
+          }
+          if (hazardBar) {
+            hazardBar.style.width = `${Math.max(5, Math.min(100, stats.hazardScore || 10))}%`;
+            hazardBar.style.backgroundColor = stats.hazardColor || '#34D399';
+          }
+
+          // Other Tokens Held List
+          if (otherTokensCount) otherTokensCount.textContent = `${otherTokens.length} token${otherTokens.length === 1 ? '' : 's'}`;
+          if (otherTokensList) {
+            if (otherTokens.length === 0) {
+              otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No other FT tokens found</div>';
+            } else {
+              otherTokensList.innerHTML = otherTokens.slice(0, 15).map(t => `
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.04);border-radius:var(--radius-md);padding:6px 10px;">
+                  <div style="display:flex;flex-direction:column;min-width:0;">
+                    <span style="font-weight:700;font-size:12px;color:var(--color-text);">${t.symbol}</span>
+                    <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">${t.contract_id}</span>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" onclick="openBubbleMap('${t.contract_id}')" style="min-width:auto;height:24px;padding:0 6px;font-size:11px;color:var(--color-primary);" title="Scan this token in RacerBubble">
+                    Scan ↗
+                  </button>
+                </div>
+              `).join('');
+            }
+          }
+
+          // Past Trades & Hold Duration Timeline
+          if (tradesCount) tradesCount.textContent = `${pastTrades.length} trade${pastTrades.length === 1 ? '' : 's'}`;
+          if (tradesList) {
+            if (pastTrades.length === 0) {
+              tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No recent dump trades recorded</div>';
+            } else {
+              tradesList.innerHTML = pastTrades.slice(0, 10).map(tr => `
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.04);border-radius:var(--radius-md);padding:6px 10px;">
+                  <div style="display:flex;flex-direction:column;">
+                    <span style="font-size:12px;font-weight:600;color:var(--color-text);">${tr.token}</span>
+                    <span style="font-size:10px;color:var(--color-text-2);">Sold: ${tr.soldAt ? new Date(tr.soldAt).toLocaleDateString() : 'Recent'}</span>
+                  </div>
+                  <span class="chip ${tr.isQuickDump ? 'chip-neg' : 'chip-neutral'}" style="font-size:10px;height:20px;padding:0 6px;">
+                    ${tr.isQuickDump ? '⚡ ' : '⏱️ '}${tr.holdStr}
+                  </span>
+                </div>
+              `).join('');
+            }
+          }
+        } catch (e) {
+          console.error('Error fetching wallet forensics:', e);
+          if (speedBadge) { speedBadge.textContent = 'Unavailable'; }
+          if (hazardLabel) { hazardLabel.textContent = 'Data offline'; }
+          if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">FastNEAR offline</div>';
+          if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">NearBlocks offline</div>';
         }
       }
 
@@ -1378,6 +2262,10 @@
           dragStartY = touch.clientY;
 
           if (draggedBubble) {
+            const vx = (dx / zoom) * 0.45;
+            const vy = (dy / zoom) * 0.45;
+            draggedBubble.vx = vx;
+            draggedBubble.vy = vy;
             draggedBubble.x += dx / zoom;
             draggedBubble.y += dy / zoom;
           } else {
@@ -1458,6 +2346,10 @@
           mouseStartY = e.clientY;
 
           if (draggedBubble) {
+            const vx = (dx / zoom) * 0.45;
+            const vy = (dy / zoom) * 0.45;
+            draggedBubble.vx = vx;
+            draggedBubble.vy = vy;
             draggedBubble.x += dx / zoom;
             draggedBubble.y += dy / zoom;
           } else {
@@ -1636,7 +2528,6 @@
         if (!drawer || !handle) return;
 
         let startY = 0;
-        let startTransform = 0;
 
         handle.addEventListener('touchstart', (e) => {
           startY = e.touches[0].clientY;
@@ -1670,7 +2561,12 @@
       });
 
       document.addEventListener('DOMContentLoaded', () => {
-        loadData();
+        if (currentToken) {
+          loadData();
+        } else {
+          setMapStatus('idle');
+          openTokenScannerModal();
+        }
       });
     })();
   </script>
