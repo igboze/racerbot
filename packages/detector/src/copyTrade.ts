@@ -235,13 +235,13 @@ async function handleTrackerAlert(
           { text: '⚡ Buy 2 N', callback_data: `buy_fixed:${swap.tokenAddress}:2` },
         ],
         [
-          { text: '📊 View Token Card', callback_data: `token_${swap.tokenAddress}` },
+          { text: '📊 View Token Card', callback_data: `token_refresh:${swap.tokenAddress}` },
           { text: '📈 Chart', url: `https://dexscreener.com/near/${swap.tokenAddress}` },
         ],
       ]
     : [
         [
-          { text: '📊 View Token & Holdings', callback_data: `token_${swap.tokenAddress}` },
+          { text: '📊 View Token & Holdings', callback_data: `token_refresh:${swap.tokenAddress}` },
           { text: '📈 Chart', url: `https://dexscreener.com/near/${swap.tokenAddress}` },
         ],
       ];

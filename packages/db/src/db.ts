@@ -2141,6 +2141,15 @@ function rowToSnipeOrder(row: any): SnipeOrderRecord {
 /** Guard against runaway order creation. */
 export const MAX_ACTIVE_SNIPE_ORDERS_PER_USER = 10;
 
+/**
+ * Solana addresses are case-sensitive base58 and must be stored as given.
+ * NEAR account ids are lowercase by definition, so they keep being normalised.
+ */
+function normalizeChainAddress(addr: string): string {
+  const t = addr.trim();
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(t) ? t : t.toLowerCase();
+}
+
 export async function createSnipeOrder(params: {
   user_id: string;
   snipe_type: 'token' | 'deployer';
@@ -2157,8 +2166,8 @@ export async function createSnipeOrder(params: {
     [
       params.user_id,
       params.snipe_type,
-      params.token_address ? params.token_address.toLowerCase() : null,
-      params.deployer_address ? params.deployer_address.toLowerCase() : null,
+      params.token_address ? normalizeChainAddress(params.token_address) : null,
+      params.deployer_address ? normalizeChainAddress(params.deployer_address) : null,
       params.amount_near,
       params.execute_after ?? null,
     ]
@@ -2238,11 +2247,22 @@ export async function getActiveDeployerSnipes(deployerAddress: string): Promise<
   return r.rows.map(rowToSnipeOrder);
 }
 
+/** All armed deployer snipes (used by the Solana creator watcher). */
+export async function getAllActiveDeployerSnipes(): Promise<SnipeOrderRecord[]> {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT * FROM snipe_orders
+     WHERE snipe_type = 'deployer' AND status = 'active' AND deployer_address IS NOT NULL
+       AND (execute_after IS NULL OR execute_after <= NOW())`
+  );
+  return r.rows.map(rowToSnipeOrder);
+}
+
 /** Distinct token addresses with currently active token snipe orders. */
 export async function getDistinctActiveSnipeTokens(): Promise<string[]> {
   const db = await getDb();
   const r = await db.query(
-    `SELECT DISTINCT lower(so.token_address) AS token_address FROM snipe_orders so
+    `SELECT DISTINCT so.token_address AS token_address FROM snipe_orders so
      WHERE so.snipe_type = 'token' AND so.status = 'active' AND so.token_address IS NOT NULL
        AND (so.execute_after IS NULL OR so.execute_after <= NOW())
        AND NOT EXISTS (
@@ -2365,7 +2385,7 @@ export async function createCopyTradeTarget(params: CreateCopyTradeTargetParams)
     [
       generateId(),
       params.user_id,
-      params.target_wallet.trim().toLowerCase(),
+      normalizeChainAddress(params.target_wallet),
       params.referrer_id ?? null,
       params.buy_amount_near ?? 1.0,
       params.copy_sells ?? true,
@@ -2402,7 +2422,7 @@ export async function getCopyTargetFollowersByWallet(
 export async function getAllActiveCopyTargetWallets(): Promise<string[]> {
   const db = await getDb();
   const res = await db.query(
-    `SELECT DISTINCT LOWER(TRIM(target_wallet)) AS target_wallet FROM copy_trade_targets WHERE status = 'active'`
+    `SELECT DISTINCT TRIM(target_wallet) AS target_wallet FROM copy_trade_targets WHERE status = 'active'`
   );
   return res.rows.map((r: any) => r.target_wallet as string);
 }
@@ -3401,6 +3421,8 @@ export interface RaceFleetWalletRecord {
   wallet_index: number;
   encrypted_private_key: string;
   is_active: boolean;
+  /** 'near' (named subaccount) or 'solana' (base58 address). */
+  chain: 'near' | 'solana';
   created_at: Date;
 }
 
@@ -3444,6 +3466,7 @@ export interface CreateRaceFleetWalletParams {
   account_id: string;
   wallet_index: number;
   encrypted_private_key: string;
+  chain?: 'near' | 'solana';
 }
 
 export interface CreateRaceFleetOrderParams {
@@ -3489,6 +3512,7 @@ function rowToRaceFleetWallet(row: any): RaceFleetWalletRecord {
     wallet_index: Number(row.wallet_index),
     encrypted_private_key: row.encrypted_private_key,
     is_active: Boolean(row.is_active),
+    chain: row.chain === 'solana' ? 'solana' : 'near',
     created_at: new Date(row.created_at),
   };
 }
@@ -3596,24 +3620,27 @@ export async function createRaceFleetWallets(wallets: CreateRaceFleetWalletParam
   for (const w of wallets) {
     const res = await db.query(
       `INSERT INTO race_fleet_wallets (
-        fleet_id, user_id, account_id, wallet_index, encrypted_private_key, is_active
-      ) VALUES ($1, $2, $3, $4, $5, TRUE)
+        fleet_id, user_id, account_id, wallet_index, encrypted_private_key, is_active, chain
+      ) VALUES ($1, $2, $3, $4, $5, TRUE, $6)
       ON CONFLICT (account_id) DO UPDATE SET
         encrypted_private_key = EXCLUDED.encrypted_private_key,
         is_active = TRUE
       RETURNING *`,
-      [w.fleet_id, w.user_id, w.account_id, w.wallet_index, w.encrypted_private_key]
+      [w.fleet_id, w.user_id, w.account_id, w.wallet_index, w.encrypted_private_key, w.chain ?? 'near']
     );
     results.push(rowToRaceFleetWallet(res.rows[0]));
   }
   return results;
 }
 
-export async function getRaceFleetWallets(fleetId: string): Promise<RaceFleetWalletRecord[]> {
+/** Fleet wallets for ONE chain (NEAR by default, so existing NEAR code is unchanged). */
+export async function getRaceFleetWallets(fleetId: string, chain: 'near' | 'solana' = 'near'): Promise<RaceFleetWalletRecord[]> {
   const db = await getDb();
   const res = await db.query(
-    'SELECT * FROM race_fleet_wallets WHERE fleet_id = $1 AND is_active = TRUE ORDER BY wallet_index ASC',
-    [fleetId]
+    `SELECT * FROM race_fleet_wallets
+     WHERE fleet_id = $1 AND is_active = TRUE AND COALESCE(chain, 'near') = $2
+     ORDER BY wallet_index ASC`,
+    [fleetId, chain]
   );
   return res.rows.map(rowToRaceFleetWallet);
 }

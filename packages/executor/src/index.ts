@@ -96,9 +96,9 @@ async function main(): Promise<void> {
         }
         // Notify the user via Telegram — notify.ts resolves telegram_id from data.user_id
         try {
-          const rawToken = event.token_out !== 'near' && event.token_out !== 'wrap.near' && event.token_out !== 'sui' && event.token_out !== '0x0'
-            ? event.token_out
-            : event.token_in;
+          const NATIVE = new Set(['near', 'wrap.near', 'sui', '0x0', 'So11111111111111111111111111111111111111112']);
+          const isSellEvent = !NATIVE.has(event.token_in);
+          const rawToken = isSellEvent ? event.token_in : event.token_out;
           await redis.publish(
             CHANNELS.NOTIFY_USER,
             JSON.stringify({
@@ -110,7 +110,8 @@ async function main(): Promise<void> {
                 txHash: 'none',
                 reason: err.message ?? 'Unknown executor error',
                 token: rawToken,
-                is_sell: event.token_in !== 'near' && event.token_in !== 'wrap.near' && event.token_in !== 'sui',
+                is_sell: isSellEvent,
+                chain: event.chain,
                 trigger_id: (event as any).trigger_id,
               },
             })
@@ -153,6 +154,8 @@ async function main(): Promise<void> {
                 txHash: 'none',
                 reason: err.message ?? 'Auto-buy executor error',
                 token: signal.token_address,
+                is_sell: false,
+                chain: signal.chain,
               },
             })
           );

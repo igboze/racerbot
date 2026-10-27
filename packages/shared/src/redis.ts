@@ -101,6 +101,8 @@ export interface AutoBuySignal {
   snipe_order_id?: string;
   snipe_trigger_id?: string;
   snipe_type?: 'token' | 'deployer';
+  /** Chain of the signal. Absent means NEAR (legacy). */
+  chain?: SupportedChain;
 }
 
 export interface PriceUpdateEvent {
@@ -124,6 +126,7 @@ export interface NotifyUserEvent {
     | 'auto_buy_skipped'
     | 'trade_failed'
     | 'trade_confirmed'
+    | 'solana_trade_confirmed'
     | 'deposit_received'
     | 'limit_order_fill'
     | 'limit_order_failed';

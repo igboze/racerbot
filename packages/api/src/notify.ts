@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, type NotifyUserEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isSolanaAddress, type NotifyUserEvent } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
 import { PUBLIC_URL } from './config.js';
 import { executeFleetBundleBuy, executeFleetBundleSell } from './raceFleet.js';
@@ -237,9 +237,14 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         return sanitize(rawReason.slice(0, 200));
       })();
 
-      const isSell = data.is_sell === true || Boolean(token && token !== 'wrap.near' && token !== 'near' && token !== 'sui' && token !== '0x0');
+      const isSolanaFail = data.chain === 'solana';
+      const isSell = typeof data.is_sell === 'boolean'
+        ? data.is_sell
+        : Boolean(token && token !== 'wrap.near' && token !== 'near' && token !== 'sui' && token !== '0x0');
       const refundNote = isSell
         ? 'No funds were lost on a failed swap — your tokens remain in your wallet. Use /wallet to check.'
+        : isSolanaFail
+        ? 'A failed Solana swap does not move your SOL (only a tiny network fee may apply). Use /wallet to check.'
         : 'No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check.';
       const retryNote = data.trigger_id ? '\n\n🔄 _Stop loss trigger remains active and will retry on the next price tick._' : '';
 
@@ -290,6 +295,38 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         `${pnlEmoji} PnL: \`${pnlSign}${pnlPct.toFixed(1)}%\` (\`${pnlSign}${pnlNear.toFixed(4)} NEAR\`)`,
         { parse_mode: 'Markdown' }
       );
+      break;
+    }
+
+    case 'solana_trade_confirmed': {
+      const side = data.side === 'sell' ? 'sell' : 'buy';
+      const tokenName = sanitize((data.tokenName as string) || (data.tokenSymbol as string) || 'TOKEN');
+      const tokenSym = sanitize((data.tokenSymbol as string) || 'TOKEN');
+      const qty = Number(data.tokenQty ?? 0);
+      const priceSol = Number(data.priceSol ?? 0);
+      const solAmount = Number(data.solAmount ?? 0);
+      const qtyDisplay = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(3)}M`
+        : qty >= 1_000 ? `${(qty / 1_000).toFixed(2)}K`
+        : qty >= 0.0001 ? qty.toFixed(4) : qty.toExponential(3);
+      const txHash = String(data.txHash || '');
+      const lines = side === 'buy'
+        ? `✅ *Buy Confirmed on Solana!*\n\n` +
+          `🪙 *${tokenName}* (${tokenSym})\n` +
+          `📦 Received: \`${qtyDisplay} ${tokenSym}\`\n` +
+          `💸 Spent: \`${solAmount.toFixed(4)} SOL\`\n` +
+          `💵 Entry: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``
+        : `✅ *Sell Confirmed on Solana!*\n\n` +
+          `🪙 *${tokenName}* (${tokenSym})\n` +
+          `📦 Sold: \`${qtyDisplay} ${tokenSym}\`\n` +
+          `💰 Received: \`${solAmount.toFixed(4)} SOL\`\n` +
+          `💵 Price: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``;
+      const keyboard: any[] = [];
+      if (txHash) keyboard.push([{ text: '🔗 View on Solscan', url: `https://solscan.io/tx/${txHash}` }]);
+      if (data.positionId) keyboard.push([{ text: '📊 View Position', callback_data: `token_detail:${data.positionId}` }]);
+      await _bot.telegram.sendMessage(telegramId, lines, {
+        parse_mode: 'Markdown',
+        ...(keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+      } as any);
       break;
     }
 
@@ -367,13 +404,17 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const sideText = side === 'buy' ? 'Limit Buy Triggered' : 'Limit Sell Triggered';
       const currentPrice = Number(data.current_price || 0);
       const currentMcap = Number(data.current_mcap || 0);
-      const amount = data.amount_input ? `${Number(data.amount_input).toFixed(2)} NEAR` : (data.sell_pct ? `${data.sell_pct}%` : 'Position');
+      const loUnit = (data.unit as string) || 'NEAR';
+      const amount = data.amount_input ? `${Number(data.amount_input).toFixed(loUnit === 'SOL' ? 3 : 2)} ${loUnit}` : (data.sell_pct ? `${data.sell_pct}%` : 'Position');
+      const priceLine = loUnit === 'SOL'
+        ? `📊 <b>Trigger Price:</b> ${currentPrice > 0 ? currentPrice.toExponential(4) : '—'} SOL\n`
+        : `📊 <b>Trigger Price:</b> $${currentPrice.toFixed(6)}\n`;
 
       const msg =
         `🎯 <b>${sideIcon} ${sideText}!</b>\n\n` +
         `🪙 <b>Token:</b> $${symbol}\n` +
         `💵 <b>Amount:</b> ${amount}\n` +
-        `📊 <b>Trigger Price:</b> $${currentPrice.toFixed(6)}\n` +
+        priceLine +
         `📈 <b>Market Cap:</b> $${currentMcap.toLocaleString('en-US', { maximumFractionDigits: 0 })}\n\n` +
         `🚀 <i>Swap dispatched to DEX executor. Confirmation will follow shortly.</i>`;
 
@@ -383,7 +424,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
           inline_keyboard: [
             [
               { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
-              { text: '🎯 Active Orders', callback_data: 'menu_limit_orders' },
+              { text: '🎯 Active Orders', callback_data: 'menu_lo' },
             ],
           ],
         },
@@ -398,6 +439,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const reason = (data.reason as string) || 'Trigger condition met';
       const tokenAddress = (data.token_address as string) || '';
       const currentPrice = Number(data.current_price || 0);
+      const fleetUnit = isSolanaAddress(tokenAddress) ? 'SOL' : 'NEAR';
+      const priceText = fleetUnit === 'SOL' ? `${currentPrice > 0 ? currentPrice.toExponential(4) : '—'} SOL` : `$${currentPrice.toFixed(6)}`;
 
       const msg =
         `🏎️ <b>RaceFleet [Beta] Order Triggered!</b>\n\n` +
@@ -405,7 +448,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         `🪙 <b>Token:</b> <code>${tokenAddress}</code>\n` +
         `📊 <b>Type:</b> ${orderType.toUpperCase()}\n` +
         `🎯 <b>Trigger:</b> ${reason}\n` +
-        `💵 <b>Price:</b> $${currentPrice.toFixed(6)}\n\n` +
+        `💵 <b>Price:</b> ${priceText}\n\n` +
         `<i>Coordinated bundle execution initiated across your fleet...</i>`;
 
       await _bot.telegram.sendMessage(telegramId, msg, {
@@ -423,7 +466,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       // Automatically execute fleet bundle if fleetId and tokenAddress exist
       if (fleetId && tokenAddress) {
         if (orderType === 'limit_buy') {
-          const buyAmt = Number(data.amount_per_wallet) || 1.0;
+          const buyAmt = Number(data.amount_per_wallet) || (fleetUnit === 'SOL' ? 0.1 : 1.0);
           executeFleetBundleBuy(fleetId, tokenAddress, buyAmt, 3.0)
             .then((res) => {
               if (res.success) {
@@ -432,7 +475,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
                   `✅ <b>Fleet Limit Buy Executed!</b>\n\n` +
                   `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
                   `📦 <b>Swaps</b>: ${res.successCount} wallets\n` +
-                  `💰 <b>Spent</b>: ${res.totalSpentNear} NEAR`,
+                  `💰 <b>Spent</b>: ${res.totalSpentNear} ${fleetUnit}`,
                   { parse_mode: 'HTML' }
                 ).catch(() => {});
               } else {
@@ -499,7 +542,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
           inline_keyboard: [
             [
               { text: '💳 Wallet', callback_data: 'menu_wallet' },
-              { text: '🎯 Active Orders', callback_data: 'menu_limit_orders' },
+              { text: '🎯 Active Orders', callback_data: 'menu_lo' },
             ],
           ],
         },

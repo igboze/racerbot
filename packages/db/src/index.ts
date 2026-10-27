@@ -66,6 +66,7 @@ export {
   deleteSnipeOrder,
   getActiveTokenSnipes,
   getActiveDeployerSnipes,
+  getAllActiveDeployerSnipes,
   getDistinctActiveSnipeTokens,
   recordSnipeTrigger,
   markSnipeTriggerFilled,
