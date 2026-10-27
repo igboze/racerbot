@@ -316,6 +316,7 @@ export {
   buildSolanaSwapPlan,
   compileSolanaPlan,
   remapSolanaSwapPlan,
+  solanaFeeTransferIx,
   setSolanaPlanSlippage,
   getJupiterQuoteOut,
   simulateSolanaTx,

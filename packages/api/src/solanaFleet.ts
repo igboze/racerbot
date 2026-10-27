@@ -6,8 +6,9 @@
  * creating them costs nothing on-chain; they are generated the first time the
  * user does anything Solana-related with the fleet.
  *
- * Fees mirror NEAR RaceFleet exactly: the monthly subscription (2 NEAR, or the
- * same USD value in SOL) and NO per-trade platform fee on fleet bundle swaps.
+ * Fees: the monthly subscription (2 NEAR, or the same USD value in SOL), plus
+ * the normal Solana trade fee on every fleet swap (buy 1.5%, sell 1.5% or 2%
+ * above $200), sent to the dev wallet inside each wallet's swap transaction.
  *
  * RPC use: balances come from one getMultipleAccounts call; swaps are built by
  * Jupiter (no RPC) and broadcast to the free endpoints first.
@@ -43,6 +44,10 @@ import {
   SOL_MINT,
   SOLANA_MIN_RESERVE_LAMPORTS,
   DEFAULT_SOLANA_DEV_FEE_WALLET,
+  solanaSellFeeBps,
+  SOLANA_FEE_BPS,
+  SOLANA_BPS_DENOMINATOR,
+  solanaFeeTransferIx,
 } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -282,7 +287,10 @@ export async function sweepSolanaFleet(telegramId: number): Promise<{
 // same or the next block instead of ~2 s apart.
 
 interface FleetLeg { wallet: RaceFleetWalletRecord; amount: bigint }
-interface FleetLegResult { wallet: RaceFleetWalletRecord; amount: bigint; out: bigint; signature: string | null; ok: boolean; error: string | null }
+interface FleetLegResult { wallet: RaceFleetWalletRecord; amount: bigint; out: bigint; fee: bigint; signature: string | null; ok: boolean; error: string | null }
+
+/** Platform fee for one wallet's swap. Buys: fixed per leg. Sells: from that leg's expected SOL out. */
+type FleetFeeFn = (leg: FleetLeg, expectedOut: bigint) => bigint;
 
 const MAX_FLEET_SLIPPAGE_BPS = 5000;
 
@@ -308,13 +316,21 @@ async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise
   }));
 }
 
-async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMint: string, baseSlippageBps: number): Promise<FleetLegResult[]> {
+async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMint: string, baseSlippageBps: number, feeFor: FleetFeeFn): Promise<FleetLegResult[]> {
   if (legs.length === 0) return [];
   const template = legs[0];
   const buildFor = (owner: string, amount: bigint, slippageBps: number) => buildSolanaSwapPlan({
     owner, inputMint, outputMint, amount, slippageBps,
-    feeLamports: 0n, // no per-trade fee on fleet bundles (same as NEAR RaceFleet)
+    feeLamports: 0n, // the route stays fee-free so it can be re-targeted; each wallet's fee is added below
   });
+  const expectedOut = (p: { plan: SolanaSwapPlan; leg: FleetLeg }) =>
+    p.plan.inAmount > 0n ? (p.plan.outAmount * p.leg.amount) / p.plan.inAmount : 0n;
+  // Appends the wallet's platform fee as a plain SOL transfer at the end of its swap.
+  const withFee = (p: { plan: SolanaSwapPlan; leg: FleetLeg }, ixs: any[]) => {
+    const fee = feeFor(p.leg, expectedOut(p));
+    if (fee <= 0n) return ixs;
+    return [...ixs, solanaFeeTransferIx(p.leg.wallet.account_id, fee)];
+  };
   let plan = await buildFor(template.wallet.account_id, template.amount, baseSlippageBps);
   const slippageBps = await fleetSlippageBps(plan, legs, baseSlippageBps);
   if (slippageBps !== plan.slippageBps && !setSolanaPlanSlippage(plan, slippageBps)) {
@@ -334,7 +350,7 @@ async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMi
   const ownBuild: Prepared[] = [];
   await runLimited(prepared, 5, async (p) => {
     if (!p.ixs) { ownBuild.push(p); return; }
-    const sim = await simulateSolanaTx(compileSolanaPlan(p.plan, p.ixs, p.leg.wallet.account_id, bh.blockhash));
+    const sim = await simulateSolanaTx(compileSolanaPlan(p.plan, withFee(p, p.ixs), p.leg.wallet.account_id, bh.blockhash));
     if (sim.ok) return;
     if (/insufficient/i.test(sim.error || '')) { p.error = `Wallet ${p.leg.wallet.wallet_index}: ${sim.error}`; return; }
     if (p.leg === template) { p.error = `Wallet ${p.leg.wallet.wallet_index}: ${sim.error}`; return; }
@@ -353,7 +369,7 @@ async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMi
 
   const ready = prepared.filter((p) => p.ixs && !p.error);
   const txs = ready.map((p) => {
-    const tx = compileSolanaPlan(p.plan, p.ixs!, p.leg.wallet.account_id, bh.blockhash);
+    const tx = compileSolanaPlan(p.plan, withFee(p, p.ixs!), p.leg.wallet.account_id, bh.blockhash);
     tx.sign([keypairOf(p.leg.wallet)]);
     return tx;
   });
@@ -362,11 +378,12 @@ async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMi
 
   return prepared.map((p) => {
     const r = bySig.get(p);
-    const out = p.plan.inAmount > 0n ? (p.plan.outAmount * p.leg.amount) / p.plan.inAmount : 0n;
+    const out = expectedOut(p);
     return {
       wallet: p.leg.wallet,
       amount: p.leg.amount,
       out,
+      fee: feeFor(p.leg, out),
       signature: r?.signature ?? null,
       ok: Boolean(r?.confirmed),
       error: p.error ?? (r && !r.confirmed ? `Wallet ${p.leg.wallet.wallet_index}: ${r.error}` : null),
@@ -389,6 +406,9 @@ export async function executeSolanaFleetBundleBuy(
   if (info.freezeAuthorityDisabled === false) return fail(['Blocked: this token has an active freeze authority (it can freeze your tokens).'], wallets.length);
   const lamports = solToLamports(solPerWallet);
   if (lamports <= 0n) return fail(['Invalid amount']);
+  // Same as a normal buy: 1.5% of the amount goes to the dev wallet, the rest is swapped.
+  const buyFee = (lamports * SOLANA_FEE_BPS) / SOLANA_BPS_DENOMINATOR;
+  const swapLamports = lamports - buyFee;
 
   const balances = await getSolanaLamportsMulti(wallets.map((w) => w.account_id)).catch(() => new Map<string, bigint>());
   const errors: string[] = [];
@@ -396,20 +416,21 @@ export async function executeSolanaFleetBundleBuy(
   for (const w of wallets) {
     const bal = balances.get(w.account_id) ?? 0n;
     if (bal < lamports + FLEET_BUY_RESERVE_LAMPORTS) errors.push(`Wallet ${w.wallet_index} low balance (${lamportsToSol(bal).toFixed(3)} SOL)`);
-    else legs.push({ wallet: w, amount: lamports });
+    else legs.push({ wallet: w, amount: swapLamports });
   }
   if (legs.length === 0) return fail(errors.length ? errors : ['No funded Solana fleet wallets. Use 📥 Distribute SOL first.'], wallets.length);
 
   const baseBps = Math.round(Math.max(slippagePct, info.bondingPhase === 'prebonded' ? 10 : 3) * 100);
   let results: FleetLegResult[];
   try {
-    results = await fireSolanaFleetWave(legs, SOL_MINT, mint, baseBps);
+    results = await fireSolanaFleetWave(legs, SOL_MINT, mint, baseBps, () => buyFee);
   } catch (err: any) {
     return fail([err?.message || 'Bundle buy failed', ...errors], wallets.length);
   }
   const done = results.filter((r) => r.ok);
   for (const r of results) if (r.error) errors.push(r.error);
-  const spentLamports = done.reduce((a, d) => a + d.amount, 0n);
+  const spentLamports = done.reduce((a, d) => a + d.amount + d.fee, 0n);
+  const feeLamports = done.reduce((a, d) => a + d.fee, 0n);
   if (done.length > 0) {
     const tokens = Number(done.reduce((a, d) => a + d.out, 0n)) / Math.pow(10, info.decimals);
     await recordRaceFleetFill({
@@ -419,7 +440,7 @@ export async function executeSolanaFleetBundleBuy(
       token_address: mint,
       amount: tokens.toString(),
       price: tokens > 0 ? lamportsToSol(spentLamports) / tokens : info.priceSol,
-      fee_paid: 0,
+      fee_paid: lamportsToSol(feeLamports),
       venue: 'jupiter',
       tx_hash: done[0].signature!,
     }).catch((err) => logger.warn('Failed to record Solana fleet buy fill', { error: String(err) }));
@@ -467,7 +488,13 @@ export async function executeSolanaFleetBundleSell(
   const baseBps = Math.round(Math.max(slippagePct, info?.bondingPhase === 'prebonded' ? 10 : 3) * 100);
   let results: FleetLegResult[];
   try {
-    results = await fireSolanaFleetWave(legs, mint, SOL_MINT, baseBps);
+    // Same tiers as a normal sell (1.5%, or 2% above $200), judged on the whole
+    // fleet sell since it is one tap. One quote prices the total for the tier.
+    const solUsd = await getSolUsdPrice().catch(() => 0);
+    const totalIn = legs.reduce((a, l) => a + l.amount, 0n);
+    const totalOut = await getJupiterQuoteOut(mint, SOL_MINT, totalIn);
+    const feeBps = solanaSellFeeBps(totalOut ?? 0n, solUsd);
+    results = await fireSolanaFleetWave(legs, mint, SOL_MINT, baseBps, (_leg, out) => (out * feeBps) / SOLANA_BPS_DENOMINATOR);
   } catch (err: any) {
     return { success: false, successCount: 0, failCount: legs.length, txHashes: [], errors: [err?.message || 'Bundle sell failed', ...errors] };
   }
@@ -475,7 +502,8 @@ export async function executeSolanaFleetBundleSell(
   for (const r of results) if (r.error) errors.push(r.error);
   if (done.length > 0) {
     const tokens = Number(done.reduce((a, d) => a + d.amount, 0n)) / Math.pow(10, decimals);
-    const outLamports = done.reduce((a, d) => a + d.out, 0n);
+    const outLamports = done.reduce((a, d) => a + d.out - d.fee, 0n);
+    const feeLamports = done.reduce((a, d) => a + d.fee, 0n);
     await recordRaceFleetFill({
       fleet_id: fleet.id,
       user_id: fleet.user_id,
@@ -483,7 +511,7 @@ export async function executeSolanaFleetBundleSell(
       token_address: mint,
       amount: tokens.toString(),
       price: tokens > 0 ? lamportsToSol(outLamports) / tokens : info?.priceSol ?? 0,
-      fee_paid: 0,
+      fee_paid: lamportsToSol(feeLamports),
       venue: 'jupiter',
       tx_hash: done[0].signature!,
     }).catch((err) => logger.warn('Failed to record Solana fleet sell fill', { error: String(err) }));

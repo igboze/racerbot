@@ -1012,6 +1012,11 @@ export async function buildSolanaSwapPlan(params: SolanaSwapParams): Promise<Sol
 
 // ── One route, many wallets (RaceFleet "fire together") ─────────────────────
 
+/** Platform fee as a plain SOL transfer to the dev wallet (appended after a swap). */
+export function solanaFeeTransferIx(from: string, lamports: bigint, recipient = DEFAULT_SOLANA_DEV_FEE_WALLET): TransactionInstruction {
+  return SystemProgram.transfer({ fromPubkey: new PublicKey(from), toPubkey: new PublicKey(recipient), lamports });
+}
+
 const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
 
