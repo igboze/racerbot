@@ -411,10 +411,10 @@ export async function getDb(): Promise<Pool> {
 
   pool = new Pool({
     connectionString,
-    min: parseInt(process.env.POOL_MIN || '5'),
-    max: parseInt(process.env.POOL_MAX || '20'),
-    idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
-    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
+    min: parseInt(process.env.POOL_MIN || '2'),
+    max: parseInt(process.env.POOL_MAX || '35'),
+    idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '15000'),
+    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '6000'),
   });
   pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
   pool.on('connect', () => {
