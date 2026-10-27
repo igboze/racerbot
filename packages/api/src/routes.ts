@@ -114,6 +114,7 @@ import {
   switchActiveStarknetWallet,
   renameUserStarknetWallet,
   prewarmStorageDeposit,
+  formatCryptoPrice,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -568,14 +569,23 @@ export function formatHoldingQuantity(quantityHeld: string, decimals = 18): stri
     const whole = rawBig / divisor;
     const remainder = rawBig % divisor;
     const human = Number(whole) + Number(remainder) / Math.pow(10, decimals);
+    if (human >= 1_000_000_000_000) return `${(human / 1_000_000_000_000).toFixed(2)}T`;
+    if (human >= 1_000_000_000) return `${(human / 1_000_000_000).toFixed(2)}B`;
     if (human >= 1_000_000) return `${(human / 1_000_000).toFixed(2)}M`;
     if (human >= 1_000) return human.toLocaleString('en-US', { maximumFractionDigits: 2 });
     if (human >= 1) return human.toFixed(2);
     if (human >= 0.0001) return human.toFixed(4);
+    if (human >= 0.000001) return human.toFixed(6);
     return human.toExponential(2);
   } catch {
     const num = parseFloat(quantityHeld);
-    return isNaN(num) ? '0' : (num >= 1000 ? num.toLocaleString('en-US') : num.toFixed(4));
+    if (isNaN(num) || num <= 0) return '0';
+    if (num >= 1_000_000_000_000) return `${(num / 1_000_000_000_000).toFixed(2)}T`;
+    if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
+    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+    if (num >= 1000) return num.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (num >= 1) return num.toFixed(2);
+    return num.toFixed(4);
   }
 }
 
@@ -1155,22 +1165,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // -- Price formatting --
   const priceNum = parseFloat(tokenInfo.price || '0');
-  let priceNearStr = '0.00';
-  if (priceNum > 0) {
-    if (priceNum >= 1) priceNearStr = priceNum.toFixed(4);
-    else if (priceNum >= 0.0001) priceNearStr = priceNum.toFixed(6);
-    else if (priceNum >= 0.00000001) priceNearStr = priceNum.toFixed(8);
-    else priceNearStr = priceNum.toExponential(4);
-  }
+  const priceNearStr = formatCryptoPrice(priceNum, '');
 
   const priceUsdNum = parseFloat((tokenInfo as any).price_usd || '0');
-  let priceUsdStr = '';
-  if (priceUsdNum > 0) {
-    if (priceUsdNum >= 1) priceUsdStr = '$' + priceUsdNum.toFixed(2);
-    else if (priceUsdNum >= 0.0001) priceUsdStr = '$' + priceUsdNum.toFixed(6);
-    else if (priceUsdNum >= 0.00000001) priceUsdStr = '$' + priceUsdNum.toFixed(8);
-    else priceUsdStr = '$' + priceUsdNum.toExponential(4);
-  }
+  const priceUsdStr = priceUsdNum > 0
+    ? formatCryptoPrice(priceUsdNum, '$')
+    : (priceNum > 0 && tokenInfo.near_usd ? formatCryptoPrice(priceNum * tokenInfo.near_usd, '$') : '');
 
   // -- Liquidity formatting --
   const liqNum = parseFloat(tokenInfo.liquidity || '0');
@@ -1308,7 +1308,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
 
     const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
-    text += `💼 *Holding*: ${formattedQty} ${safeSymbol} (${emoji} *${pnlDisplay}*) • Entry: ${entryPrice.toFixed(6)} ${nativeUnit}\n`;
+    text += `💼 *Holding*: ${formattedQty} ${safeSymbol} (${emoji} *${pnlDisplay}*) • Entry: ${formatCryptoPrice(entryPrice, '', nativeUnit).trim()}\n`;
   }
 
   // RaceFleet Position
@@ -6423,15 +6423,16 @@ export function setupRoutes(bot: Telegraf): void {
         humanQuantity = parseFloat(pos.quantity_held) || 0;
       }
 
-      const tokenPriceUsd = info?.price_usd ? parseFloat(info.price_usd) : (currentPrice * nativeUsdRate);
+      const parsedInfoUsd = info?.price_usd ? parseFloat(info.price_usd) : 0;
+      const tokenPriceUsd = parsedInfoUsd > 0 ? parsedInfoUsd : (currentPrice * nativeUsdRate);
       const tokenValueUsd = humanQuantity * tokenPriceUsd;
 
       // Dust filter:
-      // If quantity is negligible (< 0.000001) or value is < $0.01 while quantity is < 1,
+      // If quantity is negligible or value is < $0.001 while quantity is tiny (< 0.000001),
       // this is sold dust. Auto-close position in background and omit from holdings list!
       let rawBigCheck = 0n;
       try { rawBigCheck = BigInt((pos.quantity_held || '0').split('.')[0]); } catch {}
-      const isDust = rawBigCheck <= 0n || humanQuantity < 0.000001 || (currentPrice > 0 && tokenValueUsd < 0.01 && humanQuantity < 1);
+      const isDust = rawBigCheck <= 0n || humanQuantity <= 0 || (currentPrice > 0 && tokenValueUsd < 0.001 && humanQuantity < 0.000001);
       if (isDust) {
         updatePosition({
           position_id: pos.id,
@@ -6534,11 +6535,17 @@ export function setupRoutes(bot: Telegraf): void {
       const rawLabel = `${emoji} ${compactSym} (${pnlDisplay})`;
       const cappedLabel = rawLabel.length > 20 ? `${rawLabel.slice(0, 19)}…` : rawLabel;
 
+      const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
+
       return {
         pos,
+        displayLabel,
+        formattedQty,
         cappedLabel,
+        pnlDisplay,
         pnlStyle,
         tokenValueUsd,
+        emoji,
       };
     });
 
@@ -6591,14 +6598,30 @@ export function setupRoutes(bot: Telegraf): void {
       buttons.push(navRow);
     }
 
+    const lines = pageItems.map(item => {
+      const valStr = item.tokenValueUsd >= 1000
+        ? `$${(item.tokenValueUsd / 1000).toFixed(2)}K`
+        : item.tokenValueUsd >= 0.01
+        ? `$${item.tokenValueUsd.toFixed(2)}`
+        : item.tokenValueUsd > 0
+        ? formatCryptoPrice(item.tokenValueUsd, '$')
+        : '$0.00';
+      return `${item.emoji} *${item.displayLabel}*: \`${item.formattedQty}\` • \`${valStr}\` (${item.pnlDisplay})`;
+    }).join('\n');
+
     const totalUsdDisplay = totalPortfolioValueUsd >= 1000
       ? `$${(totalPortfolioValueUsd / 1000).toFixed(2)}K`
-      : `$${totalPortfolioValueUsd.toFixed(2)}`;
+      : totalPortfolioValueUsd >= 0.01
+      ? `$${totalPortfolioValueUsd.toFixed(2)}`
+      : totalPortfolioValueUsd > 0
+      ? formatCryptoPrice(totalPortfolioValueUsd, '$')
+      : `$0.00`;
 
     const pageHeader = totalPages > 1 ? ` (Page ${currentPage + 1}/${totalPages})` : '';
     const msg =
       `💼 *Holdings (${totalPositions})*${pageHeader}\n` +
       `💰 Total: \`${totalUsdDisplay}\`\n\n` +
+      `${lines}\n\n` +
       `_Tap a token below to view details & trade._`;
 
     // 4. NAVIGATION
@@ -7059,15 +7082,16 @@ export function setupRoutes(bot: Telegraf): void {
       const fmtPrice = (p: number) => {
         if (p <= 0) return '`$0.00`';
         const usd = p * usdRate;
-        const usdStr = usd >= 1 ? `$${usd.toFixed(2)}` : usd >= 0.0001 ? `$${usd.toFixed(6)}` : `$${usd.toFixed(8)}`;
-        const natStr = p >= 1 ? `${p.toFixed(2)} ${nativeUnit}` : p >= 0.0001 ? `${p.toFixed(6)} ${nativeUnit}` : `${p.toFixed(8)} ${nativeUnit}`;
+        const usdStr = formatCryptoPrice(usd, '$');
+        const natStr = formatCryptoPrice(p, '', nativeUnit).trim();
         return `\`${usdStr}\` (${natStr})`;
       };
 
       const fmtVal = (valNative: number) => {
+        if (valNative <= 0) return `\`$0.00\` (0.00 ${nativeUnit})`;
         const usd = valNative * usdRate;
-        const usdStr = usd >= 1000 ? `$${(usd / 1000).toFixed(2)}K` : `$${usd.toFixed(2)}`;
-        const natStr = valNative >= 1000 ? `${(valNative / 1000).toFixed(2)}K ${nativeUnit}` : `${valNative.toFixed(4)} ${nativeUnit}`;
+        const usdStr = usd >= 1000 ? `$${(usd / 1000).toFixed(2)}K` : (usd >= 0.01 ? `$${usd.toFixed(2)}` : (usd > 0 ? formatCryptoPrice(usd, '$') : '$0.00'));
+        const natStr = valNative >= 1000 ? `${(valNative / 1000).toFixed(2)}K ${nativeUnit}` : (valNative >= 1 ? `${valNative.toFixed(2)} ${nativeUnit}` : (valNative > 0 ? formatCryptoPrice(valNative, '', nativeUnit).trim() : `0.00 ${nativeUnit}`));
         return `\`${usdStr}\` (${natStr})`;
       };
 
@@ -7076,8 +7100,8 @@ export function setupRoutes(bot: Telegraf): void {
         const effectiveMcNative = mcNative > 0 ? mcNative : (effectiveMcUsd > 0 && usdRate > 0 ? effectiveMcUsd / usdRate : 0);
         if (effectiveMcUsd <= 0 && effectiveMcNative <= 0) return '`N/A`';
 
-        const mcUsdStr = effectiveMcUsd >= 1e6 ? `$${(effectiveMcUsd / 1e6).toFixed(2)}M` : effectiveMcUsd >= 1e3 ? `$${(effectiveMcUsd / 1e3).toFixed(2)}K` : `$${effectiveMcUsd.toFixed(2)}`;
-        const mcNatStr = effectiveMcNative >= 1e6 ? `${(effectiveMcNative / 1e6).toFixed(2)}M ${nativeUnit}` : effectiveMcNative >= 1e3 ? `${(effectiveMcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${effectiveMcNative.toFixed(2)} ${nativeUnit}`;
+        const mcUsdStr = effectiveMcUsd >= 1e9 ? `$${(effectiveMcUsd / 1e9).toFixed(2)}B` : effectiveMcUsd >= 1e6 ? `$${(effectiveMcUsd / 1e6).toFixed(2)}M` : effectiveMcUsd >= 1e3 ? `$${(effectiveMcUsd / 1e3).toFixed(2)}K` : `$${effectiveMcUsd.toFixed(2)}`;
+        const mcNatStr = effectiveMcNative >= 1e9 ? `${(effectiveMcNative / 1e9).toFixed(2)}B ${nativeUnit}` : effectiveMcNative >= 1e6 ? `${(effectiveMcNative / 1e6).toFixed(2)}M ${nativeUnit}` : effectiveMcNative >= 1e3 ? `${(effectiveMcNative / 1e3).toFixed(2)}K ${nativeUnit}` : `${effectiveMcNative.toFixed(2)} ${nativeUnit}`;
         return `\`${mcUsdStr}\` (${mcNatStr})`;
       };
 

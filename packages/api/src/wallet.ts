@@ -221,6 +221,71 @@ let nearUsdPrice = 0;
 let nearUsdLastFetch = 0;
 
 /**
+ * Formats a raw token price number to string preserving precision for micro-prices (e.g. 1e-9).
+ * Avoids truncating tiny sub-satoshi prices to '0.00000000'.
+ */
+export function formatRawPriceString(price: number): string {
+  if (!price || price <= 0 || isNaN(price)) return '0';
+  if (price >= 1) return price.toFixed(4);
+  if (price >= 0.0001) return price.toFixed(8);
+  if (price >= 0.00000001) return price.toFixed(12);
+  if (price < 1e-18) return price.toExponential(8);
+  return price.toFixed(18).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
+ * Formats a token price in USD to string preserving precision for micro-prices (e.g. $4.92e-9).
+ * Avoids truncating tiny sub-cent prices to '0.00000000'.
+ */
+export function formatRawUsdString(usd: number): string {
+  if (!usd || usd <= 0 || isNaN(usd)) return '0';
+  if (usd >= 1) return usd.toFixed(4);
+  if (usd >= 0.0001) return usd.toFixed(6);
+  if (usd >= 0.00000001) return usd.toFixed(8);
+  if (usd < 1e-18) return usd.toExponential(8);
+  return usd.toFixed(18).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
+ * High-precision, aesthetically formatted crypto price with subscript zeros notation for micro prices:
+ * e.g. 0.000000004920 -> "$0.0₈4920"
+ * e.g. 1.25 -> "$1.25"
+ */
+export function formatCryptoPrice(price: number, currencyPrefix = '$', unitSuffix = ''): string {
+  const sfx = unitSuffix ? ` ${unitSuffix}` : '';
+  if (isNaN(price) || price <= 0) {
+    return `${currencyPrefix}0.00${sfx}`;
+  }
+  if (price >= 1000) {
+    return `${currencyPrefix}${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sfx}`;
+  }
+  if (price >= 1) {
+    return `${currencyPrefix}${price.toFixed(2)}${sfx}`;
+  }
+  if (price >= 0.01) {
+    return `${currencyPrefix}${price.toFixed(4)}${sfx}`;
+  }
+  if (price >= 0.0001) {
+    return `${currencyPrefix}${price.toFixed(6)}${sfx}`;
+  }
+
+  // Micro prices (< 0.0001)
+  const str = price.toFixed(18);
+  const match = str.match(/^0\.(0+)(\d+)/);
+  if (match) {
+    const zeros = match[1].length;
+    const sigDigits = match[2].slice(0, 4);
+    if (zeros >= 4) {
+      const subscriptZeros = String(zeros).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[parseInt(d, 10)]).join('');
+      return `${currencyPrefix}0.0${subscriptZeros}${sigDigits}${sfx}`;
+    }
+    return `${currencyPrefix}${price.toFixed(zeros + 4)}${sfx}`;
+  }
+
+  return `${currencyPrefix}${price.toExponential(4)}${sfx}`;
+}
+
+/**
  * FIX 6: Warm the in-memory tokenInfoCache from the DB on startup.
  * Runs a single query for all token_cache rows updated in the last 30 minutes
  * and pre-populates the cache so the first user request after a Railway redeploy
@@ -251,8 +316,8 @@ export async function warmTokenInfoCache(): Promise<void> {
         symbol: row.symbol ?? '',
         decimals: row.decimals ?? 18,
         total_supply: row.total_supply ?? '0',
-        price: lastPrice.toFixed(12),
-        price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+        price: formatRawPriceString(lastPrice),
+        price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
         liquidity: row.last_liquidity?.toString() ?? '0',
         liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
         market_cap: mcap,
@@ -332,8 +397,8 @@ export async function getBatchTokenInfo(
         symbol: row.symbol ?? '',
         decimals: row.decimals ?? 18,
         total_supply: row.total_supply ?? '0',
-        price: lastPrice.toFixed(12),
-        price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+        price: formatRawPriceString(lastPrice),
+        price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
         liquidity: row.last_liquidity?.toString() ?? '0',
         liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
         market_cap: mcap,
@@ -992,8 +1057,8 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
       symbol: dbCache.symbol || 'TOKEN',
       decimals,
       total_supply: dbCache.total_supply || '0',
-      price: dbCache.last_price?.toString() || '0',
-      price_usd: nativeUsd > 0 ? (lastPrice * nativeUsd).toFixed(8) : '0',
+      price: formatRawPriceString(lastPrice),
+      price_usd: nativeUsd > 0 ? formatRawUsdString(lastPrice * nativeUsd) : '0',
       liquidity: dbCache.last_liquidity?.toString() || '0',
       liquidity_usd: nativeUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nativeUsd).toFixed(2) : '0',
       market_cap: mcap,
@@ -1242,8 +1307,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       symbol: tokenSymbol,
       decimals: meta.decimals,
       total_supply: rawTotalSupply,
-      price: priceNativeNum.toFixed(8),
-      price_usd: priceUsdNum.toFixed(8),
+      price: formatRawPriceString(priceNativeNum),
+      price_usd: formatRawUsdString(priceUsdNum),
       liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / strkUsd).toFixed(2) : '0'),
       liquidity_usd: liqUsdNum > 0 ? liqUsdNum.toFixed(2) : '0',
       market_cap: Math.round(mcapNativeNum),
@@ -1340,8 +1405,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           symbol,
           decimals,
           total_supply: totalSupply,
-          price: priceSui > 0 ? priceSui.toFixed(9) : '0',
-          price_usd: priceUsd > 0 ? priceUsd.toFixed(8) : '0',
+          price: formatRawPriceString(priceSui),
+          price_usd: priceUsd > 0 ? formatRawUsdString(priceUsd) : '0',
           liquidity: liqSui > 0 ? liqSui.toFixed(2) : '0',
           liquidity_usd: liqUsd > 0 ? liqUsd.toFixed(2) : '0',
           market_cap: mcapSui,
@@ -1394,8 +1459,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       symbol: curve.symbol,
       decimals: curve.decimals,
       total_supply: curveTotalSupply,
-      price: priceSui.toFixed(9),
-      price_usd: priceUsd.toFixed(8),
+      price: formatRawPriceString(priceSui),
+      price_usd: formatRawUsdString(priceUsd),
       liquidity: liqSui.toFixed(4),
       liquidity_usd: liqUsd.toFixed(2),
       market_cap: mcapSui,
@@ -1486,8 +1551,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       symbol: dbCache.symbol ?? '',
       decimals: dbCache.decimals ?? 18,
       total_supply: dbCache.total_supply ?? '0',
-      price: dbCache.last_price?.toString() ?? '0',
-      price_usd: nearUsd > 0 ? (lastPrice * nearUsd).toFixed(8) : '0',
+      price: formatRawPriceString(lastPrice),
+      price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
       price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
       volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
       liquidity: dbCache.last_liquidity?.toString() ?? '0',
