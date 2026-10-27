@@ -156,6 +156,11 @@ const RPC_URLS = Array.from(
 ).filter(Boolean);
 const near = getNear(RPC_URLS);
 
+/** NEAR RPC endpoints used for writes (FastNEAR first, then validator fallbacks). */
+export function getNearWriteRpcUrls(): string[] {
+  return [...RPC_URLS];
+}
+
 // ── In-memory token info cache with 30s TTL ───────────────────────────────────
 const tokenInfoCache = new Map<string, { data: TokenInfoResult; expiresAt: number }>();
 // ── Single-flight deduplication to eliminate cache stampedes and duplicate RPC burns ────

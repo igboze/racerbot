@@ -306,7 +306,7 @@ interface PendingAction {
     // RaceDrop wizard
     | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
     // RaceFleet wizard
-    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_lo_target_value' | 'fleet_lo_amount'
+    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_sell_pct' | 'fleet_lo_target_value' | 'fleet_lo_amount'
     | 'deposit_custom_token' | 'deposit_custom_amount';
   tokenAddress?: string;
   positionId?: string;
@@ -1340,10 +1340,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       safety?.isDrained ? 'noop_drained' : 'noop_honeypot'
     )];
     const fleetExitRow = (!isSui && !isStarknet && fleetHoldsToken)
-      ? [
-          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
-          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
-        ]
+      ? [cb('🔴 Fleet SELL', `fleet_sell_prompt:${shortKey}`, 'danger')]
       : [];
     if (holdsToken && userPosition) {
       text += `⚡ *Exit Position* (Sell Only):\n`;
@@ -1416,15 +1413,13 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           cb(`🏎️ RaceFleet Cockpit (${fleetPosition.emoji} ${fleetPosition.pnlDisplay})`, `fleet_cockpit:${shortKey}`, 'success'),
         ]);
         fleetActionRows.push([
-          cb('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`, 'danger'),
-          cb('🔴 Dump Fleet 100%', `fleet_sell:${shortKey}:100`, 'danger'),
-        ]);
-        fleetActionRows.push([
-          cb('🏎️ Buy More with Fleet', `fleet_cockpit:${shortKey}`, 'success'),
+          cb('🟢 Fleet BUY', `fleet_buy_prompt:${shortKey}`, 'success'),
+          cb('🔴 Fleet SELL', `fleet_sell_prompt:${shortKey}`, 'danger'),
         ]);
       } else {
         fleetActionRows.push([
-          cb('🏎️ Buy with RaceFleet (Beta)', `fleet_cockpit:${shortKey}`, 'success'),
+          cb('🟢 Fleet BUY (Beta)', `fleet_buy_prompt:${shortKey}`, 'success'),
+          cb('🏎️ Fleet Cockpit', `fleet_cockpit:${shortKey}`, 'primary'),
         ]);
       }
     }
@@ -4924,7 +4919,7 @@ export function setupRoutes(bot: Telegraf): void {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
               [Markup.button.callback('📊 Fleet Holdings & PnL', 'fleet_holdings'), Markup.button.callback('🏎️ Back to Cockpit', `fleet_cockpit:${shortKey}`)],
-              [Markup.button.callback('🔴 Sell Fleet 50%', `fleet_sell:${shortKey}:50`), Markup.button.callback('🔴 Dump All (100%)', `fleet_sell:${shortKey}:100`)],
+              [Markup.button.callback('🔴 Fleet SELL', `fleet_sell_prompt:${shortKey}`)],
               [Markup.button.callback('🏎️ Fleet Dashboard', 'racefleet_menu'), Markup.button.callback('🔙 Main Menu', 'menu_home')],
             ]),
           }
@@ -4936,6 +4931,54 @@ export function setupRoutes(bot: Telegraf): void {
       if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => {});
       await ctx.reply(`❌ Execution error: ${getUserFriendlyError(err)}`);
     }
+  });
+
+  // ── Single Fleet BUY / Fleet SELL buttons: ask once, then every wallet fires at the same instant ──
+
+  bot.action(/^fleet_buy_prompt:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user || !tokenAddress) return;
+    const fleet = await getRaceFleetByUserId(user.id).catch(() => null);
+    if (!fleet) {
+      const promo = buildFleetPromoCard();
+      await ctx.reply(promo.text, { parse_mode: 'HTML', ...promo.keyboard } as any).catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, { action: 'fleet_custom_buy', fleetTokenAddress: tokenAddress, expiresAt: Date.now() + 180_000 });
+    const isSol = isSolanaAddress(tokenAddress);
+    await ctx.reply(
+      `🟢 <b>Fleet BUY</b> — <code>${tokenAddress}</code>\n\n` +
+      `Reply with the amount of <b>${isSol ? 'SOL' : 'NEAR'} per wallet</b> (e.g. <code>${isSol ? '0.1' : '1'}</code>).\n` +
+      `All ${fleet.wallet_count} fleet wallets buy at the same moment.\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    ).catch(() => {});
+  });
+
+  bot.action(/^fleet_sell_prompt:(.+)$/, async (ctx) => {
+    const shortKey = (ctx as any).match[1];
+    const tokenAddress = resolveTokenAddressFromKey(shortKey);
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => {});
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    if (!user || !tokenAddress) return;
+    const fleet = await getRaceFleetByUserId(user.id).catch(() => null);
+    if (!fleet) {
+      await ctx.reply('❌ No RaceFleet found.').catch(() => {});
+      return;
+    }
+    userPendingActions.set(telegramId, { action: 'fleet_sell_pct', fleetTokenAddress: tokenAddress, expiresAt: Date.now() + 180_000 });
+    await ctx.reply(
+      `🔴 <b>Fleet SELL</b> — <code>${tokenAddress}</code>\n\n` +
+      `Reply with the <b>percent</b> of the fleet's holdings to sell (1 to 100). <code>100</code> sells everything.\n` +
+      `Every fleet wallet sells at the same moment.\n\n` +
+      `<i>Type /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    ).catch(() => {});
   });
 
   bot.action(/^fleet_custom_buy:(.+)$/, async (ctx) => {
@@ -11998,7 +12041,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (!fleet) { await ctx.reply('❌ No active RaceFleet found.'); return; }
 
         const tokenAddress = pending.fleetTokenAddress!;
-        const statusMsg = await ctx.reply(`🏎️ Executing bundle buy: \`${amt} ${fcUnit}\` per wallet across ${fleet.wallet_count} fleet wallets...`, { parse_mode: 'Markdown' });
+        const statusMsg = await ctx.reply(`🏎️ Firing all ${fleet.wallet_count} fleet wallets together: \`${amt} ${fcUnit}\` each...`, { parse_mode: 'Markdown' });
         try {
           const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
           if (res.success) {
@@ -12007,11 +12050,11 @@ export function setupRoutes(bot: Telegraf): void {
               `📦 Executed: \`${res.successCount}/${fleet.wallet_count} Wallets\`\n` +
               `💰 Total Spent: \`${res.totalSpentNear} ${fcUnit}\` (~${amt} ${fcUnit} / wallet)\n` +
               (res.failCount > 0 ? `⚠️ Failed: \`${res.failCount} wallets\` (Low balance/slippage)\n\n` : '\n') +
-              `All swaps executed in parallel with independent nonces.`,
+              `All wallets were signed first and broadcast at the same moment.`,
               {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard([
-                  [cb('🏎️ Fleet Cockpit', `fleet_cockpit:${getShortTokenKey(tokenAddress)}`, 'success')],
+                  [cb('🔴 Fleet SELL', `fleet_sell_prompt:${getShortTokenKey(tokenAddress)}`, 'danger'), cb('🏎️ Fleet Cockpit', `fleet_cockpit:${getShortTokenKey(tokenAddress)}`, 'success')],
                   [cb('🔙 Fleet Menu', 'racefleet_menu', 'primary')],
                 ]),
               }
@@ -12094,6 +12137,48 @@ export function setupRoutes(bot: Telegraf): void {
           }
         } catch (err: any) {
           await ctx.reply(`❌ Error funding fleet: ${getUserFriendlyError(err)}`);
+        }
+        return;
+      }
+
+      if (pending.action === 'fleet_sell_pct') {
+        const pct = Math.floor(parseFloat(rawText.replace('%', '')));
+        if (isNaN(pct) || pct < 1 || pct > 100) {
+          await ctx.reply('❌ Reply with a whole percent from 1 to 100.');
+          return;
+        }
+        userPendingActions.delete(telegramId);
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!user) { await ctx.reply('❌ Run /start first.'); return; }
+        const fleet = await getRaceFleetByUserId(user.id);
+        if (!fleet) { await ctx.reply('❌ No RaceFleet found.'); return; }
+        const tokenAddress = pending.fleetTokenAddress!;
+        const shortKey = getShortTokenKey(tokenAddress);
+        const unit = snipeUnit(tokenAddress);
+        const statusMsg = await ctx.reply(`🔴 Selling ${pct}% from every fleet wallet at the same moment...`).catch(() => null);
+        try {
+          const res = await executeFleetBundleSell(fleet.id, tokenAddress, pct, 3.0);
+          if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+          if (res.success) {
+            await ctx.reply(
+              `✅ *Fleet SELL Complete*\n\n` +
+              `📊 Sold: \`${pct}%\` from \`${res.successCount}\` wallets at once\n` +
+              (res.failCount > 0 ? `⚠️ Not filled: \`${res.failCount}\` (${sanitizeMd(res.errors[0] || '')})\n` : '') +
+              `\nProceeds stay in each fleet wallet as ${unit}.`,
+              {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                  [cb('📤 Sweep to Main Wallet', unit === 'SOL' ? 'fleet_sweep_sol' : 'fleet_sweep_prompt', 'primary')],
+                  [cb('🏎️ Fleet Cockpit', `fleet_cockpit:${shortKey}`, 'success')],
+                ]),
+              }
+            );
+          } else {
+            await ctx.reply(`❌ Fleet sell failed: ${res.errors[0] || 'No tokens available to sell'}`);
+          }
+        } catch (err: any) {
+          if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+          await ctx.reply(`❌ Fleet sell failed: ${getUserFriendlyError(err)}`);
         }
         return;
       }
