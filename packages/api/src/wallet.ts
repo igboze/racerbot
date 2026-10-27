@@ -38,6 +38,10 @@ import {
   isSolanaAddress,
   restoreSolanaKeypair,
   transferSol,
+  SOLANA_TRANSFER_FEE_LAMPORTS,
+  SOLANA_RENT_EXEMPT_MIN_LAMPORTS,
+  checkSolanaWithdrawDestination,
+  getSolanaTokenBalance,
   transferSolanaToken,
   getStarknetProvider,
   getStarknetAccount,
@@ -3160,8 +3164,17 @@ export async function transferNearFromUser(
  * Withdraws native SUI from user's active SUI wallet to any valid external SUI address.
  * Keeps ~0.025 SUI to ensure gas coverage for future transactions.
  */
+/** The user's Solana keypair, refusing to sign if the stored key does not match the stored address. */
+function solanaKeypairFor(user: UserRecord): ReturnType<typeof restoreSolanaKeypair> {
+  const keypair = restoreSolanaKeypair(user.solana_private_key_enc!, MASTER_KEY);
+  if (keypair.publicKey.toBase58() !== user.solana_address) {
+    throw new Error('Solana wallet key does not match the stored address. Please contact support.');
+  }
+  return keypair;
+}
+
 /**
- * Withdraw native SOL. Keeps a small reserve for the network fee.
+ * Withdraw native SOL. "all" empties the wallet exactly (minus the network fee).
  */
 export async function withdrawSolanaFunds(
   telegramId: number,
@@ -3178,21 +3191,33 @@ export async function withdrawSolanaFunds(
   if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
   if (destination === user.solana_address) throw new Error('Cannot withdraw to your own wallet address.');
 
-  const keypair = restoreSolanaKeypair(user.solana_private_key_enc, MASTER_KEY);
-  const bal = await getSolanaBalance(user.solana_address, true);
-  const feeReserve = 100_000n; // 0.0001 SOL for the network fee
-  if (bal.lamports <= feeReserve) throw new Error('Insufficient SOL balance to withdraw.');
-  const max = bal.lamports - feeReserve;
+  const keypair = solanaKeypairFor(user);
+  const [bal, dest] = await Promise.all([
+    getSolanaBalance(user.solana_address, true),
+    checkSolanaWithdrawDestination(destination),
+  ]);
+  // The network fee is exact, so "all" leaves the wallet at 0. Solana refuses
+  // to leave a wallet holding dust below the rent minimum (~0.00089 SOL).
+  const fee = SOLANA_TRANSFER_FEE_LAMPORTS;
+  if (bal.lamports <= fee) throw new Error('Insufficient SOL balance to withdraw.');
+  const max = bal.lamports - fee;
   let lamports: bigint;
   if (!amountSol || amountSol === 'all') {
     lamports = max;
   } else {
     lamports = BigInt(Math.floor(amountSol * 1e9));
     if (lamports > max) {
-      throw new Error(`Amount exceeds maximum withdrawable balance (${lamportsToSol(max).toFixed(4)} SOL after network fee).`);
+      throw new Error(`Amount exceeds maximum withdrawable balance (${lamportsToSol(max).toFixed(6)} SOL after network fee). Use "all" to send everything.`);
+    }
+    const left = max - lamports;
+    if (left > 0n && left < SOLANA_RENT_EXEMPT_MIN_LAMPORTS) {
+      throw new Error(`That would leave ${lamportsToSol(left).toFixed(6)} SOL behind, below Solana's 0.00089 SOL minimum. Use "all" to send everything, or send a little less.`);
     }
   }
   if (lamports <= 0n) throw new Error('Withdrawal amount must be greater than 0.');
+  if (!dest.exists && lamports < SOLANA_RENT_EXEMPT_MIN_LAMPORTS) {
+    throw new Error('The receiving wallet is new and needs at least 0.00089 SOL in its first transfer. Please send a larger amount.');
+  }
   const sig = await transferSol(keypair, destination, lamports);
   balanceCache.delete(telegramId);
   recordUserTrade(user.id, 'solana', 0);
@@ -3216,11 +3241,16 @@ export async function withdrawSolanaTokenFunds(
   }
   destination = destination.trim();
   if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
+  if (destination === user.solana_address) throw new Error('Cannot withdraw to your own wallet address.');
+  await checkSolanaWithdrawDestination(destination);
 
-  const holdings = await getSolanaWalletHoldings(user.solana_address, true);
-  const held = holdings.tokens.get(mint);
+  // Straight from the chain: the holdings index can lag right after a buy.
+  const [held, solBal] = await Promise.all([
+    getSolanaTokenBalance(user.solana_address, mint, true),
+    getSolanaBalance(user.solana_address, true),
+  ]);
   if (!held || held.raw <= 0n) throw new Error('You do not hold this token in your Solana wallet.');
-  if (holdings.lamports < 3_000_000n) {
+  if (solBal.lamports < 3_000_000n) {
     throw new Error('Keep at least 0.003 SOL in your wallet to pay the network fee and the recipient token account rent.');
   }
   const info = await getSolanaTokenInfo(mint).catch(() => null);
@@ -3234,8 +3264,8 @@ export async function withdrawSolanaTokenFunds(
     raw = BigInt(Math.floor(human * Math.pow(10, decimals)));
     if (raw > held.raw) raw = held.raw;
   }
-  const keypair = restoreSolanaKeypair(user.solana_private_key_enc, MASTER_KEY);
-  const sig = await transferSolanaToken(keypair, mint, destination, raw, decimals, held.programId);
+  const keypair = solanaKeypairFor(user);
+  const sig = await transferSolanaToken(keypair, mint, destination, raw, decimals, held.programId || info?.tokenProgram || '', raw === held.raw);
 
   // Keep the bot's position in step with the wallet.
   const positions = await getOpenPositions(user.id).catch(() => []);
