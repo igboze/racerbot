@@ -4,8 +4,8 @@ import {
   CHANNELS,
   createLogger,
   isSolanaAddress,
-  isSolanaTokenTradable,
-  getSolanaTokenInfo,
+  getSolanaPricesUsd,
+  getPumpCoinState,
   getPumpLatestLaunches,
   getPumpLaunchesByCreator,
   type AutoBuySignal,
@@ -69,20 +69,26 @@ async function fireSnipe(order: SnipeOrderRecord, mint: string, venue: 'pumpfun'
 }
 
 async function checkTokenSnipes(): Promise<void> {
-  const tokens = (await getDistinctActiveSnipeTokens().catch(() => [] as string[])).filter((t) => isSolanaAddress(t));
   const now = Date.now();
-  // Sequential on purpose: the Jupiter free tier is shared by the whole process.
+  const tokens = (await getDistinctActiveSnipeTokens().catch(() => [] as string[]))
+    .filter((t) => isSolanaAddress(t))
+    .filter((t) => { const neg = tokenNegativeCache.get(t); return !neg || now - neg >= TOKEN_NEGATIVE_TTL_MS; });
+  if (tokens.length === 0) return;
+  // One batched Jupiter price call covers every armed mint: a price means it trades.
+  const prices = await getSolanaPricesUsd(tokens).catch(() => new Map<string, number>());
   for (const mint of tokens) {
-    const neg = tokenNegativeCache.get(mint);
-    if (neg && now - neg < TOKEN_NEGATIVE_TTL_MS) continue;
     try {
-      if (!(await isSolanaTokenTradable(mint))) {
+      let venue: 'pumpfun' | 'jupiter' | null = (prices.get(mint) ?? 0) > 0 ? 'jupiter' : null;
+      // Brand-new pump.fun coins can be bought on the curve before Jupiter prices them.
+      if (!venue) {
+        const pump = await getPumpCoinState(mint).catch(() => null);
+        if (pump && !pump.complete) venue = 'pumpfun';
+      }
+      if (!venue) {
         tokenNegativeCache.set(mint, Date.now());
         continue;
       }
       tokenNegativeCache.delete(mint);
-      const info = await getSolanaTokenInfo(mint).catch(() => null);
-      const venue = info?.launchpad === 'pump.fun' && info.bondingPhase === 'prebonded' ? 'pumpfun' : 'jupiter';
       const orders = await getActiveTokenSnipes(mint).catch(() => [] as SnipeOrderRecord[]);
       for (const order of orders) await fireSnipe(order, mint, venue);
     } catch (err: any) {

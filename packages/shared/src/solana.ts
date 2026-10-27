@@ -185,10 +185,17 @@ const JUPITER_MIN_INTERVAL_MS = Number(
 let jupiterNextSlot = 0;
 let jupiterTradeWaiting = 0;
 
+/** A read that cannot get a Jupiter slot within this time gives up (callers fall back or retry later). */
+const JUPITER_READ_MAX_WAIT_MS = Number(process.env.JUPITER_READ_MAX_WAIT_MS || 15_000);
+
 async function jupiterSlot(priority: 'trade' | 'read'): Promise<void> {
   if (priority === 'trade') jupiterTradeWaiting++;
+  const started = Date.now();
   try {
     for (;;) {
+      if (priority === 'read' && Date.now() - started > JUPITER_READ_MAX_WAIT_MS) {
+        throw new Error('Jupiter is busy (free tier rate limit). Try again shortly.');
+      }
       if (priority === 'read' && jupiterTradeWaiting > 0) {
         await new Promise((r) => setTimeout(r, 150));
         continue;
@@ -441,10 +448,13 @@ async function loadHoldingsFromJupiter(address: string): Promise<SolanaWalletHol
 }
 
 async function loadHoldingsFromRpc(address: string): Promise<SolanaWalletHoldings> {
+  // Fallback only (Jupiter holdings failed). getTokenAccountsByOwner is an
+  // "indexed" call that free nodes may refuse and that costs many credits on a
+  // paid node, so it never touches the paid RPC.
   const [bal, classic, t22] = await Promise.all([
-    solanaRpc<any>('getBalance', [address, { commitment: 'confirmed' }]),
-    solanaRpc<any>('getTokenAccountsByOwner', [address, { programId: TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed', commitment: 'confirmed' }]),
-    solanaRpc<any>('getTokenAccountsByOwner', [address, { programId: TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed', commitment: 'confirmed' }]),
+    solanaRpc<any>('getBalance', [address, { commitment: 'confirmed' }], { allowPaid: false }),
+    solanaRpc<any>('getTokenAccountsByOwner', [address, { programId: TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed', commitment: 'confirmed' }], { allowPaid: false }),
+    solanaRpc<any>('getTokenAccountsByOwner', [address, { programId: TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed', commitment: 'confirmed' }], { allowPaid: false }),
   ]);
   const tokens = new Map<string, SolanaTokenHolding>();
   for (const [programId, res] of [[TOKEN_PROGRAM_ID, classic], [TOKEN_2022_PROGRAM_ID, t22]] as const) {
@@ -525,6 +535,48 @@ export async function getSolanaTokenBalanceOnChain(owner: string, mint: string):
   }
 }
 
+/** One getMultipleAccounts call: [classic ATA, Token-2022 ATA, mint]. Null on any failure. */
+async function readTokenBalanceFromAtas(
+  owner: string,
+  mint: string,
+): Promise<{ raw: bigint; uiAmount: number; decimals: number; programId: string | null } | null> {
+  try {
+    const o = new PublicKey(owner);
+    const m = new PublicKey(mint);
+    const programs = [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID];
+    const atas = programs.map((tp) =>
+      PublicKey.findProgramAddressSync([o.toBuffer(), new PublicKey(tp).toBuffer(), m.toBuffer()], new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID))[0].toBase58(),
+    );
+    const r = await solanaRpc<any>(
+      'getMultipleAccounts',
+      [[...atas, mint], { encoding: 'base64', commitment: 'confirmed' }],
+      { timeoutMs: 6000, allowPaid: false },
+    );
+    const vals: any[] = r?.value || [];
+    const mintAcc = vals[2];
+    const mintB64 = Array.isArray(mintAcc?.data) ? mintAcc.data[0] : null;
+    if (!mintB64) return null; // unknown mint or bad response: let the caller fall back
+    const mintBuf = Buffer.from(mintB64, 'base64');
+    if (mintBuf.length < 45) return null;
+    const decimals = mintBuf[44];
+    let raw = 0n;
+    let programId: string | null = null;
+    for (let i = 0; i < 2; i++) {
+      const acc = vals[i];
+      const b64 = Array.isArray(acc?.data) ? acc.data[0] : null;
+      if (!b64) continue;
+      const buf = Buffer.from(b64, 'base64');
+      if (buf.length < 72) continue;
+      const amt = buf.readBigUInt64LE(64);
+      raw += amt;
+      if (!programId || amt > 0n) programId = String(acc.owner || programs[i]);
+    }
+    return { raw, uiAmount: Number(raw) / 10 ** decimals, decimals, programId: programId ?? (mintAcc.owner ? String(mintAcc.owner) : null) };
+  } catch {
+    return null;
+  }
+}
+
 export function invalidateSolanaBalanceCache(address: string): void {
   holdingsCache.delete(address);
   solBalanceCache.delete(address);
@@ -558,6 +610,12 @@ export async function getSolanaTokenBalance(
   mint: string,
   force = false,
 ): Promise<{ raw: bigint; uiAmount: number; decimals: number; programId: string | null }> {
+  // A forced read comes straight from the chain: the holdings index can lag a
+  // few seconds behind a fresh buy and report 0, which would close a live position.
+  if (force) {
+    const direct = await readTokenBalanceFromAtas(address, mint);
+    if (direct) return direct;
+  }
   const h = await getSolanaWalletHoldings(address, force);
   const t = h.tokens.get(mint);
   return t
@@ -755,6 +813,12 @@ export async function getPumpLaunchesByCreator(creator: string, limit = 20): Pro
     .map(toLaunch)
     .filter((x: PumpLaunch | null): x is PumpLaunch => !!x)
     .sort((a: PumpLaunch, b: PumpLaunch) => b.createdAt - a.createdAt);
+}
+
+/** pump.fun's view of a mint (one pump.fun API call, no Jupiter, no RPC). Null when pump.fun does not know it. */
+export async function getPumpCoinState(mint: string): Promise<{ complete: boolean; createdAt: number } | null> {
+  const coin = await fetchPumpCoin(mint);
+  return coin ? { complete: Boolean(coin.complete), createdAt: Number(coin.created_timestamp || 0) } : null;
 }
 
 /** True once the token can be bought: a live pump.fun curve, or a priced token Jupiter can route. */

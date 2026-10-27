@@ -35,6 +35,7 @@ import {
   type RaceFleetOrderRecord,
 } from '@racerbot/db';
 import { localPriceCache, refreshTokenPrice } from './trigger.js';
+import { refreshSolanaMarkets, getSolanaMarket } from './solanaMarket.js';
 
 const logger = createLogger('limit_orders');
 const REDIS_URL = process.env.REDIS_URL!;
@@ -42,55 +43,6 @@ const redis = createRedis(REDIS_URL);
 
 const POLL_INTERVAL_MS = 4000;
 const PRICE_STALENESS_MS = 60_000;
-
-// ── Solana market data ──────────────────────────────────────────────────────
-// Solana orders compare price in SOL per token and market cap in USD (what
-// pump.fun, DexScreener and the wizard show). Prices for every Solana token
-// with an open order come from ONE batched Jupiter call per refresh (50 mints
-// per call), so the free API limit is respected and no RPC is used.
-
-const SOLANA_REFRESH_MS = Number(process.env.SOLANA_LIMIT_REFRESH_MS || 8000);
-const SOLANA_SUPPLY_TTL_MS = 10 * 60_000;
-export const solanaMarketCache = new Map<string, { priceSol: number; mcapUsd: number; ts: number }>();
-const solanaSupplyCache = new Map<string, { supply: number; decimals: number; ts: number }>();
-let lastSolanaRefresh = 0;
-
-export async function refreshSolanaMarkets(mints: string[], force = false): Promise<void> {
-  const unique = [...new Set(mints.filter((m) => isSolanaToken(m)))];
-  if (unique.length === 0) return;
-  if (!force && Date.now() - lastSolanaRefresh < SOLANA_REFRESH_MS) return;
-  lastSolanaRefresh = Date.now();
-  const [prices, solUsd] = await Promise.all([
-    getSolanaPricesUsd(unique).catch(() => new Map<string, number>()),
-    getSolUsdPrice(),
-  ]);
-  for (const mint of unique) {
-    let sup = solanaSupplyCache.get(mint);
-    let priceUsd = prices.get(mint) ?? 0;
-    if (!sup || Date.now() - sup.ts > SOLANA_SUPPLY_TTL_MS || priceUsd <= 0) {
-      const info = await getSolanaTokenInfo(mint).catch(() => null);
-      if (info) {
-        sup = { supply: info.totalSupply, decimals: info.decimals, ts: Date.now() };
-        solanaSupplyCache.set(mint, sup);
-        if (priceUsd <= 0 && info.priceUsd > 0) priceUsd = info.priceUsd;
-      }
-    }
-    if (priceUsd > 0 && solUsd > 0) {
-      solanaMarketCache.set(mint, {
-        priceSol: priceUsd / solUsd,
-        mcapUsd: sup && sup.supply > 0 ? priceUsd * sup.supply : 0,
-        ts: Date.now(),
-      });
-    }
-  }
-}
-
-/** Current Solana price (SOL/token) and USD market cap, or null if unknown or stale. */
-export function getSolanaMarket(mint: string): { priceSol: number; mcapUsd: number } | null {
-  const hit = solanaMarketCache.get(mint);
-  if (!hit || Date.now() - hit.ts > PRICE_STALENESS_MS) return null;
-  return hit;
-}
 
 export async function runLimitOrderEngine(): Promise<void> {
   logger.info('Starting limit order engine...', { pollInterval: POLL_INTERVAL_MS });
