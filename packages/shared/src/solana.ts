@@ -270,7 +270,11 @@ export async function solanaRpc<T = any>(
     } catch (err: any) {
       lastErr = err;
       // A real JSON-RPC error from a healthy node is the answer; do not spend credits repeating it.
-      if (err?.rpcCode !== undefined && err.rpcCode !== -32005 && err.rpcCode !== 429 && err.rpcCode !== -32603) {
+      // Exception: free nodes that refuse a method or a list size for THEIR plan
+      // (publicnode: "Indexed requests require a personal token", "A maximum of 10 accounts")
+      // are endpoint limits, not answers, so the next endpoint is tried.
+      const endpointLimit = /personal token|maximum of \d+|not available on|method not found|not supported/i.test(String(err?.message || ''));
+      if (err?.rpcCode !== undefined && err.rpcCode !== -32005 && err.rpcCode !== 429 && err.rpcCode !== -32603 && !endpointLimit) {
         throw err;
       }
     }
@@ -498,11 +502,22 @@ export async function getSolanaBalanceFreeOnly(address: string): Promise<bigint 
  * few seconds behind a fresh buy. Returns null when it cannot be determined.
  */
 export async function getSolanaTokenBalanceOnChain(owner: string, mint: string): Promise<bigint | null> {
+  // Reads the owner's associated token accounts (classic + Token-2022) with one
+  // plain getMultipleAccounts call. Free nodes refuse the "indexed"
+  // getTokenAccountsByOwner method, but serve this. Bot wallets only ever hold ATAs.
   try {
-    const res = await solanaRpc<any>('getTokenAccountsByOwner', [owner, { mint }, { encoding: 'jsonParsed', commitment: 'confirmed' }], { timeoutMs: 6000 });
+    const o = new PublicKey(owner);
+    const m = new PublicKey(mint);
+    const atas = [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID].map((tp) =>
+      PublicKey.findProgramAddressSync([o.toBuffer(), new PublicKey(tp).toBuffer(), m.toBuffer()], new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID))[0].toBase58(),
+    );
+    const r = await solanaRpc<any>('getMultipleAccounts', [atas, { encoding: 'base64', dataSlice: { offset: 64, length: 8 }, commitment: 'confirmed' }], { timeoutMs: 6000 });
     let total = 0n;
-    for (const item of res?.value || []) {
-      total += BigInt(String(item?.account?.data?.parsed?.info?.tokenAmount?.amount ?? '0'));
+    for (const acc of r?.value || []) {
+      const b64 = Array.isArray(acc?.data) ? acc.data[0] : null;
+      if (!b64) continue;
+      const buf = Buffer.from(b64, 'base64');
+      if (buf.length >= 8) total += buf.readBigUInt64LE(0);
     }
     return total;
   } catch {
@@ -791,7 +806,20 @@ export interface SolanaSwapBuild {
  * Sells: the fee is computed by the caller from the quote (via `feeFromQuote`)
  * and transferred after the swap has unwrapped SOL to the user.
  */
-export async function buildSolanaSwap(params: {
+export async function buildSolanaSwap(params: SolanaSwapParams): Promise<SolanaSwapBuild> {
+  const plan = await buildSolanaSwapPlan(params);
+  return {
+    tx: compileSolanaPlan(plan, plan.instructions, plan.owner, plan.blockhash),
+    inAmount: plan.inAmount,
+    outAmount: plan.outAmount,
+    minOutAmount: plan.minOutAmount,
+    routeLabels: plan.routeLabels,
+    lastValidBlockHeight: plan.lastValidBlockHeight,
+    feeLamports: plan.feeLamports,
+  };
+}
+
+export interface SolanaSwapParams {
   owner: string;
   inputMint: string;
   outputMint: string;
@@ -802,7 +830,42 @@ export async function buildSolanaSwap(params: {
   /** Fee from quoted SOL output (sells). Receives the quoted out amount in lamports. */
   feeFromQuote?: (outLamports: bigint) => bigint;
   feeRecipient?: string;
-}): Promise<SolanaSwapBuild> {
+}
+
+/** A built swap before it is compiled into a transaction (lets RaceFleet reuse one route for many wallets). */
+export interface SolanaSwapPlan {
+  owner: string;
+  inputMint: string;
+  outputMint: string;
+  instructions: TransactionInstruction[];
+  /** Index of the Jupiter swap instruction inside `instructions`. */
+  swapIndex: number;
+  alts: AddressLookupTableAccount[];
+  blockhash: string;
+  lastValidBlockHeight: number;
+  inAmount: bigint;
+  outAmount: bigint;
+  minOutAmount: bigint;
+  slippageBps: number;
+  routeLabels: string[];
+  feeLamports: bigint;
+}
+
+export function compileSolanaPlan(
+  plan: SolanaSwapPlan,
+  instructions: TransactionInstruction[],
+  payer: string,
+  blockhash: string,
+): VersionedTransaction {
+  const message = new TransactionMessage({
+    payerKey: new PublicKey(payer),
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message(plan.alts);
+  return new VersionedTransaction(message);
+}
+
+export async function buildSolanaSwapPlan(params: SolanaSwapParams): Promise<SolanaSwapPlan> {
   const q = new URLSearchParams({
     inputMint: params.inputMint,
     outputMint: params.outputMint,
@@ -835,10 +898,11 @@ export async function buildSolanaSwap(params: {
   }
   if (priceMicroLamports > MAX_PRIORITY_MICROLAMPORTS) priceMicroLamports = MAX_PRIORITY_MICROLAMPORTS;
 
+  const setupIxs = ((j.setupInstructions || []) as JupIx[]).map(toIx);
   const ixs: TransactionInstruction[] = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: SWAP_COMPUTE_UNIT_LIMIT }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priceMicroLamports }),
-    ...((j.setupInstructions || []) as JupIx[]).map(toIx),
+    ...setupIxs,
     toIx(j.swapInstruction),
     ...(j.cleanupInstruction ? [toIx(j.cleanupInstruction)] : []),
     ...((j.otherInstructions || []) as JupIx[]).map(toIx),
@@ -863,21 +927,236 @@ export async function buildSolanaSwap(params: {
 
   const bhMeta = j.blockhashWithMetadata;
   if (!bhMeta?.blockhash) throw new Error('Jupiter build returned no blockhash');
-  const message = new TransactionMessage({
-    payerKey: owner,
-    recentBlockhash: blockhashToString(bhMeta.blockhash),
-    instructions: ixs,
-  }).compileToV0Message(alts);
 
   return {
-    tx: new VersionedTransaction(message),
+    owner: params.owner,
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    instructions: ixs,
+    swapIndex: 2 + setupIxs.length,
+    alts,
+    blockhash: blockhashToString(bhMeta.blockhash),
+    lastValidBlockHeight: Number(bhMeta.lastValidBlockHeight || 0),
     inAmount: BigInt(String(j.inAmount ?? params.amount)),
     outAmount,
     minOutAmount,
+    slippageBps: Math.max(1, Math.min(5000, Math.round(params.slippageBps))),
     routeLabels: (j.routePlan || []).map((r: any) => r?.swapInfo?.label).filter(Boolean),
-    lastValidBlockHeight: Number(bhMeta.lastValidBlockHeight || 0),
     feeLamports,
   };
+}
+
+// ── One route, many wallets (RaceFleet "fire together") ─────────────────────
+
+const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
+
+function ataOf(owner: PublicKey, mint: PublicKey, tokenProgram: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+    new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+  )[0];
+}
+
+/** Owner-derived accounts a Jupiter route may touch: the owner, its token accounts and pump.fun volume PDAs. */
+type OwnerSlot =
+  | { kind: 'owner' }
+  | { kind: 'ata'; mint: PublicKey; tokenProgram: PublicKey }
+  | { kind: 'pda'; program: PublicKey; seed: string };
+
+function ownerSlots(plan: SolanaSwapPlan): Map<string, OwnerSlot> {
+  const owner = new PublicKey(plan.owner);
+  const slots = new Map<string, OwnerSlot>([[plan.owner, { kind: 'owner' }]]);
+  const candidates = new Set<string>([plan.inputMint, plan.outputMint, SOL_MINT]);
+  for (const ix of plan.instructions) for (const k of ix.keys) candidates.add(k.pubkey.toBase58());
+  const programs = [new PublicKey(TOKEN_PROGRAM_ID), new PublicKey(TOKEN_2022_PROGRAM_ID)];
+  const used = new Set<string>();
+  for (const ix of plan.instructions) for (const k of ix.keys) used.add(k.pubkey.toBase58());
+  for (const m of candidates) {
+    let mint: PublicKey;
+    try { mint = new PublicKey(m); } catch { continue; }
+    for (const tp of programs) {
+      const ata = ataOf(owner, mint, tp).toBase58();
+      if (used.has(ata)) slots.set(ata, { kind: 'ata', mint, tokenProgram: tp });
+    }
+  }
+  for (const prog of [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID]) {
+    const program = new PublicKey(prog);
+    const pda = PublicKey.findProgramAddressSync([Buffer.from('user_volume_accumulator'), owner.toBuffer()], program)[0].toBase58();
+    if (used.has(pda)) slots.set(pda, { kind: 'pda', program, seed: 'user_volume_accumulator' });
+  }
+  return slots;
+}
+
+function slotFor(slot: OwnerSlot, owner: PublicKey): PublicKey {
+  if (slot.kind === 'owner') return owner;
+  if (slot.kind === 'ata') return ataOf(owner, slot.mint, slot.tokenProgram);
+  return PublicKey.findProgramAddressSync([Buffer.from(slot.seed), owner.toBuffer()], slot.program)[0];
+}
+
+/**
+ * Offset of in_amount inside the Jupiter swap instruction data, or -1 when the
+ * layout is not the one we verified (in_amount u64, quoted_out u64, slippage u16
+ * right after the 8-byte discriminator, with an optional 1-byte id before them).
+ */
+function jupiterAmountOffset(plan: SolanaSwapPlan): number {
+  const d = plan.instructions[plan.swapIndex]?.data;
+  if (!d) return -1;
+  for (const off of [8, 9]) {
+    if (d.length < off + 18) continue;
+    if (d.readBigUInt64LE(off) === plan.inAmount && d.readBigUInt64LE(off + 8) === plan.outAmount && d.readUInt16LE(off + 16) === plan.slippageBps) {
+      return off;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Re-targets a built route to another wallet: swaps the owner and every
+ * owner-derived account, and (for sells) patches the input amount and quoted
+ * output. Returns null when the instruction layout is unknown and the amount
+ * must change, so the caller can build that wallet separately instead.
+ * Callers must simulate the result before sending.
+ */
+export function remapSolanaSwapPlan(plan: SolanaSwapPlan, newOwner: string, newAmount?: bigint): TransactionInstruction[] | null {
+  const owner = new PublicKey(newOwner);
+  const slots = ownerSlots(plan);
+  const replace = new Map<string, PublicKey>();
+  for (const [addr, slot] of slots) replace.set(addr, slotFor(slot, owner));
+
+  const amountChanges = newAmount !== undefined && newAmount !== plan.inAmount;
+  const off = amountChanges ? jupiterAmountOffset(plan) : -1;
+  if (amountChanges && off < 0) return null;
+
+  return plan.instructions.map((ix, i) => {
+    let data = ix.data;
+    if (i === plan.swapIndex && amountChanges) {
+      data = Buffer.from(ix.data);
+      data.writeBigUInt64LE(newAmount!, off);
+      data.writeBigUInt64LE((plan.outAmount * newAmount!) / plan.inAmount, off + 8);
+    }
+    return new TransactionInstruction({
+      programId: ix.programId,
+      data,
+      keys: ix.keys.map((k) => ({ ...k, pubkey: replace.get(k.pubkey.toBase58()) ?? k.pubkey })),
+    });
+  });
+}
+
+/**
+ * Changes the slippage of an already built route in place (verified layout
+ * only). Returns false when the layout is unknown; the caller then rebuilds.
+ */
+export function setSolanaPlanSlippage(plan: SolanaSwapPlan, slippageBps: number): boolean {
+  const off = jupiterAmountOffset(plan);
+  if (off < 0) return false;
+  const bps = Math.max(1, Math.min(5000, Math.round(slippageBps)));
+  const ix = plan.instructions[plan.swapIndex];
+  const data = Buffer.from(ix.data);
+  data.writeUInt16LE(bps, off + 16);
+  plan.instructions[plan.swapIndex] = new TransactionInstruction({ programId: ix.programId, keys: ix.keys, data });
+  plan.slippageBps = bps;
+  return true;
+}
+
+/** Quote only (no transaction). Used to size slippage for many wallets trading the same pool at once. */
+export async function getJupiterQuoteOut(inputMint: string, outputMint: string, amount: bigint): Promise<bigint | null> {
+  try {
+    const q = new URLSearchParams({ inputMint, outputMint, amount: amount.toString(), slippageBps: '100' });
+    const j = await jupiterGet<any>(`/swap/v1/quote?${q.toString()}`, 'trade', 8000);
+    const out = BigInt(String(j?.outAmount ?? '0'));
+    return out > 0n ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Simulates a transaction without signatures (free RPC only). */
+export async function simulateSolanaTx(tx: VersionedTransaction): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const b64 = Buffer.from(tx.serialize()).toString('base64');
+    const r = await solanaRpc<any>('simulateTransaction', [b64, { encoding: 'base64', sigVerify: false, replaceRecentBlockhash: true, commitment: 'confirmed' }], { timeoutMs: 8000, allowPaid: false });
+    const err = r?.value?.err;
+    return err ? { ok: false, error: describeSolanaError(err) } : { ok: true, error: null };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'simulation failed' };
+  }
+}
+
+/** Fresh blockhash for signing many transactions at once. */
+export async function getSolanaLatestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+  return latestBlockhash();
+}
+
+/**
+ * Broadcasts many signed transactions at the same instant, then confirms them
+ * together with one getSignatureStatuses call per round (not one per tx).
+ * Unconfirmed ones are re-broadcast every 3 s until the blockhash expires.
+ */
+export async function sendAndConfirmManySolana(
+  txs: VersionedTransaction[],
+  lastValidBlockHeight: number,
+): Promise<SolanaSendResult[]> {
+  const items = txs.map((tx) => ({
+    b64: Buffer.from(tx.serialize()).toString('base64'),
+    sig: bs58.encode(Buffer.from(tx.signatures[0])),
+    done: null as SolanaSendResult | null,
+  }));
+  const fire = (list: typeof items) =>
+    Promise.all(list.map((it) => Promise.all([broadcastFree(it.b64), broadcastJupiter(it.b64)])));
+
+  // Everything goes out together.
+  const first = await fire(items);
+  // Anything no free endpoint (or Jupiter) accepted gets one paid attempt.
+  await Promise.all(items.map(async (it, i) => {
+    const [freeSig, jupOk] = first[i];
+    if (!freeSig && !jupOk) await broadcastPaid(it.b64);
+  }));
+
+  const started = Date.now();
+  let lastRebroadcast = Date.now();
+  let lastHeightCheck = 0;
+  while (items.some((it) => !it.done) && Date.now() - started < 75_000) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const pending = items.filter((it) => !it.done);
+    // Chunks of 10 keep every free endpoint happy (some cap list sizes).
+    await Promise.all(Array.from({ length: Math.ceil(pending.length / 10) }, (_, c) => pending.slice(c * 10, c * 10 + 10)).map(async (chunk) => {
+      try {
+        const st = await solanaRpc<any>('getSignatureStatuses', [chunk.map((p) => p.sig), { searchTransactionHistory: false }], { timeoutMs: 6000, allowPaid: false });
+        (st?.value || []).forEach((s: any, i: number) => {
+          if (!s) return;
+          const it = chunk[i];
+          if (s.err) it.done = { signature: it.sig, confirmed: false, error: describeSolanaError(s.err) };
+          else if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') it.done = { signature: it.sig, confirmed: true, error: null };
+        });
+      } catch { /* keep polling */ }
+    }));
+    if (Date.now() - lastRebroadcast > 3000) {
+      lastRebroadcast = Date.now();
+      void fire(items.filter((it) => !it.done));
+    }
+    if (lastValidBlockHeight > 0 && Date.now() - lastHeightCheck > 10_000) {
+      lastHeightCheck = Date.now();
+      try {
+        const height = await solanaRpc<number>('getBlockHeight', [{ commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: false });
+        if (height > lastValidBlockHeight) break;
+      } catch { /* ignore */ }
+    }
+  }
+  // Final look with history for anything still open.
+  const open = items.filter((it) => !it.done);
+  for (let c = 0; c < open.length; c += 10) {
+    const chunk = open.slice(c, c + 10);
+    try {
+      const st = await solanaRpc<any>('getSignatureStatuses', [chunk.map((p) => p.sig), { searchTransactionHistory: true }], { timeoutMs: 6000 });
+      (st?.value || []).forEach((s: any, i: number) => {
+        const it = chunk[i];
+        if (s && !s.err) it.done = { signature: it.sig, confirmed: true, error: null };
+        else if (s?.err) it.done = { signature: it.sig, confirmed: false, error: describeSolanaError(s.err) };
+      });
+    } catch { /* ignore */ }
+  }
+  return items.map((it) => it.done ?? { signature: it.sig, confirmed: false, error: 'Not confirmed in time (blockhash expired). Nothing was spent for this wallet.' });
 }
 
 /** Sell fee: 1.5%, or 2% when proceeds are above $200 (same as NEAR). */

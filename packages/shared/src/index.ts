@@ -312,6 +312,14 @@ export {
   sendSolToMany,
   sweepSolFromMany,
   SOLANA_RENT_EXEMPT_MIN_LAMPORTS,
+  buildSolanaSwapPlan,
+  compileSolanaPlan,
+  remapSolanaSwapPlan,
+  setSolanaPlanSlippage,
+  getJupiterQuoteOut,
+  simulateSolanaTx,
+  getSolanaLatestBlockhash,
+  sendAndConfirmManySolana,
 } from './solana.js';
 export type {
   GeneratedSolanaWallet,
@@ -322,4 +330,6 @@ export type {
   SolanaSwapBuild,
   SolanaSendResult,
   PumpLaunch,
+  SolanaSwapPlan,
+  SolanaSwapParams,
 } from './solana.js';
