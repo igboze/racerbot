@@ -6072,7 +6072,9 @@
           msg.includes('registered with this token contract') ||
           msg.includes('not registered') ||
           msg.includes('account is not registered') ||
-          msg.includes('storage deposit')
+          msg.includes('storage deposit') ||
+          msg.includes('zero_tokens_received') ||
+          msg.includes('0 tokens received')
         );
 
       try {
