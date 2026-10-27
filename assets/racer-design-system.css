@@ -262,6 +262,8 @@ p, .text-body {
   height: 32px;
   object-fit: contain;
   display: block;
+  border-radius: 50%;
+  background: transparent;
 }
 
 .desktop-nav {
