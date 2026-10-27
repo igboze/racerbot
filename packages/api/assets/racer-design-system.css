@@ -262,6 +262,8 @@ p, .text-body {
   height: 32px;
   object-fit: contain;
   display: block;
+  border-radius: 50%;
+  background: transparent;
 }
 
 .desktop-nav {
@@ -962,6 +964,8 @@ a[href="#main-content"]:first-child:focus {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  border-radius: 50%;
+  background: transparent;
 }
 
 @media (max-width: 767px) {
