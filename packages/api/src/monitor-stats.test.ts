@@ -112,8 +112,8 @@ describe('formatReasons', () => {
 });
 
 describe('buildVolumeUpdateText', () => {
-  it('formats report with NEAR, SUI, and Starknet volumes and USD estimates', async () => {
-    const { buildVolumeUpdateText } = await import('./monitor.js');
+  it('formats report with NEAR, SUI, Starknet, and Solana volumes and USD estimates', async () => {
+    const { buildVolumeUpdateText } = await import('./monitorStats.js');
     const stats = {
       volume24hNear: 1000,
       fees24hNear: 15,
@@ -136,13 +136,19 @@ describe('buildVolumeUpdateText', () => {
       volumeTotalStarknet: 1839.73,
       feesTotalStarknet: 27.596,
       tradesTotalStarknet: 14,
+      volume24hSolana: 120,
+      fees24hSolana: 1.8,
+      trades24hSolana: 8,
+      volumeTotalSolana: 450,
+      feesTotalSolana: 6.75,
+      tradesTotalSolana: 30,
       usersTotal: 250,
       newUsers24h: 5,
     };
 
-    const text = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4);
+    const text = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4, 150);
     expect(text).toContain('📊 *RacerBot Daily Report*');
-    expect(text).toContain('• Total trades: `45` (25 buys / 5 sells)');
+    expect(text).toContain('• Total trades: `53` (25 buys / 5 sells)');
     expect(text).toContain('〽️ *NEAR — 24h*');
     expect(text).toContain('• Volume: `1,000 NEAR` (~$2,500)');
     expect(text).toContain('🔵 *SUI — 24h*');
@@ -150,7 +156,11 @@ describe('buildVolumeUpdateText', () => {
     expect(text).toContain('⚡ *Starknet — 24h*');
     expect(text).toContain('• Volume: `800 STRK` (~$320)');
     expect(text).toContain('• Trades: `15`');
+    expect(text).toContain('🟣 *Solana — 24h*');
+    expect(text).toContain('• Volume: `120 SOL` (~$18,000)');
+    expect(text).toContain('• Trades: `8`');
     expect(text).toContain('• Starknet volume: `1,839.73 STRK` (~$736)');
-    expect(text).toContain('• Total trades: `1,414`');
+    expect(text).toContain('• Solana volume: `450 SOL` (~$67,500)');
+    expect(text).toContain('• Total trades: `1,444`');
   });
 });
