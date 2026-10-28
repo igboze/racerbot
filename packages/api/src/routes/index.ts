@@ -13,7 +13,7 @@ import {
   getCompetitionLeaderboard,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { createLogger } from '@racerbot/shared';
+import { createLogger, formatTokenUnits } from '@racerbot/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
@@ -2739,9 +2739,11 @@ router.get('/bubblemap-data/:token', async (req, res) => {
     const totalHolders = holdersCountObj?.count || (meta as any)?.holders_count || (meta as any)?.holdersCount || holders.length;
 
     const m = meta as any;
+    const decimals = Number(m?.decimals ?? 18);
     const normalizedMeta = m ? {
       ...m,
       symbol: m.symbol || m.name || '',
+      decimals,
       priceUsd: m.price_usd !== undefined ? Number(m.price_usd) : Number(m.priceUsd || 0),
       priceChange24h: m.price_24h_change !== undefined ? Number(m.price_24h_change) : Number(m.priceChange24h || 0),
       marketCap: m.market_cap_usd !== undefined ? Number(m.market_cap_usd) : Number(m.market_cap || m.marketCap || 0),
@@ -2750,14 +2752,44 @@ router.get('/bubblemap-data/:token', async (req, res) => {
       holdersCount: totalHolders,
     } : null;
 
+    const enrichedHolders = holders.map((h: any) => {
+      let formattedAmount = '';
+      try {
+        const rawBig = BigInt(h.amount || '0');
+        formattedAmount = formatTokenUnits(rawBig, decimals, 4);
+      } catch {
+        formattedAmount = h.amount || '0';
+      }
+      return {
+        ...h,
+        decimals,
+        formattedAmount,
+      };
+    });
+
+    const enrichedTxns = txns.map((t: any) => {
+      let formattedAmount = '';
+      try {
+        const rawBig = BigInt(t.amount || '0');
+        formattedAmount = formatTokenUnits(rawBig, decimals, 4);
+      } catch {
+        formattedAmount = t.amount || '0';
+      }
+      return {
+        ...t,
+        decimals,
+        formattedAmount,
+      };
+    });
+
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.json({
       token,
-      holders,
+      holders: enrichedHolders,
       totalHolders,
-      txns,
+      txns: enrichedTxns,
       identityLinks,
       identityClusters,
       meta: normalizedMeta,

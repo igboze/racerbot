@@ -1787,10 +1787,48 @@ const server = http.createServer(async (req, res) => {
         decimals: 18,
       };
 
+      const enrichedHolders = holders.map(h => {
+        let formattedAmount = '';
+        try {
+          const rawBig = BigInt(h.amount || '0');
+          const divisor = 10n ** 18n;
+          const whole = rawBig / divisor;
+          const rem = rawBig % divisor;
+          const remStr = rem.toString().padStart(18, '0').slice(0, 4);
+          formattedAmount = `${whole}.${remStr}`;
+        } catch {
+          formattedAmount = h.amount || '0';
+        }
+        return {
+          ...h,
+          decimals: 18,
+          formattedAmount,
+        };
+      });
+
+      const enrichedTxns = txns.map(t => {
+        let formattedAmount = '';
+        try {
+          const rawBig = BigInt(t.amount || '0');
+          const divisor = 10n ** 18n;
+          const whole = rawBig / divisor;
+          const rem = rawBig % divisor;
+          const remStr = rem.toString().padStart(18, '0').slice(0, 4);
+          formattedAmount = `${whole}.${remStr}`;
+        } catch {
+          formattedAmount = t.amount || '0';
+        }
+        return {
+          ...t,
+          decimals: 18,
+          formattedAmount,
+        };
+      });
+
       const result = {
         token,
-        holders,
-        txns,
+        holders: enrichedHolders,
+        txns: enrichedTxns,
         identityLinks,
         identityClusters,
         meta,
