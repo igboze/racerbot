@@ -4,7 +4,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
-import { getTokenInfo, publishSwap, fetchTokenHoldersCount } from '../wallet.js';
+import { getTokenInfo, publishSwap, fetchTokenHoldersCount, getNearUsdPrice } from '../wallet.js';
 import {
   createTrigger,
   getCompetition,
@@ -663,6 +663,11 @@ router.post('/alpha/creator/pricing', async (req, res) => {
 const accountBalanceCache = new Map<string, { balance: any; timestamp: number }>();
 const BALANCE_CACHE_TTL_MS = 2500;
 
+router.get('/api/near-price', async (_req, res) => {
+  const nearUsd = await getNearUsdPrice().catch(() => 0);
+  res.json({ nearUsd });
+});
+
 router.get(['/api/user/balance', '/user/balance'], async (req, res) => {
   try {
     let accountId = (req.query.accountId as string)?.trim() ||
@@ -702,7 +707,8 @@ router.get(['/api/user/balance', '/user/balance'], async (req, res) => {
     const yoctoBigInt = BigInt(yocto || '0');
     const nearFloat = Number(yoctoBigInt / 1000000000000000000n) / 1e6;
     const nearFormatted = nearFloat.toFixed(4);
-    const nearUsd = (nearFloat * 4.95).toFixed(2);
+    const nearUsdPrice = await getNearUsdPrice().catch(() => 0);
+    const nearUsd = (nearFloat * nearUsdPrice).toFixed(2);
 
     const result = {
       success: true,
@@ -712,6 +718,7 @@ router.get(['/api/user/balance', '/user/balance'], async (req, res) => {
       formatted: `${nearFloat.toFixed(2)} NEAR`,
       totalNear: nearFormatted,
       usd: nearUsd,
+      nearUsdPrice,
     };
 
     accountBalanceCache.set(cacheKey, { balance: result, timestamp: Date.now() });
@@ -1111,7 +1118,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       message:
         intentMessage ||
         (executionRouting === 'INTENT_SOLVER'
-          ? 'Private Zero-MEV Intent executed via Defuse Solver batch auction'
+          ? 'Private trade filled by a NEAR Intents (1Click) solver'
           : executionRouting === 'RACER_SHIELDED_VAULT'
           ? 'Atomic Shielded Trade executed via Racer Router (racerbotrouter.near)'
           : 'Private trade executed on-chain'),
@@ -2078,7 +2085,7 @@ export async function serveCompetitionHtml(res: import('express').Response, comp
       getSnapshotLeaderboard(30).catch(() => []),
     ]);
 
-    const nearUsd = tokenInfo?.near_usd || 4.82;
+    const nearUsd = tokenInfo?.near_usd || await getNearUsdPrice().catch(() => 0);
     const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
     const currentMcapNear = tokenInfo?.market_cap || 0;
     const currentPriceNear = parseFloat(tokenInfo?.price || '0');
@@ -2167,7 +2174,7 @@ async function fetchCompetitionSnapshot(rawId = 'kookdog') {
     getSnapshotLeaderboard(30).catch(() => []),
   ]);
 
-  const nearUsd = tokenInfo?.near_usd || 4.82;
+  const nearUsd = tokenInfo?.near_usd || await getNearUsdPrice().catch(() => 0);
   const currentMcapUsd = tokenInfo?.market_cap_usd || 0;
   const currentMcapNear = tokenInfo?.market_cap || 0;
   const currentPriceNear = parseFloat(tokenInfo?.price || '0');

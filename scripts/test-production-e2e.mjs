@@ -2,7 +2,11 @@
 import pg from 'pg';
 
 const BASE_URL = 'http://localhost:3000';
-const DATABASE_URL = 'postgresql://postgres:REDACTED@localhost:5432/railway';
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('Set DATABASE_URL (see .env.example) before running this script.');
+  process.exit(1);
+}
 
 async function runTest() {
   console.log('--- 1. Testing NEAR Intents Deposit API Endpoints ---');
