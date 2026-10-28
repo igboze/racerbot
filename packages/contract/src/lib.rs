@@ -222,7 +222,6 @@ impl RacerbotVault {
             .expect("No pending swap with this nonce");
         self.credit(&pending.user, &pending.token_in, pending.amount_in);
         self.clear_snapshot(swap_nonce);
-        self.take_native_snapshot(swap_nonce);
         self.take_used(swap_nonce);
         self.set_token_lock(Self::payout_token(&pending.token_out), false);
         self.finish_inflight();
@@ -280,7 +279,6 @@ impl RacerbotVault {
     #[payable]
     pub fn deposit_near(&mut self, user: AccountId) {
         self.assert_not_paused();
-        require!(!self.native_gate_closed(), "Token busy: a sell to NEAR is settling, retry shortly");
         let amount = env::attached_deposit().as_yoctonear();
         require!(amount > 0, "Must attach NEAR");
         self.credit(&user, "near", amount);
@@ -300,7 +298,7 @@ impl RacerbotVault {
         self.assert_not_paused();
         let token_id = env::predecessor_account_id().to_string();
         // Incoming wNEAR would be counted as a settling sell's output: hand it back (NEP-141 refund)
-        if token_id == WRAP_NEAR && self.native_gate_closed() {
+        if token_id == WRAP_NEAR && self.wnear_gate_closed() {
             return PromiseOrValue::Value(amount);
         }
         let user: AccountId = if msg.starts_with("user:") {
@@ -322,7 +320,7 @@ impl RacerbotVault {
     #[payable]
     pub fn withdraw(&mut self, token: String) -> Promise {
         self.assert_not_paused();
-        self.assert_native_untouched(&token);
+        self.assert_wnear_untouched(&token);
         let user = env::predecessor_account_id();
         let amount = self.debit_all(&user, &token);
         require!(amount > 0, "Nothing to withdraw");
@@ -337,7 +335,7 @@ impl RacerbotVault {
     #[payable]
     pub fn withdraw_amount(&mut self, token: String, amount: U128) -> Promise {
         self.assert_not_paused();
-        self.assert_native_untouched(&token);
+        self.assert_wnear_untouched(&token);
         let user = env::predecessor_account_id();
         self.debit_exact(&user, &token, amount.0);
         Self::emit("withdraw_initiated", serde_json::json!({
@@ -351,7 +349,7 @@ impl RacerbotVault {
     #[payable]
     pub fn withdraw_user(&mut self, user: AccountId, token: String) -> Promise {
         self.assert_not_paused();
-        self.assert_native_untouched(&token);
+        self.assert_wnear_untouched(&token);
         let caller = env::predecessor_account_id();
         require!(
             caller == self.owner_id || caller == user,
@@ -428,12 +426,13 @@ impl RacerbotVault {
         // Ref swaps take the lock too, because their payouts also move the router's balance.
         let payout_token = Self::payout_token(&intent.token_out);
         require!(!self.is_token_locked(payout_token), "Token busy: another swap is settling, retry shortly");
-        // A sell to NEAR measures the router's native balance too, so it runs alone:
-        // it starts only with no other swap in flight, and nothing new starts while it settles.
+        // A sell to NEAR measures the router's wNEAR balance, which buys also move (wrapping and
+        // sending wNEAR), so it runs alone: it starts only with no other swap in flight, and
+        // nothing new starts while it settles.
         if payout_token == WRAP_NEAR {
             require!(self.inflight() == 0, "Token busy: swaps are settling before a sell to NEAR, retry shortly");
         } else {
-            require!(!self.native_gate_closed(), "Token busy: a sell to NEAR is settling, retry shortly");
+            require!(!self.wnear_gate_closed(), "Token busy: a sell to NEAR is settling, retry shortly");
         }
         self.set_token_lock(payout_token, true);
         self.set_inflight(self.inflight() + 1);
@@ -535,10 +534,6 @@ impl RacerbotVault {
         };
 
         self.set_snapshot(swap_nonce, pre.0);
-        if Self::payout_token(&intent.token_out) == WRAP_NEAR {
-            // Venues may pay NEAR output natively (Ref DCL unwraps wNEAR); read before dispatching
-            self.set_native_snapshot(swap_nonce, env::account_balance().as_yoctonear());
-        }
         match &intent.venue {
             Venue::Nearlytrade | Venue::Dcl => self.dispatch_dcl(&intent, swap_nonce, is_near_wrapped),
             Venue::Intear => self.dispatch_intear(&intent, swap_nonce),
@@ -627,6 +622,9 @@ impl RacerbotVault {
                 "pool_ids": pool_ids,
                 "output_token": out_tok,
                 "min_output_amount": intent.min_amount_out,
+                // Without this DCL unwraps wNEAR output and pays native NEAR in a detached transfer
+                // that can land after the router's balance check
+                "skip_unwrap_near": true,
             }
         }).to_string();
 
@@ -889,21 +887,17 @@ impl RacerbotVault {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<U128>(&bytes).ok());
         let pre = self.take_snapshot(swap_nonce);
-        // Native NEAR the venue paid in (sells to NEAR only; 0 otherwise)
-        let native_out = self.take_native_snapshot(swap_nonce)
-            .map(|native_pre| env::account_balance().as_yoctonear().saturating_sub(native_pre))
-            .unwrap_or(0);
 
         match (post, pre) {
             (Some(post), Some(pre)) => {
-                let raw_out = post.0.saturating_sub(pre) + native_out;
+                let raw_out = post.0.saturating_sub(pre);
                 if raw_out == 0 {
                     self.fail_balance_diff_swap(swap_nonce, &pending, "zero_tokens_received");
                     return PromiseOrValue::Value(U128(0));
                 }
                 self.take_used(swap_nonce);
                 let lock = Self::payout_token(&pending.token_out).to_string();
-                self.settle(&pending, raw_out, native_out, Some(lock))
+                self.settle(&pending, raw_out, Some(lock))
             }
             _ => {
                 self.fail_balance_diff_swap(swap_nonce, &pending, "balance_query_failed");
@@ -948,8 +942,7 @@ impl RacerbotVault {
         }
     }
 
-    /// wrap.near → NEAR unwrap resolved: pay the user natively, or re-credit on failure
-    /// (the wNEAR part stays wNEAR, the part received natively stays native).
+    /// wrap.near → NEAR unwrap resolved: pay the user natively, or re-credit wrap.near on failure.
     #[private]
     pub fn on_unwrapped(
         &mut self,
@@ -957,8 +950,6 @@ impl RacerbotVault {
         user: AccountId,
         net: U128,
         fee: U128,
-        wrapped_net: U128,
-        wrapped_fee: U128,
         lock_token: Option<String>,
     ) -> PromiseOrValue<bool> {
         match env::promise_result_checked(0, 512) {
@@ -980,15 +971,13 @@ impl RacerbotVault {
                     self.finish_inflight();
                 }
                 let treasury = self.treasury_id.clone();
-                self.credit(&treasury, WRAP_NEAR, wrapped_fee.0);
-                self.credit(&treasury, "near", fee.0.saturating_sub(wrapped_fee.0));
-                self.credit(&user, WRAP_NEAR, wrapped_net.0);
-                self.credit(&user, "near", net.0.saturating_sub(wrapped_net.0));
+                self.credit(&treasury, WRAP_NEAR, fee.0);
+                self.credit(&user, WRAP_NEAR, net.0);
                 Self::emit("payout_failed", serde_json::json!({
                     "correlation_id": correlation_id,
                     "user": user,
                     "token": WRAP_NEAR,
-                    "amount": wrapped_net,
+                    "amount": net,
                     "reason": "unwrap_failed",
                     "action": "credited_to_vault_ledger",
                 }));
@@ -1002,7 +991,7 @@ impl RacerbotVault {
     /// Pays `raw_out` (minus fee) to the user. The fee is credited to the treasury's
     /// sub-ledger instead of being transferred, so the user payout is the only outgoing
     /// transfer and its result is always checked by `on_payout_resolved`.
-    fn settle(&mut self, pending: &PendingSwap, raw_out: u128, native_out: u128, lock_token: Option<String>) -> PromiseOrValue<U128> {
+    fn settle(&mut self, pending: &PendingSwap, raw_out: u128, lock_token: Option<String>) -> PromiseOrValue<U128> {
         // Slippage guard: give user full amount back, no fee charged
         let fee_amount = if raw_out < pending.min_amount_out.0 {
             Self::emit("slippage_refund", serde_json::json!({
@@ -1030,35 +1019,13 @@ impl RacerbotVault {
             }));
         }
 
-        // Sells to NEAR (token_out "near" or wrap.near) pay the user native NEAR. Output may arrive
-        // as wNEAR, as native NEAR (Ref DCL unwraps), or both; only the wNEAR part is unwrapped.
+        // Sells to NEAR (token_out "near" or wrap.near) arrive as wNEAR and pay the user native NEAR
         if pending.token_out == "near" || pending.token_out == WRAP_NEAR {
-            let wrapped = raw_out.saturating_sub(native_out);
-            if wrapped == 0 {
-                let treasury = self.treasury_id.clone();
-                self.credit(&treasury, "near", fee_amount);
-                return PromiseOrValue::Promise(
-                    Promise::new(pending.user.clone())
-                        .transfer(NearToken::from_yoctonear(net_amount))
-                        .then(
-                            Self::ext(env::current_account_id())
-                                .with_static_gas(GAS_RESOLVE_XFER)
-                                .on_payout_resolved(
-                                    pending.correlation_id.clone(),
-                                    pending.user.clone(),
-                                    "near".to_string(),
-                                    U128(net_amount),
-                                    lock_token,
-                                )
-                        )
-                );
-            }
-            let wrapped_fee = (wrapped * fee_amount) / raw_out;
             return PromiseOrValue::Promise(
                 Promise::new(WRAP_NEAR.parse().unwrap())
                     .function_call(
                         "near_withdraw".to_string(),
-                        serde_json::to_vec(&serde_json::json!({ "amount": U128(wrapped) })).unwrap(),
+                        serde_json::to_vec(&serde_json::json!({ "amount": U128(raw_out) })).unwrap(),
                         ONE_YOCTO,
                         GAS_WRAP,
                     )
@@ -1070,8 +1037,6 @@ impl RacerbotVault {
                                 pending.user.clone(),
                                 U128(net_amount),
                                 U128(fee_amount),
-                                U128(wrapped - wrapped_fee),
-                                U128(wrapped_fee),
                                 lock_token,
                             )
                     )
@@ -1104,7 +1069,6 @@ impl RacerbotVault {
         let refund = pending.amount_in.saturating_sub(used);
         self.credit(&pending.user, &pending.token_in, refund);
         self.clear_snapshot(swap_nonce);
-        self.take_native_snapshot(swap_nonce);
         self.set_token_lock(Self::payout_token(&pending.token_out), false);
         self.finish_inflight();
         Self::emit("swap_failed", serde_json::json!({
@@ -1138,7 +1102,7 @@ impl RacerbotVault {
     }
 
     // ═══════════════════ PAYOUT LOCKS & BALANCE SNAPSHOTS ═════════════════════
-    // Raw storage keys (prefixes "l:" / "s:" / "n:" / "u:" / "c:") so the contract state layout is unchanged
+    // Raw storage keys (prefixes "l:" / "s:" / "u:" / "c:") so the contract state layout is unchanged
     // and the upgrade needs no migration.
 
     fn payout_token(token_out: &str) -> &str {
@@ -1179,20 +1143,6 @@ impl RacerbotVault {
         env::storage_remove(&Self::snapshot_key(swap_nonce));
     }
 
-    fn native_snapshot_key(swap_nonce: u64) -> Vec<u8> {
-        [b"n:".as_slice(), &swap_nonce.to_le_bytes()].concat()
-    }
-
-    fn set_native_snapshot(&mut self, swap_nonce: u64, balance: u128) {
-        env::storage_write(&Self::native_snapshot_key(swap_nonce), &balance.to_le_bytes());
-    }
-
-    fn take_native_snapshot(&mut self, swap_nonce: u64) -> Option<u128> {
-        let raw = env::storage_read(&Self::native_snapshot_key(swap_nonce))?;
-        env::storage_remove(&Self::native_snapshot_key(swap_nonce));
-        raw.try_into().ok().map(u128::from_le_bytes)
-    }
-
     /// Number of swaps between execute_intent and their final payout/refund callback.
     fn inflight(&self) -> u64 {
         env::storage_read(b"c:inflight")
@@ -1210,14 +1160,15 @@ impl RacerbotVault {
         self.set_inflight(n.saturating_sub(1));
     }
 
-    /// Closed while a sell to NEAR settles (it holds the wrap.near payout lock).
-    fn native_gate_closed(&self) -> bool {
+    /// Closed while a sell to NEAR settles (it holds the wrap.near payout lock and measures
+    /// the router's wNEAR balance, so nothing else may move wNEAR in or out meanwhile).
+    fn wnear_gate_closed(&self) -> bool {
         self.is_token_locked(WRAP_NEAR)
     }
 
-    fn assert_native_untouched(&self, token: &str) {
-        if token == "near" || token == WRAP_NEAR {
-            require!(!self.native_gate_closed(), "Token busy: a sell to NEAR is settling, retry shortly");
+    fn assert_wnear_untouched(&self, token: &str) {
+        if token == WRAP_NEAR {
+            require!(!self.wnear_gate_closed(), "Token busy: a sell to NEAR is settling, retry shortly");
         }
     }
 
@@ -1805,24 +1756,7 @@ mod tests {
         assert_eq!(c.get_balance(&user(), WRAP_NEAR), 9_000);
     }
 
-    // ── Sells to NEAR: native output measurement and the native gate ─────────
-
-    const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
-
-    fn callback_env_with_balance(result: near_sdk::PromiseResult, balance_yocto: u128) {
-        let ctx = VMContextBuilder::new()
-            .current_account_id(vault())
-            .predecessor_account_id(vault())
-            .account_balance(NearToken::from_yoctonear(balance_yocto))
-            .build();
-        testing_env!(
-            ctx,
-            near_sdk::test_vm_config(),
-            near_sdk::RuntimeFeesConfig::test(),
-            Default::default(),
-            vec![result]
-        );
-    }
+    // ── Sells to NEAR: wNEAR output measurement and the wNEAR gate ───────────
 
     fn pending_sell(c: &mut RacerbotVault, swap_nonce: u64) {
         c.pending_swaps.insert(swap_nonce, PendingSwap {
@@ -1840,35 +1774,47 @@ mod tests {
     }
 
     #[test]
-    fn test_sell_counts_native_near_paid_by_the_venue() {
-        // The 2026-10-28 case: DCL unwrapped the output and paid 0.3 NEAR natively, no wNEAR
+    fn test_sell_pays_measured_wnear_and_releases_gate_after_payout() {
         let mut c = setup();
         pending_sell(&mut c, 30);
         c.set_snapshot(30, 1_000);
-        c.set_native_snapshot(30, 10 * ONE_NEAR);
         c.set_used(30, 1_351_942);
-        callback_env_with_balance(balance_result(1_000), 10 * ONE_NEAR + 3 * ONE_NEAR / 10);
+        callback_env(balance_result(1_000 + 300_000));
         let _ = c.on_swap_payout(30);
-        let fee = (3 * ONE_NEAR / 10) * 150 / 10_000;
-        assert_eq!(c.get_balance(&treasury(), "near"), fee, "fee kept as native NEAR");
         assert_eq!(c.get_balance(&user(), "usdc.near"), 0, "no USDC re-credit");
         assert!(c.is_token_locked(WRAP_NEAR), "gate stays closed until the payout resolves");
         assert_eq!(c.inflight(), 1);
 
+        // unwrap succeeded -> native payout; its callback ends the swap
         callback_env(near_sdk::PromiseResult::Successful(vec![]));
-        assert!(c.on_payout_resolved("sell".into(), user(), "near".into(), U128(1), Some(WRAP_NEAR.into())));
+        let _ = c.on_unwrapped("sell".into(), user(), U128(295_500), U128(4_500), Some(WRAP_NEAR.into()));
+        assert_eq!(c.get_balance(&treasury(), "near"), 4_500, "fee kept as native NEAR");
+        callback_env(near_sdk::PromiseResult::Successful(vec![]));
+        assert!(c.on_payout_resolved("sell".into(), user(), "near".into(), U128(295_500), Some(WRAP_NEAR.into())));
         assert!(!c.is_token_locked(WRAP_NEAR));
         assert_eq!(c.inflight(), 0);
     }
 
     #[test]
-    fn test_sell_with_no_output_in_either_form_flags_reconciliation() {
+    fn test_failed_unwrap_recredits_wnear_and_ends_the_swap() {
+        let mut c = setup();
+        c.set_token_lock(WRAP_NEAR, true);
+        c.set_inflight(1);
+        callback_env(near_sdk::PromiseResult::Failed);
+        let _ = c.on_unwrapped("sell".into(), user(), U128(295_500), U128(4_500), Some(WRAP_NEAR.into()));
+        assert_eq!(c.get_balance(&user(), WRAP_NEAR), 295_500);
+        assert_eq!(c.get_balance(&treasury(), WRAP_NEAR), 4_500);
+        assert!(!c.is_token_locked(WRAP_NEAR));
+        assert_eq!(c.inflight(), 0);
+    }
+
+    #[test]
+    fn test_sell_with_no_output_flags_reconciliation() {
         let mut c = setup();
         pending_sell(&mut c, 31);
         c.set_snapshot(31, 1_000);
-        c.set_native_snapshot(31, 10 * ONE_NEAR);
         c.set_used(31, 1_351_942);
-        callback_env_with_balance(balance_result(1_000), 10 * ONE_NEAR);
+        callback_env(balance_result(1_000));
         let _ = c.on_swap_payout(31);
         assert_eq!(c.get_balance(&user(), "usdc.near"), 0);
         assert!(!c.is_token_locked(WRAP_NEAR));
@@ -1896,8 +1842,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Token busy: a sell to NEAR is settling")]
-    fn test_deposit_near_waits_while_a_sell_to_near_settles() {
+    fn test_deposit_near_is_not_gated() {
         let mut c = setup();
         c.set_token_lock(WRAP_NEAR, true);
         testing_env!(VMContextBuilder::new()
@@ -1906,16 +1851,27 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         c.deposit_near(user());
+        assert_eq!(c.get_balance(&user(), "near"), 1_000_000_000_000_000_000_000_000);
     }
 
     #[test]
     #[should_panic(expected = "Token busy: a sell to NEAR is settling")]
-    fn test_near_withdraw_waits_while_a_sell_to_near_settles() {
+    fn test_wnear_withdraw_waits_while_a_sell_to_near_settles() {
+        let mut c = setup();
+        c.credit(&user(), WRAP_NEAR, 10_000);
+        c.set_token_lock(WRAP_NEAR, true);
+        as_user();
+        let _ = c.withdraw(WRAP_NEAR.into());
+    }
+
+    #[test]
+    fn test_native_near_withdraw_is_not_gated() {
         let mut c = setup();
         c.credit(&user(), "near", 10_000);
         c.set_token_lock(WRAP_NEAR, true);
         as_user();
         let _ = c.withdraw("near".into());
+        assert_eq!(c.get_balance(&user(), "near"), 0);
     }
 
     #[test]
