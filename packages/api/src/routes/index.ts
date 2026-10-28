@@ -836,20 +836,28 @@ router.get('/alpha/user/token-balance', async (req, res) => {
       return;
     }
 
-    const [tokenBalRaw, meta] = await Promise.all([
+    // Tokens held in the router vault (e.g. returned by a failed private sell) are sellable too:
+    // a private sell uses the vault balance first and deposits only the shortfall from the wallet.
+    const { getVaultBalance } = await import('../racerVault.js');
+    const [tokenBalRaw, vaultBalRaw, meta] = await Promise.all([
       near.getTokenBalance(tokenAddress, accountToCheck).catch(() => '0'),
+      getVaultBalance(accountToCheck, tokenAddress).catch(() => '0'),
       near.getTokenMetadata(tokenAddress).catch(() => null),
     ]);
 
     const decimals = meta?.decimals ?? 18;
     const symbol = meta?.symbol || tokenAddress.split('.')[0].toUpperCase();
-    const rawBalBig = BigInt(tokenBalRaw || '0');
+    const walletBalBig = BigInt(tokenBalRaw || '0');
+    const vaultBalBig = BigInt(vaultBalRaw || '0');
+    const rawBalBig = walletBalBig + vaultBalBig;
     const formatted = formatTokenUnits(rawBalBig, decimals, 4);
 
     res.json({
       success: true,
       balance: formatted,
       balanceRaw: rawBalBig.toString(),
+      walletBalanceRaw: walletBalBig.toString(),
+      vaultBalanceRaw: vaultBalBig.toString(),
       decimals,
       symbol,
     });
