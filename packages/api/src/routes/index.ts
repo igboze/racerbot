@@ -367,6 +367,28 @@ export function serveRacerAlphaHtml(res: import('express').Response): void {
 
 // ── RacerAlpha Endpoints & User Resolution ────────────────────────────────
 
+/**
+ * Check a transaction hash supplied by the browser: it must exist on-chain, have succeeded,
+ * and be signed by the expected account. Without this, any string was accepted as proof of a trade.
+ */
+async function verifyClientTx(txHash: string, signerId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(txHash)) {
+    return { ok: false, reason: 'Transaction hash is not a valid NEAR transaction hash.' };
+  }
+  const { getNear } = await import('@racerbot/shared');
+  const outcome = await getNear().waitForOutcome(txHash, signerId, 20_000).catch(() => null);
+  if (!outcome) {
+    return { ok: false, reason: `Transaction ${txHash} was not found for ${signerId}.` };
+  }
+  if (outcome.transaction?.signer_id !== signerId) {
+    return { ok: false, reason: `Transaction ${txHash} was not signed by ${signerId}.` };
+  }
+  if (outcome.status && typeof outcome.status === 'object' && 'Failure' in outcome.status) {
+    return { ok: false, reason: `Transaction ${txHash} failed on-chain.` };
+  }
+  return { ok: true };
+}
+
 export async function resolveAlphaUser(req: any) {
   const { getUserById, getUserByTelegramId, getDb } = await import('@racerbot/db');
 
@@ -1109,6 +1131,14 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       return;
     }
 
+    if (clientTxHash && onChainTxHash === clientTxHash) {
+      const check = await verifyClientTx(clientTxHash, user.subaccount_id || user.id);
+      if (!check.ok) {
+        res.status(400).json({ error: check.reason });
+        return;
+      }
+    }
+
     res.json({
       success: true,
       isPrivateTrade: true,
@@ -1280,6 +1310,17 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
     // Auto-resolve or create effective trader ID if not provided
     let effectiveTraderId = traderId;
+    if (traderId) {
+      const db = await (await import('@racerbot/db')).getDb();
+      const owned = await db.query(
+        `SELECT id FROM racer_alpha_traders WHERE id = $1 AND (user_id = $2 OR payout_wallet_address = $3) LIMIT 1`,
+        [traderId, user.id, user.subaccount_id || user.id]
+      ).catch(() => ({ rows: [] }));
+      if (!owned.rows[0]) {
+        res.status(403).json({ error: 'You can only publish signals for your own creator profile.' });
+        return;
+      }
+    }
     if (!effectiveTraderId) {
       const db = await (await import('@racerbot/db')).getDb();
       const tr = await db.query(
@@ -1433,6 +1474,28 @@ router.post('/alpha/creator/signal', async (req, res) => {
       return;
     }
 
+    if (clientTxHash && onChainTxHash === clientTxHash) {
+      const signerId = user.subaccount_id || user.id;
+      const check = await verifyClientTx(clientTxHash, signerId);
+      if (!check.ok) {
+        res.status(400).json({ error: check.reason });
+        return;
+      }
+      const db = await (await import('@racerbot/db')).getDb();
+      const reused = await db.query(`SELECT 1 FROM racer_alpha_signals WHERE tx_hash = $1 LIMIT 1`, [clientTxHash]).catch(() => ({ rows: [] }));
+      if (reused.rows[0]) {
+        res.status(409).json({ error: 'This transaction was already published as a signal.' });
+        return;
+      }
+    }
+
+    // Price: the creator's quoted price, else the live token price; 0 means unknown (never invented)
+    let signalPriceNear = Number(priceNear) > 0 ? Number(priceNear) : 0;
+    if (!signalPriceNear) {
+      const info: any = await getTokenInfo(tokenAddress, false).catch(() => null);
+      signalPriceNear = parseFloat(info?.price || '0') || 0;
+    }
+
     // ── Phase 2: Record Encrypted Alpha Signal & Trigger Auto-Copy ──
     const effectiveVenue = executionRouting === 'INTENT_SOLVER' ? 'NEAR Intents (Defuse)' : venue;
     const result = await recordAlphaSignal({
@@ -1441,7 +1504,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
       tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
       tokenName: tokenName || tokenSymbol || tokenAddress.split('.')[0],
       side: side.toUpperCase() as 'BUY' | 'SELL',
-      priceNear: Number(priceNear) || (numNear / 50),
+      priceNear: signalPriceNear,
       amountNear: numNear,
       venue: effectiveVenue,
       txHash: onChainTxHash,
@@ -2310,7 +2373,7 @@ async function fetchHoldersForToken(token: string): Promise<Array<{ account: str
   let rawHolders: Array<{ account: string; amount: string }> = [];
 
   // 1. FastNEAR Paid API top holders (/v1/ft/:token/top)
-  const fastNearKey = (process.env.FASTNEAR_API_KEY || 'REDACTED').trim();
+  const fastNearKey = (process.env.FASTNEAR_API_KEY || '').trim();
   if (fastNearKey) {
     try {
       const resp = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(token)}/top`, {
@@ -2822,7 +2885,7 @@ router.get('/account-balance/:token/:account', async (req, res) => {
       return;
     }
 
-    const fastNearKey = (process.env.FASTNEAR_API_KEY || 'REDACTED').trim();
+    const fastNearKey = (process.env.FASTNEAR_API_KEY || '').trim();
     if (fastNearKey) {
       try {
         const r = await fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(account)}/ft`, {
@@ -2860,7 +2923,7 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       return;
     }
 
-    const fastNearKey = (process.env.FASTNEAR_API_KEY || 'REDACTED').trim();
+    const fastNearKey = (process.env.FASTNEAR_API_KEY || '').trim();
     let otherTokens: Array<{ contract_id: string; symbol: string; balance: string }> = [];
     let txns: any[] = [];
 

@@ -340,7 +340,7 @@ export class MultiRpcNear {
   private nearBalanceCache = new Map<string, { at: number; value: string }>();
 
   constructor(rpcUrls: string[], networkId = 'mainnet') {
-    const ACTIVE_PAID_FASTNEAR_KEY = 'REDACTED';
+    const ACTIVE_PAID_FASTNEAR_KEY = ''; // keys come only from FASTNEAR_API_KEY
     const DEPRECATED_FASTNEAR_KEY = 'REDACTED';
     let rawApiKey = (process.env.FASTNEAR_API_KEY || '').trim();
     if (!rawApiKey || rawApiKey === DEPRECATED_FASTNEAR_KEY || rawApiKey.startsWith('TEMP') || rawApiKey.startsWith('change-me') || rawApiKey.startsWith('${')) {
@@ -483,7 +483,7 @@ export class MultiRpcNear {
       return this.connections.get(providerUrl)!;
     }
 
-    const ACTIVE_PAID_FASTNEAR_KEY = 'REDACTED';
+    const ACTIVE_PAID_FASTNEAR_KEY = ''; // keys come only from FASTNEAR_API_KEY
     const DEPRECATED_FASTNEAR_KEY = 'REDACTED';
     let apiKey = (process.env.FASTNEAR_API_KEY || '').trim();
     if (!apiKey || apiKey === DEPRECATED_FASTNEAR_KEY || apiKey.startsWith('TEMP') || apiKey.startsWith('change-me') || apiKey.startsWith('${')) {
