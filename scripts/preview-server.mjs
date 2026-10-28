@@ -23,7 +23,7 @@ const bubblemapHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src'
 const raceralphaHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'raceralpha.html');
 const racerHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'racer.html');
 const fleetHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'fleet.html');
-const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || '***REMOVED***';
+const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || '';
 
 // Real PostgreSQL Database Pool
 const pool = new pg.Pool({
@@ -74,7 +74,7 @@ async function fetchOnChainAccountVolume(accountId) {
     };
   }
 
-  const fastnearKey = (process.env.FASTNEAR_API_KEY || '***REMOVED***').trim();
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
     'https://near.drpc.org',

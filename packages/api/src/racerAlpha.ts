@@ -758,7 +758,7 @@ export async function fetchOnChainAccountVolume(accountId?: string): Promise<OnC
     };
   }
 
-  const ACTIVE_PAID_FASTNEAR_KEY = '***REMOVED***';
+  const ACTIVE_PAID_FASTNEAR_KEY = ''; // keys come only from FASTNEAR_API_KEY
   const DEPRECATED_FASTNEAR_KEY = '***REMOVED***';
   const rawKey = (process.env.FASTNEAR_API_KEY || '').trim();
   const fastnearKey = (!rawKey || rawKey === DEPRECATED_FASTNEAR_KEY || rawKey.startsWith('TEMP') || rawKey.startsWith('${'))
@@ -1394,7 +1394,7 @@ export async function recordAlphaSignal(params: {
         `🚨 <b>New RacerAlpha Signal!</b>\n\n` +
         `🏎️ <b>Action</b>: <b>${params.side} ${params.tokenSymbol}</b>\n` +
         `🪙 <b>Token</b>: <code>${params.tokenAddress}</code>\n` +
-        `💵 <b>Price</b>: <code>${params.priceNear} NEAR</code>\n` +
+        `💵 <b>Price</b>: <code>${params.priceNear > 0 ? `${params.priceNear} NEAR` : 'unknown'}</code>\n` +
         `📊 <b>Size</b>: <code>${params.amountNear} NEAR</code>\n` +
         `🏛️ <b>Venue</b>: <code>${venue.toUpperCase()}</code>\n` +
         `⚡ <b>Auto-Copy</b>: <code>${kh.autoCopyEnabled ? 'ON' : 'OFF'}</code>\n\n` +
@@ -2284,7 +2284,7 @@ export async function fetchOnChainTokenRpcData(tokenAddress: string): Promise<On
   return null;
 }
 
-export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
+const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
   // ── HOOT Launchpad (JustHoot) ──
   {
     address: 'kookdog-42db38.launchpad.justhoot.near',
@@ -2580,6 +2580,22 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     decimals: 18,
   },
 ];
+
+// Seeds supply token metadata only (address, symbol, venue, pool ids). Their market numbers
+// were static placeholders, so they are zeroed: a token without live data shows no price
+// instead of a made-up one.
+export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = SEED_ALPHA_TOKENS.map(t => ({
+  ...t,
+  priceUsd: 0,
+  priceNear: 0,
+  change24h: 0,
+  marketCap: 0,
+  volume24h: 0,
+  bondingProgress: 0,
+  liquidityUsd: 0,
+  sparkline: [],
+  holders: 0,
+}));
 
 let cachedAlphaTokensList: { timestamp: number; tokens: AlphaTokenItem[] } = {
   timestamp: 0,

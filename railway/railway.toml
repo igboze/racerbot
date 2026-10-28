@@ -5,7 +5,7 @@ dockerfile = "Dockerfile.api"
 ports = [{ port = 3000 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
-  { variable = "FASTNEAR_API_KEY", value = "***REMOVED***" },
+  { variable = "FASTNEAR_API_KEY", value = "${{secrets.FASTNEAR_API_KEY}}" },
   { variable = "RACERBOT_PARENT_ACCOUNT", value = "racerbot.near" },
   { variable = "ROUTER_CONTRACT_ID", value = "racerbotrouter.near" },
   { variable = "RELAYER_ACCOUNT_ID", value = "racerbot.near" },
@@ -26,7 +26,7 @@ dockerfile = "Dockerfile.detector"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
-  { variable = "FASTNEAR_API_KEY", value = "***REMOVED***" },
+  { variable = "FASTNEAR_API_KEY", value = "${{secrets.FASTNEAR_API_KEY}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "3000" },
@@ -37,7 +37,7 @@ dockerfile = "Dockerfile.executor"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
-  { variable = "FASTNEAR_API_KEY", value = "***REMOVED***" },
+  { variable = "FASTNEAR_API_KEY", value = "${{secrets.FASTNEAR_API_KEY}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "KEY_ENCRYPTION_MASTER_KEY", value = "${{secrets.KEY_ENCRYPTION_MASTER_KEY}}" },
@@ -48,7 +48,7 @@ dockerfile = "Dockerfile.triggers"
 ports = [{ port = 8080 }]
 environments = [
   { variable = "RPC_PROVIDERS", value = "https://rpc.mainnet.fastnear.com,https://near.drpc.org,https://rpc.intea.rs,https://rpc.shitzuapes.xyz" },
-  { variable = "FASTNEAR_API_KEY", value = "***REMOVED***" },
+  { variable = "FASTNEAR_API_KEY", value = "${{secrets.FASTNEAR_API_KEY}}" },
   { variable = "DATABASE_URL", value = "${{PostgreSQL.URL}}" },
   { variable = "REDIS_URL", value = "${{Redis.URL}}" },
   { variable = "TRIGGER_INTERVAL_MS", value = "5000" },

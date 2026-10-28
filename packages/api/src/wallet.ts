@@ -103,7 +103,7 @@ import { notifyTokenDeposit } from './notify.js';
 import { recordUserTrade } from './depositWatcher.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY!;
-export const ACTIVE_PAID_FASTNEAR_KEY = '***REMOVED***';
+export const ACTIVE_PAID_FASTNEAR_KEY = ''; // keys come only from FASTNEAR_API_KEY
 const DEPRECATED_FASTNEAR_KEY = '***REMOVED***';
 
 function resolveFastnearKey(rawKey?: string): string {
