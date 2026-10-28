@@ -4,7 +4,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
-import { getTokenInfo, publishSwap } from '../wallet.js';
+import { getTokenInfo, publishSwap, fetchTokenHoldersCount } from '../wallet.js';
 import {
   createTrigger,
   getCompetition,
@@ -13,7 +13,7 @@ import {
   getCompetitionLeaderboard,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
-import { createLogger } from '@racerbot/shared';
+import { createLogger, formatTokenUnits } from '@racerbot/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
@@ -897,6 +897,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     let onChainTxHash: string | undefined = clientTxHash || undefined;
     let executionRouting: 'INTENT_SOLVER' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
+    let recipientAccountId: string | undefined;
 
     const isLaunchpadToken =
       (Boolean(venue) && !['defuse', 'intent', 'near intents (defuse)', '1click'].includes(venue.toLowerCase())) ||
@@ -983,6 +984,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           onChainTxHash = vaultRes.txHash;
           executionRouting = 'RACER_SHIELDED_VAULT';
           intentMessage = vaultRes.message || `Shielded atomic trade executed via Racer Router (${vaultRes.txHash})`;
+          recipientAccountId = vaultRes.recipientAccountId;
         } else {
           logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
           if (isPrivateTrade) {
@@ -1105,6 +1107,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       isPrivateTrade: true,
       txHash: onChainTxHash,
       routing: executionRouting,
+      recipientAccountId: recipientAccountId || user.subaccount_id,
       message:
         intentMessage ||
         (executionRouting === 'INTENT_SOLVER'
@@ -2724,10 +2727,11 @@ async function fetchIdentityTracesForHolders(
 router.get('/bubblemap-data/:token', async (req, res) => {
   try {
     const { token } = req.params;
-    const [holders, txns, meta] = await Promise.all([
+    const [holders, txns, meta, holdersCountObj] = await Promise.all([
       fetchHoldersForToken(token).catch(() => []),
       fetchTransfersForToken(token).catch(() => []),
       getTokenInfo(token, true).catch(() => null),
+      fetchTokenHoldersCount(token).catch(() => null),
     ]);
 
     const { identityLinks, identityClusters } = await fetchIdentityTracesForHolders(token, holders, txns).catch(() => ({
@@ -2735,24 +2739,60 @@ router.get('/bubblemap-data/:token', async (req, res) => {
       identityClusters: [],
     }));
 
+    const totalHolders = holdersCountObj?.count || (meta as any)?.holders_count || (meta as any)?.holdersCount || holders.length;
+
     const m = meta as any;
+    const decimals = Number(m?.decimals ?? 18);
     const normalizedMeta = m ? {
       ...m,
       symbol: m.symbol || m.name || '',
+      decimals,
       priceUsd: m.price_usd !== undefined ? Number(m.price_usd) : Number(m.priceUsd || 0),
       priceChange24h: m.price_24h_change !== undefined ? Number(m.price_24h_change) : Number(m.priceChange24h || 0),
       marketCap: m.market_cap_usd !== undefined ? Number(m.market_cap_usd) : Number(m.market_cap || m.marketCap || 0),
       volume24h: m.volume_24h_usd !== undefined ? Number(m.volume_24h_usd) : Number(m.volume24h || 0),
       liquidity: m.liquidity_usd !== undefined ? Number(m.liquidity_usd) : Number(m.liquidity || 0),
+      holdersCount: totalHolders,
     } : null;
+
+    const enrichedHolders = holders.map((h: any) => {
+      let formattedAmount = '';
+      try {
+        const rawBig = BigInt(h.amount || '0');
+        formattedAmount = formatTokenUnits(rawBig, decimals, 4);
+      } catch {
+        formattedAmount = h.amount || '0';
+      }
+      return {
+        ...h,
+        decimals,
+        formattedAmount,
+      };
+    });
+
+    const enrichedTxns = txns.map((t: any) => {
+      let formattedAmount = '';
+      try {
+        const rawBig = BigInt(t.amount || '0');
+        formattedAmount = formatTokenUnits(rawBig, decimals, 4);
+      } catch {
+        formattedAmount = t.amount || '0';
+      }
+      return {
+        ...t,
+        decimals,
+        formattedAmount,
+      };
+    });
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.json({
       token,
-      holders,
-      txns,
+      holders: enrichedHolders,
+      totalHolders,
+      txns: enrichedTxns,
       identityLinks,
       identityClusters,
       meta: normalizedMeta,
@@ -2832,21 +2872,11 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       }),
     ]);
 
+    let rawFtTokens: any[] = [];
     if (ftRes.status === 'fulfilled' && ftRes.value.ok) {
       try {
         const ftData: any = await ftRes.value.json();
-        const rawTokens = ftData.tokens || [];
-        otherTokens = rawTokens
-          .filter((t: any) => t.contract_id !== currentToken)
-          .map((t: any) => {
-            const cid = t.contract_id || '';
-            const sym = (cid.split('.')[0] || cid).toUpperCase();
-            return {
-              contract_id: cid,
-              symbol: sym,
-              balance: t.balance || '0',
-            };
-          });
+        rawFtTokens = ftData.tokens || [];
       } catch {}
     }
 
@@ -2884,50 +2914,96 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       }
     }
 
-    // Calculate hold duration for other tokens currently held in portfolio
-    if (ftRes.status === 'fulfilled' && ftRes.value.ok) {
-      try {
-        const ftData: any = await ftRes.value.json();
-        const rawTokens = ftData.tokens || [];
-        otherTokens = rawTokens
-          .filter((t: any) => t.contract_id !== currentToken)
-          .map((t: any) => {
-            const cid = t.contract_id || '';
-            const sym = (cid.split('.')[0] || cid).toUpperCase();
-            const timeline = tokenTimeline.get(cid);
-            let holdingSince = timeline?.acquiredAt || null;
-            let holdDurationMinutes = 0;
-            let holdDurationStr = '30d+';
+    // Fetch current approximate block height to calculate exact block-based durations
+    let currentBlockHeight = 221943000;
+    try {
+      const bRes = await fetch('https://rpc.mainnet.fastnear.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'bh', method: 'block', params: { finality: 'final' } }),
+        signal: AbortSignal.timeout(1500),
+      });
+      if (bRes.ok) {
+        const bData: any = await bRes.json();
+        const h = Number(bData.result?.header?.height);
+        if (h > 0) currentBlockHeight = h;
+      }
+    } catch {}
 
-            if (holdingSince) {
-              const diffMs = Math.max(0, Date.now() - holdingSince);
-              holdDurationMinutes = Math.max(1, Math.round(diffMs / 60_000));
-              if (holdDurationMinutes > 1440) {
-                holdDurationStr = `${Math.round(holdDurationMinutes / 1440)}d`;
-              } else if (holdDurationMinutes > 60) {
-                holdDurationStr = `${Math.round(holdDurationMinutes / 60)}h`;
-              } else {
-                holdDurationStr = `${holdDurationMinutes}m`;
-              }
-            } else if (txns.length > 0) {
-              const oldestTs = Math.floor(Number(txns[txns.length - 1].block_timestamp || 0) / 1_000_000);
-              if (oldestTs > 0) {
-                const days = Math.max(1, Math.round((Date.now() - oldestTs) / 86_400_000));
-                holdDurationStr = `${days}d+`;
-              }
-            }
+    const formatMinsToDuration = (diffMins: number): string => {
+      if (diffMins < 60) return `${diffMins}m`;
+      const hours = Math.round(diffMins / 60);
+      if (hours < 24) return `${hours}h`;
+      const days = Math.round(hours / 24);
+      if (days < 30) return `${days}d`;
+      return `${(days / 30).toFixed(1)}mo (${days}d)`;
+    };
 
-            return {
-              contract_id: cid,
-              symbol: sym,
-              balance: t.balance || '0',
-              holdDurationStr,
-              holdDurationMinutes,
-              holdingSince,
-            };
-          });
-      } catch {}
+    // Calculate current target token holding duration for this wallet
+    let currentTokenHoldDurationStr = '—';
+    let currentTokenHoldMinutes = 0;
+    if (currentToken && rawFtTokens.length > 0) {
+      const curMatch = rawFtTokens.find((t: any) => t.contract_id === currentToken);
+      if (curMatch) {
+        const lastBlock = Number(curMatch.last_update_block_height || 0);
+        const timeline = tokenTimeline.get(currentToken);
+        if (timeline?.acquiredAt) {
+          const diffMs = Math.max(0, Date.now() - timeline.acquiredAt);
+          currentTokenHoldMinutes = Math.max(1, Math.round(diffMs / 60_000));
+          currentTokenHoldDurationStr = formatMinsToDuration(currentTokenHoldMinutes);
+        } else if (lastBlock > 0 && currentBlockHeight > lastBlock) {
+          const diffSeconds = (currentBlockHeight - lastBlock) * 1.05;
+          currentTokenHoldMinutes = Math.max(1, Math.round(diffSeconds / 60));
+          currentTokenHoldDurationStr = formatMinsToDuration(currentTokenHoldMinutes);
+        } else if (txns.length > 0) {
+          const oldestTs = Math.floor(Number(txns[txns.length - 1].block_timestamp || 0) / 1_000_000);
+          if (oldestTs > 0) {
+            const diffMs = Math.max(0, Date.now() - oldestTs);
+            currentTokenHoldMinutes = Math.max(1, Math.round(diffMs / 60_000));
+            currentTokenHoldDurationStr = formatMinsToDuration(currentTokenHoldMinutes);
+          }
+        }
+      }
     }
+
+    // Calculate hold duration for other tokens currently held in portfolio
+    otherTokens = rawFtTokens
+      .filter((t: any) => t.contract_id !== currentToken)
+      .map((t: any) => {
+        const cid = t.contract_id || '';
+        const sym = (cid.split('.')[0] || cid).toUpperCase();
+        const timeline = tokenTimeline.get(cid);
+        const lastBlock = Number(t.last_update_block_height || 0);
+
+        let holdDurationMinutes = 0;
+        let holdDurationStr = 'Recent';
+
+        if (timeline?.acquiredAt) {
+          const diffMs = Math.max(0, Date.now() - timeline.acquiredAt);
+          holdDurationMinutes = Math.max(1, Math.round(diffMs / 60_000));
+          holdDurationStr = formatMinsToDuration(holdDurationMinutes);
+        } else if (lastBlock > 0 && currentBlockHeight > lastBlock) {
+          const diffSeconds = (currentBlockHeight - lastBlock) * 1.05;
+          holdDurationMinutes = Math.max(1, Math.round(diffSeconds / 60));
+          holdDurationStr = formatMinsToDuration(holdDurationMinutes);
+        } else if (txns.length > 0) {
+          const oldestTs = Math.floor(Number(txns[txns.length - 1].block_timestamp || 0) / 1_000_000);
+          if (oldestTs > 0) {
+            const days = Math.max(1, Math.round((Date.now() - oldestTs) / 86_400_000));
+            holdDurationMinutes = days * 1440;
+            holdDurationStr = `${days}d+`;
+          }
+        }
+
+        return {
+          contract_id: cid,
+          symbol: sym,
+          balance: t.balance || '0',
+          holdDurationStr,
+          holdDurationMinutes,
+          lastUpdateBlock: lastBlock,
+        };
+      });
 
     const durationsMs: number[] = [];
     let fastDumpCount = 0;
@@ -2956,9 +3032,7 @@ router.get('/wallet-forensics/:account', async (req, res) => {
         const isFast = diffMins <= 30;
         if (isFast) fastDumpCount++;
 
-        let durationStr = `${diffMins}m`;
-        if (diffMins > 1440) durationStr = `${(diffMins / 1440).toFixed(1)}d`;
-        else if (diffMins > 60) durationStr = `${(diffMins / 60).toFixed(1)}h`;
+        const durationStr = formatMinsToDuration(diffMins);
 
         pastTrades.push({
           token: tok,
@@ -2975,15 +3049,15 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       }
     }
 
-    let avgHoldMinutes = 45;
+    let avgHoldMinutes = currentTokenHoldMinutes > 0 ? currentTokenHoldMinutes : 45;
     if (durationsMs.length > 0) {
       const avgMs = durationsMs.reduce((a, b) => a + b, 0) / durationsMs.length;
       avgHoldMinutes = Math.max(1, Math.round(avgMs / 60_000));
+    } else if (currentTokenHoldMinutes > 0) {
+      avgHoldMinutes = currentTokenHoldMinutes;
     }
 
-    let avgHoldStr = `${avgHoldMinutes}m`;
-    if (avgHoldMinutes > 1440) avgHoldStr = `${(avgHoldMinutes / 1440).toFixed(1)}d`;
-    else if (avgHoldMinutes > 60) avgHoldStr = `${(avgHoldMinutes / 60).toFixed(1)}h`;
+    const avgHoldStr = formatMinsToDuration(avgHoldMinutes);
 
     const dumpRate30m = completedExits > 0 ? Math.round((fastDumpCount / completedExits) * 100) : (txns.length > 20 ? 15 : 35);
 
@@ -3021,6 +3095,8 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       hazardScore,
       avgHoldMinutes,
       avgHoldStr,
+      currentTokenHoldDurationStr,
+      currentTokenHoldMinutes,
       dumpRate30m,
       completedExits,
       totalTxnsScanned: txns.length,
@@ -3035,6 +3111,8 @@ router.get('/wallet-forensics/:account', async (req, res) => {
       hazardScore,
       avgHoldMinutes,
       avgHoldStr,
+      currentTokenHoldDurationStr,
+      currentTokenHoldMinutes,
       dumpRate30m,
       completedExits,
       otherTokensCount: otherTokens.length,
