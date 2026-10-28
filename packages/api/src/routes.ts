@@ -417,7 +417,16 @@ function sanitizeMd(str: string): string {
 }
 
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
+const mainMenuCache = new Map<number, { data: { text: string; keyboard: any }; expiresAt: number }>();
+
 export async function buildMainMenu(telegramId: number, forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = mainMenuCache.get(telegramId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.data;
+    }
+  }
+
   let user = await getUserByTelegramId(telegramId).catch(() => null);
   let subaccount = 'Not initialized';
   let suiAddress = '';
@@ -440,7 +449,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     suiAddress = user.sui_address || '';
     starknetAddress = user.starknet_address || '';
     try {
-      const b = await getUserBalances(telegramId, forceRefresh);
+      const b = await getUserBalances(telegramId, forceRefresh, user);
       nearBalFormatted = b.totalNearFormatted;
       suiAddress = b.suiAddress || user.sui_address || '';
       suiBalFormatted = b.suiBalanceFormatted || '0';
@@ -510,7 +519,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
   ]);
 
-  return { text, keyboard };
+  const res = { text, keyboard };
+  mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
+  return res;
 }
 
 // ── Helper: Build Points (Season 1) view ────────────────────────────────────
@@ -590,7 +601,16 @@ export function formatHoldingQuantity(quantityHeld: string, decimals = 18): stri
 }
 
 // ── Helper: Build Wallet Menu ────────────────────────────────────────────────
+const walletMenuCache = new Map<number, { data: { text: string; keyboard: any }; expiresAt: number }>();
+
 export async function buildWalletMenu(telegramId: number, forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = walletMenuCache.get(telegramId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.data;
+    }
+  }
+
   markUserActiveForDeposit(telegramId);
   checkUserDepositNow(telegramId).catch(() => {});
   let user = await getUserByTelegramId(telegramId);
@@ -603,7 +623,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     }
   }
 
-  const b = await getUserBalances(telegramId, forceRefresh);
+  const b = await getUserBalances(telegramId, forceRefresh, user);
   const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
   const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
   const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
@@ -669,7 +689,9 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     (b.starknetAddress ? `\n✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>` : '') +
     (b.solanaAddress ? `\n◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>` : '');
 
-  return { text, keyboard: Markup.inlineKeyboard(buttons) };
+  const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
+  walletMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
+  return res;
 }
 
 // ── Helper: Build Wallets Management Menu ────────────────────────────────────
@@ -3775,14 +3797,14 @@ export function setupRoutes(bot: Telegraf): void {
   // ── Main Menu Actions ─────────────────────────────────────────────────────
   bot.action('menu_home', async (ctx) => {
     const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery('Main Menu').catch(() => {});
     try {
       const menu = await buildMainMenu(telegramId, false);
-      await ctx.answerCbQuery('Main Menu').catch(() => {});
       await ctx.editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
       });
     } catch {
-      await ctx.answerCbQuery().catch(() => {});
+      // handled
     }
   });
 
