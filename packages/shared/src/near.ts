@@ -350,15 +350,16 @@ export class MultiRpcNear {
     const hasValidKey = Boolean(apiKey);
     const rawQn = (process.env.QUICKNODE_ENDPOINT_URL || '').trim();
     const qnUrl = rawQn.startsWith('${') ? '' : rawQn;
-    const brokenDefaultQn = 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
-    const initialUrls = [...rpcUrls].filter(u => u && !u.startsWith('${') && u !== brokenDefaultQn);
-    if (qnUrl && qnUrl !== brokenDefaultQn && !initialUrls.includes(qnUrl)) {
+    // A retired QuickNode endpoint that still appears in some deployed RPC_PROVIDERS lists
+    const isBrokenDefaultQn = (u: string) => u.startsWith('https://blissful-capable-road.near-mainnet.quiknode.pro/');
+    const initialUrls = [...rpcUrls].filter(u => u && !u.startsWith('${') && !isBrokenDefaultQn(u));
+    if (qnUrl && !isBrokenDefaultQn(qnUrl) && !initialUrls.includes(qnUrl)) {
       initialUrls.push(qnUrl);
     }
 
     // Allow FastNEAR, community validator nodes (Shitzu, Intear), and QuickNode endpoints
     const allowedUrls = initialUrls.filter(url => {
-      const isQn = (url.includes('quiknode.pro') || url.includes('quicknode')) && url !== brokenDefaultQn;
+      const isQn = (url.includes('quiknode.pro') || url.includes('quicknode')) && !isBrokenDefaultQn(url);
       const isFn = url.includes('fastnear.com');
       const isShitzu = url.includes('shitzuapes.xyz');
       const isIntear = url.includes('intea.rs');
@@ -5054,7 +5055,8 @@ export class MultiRpcNear {
     } catch {}
 
     try {
-      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
+      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || '';
+      if (!qnUrl) throw new Error('QUICKNODE_ENDPOINT_URL not set');
       const qnP = createProvider(qnUrl, 'emergency-qn-ak', true);
       const res = await attempt(qnP, 'final');
       if (res) return res;
@@ -5136,7 +5138,8 @@ export class MultiRpcNear {
     } catch {}
 
     try {
-      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || 'https://blissful-capable-road.near-mainnet.quiknode.pro/REDACTED/';
+      const qnUrl = process.env.QUICKNODE_ENDPOINT_URL || '';
+      if (!qnUrl) throw new Error('QUICKNODE_ENDPOINT_URL not set');
       const qnP = createProvider(qnUrl, 'emergency-qn-block', true);
       const hash = await fetchFrom(qnP);
       if (hash) return hash;
