@@ -1047,8 +1047,10 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
     };
   }
 
-  // The router's Shardsmarket and bonding-curve dispatch can only buy (it attaches native NEAR)
-  if (!isBuy && (planned.venue === 'Shardsmarket' || planned.venue === 'BondingCurve')) {
+  // Private sells run only on Ref DCL pools, where the router asks DCL to pay wNEAR
+  // (skip_unwrap_near, verified on mainnet). Other venues may pay native NEAR in a transfer the
+  // router cannot time, and Shardsmarket / bonding curves can only buy. Checked before any deposit.
+  if (!isBuy && planned.venue !== 'Dcl') {
     return {
       success: false,
       routing: 'RACER_SHIELDED_VAULT',
@@ -1056,7 +1058,8 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenIn: planned.tokenIn,
       tokenOut: planned.tokenOut,
       amountInFormatted: String(numNear),
-      reason: 'Selling on this bonding curve is not supported by the shielded router. Use a regular (non-private) sell.',
+      privateSellsPaused: true,
+      reason: `Private sells are available for tokens trading on Ref DCL pools; this token routes through ${planned.venue}. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.`,
     };
   }
 
