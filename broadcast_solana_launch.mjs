@@ -19,38 +19,40 @@ if (!BOT_TOKEN) {
 
 const isDryRun = process.argv.includes('--dry-run');
 
-const MESSAGE = `🏎💨 *RacerBot is now LIVE on Solana!* 🟣
+const MESSAGE = `🚨 *STILL TRADING SOLANA WITH SLOW BOTS? TIME TO SWITCH.* 🟣⚡
 
-We have officially integrated the *Solana blockchain*! You can now trade any Solana token directly inside Telegram with lightning execution, zero wallet extension hassle, and institutional routing.
+If you're still getting front-run, suffering failed transactions, or paying ridiculous fees on Photon, Trojan, BullX, or BONKbot — you're leaving money on the table.
 
-Here is what's now live on Solana:
+*RacerBot Solana is officially LIVE.*
+Engineered for raw speed, zero-lag execution, and sniper-grade precision directly inside Telegram.
 
-🪙 *Trade Any Solana Token / Mint*
-Paste any Solana token mint address or DexScreener/Birdeye link to get instant real-time price, market cap, liquidity, and 1-click Buy/Sell.
+🔥 *WHY TRADERS ARE SWITCHING TO RACERBOT:*
 
-🚀 *Pump.fun Launchpad Sniping*
-Snipe brand new tokens fresh off the *Pump.fun* bonding curve before they graduate to Raydium, with custom slippage and instant confirmation.
+⚡ *Sub-Second Execution Speed*
+Direct high-priority MEV-protected routing. When milliseconds decide between a 10x entry and a red candle, RacerBot lands your block first.
 
-💧 *Jupiter DEX Aggregation*
-Every trade automatically routes through *Jupiter v6*, guaranteeing the absolute lowest slippage, deepest liquidity pools, and optimal routes across Raydium, Orca, Meteora, and Phoenix.
+🎯 *Instant Pump.fun Sniping*
+Paste any Pump.fun link or CA. Zero bonding curve delay. Enter before the crowd and exit cleanly with automated slippage.
 
-💼 *Multi-Chain Portfolio & PnL*
-Track all your Solana bags directly in *💼 Holdings* alongside your NEAR, SUI, and Starknet positions — with live PnL and one-click selling.
+💧 *Institutional Jupiter v6 Aggregation*
+Automatic multi-route liquidity across Raydium, Orca, Meteora & Phoenix. Get maximum tokens per SOL with zero wasted slippage.
 
-📊 *Branded Solana PNL Cards*
-Win or lose, generate branded, shareable PnL cards showing your profit in SOL and USD with holding duration metrics.
+🛡️ *Zero Failed TX Headaches*
+Dynamic priority fees and adaptive gas bidding ensure your trades never hang or revert during extreme volatility.
 
-🏁 *RaceFleet Multi-Wallet Trading*
-Execute coordinated multi-wallet trades across your Solana fleets for stealth entries and automated volume distribution.
+💼 *One Cockpit. Four Chains.*
+Stop juggling 5 different bots. Trade *Solana, NEAR, SUI, and Starknet* from a single unified wallet dashboard with live PnL tracking and one-tap instant sells.
 
 ───────────────
-⚡ *How to Start in 30 Seconds:*
-1. Open @racertradingbot
-2. Tap *Settings → Wallets* (your dedicated Solana address is already ready!)
-3. Send SOL to your Solana deposit address
-4. Paste any token address or Pump.fun link to trade!
+💰 *CLAIM YOUR EDGE RIGHT NOW:*
 
-_RacerBot — The fastest trading machine in Web3_ 🏎️✨`;
+Your personal Solana high-speed wallet is *already generated and waiting in your account.*
+
+👉 *Step 1:* Open @racertradingbot
+👉 *Step 2:* Tap *💳 View Wallet* (or type /wallet) to grab your Solana address
+👉 *Step 3:* Send 0.1+ SOL and paste ANY token CA to experience instant execution!
+
+🚀 *Stop settling for second place. Start trading with the fastest machine in crypto.* 🏁`;
 
 async function sendMessage(chatId, text) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
@@ -62,6 +64,18 @@ async function sendMessage(chatId, text) {
       text,
       parse_mode: 'Markdown',
       disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '💳 Open Solana Wallet', callback_data: 'menu_wallet' },
+            { text: '🚀 Snipe Pump.fun Now', callback_data: 'menu_trade' }
+          ],
+          [
+            { text: '💼 View Portfolio & PnL', callback_data: 'menu_holdings' },
+            { text: '🏎️ Launch WebApp Cockpit', url: 'https://t.me/racertradingbot/app' }
+          ]
+        ]
+      }
     }),
   });
   return res.json();
