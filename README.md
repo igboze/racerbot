@@ -1,6 +1,6 @@
 # RacerBot 🏎️💨
 
-> **A non-custodial, high-performance automated trading terminal for NEAR Protocol and Sui Network, directly inside Telegram.**
+> **An automated trading terminal for NEAR Protocol (with Sui support), in Telegram and on the web.**
 
 [![NEAR Protocol](https://img.shields.io/badge/NEAR-Protocol-black?style=flat&logo=near)](https://near.org)
 [![Sui Network](https://img.shields.io/badge/Sui-Network-4da2ff?style=flat&logo=sui)](https://sui.io)
@@ -12,11 +12,12 @@
 
 ## 📖 Table of Contents
 
+- [NEAR HACKATHON Submission](#near-hackathon-submission)
 - [What is RacerBot?](#-what-is-racerbot)
 - [The Problem RacerBot Solves](#-the-problem-racerbot-solves)
 - [What RacerBot Does (Core Features)](#-what-racerbot-does-core-features)
 - [How It Works (System Architecture & Trade Lifecycle)](#-how-it-works-system-architecture--trade-lifecycle)
-  - [1. Non-Custodial Key Architecture](#1-non-custodial-key-architecture)
+  - [1. Managed Wallet Key Model](#1-managed-wallet-key-model)
   - [2. The Lifecycle of a Swap](#2-the-lifecycle-of-a-swap)
   - [3. How the Sniper & Pool Detector Work](#3-how-the-sniper--pool-detector-work)
   - [4. Automated Risk Triggers (TP/SL, Limit, DCA)](#4-automated-risk-triggers-tpsl-limit-dca)
@@ -34,9 +35,21 @@
 
 ---
 
+## NEAR HACKATHON Submission
+
+RacerBot existed before NEAR HACKATHON. Per the hackathon rules (Q-003, Q-004), only work after the baseline is submitted for judging:
+
+- **Baseline:** tag [`pre-hackathon`](https://github.com/igboze/racerbot/tree/pre-hackathon) (2026-10-19). Everything up to this tag is pre-existing work.
+- **Hackathon work:** [`pre-hackathon...main`](https://github.com/igboze/racerbot/compare/pre-hackathon...main).
+- **Built in the window so far:**
+  - Router contract (`packages/contract`, deployed at `racerbotrouter.near`): payouts are checked and re-credited on failure, swap output is measured as a per-swap balance difference, and swaps are serialised per payout token.
+  - Backend reports a confidential trade as successful only after the router confirms delivery, retries busy tokens, and verifies client-supplied transaction hashes on-chain.
+- **Other chains (disclosure, Q-002):** Sui, Solana and Starknet wallet code (`packages/shared/src/sui.ts`, `solana.ts`, `starknet.ts`, `packages/api/src/solanaFleet.ts`, `starknetAlerts.ts`) is pre-existing and not part of the submission.
+- **Libraries and AI assistance (Q-005):** near-sdk (Rust), near-api-js, Express, PostgreSQL, Redis, D3. Parts of the hackathon code were written with AI coding assistants (Claude Code).
+
 ## 💡 What is RacerBot?
 
-**RacerBot** is an automated, lightning-fast decentralized trading terminal built for Telegram and Web. It allows traders to buy, sell, snipe, and automate trades across **NEAR Protocol** and the **Sui Network** without leaving Telegram and without sacrificing custody of their funds.
+**RacerBot** is an automated, lightning-fast decentralized trading terminal built for Telegram and Web. It allows traders to buy, sell, snipe, and automate trades across **NEAR Protocol** and the **Sui Network** without leaving Telegram.
 
 Instead of navigating sluggish web browser DEX interfaces, manually approving wallet popups, calculating slippage, or missing new token bonding curves, RacerBot handles the entire trading pipeline in milliseconds: from instant 1-click swaps to automated first-block pool snipes and trailing stop-losses.
 
@@ -49,9 +62,7 @@ Trading meme tokens and fast-moving decentralized launchpads on mobile has tradi
 2. **Launchpad Fragmentation**: Liquidity on NEAR and Sui is spread across dozens of launchpad factories (Ref, Rhea, MemeCooking, ShardsMarket, NearlyTrade, Cetus, Hop.ag). Finding where a token trades requires manual research.
 3. **No Risk Automation**: Native DEXs lack basic centralized exchange tools—such as automated Stop-Loss, Take-Profit targets, Limit Orders, and recurring DCA.
 4. **Honeypots & Rug Pulls**: Malicious developers lock liquidity, set 100% sell taxes, or hold massive developer supply, leaving regular traders stranded.
-5. **Custodial Trade-Off**: Traditional trading bots often require users to send their private keys directly to a centralized server, exposing their entire balance to theft or server compromise.
-
-**RacerBot solves all of these** by pairing **client-side non-custodial keys** with a **pre-warmed atomic routing engine**, automated honeypot filters, visual holder bubble maps, and complete order automation.
+**RacerBot addresses these** with managed trading wallets, a pre-warmed routing engine, automated honeypot filters, visual holder bubble maps, and order automation.
 
 ---
 
@@ -63,7 +74,7 @@ Trading meme tokens and fast-moving decentralized launchpads on mobile has tradi
 - Dynamic slippage optimization and automatic storage deposit registration so transactions never fail due to unregistered NEP-141 storage.
 
 ### 🎯 First-Block Token Sniping
-- **Launchpad Pool Sniping**: Place snipe orders on upcoming token launches. The moment a pool is initialized, RacerBot executes in the very same block.
+- **Launchpad Pool Sniping**: Place snipe orders on upcoming token launches. When the detector sees a pool initialize, RacerBot submits the buy immediately (block inclusion depends on network conditions).
 - **Deployer Auto-Sniping**: Automatically snipe tokens launched by specific creator accounts matching your customized liquidity thresholds and max market cap limits.
 - **Pre-Warmed Storage**: Proactively registers user token storage on-chain before the token launches, saving critical milliseconds during competitive pool openings.
 
@@ -92,32 +103,13 @@ Trading meme tokens and fast-moving decentralized launchpads on mobile has tradi
 
 ## ⚙️ How It Works (System Architecture & Trade Lifecycle)
 
-### 1. Non-Custodial Key Architecture
+### 1. Managed Wallet Key Model
 
-RacerBot uses a dual-key model to ensure your funds can **never** be stolen:
+Each user gets a managed NEAR subaccount (for example `<id>.racerbot.near`) created by the `racerbot.near` parent account.
 
-```
-┌────────────────────────────────────────────────────────┐
-│                   User's Browser / Mini App            │
-│  • Generates Full-Access Keypair (Seed Phrase)         │
-│  • Seed phrase is shown ONCE to user and NEVER saved   │
-│  • Creates a Function-Call Scoped Access Key           │
-└──────────────────────────┬─────────────────────────────┘
-                           │ Grants permission ONLY to:
-                           │ Contract: router.racerbot.near
-                           │ Method:   execute_swap
-                           │ Allowance: 0.5 - 2.0 NEAR
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│                   RacerBot Backend                     │
-│  • Stores ONLY the encrypted Function-Call Key         │
-│  • CANNOT transfer native NEAR to other accounts       │
-│  • CANNOT call any method other than execute_swap      │
-│  • CANNOT delete keys or add new keys                  │
-└────────────────────────────────────────────────────────┘
-```
-
-Because the backend holds only a **scoped function-call key**, even in the impossible event of a server compromise, an attacker **cannot** withdraw your NEAR or transfer your tokens to an external wallet.
+- The subaccount's key is generated server-side and is a **full-access key**. The server stores it encrypted with AES-256-GCM (`KEY_ENCRYPTION_MASTER_KEY`) and decrypts it to sign trades.
+- This makes managed wallets **custodial**: whoever controls the server and the master key can move funds in them. Keep only trading balances there.
+- Users who connect an external wallet (Meteor, MyNearWallet, ...) keep their own keys. They sign their own transactions in the wallet, and confidential router trades are not available to them.
 
 ---
 
@@ -134,7 +126,7 @@ When you tap **Buy** or **Sell**, RacerBot executes the trade through the follow
 [3. Safety Check]  ──► Honeypot engine checks contract supply concentration,
        │               freeze authorities, and creator balances
        │
-[4. Atomic Router] ──► Constructs transaction for Rust contract (router.racerbot.near)
+[4. Atomic Router] ──► Constructs transaction for Rust contract (racerbotrouter.near)
        │               Batches wrap_near + storage_deposit + swap + fee deduction
        │
 [5. Hedged Multi-RPC]► Broadcasts signed transaction to FastNEAR, QuickNode, and
@@ -166,7 +158,7 @@ When you tap **Buy** or **Sell**, RacerBot executes the trade through the follow
               │ 4. Signs & broadcasts atomic swap transaction
               ▼
 ┌──────────────────────────┐
-│      NEAR Blockchain     │  Transaction lands in the FIRST block of pool launch!
+│      NEAR Blockchain     │  Transaction is included as soon as the network allows
 └──────────────────────────┘
 ```
 
@@ -199,7 +191,7 @@ flowchart TD
     end
 
     subgraph Blockchain Layer
-        Executor -->|execute_swap| Router[Smart Router Contract\nrouter.racerbot.near]
+        Executor -->|execute_intent| Router[Smart Router Contract\nracerbotrouter.near]
         Router -->|Atomic Swaps| DEXs[Ref Finance / Rhea / Launchpads]
         Executor -->|Direct Swaps| SuiNetwork[Sui Network / Cetus / Hop.ag]
         Executor -->|Events| NostrRelay[NEAR Builders Activity\nNostr Relay & Leaderboard]
@@ -230,13 +222,10 @@ flowchart TD
 
 ## 🛡️ Security & Risk Model
 
-RacerBot enforces bank-grade security protocols:
-
-1. **Zero Full-Access Keys on Server**: Seed phrases and full-access keys never leave the client's device.
-2. **Strict Method Scoping**: Scoped keys can only invoke `execute_swap` on `router.racerbot.near`. Any attempt to call unauthorized methods fails at the consensus level.
-3. **Restricted Allowance**: Scoped access keys carry an allowance (default 0.5 NEAR to 2.0 NEAR) used purely for transaction gas.
-4. **AES-256-GCM Encryption**: All access keys stored in the database are encrypted using AES-256-GCM with authenticated tags.
-5. **Atomic Fee Skimming**: Router fees are collected atomically in the swap transaction. If a swap fails or reverts, zero fee is charged.
+1. **Managed wallets are custodial**: the server holds encrypted full-access keys for managed subaccounts (see [Managed Wallet Key Model](#1-managed-wallet-key-model)). A compromise of the server and its master key would expose those balances.
+2. **Encryption at rest**: stored keys are encrypted with AES-256-GCM with authenticated tags.
+3. **Secrets only in the environment**: keys, tokens and database URLs are read from environment variables (see `.env.example`), never from the repository.
+4. **Router fees only on success**: the router (`racerbotrouter.near`) charges its fee only when a swap settles. Failed swaps are refunded to the user's vault balance, and a failed payout transfer is re-credited there.
 6. **Live Balance Verification**: Positions are continually validated against real on-chain contract states to prevent phantom positions or stale balances.
 
 ---
@@ -247,13 +236,13 @@ The repository is structured as a **Turborepo** monorepo:
 
 | Package | Path | Purpose |
 |---|---|---|
-| **`@racerbot/api`** | [`packages/api`](file:///c:/Users/Igboze/racerbot/racerbot/packages/api) | Telegram bot handlers, command routing, Mini App API, PnL card rendering, buy bot alerts. |
-| **`@racerbot/detector`** | [`packages/detector`](file:///c:/Users/Igboze/racerbot/racerbot/packages/detector) | Real-time block stream monitor scanning for new tokens and liquidity additions. |
-| **`@racerbot/executor`** | [`packages/executor`](file:///c:/Users/Igboze/racerbot/racerbot/packages/executor) | Transaction builder, hedged multi-RPC broadcaster, fill recording, and fee ledger. |
-| **`@racerbot/triggers`** | [`packages/triggers`](file:///c:/Users/Igboze/racerbot/racerbot/packages/triggers) | Polling engine for Take-Profit, Stop-Loss, Limit Orders, and scheduled DCA tasks. |
-| **`@racerbot/contract`** | [`packages/contract`](file:///c:/Users/Igboze/racerbot/racerbot/packages/contract) | Rust smart contract (`racerbot-router`) compiled to `wasm32-unknown-unknown`. |
-| **`@racerbot/db`** | [`packages/db`](file:///c:/Users/Igboze/racerbot/racerbot/packages/db) | PostgreSQL schema, migrations, connection pools, and query repositories. |
-| **`@racerbot/shared`** | [`packages/shared`](file:///c:/Users/Igboze/racerbot/racerbot/packages/shared) | Shared cryptography, multi-RPC client, Redis pub/sub, Sui client, Activity protocol. |
+| **`@racerbot/api`** | [`packages/api`](packages/api) | Telegram bot handlers, command routing, Mini App API, PnL card rendering, buy bot alerts. |
+| **`@racerbot/detector`** | [`packages/detector`](packages/detector) | Real-time block stream monitor scanning for new tokens and liquidity additions. |
+| **`@racerbot/executor`** | [`packages/executor`](packages/executor) | Transaction builder, hedged multi-RPC broadcaster, fill recording, and fee ledger. |
+| **`@racerbot/triggers`** | [`packages/triggers`](packages/triggers) | Polling engine for Take-Profit, Stop-Loss, Limit Orders, and scheduled DCA tasks. |
+| **`@racerbot/contract`** | [`packages/contract`](packages/contract) | Rust smart contract (`racerbot-router`) compiled to `wasm32-unknown-unknown`. |
+| **`@racerbot/db`** | [`packages/db`](packages/db) | PostgreSQL schema, migrations, connection pools, and query repositories. |
+| **`@racerbot/shared`** | [`packages/shared`](packages/shared) | Shared cryptography, multi-RPC client, Redis pub/sub, Sui client, Activity protocol. |
 
 ---
 
@@ -288,7 +277,7 @@ The repository is structured as a **Turborepo** monorepo:
    - `REDIS_URL`: Connection string to your Redis server.
    - `TELEGRAM_BOT_TOKEN`: Bot token from Telegram's `@BotFather`.
    - `KEY_ENCRYPTION_MASTER_KEY`: 64-character hex string for AES-256-GCM encryption.
-   - `ROUTER_CONTRACT_ID`: Mainnet or testnet router contract ID (`router.racerbot.near`).
+   - `ROUTER_CONTRACT_ID`: Mainnet or testnet router contract ID (`racerbotrouter.near`).
    - `RPC_PROVIDERS`: Comma-separated list of NEAR RPC endpoints (e.g. FastNEAR, QuickNode).
    - `NEAR_ACTIVITY_API_KEY`: API key for NEAR Builders Activity integration.
 

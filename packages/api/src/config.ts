@@ -18,7 +18,7 @@ export const PARENT_ACCOUNT: string = process.env.RACERBOT_PARENT_ACCOUNT || 'ra
 export const RACERBOT_PARENT_ACCOUNT = PARENT_ACCOUNT;
 export const MAIN_WALLET_PRIVATE_KEY: string = process.env.MAIN_WALLET_PRIVATE_KEY || '';
 export const TELEGRAM_BOT_TOKEN: string = process.env.TELEGRAM_BOT_TOKEN || '';
-const ACTIVE_PAID_FASTNEAR_KEY = '***REMOVED***';
+const ACTIVE_PAID_FASTNEAR_KEY = (process.env.FASTNEAR_API_KEY || '').trim();
 const DEPRECATED_FASTNEAR_KEY = '***REMOVED***';
 export const RPC_PROVIDERS: string[] = (process.env.RPC_PROVIDERS || '')
   .split(',')
