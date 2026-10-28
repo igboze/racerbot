@@ -634,7 +634,10 @@
             <div class="map-status-spinner" aria-hidden="true"></div>
             <p class="map-status-title" id="map-status-title">Loading holders…</p>
             <p class="map-status-sub" id="map-status-sub"></p>
-            <button type="button" class="btn btn-secondary btn-sm" id="map-status-retry" hidden>Retry</button>
+            <div style="display:flex;gap:8px;margin-top:8px;justify-content:center;">
+              <button type="button" class="btn btn-secondary btn-sm" id="map-status-retry" hidden>Retry</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="map-status-scan-alt" onclick="openTokenScannerModal()" hidden>Scan Another</button>
+            </div>
           </div>
         </div>
 
@@ -1463,7 +1466,7 @@
 
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 22000);
+          const timer = setTimeout(() => ctrl.abort(), 35000);
           const r = await fetch(`/api/bubblemap-data/${encodeURIComponent(currentToken)}`, { signal: ctrl.signal });
           clearTimeout(timer);
           if (r.ok) {
@@ -1487,10 +1490,12 @@
         const title = document.getElementById('map-status-title');
         const sub = document.getElementById('map-status-sub');
         const retry = document.getElementById('map-status-retry');
+        const scanAlt = document.getElementById('map-status-scan-alt');
         if (!state) { el.hidden = true; return; }
         el.hidden = false;
         el.classList.toggle('is-idle', state !== 'loading');
         if (retry) { retry.hidden = state !== 'error' && state !== 'idle'; retry.onclick = () => (state === 'idle' ? openTokenScannerModal() : loadData()); }
+        if (scanAlt) { scanAlt.hidden = state !== 'error'; }
         if (state === 'loading') {
           title.textContent = 'Loading holder distribution…';
           sub.textContent = 'Mapping wallet networks and cabal clusters for ' + (currentSymbol || 'this token') + '.';
@@ -1536,6 +1541,11 @@
         rawIdentityClusters = data?.identityClusters || [];
         tokenMeta = data?.meta || {};
 
+        if (tokenMeta?.symbol) {
+          currentSymbol = tokenMeta.symbol;
+          updateHeaderInfo();
+        }
+
         bubbles = [];
         bubbleMap.clear();
 
@@ -1547,11 +1557,15 @@
         const addressToClusterMap = new Map();
         rawIdentityClusters.forEach(c => {
           const members = c.wallets || c.addresses || [];
-          members.forEach(addr => addressToClusterMap.set(addr.toLowerCase(), c.id || c.clusterId));
+          members.forEach(addr => {
+            if (addr) addressToClusterMap.set(String(addr).toLowerCase(), c.id || c.clusterId);
+          });
         });
 
         holders.forEach((h, idx) => {
-          const addrLower = (h.address || '').toLowerCase();
+          const addr = (h.address || h.account || '').trim();
+          if (!addr) return;
+          const addrLower = addr.toLowerCase();
           const isPool = addrLower.includes('ref-finance') || addrLower.includes('pool') || addrLower.includes('v2.ref-finance');
           const isDev = h.isDev || (!isPool && (idx === 0 || (tokenMeta?.creator && addrLower === tokenMeta.creator.toLowerCase())));
           const isWhale = (h.pct || 0) >= 10 && !isPool && !isDev;
@@ -1567,8 +1581,9 @@
           const r = Math.max(16, Math.min(68, Math.sqrt(h.pct || (100 / (holders.length || 1))) * 18));
 
           const b = {
-            id: h.address,
-            address: h.address,
+            id: addr,
+            address: addr,
+            account: addr,
             pct: h.pct || (100 / (holders.length || 1)),
             amount: h.amount || '0',
             rank: idx + 1,
@@ -1769,18 +1784,23 @@
         const hudDev = document.getElementById('hud-dev-val');
         const hudRisk = document.getElementById('hud-risk-badge');
 
+        const priceVal = Number(meta.priceUsd !== undefined ? meta.priceUsd : (meta.price_usd || 0));
+        const chgVal = Number(meta.priceChange24h !== undefined ? meta.priceChange24h : (meta.price_24h_change || 0));
+        const mcapVal = Number(meta.marketCap !== undefined ? meta.marketCap : (meta.market_cap_usd || meta.market_cap || 0));
+        const volVal = Number(meta.volume24h !== undefined ? meta.volume24h : (meta.volume_24h_usd || 0));
+        const liqVal = Number(meta.liquidity !== undefined ? meta.liquidity : (meta.liquidity_usd || 0));
+
         if (hudSym) hudSym.textContent = currentSymbol;
         if (hudCa) hudCa.textContent = currentToken;
-        if (hudPrice) hudPrice.textContent = meta.priceUsd ? `$${Number(meta.priceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}` : '$0.00';
+        if (hudPrice) hudPrice.textContent = priceVal > 0 ? `$${priceVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}` : '$0.00';
         
         if (hudChg) {
-          const chg = Number(meta.priceChange24h || 0);
-          hudChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
-          hudChg.style.color = chg >= 0 ? 'var(--color-success)' : 'var(--color-error)';
+          hudChg.textContent = `${chgVal >= 0 ? '+' : ''}${chgVal.toFixed(2)}%`;
+          hudChg.style.color = chgVal >= 0 ? 'var(--color-success)' : 'var(--color-error)';
         }
-        if (hudMcap) hudMcap.textContent = meta.marketCap ? `$${formatCompactNumber(meta.marketCap)}` : '—';
-        if (hudVol) hudVol.textContent = meta.volume24h ? `$${formatCompactNumber(meta.volume24h)}` : '—';
-        if (hudLiq) hudLiq.textContent = meta.liquidity ? `$${formatCompactNumber(meta.liquidity)}` : '—';
+        if (hudMcap) hudMcap.textContent = mcapVal > 0 ? `$${formatCompactNumber(mcapVal)}` : '—';
+        if (hudVol) hudVol.textContent = volVal > 0 ? `$${formatCompactNumber(volVal)}` : '—';
+        if (hudLiq) hudLiq.textContent = liqVal > 0 ? `$${formatCompactNumber(liqVal)}` : '—';
         if (hudTop10) hudTop10.textContent = `${top10WhalePct.toFixed(1)}%`;
         if (hudBundle) {
           hudBundle.textContent = `${bundlerPct.toFixed(1)}% (${bundlers.length})`;
@@ -1818,11 +1838,10 @@
         const riskScoreBadge = document.getElementById('risk-score-badge');
         const riskDiag = document.getElementById('risk-diagnostic-text');
 
-        if (panelPrice && meta.priceUsd) panelPrice.textContent = `$${Number(meta.priceUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+        if (panelPrice) panelPrice.textContent = priceVal > 0 ? `$${priceVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}` : '$0.00';
         if (panelChg) {
-          const chg = Number(meta.priceChange24h || 0);
-          panelChg.textContent = `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}% ${chg >= 0 ? '▲' : '▼'}`;
-          panelChg.className = chg >= 0 ? 'chip chip-pos' : 'chip chip-neg';
+          panelChg.textContent = `${chgVal >= 0 ? '+' : ''}${chgVal.toFixed(2)}% ${chgVal >= 0 ? '▲' : '▼'}`;
+          panelChg.className = chgVal >= 0 ? 'chip chip-pos' : 'chip chip-neg';
         }
         if (riskScoreNum) riskScoreNum.textContent = riskScore;
         if (riskScoreBadge) {

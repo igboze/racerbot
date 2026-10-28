@@ -411,10 +411,10 @@ export async function getDb(): Promise<Pool> {
 
   pool = new Pool({
     connectionString,
-    min: parseInt(process.env.POOL_MIN || '5'),
-    max: parseInt(process.env.POOL_MAX || '20'),
-    idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '30000'),
-    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '10000'),
+    min: parseInt(process.env.POOL_MIN || '2'),
+    max: parseInt(process.env.POOL_MAX || '35'),
+    idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '15000'),
+    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '6000'),
   });
   pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
   pool.on('connect', () => {
@@ -1917,6 +1917,13 @@ export interface VolumeStats {
   volumeTotalStarknet: number;
   feesTotalStarknet: number;
   tradesTotalStarknet: number;
+  // Solana chain
+  volume24hSolana: number;
+  fees24hSolana: number;
+  trades24hSolana: number;
+  volumeTotalSolana: number;
+  feesTotalSolana: number;
+  tradesTotalSolana: number;
   // Combined
   usersTotal: number;
   newUsers24h: number;
@@ -1972,6 +1979,20 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
+  // Solana fills (fee_paid stored in human SOL units; safeguard against raw lamports >= 1_000_000)
+  const solana = await db.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN fee_paid::numeric >= 1000000 THEN fee_paid::numeric / 1e9 ELSE fee_paid::numeric END) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS fees24,
+       COALESCE(SUM(CASE WHEN fee_paid::numeric >= 1000000 THEN fee_paid::numeric / 1e9 ELSE fee_paid::numeric END), 0)::float AS fees_total,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
+       COUNT(*)::int AS trades_total
+     FROM fills
+     WHERE chain = 'solana'
+       AND side IN ('buy', 'sell')
+       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
+  );
+
   // Overall 24h trade activity across all chains
   const activity = await db.query(
     `SELECT
@@ -1994,6 +2015,7 @@ export async function getVolumeStats(): Promise<VolumeStats> {
   const nr = near.rows[0];
   const sr = sui.rows[0];
   const strkr = starknet.rows[0];
+  const solr = solana.rows[0];
   const act = activity.rows[0];
   const ur = u.rows[0];
 
@@ -2022,6 +2044,13 @@ export async function getVolumeStats(): Promise<VolumeStats> {
     volumeTotalStarknet: strkr.fees_total / 0.015,
     feesTotalStarknet:   strkr.fees_total,
     tradesTotalStarknet: strkr.trades_total,
+    // Solana
+    volume24hSolana:     solr.fees24 / 0.015,
+    fees24hSolana:       solr.fees24,
+    trades24hSolana:     solr.trades24,
+    volumeTotalSolana:   solr.fees_total / 0.015,
+    feesTotalSolana:     solr.fees_total,
+    tradesTotalSolana:   solr.trades_total,
     // Users
     usersTotal:          ur.total,
     newUsers24h:         ur.new24h,
