@@ -168,10 +168,18 @@ export function withMinimumOut<T extends { hops: VaultHop[]; minAmountOut: strin
 const TOKEN_BUSY_RETRIES = 3;
 const QUOTE_TIMEOUT_MS = 5000;
 
-// Venues pay sell proceeds out as native NEAR (Ref DCL unwraps wNEAR, Ref v2 withdraw unwraps by
-// default), but the router only measures wNEAR. Until the router handles that, private sells stay off.
-const PRIVATE_SELLS_PAUSED = true;
 const TOKEN_BUSY_RETRY_MS = 2500;
+
+/**
+ * Private sells need the router upgrade that measures native NEAR output (Ref DCL pays sells in
+ * native NEAR). They stay off until verified on mainnet: PRIVATE_SELLS_ENABLED=true turns them on
+ * for everyone, PRIVATE_SELLS_ALLOWLIST (comma-separated accounts) for test accounts only.
+ */
+export function privateSellsAllowed(accountId: string): boolean {
+  if ((process.env.PRIVATE_SELLS_ENABLED || '').trim().toLowerCase() === 'true') return true;
+  const allow = (process.env.PRIVATE_SELLS_ALLOWLIST || '').split(',').map(a => a.trim()).filter(Boolean);
+  return allow.includes(accountId);
+}
 
 /**
  * Query a user's isolated sub-ledger balance in the Shielded Vault
@@ -877,14 +885,23 @@ export async function executeShieldedVaultIntent(params: {
   // The router serialises swaps per payout token; retry briefly when another swap is settling
   for (let attempt = 1; ; attempt++) {
     const res = await executeShieldedVaultIntentOnce(params);
-    if (!res.tokenBusy || attempt >= TOKEN_BUSY_RETRIES) return res;
+    if (!res.tokenBusy) return res;
+    if (attempt >= TOKEN_BUSY_RETRIES) {
+      // A sell deposits its tokens into the vault before the (reverted) intent; hand them back
+      if (params.side === 'SELL' && params.user.subaccount_id) {
+        await refundUserFromVault(params.user.subaccount_id, params.tokenAddress).catch((e: any) =>
+          logger.warn(`Returning vault tokens after busy sell failed: ${e?.message}`)
+        );
+      }
+      return res;
+    }
     logger.info(`Router busy settling ${params.tokenAddress}; retry ${attempt}/${TOKEN_BUSY_RETRIES - 1}`);
     await new Promise(r => setTimeout(r, TOKEN_BUSY_RETRY_MS));
   }
 }
 
 async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeShieldedVaultIntent>[0]): Promise<VaultExecutionResult> {
-  if (PRIVATE_SELLS_PAUSED && params.side === 'SELL') {
+  if (params.side === 'SELL' && !privateSellsAllowed(params.user.subaccount_id || params.user.id)) {
     return {
       success: false,
       routing: 'RACER_SHIELDED_VAULT',
@@ -893,7 +910,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenOut: 'near',
       amountInFormatted: String(params.amountTokens || '0'),
       privateSellsPaused: true,
-      reason: 'Private sells are temporarily unavailable while a router payout issue is fixed. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
+      reason: 'Private sells are not enabled yet. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
     };
   }
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
