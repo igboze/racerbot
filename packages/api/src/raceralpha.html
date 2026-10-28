@@ -3913,12 +3913,12 @@
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-text);">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                      <span id="intent-routing-badge">Private Intent Solver Shield</span>
+                      <span id="intent-routing-badge">Private route</span>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">NEAR INTENT ROUTE</span>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">CHECKING</span>
                   </div>
                   <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;" id="intent-routing-desc">
-                    Decentralized off-chain intent routed via NEAR Intent Solvers (Defuse network). Routed privately through NEAR Intents across launchpad bonding curves and DEX pools.
+                    Checking which route this trade will use.
                   </div>
                 </div>
 
@@ -6004,31 +6004,40 @@
             const badge = document.getElementById('intent-routing-badge');
             const desc = document.getElementById('intent-routing-desc');
             const tag = document.getElementById('intent-routing-tag');
-            if (q.supported && q.routing === 'INTENT_SOLVER') {
-              if (badge) badge.textContent = 'NEAR Intent Solver Shield Active';
+            // Mirrors the trade request: non-Defuse venues use the router, and only buys go to Intents
+            const venueUsesRouter = Boolean(selectedAlphaToken.venue && selectedAlphaToken.venue.toLowerCase() !== 'defuse');
+            const willUseIntents = selectedRacerAlphaSide === 'BUY' && !venueUsesRouter && q.supported && q.routing === 'INTENT_SOLVER';
+            if (selectedRacerAlphaSide === 'SELL' && !q.privateSellsAllowed) {
+              if (badge) badge.textContent = 'Private sells switched off';
               if (tag) {
-                tag.textContent = 'NEAR INTENT ROUTE';
+                tag.textContent = 'REGULAR SELL';
+                tag.style.color = 'var(--color-racer-gold)';
+                tag.style.background = 'rgba(240, 173, 78,0.12)';
+              }
+              if (desc) desc.textContent = 'Private sells are temporarily switched off. You will be offered a regular (non-private) sell.';
+            } else if (willUseIntents) {
+              if (badge) badge.textContent = 'NEAR Intents route';
+              if (tag) {
+                tag.textContent = 'NEAR INTENTS';
                 tag.style.color = 'var(--color-primary)';
                 tag.style.background = 'rgba(52, 211, 153,0.12)';
               }
-              const outText = selectedRacerAlphaSide === 'BUY'
-                ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}`
-                : `${q.amountOutFormatted} NEAR`;
-              if (desc) desc.textContent = `Off-chain private intent verified by Defuse solvers with zero public mempool exposure. Est Output: ${outText}.`;
+              const outText = `${q.amountOutFormatted} ${selectedAlphaToken.symbol}`;
+              if (desc) desc.textContent = `Filled by a NEAR Intents (1Click) solver. Est Output: ${outText}.`;
               if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
                 estEl.textContent = `≈ ${outText}`;
               }
             } else {
-              if (badge) badge.textContent = 'Racer Shielded Router Active';
+              if (badge) badge.textContent = 'Racer router';
               if (tag) {
-                tag.textContent = 'SHIELDED ROUTER';
+                tag.textContent = 'RACER ROUTER';
                 tag.style.color = 'var(--color-primary)';
                 tag.style.background = 'rgba(52, 211, 153,0.12)';
               }
               const outText = selectedRacerAlphaSide === 'BUY'
                 ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`)
                 : (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} NEAR` : `${estNear.toFixed(4)} NEAR`);
-              if (desc) desc.textContent = `Atomic on-chain execution via racerbotrouter.near on ${escapeHtml(selectedAlphaToken.venue || 'Direct DEX')}. Est Output: ≈ ${outText}.`;
+              if (desc) desc.textContent = `Executed on-chain through racerbotrouter.near on ${selectedAlphaToken.venue || 'the DEX'}, with a minimum output set by your slippage. Est Output: ≈ ${outText}.`;
               if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
                 estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedRacerAlphaSide === 'BUY' ? selectedAlphaToken.symbol : 'NEAR'}`;
               }
@@ -6045,6 +6054,42 @@
       }).catch(() => {
         prompt('Copy Token Address:', selectedAlphaToken.address);
       });
+    }
+
+    // Regular (non-private) sell, offered when private sells are paused. Same order, sent through the AMM.
+    async function retryRegularSell(payloadJson) {
+      const feedback = document.getElementById('alpha-trade-feedback');
+      const btn = document.getElementById('btn-retry-public-sell');
+      if (btn) { btn.disabled = true; btn.textContent = 'Selling...'; }
+      try {
+        const payload = JSON.parse(payloadJson);
+        payload.isPrivateTrade = false;
+        payload.routingPreference = 'amm';
+        const res = await fetch('/alpha/trade/execute', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Sell failed.');
+        const txLink = data.txHash
+          ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
+          : '';
+        if (feedback) {
+          feedback.style.background = 'rgba(52, 211, 153, 0.15)';
+          feedback.style.color = 'var(--color-primary)';
+          feedback.innerHTML = `<b>Sell executed</b> (regular trade, not private).${txLink}`;
+        }
+        refreshUserBalance();
+        if (selectedAlphaToken) fetchUserTokenBalance(selectedAlphaToken.address);
+        loadTerminalData();
+      } catch (err) {
+        if (feedback) {
+          feedback.style.background = 'rgba(255, 107, 115, 0.15)';
+          feedback.style.color = 'var(--color-danger)';
+          feedback.textContent = 'Sell failed: ' + (err.message || 'Execution error');
+        }
+      }
     }
 
     async function executeRacerAlphaConsoleTrade() {
@@ -6138,6 +6183,18 @@
             body: tradePayload()
           });
           data = await res.json();
+        }
+
+        if (data && data.canRetryPublic) {
+          if (feedback) {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(240, 173, 78, 0.12)';
+            feedback.style.color = '#F0AD4E';
+            feedback.innerHTML = `${escapeHtml(data.error || 'Private sells are temporarily unavailable.')}<br><button type="button" id="btn-retry-public-sell" style="margin-top:8px; min-height:44px; padding:0 14px; border-radius:6px; border:1px solid currentColor; background:transparent; color:inherit; font-weight:700; cursor:pointer;">Sell with a regular trade</button>`;
+            const payloadJson = tradePayload();
+            document.getElementById('btn-retry-public-sell')?.addEventListener('click', () => retryRegularSell(payloadJson));
+          }
+          return;
         }
 
         // If user is connected via an external wallet (Meteor, MyNearWallet, etc.), prompt wallet approval
