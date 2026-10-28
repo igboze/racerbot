@@ -71,7 +71,7 @@
         },
         {
           "variable": "QUICKNODE_API_KEY",
-          "value": "***REMOVED***"
+          "value": "${{secrets.QUICKNODE_API_KEY}}"
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
