@@ -4854,10 +4854,23 @@ export class MultiRpcNear {
     let signed: { hash: string; signedB64: string; nonce: bigint };
     try {
       signed = await signOnce(false);
-      try {
-        await this.broadcastToAll(signed.signedB64);
-      } catch (err: any) {
-        await this.broadcastSigned(signed.signedB64);
+      // Validate-and-include first, so a rejected tx fails in ~1s with the node's reason
+      // instead of being silently dropped and polled for ~24s
+      let inclusion = await this.sendIncluded(signed.signedB64);
+      for (let retry = 0; inclusion.status === 'invalid' && MultiRpcNear.isInvalidNonce(inclusion.error) && retry < 2; retry++) {
+        signed = await signOnce(true);
+        inclusion = await this.sendIncluded(signed.signedB64);
+      }
+      if (inclusion.status === 'invalid') {
+        throw new TradeError(MultiRpcNear.describeInvalidTx(inclusion.error), { code: 'INVALID_TX', txHash: signed.hash });
+      }
+      if (inclusion.status === 'unknown') {
+        // Congestion or transport errors: fall back to the async fan-out and the existing poll/re-sign path
+        try {
+          await this.broadcastToAll(signed.signedB64);
+        } catch (err: any) {
+          await this.broadcastSigned(signed.signedB64);
+        }
       }
       // The network has accepted the signed transaction. Confirmation and
       // receipt execution can take longer, but callers can now immediately
@@ -4865,7 +4878,7 @@ export class MultiRpcNear {
       onBroadcast?.(signed.hash);
 
       const broadcastMs = Date.now() - tStart;
-      const seen = { everSeen: false };
+      const seen = { everSeen: inclusion.status === 'included' };
       // Phase 1: Fan-out poll across all trade providers (FastNEAR + validator nodes).
       // Under network congestion, block inclusion and receipt routing often take 18-28s.
       // Give Phase 1 up to 30s before assuming a mempool drop.
@@ -5178,6 +5191,66 @@ export class MultiRpcNear {
       markProviderError(provider);
       throw err;
     }
+  }
+
+  /**
+   * Send signed bytes with send_tx(wait_until: INCLUDED) to all trade providers.
+   * Unlike broadcast_tx_async, a node validates the tx and rejects an invalid one
+   * (bad nonce, unknown key, low balance, expired block hash) in about a second
+   * instead of silently dropping it.
+   *  - 'included': some provider confirmed block inclusion
+   *  - 'invalid':  no provider included it and at least one rejected it as INVALID_TRANSACTION
+   *  - 'unknown':  timeouts or transport errors only (congestion); caller falls back to async broadcast
+   * A success outranks a rejection: a node that sees an already-included tx can report InvalidNonce.
+   */
+  private async sendIncluded(signedB64: string, timeoutMs = 6000): Promise<
+    { status: 'included' } | { status: 'invalid'; error: any } | { status: 'unknown' }
+  > {
+    const attempts = this.tradeProviders.map(async (provider) => {
+      const res = await fetch(provider.url, {
+        method: 'POST',
+        headers: provider.headers ?? { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'racerbot-send-included',
+          method: 'send_tx',
+          params: { signed_tx_base64: signedB64, wait_until: 'INCLUDED' },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const data: any = await res.json();
+      if (data?.error) {
+        const invalid = data.error?.cause?.name === 'INVALID_TRANSACTION'
+          ? (data.error?.data?.TxExecutionError?.InvalidTxError ?? data.error?.data ?? {})
+          : undefined;
+        throw Object.assign(new Error(data.error.message || 'send_tx error'), { invalid });
+      }
+      return data?.result;
+    });
+
+    try {
+      await Promise.any(attempts);
+      return { status: 'included' };
+    } catch (agg: any) {
+      const rejection = (agg?.errors ?? []).find((e: any) => e?.invalid !== undefined);
+      return rejection ? { status: 'invalid', error: rejection.invalid } : { status: 'unknown' };
+    }
+  }
+
+  /** True when an InvalidTxError is a nonce clash, which a fresh nonce resolves. */
+  private static isInvalidNonce(invalidTxError: any): boolean {
+    return Boolean(invalidTxError && typeof invalidTxError === 'object' && 'InvalidNonce' in invalidTxError);
+  }
+
+  /** Human-readable reason for an InvalidTxError returned by send_tx. */
+  private static describeInvalidTx(invalidTxError: any): string {
+    const e = invalidTxError ?? {};
+    if (e.InvalidAccessKeyError) return 'The network rejected the transaction: this account\'s signing key is not authorized on-chain. No funds were spent.';
+    if (e.NotEnoughBalance) return 'The network rejected the transaction: not enough NEAR to cover the amount plus gas. No funds were spent.';
+    if (e.LackBalanceForState) return 'The network rejected the transaction: it would leave the account below its storage reserve. No funds were spent.';
+    if (e.Expired) return 'The network rejected the transaction because it expired before inclusion. No funds were spent; please retry.';
+    if (e.InvalidNonce) return 'Another transaction from this account was sent at the same moment. No funds were spent; please retry.';
+    return `The network rejected the transaction (${JSON.stringify(e).slice(0, 160)}). No funds were spent.`;
   }
 
   /**
