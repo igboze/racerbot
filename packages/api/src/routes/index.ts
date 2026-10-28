@@ -878,7 +878,8 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
       recipientAccountId: recipient,
       dryRun: true,
     });
-    res.json(quote);
+    const { privateSellsAllowed } = await import('../racerVault.js');
+    res.json({ ...quote, privateSellsAllowed: privateSellsAllowed() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch intent quote' });
   }
@@ -1016,6 +1017,10 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           recipientAccountId = vaultRes.recipientAccountId;
         } else {
           logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
+          if (isPrivateTrade && vaultRes.privateSellsPaused) {
+            res.status(409).json({ error: vaultRes.reason, canRetryPublic: true });
+            return;
+          }
           if (isPrivateTrade) {
             let reasonText = vaultRes.reason || 'Transaction could not be shielded';
             if (reasonText.includes('zero_tokens_received')) {

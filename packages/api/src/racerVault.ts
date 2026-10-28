@@ -102,6 +102,8 @@ export interface VaultExecutionResult {
   recipientAccountId?: string;
   /** Contract rejected the intent because another swap of this token is still settling. */
   tokenBusy?: boolean;
+  /** Private sells are paused; the caller may offer a regular (public) sell instead. */
+  privateSellsPaused?: boolean;
   message?: string;
   reason?: string;
 }
@@ -128,9 +130,16 @@ async function quoteMinimumOut(params: {
   const quoteVenue = QUOTE_VENUES.has(v) ? v : 'rhea';
   const tokenIn = params.isBuy ? 'wrap.near' : params.tokenAddress;
   const tokenOut = params.isBuy ? params.tokenAddress : 'wrap.near';
-  const { minAmountOut } = await getNear().computeMinAmountOut(
-    quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
-  );
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`price quote timed out after ${QUOTE_TIMEOUT_MS / 1000}s`)), QUOTE_TIMEOUT_MS);
+  });
+  const { minAmountOut } = await Promise.race([
+    getNear().computeMinAmountOut(
+      quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
+    ),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
   if (!minAmountOut || BigInt(minAmountOut) <= 0n) {
     throw new Error('quote returned zero output');
   }
@@ -157,7 +166,17 @@ export function withMinimumOut<T extends { hops: VaultHop[]; minAmountOut: strin
 }
 
 const TOKEN_BUSY_RETRIES = 3;
+const QUOTE_TIMEOUT_MS = 5000;
+
 const TOKEN_BUSY_RETRY_MS = 2500;
+
+/**
+ * Private sells are on for everyone. PRIVATE_SELLS_ENABLED=false is an emergency off switch
+ * (sellers are then offered a regular sell instead).
+ */
+export function privateSellsAllowed(): boolean {
+  return (process.env.PRIVATE_SELLS_ENABLED || '').trim().toLowerCase() !== 'false';
+}
 
 /**
  * Query a user's isolated sub-ledger balance in the Shielded Vault
@@ -376,7 +395,7 @@ export async function refundUserFromVault(
         contractId: RACER_VAULT_CONTRACT_ID,
         methodName: 'withdraw_user',
         args: { user: subaccountId, token },
-        gas: BigInt('60000000000000'), // 60 TGas
+        gas: BigInt('200000000000000'), // 200 TGas: the router reserves 115 TGas for its withdraw callback
         attachedDeposit: 1n, // 1 yocto
       });
     });
@@ -863,13 +882,34 @@ export async function executeShieldedVaultIntent(params: {
   // The router serialises swaps per payout token; retry briefly when another swap is settling
   for (let attempt = 1; ; attempt++) {
     const res = await executeShieldedVaultIntentOnce(params);
-    if (!res.tokenBusy || attempt >= TOKEN_BUSY_RETRIES) return res;
+    if (!res.tokenBusy) return res;
+    if (attempt >= TOKEN_BUSY_RETRIES) {
+      // A sell deposits its tokens into the vault before the (reverted) intent; hand them back
+      if (params.side === 'SELL' && params.user.subaccount_id) {
+        await refundUserFromVault(params.user.subaccount_id, params.tokenAddress).catch((e: any) =>
+          logger.warn(`Returning vault tokens after busy sell failed: ${e?.message}`)
+        );
+      }
+      return res;
+    }
     logger.info(`Router busy settling ${params.tokenAddress}; retry ${attempt}/${TOKEN_BUSY_RETRIES - 1}`);
     await new Promise(r => setTimeout(r, TOKEN_BUSY_RETRY_MS));
   }
 }
 
 async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeShieldedVaultIntent>[0]): Promise<VaultExecutionResult> {
+  if (params.side === 'SELL' && !privateSellsAllowed()) {
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId: `intent_paused_${Date.now()}`,
+      tokenIn: params.tokenAddress,
+      tokenOut: 'near',
+      amountInFormatted: String(params.amountTokens || '0'),
+      privateSellsPaused: true,
+      reason: 'Private sells are temporarily switched off. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
+    };
+  }
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const nonceBytes = crypto.randomBytes(32);
   const nonceArray = Array.from(nonceBytes);
@@ -1173,14 +1213,15 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
               netOut = ev.data?.net || '0';
             } else if (ev.event === 'slippage_refund') {
               isSlippageRefund = true;
-              failReason = 'Slippage breach: full refund returned to user';
+              failReason = 'Price moved past your slippage limit: the tokens received were delivered with no fee';
             } else if (ev.event === 'swap_failed') {
               const r = ev.data?.reason || 'Venue swap failed';
               failReason = r === 'zero_tokens_received'
-                ? 'zero_tokens_received (0 tokens received from venue - liquidity temporarily unavailable or slippage limit exceeded; refunded to vault)'
+                ? 'zero_tokens_received (no tokens came back from the venue; any unused input was returned to your vault balance)'
                 : r;
-            } else if (ev.event === 'ref_withdraw_failed') {
-              failReason = 'Withdrawal from venue failed; credited to vault ledger';
+            } else if (ev.event === 'unaccounted_output') {
+              // The venue kept the input but the router could not measure what it paid out
+              failReason = 'The venue took the input but its output could not be measured by the router. It has been flagged for reconciliation; contact support with this transaction hash.';
             } else if (ev.event === 'payout_completed') {
               isPaidOut = true;
             } else if (ev.event === 'payout_failed' || ev.event === 'withdraw_failed') {
