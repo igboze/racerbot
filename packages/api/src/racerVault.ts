@@ -171,14 +171,11 @@ const QUOTE_TIMEOUT_MS = 5000;
 const TOKEN_BUSY_RETRY_MS = 2500;
 
 /**
- * Private sells need the router upgrade that measures native NEAR output (Ref DCL pays sells in
- * native NEAR). They stay off until verified on mainnet: PRIVATE_SELLS_ENABLED=true turns them on
- * for everyone, PRIVATE_SELLS_ALLOWLIST (comma-separated accounts) for test accounts only.
+ * Private sells are on for everyone. PRIVATE_SELLS_ENABLED=false is an emergency off switch
+ * (sellers are then offered a regular sell instead).
  */
-export function privateSellsAllowed(accountId: string): boolean {
-  if ((process.env.PRIVATE_SELLS_ENABLED || '').trim().toLowerCase() === 'true') return true;
-  const allow = (process.env.PRIVATE_SELLS_ALLOWLIST || '').split(',').map(a => a.trim()).filter(Boolean);
-  return allow.includes(accountId);
+export function privateSellsAllowed(): boolean {
+  return (process.env.PRIVATE_SELLS_ENABLED || '').trim().toLowerCase() !== 'false';
 }
 
 /**
@@ -901,7 +898,7 @@ export async function executeShieldedVaultIntent(params: {
 }
 
 async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeShieldedVaultIntent>[0]): Promise<VaultExecutionResult> {
-  if (params.side === 'SELL' && !privateSellsAllowed(params.user.subaccount_id || params.user.id)) {
+  if (params.side === 'SELL' && !privateSellsAllowed()) {
     return {
       success: false,
       routing: 'RACER_SHIELDED_VAULT',
@@ -910,7 +907,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenOut: 'near',
       amountInFormatted: String(params.amountTokens || '0'),
       privateSellsPaused: true,
-      reason: 'Private sells are not enabled yet. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
+      reason: 'Private sells are temporarily switched off. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
     };
   }
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;

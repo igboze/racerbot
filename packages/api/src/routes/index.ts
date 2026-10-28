@@ -879,7 +879,7 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
       dryRun: true,
     });
     const { privateSellsAllowed } = await import('../racerVault.js');
-    res.json({ ...quote, privateSellsAllowed: user ? privateSellsAllowed(user.subaccount_id || user.id) : false });
+    res.json({ ...quote, privateSellsAllowed: privateSellsAllowed() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch intent quote' });
   }
