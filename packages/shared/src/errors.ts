@@ -12,7 +12,8 @@ export type TradeErrorCode =
   | 'RPC_TIMEOUT'              // all NEAR RPC providers timed out for a view call
   | 'CONTRACT_ERROR'           // contract panic / ExecutionError returned by RPC
   | 'SLIPPAGE'                 // on-chain slippage exceeded
-  | 'INSUFFICIENT_BALANCE';    // balance too low to execute trade
+  | 'INSUFFICIENT_BALANCE'     // balance too low to execute trade
+  | 'INVALID_TX';               // node rejected the signed tx before inclusion (key, nonce, balance, expiry)
 
 export interface TradeErrorOptions {
   code: TradeErrorCode;
