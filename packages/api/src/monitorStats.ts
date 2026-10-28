@@ -1,4 +1,4 @@
-import type { TradeAttemptRow } from '@racerbot/db';
+import type { TradeAttemptRow, VolumeStats } from '@racerbot/db';
 
 export interface AttemptSummary {
   total: number;
@@ -98,4 +98,59 @@ export function formatReasons(topReasons: Array<[string, number]>, max = 3): str
     .slice(0, max)
     .map(([reason, count]) => `×${count} ${reason}`)
     .join('\n');
+}
+
+// ── Daily volume update formatting ──────────────────────────────────────────
+
+export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 0, strkUsd = 0, solUsd = 0): string {
+  const nearFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const nearUsdFmt = (nearAmt: number) =>
+    nearUsd > 0 ? ` (~$${(nearAmt * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+  const suiFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const suiUsdFmt = (suiAmt: number) =>
+    suiUsd > 0 ? ` (~$${(suiAmt * suiUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+  const strkFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const strkUsdFmt = (strkAmt: number) =>
+    strkUsd > 0 ? ` (~$${(strkAmt * strkUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+  const solFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const solUsdFmt = (solAmt: number) =>
+    solUsd > 0 ? ` (~$${(solAmt * solUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+
+  const total24hTrades = s.trades24h + s.trades24hSui + (s.trades24hStarknet || 0) + (s.trades24hSolana || 0);
+  const totalTrades = s.tradesTotal + s.tradesTotalSui + (s.tradesTotalStarknet || 0) + (s.tradesTotalSolana || 0);
+
+  return (
+    `📊 *RacerBot Daily Report*\n\n` +
+
+    `👥 *Users*\n` +
+    `• Total: \`${s.usersTotal.toLocaleString('en-US')}\`\n` +
+    `• New today: \`${s.newUsers24h}\`\n\n` +
+
+    `🔥 *Last 24h*\n` +
+    `• Total trades: \`${total24hTrades}\` (${s.buys24h} buys / ${s.sells24h} sells)\n` +
+    `• Active traders: \`${s.activeTraders24h}\`\n\n` +
+
+    `〽️ *NEAR — 24h*\n` +
+    `• Volume: \`${nearFmt(s.volume24hNear)} NEAR\`${nearUsdFmt(s.volume24hNear)}\n` +
+    `• Trades: \`${s.trades24h}\`\n\n` +
+
+    `🔵 *SUI — 24h*\n` +
+    `• Volume: \`${suiFmt(s.volume24hSui)} SUI\`${suiUsdFmt(s.volume24hSui)}\n` +
+    `• Trades: \`${s.trades24hSui}\`\n\n` +
+
+    `⚡ *Starknet — 24h*\n` +
+    `• Volume: \`${strkFmt(s.volume24hStarknet || 0)} STRK\`${strkUsdFmt(s.volume24hStarknet || 0)}\n` +
+    `• Trades: \`${s.trades24hStarknet || 0}\`\n\n` +
+
+    `🟣 *Solana — 24h*\n` +
+    `• Volume: \`${solFmt(s.volume24hSolana || 0)} SOL\`${solUsdFmt(s.volume24hSolana || 0)}\n` +
+    `• Trades: \`${s.trades24hSolana || 0}\`\n\n` +
+
+    `📈 *All Time*\n` +
+    `• NEAR volume: \`${nearFmt(s.volumeTotalNear)} NEAR\`${nearUsdFmt(s.volumeTotalNear)}\n` +
+    `• SUI volume: \`${suiFmt(s.volumeTotalSui)} SUI\`${suiUsdFmt(s.volumeTotalSui)}\n` +
+    `• Starknet volume: \`${strkFmt(s.volumeTotalStarknet || 0)} STRK\`${strkUsdFmt(s.volumeTotalStarknet || 0)}\n` +
+    `• Solana volume: \`${solFmt(s.volumeTotalSolana || 0)} SOL\`${solUsdFmt(s.volumeTotalSolana || 0)}\n` +
+    `• Total trades: \`${totalTrades.toLocaleString('en-US')}\``
+  );
 }
