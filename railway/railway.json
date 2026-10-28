@@ -15,7 +15,7 @@
         },
         {
           "variable": "FASTNEAR_API_KEY",
-          "value": "REDACTED"
+          "value": "${{secrets.FASTNEAR_API_KEY}}"
         },
         {
           "variable": "RACERBOT_PARENT_ACCOUNT",
@@ -71,7 +71,7 @@
         },
         {
           "variable": "QUICKNODE_API_KEY",
-          "value": "REDACTED"
+          "value": "${{secrets.QUICKNODE_API_KEY}}"
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
@@ -105,7 +105,7 @@
         },
         {
           "variable": "FASTNEAR_API_KEY",
-          "value": "REDACTED"
+          "value": "${{secrets.FASTNEAR_API_KEY}}"
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
@@ -139,7 +139,7 @@
         },
         {
           "variable": "FASTNEAR_API_KEY",
-          "value": "REDACTED"
+          "value": "${{secrets.FASTNEAR_API_KEY}}"
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",
@@ -173,7 +173,7 @@
         },
         {
           "variable": "FASTNEAR_API_KEY",
-          "value": "REDACTED"
+          "value": "${{secrets.FASTNEAR_API_KEY}}"
         },
         {
           "variable": "QUICKNODE_ENDPOINT_URL",

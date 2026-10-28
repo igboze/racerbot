@@ -758,7 +758,7 @@ export async function fetchOnChainAccountVolume(accountId?: string): Promise<OnC
     };
   }
 
-  const ACTIVE_PAID_FASTNEAR_KEY = 'REDACTED';
+  const ACTIVE_PAID_FASTNEAR_KEY = ''; // keys come only from FASTNEAR_API_KEY
   const DEPRECATED_FASTNEAR_KEY = 'REDACTED';
   const rawKey = (process.env.FASTNEAR_API_KEY || '').trim();
   const fastnearKey = (!rawKey || rawKey === DEPRECATED_FASTNEAR_KEY || rawKey.startsWith('TEMP') || rawKey.startsWith('${'))
@@ -1394,7 +1394,7 @@ export async function recordAlphaSignal(params: {
         `🚨 <b>New RacerAlpha Signal!</b>\n\n` +
         `🏎️ <b>Action</b>: <b>${params.side} ${params.tokenSymbol}</b>\n` +
         `🪙 <b>Token</b>: <code>${params.tokenAddress}</code>\n` +
-        `💵 <b>Price</b>: <code>${params.priceNear} NEAR</code>\n` +
+        `💵 <b>Price</b>: <code>${params.priceNear > 0 ? `${params.priceNear} NEAR` : 'unknown'}</code>\n` +
         `📊 <b>Size</b>: <code>${params.amountNear} NEAR</code>\n` +
         `🏛️ <b>Venue</b>: <code>${venue.toUpperCase()}</code>\n` +
         `⚡ <b>Auto-Copy</b>: <code>${kh.autoCopyEnabled ? 'ON' : 'OFF'}</code>\n\n` +
@@ -2161,110 +2161,6 @@ export async function generateTerminalLink(userId: string): Promise<any> {
   return { success: true, terminalUrl: `https://raceralpha.xyz/terminal/${token}` };
 }
 
-export async function publishAlphaSignal(data: {
-  traderId: string;
-  tokenAddress: string;
-  tokenSymbol?: string;
-  tokenName?: string;
-  side: string;
-  priceNear?: number;
-  amountNear?: number;
-  venue?: string;
-}): Promise<any> {
-  const db = await getDb().catch(() => null);
-  if (!db) return { success: false, reason: 'Database unavailable' };
-
-  const signalId = 'sig_' + crypto.randomBytes(8).toString('hex');
-  const txHash = 'tx_alpha_' + crypto.randomBytes(16).toString('hex');
-  const tokenAddress = (data.tokenAddress || 'blackdragon.tkn.near').trim().toLowerCase();
-  const side = (data.side || 'BUY').toUpperCase();
-  const amountNear = Number(data.amountNear || 1.0);
-  const priceNear = Number(data.priceNear || (amountNear / 50));
-  const tokenSymbol = (data.tokenSymbol || tokenAddress.split('.')[0] || 'TKN').toUpperCase();
-  const tokenName = data.tokenName || (tokenSymbol + ' Token');
-
-  // Infer venue
-  let venue = data.venue || 'Ref Finance';
-  if (tokenAddress.endsWith('.meme-cooking.near') || tokenAddress.includes('memecooking')) venue = 'Meme.Cooking';
-  else if (tokenAddress.includes('intear.near')) venue = 'InTear Launch';
-  else if (tokenAddress.endsWith('.shardsmarket.near')) venue = 'Shards';
-  else if (tokenAddress.endsWith('.nearlytrade.near')) venue = 'NearlyTrade';
-  else if (tokenAddress.endsWith('.pad.onetokenhub.near')) venue = 'OneTokenHub';
-  else if (tokenAddress.endsWith('.gaypad.j1-racing.near')) venue = 'Gaypad';
-  else if (tokenAddress.endsWith('.nearpumpfun.near')) venue = 'NearPump';
-  else if (tokenAddress.includes('rhea')) venue = 'Rhea Swap';
-
-  // 1. Insert into racer_alpha_signals
-  await db.query(`
-    INSERT INTO racer_alpha_signals (
-      id, trader_id, token_address, token_symbol, token_name, side, price_near, amount_near, pnl_pct, venue, tx_hash, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0.0, $9, $10, NOW())
-  `, [
-    signalId,
-    data.traderId,
-    tokenAddress,
-    tokenSymbol,
-    tokenName,
-    side,
-    priceNear,
-    amountNear,
-    venue,
-    txHash
-  ]);
-
-  // 2. Insert or update racer_alpha_positions
-  if (side === 'BUY') {
-    const entryPriceUsd = priceNear * 4.95;
-    const sizeTokens = amountNear / priceNear;
-    await db.query(`
-      INSERT INTO racer_alpha_positions (
-        id, trader_id, symbol, token_address, side, size_tokens, entry_price_usd, current_price_usd, pnl_usd, pnl_pct, sparkline, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, $9, NOW())
-      ON CONFLICT (id) DO UPDATE SET
-        size_tokens = racer_alpha_positions.size_tokens + EXCLUDED.size_tokens,
-        updated_at = NOW()
-    `, [
-      'pos_' + data.traderId + '_' + tokenSymbol.toLowerCase(),
-      data.traderId,
-      tokenSymbol,
-      tokenAddress,
-      'BUY',
-      sizeTokens,
-      entryPriceUsd,
-      entryPriceUsd,
-      JSON.stringify([100, 105, 102, 108])
-    ]).catch((e: any) => logger.warn(`Error updating position: ${e.message}`));
-  }
-
-  // 3. Count active subscribers for auto-copy
-  const khRes = await db.query(`
-    SELECT COUNT(*) FROM racer_alpha_keys 
-    WHERE trader_id = $1 AND payment_status = 'completed' AND auto_copy_enabled = TRUE
-  `, [data.traderId]).catch(() => ({ rows: [{ count: 0 }] }));
-  const autoCopyFillsCount = parseInt(khRes.rows[0]?.count || '0', 10);
-
-  // 4. Update trader volume & stats
-  await db.query(`
-    UPDATE racer_alpha_traders 
-    SET total_trades = total_trades + 1, total_volume_near = total_volume_near + $1, updated_at = NOW()
-    WHERE id = $2
-  `, [amountNear, data.traderId]).catch(() => {});
-
-  return {
-    success: true,
-    signalId,
-    traderId: data.traderId,
-    tokenSymbol,
-    tokenAddress,
-    side,
-    amountNear,
-    venue,
-    txHash,
-    autoCopyFillsCount,
-    message: `Confidential ${side} intent executed on ${venue} via Stealth Relayer! ${autoCopyFillsCount} subscriber copy-fills triggered.`
-  };
-}
-
 export interface AlphaTokenItem {
   address: string;
   symbol: string;
@@ -2388,7 +2284,7 @@ export async function fetchOnChainTokenRpcData(tokenAddress: string): Promise<On
   return null;
 }
 
-export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
+const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
   // ── HOOT Launchpad (JustHoot) ──
   {
     address: 'kookdog-42db38.launchpad.justhoot.near',
@@ -2684,6 +2580,22 @@ export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = [
     decimals: 18,
   },
 ];
+
+// Seeds supply token metadata only (address, symbol, venue, pool ids). Their market numbers
+// were static placeholders, so they are zeroed: a token without live data shows no price
+// instead of a made-up one.
+export const INITIAL_ALPHA_TOKENS: AlphaTokenItem[] = SEED_ALPHA_TOKENS.map(t => ({
+  ...t,
+  priceUsd: 0,
+  priceNear: 0,
+  change24h: 0,
+  marketCap: 0,
+  volume24h: 0,
+  bondingProgress: 0,
+  liquidityUsd: 0,
+  sparkline: [],
+  holders: 0,
+}));
 
 let cachedAlphaTokensList: { timestamp: number; tokens: AlphaTokenItem[] } = {
   timestamp: 0,

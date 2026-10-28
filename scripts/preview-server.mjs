@@ -23,7 +23,7 @@ const bubblemapHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src'
 const raceralphaHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'raceralpha.html');
 const racerHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'racer.html');
 const fleetHtmlPath = path.resolve(__dirname, '..', 'packages', 'api', 'src', 'fleet.html');
-const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || 'REDACTED';
+const FASTNEAR_KEY = process.env.FASTNEAR_API_KEY || '';
 
 // Real PostgreSQL Database Pool
 const pool = new pg.Pool({
@@ -74,7 +74,7 @@ async function fetchOnChainAccountVolume(accountId) {
     };
   }
 
-  const fastnearKey = (process.env.FASTNEAR_API_KEY || 'REDACTED').trim();
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
   const rpcUrls = [
     fastnearKey ? `https://rpc.mainnet.fastnear.com?apiKey=${fastnearKey}` : 'https://rpc.mainnet.fastnear.com',
     'https://near.drpc.org',
@@ -1413,9 +1413,9 @@ const server = http.createServer(async (req, res) => {
       return cached1ClickTokens;
     }
     try {
-      const apiKey = process.env.NEAR_INTENTS_API_KEY || 'REDACTED';
+      const apiKey = process.env.NEAR_INTENTS_API_KEY || '';
       const r = await fetch('https://1click.chaindefuser.com/v0/tokens', {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
         signal: AbortSignal.timeout(6000),
       });
       if (r.ok) {
@@ -1531,7 +1531,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const apiKey = process.env.NEAR_INTENTS_API_KEY || 'REDACTED';
+        const apiKey = process.env.NEAR_INTENTS_API_KEY || '';
         const tokensList = await getCached1ClickTokens();
         const token = tokensList.find(t => (t.blockchain || '').toLowerCase() === chain && (t.symbol || '').toUpperCase() === symbol) || tokensList.find(t => (t.blockchain || '').toLowerCase() === chain);
 
@@ -1562,7 +1562,7 @@ const server = http.createServer(async (req, res) => {
 
         const qRes = await fetch('https://1click.chaindefuser.com/v0/quote', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
           body: JSON.stringify(quotePayload)
         });
 
@@ -1607,9 +1607,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const apiKey = process.env.NEAR_INTENTS_API_KEY || 'REDACTED';
+      const apiKey = process.env.NEAR_INTENTS_API_KEY || '';
       const statusRes = await fetch(`https://1click.chaindefuser.com/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` }
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
       });
 
       if (!statusRes.ok) {
