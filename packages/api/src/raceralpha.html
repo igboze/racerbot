@@ -3651,7 +3651,7 @@
           <div class="alpha-top-metrics">
             <div class="alpha-metric-item">
               <span class="alpha-m-label">NEAR / USD</span>
-              <span class="alpha-m-val" style="color:var(--color-text);">$4.95 <small style="font-size:10px; color:var(--color-text);">+4.2%</small></span>
+              <span class="alpha-m-val" id="alpha-near-usd" style="color:var(--color-text);">--</span>
             </div>
             <div class="alpha-metric-divider"></div>
             <div class="alpha-metric-item">
@@ -3926,7 +3926,7 @@
 
                 <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="executeRacerAlphaConsoleTrade()" style="width:100%; justify-content:center; height:44px; font-size:13.5px; font-weight:700;">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                  <span id="btn-alpha-label">Execute Private Trade (Zero-MEV Shield)</span>
+                  <span id="btn-alpha-label">Execute Private Trade</span>
                 </button>
               </div>
 
@@ -5280,7 +5280,19 @@
     let selectedTokenBalance = { formatted: '0', raw: '0', decimals: 18, symbol: '' };
     let isSelectedMaxSell = false;
     let lastCachedNearBalance = 0;
-    const NEAR_USD_PRICE = 4.95;
+    // Live NEAR/USD price from the API (0 until loaded; estimates show "unavailable" meanwhile)
+    let NEAR_USD_PRICE = 0;
+    async function refreshNearUsdPrice() {
+      try {
+        const res = await fetch('/api/near-price');
+        const data = res.ok ? await res.json() : null;
+        if (data && data.nearUsd > 0) NEAR_USD_PRICE = data.nearUsd;
+      } catch {}
+      const el = document.getElementById('alpha-near-usd');
+      if (el) el.textContent = NEAR_USD_PRICE > 0 ? `$${NEAR_USD_PRICE.toFixed(2)}` : '--';
+    }
+    refreshNearUsdPrice();
+    setInterval(refreshNearUsdPrice, 60000);
 
     async function fetchRacerAlphaTokens() {
       try {
@@ -5952,22 +5964,22 @@
       const inputVal = parseFloat(document.getElementById('alpha-trade-amount')?.value || '0');
       if (!estEl || !selectedAlphaToken) return;
 
-      const tokPriceUsd = selectedAlphaToken.priceUsd || 0.0001;
-      const tokPriceNear = selectedAlphaToken.priceNear || (tokPriceUsd / NEAR_USD_PRICE);
+      const tokPriceUsd = selectedAlphaToken.priceUsd || 0;
+      const tokPriceNear = selectedAlphaToken.priceNear || (tokPriceUsd > 0 && NEAR_USD_PRICE > 0 ? tokPriceUsd / NEAR_USD_PRICE : 0);
+      if (!(tokPriceNear > 0)) {
+        estEl.textContent = '≈ estimate unavailable (no price yet)';
+        return;
+      }
 
       let estTokens = 0;
       let estNear = 0;
       if (selectedRacerAlphaSide === 'BUY') {
         const amtNear = inputVal || 0;
-        if (tokPriceNear > 0) {
-          estTokens = amtNear / tokPriceNear;
-        } else if (tokPriceUsd > 0) {
-          estTokens = (amtNear * NEAR_USD_PRICE) / tokPriceUsd;
-        }
+        estTokens = amtNear / tokPriceNear;
         estEl.textContent = `≈ ${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`;
       } else {
         const amtTokens = inputVal || 0;
-        estNear = tokPriceNear > 0 ? (amtTokens * tokPriceNear) : (tokPriceUsd > 0 ? (amtTokens * tokPriceUsd / NEAR_USD_PRICE) : 0);
+        estNear = amtTokens * tokPriceNear;
         const tokenValUsd = amtTokens * tokPriceUsd;
         estEl.textContent = `≈ ${estNear.toFixed(4)} NEAR ($${tokenValUsd.toFixed(2)})`;
       }
@@ -6184,7 +6196,7 @@
           if (feedback) {
             feedback.style.background = 'rgba(52, 211, 153, 0.15)';
             feedback.style.color = 'var(--color-primary)';
-            feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>Decentralized Private Intent (Defuse Solver)</b><br><span style="font-size:11px; color:var(--color-racer-cyan);">Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>${txLink}`;
+            feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>Decentralized Private Intent (Defuse Solver)</b><br><span style="font-size:11px; color:var(--color-racer-cyan);">Filled by a NEAR Intents solver</span>${txLink}`;
           }
 
           refreshUserBalance();
@@ -6205,7 +6217,7 @@
           ? 'Racer Shielded Router (racerbotrouter.near)'
           : `AMM Relayer (${escapeHtml(selectedAlphaToken.venue)})`;
         const extraNote = isIntent
-          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Zero-MEV Off-Chain Batch Auction Fill Confirmed!</span>'
+          ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Filled by a NEAR Intents solver</span>'
           : isVault
           ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Atomic Multi-Hop On-Chain Settlement Confirmed via Deployed Contract!</span>'
           : '';
@@ -6423,7 +6435,7 @@
                 `;
               }
               const amtStr = s.amountNear ? `${parseFloat(s.amountNear).toFixed(2)} NEAR` : '--';
-              const usdStr = s.amountNear ? `≈ $${(parseFloat(s.amountNear) * 4.95).toFixed(2)}` : '';
+              const usdStr = s.amountNear && NEAR_USD_PRICE > 0 ? `≈ $${(parseFloat(s.amountNear) * NEAR_USD_PRICE).toFixed(2)}` : '';
               return `
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--color-surface-card); border-radius:8px; border:1px solid var(--color-border-subtle); font-family:var(--font-mono); font-size:12px;">
                   <div style="display:flex; align-items:center; gap:10px;">
@@ -6626,7 +6638,7 @@
       }
 
       btn.disabled = true;
-      btn.innerHTML = '<span>Executing via Stealth Relayer...</span>';
+      btn.innerHTML = '<span>Executing trade...</span>';
       if (feedback) {
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(106, 204, 220, 0.1)';
@@ -7515,11 +7527,14 @@
         return;
       }
 
-      // Live estimate based on USD prices: NEAR ~$4.95
-      const tokenUsd = currentDepositToken.price || (currentDepositToken.symbol === 'SOL' ? 180 : (currentDepositToken.symbol === 'ETH' ? 2600 : (currentDepositToken.symbol === 'BTC' ? 68000 : 1.0)));
+      // Live estimate from the deposit token's USD price and the live NEAR/USD price
+      const tokenUsd = currentDepositToken.price || 0;
+      if (!(tokenUsd > 0) || !(NEAR_USD_PRICE > 0)) {
+        estNearEl.textContent = 'Estimate unavailable (no live price)';
+        return;
+      }
       const totalUsd = amt * tokenUsd;
-      const nearPrice = 4.95;
-      const estNear = (totalUsd / nearPrice).toFixed(2);
+      const estNear = (totalUsd / NEAR_USD_PRICE).toFixed(2);
       estNearEl.textContent = `~${estNear} NEAR ($${totalUsd.toFixed(2)} USD)`;
     }
 

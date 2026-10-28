@@ -4,7 +4,7 @@ import { getDb } from '@racerbot/db';
 process.env.KEY_ENCRYPTION_MASTER_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 process.env.MAIN_WALLET_PRIVATE_KEY =
-  'ed25519:***REMOVED***';
+  'ed25519:4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wqU5QDnuP8UtG9WJGj8oicVLRMkvrDSTtgL4mJmcnBeeKebLw';
 process.env.RACERBOT_PARENT_ACCOUNT = 'racerbot.near';
 
 // Track calls and order across mock accounts
@@ -139,8 +139,8 @@ describe('wallet: onboarding and key rotation', () => {
   });
 
   describe('NEAR key parsing & validation', () => {
-    const validKeyWithPrefix = 'ed25519:***REMOVED***';
-    const validRawBase58 = '***REMOVED***';
+    const validKeyWithPrefix = 'ed25519:4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wqU5QDnuP8UtG9WJGj8oicVLRMkvrDSTtgL4mJmcnBeeKebLw';
+    const validRawBase58 = '4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wqU5QDnuP8UtG9WJGj8oicVLRMkvrDSTtgL4mJmcnBeeKebLw';
 
     it('parses valid ed25519 key with prefix', () => {
       const keyPair = validateAndParseNearKey(validKeyWithPrefix);

@@ -1,6 +1,10 @@
 import pg from 'pg';
 
-const DATABASE_URL = 'postgresql://postgres:***REMOVED***@iriguchi.proxy.rlwy.net:37784/railway';
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('Set DATABASE_URL (see .env.example) before running this script.');
+  process.exit(1);
+}
 
 async function seed() {
   const pool = new pg.Pool({ connectionString: DATABASE_URL });

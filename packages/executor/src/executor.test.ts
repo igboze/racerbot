@@ -5,7 +5,7 @@ import { encrypt, getNear, type SwapEvent, type RedisClient, type MultiRpcNear }
 process.env.KEY_ENCRYPTION_MASTER_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 process.env.MAIN_WALLET_PRIVATE_KEY =
-  'ed25519:***REMOVED***';
+  'ed25519:4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wqU5QDnuP8UtG9WJGj8oicVLRMkvrDSTtgL4mJmcnBeeKebLw';
 process.env.RACERBOT_PARENT_ACCOUNT = 'racerbot.near';
 process.env.ROUTER_CONTRACT_ID = 'router.near';
 process.env.TREASURY_ACCOUNT_ID = 'treasury.near';
