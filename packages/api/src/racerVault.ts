@@ -117,6 +117,29 @@ const QUOTE_VENUES = new Set([
  * Live-quote the swap and return the minimum acceptable output (expected output minus slippage).
  * Throws when no quote is available, so a trade is never sent without price protection.
  */
+const PIPS = 1_000_000n;
+const TRANSFER_FEE_CACHE_MS = 10 * 60_000;
+const transferFeeCache = new Map<string, { pips: bigint; at: number }>();
+
+/**
+ * Transfer fee charged by fee-on-transfer tokens (e.g. JustHoot launchpad tokens expose
+ * get_config().transfer_fee_pips; 30000 pips = 3%). 0 for ordinary NEP-141 tokens.
+ */
+async function getTransferFeePips(tokenId: string): Promise<bigint> {
+  const cached = transferFeeCache.get(tokenId);
+  if (cached && Date.now() - cached.at < TRANSFER_FEE_CACHE_MS) return cached.pips;
+  const config = await getNear().view<any>(tokenId, 'get_config', {}).catch(() => null);
+  const raw = Number(config?.transfer_fee_pips);
+  const pips = Number.isFinite(raw) && raw > 0 && raw < 1_000_000 ? BigInt(Math.floor(raw)) : 0n;
+  transferFeeCache.set(tokenId, { pips, at: Date.now() });
+  return pips;
+}
+
+/** Amount left after a transfer fee of `pips` parts per million. */
+export function afterTransferFee(amount: string | bigint, pips: bigint): bigint {
+  return (BigInt(amount) * (PIPS - pips)) / PIPS;
+}
+
 async function quoteMinimumOut(params: {
   tokenAddress: string;
   venue: string;
@@ -130,20 +153,24 @@ async function quoteMinimumOut(params: {
   const quoteVenue = QUOTE_VENUES.has(v) ? v : 'rhea';
   const tokenIn = params.isBuy ? 'wrap.near' : params.tokenAddress;
   const tokenOut = params.isBuy ? params.tokenAddress : 'wrap.near';
+  // Fee-on-transfer tokens: a sell reaches the venue minus the fee, and a buy's output is
+  // charged the fee on its way back to the router, so quote and floor on the net amounts.
+  const feePips = await getTransferFeePips(params.tokenAddress);
+  const quotedAmountIn = params.isBuy || feePips === 0n ? params.amountIn : afterTransferFee(params.amountIn, feePips).toString();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`price quote timed out after ${QUOTE_TIMEOUT_MS / 1000}s`)), QUOTE_TIMEOUT_MS);
   });
   const { minAmountOut } = await Promise.race([
     getNear().computeMinAmountOut(
-      quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
+      quoteVenue as any, tokenIn, tokenOut, quotedAmountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
     ),
     timeout,
   ]).finally(() => clearTimeout(timer));
   if (!minAmountOut || BigInt(minAmountOut) <= 0n) {
     throw new Error('quote returned zero output');
   }
-  return minAmountOut;
+  return params.isBuy && feePips > 0n ? afterTransferFee(minAmountOut, feePips).toString() : minAmountOut;
 }
 
 /** Apply a minimum output to a planned route: intent, final hop, and any venue message that carries one. */
@@ -1218,7 +1245,9 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
               const r = ev.data?.reason || 'Venue swap failed';
               failReason = r === 'zero_tokens_received'
                 ? 'zero_tokens_received (no tokens came back from the venue; any unused input was returned to your vault balance)'
-                : r;
+                : r === 'venue_refunded_input'
+                  ? 'The exchange rejected the swap (price moved past your slippage limit, or not enough liquidity) and returned your tokens. Nothing was lost; try again or raise slippage.'
+                  : r;
             } else if (ev.event === 'unaccounted_output') {
               // The venue kept the input but the router could not measure what it paid out
               failReason = 'The venue took the input but its output could not be measured by the router. It has been flagged for reconciliation; contact support with this transaction hash.';
