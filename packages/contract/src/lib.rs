@@ -16,6 +16,8 @@
  *   7. Emergency pause/unpause and swap rescue by owner.
  *   8. Universal venue support: Ref AMM, Ref DCL, Intear, Shardsmarket, Bonding Curve, Generic FT Call.
  *   9. Native NEAR and NEP-141 token seamless auto-wrapping / auto-unwrapping.
+ *  10. Payouts are checked: a failed transfer re-credits the user's sub-ledger.
+ *  11. Balance-diff venues pay only (balance after − snapshot before), one swap per token at a time.
  */
 
 use near_sdk::{
@@ -32,8 +34,14 @@ const GAS_RESOLVE_RHEA: Gas  = Gas::from_tgas(160);
 const GAS_WITHDRAW_REF: Gas  = Gas::from_tgas(40);
 const GAS_BALANCE: Gas       = Gas::from_tgas(15);
 const GAS_RESOLVE: Gas       = Gas::from_tgas(115);
-const GAS_STORAGE: Gas       = Gas::from_tgas(20);
-const GAS_FT_XFER: Gas       = Gas::from_tgas(30);
+const GAS_STORAGE: Gas       = Gas::from_tgas(10);
+const GAS_FT_XFER: Gas       = Gas::from_tgas(15);
+// Balance-diff venues: snapshot → venue swap → balance check → payout → payout callback
+const GAS_RESOLVE_XFER: Gas  = Gas::from_tgas(10);
+const GAS_RESOLVE_UNWRAP: Gas = Gas::from_tgas(20);
+const GAS_PAYOUT: Gas        = Gas::from_tgas(60);
+const GAS_SWAP_COMPLETE: Gas = Gas::from_tgas(90);
+const GAS_SNAPSHOT: Gas      = Gas::from_tgas(195);
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const STORAGE_DEPOSIT: NearToken = NearToken::from_yoctonear(1_250_000_000_000_000_000_000); // 0.00125 NEAR standard NEP-141
@@ -214,6 +222,8 @@ impl RacerbotVault {
         let pending = self.pending_swaps.remove(&swap_nonce)
             .expect("No pending swap with this nonce");
         self.credit(&pending.user, &pending.token_in, pending.amount_in);
+        self.clear_snapshot(swap_nonce);
+        self.set_token_lock(Self::payout_token(&pending.token_out), false);
         Self::emit("swap_rescued", serde_json::json!({
             "correlation_id": pending.correlation_id,
             "swap_nonce": swap_nonce,
@@ -221,6 +231,13 @@ impl RacerbotVault {
             "refunded_token": pending.token_in,
             "refunded_amount": U128(pending.amount_in),
         }));
+    }
+
+    /// Emergency: release a payout-token lock left behind by a swap whose callbacks never ran.
+    pub fn release_token_lock(&mut self, token: String) {
+        self.assert_owner();
+        self.set_token_lock(Self::payout_token(&token), false);
+        Self::emit("token_lock_released", serde_json::json!({ "token": token }));
     }
 
     // ═══════════════════════════ DEPOSIT ═════════════════════════════════════
@@ -364,6 +381,14 @@ impl RacerbotVault {
         require!(!intent.hops.is_empty() && intent.hops.len() <= 4, "Hops must be 1-4");
         require!(intent.amount_in.0 > 0, "amount_in must be > 0");
 
+        // Balance-diff venues measure output as (router balance after − before), so only one
+        // swap per payout token may be in flight; otherwise outputs would be paid to the wrong user.
+        // Ref swaps take the lock too, because their payouts also move the router's balance.
+        let uses_balance_diff = intent.venue != Venue::Rhea && intent.venue != Venue::RefAmm;
+        let payout_token = Self::payout_token(&intent.token_out);
+        require!(!self.is_token_locked(payout_token), "Token busy: another swap is settling, retry shortly");
+        self.set_token_lock(payout_token, true);
+
         // 4. Debit user's sub-ledger (flexible between native near and wrap.near)
         let held_direct = self.get_balance(&intent.user, &intent.token_in);
         let actual_debit_token = if held_direct >= intent.amount_in.0 {
@@ -419,15 +444,41 @@ impl RacerbotVault {
             "swap_nonce": swap_nonce,
         }));
 
-        // 7. Dispatch to venue
+        // 7. Dispatch to venue (balance-diff venues snapshot the router's payout-token balance first)
+        if !uses_balance_diff {
+            return self.dispatch_ref_amm(&intent, swap_nonce, is_near_wrapped);
+        }
+        Self::ft_balance_of_self(Self::payout_token(&intent.token_out))
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_SNAPSHOT)
+                    .on_balance_snapshot(swap_nonce, intent, is_near_wrapped)
+            )
+    }
+
+    /// Pre-swap balance snapshot resolved → record it, then dispatch to the venue.
+    #[private]
+    pub fn on_balance_snapshot(&mut self, swap_nonce: u64, intent: Intent, is_near_wrapped: bool) -> PromiseOrValue<U128> {
+        let pre = env::promise_result_checked(0, 1024)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<U128>(&bytes).ok());
+
+        let Some(pre) = pre else {
+            if let Some(pending) = self.pending_swaps.remove(&swap_nonce) {
+                self.fail_balance_diff_swap(swap_nonce, &pending, "balance_snapshot_failed");
+            }
+            return PromiseOrValue::Value(U128(0));
+        };
+
+        self.set_snapshot(swap_nonce, pre.0);
         match &intent.venue {
-            Venue::Rhea | Venue::RefAmm => self.dispatch_ref_amm(&intent, swap_nonce, is_near_wrapped),
             Venue::Nearlytrade | Venue::Dcl => self.dispatch_dcl(&intent, swap_nonce, is_near_wrapped),
             Venue::Intear => self.dispatch_intear(&intent, swap_nonce),
             Venue::Shardsmarket => self.dispatch_shardsmarket(&intent, swap_nonce),
             Venue::BondingCurve => self.dispatch_bonding_curve(&intent, swap_nonce),
             Venue::GenericFtCall => self.dispatch_generic_ft_call(&intent, swap_nonce),
-        }
+            Venue::Rhea | Venue::RefAmm => self.dispatch_ref_amm(&intent, swap_nonce, is_near_wrapped),
+        }.into()
     }
 
     // ═══════════════════════ VENUE DISPATCH ══════════════════════════════════
@@ -518,7 +569,7 @@ impl RacerbotVault {
         });
 
         let callback = Self::ext(env::current_account_id())
-            .with_static_gas(GAS_RESOLVE)
+            .with_static_gas(GAS_SWAP_COMPLETE)
             .on_swap_complete(swap_nonce);
 
         if is_near_wrapped {
@@ -600,7 +651,7 @@ impl RacerbotVault {
                 )
                 .then(
                     Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_RESOLVE)
+                        .with_static_gas(GAS_SWAP_COMPLETE)
                         .on_swap_complete(swap_nonce)
                 )
         } else {
@@ -624,7 +675,7 @@ impl RacerbotVault {
                 )
                 .then(
                     Self::ext(env::current_account_id())
-                        .with_static_gas(GAS_RESOLVE)
+                        .with_static_gas(GAS_SWAP_COMPLETE)
                         .on_swap_complete(swap_nonce)
                 )
         }
@@ -646,7 +697,7 @@ impl RacerbotVault {
             )
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_RESOLVE)
+                    .with_static_gas(GAS_SWAP_COMPLETE)
                     .on_swap_complete(swap_nonce)
             )
     }
@@ -666,7 +717,7 @@ impl RacerbotVault {
             )
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_RESOLVE)
+                    .with_static_gas(GAS_SWAP_COMPLETE)
                     .on_swap_complete(swap_nonce)
             )
     }
@@ -690,7 +741,7 @@ impl RacerbotVault {
             )
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_RESOLVE)
+                    .with_static_gas(GAS_SWAP_COMPLETE)
                     .on_swap_complete(swap_nonce)
             )
     }
@@ -716,6 +767,7 @@ impl RacerbotVault {
                 if raw_out.0 == 0 {
                     self.pending_swaps.remove(&swap_nonce);
                     self.credit(&pending.user, &pending.token_in, pending.amount_in);
+                    self.set_token_lock(Self::payout_token(&pending.token_out), false);
                     Self::emit("swap_failed", serde_json::json!({
                         "correlation_id": pending.correlation_id,
                         "user": pending.user,
@@ -749,6 +801,7 @@ impl RacerbotVault {
             Err(_) => {
                 let pending = self.pending_swaps.remove(&swap_nonce).unwrap();
                 self.credit(&pending.user, &pending.token_in, pending.amount_in);
+                self.set_token_lock(Self::payout_token(&pending.token_out), false);
                 Self::emit("swap_failed", serde_json::json!({
                     "correlation_id": pending.correlation_id,
                     "user": pending.user,
@@ -774,9 +827,13 @@ impl RacerbotVault {
         };
 
         match env::promise_result_checked(0, 512) {
-            Ok(_) => self.settle(&pending, raw_out.0),
+            Ok(_) => {
+                let lock = Self::payout_token(&pending.token_out).to_string();
+                self.settle(&pending, raw_out.0, Some(lock))
+            }
             Err(_) => {
                 self.credit(&pending.user, &pending.token_out, raw_out.0);
+                self.set_token_lock(Self::payout_token(&pending.token_out), false);
                 Self::emit("ref_withdraw_failed", serde_json::json!({
                     "correlation_id": pending.correlation_id,
                     "user": pending.user,
@@ -819,28 +876,22 @@ impl RacerbotVault {
                     )
                     .then(
                         Self::ext(env::current_account_id())
-                            .with_static_gas(GAS_RESOLVE)
+                            .with_static_gas(GAS_PAYOUT)
                             .on_swap_payout(swap_nonce)
                     )
                     .into()
             }
             Err(_) => {
                 let pending = self.pending_swaps.remove(&swap_nonce).unwrap();
-                self.credit(&pending.user, &pending.token_in, pending.amount_in);
-                Self::emit("swap_failed", serde_json::json!({
-                    "correlation_id": pending.correlation_id,
-                    "user": pending.user,
-                    "reason": "venue_reverted",
-                    "refunded_token": pending.token_in,
-                    "refunded_amount": U128(pending.amount_in),
-                }));
+                self.fail_balance_diff_swap(swap_nonce, &pending, "venue_reverted");
                 PromiseOrValue::Value(U128(0))
             }
         }
     }
 
     /// Step 2: Balance query resolved.
-    /// `raw_out` is the exact token balance held by the router contract.
+    /// Output = router balance now − pre-swap snapshot, so tokens already held by the
+    /// router (other users' funds, earlier stuck payouts) are never paid out for this swap.
     #[private]
     pub fn on_swap_payout(&mut self, swap_nonce: u64) -> PromiseOrValue<U128> {
         let pending = match self.pending_swaps.remove(&swap_nonce) {
@@ -851,44 +902,114 @@ impl RacerbotVault {
             }
         };
 
-        match env::promise_result_checked(0, 1024) {
-            Ok(bytes) => {
-                let raw_out: U128 = serde_json::from_slice(&bytes).unwrap_or(U128(0));
-                if raw_out.0 == 0 {
-                    self.credit(&pending.user, &pending.token_in, pending.amount_in);
-                    Self::emit("swap_failed", serde_json::json!({
-                        "correlation_id": pending.correlation_id,
-                        "user": pending.user,
-                        "reason": "zero_tokens_received",
-                        "refunded_token": pending.token_in,
-                        "refunded_amount": U128(pending.amount_in),
-                    }));
+        let post = env::promise_result_checked(0, 1024)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<U128>(&bytes).ok());
+        let pre = self.take_snapshot(swap_nonce);
+
+        match (post, pre) {
+            (Some(post), Some(pre)) => {
+                let raw_out = post.0.saturating_sub(pre);
+                if raw_out == 0 {
+                    self.fail_balance_diff_swap(swap_nonce, &pending, "zero_tokens_received");
                     return PromiseOrValue::Value(U128(0));
                 }
-                self.settle(&pending, raw_out.0)
+                let lock = Self::payout_token(&pending.token_out).to_string();
+                self.settle(&pending, raw_out, Some(lock))
+            }
+            _ => {
+                self.fail_balance_diff_swap(swap_nonce, &pending, "balance_query_failed");
+                PromiseOrValue::Value(U128(0))
+            }
+        }
+    }
+
+    /// Payout transfer resolved: release the payout-token lock and, if the transfer
+    /// failed, re-credit the user's sub-ledger so the tokens stay withdrawable.
+    #[private]
+    pub fn on_payout_resolved(
+        &mut self,
+        correlation_id: String,
+        user: AccountId,
+        token: String,
+        amount: U128,
+        lock_token: Option<String>,
+    ) -> bool {
+        if let Some(lock) = lock_token {
+            self.set_token_lock(&lock, false);
+        }
+        match env::promise_result_checked(0, 512) {
+            Ok(_) => {
+                Self::emit("payout_completed", serde_json::json!({
+                    "correlation_id": correlation_id, "user": user, "token": token, "amount": amount,
+                }));
+                true
             }
             Err(_) => {
-                self.credit(&pending.user, &pending.token_in, pending.amount_in);
-                Self::emit("swap_failed", serde_json::json!({
-                    "correlation_id": pending.correlation_id,
-                    "user": pending.user,
-                    "reason": "balance_query_failed",
-                    "refunded_token": pending.token_in,
-                    "refunded_amount": U128(pending.amount_in),
+                self.credit(&user, &token, amount.0);
+                Self::emit("payout_failed", serde_json::json!({
+                    "correlation_id": correlation_id,
+                    "user": user,
+                    "token": token,
+                    "amount": amount,
+                    "action": "credited_to_vault_ledger",
                 }));
-                PromiseOrValue::Value(U128(0))
+                false
+            }
+        }
+    }
+
+    /// wrap.near → NEAR unwrap resolved: pay the user natively, or re-credit wrap.near on failure.
+    #[private]
+    pub fn on_unwrapped(
+        &mut self,
+        correlation_id: String,
+        user: AccountId,
+        net: U128,
+        fee: U128,
+        lock_token: Option<String>,
+    ) -> PromiseOrValue<bool> {
+        match env::promise_result_checked(0, 512) {
+            Ok(_) => {
+                let treasury = self.treasury_id.clone();
+                self.credit(&treasury, "near", fee.0);
+                Promise::new(user.clone())
+                    .transfer(NearToken::from_yoctonear(net.0))
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(GAS_RESOLVE_XFER)
+                            .on_payout_resolved(correlation_id, user, "near".to_string(), net, lock_token)
+                    )
+                    .into()
+            }
+            Err(_) => {
+                if let Some(lock) = lock_token {
+                    self.set_token_lock(&lock, false);
+                }
+                let treasury = self.treasury_id.clone();
+                self.credit(&treasury, WRAP_NEAR, fee.0);
+                self.credit(&user, WRAP_NEAR, net.0);
+                Self::emit("payout_failed", serde_json::json!({
+                    "correlation_id": correlation_id,
+                    "user": user,
+                    "token": WRAP_NEAR,
+                    "amount": net,
+                    "reason": "unwrap_failed",
+                    "action": "credited_to_vault_ledger",
+                }));
+                PromiseOrValue::Value(false)
             }
         }
     }
 
     // ═══════════════════════ SETTLEMENT ══════════════════════════════════════
 
-    fn settle(&self, pending: &PendingSwap, raw_out: u128) -> PromiseOrValue<U128> {
-        let is_ref_venue = pending.venue == Venue::Rhea || pending.venue == Venue::RefAmm ||
-                           pending.venue == Venue::Nearlytrade || pending.venue == Venue::Dcl;
-
+    /// Pays `raw_out` (minus fee) to the user. The fee is credited to the treasury's
+    /// sub-ledger instead of being transferred, so the user payout is the only outgoing
+    /// transfer and its result is always checked by `on_payout_resolved`.
+    fn settle(&mut self, pending: &PendingSwap, raw_out: u128, lock_token: Option<String>) -> PromiseOrValue<U128> {
         // Slippage guard: give user full amount back, no fee charged
-        if raw_out < pending.min_amount_out.0 {
+        let fee_amount = if raw_out < pending.min_amount_out.0 {
             Self::emit("slippage_refund", serde_json::json!({
                 "correlation_id": pending.correlation_id,
                 "user": pending.user,
@@ -896,76 +1017,129 @@ impl RacerbotVault {
                 "got": U128(raw_out),
                 "min": pending.min_amount_out,
             }));
+            0
+        } else {
+            (raw_out * pending.fee_bps as u128) / 10_000
+        };
+        let net_amount = raw_out - fee_amount;
 
-            // If user asked for native NEAR and we received wrap.near, unwrap wrap.near -> near
-            if pending.token_out == "near" && is_ref_venue {
-                return PromiseOrValue::Promise(
-                    Promise::new(WRAP_NEAR.parse().unwrap())
-                        .function_call(
-                            "near_withdraw".to_string(),
-                            serde_json::to_vec(&serde_json::json!({ "amount": U128(raw_out) })).unwrap(),
-                            ONE_YOCTO,
-                            GAS_WRAP,
-                        )
-                        .then(
-                            Promise::new(pending.user.clone())
-                                .transfer(NearToken::from_yoctonear(raw_out))
-                        )
-                );
-            }
+        if raw_out >= pending.min_amount_out.0 {
+            Self::emit("swap_settled", serde_json::json!({
+                "correlation_id": pending.correlation_id,
+                "user": pending.user,
+                "token_out": pending.token_out,
+                "gross": U128(raw_out),
+                "fee": U128(fee_amount),
+                "net": U128(net_amount),
+                "fee_bps": pending.fee_bps,
+            }));
+        }
 
+        // Every venue hands "near" output back as wrap.near → unwrap before paying natively
+        if pending.token_out == "near" {
             return PromiseOrValue::Promise(
-                self.xfer_out(&pending.token_out, &pending.user, raw_out)
+                Promise::new(WRAP_NEAR.parse().unwrap())
+                    .function_call(
+                        "near_withdraw".to_string(),
+                        serde_json::to_vec(&serde_json::json!({ "amount": U128(raw_out) })).unwrap(),
+                        ONE_YOCTO,
+                        GAS_WRAP,
+                    )
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(GAS_RESOLVE_UNWRAP)
+                            .on_unwrapped(
+                                pending.correlation_id.clone(),
+                                pending.user.clone(),
+                                U128(net_amount),
+                                U128(fee_amount),
+                                lock_token,
+                            )
+                    )
             );
         }
 
-        let fee_amount = (raw_out * pending.fee_bps as u128) / 10_000;
-        let net_amount = raw_out - fee_amount;
+        let treasury = self.treasury_id.clone();
+        self.credit(&treasury, &pending.token_out, fee_amount);
+        PromiseOrValue::Promise(
+            self.ft_send(&pending.token_out, &pending.user, net_amount)
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(GAS_RESOLVE_XFER)
+                        .on_payout_resolved(
+                            pending.correlation_id.clone(),
+                            pending.user.clone(),
+                            pending.token_out.clone(),
+                            U128(net_amount),
+                            lock_token,
+                        )
+                )
+        )
+    }
 
-        Self::emit("swap_settled", serde_json::json!({
+    /// Refund a failed balance-diff swap: re-credit input, drop snapshot, release lock.
+    fn fail_balance_diff_swap(&mut self, swap_nonce: u64, pending: &PendingSwap, reason: &str) {
+        self.credit(&pending.user, &pending.token_in, pending.amount_in);
+        self.clear_snapshot(swap_nonce);
+        self.set_token_lock(Self::payout_token(&pending.token_out), false);
+        Self::emit("swap_failed", serde_json::json!({
             "correlation_id": pending.correlation_id,
             "user": pending.user,
-            "token_out": pending.token_out,
-            "gross": U128(raw_out),
-            "fee": U128(fee_amount),
-            "net": U128(net_amount),
-            "fee_bps": pending.fee_bps,
+            "reason": reason,
+            "refunded_token": pending.token_in,
+            "refunded_amount": U128(pending.amount_in),
         }));
+    }
 
-        // If user wants native NEAR and swap returned wrap.near, unwrap wrap.near -> near
-        if pending.token_out == "near" && is_ref_venue {
-            let user_p = Promise::new(WRAP_NEAR.parse().unwrap())
-                .function_call(
-                    "near_withdraw".to_string(),
-                    serde_json::to_vec(&serde_json::json!({ "amount": U128(raw_out) })).unwrap(),
-                    ONE_YOCTO,
-                    GAS_WRAP,
-                )
-                .then(
-                    Promise::new(pending.user.clone())
-                        .transfer(NearToken::from_yoctonear(net_amount))
-                );
+    // ═══════════════════ PAYOUT LOCKS & BALANCE SNAPSHOTS ═════════════════════
+    // Raw storage keys (prefixes "l:" / "s:") so the contract state layout is unchanged
+    // and the upgrade needs no migration.
 
-            if fee_amount > 0 {
-                return PromiseOrValue::Promise(
-                    user_p.then(
-                        Promise::new(self.treasury_id.clone())
-                            .transfer(NearToken::from_yoctonear(fee_amount))
-                    )
-                );
-            } else {
-                return PromiseOrValue::Promise(user_p);
-            }
-        }
+    fn payout_token(token_out: &str) -> &str {
+        if token_out == "near" { WRAP_NEAR } else { token_out }
+    }
 
-        let user_xfer = self.xfer_out(&pending.token_out, &pending.user, net_amount);
-        if fee_amount > 0 {
-            PromiseOrValue::Promise(
-                user_xfer.then(self.xfer_out(&pending.token_out, &self.treasury_id, fee_amount))
-            )
+    fn lock_key(token: &str) -> Vec<u8> {
+        [b"l:".as_slice(), token.as_bytes()].concat()
+    }
+
+    fn snapshot_key(swap_nonce: u64) -> Vec<u8> {
+        [b"s:".as_slice(), &swap_nonce.to_le_bytes()].concat()
+    }
+
+    fn is_token_locked(&self, token: &str) -> bool {
+        env::storage_has_key(&Self::lock_key(token))
+    }
+
+    fn set_token_lock(&mut self, token: &str, locked: bool) {
+        if locked {
+            env::storage_write(&Self::lock_key(token), &[1]);
         } else {
-            PromiseOrValue::Promise(user_xfer)
+            env::storage_remove(&Self::lock_key(token));
         }
+    }
+
+    fn set_snapshot(&mut self, swap_nonce: u64, balance: u128) {
+        env::storage_write(&Self::snapshot_key(swap_nonce), &balance.to_le_bytes());
+    }
+
+    fn take_snapshot(&mut self, swap_nonce: u64) -> Option<u128> {
+        let raw = env::storage_read(&Self::snapshot_key(swap_nonce))?;
+        self.clear_snapshot(swap_nonce);
+        raw.try_into().ok().map(u128::from_le_bytes)
+    }
+
+    fn clear_snapshot(&mut self, swap_nonce: u64) {
+        env::storage_remove(&Self::snapshot_key(swap_nonce));
+    }
+
+    fn ft_balance_of_self(token: &str) -> Promise {
+        Promise::new(token.parse().unwrap()).function_call(
+            "ft_balance_of".to_string(),
+            serde_json::to_vec(&serde_json::json!({ "account_id": env::current_account_id() })).unwrap(),
+            NearToken::ZERO,
+            GAS_BALANCE,
+        )
     }
 
     // ═══════════════════════ SUB-LEDGER HELPERS ═══════════════════════════════
@@ -1244,5 +1418,142 @@ mod tests {
         // If on_withdraw_resolved receives Err (simulated by calling credit in callback):
         c.credit(&user(), "token.near", 10_000);
         assert_eq!(c.get_balance(&user(), "token.near"), 10_000);
+    }
+
+    // ── Payout safety ────────────────────────────────────────────────────────
+
+    fn callback_env(result: near_sdk::PromiseResult) {
+        let ctx = VMContextBuilder::new()
+            .current_account_id(vault())
+            .predecessor_account_id(vault())
+            .build();
+        testing_env!(
+            ctx,
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![result]
+        );
+    }
+
+    fn balance_result(amount: u128) -> near_sdk::PromiseResult {
+        near_sdk::PromiseResult::Successful(serde_json::to_vec(&U128(amount)).unwrap())
+    }
+
+    fn pending_buy(c: &mut RacerbotVault, swap_nonce: u64, min_out: u128) {
+        c.pending_swaps.insert(swap_nonce, PendingSwap {
+            user: user(),
+            token_in: "near".to_string(),
+            amount_in: 5_000_000,
+            token_out: "meme.near".to_string(),
+            fee_bps: 150,
+            min_amount_out: U128(min_out),
+            correlation_id: "corr".to_string(),
+            venue: Venue::Dcl,
+        });
+        c.set_token_lock("meme.near", true);
+    }
+
+    fn intent(nonce_byte: u8) -> Intent {
+        Intent {
+            user: user(),
+            venue: Venue::Dcl,
+            hops: vec![Hop {
+                pool_id: None,
+                dcl_pool_id: Some("wrap.near|meme.near|2000".to_string()),
+                token_in: "near".to_string(),
+                token_out: "meme.near".to_string(),
+                min_amount_out: U128(0),
+            }],
+            amount_in: U128(1_000),
+            token_in: "near".to_string(),
+            token_out: "meme.near".to_string(),
+            min_amount_out: U128(0),
+            nonce: [nonce_byte; 32],
+            deadline: 0,
+            correlation_id: format!("c{}", nonce_byte),
+            custom_contract: None,
+            custom_msg: None,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Token busy")]
+    fn test_second_swap_on_same_token_is_rejected_while_settling() {
+        let mut c = setup();
+        c.credit(&user(), "near", 10_000);
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(vault())
+            .predecessor_account_id(user())
+            .build());
+        let _ = c.execute_intent(intent(1));
+        assert!(c.is_token_locked("meme.near"));
+        let _ = c.execute_intent(intent(2));
+    }
+
+    #[test]
+    fn test_payout_is_balance_diff_not_total_balance() {
+        let mut c = setup();
+        pending_buy(&mut c, 7, 0);
+        c.set_snapshot(7, 900_000); // router already held 900k meme tokens before this swap
+        callback_env(balance_result(910_000));
+        let _ = c.on_swap_payout(7);
+        // Fee is 1.5% of the 10_000 actually received, not of the router's 910_000 balance
+        assert_eq!(c.get_balance(&treasury(), "meme.near"), 150);
+        assert!(c.take_snapshot(7).is_none());
+        assert!(c.is_token_locked("meme.near"), "lock held until payout transfer resolves");
+    }
+
+    #[test]
+    fn test_zero_diff_refunds_and_unlocks() {
+        let mut c = setup();
+        pending_buy(&mut c, 8, 0);
+        c.set_snapshot(8, 900_000);
+        callback_env(balance_result(900_000));
+        let _ = c.on_swap_payout(8);
+        assert_eq!(c.get_balance(&user(), "near"), 5_000_000);
+        assert!(!c.is_token_locked("meme.near"));
+    }
+
+    #[test]
+    fn test_missing_snapshot_refunds_instead_of_paying_total_balance() {
+        let mut c = setup();
+        pending_buy(&mut c, 9, 0);
+        callback_env(balance_result(910_000));
+        let _ = c.on_swap_payout(9);
+        assert_eq!(c.get_balance(&user(), "near"), 5_000_000);
+        assert_eq!(c.get_balance(&treasury(), "meme.near"), 0);
+        assert!(!c.is_token_locked("meme.near"));
+    }
+
+    #[test]
+    fn test_failed_payout_recredits_user_and_unlocks() {
+        let mut c = setup();
+        c.set_token_lock("meme.near", true);
+        callback_env(near_sdk::PromiseResult::Failed);
+        let ok = c.on_payout_resolved("corr".into(), user(), "meme.near".into(), U128(9_850), Some("meme.near".into()));
+        assert!(!ok);
+        assert_eq!(c.get_balance(&user(), "meme.near"), 9_850);
+        assert!(!c.is_token_locked("meme.near"));
+    }
+
+    #[test]
+    fn test_successful_payout_unlocks_without_credit() {
+        let mut c = setup();
+        c.set_token_lock("meme.near", true);
+        callback_env(near_sdk::PromiseResult::Successful(vec![]));
+        assert!(c.on_payout_resolved("corr".into(), user(), "meme.near".into(), U128(9_850), Some("meme.near".into())));
+        assert_eq!(c.get_balance(&user(), "meme.near"), 0);
+        assert!(!c.is_token_locked("meme.near"));
+    }
+
+    #[test]
+    fn test_rescue_releases_lock_and_snapshot() {
+        let mut c = setup();
+        pending_buy(&mut c, 11, 0);
+        c.set_snapshot(11, 5);
+        c.rescue_stuck_swap(11);
+        assert!(!c.is_token_locked("meme.near"));
+        assert!(c.take_snapshot(11).is_none());
     }
 }

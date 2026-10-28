@@ -897,6 +897,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     let onChainTxHash: string | undefined = clientTxHash || undefined;
     let executionRouting: 'INTENT_SOLVER' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
+    let recipientAccountId: string | undefined;
 
     const isLaunchpadToken =
       (Boolean(venue) && !['defuse', 'intent', 'near intents (defuse)', '1click'].includes(venue.toLowerCase())) ||
@@ -983,6 +984,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           onChainTxHash = vaultRes.txHash;
           executionRouting = 'RACER_SHIELDED_VAULT';
           intentMessage = vaultRes.message || `Shielded atomic trade executed via Racer Router (${vaultRes.txHash})`;
+          recipientAccountId = vaultRes.recipientAccountId;
         } else {
           logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
           if (isPrivateTrade) {
@@ -1105,6 +1107,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       isPrivateTrade: true,
       txHash: onChainTxHash,
       routing: executionRouting,
+      recipientAccountId: recipientAccountId || user.subaccount_id,
       message:
         intentMessage ||
         (executionRouting === 'INTENT_SOLVER'
