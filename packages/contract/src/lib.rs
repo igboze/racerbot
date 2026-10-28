@@ -30,8 +30,6 @@ use near_sdk::store::{LookupMap, LookupSet};
 // ── Gas budgets ───────────────────────────────────────────────────────────────
 const GAS_WRAP: Gas          = Gas::from_tgas(10);
 const GAS_SWAP: Gas          = Gas::from_tgas(80);
-const GAS_RESOLVE_RHEA: Gas  = Gas::from_tgas(160);
-const GAS_WITHDRAW_REF: Gas  = Gas::from_tgas(40);
 const GAS_BALANCE: Gas       = Gas::from_tgas(15);
 const GAS_RESOLVE: Gas       = Gas::from_tgas(115);
 const GAS_STORAGE: Gas       = Gas::from_tgas(10);
@@ -41,7 +39,8 @@ const GAS_RESOLVE_XFER: Gas  = Gas::from_tgas(10);
 const GAS_RESOLVE_UNWRAP: Gas = Gas::from_tgas(20);
 const GAS_PAYOUT: Gas        = Gas::from_tgas(60);
 const GAS_SWAP_COMPLETE: Gas = Gas::from_tgas(90);
-const GAS_SNAPSHOT: Gas      = Gas::from_tgas(195);
+const GAS_SNAPSHOT: Gas      = Gas::from_tgas(215);
+const GAS_SWAP_REF: Gas      = Gas::from_tgas(100);
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const STORAGE_DEPOSIT: NearToken = NearToken::from_yoctonear(1_250_000_000_000_000_000_000); // 0.00125 NEAR standard NEP-141
@@ -223,6 +222,7 @@ impl RacerbotVault {
             .expect("No pending swap with this nonce");
         self.credit(&pending.user, &pending.token_in, pending.amount_in);
         self.clear_snapshot(swap_nonce);
+        self.take_used(swap_nonce);
         self.set_token_lock(Self::payout_token(&pending.token_out), false);
         Self::emit("swap_rescued", serde_json::json!({
             "correlation_id": pending.correlation_id,
@@ -384,7 +384,6 @@ impl RacerbotVault {
         // Balance-diff venues measure output as (router balance after − before), so only one
         // swap per payout token may be in flight; otherwise outputs would be paid to the wrong user.
         // Ref swaps take the lock too, because their payouts also move the router's balance.
-        let uses_balance_diff = intent.venue != Venue::Rhea && intent.venue != Venue::RefAmm;
         let payout_token = Self::payout_token(&intent.token_out);
         require!(!self.is_token_locked(payout_token), "Token busy: another swap is settling, retry shortly");
         self.set_token_lock(payout_token, true);
@@ -461,10 +460,8 @@ impl RacerbotVault {
             "swap_nonce": swap_nonce,
         }));
 
-        // 7. Dispatch to venue (balance-diff venues snapshot the router's payout-token balance first)
-        if !uses_balance_diff {
-            return self.dispatch_ref_amm(&intent, swap_nonce, is_near_wrapped);
-        }
+        // 7. Snapshot the router's payout-token balance, then dispatch to the venue.
+        // Ref swaps are instant swaps (output is sent straight back), so they are measured like DCL.
         Self::ft_balance_of_self(Self::payout_token(&intent.token_out))
             .then(
                 Self::ext(env::current_account_id())
@@ -530,8 +527,8 @@ impl RacerbotVault {
         });
 
         let callback = Self::ext(env::current_account_id())
-            .with_static_gas(GAS_RESOLVE_RHEA)
-            .on_rhea_swap(swap_nonce);
+            .with_static_gas(GAS_SWAP_COMPLETE)
+            .on_swap_complete(swap_nonce);
 
         if is_near_wrapped {
             Promise::new(WRAP_NEAR.parse().unwrap())
@@ -547,7 +544,7 @@ impl RacerbotVault {
                             "ft_transfer_call".to_string(),
                             serde_json::to_vec(&xfer_args).unwrap(),
                             ONE_YOCTO,
-                            GAS_SWAP,
+                            GAS_SWAP_REF,
                         )
                 )
                 .then(callback)
@@ -558,7 +555,7 @@ impl RacerbotVault {
                     "ft_transfer_call".to_string(),
                     serde_json::to_vec(&xfer_args).unwrap(),
                     ONE_YOCTO,
-                    GAS_SWAP,
+                    GAS_SWAP_REF,
                 )
                 .then(callback)
         }
@@ -765,108 +762,9 @@ impl RacerbotVault {
 
     // ═══════════════════════════ CALLBACKS ═══════════════════════════════════
 
-    /// Step 1 (Ref AMM): ft_transfer_call resolved → read Ref AMM output amount,
-    /// then call `withdraw` to pull tokens out of Ref's internal deposit ledger.
-    #[private]
-    pub fn on_rhea_swap(&mut self, swap_nonce: u64) -> PromiseOrValue<U128> {
-        let pending = match self.pending_swaps.get(&swap_nonce) {
-            Some(p) => p.clone(),
-            None => {
-                env::log_str(&format!("WARN: no pending swap nonce={}", swap_nonce));
-                return PromiseOrValue::Value(U128(0));
-            }
-        };
-
-        match env::promise_result_checked(0, 2048) {
-            Ok(bytes) => {
-                let raw_out: U128 = serde_json::from_slice(&bytes).unwrap_or(U128(0));
-
-                if raw_out.0 == 0 {
-                    self.pending_swaps.remove(&swap_nonce);
-                    self.credit(&pending.user, &pending.token_in, pending.amount_in);
-                    self.set_token_lock(Self::payout_token(&pending.token_out), false);
-                    Self::emit("swap_failed", serde_json::json!({
-                        "correlation_id": pending.correlation_id,
-                        "user": pending.user,
-                        "reason": "venue_returned_zero",
-                        "refunded_token": pending.token_in,
-                        "refunded_amount": U128(pending.amount_in),
-                    }));
-                    return PromiseOrValue::Value(U128(0));
-                }
-
-                let withdraw_token = if pending.token_out == "near" { WRAP_NEAR } else { &pending.token_out };
-                let withdraw_args = serde_json::json!({
-                    "token_id": withdraw_token,
-                    "amount": raw_out,
-                });
-
-                Promise::new(REF_AMM.parse().unwrap())
-                    .function_call(
-                        "withdraw".to_string(),
-                        serde_json::to_vec(&withdraw_args).unwrap(),
-                        ONE_YOCTO,
-                        GAS_WITHDRAW_REF,
-                    )
-                    .then(
-                        Self::ext(env::current_account_id())
-                            .with_static_gas(GAS_RESOLVE)
-                            .on_rhea_withdraw(swap_nonce, raw_out)
-                    )
-                    .into()
-            }
-            Err(_) => {
-                let pending = self.pending_swaps.remove(&swap_nonce).unwrap();
-                self.credit(&pending.user, &pending.token_in, pending.amount_in);
-                self.set_token_lock(Self::payout_token(&pending.token_out), false);
-                Self::emit("swap_failed", serde_json::json!({
-                    "correlation_id": pending.correlation_id,
-                    "user": pending.user,
-                    "reason": "ft_transfer_call_failed",
-                    "refunded_token": pending.token_in,
-                    "refunded_amount": U128(pending.amount_in),
-                }));
-                PromiseOrValue::Value(U128(0))
-            }
-        }
-    }
-
-    /// Step 2 (Ref AMM): `withdraw` from Ref's ledger resolved.
-    /// Output tokens are now in our contract → apply fee split and send to user.
-    #[private]
-    pub fn on_rhea_withdraw(&mut self, swap_nonce: u64, raw_out: U128) -> PromiseOrValue<U128> {
-        let pending = match self.pending_swaps.remove(&swap_nonce) {
-            Some(p) => p,
-            None => {
-                env::log_str(&format!("WARN: no pending swap nonce={}", swap_nonce));
-                return PromiseOrValue::Value(U128(0));
-            }
-        };
-
-        match env::promise_result_checked(0, 512) {
-            Ok(_) => {
-                let lock = Self::payout_token(&pending.token_out).to_string();
-                self.settle(&pending, raw_out.0, Some(lock))
-            }
-            Err(_) => {
-                self.credit(&pending.user, &pending.token_out, raw_out.0);
-                self.set_token_lock(Self::payout_token(&pending.token_out), false);
-                Self::emit("ref_withdraw_failed", serde_json::json!({
-                    "correlation_id": pending.correlation_id,
-                    "user": pending.user,
-                    "token_out": pending.token_out,
-                    "amount_stuck_in_ref": raw_out,
-                    "action": "credited_to_vault_ledger_retry_withdraw",
-                }));
-                PromiseOrValue::Value(U128(0))
-            }
-        }
-    }
-
-    /// Generic callback for DCL, Intear, and Shardsmarket swaps.
-    /// Step 1: Venue swap finished.
-    /// Query the router's own ft_balance_of for token_out (or wrap.near) to discover
-    /// the exact number of tokens received from the venue.
+    /// Step 1: Venue swap finished (every venue).
+    /// Record how much input the venue used, then query the router's ft_balance_of for the
+    /// payout token to measure exactly what this swap delivered.
     #[private]
     pub fn on_swap_complete(&mut self, swap_nonce: u64) -> PromiseOrValue<U128> {
         let pending = match self.pending_swaps.get(&swap_nonce) {
@@ -878,7 +776,21 @@ impl RacerbotVault {
         };
 
         match env::promise_result_checked(0, 2048) {
-            Ok(_) => {
+            Ok(bytes) => {
+                // ft_transfer_call returns the amount the receiver kept (NEP-141); a payable
+                // venue call that succeeded keeps the attached NEAR.
+                let used = if Self::is_ft_call_venue(&pending) {
+                    serde_json::from_slice::<U128>(&bytes).map(|u| u.0.min(pending.amount_in)).unwrap_or(pending.amount_in)
+                } else {
+                    pending.amount_in
+                };
+                if used == 0 {
+                    let pending = self.pending_swaps.remove(&swap_nonce).unwrap();
+                    self.fail_balance_diff_swap(swap_nonce, &pending, "venue_refunded_input");
+                    return PromiseOrValue::Value(U128(0));
+                }
+                self.set_used(swap_nonce, used);
+
                 let check_token = if pending.token_out == "near" { WRAP_NEAR } else { &pending.token_out };
                 let bal_args = serde_json::json!({
                     "account_id": env::current_account_id(),
@@ -931,6 +843,7 @@ impl RacerbotVault {
                     self.fail_balance_diff_swap(swap_nonce, &pending, "zero_tokens_received");
                     return PromiseOrValue::Value(U128(0));
                 }
+                self.take_used(swap_nonce);
                 let lock = Self::payout_token(&pending.token_out).to_string();
                 self.settle(&pending, raw_out, Some(lock))
             }
@@ -1094,9 +1007,13 @@ impl RacerbotVault {
         )
     }
 
-    /// Refund a failed balance-diff swap: re-credit input, drop snapshot, release lock.
+    /// Fail a swap: re-credit only the input the venue did not use, drop snapshot, release lock.
+    /// Input the venue did use is never re-credited (the router no longer holds it); if its output
+    /// could not be measured, an `unaccounted_output` event flags it for reconciliation.
     fn fail_balance_diff_swap(&mut self, swap_nonce: u64, pending: &PendingSwap, reason: &str) {
-        self.credit(&pending.user, &pending.token_in, pending.amount_in);
+        let used = self.take_used(swap_nonce);
+        let refund = pending.amount_in.saturating_sub(used);
+        self.credit(&pending.user, &pending.token_in, refund);
         self.clear_snapshot(swap_nonce);
         self.set_token_lock(Self::payout_token(&pending.token_out), false);
         Self::emit("swap_failed", serde_json::json!({
@@ -1104,12 +1021,33 @@ impl RacerbotVault {
             "user": pending.user,
             "reason": reason,
             "refunded_token": pending.token_in,
-            "refunded_amount": U128(pending.amount_in),
+            "refunded_amount": U128(refund),
+            "consumed_amount": U128(used),
         }));
+        if used > 0 {
+            Self::emit("unaccounted_output", serde_json::json!({
+                "correlation_id": pending.correlation_id,
+                "user": pending.user,
+                "venue": format!("{:?}", pending.venue),
+                "token_in": pending.token_in,
+                "consumed_amount": U128(used),
+                "token_out": pending.token_out,
+                "action": "needs_owner_reconciliation",
+            }));
+        }
+    }
+
+    /// Venues dispatched with ft_transfer_call (result = amount kept by the receiver).
+    fn is_ft_call_venue(pending: &PendingSwap) -> bool {
+        match pending.venue {
+            Venue::Rhea | Venue::RefAmm | Venue::Dcl | Venue::Nearlytrade | Venue::GenericFtCall => true,
+            Venue::Intear => pending.token_in != "near" && pending.token_in != WRAP_NEAR,
+            Venue::Shardsmarket | Venue::BondingCurve => false,
+        }
     }
 
     // ═══════════════════ PAYOUT LOCKS & BALANCE SNAPSHOTS ═════════════════════
-    // Raw storage keys (prefixes "l:" / "s:") so the contract state layout is unchanged
+    // Raw storage keys (prefixes "l:" / "s:" / "u:") so the contract state layout is unchanged
     // and the upgrade needs no migration.
 
     fn payout_token(token_out: &str) -> &str {
@@ -1148,6 +1086,21 @@ impl RacerbotVault {
 
     fn clear_snapshot(&mut self, swap_nonce: u64) {
         env::storage_remove(&Self::snapshot_key(swap_nonce));
+    }
+
+    fn used_key(swap_nonce: u64) -> Vec<u8> {
+        [b"u:".as_slice(), &swap_nonce.to_le_bytes()].concat()
+    }
+
+    fn set_used(&mut self, swap_nonce: u64, used: u128) {
+        env::storage_write(&Self::used_key(swap_nonce), &used.to_le_bytes());
+    }
+
+    /// Input the venue used for this swap (0 if not recorded), removing the record.
+    fn take_used(&mut self, swap_nonce: u64) -> u128 {
+        let raw = env::storage_read(&Self::used_key(swap_nonce));
+        env::storage_remove(&Self::used_key(swap_nonce));
+        raw.and_then(|r| r.try_into().ok()).map(u128::from_le_bytes).unwrap_or(0)
     }
 
     fn ft_balance_of_self(token: &str) -> Promise {
@@ -1624,6 +1577,99 @@ mod tests {
         let _ = c.execute_intent(intent_for(Venue::Dcl, "near", "meme.near", 7));
         assert_eq!(c.get_balance(&user(), WRAP_NEAR), 9_000);
         assert_eq!(c.get_balance(&user(), "near"), 0);
+    }
+
+    fn ft_call_result(used: u128) -> near_sdk::PromiseResult {
+        near_sdk::PromiseResult::Successful(serde_json::to_vec(&U128(used)).unwrap())
+    }
+
+    #[test]
+    fn test_venue_that_kept_nothing_gets_full_refund() {
+        let mut c = setup();
+        pending_buy(&mut c, 20, 0);
+        c.set_snapshot(20, 100);
+        callback_env(ft_call_result(0));
+        let _ = c.on_swap_complete(20);
+        assert_eq!(c.get_balance(&user(), "near"), 5_000_000);
+        assert!(!c.is_token_locked("meme.near"));
+        assert_eq!(c.take_used(20), 0);
+    }
+
+    #[test]
+    fn test_swap_complete_records_used_input() {
+        let mut c = setup();
+        pending_buy(&mut c, 21, 0);
+        callback_env(ft_call_result(4_000_000));
+        let _ = c.on_swap_complete(21);
+        assert_eq!(c.take_used(21), 4_000_000);
+        assert!(c.is_token_locked("meme.near"), "still settling");
+    }
+
+    #[test]
+    fn test_payable_venue_success_counts_full_input_as_used() {
+        let mut c = setup();
+        c.pending_swaps.insert(22, PendingSwap {
+            user: user(),
+            token_in: "near".to_string(),
+            amount_in: 5_000_000,
+            token_out: "meme.near".to_string(),
+            fee_bps: 250,
+            min_amount_out: U128(0),
+            correlation_id: "corr".to_string(),
+            venue: Venue::Shardsmarket,
+        });
+        callback_env(near_sdk::PromiseResult::Successful(b"true".to_vec()));
+        let _ = c.on_swap_complete(22);
+        assert_eq!(c.take_used(22), 5_000_000);
+    }
+
+    #[test]
+    fn test_used_input_is_not_refunded_when_output_is_missing() {
+        // The USDC-sell case: the venue kept the input but paid out something the router did not see
+        let mut c = setup();
+        pending_buy(&mut c, 23, 0);
+        c.set_snapshot(23, 100);
+        c.set_used(23, 5_000_000);
+        callback_env(balance_result(100));
+        let _ = c.on_swap_payout(23);
+        assert_eq!(c.get_balance(&user(), "near"), 0, "no credit for input the router no longer holds");
+        assert!(!c.is_token_locked("meme.near"));
+        assert_eq!(c.take_used(23), 0);
+    }
+
+    #[test]
+    fn test_partially_used_input_refunds_the_remainder() {
+        let mut c = setup();
+        pending_buy(&mut c, 24, 0);
+        c.set_snapshot(24, 100);
+        c.set_used(24, 3_000_000);
+        callback_env(balance_result(100));
+        let _ = c.on_swap_payout(24);
+        assert_eq!(c.get_balance(&user(), "near"), 2_000_000);
+    }
+
+    #[test]
+    fn test_successful_payout_clears_used_record() {
+        let mut c = setup();
+        pending_buy(&mut c, 25, 0);
+        c.set_snapshot(25, 100);
+        c.set_used(25, 5_000_000);
+        callback_env(balance_result(10_100));
+        let _ = c.on_swap_payout(25);
+        assert_eq!(c.take_used(25), 0);
+        assert_eq!(c.get_balance(&user(), "near"), 0);
+    }
+
+    #[test]
+    fn test_ref_swap_now_goes_through_the_snapshot_path() {
+        let mut c = setup();
+        c.credit(&user(), WRAP_NEAR, 10_000);
+        as_user();
+        let mut i = intent_for(Venue::RefAmm, WRAP_NEAR, "meme.near", 8);
+        i.hops = vec![Hop { pool_id: Some(4276), dcl_pool_id: None, token_in: WRAP_NEAR.into(), token_out: "meme.near".into(), min_amount_out: U128(1) }];
+        let _ = c.execute_intent(i);
+        assert!(c.is_token_locked("meme.near"), "Ref swaps take the payout lock and are measured like DCL");
+        assert_eq!(c.get_balance(&user(), WRAP_NEAR), 9_000);
     }
 
     #[test]

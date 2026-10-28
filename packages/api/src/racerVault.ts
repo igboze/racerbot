@@ -1199,14 +1199,15 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
               netOut = ev.data?.net || '0';
             } else if (ev.event === 'slippage_refund') {
               isSlippageRefund = true;
-              failReason = 'Slippage breach: full refund returned to user';
+              failReason = 'Price moved past your slippage limit: the tokens received were delivered with no fee';
             } else if (ev.event === 'swap_failed') {
               const r = ev.data?.reason || 'Venue swap failed';
               failReason = r === 'zero_tokens_received'
-                ? 'zero_tokens_received (0 tokens received from venue - liquidity temporarily unavailable or slippage limit exceeded; refunded to vault)'
+                ? 'zero_tokens_received (no tokens came back from the venue; any unused input was returned to your vault balance)'
                 : r;
-            } else if (ev.event === 'ref_withdraw_failed') {
-              failReason = 'Withdrawal from venue failed; credited to vault ledger';
+            } else if (ev.event === 'unaccounted_output') {
+              // The venue kept the input but the router could not measure what it paid out
+              failReason = 'The venue took the input but its output could not be measured by the router. It has been flagged for reconciliation; contact support with this transaction hash.';
             } else if (ev.event === 'payout_completed') {
               isPaidOut = true;
             } else if (ev.event === 'payout_failed' || ev.event === 'withdraw_failed') {
