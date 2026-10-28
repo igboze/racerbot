@@ -19,40 +19,38 @@ if (!BOT_TOKEN) {
 
 const isDryRun = process.argv.includes('--dry-run');
 
-const MESSAGE = `🚨 *STILL TRADING SOLANA WITH SLOW BOTS? TIME TO SWITCH.* 🟣⚡
+const MESSAGE = `🏎💨 *RACERBOT IS NOW LIVE ON SOLANA!* 🟣⚡
 
-If you're still getting front-run, suffering failed transactions, or paying ridiculous fees on Photon, Trojan, BullX, or BONKbot — you're leaving money on the table.
+You already know RacerBot is the fastest trading terminal on *NEAR, SUI, and Starknet*. 
 
-*RacerBot Solana is officially LIVE.*
-Engineered for raw speed, zero-lag execution, and sniper-grade precision directly inside Telegram.
+Now, you never have to leave RacerBot to trade Solana meme coins or snipe Pump.fun again.
 
-🔥 *WHY TRADERS ARE SWITCHING TO RACERBOT:*
+Stop splitting your focus and paying heavy fees across *Photon, Trojan, BullX, or BONKbot*. Everything you trade on Solana is now built directly into the bot you already trust — faster, smoother, and all under one roof.
 
-⚡ *Sub-Second Execution Speed*
-Direct high-priority MEV-protected routing. When milliseconds decide between a 10x entry and a red candle, RacerBot lands your block first.
+🔥 *WHY BRING YOUR SOLANA TRADES TO RACERBOT?*
 
 🎯 *Instant Pump.fun Sniping*
-Paste any Pump.fun link or CA. Zero bonding curve delay. Enter before the crowd and exit cleanly with automated slippage.
+Paste any Pump.fun link or CA. Zero bonding curve delay — get in early before the Raydium migration.
 
-💧 *Institutional Jupiter v6 Aggregation*
-Automatic multi-route liquidity across Raydium, Orca, Meteora & Phoenix. Get maximum tokens per SOL with zero wasted slippage.
+⚡ *Jupiter v6 Institutional Routing*
+Every trade routes through Jupiter's deepest liquidity (Raydium, Orca, Meteora, Phoenix) for the best fills and lowest slippage on Solana.
 
-🛡️ *Zero Failed TX Headaches*
-Dynamic priority fees and adaptive gas bidding ensure your trades never hang or revert during extreme volatility.
+🛡️ *Zero Hanging / Failed Trades*
+Dynamic MEV-protected priority fee bidding guarantees your buy/sell lands even during extreme Solana congestion.
 
-💼 *One Cockpit. Four Chains.*
-Stop juggling 5 different bots. Trade *Solana, NEAR, SUI, and Starknet* from a single unified wallet dashboard with live PnL tracking and one-tap instant sells.
+💼 *One Unified Cockpit for All 4 Chains*
+Track your *Solana, NEAR, SUI, and Starknet* bags in a single *💼 Holdings* dashboard. Instant 1-tap selling, live portfolio tracking, and viral branded PnL cards.
 
 ───────────────
-💰 *CLAIM YOUR EDGE RIGHT NOW:*
+💰 *YOUR SOLANA WALLET IS ALREADY LIVE:*
 
-Your personal Solana high-speed wallet is *already generated and waiting in your account.*
+We’ve already generated your secure Solana deposit address inside your existing RacerBot account:
 
-👉 *Step 1:* Open @racertradingbot
-👉 *Step 2:* Tap *💳 View Wallet* (or type /wallet) to grab your Solana address
-👉 *Step 3:* Send 0.1+ SOL and paste ANY token CA to experience instant execution!
+1️⃣ Tap *💳 My Solana Wallet* below to reveal your address
+2️⃣ Deposit SOL (from Phantom, Solflare, Binance, or Bybit)
+3️⃣ Paste *ANY* Solana mint address or Pump.fun link to execute your first trade!
 
-🚀 *Stop settling for second place. Start trading with the fastest machine in crypto.* 🏁`;
+🏁 *One bot. Four chains. Maximum speed.* Let's ride! 🚀`;
 
 async function sendMessage(chatId, text) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
