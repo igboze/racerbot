@@ -98,9 +98,16 @@ export interface VaultExecutionResult {
   tokenOut: string;
   amountInFormatted: string;
   amountOutFormatted?: string;
+  /** Account that signed the trade and receives the output tokens. */
+  recipientAccountId?: string;
+  /** Contract rejected the intent because another swap of this token is still settling. */
+  tokenBusy?: boolean;
   message?: string;
   reason?: string;
 }
+
+const TOKEN_BUSY_RETRIES = 3;
+const TOKEN_BUSY_RETRY_MS = 2500;
 
 /**
  * Query a user's isolated sub-ledger balance in the Shielded Vault
@@ -794,6 +801,16 @@ export async function executeShieldedVaultIntent(params: {
   dclPoolId?: string | null;
   tokenDecimals?: number;
 }): Promise<VaultExecutionResult> {
+  // The router serialises swaps per payout token; retry briefly when another swap is settling
+  for (let attempt = 1; ; attempt++) {
+    const res = await executeShieldedVaultIntentOnce(params);
+    if (!res.tokenBusy || attempt >= TOKEN_BUSY_RETRIES) return res;
+    logger.info(`Router busy settling ${params.tokenAddress}; retry ${attempt}/${TOKEN_BUSY_RETRIES - 1}`);
+    await new Promise(r => setTimeout(r, TOKEN_BUSY_RETRY_MS));
+  }
+}
+
+async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeShieldedVaultIntent>[0]): Promise<VaultExecutionResult> {
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const nonceBytes = crypto.randomBytes(32);
   const nonceArray = Array.from(nonceBytes);
@@ -825,6 +842,20 @@ export async function executeShieldedVaultIntent(params: {
   }
 
   const userAccountId = params.user.subaccount_id || params.user.id;
+  if (!params.user.scoped_key_encrypted) {
+    // Externally connected wallets (Meteor, MyNearWallet, ...) have no server-held key, so the
+    // server cannot sign for them; fail clearly instead of with an opaque decrypt error.
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId,
+      tokenIn: isBuy ? 'near' : params.tokenAddress,
+      tokenOut: isBuy ? params.tokenAddress : 'near',
+      amountInFormatted: String(numNear),
+      recipientAccountId: userAccountId,
+      reason: `Confidential trades run from a RacerBot-managed account, and ${userAccountId} is an external wallet without one. Sign in with Telegram to use your managed account.`,
+    };
+  }
   const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
   const privateKey = decrypt(params.user.scoped_key_encrypted, masterKey);
   const keyPair = KeyPair.fromString(privateKey as any);
@@ -950,7 +981,7 @@ export async function executeShieldedVaultIntent(params: {
       transactions.functionCall(
         'deposit_near',
         { user: intentPayload.user },
-        BigInt('20000000000000'), // 20 TGas
+        BigInt('10000000000000'), // 10 TGas
         neededNearToAttach
       )
     );
@@ -960,7 +991,7 @@ export async function executeShieldedVaultIntent(params: {
     transactions.functionCall(
       'execute_intent',
       { intent: intentPayload },
-      isBuy && neededNearToAttach > 0n ? BigInt('260000000000000') : BigInt('280000000000000'), // 260 or 280 TGas (<= 300 Tgas block limit)
+      BigInt('285000000000000'), // 285 TGas: snapshot → swap → balance check → payout chain (+10 for deposit <= 300 limit)
       0n
     )
   );
@@ -975,9 +1006,32 @@ export async function executeShieldedVaultIntent(params: {
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
     logger.info(`Vault intent executed on-chain: tx=${txHash}, correlation=${correlationId}`);
 
+    // A reverted transaction comes back as an outcome with status.Failure (not a thrown error)
+    const txFailure = res?.status && typeof res.status === 'object' && 'Failure' in res.status
+      ? JSON.stringify(res.status.Failure)
+      : '';
+    const panicMsg = txFailure.match(/Smart contract panicked: ([^"\\]+)/)?.[1];
+    if (/Token busy/.test(txFailure)) {
+      await updateVaultIntentStatus(correlationId, { status: 'FAILED', tx_hash: txHash, failure_reason: 'token_busy' }).catch(() => {});
+      return {
+        success: false,
+        routing: 'RACER_SHIELDED_VAULT',
+        txHash,
+        correlationId,
+        tokenIn: planned.tokenIn,
+        tokenOut: planned.tokenOut,
+        amountInFormatted: String(numNear),
+        recipientAccountId: intentPayload.user,
+        tokenBusy: true,
+        reason: 'Another trade of this token is still settling on the router; please retry in a few seconds',
+      };
+    }
+
     // Inspect logs for EVENT_JSON to extract status and amounts
     let isSettled = false;
     let isSlippageRefund = false;
+    let isPaidOut = false;
+    let payoutFailedToken: string | undefined;
     let netOut = '0';
     let failReason: string | undefined;
 
@@ -1000,15 +1054,36 @@ export async function executeShieldedVaultIntent(params: {
                 : r;
             } else if (ev.event === 'ref_withdraw_failed') {
               failReason = 'Withdrawal from venue failed; credited to vault ledger';
-            } else if (ev.event === 'withdraw_failed') {
-              failReason = 'Withdrawal to user wallet failed; credited back to vault ledger';
+            } else if (ev.event === 'payout_completed') {
+              isPaidOut = true;
+            } else if (ev.event === 'payout_failed' || ev.event === 'withdraw_failed') {
+              payoutFailedToken = ev.data?.token || planned.tokenOut;
+              failReason = 'Swap filled but the token transfer to your account failed; tokens were credited to your shielded vault balance';
             }
           } catch (_) {}
         }
       }
     }
 
-    const finalStatus = isSettled ? 'SETTLED' : isSlippageRefund ? 'SLIPPAGE_REFUNDED' : 'FAILED';
+    if (!failReason && panicMsg) {
+      failReason = `Router rejected the trade: ${panicMsg}`;
+    }
+
+    // "swap_settled" only means the venue filled; the trade is done once the payout transfer succeeded
+    const delivered = (isSettled || isSlippageRefund) && isPaidOut && !payoutFailedToken;
+    const finalStatus = delivered
+      ? (isSettled ? 'SETTLED' : 'SLIPPAGE_REFUNDED')
+      : payoutFailedToken ? 'PAYOUT_FAILED' : 'FAILED';
+
+    if (payoutFailedToken) {
+      // Tokens are safe in the vault ledger; retry delivering them to the user's account
+      const retry = await refundUserFromVault(intentPayload.user, payoutFailedToken).catch((e: any): { success: boolean; txHash?: string; reason?: string } => ({ success: false, reason: e?.message }));
+      if (retry.success) {
+        failReason = `Swap filled; first token transfer failed but redelivery to ${intentPayload.user} was submitted (tx ${retry.txHash})`;
+      } else {
+        logger.warn(`Payout redelivery failed for ${intentPayload.user} (${payoutFailedToken}): ${retry.reason}`);
+      }
+    }
 
     await updateVaultIntentStatus(correlationId, {
       status: finalStatus,
@@ -1017,7 +1092,11 @@ export async function executeShieldedVaultIntent(params: {
       failure_reason: failReason,
     }).catch(() => {});
 
-    if (isSettled) {
+    if (delivered) {
+      const fromVault = isBuy ? BigInt(rawAmountIn) - neededNearToAttach : 0n;
+      const vaultNote = fromVault > 0n
+        ? ` ${(Number(fromVault / 10n ** 18n) / 1e6).toString()} NEAR was paid from your existing shielded vault balance.`
+        : '';
       return {
         success: true,
         routing: 'RACER_SHIELDED_VAULT',
@@ -1027,10 +1106,14 @@ export async function executeShieldedVaultIntent(params: {
         tokenOut: planned.tokenOut,
         amountInFormatted: String(numNear),
         amountOutFormatted: netOut,
-        message: `Trade settled via Racer Shielded Intent Vault (Atomic multi-hop). On-chain private execution confirmed.`,
+        recipientAccountId: intentPayload.user,
+        message: isSettled
+          ? `Trade settled via Racer Shielded Intent Vault. Tokens delivered to ${intentPayload.user}.${vaultNote}`
+          : `Price moved past your slippage limit; the ${netOut} tokens received were delivered to ${intentPayload.user} with no fee.${vaultNote}`,
       };
     } else {
-      if (autoDepositedToken) {
+      // Input is only refundable when the swap itself did not fill
+      if (autoDepositedToken && !payoutFailedToken) {
         logger.info(`Auto-refunding ${autoDepositedToken} to ${intentPayload.user} following execution failure...`);
         await refundUserFromVault(intentPayload.user, autoDepositedToken).catch(rErr =>
           logger.warn(`Auto-refund attempt failed: ${rErr?.message}`)
@@ -1045,11 +1128,13 @@ export async function executeShieldedVaultIntent(params: {
         tokenIn: planned.tokenIn,
         tokenOut: planned.tokenOut,
         amountInFormatted: String(numNear),
+        recipientAccountId: intentPayload.user,
         reason: failReason || 'Shielded vault execution reverted or refunded',
       };
     }
   } catch (err: any) {
-    logger.error(`Error executing vault intent for correlation=${correlationId}: ${err.message}`);
+    const tokenBusy = /Token busy/.test(err?.message || '');
+    logger[tokenBusy ? 'info' : 'error'](`Error executing vault intent for correlation=${correlationId}: ${err.message}`);
     await updateVaultIntentStatus(correlationId, {
       status: 'FAILED',
       failure_reason: err.message,
@@ -1069,7 +1154,11 @@ export async function executeShieldedVaultIntent(params: {
       tokenIn: planned.tokenIn,
       tokenOut: planned.tokenOut,
       amountInFormatted: String(numNear),
-      reason: err.message || 'Vault execution failed',
+      recipientAccountId: intentPayload.user,
+      tokenBusy,
+      reason: tokenBusy
+        ? 'Another trade of this token is still settling on the router; please retry in a few seconds'
+        : err.message || 'Vault execution failed',
     };
   }
 }
