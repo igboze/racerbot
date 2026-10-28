@@ -921,7 +921,11 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   const near = getNear();
 
   // Concurrent Execution: 1. Plan hops, 2. Check vault ledger balances, 3. Ensure signing key ready in NearClient
-  let [planned, [balNear, balWrap]] = await Promise.all([
+  // Everything before signing depends only on the request, so it runs concurrently:
+  // route, vault balances, signing key, live price quote, and storage registration.
+  // Router and user must be registered on the traded token (and wNEAR) before the payout.
+  const tPrep = Date.now();
+  let [planned, [balNear, balWrap], , minOutQuote] = await Promise.all([
     planVaultHops({
       tokenAddress: params.tokenAddress,
       venue: params.venue,
@@ -935,7 +939,34 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       ? Promise.all([getVaultBalance(userAccountId, 'near'), getVaultBalance(userAccountId, 'wrap.near')])
       : Promise.all([getVaultBalance(userAccountId, params.tokenAddress), Promise.resolve('0')]),
     near.addKey(userAccountId, keyPair),
+    quoteMinimumOut({
+      tokenAddress: params.tokenAddress,
+      venue: String(params.venue),
+      isBuy,
+      amountIn: rawAmountIn,
+      slippagePct: slippage,
+      poolId: params.poolId,
+      dclPoolId: params.dclPoolId,
+    }).then(
+      (minOut) => ({ ok: true as const, minOut }),
+      (err: any) => ({ ok: false as const, reason: err?.message || 'quote failed' }),
+    ),
+    Promise.all([
+      ensureRouterStorage(params.tokenAddress, userAccountId).catch(e =>
+        logger.warn(`Router storage registration warning on ${params.tokenAddress}: ${e?.message}`)
+      ),
+      ensureRouterStorage('wrap.near', userAccountId).catch(e =>
+        logger.warn(`Router storage registration warning on wrap.near: ${e?.message}`)
+      ),
+      near.ensureStorageDeposit(userAccountId, params.tokenAddress).catch(e =>
+        logger.warn(`User storage deposit warning on ${params.tokenAddress}: ${e?.message}`)
+      ),
+      near.ensureStorageDeposit(userAccountId, 'wrap.near').catch(e =>
+        logger.warn(`User storage deposit warning on wrap.near: ${e?.message}`)
+      ),
+    ]),
   ]);
+  const prepMs = Date.now() - tPrep;
 
   if (planned.venue === 'GenericFtCall' && planned.custom_contract === 'meme-cooking.near') {
     return {
@@ -963,18 +994,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   }
 
   // Price protection: every route gets a live minimum output; no quote means no trade
-  try {
-    const minOut = await quoteMinimumOut({
-      tokenAddress: params.tokenAddress,
-      venue: String(params.venue),
-      isBuy,
-      amountIn: rawAmountIn,
-      slippagePct: slippage,
-      poolId: params.poolId,
-      dclPoolId: params.dclPoolId,
-    });
-    planned = withMinimumOut(planned, minOut);
-  } catch (quoteErr: any) {
+  if (!minOutQuote.ok) {
     return {
       success: false,
       routing: 'RACER_SHIELDED_VAULT',
@@ -982,26 +1002,10 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenIn: planned.tokenIn,
       tokenOut: planned.tokenOut,
       amountInFormatted: String(numNear),
-      reason: `No live price quote for this token (${quoteErr?.message || 'quote failed'}), so the trade was not sent.`,
+      reason: `No live price quote for this token (${minOutQuote.reason}), so the trade was not sent.`,
     };
   }
-
-  // Shielded router guarantee: Ensure router contract and user subaccount have storage deposit registered
-  // on tokenOut (and tokenIn) before executing intent to eliminate "zero_tokens_received" registration errors
-  await Promise.all([
-    ensureRouterStorage(planned.tokenOut, userAccountId).catch(e =>
-      logger.warn(`Router storage registration warning on tokenOut (${planned.tokenOut}): ${e?.message}`)
-    ),
-    ensureRouterStorage(planned.tokenIn, userAccountId).catch(e =>
-      logger.warn(`Router storage registration warning on tokenIn (${planned.tokenIn}): ${e?.message}`)
-    ),
-    near.ensureStorageDeposit(userAccountId, planned.tokenOut).catch(e =>
-      logger.warn(`User storage deposit warning on tokenOut (${planned.tokenOut}): ${e?.message}`)
-    ),
-    near.ensureStorageDeposit(userAccountId, 'wrap.near').catch(e =>
-      logger.warn(`User storage deposit warning on wrap.near: ${e?.message}`)
-    ),
-  ]);
+  planned = withMinimumOut(planned, minOutQuote.minOut);
 
   const intentPayload: ShieldedIntentPayload = {
     user: userAccountId,
@@ -1124,7 +1128,10 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
     );
 
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
-    logger.info(`Vault intent executed on-chain: tx=${txHash}, correlation=${correlationId}`);
+    logger.info(
+      `Vault intent executed on-chain: tx=${txHash}, correlation=${correlationId}, ` +
+      `prep=${prepMs}ms broadcast=${res?.__perf?.broadcastMs ?? '?'}ms confirm=${res?.__perf?.confirmMs ?? '?'}ms`
+    );
 
     // A reverted transaction comes back as an outcome with status.Failure (not a thrown error)
     const txFailure = res?.status && typeof res.status === 'object' && 'Failure' in res.status

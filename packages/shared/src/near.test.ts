@@ -692,3 +692,41 @@ describe('near: FastNEAR credit reduction (free validator prioritized)', () => {
   });
 });
 
+
+describe('near: sendIncluded validates before waiting on a dropped tx', () => {
+  const FN = 'https://rpc.mainnet.fastnear.com';
+  const json = (body: any) => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  const invalid = (err: any) => json({
+    jsonrpc: '2.0',
+    error: { name: 'HANDLER_ERROR', cause: { info: {}, name: 'INVALID_TRANSACTION' }, code: -32000, message: 'Server error', data: { TxExecutionError: { InvalidTxError: err } } },
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports included when a provider confirms inclusion', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ jsonrpc: '2.0', result: { final_execution_status: 'INCLUDED' } })));
+    const near = new MultiRpcNear([FN]) as any;
+    expect(await near.sendIncluded('AAAA')).toEqual({ status: 'included' });
+  });
+
+  it('reports invalid with the node reason when every provider rejects it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => invalid({ InvalidAccessKeyError: { AccessKeyNotFound: {} } })));
+    const near = new MultiRpcNear([FN]) as any;
+    const res = await near.sendIncluded('AAAA');
+    expect(res.status).toBe('invalid');
+    expect((MultiRpcNear as any).describeInvalidTx(res.error)).toMatch(/signing key is not authorized/);
+  });
+
+  it('recognises a nonce clash so the caller can re-sign', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => invalid({ InvalidNonce: { tx_nonce: 5, ak_nonce: 5 } })));
+    const near = new MultiRpcNear([FN]) as any;
+    const res = await near.sendIncluded('AAAA');
+    expect((MultiRpcNear as any).isInvalidNonce(res.error)).toBe(true);
+  });
+
+  it('reports unknown on timeouts or transport errors (falls back to async broadcast)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('timeout'); }));
+    const near = new MultiRpcNear([FN]) as any;
+    expect(await near.sendIncluded('AAAA')).toEqual({ status: 'unknown' });
+  });
+});
