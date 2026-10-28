@@ -165,34 +165,105 @@
       display: flex;
       flex-direction: column;
       overflow-y: auto;
+      overflow-x: hidden;
       z-index: 20;
       flex-shrink: 0;
     }
 
     .inspector-content-inner {
-      padding: 20px;
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 7px;
     }
 
     .risk-summary-card {
       background: var(--color-surface-2);
       border: 1px solid var(--color-border);
-      border-radius: var(--radius-lg);
-      padding: 16px;
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 4px;
     }
 
     .risk-score-mono {
       font-family: var(--font-mono);
-      font-size: 32px;
+      font-size: 22px;
       font-weight: 700;
       line-height: 1.1;
       color: var(--color-text);
       font-variant-numeric: tabular-nums;
+    }
+
+    /* Scoped Metric Widget Enhancements inside Inspector */
+    .bubble-inspector .widget-grid-2col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      gap: 5px;
+      width: 100%;
+    }
+    .bubble-inspector .metric-widget {
+      background-color: var(--color-surface-2);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .bubble-inspector .metric-widget .metric-value {
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--color-text);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+    }
+    .bubble-inspector .metric-widget .metric-label {
+      font-size: 9.5px;
+      color: var(--color-text-2);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Sub-tabs for Forensic Deep Intelligence */
+    .wallet-subtab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--color-text-2);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 4px 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .wallet-subtab-btn:hover {
+      color: var(--color-text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .wallet-subtab-btn.active {
+      color: var(--color-text);
+      background: var(--color-surface);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      font-weight: 700;
+    }
+    .wallet-tab-panel {
+      width: 100%;
     }
 
     @media (max-width: 1023px) {
@@ -585,6 +656,10 @@
             <span class="hud-label">Liquidity</span>
             <span id="hud-liq-val" class="hud-val mono-data">—</span>
           </div>
+          <div class="hud-stat">
+            <span class="hud-label">Total Holders</span>
+            <span id="hud-holders-val" class="hud-val mono-data">—</span>
+          </div>
           <div class="hud-divider"></div>
           <div class="hud-stat">
             <span class="hud-label">Top 10 Supply</span>
@@ -759,21 +834,24 @@
 
         <!-- Inspector View 2: Wallet Details View (after clicking a bubble) -->
         <div id="inspector-wallet-view" class="inspector-content-inner" style="display:none;">
+          <!-- Top Nav Row -->
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <button class="btn btn-ghost btn-sm" onclick="showTokenSummaryView()" style="min-width:auto;padding:0;">
-              ← Back to summary
+            <button class="btn btn-ghost btn-sm" onclick="showTokenSummaryView()" style="min-width:auto;padding:0;font-size:11px;font-weight:600;color:var(--color-primary);display:flex;align-items:center;gap:4px;">
+              <span>← Back to summary</span>
             </button>
-            <span id="wallet-category-chip" class="chip chip-warn">Whale</span>
+            <span id="wallet-category-chip" class="chip chip-warn" style="font-size:10px;height:20px;padding:0 6px;">Whale</span>
           </div>
 
-          <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
-            <span class="text-caption">Account ID</span>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
-              <span id="wallet-addr-display" class="mono-data" style="font-size:13px;word-break:break-all;">—</span>
-              <button class="btn btn-ghost btn-sm" onclick="copyWalletAddress()" style="min-width:auto;padding:0 6px;">Copy</button>
+          <!-- Account ID Box -->
+          <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:5px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="display:flex;flex-direction:column;min-width:0;flex:1;">
+              <span class="text-caption" style="font-size:9px;text-transform:uppercase;letter-spacing:0.04em;color:var(--color-text-2);font-weight:600;">Account ID</span>
+              <span id="wallet-addr-display" class="mono-data" style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text);" title="—">—</span>
             </div>
+            <button class="btn btn-ghost btn-sm" onclick="copyWalletAddress()" style="min-width:auto;height:22px;padding:0 6px;font-size:10.5px;border:1px solid var(--color-border);border-radius:4px;flex-shrink:0;">Copy</button>
           </div>
 
+          <!-- 2x2 Metric Widgets (strictly 50%/50% width, no overflow) -->
           <div class="widget-grid-2col">
             <div class="metric-widget">
               <span id="wallet-share-val" class="metric-value">—</span>
@@ -784,7 +862,7 @@
               <span class="metric-label">Holder Rank</span>
             </div>
             <div class="metric-widget">
-              <span id="wallet-balance-val" class="metric-value">—</span>
+              <span id="wallet-balance-val" class="metric-value" title="—">—</span>
               <span class="metric-label">Token Balance</span>
             </div>
             <div class="metric-widget">
@@ -793,105 +871,96 @@
             </div>
           </div>
 
-          <!-- Exit Progress -->
-          <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-              <span class="text-caption">Exit Status</span>
-              <span id="wallet-exit-pct" class="mono-sm" style="font-weight:700;">0% Dumped</span>
-            </div>
-            <div style="height:6px;background:var(--color-bg);border-radius:var(--radius-full);overflow:hidden;">
-              <div id="wallet-exit-bar" style="height:100%;width:0%;background:var(--color-error);transition:width 0.3s ease;"></div>
-            </div>
-          </div>
-
-          <!-- Deep Wallet Forensics: Trading Velocity & Exit Speed -->
-          <div id="wallet-forensics-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:12px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-size:15px;">⚡</span>
-                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Trading Velocity &amp; Speed</span>
-              </div>
-              <span id="wallet-speed-badge" class="chip chip-neutral" style="font-size:11px;font-weight:700;">Analyzing...</span>
-            </div>
-
-            <div class="widget-grid-2col" style="gap:8px;">
-              <div style="background:rgba(0,0,0,0.2);padding:8px 10px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.04);">
-                <span class="text-caption" style="font-size:10px;">Avg Hold Duration</span>
-                <div id="wallet-avg-hold" class="mono-data" style="font-size:14px;font-weight:700;margin-top:2px;">—</div>
-              </div>
-              <div style="background:rgba(0,0,0,0.2);padding:8px 10px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.04);">
-                <span class="text-caption" style="font-size:10px;">Quick Dump (&lt;30m)</span>
-                <div id="wallet-dump-rate" class="mono-data" style="font-size:14px;font-weight:700;margin-top:2px;">—</div>
-              </div>
-            </div>
-
-            <!-- Hazard Meter -->
+          <!-- Exit Status & Dump Hazard Dual-Telemetry Card -->
+          <div id="wallet-forensics-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:6px 9px;display:flex;flex-direction:column;gap:5px;">
+            <!-- Exit Status -->
             <div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                <span class="text-caption" style="font-size:11px;">Dump Hazard Rating</span>
-                <span id="wallet-hazard-label" class="mono-sm" style="font-size:11px;font-weight:700;color:var(--color-text-2);">—</span>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+                <span style="font-size:9.5px;color:var(--color-text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.03em;">Exit Status</span>
+                <span id="wallet-exit-pct" class="mono-sm" style="font-size:11px;font-weight:700;color:var(--color-error);">0% Dumped</span>
               </div>
-              <div style="height:6px;background:var(--color-bg);border-radius:var(--radius-full);overflow:hidden;">
+              <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:var(--radius-full);overflow:hidden;">
+                <div id="wallet-exit-bar" style="height:100%;width:0%;background:var(--color-error);transition:width 0.3s ease;"></div>
+              </div>
+            </div>
+
+            <!-- Dump Hazard -->
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:10px;">⚡</span>
+                  <span style="font-size:9.5px;color:var(--color-text-2);font-weight:600;text-transform:uppercase;letter-spacing:0.03em;">Dump Hazard</span>
+                  <span id="wallet-speed-badge" class="chip chip-neutral" style="font-size:9px;height:16px;padding:0 4px;font-weight:600;line-height:16px;">Analyzing...</span>
+                </div>
+                <span id="wallet-hazard-label" class="mono-sm" style="font-size:10.5px;font-weight:700;color:var(--color-text-2);">—</span>
+              </div>
+              <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:var(--radius-full);overflow:hidden;">
                 <div id="wallet-hazard-bar" style="height:100%;width:0%;background:var(--color-primary);transition:width 0.4s ease, background-color 0.4s ease;"></div>
               </div>
             </div>
-          </div>
 
-          <!-- Other Tokens Held (FastNEAR) -->
-          <div id="wallet-other-tokens-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-size:14px;">💼</span>
-                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Other Tokens Held</span>
+            <!-- Hold Times inline 2-col -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-top:1px;">
+              <div style="background:rgba(0,0,0,0.25);padding:3px 6px;border-radius:4px;display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:9px;color:var(--color-text-2);">Hold Time:</span>
+                <span id="wallet-cur-hold" class="mono-data" style="font-size:10px;font-weight:700;color:var(--color-primary);">—</span>
               </div>
-              <span id="wallet-other-tokens-count" class="chip chip-neutral" style="font-size:10px;height:20px;padding:0 6px;">0 tokens</span>
-            </div>
-            <div id="wallet-other-tokens-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
-              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click bubble to scan</div>
-            </div>
-          </div>
-
-          <!-- Past Trades Timeline -->
-          <div id="wallet-trades-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-size:14px;">⏱️</span>
-                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Recent Trades &amp; Hold Time</span>
+              <div style="background:rgba(0,0,0,0.25);padding:3px 6px;border-radius:4px;display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:9px;color:var(--color-text-2);">Avg Exit:</span>
+                <span id="wallet-avg-hold" class="mono-data" style="font-size:10px;font-weight:700;color:var(--color-text);">—</span>
               </div>
-              <span id="wallet-trades-count" class="mono-sm" style="font-size:11px;color:var(--color-text-2);">0 events</span>
-            </div>
-            <div id="wallet-trades-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
-              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click bubble to scan</div>
             </div>
           </div>
 
-          <!-- Connected Wallets: Token Transfers & Shared Funding -->
-          <div id="wallet-connections-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:flex;flex-direction:column;gap:10px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-size:14px;">🔗</span>
-                <span class="text-caption" style="font-weight:700;color:var(--color-text);">Connected Wallets &amp; Traces</span>
+          <!-- Deep Intelligence Tabbed Card (Other Tokens, Trades, Connected Wallets) -->
+          <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);overflow:hidden;display:flex;flex-direction:column;">
+            <div style="display:flex;background:rgba(0,0,0,0.25);border-bottom:1px solid var(--color-border);padding:2px;gap:2px;">
+              <button id="subtab-btn-tokens" class="wallet-subtab-btn active" onclick="switchWalletSubTab('tokens')">
+                💼 Tokens <span id="wallet-other-tokens-count" style="font-size:9px;opacity:0.8;">(0)</span>
+              </button>
+              <button id="subtab-btn-trades" class="wallet-subtab-btn" onclick="switchWalletSubTab('trades')">
+                ⏱️ Trades <span id="wallet-trades-count" style="font-size:9px;opacity:0.8;">(0)</span>
+              </button>
+              <button id="subtab-btn-connections" class="wallet-subtab-btn" onclick="switchWalletSubTab('connections')">
+                🔗 Links <span id="wallet-connections-count" style="font-size:9px;opacity:0.8;">(0)</span>
+              </button>
+            </div>
+
+            <div style="padding:5px 6px;min-height:95px;max-height:105px;overflow-y:auto;display:flex;flex-direction:column;">
+              <!-- 1. Other Tokens List -->
+              <div id="wallet-other-tokens-box" style="display:contents;">
+                <div id="wallet-other-tokens-list" class="wallet-tab-panel" style="display:flex;flex-direction:column;gap:3px;">
+                  <div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:12px;">Click bubble to scan</div>
+                </div>
               </div>
-              <span id="wallet-connections-count" class="chip chip-neutral" style="font-size:10px;height:20px;padding:0 6px;">0 links</span>
-            </div>
-            <div id="wallet-connections-list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;padding-right:2px;">
-              <div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">Click a bubble to view connections</div>
+              <!-- 2. Recent Trades List -->
+              <div id="wallet-trades-box" style="display:contents;">
+                <div id="wallet-trades-list" class="wallet-tab-panel" style="display:none;flex-direction:column;gap:3px;">
+                  <div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:12px;">Click bubble to scan</div>
+                </div>
+              </div>
+              <!-- 3. Connected Links List -->
+              <div id="wallet-connections-box" style="display:contents;">
+                <div id="wallet-connections-list" class="wallet-tab-panel" style="display:none;flex-direction:column;gap:3px;">
+                  <div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:12px;">Click bubble to view links</div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Cluster Information -->
-          <div id="wallet-cluster-box" style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;display:none;">
-            <span class="text-caption" style="color:var(--color-purple-text);">Cluster Membership</span>
-            <div id="wallet-cluster-info" style="font-size:13px;color:var(--color-text);margin-top:4px;">—</div>
+          <!-- Cluster Ribbon (displayed only if wallet belongs to a cluster) -->
+          <div id="wallet-cluster-box" style="background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.25);border-radius:var(--radius-md);padding:3px 6px;display:none;align-items:center;justify-content:space-between;">
+            <span class="text-caption" style="color:var(--color-purple-text);font-size:9.5px;font-weight:700;">Cluster Member</span>
+            <span id="wallet-cluster-info" style="font-size:9.5px;color:var(--color-text);font-family:var(--font-mono);">—</span>
           </div>
 
-          <!-- Actions -->
-          <div style="display:flex;flex-direction:column;gap:8px;">
-            <a id="wallet-explorer-link" href="javascript:void(0)" role="button" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm btn-full" style="text-decoration:none;">
-              View on NEAR Explorer ↗
+          <!-- Bottom Action Buttons (side-by-side, compact 28px) -->
+          <div style="display:flex;gap:6px;margin-top:auto;">
+            <a id="wallet-explorer-link" href="javascript:void(0)" role="button" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="flex:1;height:28px;padding:0 8px;font-size:11px;text-decoration:none;display:flex;align-items:center;justify-content:center;">
+              Explorer ↗
             </a>
-            <a href="/alpha?tab=leaderboard" class="btn btn-primary btn-sm btn-full" style="text-decoration:none;">
-              Copy trade wallet on Racer
+            <a href="/alpha?tab=leaderboard" class="btn btn-primary btn-sm" style="flex:1;height:28px;padding:0 8px;font-size:11px;text-decoration:none;display:flex;align-items:center;justify-content:center;">
+              Copy Trade ⚡
             </a>
           </div>
         </div>
@@ -1326,9 +1395,9 @@
           return s === addrLower || t === addrLower;
         });
 
-        countEl.textContent = `${connected.length} link${connected.length === 1 ? '' : 's'}`;
+        countEl.textContent = `(${connected.length})`;
         if (connected.length === 0) {
-          listEl.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No on-chain transfer connections or shared funder traces detected with other top holders.</div>';
+          listEl.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">No transfer or funder traces detected</div>';
           return;
         }
 
@@ -1338,7 +1407,7 @@
           const isSource = sAddr.toLowerCase() === addrLower;
           const other = isSource ? link.target : link.source;
           const otherAddr = other?.address || (isSource ? tAddr : sAddr);
-          const shortOther = otherAddr.length > 14 ? (otherAddr.slice(0, 6) + '…' + otherAddr.slice(-4)) : otherAddr;
+          const shortOther = otherAddr.length > 14 ? (otherAddr.slice(0, 5) + '…' + otherAddr.slice(-4)) : otherAddr;
 
           let badgeText = '';
           let typeColor = link.color || '#38BDF8';
@@ -1346,21 +1415,22 @@
 
           if (link.type === 'token_transfer') {
             typeColor = '#10B981';
+            const scaledAmt = formatTokenBalanceDisplay(link.amount, tokenMeta?.decimals ?? 18, link.formattedAmount);
             if (isSource) {
               icon = '➡️';
-              badgeText = `Sent ${formatCompactNumber(link.amount || 0)} ${currentSymbol}`;
+              badgeText = `Sent ${scaledAmt} ${currentSymbol}`;
             } else {
               icon = '⬅️';
-              badgeText = `Received ${formatCompactNumber(link.amount || 0)} ${currentSymbol}`;
+              badgeText = `Received ${scaledAmt} ${currentSymbol}`;
             }
           } else if (link.type === 'common_funder') {
             typeColor = '#A855F7';
             icon = '⚡';
-            badgeText = `Same Gas Funder (${link.funder || 'Deployer'})`;
+            badgeText = `Same Funder (${link.funder || 'Deployer'})`;
           } else if (link.type === 'cluster') {
             typeColor = link.color || '#FF4D4D';
             icon = '⚠️';
-            badgeText = 'Coordinated Cabal Link';
+            badgeText = 'Cabal Link';
           } else {
             typeColor = '#38BDF8';
             icon = '🔄';
@@ -1368,15 +1438,15 @@
           }
 
           return `
-            <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-left:3px solid ${typeColor};border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-left:3px solid ${typeColor};border-radius:var(--radius-md);padding:4px 7px;gap:6px;">
               <div style="display:flex;flex-direction:column;min-width:0;flex:1;">
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <span style="font-size:12px;">${icon}</span>
-                  <span style="font-size:11px;font-weight:700;color:var(--color-text);">${badgeText}</span>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <span style="font-size:11px;">${icon}</span>
+                  <span style="font-size:10.5px;font-weight:700;color:var(--color-text);">${badgeText}</span>
                 </div>
-                <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);margin-top:2px;">Peer: ${shortOther}</span>
+                <span class="mono-sm" style="font-size:9.5px;color:var(--color-text-2);">Peer: ${shortOther}</span>
               </div>
-              <button class="btn btn-ghost btn-sm" onclick="selectBubbleByAddress('${otherAddr}')" style="min-width:auto;height:24px;padding:0 8px;font-size:11px;color:${typeColor};border:1px solid ${typeColor}44;" title="Inspect connected wallet">
+              <button class="btn btn-ghost btn-sm" onclick="selectBubbleByAddress('${otherAddr}')" style="min-width:auto;height:22px;padding:0 6px;font-size:10px;color:${typeColor};border:1px solid ${typeColor}44;" title="Inspect connected wallet">
                 View ➔
               </button>
             </div>
@@ -1404,6 +1474,57 @@
         if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
         return num.toFixed(2);
       }
+
+      function formatSmartTokenDisplay(num) {
+        if (isNaN(num) || num === null || num === undefined) return '—';
+        if (num >= 1e9) return (num / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 }) + 'B';
+        if (num >= 1e7) return (num / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 }) + 'M';
+        if (num >= 1000) return num.toLocaleString(undefined, { maximumFractionDigits: num >= 10000 ? 1 : 2 });
+        if (num >= 1) return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        if (num > 0) return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
+        return '0';
+      }
+
+      function formatTokenBalanceDisplay(rawAmount, decimals, formattedAmount) {
+        if (formattedAmount && formattedAmount !== '0' && formattedAmount !== '—') {
+          const num = parseFloat(formattedAmount);
+          if (!isNaN(num)) return formatSmartTokenDisplay(num);
+          return formattedAmount;
+        }
+        if (!rawAmount || rawAmount === '0') return '0';
+        const str = String(rawAmount).trim();
+        const dec = Number(decimals) >= 0 ? Number(decimals) : (tokenMeta?.decimals ?? 18);
+        try {
+          if (str.includes('.') && !str.includes('e')) {
+            const num = parseFloat(str);
+            return formatSmartTokenDisplay(num);
+          }
+          const big = BigInt(str.split('.')[0] || '0');
+          if (big === 0n) return '0';
+          const divisor = 10n ** BigInt(dec);
+          const whole = big / divisor;
+          const remainder = big % divisor;
+          const remStr = remainder.toString().padStart(dec, '0');
+          const frac = remStr.slice(0, 4);
+          const fullNum = parseFloat(`${whole}.${frac}`);
+          return formatSmartTokenDisplay(fullNum);
+        } catch {
+          const num = parseFloat(rawAmount);
+          return isNaN(num) ? '—' : formatSmartTokenDisplay(num);
+        }
+      }
+
+      let currentWalletSubTab = 'tokens';
+      window.switchWalletSubTab = function(tabName) {
+        currentWalletSubTab = tabName;
+        const tabs = ['tokens', 'trades', 'connections'];
+        tabs.forEach(t => {
+          const btn = document.getElementById(`subtab-btn-${t}`);
+          const list = document.getElementById(t === 'tokens' ? 'wallet-other-tokens-list' : (t === 'trades' ? 'wallet-trades-list' : 'wallet-connections-list'));
+          if (btn) btn.classList.toggle('active', t === tabName);
+          if (list) list.style.display = t === tabName ? 'flex' : 'none';
+        });
+      };
 
       // Modal Controls
       window.openTokenScannerModal = function() {
@@ -1586,6 +1707,7 @@
             account: addr,
             pct: h.pct || (100 / (holders.length || 1)),
             amount: h.amount || '0',
+            formattedAmount: h.formattedAmount || '',
             rank: idx + 1,
             color: tier.color,
             rawColor: tier.color,
@@ -1635,9 +1757,10 @@
                 source: b1,
                 target: b2,
                 amount: tx.amount || '0',
+                formattedAmount: tx.formattedAmount || '',
                 cause: tx.cause || 'Transfer',
                 tx: tx.tx || '',
-                label: `Transferred ${formatCompactNumber(tx.amount || 0)} ${currentSymbol}`,
+                label: `Transferred ${formatTokenBalanceDisplay(tx.amount, tokenMeta?.decimals ?? 18, tx.formattedAmount)} ${currentSymbol}`,
                 color: '#10B981',
                 seed: Math.random() * 10
               });
@@ -1721,7 +1844,7 @@
         });
 
         // Compute metrics
-        const holdersCount = holders.length;
+        const totalHoldersCount = Number(data?.totalHolders || data?.meta?.holdersCount || data?.meta?.holders_count || holders.length);
         const top10WhalePct = bubbles.slice(0, 10).reduce((acc, b) => acc + b.pct, 0);
 
         const hEl = document.getElementById('stat-holders-val');
@@ -1731,7 +1854,13 @@
         const bEl = document.getElementById('stat-bundler-sells-val');
         const rEl = document.getElementById('stat-retail-sells-val');
 
-        if (hEl) hEl.textContent = holdersCount || '—';
+        if (hEl) {
+          if (totalHoldersCount > holders.length) {
+            hEl.innerHTML = `${totalHoldersCount.toLocaleString()}<span style="font-size:11px;color:var(--color-text-2);font-weight:500;display:block;">(Top ${holders.length} mapped)</span>`;
+          } else {
+            hEl.textContent = totalHoldersCount ? totalHoldersCount.toLocaleString() : '—';
+          }
+        }
         if (sEl) sEl.textContent = rawIdentityClusters.length || '0';
         if (cEl) cEl.textContent = rawIdentityClusters.length || '0';
         if (tEl) tEl.textContent = `${top10WhalePct.toFixed(1)}%`;
@@ -1779,6 +1908,7 @@
         const hudMcap = document.getElementById('hud-mcap-val');
         const hudVol = document.getElementById('hud-vol-val');
         const hudLiq = document.getElementById('hud-liq-val');
+        const hudHolders = document.getElementById('hud-holders-val');
         const hudTop10 = document.getElementById('hud-top10-val');
         const hudBundle = document.getElementById('hud-bundle-val');
         const hudDev = document.getElementById('hud-dev-val');
@@ -1789,6 +1919,7 @@
         const mcapVal = Number(meta.marketCap !== undefined ? meta.marketCap : (meta.market_cap_usd || meta.market_cap || 0));
         const volVal = Number(meta.volume24h !== undefined ? meta.volume24h : (meta.volume_24h_usd || 0));
         const liqVal = Number(meta.liquidity !== undefined ? meta.liquidity : (meta.liquidity_usd || 0));
+        const totalHoldersVal = Number(data?.totalHolders || meta?.holdersCount || meta?.holders_count || bubbles.length);
 
         if (hudSym) hudSym.textContent = currentSymbol;
         if (hudCa) hudCa.textContent = currentToken;
@@ -1801,6 +1932,7 @@
         if (hudMcap) hudMcap.textContent = mcapVal > 0 ? `$${formatCompactNumber(mcapVal)}` : '—';
         if (hudVol) hudVol.textContent = volVal > 0 ? `$${formatCompactNumber(volVal)}` : '—';
         if (hudLiq) hudLiq.textContent = liqVal > 0 ? `$${formatCompactNumber(liqVal)}` : '—';
+        if (hudHolders) hudHolders.textContent = totalHoldersVal > 0 ? totalHoldersVal.toLocaleString() : '—';
         if (hudTop10) hudTop10.textContent = `${top10WhalePct.toFixed(1)}%`;
         if (hudBundle) {
           hudBundle.textContent = `${bundlerPct.toFixed(1)}% (${bundlers.length})`;
@@ -2042,9 +2174,37 @@
         ctx.fillStyle = PALETTE.bg;
         ctx.fillRect(0, 0, W, H);
 
+        // Futuristic Ambient Radial Glow in center
+        const centerGlow = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * 0.75);
+        centerGlow.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
+        centerGlow.addColorStop(0.5, 'rgba(168, 85, 247, 0.025)');
+        centerGlow.addColorStop(1, 'rgba(15, 19, 32, 0)');
+        ctx.fillStyle = centerGlow;
+        ctx.fillRect(0, 0, W, H);
+
         ctx.save();
         ctx.translate(panX, panY);
         ctx.scale(zoom, zoom);
+
+        // World-Class Forensic Cyber Grid
+        const gridSpacing = 80;
+        const startX = Math.floor((-panX / zoom) / gridSpacing) * gridSpacing - gridSpacing;
+        const endX = startX + (W / zoom) + gridSpacing * 2;
+        const startY = Math.floor((-panY / zoom) / gridSpacing) * gridSpacing - gridSpacing;
+        const endY = startY + (H / zoom) + gridSpacing * 2;
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+        ctx.lineWidth = 1 / zoom;
+        ctx.beginPath();
+        for (let gx = startX; gx <= endX; gx += gridSpacing) {
+          ctx.moveTo(gx, startY);
+          ctx.lineTo(gx, endY);
+        }
+        for (let gy = startY; gy <= endY; gy += gridSpacing) {
+          ctx.moveTo(startX, gy);
+          ctx.lineTo(endX, gy);
+        }
+        ctx.stroke();
 
         // 1. Draw Connected Wallets (Token Transfers, Shared Gas Funder, Coordinated Cabals)
         const activeBubble = selectedBubble || hoveredBubble;
@@ -2150,7 +2310,8 @@
                 const isOutbound = (b1 === activeBubble);
                 const counterparty = isOutbound ? b2.address : b1.address;
                 const shortAddr = counterparty.length > 12 ? (counterparty.slice(0, 5) + '…' + counterparty.slice(-3)) : counterparty;
-                badgeText = isOutbound ? `Sent ${formatCompactNumber(link.amount || 0)} ${currentSymbol} ➔ ${shortAddr}` : `Received ${formatCompactNumber(link.amount || 0)} ${currentSymbol} 🠔 ${shortAddr}`;
+                const scaledAmt = formatTokenBalanceDisplay(link.amount, tokenMeta?.decimals ?? 18, link.formattedAmount);
+                badgeText = isOutbound ? `Sent ${scaledAmt} ${currentSymbol} ➔ ${shortAddr}` : `Received ${scaledAmt} ${currentSymbol} 🠔 ${shortAddr}`;
               }
 
               ctx.save();
@@ -2259,33 +2420,69 @@
           ctx.fillStyle = sphereGrad;
           ctx.fill();
 
-          // Dark boundary stroke
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = PALETTE.bg;
+          // Glassmorphic Outer Fresnel Rim
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+          ctx.lineWidth = Math.max(1, b.radius * 0.06);
+          ctx.strokeStyle = `${adjustColor(b.color, 45)}66`;
           ctx.stroke();
 
-          // Specular Glint (Top-left glass reflection)
+          // Dark boundary stroke
+          ctx.lineWidth = 1.2;
+          ctx.strokeStyle = 'rgba(15, 19, 32, 0.9)';
+          ctx.stroke();
+
+          // Primary Specular Glint (Top-left high-gloss reflection)
           ctx.beginPath();
-          ctx.arc(b.x - b.radius * 0.32, b.y - b.radius * 0.32, b.radius * 0.26, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+          ctx.ellipse(
+            b.x - b.radius * 0.35,
+            b.y - b.radius * 0.35,
+            b.radius * 0.28,
+            b.radius * 0.16,
+            -Math.PI / 4,
+            0,
+            Math.PI * 2
+          );
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
           ctx.fill();
 
-          // Hover / Selection Highlight
+          // Secondary Sub-surface Bounce Reflection (Bottom-right soft glass crescent)
+          ctx.beginPath();
+          ctx.arc(b.x + b.radius * 0.2, b.y + b.radius * 0.25, b.radius * 0.45, Math.PI * 0.1, Math.PI * 0.6);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+          ctx.lineWidth = Math.max(1, b.radius * 0.08);
+          ctx.stroke();
+
+          // Hover / Selection Highlight with Cybernetic Pulse
           if (b === selectedBubble) {
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 5, 0, Math.PI * 2);
+            ctx.arc(b.x, b.y, b.radius + 6, 0, Math.PI * 2);
             ctx.strokeStyle = '#38BDF8';
             ctx.lineWidth = 3.0;
             ctx.shadowColor = '#38BDF8';
-            ctx.shadowBlur = 12;
+            ctx.shadowBlur = 16;
             ctx.stroke();
             ctx.shadowBlur = 0;
+
+            // Reticle tick marks at 0, 90, 180, 270 degrees
+            const rTicks = b.radius + 10;
+            ctx.strokeStyle = '#38BDF8';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(b.x - rTicks, b.y); ctx.lineTo(b.x - rTicks + 4, b.y);
+            ctx.moveTo(b.x + rTicks, b.y); ctx.lineTo(b.x + rTicks - 4, b.y);
+            ctx.moveTo(b.x, b.y - rTicks); ctx.lineTo(b.x, b.y - rTicks + 4);
+            ctx.moveTo(b.x, b.y + rTicks); ctx.lineTo(b.x, b.y + rTicks - 4);
+            ctx.stroke();
           } else if (b === hoveredBubble) {
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
-            ctx.lineWidth = 2.0;
+            ctx.arc(b.x, b.y, b.radius + 4.5, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+            ctx.lineWidth = 2.2;
+            ctx.shadowColor = '#38BDF8';
+            ctx.shadowBlur = 10;
             ctx.stroke();
+            ctx.shadowBlur = 0;
           }
 
           // Labels & Badges
@@ -2339,7 +2536,10 @@
         const sumView = document.getElementById('inspector-summary-view');
         const walView = document.getElementById('inspector-wallet-view');
         if (sumView) sumView.style.display = 'none';
-        if (walView) walView.style.display = 'flex';
+        if (walView) {
+          walView.style.display = 'flex';
+          walView.scrollTop = 0;
+        }
 
         const addrEl = document.getElementById('wallet-addr-display');
         const shareEl = document.getElementById('wallet-share-val');
@@ -2348,17 +2548,38 @@
         const sellsEl = document.getElementById('wallet-sells-val');
         const chipEl = document.getElementById('wallet-category-chip');
         const expLink = document.getElementById('wallet-explorer-link');
+        const clusterBox = document.getElementById('wallet-cluster-box');
+        const clusterInfo = document.getElementById('wallet-cluster-info');
 
-        if (addrEl) addrEl.textContent = b.address;
+        if (addrEl) {
+          addrEl.textContent = b.address;
+          addrEl.title = b.address;
+        }
         if (shareEl) shareEl.textContent = `${b.pct.toFixed(2)}%`;
         if (rankEl) rankEl.textContent = `#${b.rank}`;
-        if (balEl) balEl.textContent = b.amount ? Number(b.amount).toLocaleString() : '—';
+        if (balEl) {
+          const displayBal = formatTokenBalanceDisplay(b.amount, tokenMeta?.decimals ?? 18, b.formattedAmount);
+          balEl.textContent = displayBal;
+          balEl.title = `${b.formattedAmount || b.amount} ${currentSymbol}`;
+        }
         if (sellsEl) sellsEl.textContent = `${b.sellCount} sells`;
         if (chipEl) {
           chipEl.textContent = b.category;
           chipEl.className = b.isBundler ? 'chip chip-neg' : (b.isDev ? 'chip chip-pos' : (b.pct >= 10 ? 'chip chip-warn' : 'chip chip-neutral'));
         }
         if (expLink) expLink.href = `https://nearblocks.io/address/${encodeURIComponent(b.address)}`;
+
+        if (clusterBox && clusterInfo) {
+          if (b.clusterId) {
+            clusterBox.style.display = 'flex';
+            clusterInfo.textContent = `Cluster #${String(b.clusterId).slice(0, 10)}`;
+          } else {
+            clusterBox.style.display = 'none';
+          }
+        }
+
+        // Switch to default tab
+        switchWalletSubTab('tokens');
 
         // Expand mobile bottom sheet to half state on selection
         const drawer = document.getElementById('inspector-drawer');
@@ -2375,8 +2596,8 @@
 
       async function fetchWalletForensics(account) {
         const speedBadge = document.getElementById('wallet-speed-badge');
+        const curHoldEl = document.getElementById('wallet-cur-hold');
         const avgHoldEl = document.getElementById('wallet-avg-hold');
-        const dumpRateEl = document.getElementById('wallet-dump-rate');
         const hazardLabel = document.getElementById('wallet-hazard-label');
         const hazardBar = document.getElementById('wallet-hazard-bar');
         const otherTokensCount = document.getElementById('wallet-other-tokens-count');
@@ -2385,12 +2606,12 @@
         const tradesList = document.getElementById('wallet-trades-list');
 
         if (speedBadge) { speedBadge.className = 'chip chip-neutral'; speedBadge.textContent = 'Scanning...'; }
+        if (curHoldEl) curHoldEl.textContent = '—';
         if (avgHoldEl) avgHoldEl.textContent = '—';
-        if (dumpRateEl) dumpRateEl.textContent = '—';
         if (hazardLabel) hazardLabel.textContent = 'Analyzing...';
         if (hazardBar) { hazardBar.style.width = '20%'; hazardBar.style.backgroundColor = '#6B7490'; }
-        if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:12px;">Querying FastNEAR FT portfolio...</div>';
-        if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:12px;">Checking NearBlocks trade history...</div>';
+        if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">Querying FastNEAR FT portfolio...</div>';
+        if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">Checking NearBlocks trade history...</div>';
 
         try {
           const res = await fetch(`/api/wallet-forensics/${encodeURIComponent(account)}?currentToken=${encodeURIComponent(currentToken)}`);
@@ -2407,8 +2628,8 @@
             else if (stats.hazardLevel === 'High Dump Hazard' || stats.hazardLevel === 'MODERATE') speedBadge.className = 'chip chip-warn';
             else speedBadge.className = 'chip chip-pos';
           }
+          if (curHoldEl) curHoldEl.textContent = stats.currentTokenHoldDurationStr || stats.avgHoldStr || 'Recent';
           if (avgHoldEl) avgHoldEl.textContent = stats.avgHoldStr || '—';
-          if (dumpRateEl) dumpRateEl.textContent = `${stats.dumpRate30m ?? 0}%`;
           if (hazardLabel) {
             hazardLabel.textContent = `${stats.hazardLevel || 'LOW'} (${stats.hazardScore ?? 0}/100)`;
             hazardLabel.style.color = stats.hazardColor || '#34D399';
@@ -2419,26 +2640,26 @@
           }
 
           // Other Tokens Held List with computed hold duration
-          if (otherTokensCount) otherTokensCount.textContent = `${otherTokens.length} token${otherTokens.length === 1 ? '' : 's'}`;
+          if (otherTokensCount) otherTokensCount.textContent = `(${otherTokens.length})`;
           if (otherTokensList) {
             if (otherTokens.length === 0) {
-              otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No other FT tokens held</div>';
+              otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">No other FT tokens held</div>';
             } else {
               otherTokensList.innerHTML = otherTokens.slice(0, 20).map(t => {
                 const holdDuration = t.holdDurationStr || 'Holding';
                 const isShortHold = t.holdDurationMinutes && t.holdDurationMinutes < 60;
                 return `
-                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:4px 6px;gap:6px;">
                     <div style="display:flex;flex-direction:column;min-width:0;flex:1;">
-                      <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="font-weight:700;font-size:12px;color:var(--color-text);">${t.symbol}</span>
-                        <span class="chip ${isShortHold ? 'chip-warn' : 'chip-neutral'}" style="font-size:10px;height:18px;padding:0 5px;font-weight:600;">
+                      <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-weight:700;font-size:11px;color:var(--color-text);">${t.symbol}</span>
+                        <span class="chip ${isShortHold ? 'chip-warn' : 'chip-neutral'}" style="font-size:8.5px;height:16px;padding:0 4px;font-weight:600;line-height:16px;">
                           ⏱️ ${holdDuration}
                         </span>
                       </div>
-                      <span class="mono-sm" style="font-size:10px;color:var(--color-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="${t.contract_id}">${t.contract_id}</span>
+                      <span class="mono-sm" style="font-size:9.5px;color:var(--color-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;" title="${t.contract_id}">${t.contract_id}</span>
                     </div>
-                    <button class="btn btn-ghost btn-sm" onclick="openBubbleMap('${t.contract_id}')" style="min-width:auto;height:24px;padding:0 8px;font-size:11px;color:var(--color-primary);border:1px solid rgba(106,204,220,0.2);" title="Scan this token in RacerBubble">
+                    <button class="btn btn-ghost btn-sm" onclick="openBubbleMap('${t.contract_id}')" style="min-width:auto;height:22px;padding:0 6px;font-size:10px;color:var(--color-primary);border:1px solid rgba(106,204,220,0.2);" title="Scan in RacerBubble">
                       Scan ↗
                     </button>
                   </div>
@@ -2448,10 +2669,10 @@
           }
 
           // Past Trades & Hold Duration Timeline
-          if (tradesCount) tradesCount.textContent = `${pastTrades.length} trade${pastTrades.length === 1 ? '' : 's'}`;
+          if (tradesCount) tradesCount.textContent = `(${pastTrades.length})`;
           if (tradesList) {
             if (pastTrades.length === 0) {
-              tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">No recent dump trades recorded</div>';
+              tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">No recent dump trades recorded</div>';
             } else {
               tradesList.innerHTML = pastTrades.slice(0, 15).map(tr => {
                 const holdStr = tr.holdDurationStr || tr.holdStr || '—';
@@ -2462,15 +2683,15 @@
                 const dateStr = tr.soldAt ? new Date(tr.soldAt).toLocaleDateString() : 'Recent';
 
                 return `
-                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:8px 10px;gap:8px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);border-radius:var(--radius-md);padding:4px 6px;gap:6px;">
                     <div style="display:flex;flex-direction:column;min-width:0;">
-                      <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="font-size:12px;font-weight:700;color:var(--color-text);">${tr.symbol || tr.token}</span>
-                        <span style="font-size:10px;color:var(--color-text-2);">${tr.exitType || 'Exit'}</span>
+                      <div style="display:flex;align-items:center;gap:4px;">
+                        <span style="font-size:11px;font-weight:700;color:var(--color-text);">${tr.symbol || tr.token}</span>
+                        <span style="font-size:9.5px;color:var(--color-text-2);">${tr.exitType || 'Exit'}</span>
                       </div>
-                      <span style="font-size:10px;color:var(--color-text-2);">Sold: ${dateStr}</span>
+                      <span style="font-size:9.5px;color:var(--color-text-2);">Sold: ${dateStr}</span>
                     </div>
-                    <span class="chip ${chipClass}" style="font-size:10px;height:20px;padding:0 6px;font-weight:700;white-space:nowrap;">
+                    <span class="chip ${chipClass}" style="font-size:9px;height:18px;padding:0 5px;font-weight:700;white-space:nowrap;line-height:18px;">
                       ${badgeIcon} Held ${holdStr}
                     </span>
                   </div>
@@ -2482,8 +2703,8 @@
           console.error('Error fetching wallet forensics:', e);
           if (speedBadge) { speedBadge.textContent = 'Unavailable'; }
           if (hazardLabel) { hazardLabel.textContent = 'Data offline'; }
-          if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">FastNEAR offline</div>';
-          if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:12px;text-align:center;padding:10px;">NearBlocks offline</div>';
+          if (otherTokensList) otherTokensList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">FastNEAR offline</div>';
+          if (tradesList) tradesList.innerHTML = '<div style="color:var(--color-text-2);font-size:11px;text-align:center;padding:8px;">NearBlocks offline</div>';
         }
       }
 

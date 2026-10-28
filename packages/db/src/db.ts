@@ -4082,7 +4082,7 @@ export interface RacerVaultIntentRecord {
   amount_out_formatted?: number;
   fee_bps: number;
   fee_amount?: string;
-  status: 'PENDING' | 'SETTLED' | 'FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
+  status: 'PENDING' | 'SETTLED' | 'FAILED' | 'PAYOUT_FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
   tx_hash?: string;
   failure_reason?: string;
   hops: any[];
@@ -4127,7 +4127,7 @@ export async function recordVaultIntent(intent: Omit<RacerVaultIntentRecord, 'id
 export async function updateVaultIntentStatus(
   correlationId: string,
   update: {
-    status: 'PENDING' | 'SETTLED' | 'FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
+    status: 'PENDING' | 'SETTLED' | 'FAILED' | 'PAYOUT_FAILED' | 'SLIPPAGE_REFUNDED' | 'EXPIRED';
     tx_hash?: string;
     amount_out?: string;
     amount_out_formatted?: number;
