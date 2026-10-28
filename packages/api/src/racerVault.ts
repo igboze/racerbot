@@ -398,7 +398,7 @@ export async function refundUserFromVault(
         contractId: RACER_VAULT_CONTRACT_ID,
         methodName: 'withdraw_user',
         args: { user: subaccountId, token },
-        gas: BigInt('60000000000000'), // 60 TGas
+        gas: BigInt('200000000000000'), // 200 TGas: the router reserves 115 TGas for its withdraw callback
         attachedDeposit: 1n, // 1 yocto
       });
     });
