@@ -6095,9 +6095,7 @@
           msg.includes('registered with this token contract') ||
           msg.includes('not registered') ||
           msg.includes('account is not registered') ||
-          msg.includes('storage deposit') ||
-          msg.includes('zero_tokens_received') ||
-          msg.includes('0 tokens received')
+          msg.includes('storage deposit')
         );
 
       try {
@@ -6215,11 +6213,17 @@
         const txLink = data.txHash
           ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
           : '';
+        const deliveredTo = data.recipientAccountId
+          ? `<br><span style="font-size:11px;">Delivered to <b style="font-family:var(--font-mono);">${escapeHtml(data.recipientAccountId)}</b></span>`
+          : '';
+        const routerNote = isVault && data.message
+          ? `<br><span style="font-size:11px;">${escapeHtml(data.message)}</span>`
+          : '';
 
         if (feedback) {
           feedback.style.background = 'rgba(52, 211, 153, 0.15)';
           feedback.style.color = 'var(--color-primary)';
-          feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${txLink}`;
+          feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${deliveredTo}${routerNote}${txLink}`;
         }
 
         // Immediately update live wallet balance and terminal views
