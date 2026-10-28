@@ -401,11 +401,28 @@ impl RacerbotVault {
             env::panic_str("Insufficient vault balance");
         };
 
+        // The asset the venue dispatch physically spends must be the asset debited from the user,
+        // otherwise the router pays with other users' NEAR or wNEAR.
+        let native_only = match intent.venue {
+            Venue::Shardsmarket | Venue::BondingCurve => true,
+            Venue::Intear => intent.token_in == "near" || intent.token_in == WRAP_NEAR,
+            _ => false,
+        };
+        if native_only {
+            require!(actual_debit_token == "near",
+                "This venue spends native NEAR: vault balance must be native NEAR (buys only)");
+        }
+        if intent.venue == Venue::GenericFtCall {
+            require!(intent.token_in != "near" && actual_debit_token == intent.token_in,
+                "GenericFtCall sends token_in: vault balance must be held in that token");
+        }
+
         self.debit_exact(&intent.user, &actual_debit_token, intent.amount_in.0);
 
         let is_ref_venue = intent.venue == Venue::Rhea || intent.venue == Venue::RefAmm ||
                            intent.venue == Venue::Nearlytrade || intent.venue == Venue::Dcl;
-        let is_near_wrapped = (actual_debit_token == "near" || intent.token_in == "near") && is_ref_venue;
+        // Wrap only when native NEAR was debited; a wNEAR debit is sent as wNEAR
+        let is_near_wrapped = actual_debit_token == "near" && is_ref_venue;
 
         // 5. Fee
         let is_sell = intent.token_out == WRAP_NEAR || intent.token_out == "near";
@@ -1545,6 +1562,68 @@ mod tests {
         assert!(c.on_payout_resolved("corr".into(), user(), "meme.near".into(), U128(9_850), Some("meme.near".into())));
         assert_eq!(c.get_balance(&user(), "meme.near"), 0);
         assert!(!c.is_token_locked("meme.near"));
+    }
+
+    fn intent_for(venue: Venue, token_in: &str, token_out: &str, nonce_byte: u8) -> Intent {
+        let mut i = intent(nonce_byte);
+        i.venue = venue;
+        i.token_in = token_in.to_string();
+        i.token_out = token_out.to_string();
+        i.custom_contract = Some("receiver.near".parse().unwrap());
+        i
+    }
+
+    fn as_user() {
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(vault())
+            .predecessor_account_id(user())
+            .build());
+    }
+
+    #[test]
+    #[should_panic(expected = "This venue spends native NEAR")]
+    fn test_native_venue_rejects_wnear_balance() {
+        let mut c = setup();
+        c.credit(&user(), WRAP_NEAR, 10_000);
+        as_user();
+        let _ = c.execute_intent(intent_for(Venue::Shardsmarket, "near", "meme.near", 3));
+    }
+
+    #[test]
+    #[should_panic(expected = "This venue spends native NEAR")]
+    fn test_native_venue_rejects_sells() {
+        let mut c = setup();
+        c.credit(&user(), "meme.near", 10_000);
+        as_user();
+        let _ = c.execute_intent(intent_for(Venue::BondingCurve, "meme.near", "near", 4));
+    }
+
+    #[test]
+    fn test_native_venue_accepts_native_balance() {
+        let mut c = setup();
+        c.credit(&user(), "near", 10_000);
+        as_user();
+        let _ = c.execute_intent(intent_for(Venue::Intear, "near", "meme.near", 5));
+        assert_eq!(c.get_balance(&user(), "near"), 9_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "GenericFtCall sends token_in")]
+    fn test_generic_ft_call_rejects_mismatched_debit() {
+        let mut c = setup();
+        c.credit(&user(), "near", 10_000); // only native NEAR, but the call would send wNEAR
+        as_user();
+        let _ = c.execute_intent(intent_for(Venue::GenericFtCall, WRAP_NEAR, "meme.near", 6));
+    }
+
+    #[test]
+    fn test_ref_buy_debits_wnear_when_only_wnear_held() {
+        let mut c = setup();
+        c.credit(&user(), WRAP_NEAR, 10_000);
+        as_user();
+        let _ = c.execute_intent(intent_for(Venue::Dcl, "near", "meme.near", 7));
+        assert_eq!(c.get_balance(&user(), WRAP_NEAR), 9_000);
+        assert_eq!(c.get_balance(&user(), "near"), 0);
     }
 
     #[test]

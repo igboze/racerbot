@@ -106,6 +106,56 @@ export interface VaultExecutionResult {
   reason?: string;
 }
 
+const QUOTE_VENUES = new Set([
+  'rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'memecooking', 'onetokenhub',
+  'gaypad', 'nearpad', 'shoremarkets', 'kelytra', 'nearpumpfun', 'qlyphs',
+]);
+
+/**
+ * Live-quote the swap and return the minimum acceptable output (expected output minus slippage).
+ * Throws when no quote is available, so a trade is never sent without price protection.
+ */
+async function quoteMinimumOut(params: {
+  tokenAddress: string;
+  venue: string;
+  isBuy: boolean;
+  amountIn: string;
+  slippagePct: number;
+  poolId?: number | null;
+  dclPoolId?: string | null;
+}): Promise<string> {
+  const v = (params.venue || '').toLowerCase().trim();
+  const quoteVenue = QUOTE_VENUES.has(v) ? v : 'rhea';
+  const tokenIn = params.isBuy ? 'wrap.near' : params.tokenAddress;
+  const tokenOut = params.isBuy ? params.tokenAddress : 'wrap.near';
+  const { minAmountOut } = await getNear().computeMinAmountOut(
+    quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
+  );
+  if (!minAmountOut || BigInt(minAmountOut) <= 0n) {
+    throw new Error('quote returned zero output');
+  }
+  return minAmountOut;
+}
+
+/** Apply a minimum output to a planned route: intent, final hop, and any venue message that carries one. */
+export function withMinimumOut<T extends { hops: VaultHop[]; minAmountOut: string; custom_msg?: string | null }>(planned: T, minOut: string): T {
+  const hops = planned.hops.map((h, i) => (i === planned.hops.length - 1 ? { ...h, min_amount_out: minOut } : { ...h }));
+  let custom_msg = planned.custom_msg ?? null;
+  if (custom_msg) {
+    try {
+      const msg = JSON.parse(custom_msg);
+      if (msg && typeof msg === 'object') {
+        if ('min_tokens_out' in msg) msg.min_tokens_out = minOut;
+        for (const op of Array.isArray(msg.operations) ? msg.operations : []) {
+          if (op?.Withdraw?.amount?.Full) op.Withdraw.amount.Full.at_least = minOut;
+        }
+        custom_msg = JSON.stringify(msg);
+      }
+    } catch {}
+  }
+  return { ...planned, hops, minAmountOut: minOut, custom_msg };
+}
+
 const TOKEN_BUSY_RETRIES = 3;
 const TOKEN_BUSY_RETRY_MS = 2500;
 
@@ -240,7 +290,8 @@ export async function depositNearToVault(
 export async function depositFtToVault(
   user: UserRecord,
   tokenContractId: string,
-  amountRaw: string
+  amountRaw: string,
+  opts: { wrapNative?: boolean } = {}
 ): Promise<{ success: boolean; txHash?: string; reason?: string }> {
   if (!user.subaccount_id) {
     return { success: false, reason: 'No managed subaccount for user' };
@@ -258,10 +309,15 @@ export async function depositFtToVault(
     await near.ensureStorageDeposit(RACER_VAULT_CONTRACT_ID, tokenContractId).catch(() => {});
 
     const { transactions } = await import('near-api-js');
+    // wrap.near only: turn native NEAR into wNEAR in the same transaction before depositing it
+    const wrapActions = opts.wrapNative && tokenContractId === 'wrap.near'
+      ? [transactions.functionCall('near_deposit', {}, BigInt('10000000000000'), BigInt(amountRaw))]
+      : [];
     const res = await near.signAndSendTransactionAll(
       user.subaccount_id,
       tokenContractId,
       [
+        ...wrapActions,
         transactions.functionCall(
           'ft_transfer_call',
           {
@@ -276,6 +332,9 @@ export async function depositFtToVault(
     );
 
     const txHash = res?.transaction?.hash || res?.transaction_outcome?.id;
+    if (res?.status && typeof res.status === 'object' && 'Failure' in res.status) {
+      return { success: false, txHash, reason: `Vault deposit transaction failed: ${JSON.stringify(res.status.Failure)}` };
+    }
     logger.info(`Deposited ${amountRaw} FT (${tokenContractId}) to vault for ${user.subaccount_id}: tx=${txHash}`);
     return { success: true, txHash };
   } catch (err: any) {
@@ -862,7 +921,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   const near = getNear();
 
   // Concurrent Execution: 1. Plan hops, 2. Check vault ledger balances, 3. Ensure signing key ready in NearClient
-  const [planned, [balNear, balWrap]] = await Promise.all([
+  let [planned, [balNear, balWrap]] = await Promise.all([
     planVaultHops({
       tokenAddress: params.tokenAddress,
       venue: params.venue,
@@ -887,6 +946,43 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenOut: planned.tokenOut,
       amountInFormatted: String(numNear),
       reason: 'Token is in the Meme.Cooking pre-bonding auction phase. Atomic shielded swap requires bonded Ref/DCL pool liquidity.',
+    };
+  }
+
+  // The router's Shardsmarket and bonding-curve dispatch can only buy (it attaches native NEAR)
+  if (!isBuy && (planned.venue === 'Shardsmarket' || planned.venue === 'BondingCurve')) {
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId,
+      tokenIn: planned.tokenIn,
+      tokenOut: planned.tokenOut,
+      amountInFormatted: String(numNear),
+      reason: 'Selling on this bonding curve is not supported by the shielded router. Use a regular (non-private) sell.',
+    };
+  }
+
+  // Price protection: every route gets a live minimum output; no quote means no trade
+  try {
+    const minOut = await quoteMinimumOut({
+      tokenAddress: params.tokenAddress,
+      venue: String(params.venue),
+      isBuy,
+      amountIn: rawAmountIn,
+      slippagePct: slippage,
+      poolId: params.poolId,
+      dclPoolId: params.dclPoolId,
+    });
+    planned = withMinimumOut(planned, minOut);
+  } catch (quoteErr: any) {
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId,
+      tokenIn: planned.tokenIn,
+      tokenOut: planned.tokenOut,
+      amountInFormatted: String(numNear),
+      reason: `No live price quote for this token (${quoteErr?.message || 'quote failed'}), so the trade was not sent.`,
     };
   }
 
@@ -929,13 +1025,37 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   let neededNearToAttach = 0n;
 
   if (isBuy) {
-    const maxAvailable = BigInt(balNear) >= BigInt(balWrap) ? BigInt(balNear) : BigInt(balWrap);
-    if (maxAvailable < BigInt(rawAmountIn)) {
-      const needed = BigInt(rawAmountIn) - maxAvailable;
-      if (needed > 0n) {
-        logger.info(`Auto-funding vault sub-ledger: ${needed} yocto for ${userAccountId} (batched atomically into intent tx)`);
-        neededNearToAttach = needed;
+    // Fund in the asset the venue spends: native NEAR (Shardsmarket, bonding curves, Intear),
+    // wNEAR (generic ft_transfer_call venues), or either one for Ref/DCL (the router wraps NEAR)
+    const amount = BigInt(rawAmountIn);
+    const nearBal = BigInt(balNear);
+    const wrapBal = BigInt(balWrap);
+    const nativeOnly = planned.venue === 'Shardsmarket' || planned.venue === 'BondingCurve' || planned.venue === 'Intear';
+    if (planned.venue === 'GenericFtCall') {
+      if (wrapBal < amount) {
+        const needed = (amount - wrapBal).toString();
+        logger.info(`Auto-funding vault with ${needed} wNEAR for ${userAccountId} (wrap + deposit)`);
+        const depRes = await depositFtToVault(params.user, 'wrap.near', needed, { wrapNative: true });
+        if (!depRes.success) {
+          return {
+            success: false,
+            routing: 'RACER_SHIELDED_VAULT',
+            correlationId,
+            tokenIn: planned.tokenIn,
+            tokenOut: planned.tokenOut,
+            amountInFormatted: String(numNear),
+            reason: `Could not fund the vault with wNEAR: ${depRes.reason}`,
+          };
+        }
+        autoDepositedToken = 'wrap.near';
+      }
+    } else {
+      const covered = nativeOnly ? nearBal >= amount : (nearBal >= amount || wrapBal >= amount);
+      if (!covered) {
+        // deposit_near credits native NEAR, so top up the native balance to the full amount
+        neededNearToAttach = amount - nearBal;
         autoDepositedToken = 'near';
+        logger.info(`Auto-funding vault sub-ledger: ${neededNearToAttach} yocto for ${userAccountId} (batched atomically into intent tx)`);
       }
     }
   } else if (!isBuy && BigInt(balNear) < BigInt(rawAmountIn)) {
