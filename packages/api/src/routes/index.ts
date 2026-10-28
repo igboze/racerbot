@@ -1195,10 +1195,16 @@ router.get('/alpha/vault/intents', async (req, res) => {
 
 router.get('/alpha/vault/intent/:correlationId', async (req, res) => {
   try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
     const { correlationId } = req.params;
     const { getVaultIntentByCorrelationId } = await import('@racerbot/db');
     const intent = await getVaultIntentByCorrelationId(correlationId);
-    if (!intent) {
+    // Someone else's trade answers exactly like a missing one, so ids cannot be probed
+    if (!intent || intent.account_id !== (user.subaccount_id || user.id)) {
       res.status(404).json({ error: 'Intent not found with this correlation ID' });
       return;
     }
@@ -1250,29 +1256,6 @@ router.post(['/alpha/vault/withdraw', '/alpha/vault/refund'], async (req, res) =
     res.json({ success: true, txHash: result.txHash, token, accountId: user.subaccount_id });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Vault refund error' });
-  }
-});
-
-router.get('/alpha/vault/balance', async (req, res) => {
-  try {
-    const user = await resolveAlphaUser(req);
-    if (!user || !user.subaccount_id) {
-      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
-      return;
-    }
-    const token = ((req.query.token as string) || 'near').toLowerCase();
-    const { getVaultBalance } = await import('../racerVault.js');
-    const balanceYocto = await getVaultBalance(user.subaccount_id, token);
-    const balanceNear = (Number(BigInt(balanceYocto) / 1000000000000000000n) / 1e6).toFixed(4);
-    res.json({
-      success: true,
-      accountId: user.subaccount_id,
-      token,
-      balanceYocto,
-      balanceFormatted: balanceNear,
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to fetch vault balance' });
   }
 });
 
