@@ -6007,14 +6007,14 @@
             // Mirrors the trade request: non-Defuse venues use the router, and only buys go to Intents
             const venueUsesRouter = Boolean(selectedAlphaToken.venue && selectedAlphaToken.venue.toLowerCase() !== 'defuse');
             const willUseIntents = selectedRacerAlphaSide === 'BUY' && !venueUsesRouter && q.supported && q.routing === 'INTENT_SOLVER';
-            if (selectedRacerAlphaSide === 'SELL') {
-              if (badge) badge.textContent = 'Private sells paused';
+            if (selectedRacerAlphaSide === 'SELL' && !q.privateSellsAllowed) {
+              if (badge) badge.textContent = 'Private sells not enabled';
               if (tag) {
                 tag.textContent = 'REGULAR SELL';
                 tag.style.color = 'var(--color-racer-gold)';
                 tag.style.background = 'rgba(240, 173, 78,0.12)';
               }
-              if (desc) desc.textContent = 'Private sells are temporarily unavailable while a router payout issue is fixed. You will be offered a regular (non-private) sell.';
+              if (desc) desc.textContent = 'Private sells are not enabled yet. You will be offered a regular (non-private) sell.';
             } else if (willUseIntents) {
               if (badge) badge.textContent = 'NEAR Intents route';
               if (tag) {
