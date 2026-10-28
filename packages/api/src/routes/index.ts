@@ -1016,6 +1016,10 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           recipientAccountId = vaultRes.recipientAccountId;
         } else {
           logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
+          if (isPrivateTrade && vaultRes.privateSellsPaused) {
+            res.status(409).json({ error: vaultRes.reason, canRetryPublic: true });
+            return;
+          }
           if (isPrivateTrade) {
             let reasonText = vaultRes.reason || 'Transaction could not be shielded';
             if (reasonText.includes('zero_tokens_received')) {

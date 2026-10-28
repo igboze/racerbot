@@ -102,6 +102,8 @@ export interface VaultExecutionResult {
   recipientAccountId?: string;
   /** Contract rejected the intent because another swap of this token is still settling. */
   tokenBusy?: boolean;
+  /** Private sells are paused; the caller may offer a regular (public) sell instead. */
+  privateSellsPaused?: boolean;
   message?: string;
   reason?: string;
 }
@@ -128,9 +130,16 @@ async function quoteMinimumOut(params: {
   const quoteVenue = QUOTE_VENUES.has(v) ? v : 'rhea';
   const tokenIn = params.isBuy ? 'wrap.near' : params.tokenAddress;
   const tokenOut = params.isBuy ? params.tokenAddress : 'wrap.near';
-  const { minAmountOut } = await getNear().computeMinAmountOut(
-    quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
-  );
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`price quote timed out after ${QUOTE_TIMEOUT_MS / 1000}s`)), QUOTE_TIMEOUT_MS);
+  });
+  const { minAmountOut } = await Promise.race([
+    getNear().computeMinAmountOut(
+      quoteVenue as any, tokenIn, tokenOut, params.amountIn, params.slippagePct, params.poolId ?? null, params.dclPoolId ?? null
+    ),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
   if (!minAmountOut || BigInt(minAmountOut) <= 0n) {
     throw new Error('quote returned zero output');
   }
@@ -157,6 +166,11 @@ export function withMinimumOut<T extends { hops: VaultHop[]; minAmountOut: strin
 }
 
 const TOKEN_BUSY_RETRIES = 3;
+const QUOTE_TIMEOUT_MS = 5000;
+
+// Venues pay sell proceeds out as native NEAR (Ref DCL unwraps wNEAR, Ref v2 withdraw unwraps by
+// default), but the router only measures wNEAR. Until the router handles that, private sells stay off.
+const PRIVATE_SELLS_PAUSED = true;
 const TOKEN_BUSY_RETRY_MS = 2500;
 
 /**
@@ -870,6 +884,18 @@ export async function executeShieldedVaultIntent(params: {
 }
 
 async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeShieldedVaultIntent>[0]): Promise<VaultExecutionResult> {
+  if (PRIVATE_SELLS_PAUSED && params.side === 'SELL') {
+    return {
+      success: false,
+      routing: 'RACER_SHIELDED_VAULT',
+      correlationId: `intent_paused_${Date.now()}`,
+      tokenIn: params.tokenAddress,
+      tokenOut: 'near',
+      amountInFormatted: String(params.amountTokens || '0'),
+      privateSellsPaused: true,
+      reason: 'Private sells are temporarily unavailable while a router payout issue is fixed. Nothing was sent and no funds moved. You can sell with a regular (non-private) trade instead.',
+    };
+  }
   const correlationId = `intent_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const nonceBytes = crypto.randomBytes(32);
   const nonceArray = Array.from(nonceBytes);
