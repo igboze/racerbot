@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withMinimumOut } from './racerVault.js';
+import { afterTransferFee, withMinimumOut } from './racerVault.js';
 
 describe('Shielded vault minimum output', () => {
   const base = {
@@ -53,5 +53,16 @@ describe('Shielded vault minimum output', () => {
     const custom_msg = JSON.stringify({ token: 'meme.near' });
     const out = withMinimumOut({ ...base, custom_msg } as any, '5');
     expect(out.custom_msg).toBe(custom_msg);
+  });
+});
+
+describe('Fee-on-transfer tokens', () => {
+  it('removes a 3% (30000 pips) fee the way JustHoot tokens charge it', () => {
+    // The 2026-10-28 THREE sell: 3,750,033 sent, 3,637,532 reached Ref DCL
+    expect(afterTransferFee(3750033276138261254544n, 30000n)).toBe(3637532277854113416907n);
+  });
+
+  it('leaves ordinary tokens untouched', () => {
+    expect(afterTransferFee('1000', 0n)).toBe(1000n);
   });
 });
