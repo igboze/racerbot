@@ -17,6 +17,7 @@ import {
 import crypto from 'crypto';
 import { KeyPair, transactions } from 'near-api-js';
 import { connectWithNearRpcFailover } from './wallet.js';
+import { describeOutcome, parseRouterOutcome } from './routerEvents.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 
 const logger = createLogger('racer-vault');
@@ -1203,12 +1204,9 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       `prep=${prepMs}ms broadcast=${res?.__perf?.broadcastMs ?? '?'}ms confirm=${res?.__perf?.confirmMs ?? '?'}ms`
     );
 
-    // A reverted transaction comes back as an outcome with status.Failure (not a thrown error)
-    const txFailure = res?.status && typeof res.status === 'object' && 'Failure' in res.status
-      ? JSON.stringify(res.status.Failure)
-      : '';
-    const panicMsg = txFailure.match(/Smart contract panicked: ([^"\\]+)/)?.[1];
-    if (/Token busy/.test(txFailure)) {
+    // One parser for the router's events (also used by receipts and the background re-check)
+    const parsed = parseRouterOutcome(res);
+    if (parsed.tokenBusy) {
       await updateVaultIntentStatus(correlationId, { status: 'FAILED', tx_hash: txHash, failure_reason: 'token_busy' }).catch(() => {});
       return {
         success: false,
@@ -1224,56 +1222,14 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       };
     }
 
-    // Inspect logs for EVENT_JSON to extract status and amounts
-    let isSettled = false;
-    let isSlippageRefund = false;
-    let isPaidOut = false;
-    let payoutFailedToken: string | undefined;
-    let netOut = '0';
-    let failReason: string | undefined;
-
-    const allReceipts = res?.receipts_outcome || [];
-    for (const ro of allReceipts) {
-      for (const log of ro.outcome?.logs || []) {
-        if (log.startsWith('EVENT_JSON:')) {
-          try {
-            const ev = JSON.parse(log.slice(11));
-            if (ev.event === 'swap_settled') {
-              isSettled = true;
-              netOut = ev.data?.net || '0';
-            } else if (ev.event === 'slippage_refund') {
-              isSlippageRefund = true;
-              failReason = 'Price moved past your slippage limit: the tokens received were delivered with no fee';
-            } else if (ev.event === 'swap_failed') {
-              const r = ev.data?.reason || 'Venue swap failed';
-              failReason = r === 'zero_tokens_received'
-                ? 'zero_tokens_received (no tokens came back from the venue; any unused input was returned to your vault balance)'
-                : r === 'venue_refunded_input'
-                  ? 'The exchange rejected the swap (price moved past your slippage limit, or not enough liquidity) and returned your tokens. Nothing was lost; try again or raise slippage.'
-                  : r;
-            } else if (ev.event === 'unaccounted_output') {
-              // The venue kept the input but the router could not measure what it paid out
-              failReason = 'The venue took the input but its output could not be measured by the router. It has been flagged for reconciliation; contact support with this transaction hash.';
-            } else if (ev.event === 'payout_completed') {
-              isPaidOut = true;
-            } else if (ev.event === 'payout_failed' || ev.event === 'withdraw_failed') {
-              payoutFailedToken = ev.data?.token || planned.tokenOut;
-              failReason = 'Swap filled but the token transfer to your account failed; tokens were credited to your shielded vault balance';
-            }
-          } catch (_) {}
-        }
-      }
-    }
-
-    if (!failReason && panicMsg) {
-      failReason = `Router rejected the trade: ${panicMsg}`;
-    }
+    const netOut = parsed.netOut || '0';
+    const isSettled = parsed.status === 'SETTLED';
+    const payoutFailedToken = parsed.status === 'PAYOUT_FAILED' ? (parsed.payoutToken || planned.tokenOut) : undefined;
+    let failReason = describeOutcome(parsed);
 
     // "swap_settled" only means the venue filled; the trade is done once the payout transfer succeeded
-    const delivered = (isSettled || isSlippageRefund) && isPaidOut && !payoutFailedToken;
-    const finalStatus = delivered
-      ? (isSettled ? 'SETTLED' : 'SLIPPAGE_REFUNDED')
-      : payoutFailedToken ? 'PAYOUT_FAILED' : 'FAILED';
+    const delivered = parsed.status === 'SETTLED' || parsed.status === 'SLIPPAGE_REFUNDED';
+    const finalStatus = parsed.status === 'PENDING' ? 'PENDING' : parsed.status;
 
     if (payoutFailedToken) {
       // Tokens are safe in the vault ledger; retry delivering them to the user's account
@@ -1289,7 +1245,13 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       status: finalStatus,
       tx_hash: txHash,
       amount_out: netOut,
+      fee_amount: parsed.fee,
       failure_reason: failReason,
+      events: parsed.events,
+      payout_token: parsed.payoutToken,
+      payout_amount: parsed.payoutAmount,
+      refunded_amount: parsed.refundedAmount,
+      consumed_amount: parsed.consumedAmount,
     }).catch(() => {});
 
     if (delivered) {
@@ -1312,8 +1274,8 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
           : `Price moved past your slippage limit; the ${netOut} tokens received were delivered to ${intentPayload.user} with no fee.${vaultNote}`,
       };
     } else {
-      // Input is only refundable when the swap itself did not fill
-      if (autoDepositedToken && !payoutFailedToken) {
+      // Input is only refundable when the swap itself did not fill (and is no longer settling)
+      if (autoDepositedToken && !payoutFailedToken && finalStatus !== 'PENDING') {
         logger.info(`Auto-refunding ${autoDepositedToken} to ${intentPayload.user} following execution failure...`);
         await refundUserFromVault(intentPayload.user, autoDepositedToken).catch(rErr =>
           logger.warn(`Auto-refund attempt failed: ${rErr?.message}`)

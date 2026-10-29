@@ -1190,6 +1190,22 @@ router.get('/alpha/vault/balance', async (req, res) => {
   }
 });
 
+// Trade receipts and vault balances for the signed-in user
+router.get('/alpha/vault/receipts', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
+      return;
+    }
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 100);
+    const { getReceiptsAndVault } = await import('../receipts.js');
+    res.json({ success: true, ...(await getReceiptsAndVault(user.subaccount_id || user.id, limit)) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load receipts' });
+  }
+});
+
 router.get('/alpha/vault/intents', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
