@@ -68,6 +68,7 @@ export type {
   PoolCreatedEvent,
   TriggerEvent,
   SwapEvent,
+  CopyFillMeta,
   AutoBuySignal,
   PriceUpdateEvent,
   NotifyUserEvent,

@@ -3,6 +3,7 @@ import { pathToFileURL } from 'url';
 import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, getNear, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import { SwapExecutor, warmAllKeys, ensureRefStorage, ensureTreasuryStorage, preWarmActiveSnipeStorage } from './executor.js';
+import { settleCopyFill } from './copyFill.js';
 import { PARENT_ACCOUNT, MASTER_KEY } from './config.js';
 
 const REDIS_URL = process.env.REDIS_URL!;
@@ -83,7 +84,11 @@ async function main(): Promise<void> {
     });
 
     await logger.time('Swap executed', async () => {
-      await executor.execute(event).catch(async (err: Error) => {
+      const result = await executor.execute(event).catch(async (err: Error) => {
+        if (event.copy) {
+          await settleCopyFill(event.copy, { ok: false, reason: err.message ?? 'swap failed' })
+            .catch(e => logger.warn('Copy fill settle failed', { error: e?.message, fillId: event.copy?.fill_id }));
+        }
         logger.error('Swap failed', err, { correlationId, userId: event.user_id });
         if ((event as any).trigger_id) {
           try {
@@ -119,7 +124,15 @@ async function main(): Promise<void> {
         } catch (notifyErr: any) {
           logger.warn('Failed to publish trade_failed notification', { error: notifyErr.message });
         }
+        return null;
       });
+      // A failure the executor returned (rather than threw) is still a failed copy
+      if (event.copy && result) {
+        await settleCopyFill(event.copy, result.success === false
+          ? { ok: false, reason: result.reason || 'swap failed' }
+          : { ok: true, txHash: result.txHash })
+          .catch(e => logger.warn('Copy fill settle failed', { error: e?.message, fillId: event.copy?.fill_id }));
+      }
     }, { correlationId, userId: event.user_id });
   });
 
