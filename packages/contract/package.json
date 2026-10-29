@@ -4,8 +4,9 @@
   "private": true,
   "main": "src/lib.rs",
   "scripts": {
-    "build": "cargo build --target wasm32-unknown-unknown --release --target-dir ../../.cargo-target",
-    "test": "cargo test --target-dir ../../.cargo-target",
-    "deploy": "near deploy router.racerbot.near ../../.cargo-target/wasm32-unknown-unknown/release/racerbot_router.wasm"
+    "build": "cargo build --target wasm32-unknown-unknown --release",
+    "test": "cargo test",
+    "deploy": "near deploy router.racerbot.near ../../.cargo-target/wasm32-unknown-unknown/release/racerbot_router.wasm",
+    "optimize": "npx --yes --package=binaryen@132.0.0 wasm-opt -Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --strip-debug target/wasm32-unknown-unknown/release/racerbot_router.wasm -o target/racerbot_router.opt.wasm"
   }
 }

@@ -221,3 +221,26 @@ export type {
 
 export type { RacerVaultIntentRecord } from './db.js';
 export { recordVaultIntent, updateVaultIntentStatus, getVaultIntentByCorrelationId, getUserVaultIntents, listPendingVaultIntents, markVaultIntentChecked, expireUnsentVaultIntents } from './db.js';
+
+export type {
+  ConfidentialAccountRecord,
+  ConfidentialExecutorRecord,
+  ConfidentialMoveRecord,
+  ExecutorStatus,
+  ConfidentialMoveKind,
+} from './db.js';
+export {
+  getConfidentialAccount,
+  createConfidentialAccount,
+  updateConfidentialSettings,
+  insertExecutor,
+  updateExecutor,
+  getExecutor,
+  listUserExecutors,
+  listExecutorsByStatus,
+  claimReadyExecutors,
+  insertConfidentialMove,
+  updateConfidentialMove,
+  listOpenConfidentialMoves,
+  listUserConfidentialMoves,
+} from './db.js';
