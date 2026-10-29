@@ -1098,6 +1098,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   // cutting out the sequential 2nd transaction and eliminating 4+ seconds of latency!
   let autoDepositedToken: string | null = null;
   let neededNearToAttach = 0n;
+  let sellDepositAmount = 0n;
 
   if (isBuy) {
     // Fund in the asset the venue spends: native NEAR (Shardsmarket, bonding curves, Intear),
@@ -1134,20 +1135,9 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       }
     }
   } else if (!isBuy && BigInt(balNear) < BigInt(rawAmountIn)) {
-    const needed = (BigInt(rawAmountIn) - BigInt(balNear)).toString();
-    logger.info(`Auto-depositing ${needed} FT (${planned.tokenIn}) into vault sub-ledger for ${userAccountId}`);
-    const depRes = await depositFtToVault(params.user, planned.tokenIn, needed);
-    if (!depRes.success) {
-      return {
-        success: false,
-        routing: 'RACER_SHIELDED_VAULT',
-        correlationId,
-        tokenIn: planned.tokenIn,
-        tokenOut: planned.tokenOut,
-        amountInFormatted: String(numNear),
-        reason: `Insufficient ${planned.tokenIn} in shielded vault ledger and auto-deposit failed: ${depRes.reason}`,
-      };
-    }
+    // One transaction: the shortfall is deposited with ft_transfer_call carrying the intent, and the
+    // router starts the sell on arrival (a rejected intent is refunded by the token, per NEP-141)
+    sellDepositAmount = BigInt(rawAmountIn) - BigInt(balNear);
     autoDepositedToken = planned.tokenIn;
   }
 
@@ -1182,19 +1172,33 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
     );
   }
 
-  actions.push(
-    transactions.functionCall(
-      'execute_intent',
-      { intent: intentPayload },
-      BigInt('285000000000000'), // 285 TGas: snapshot → swap → balance check → payout chain (+10 for deposit <= 300 limit)
-      0n
-    )
-  );
+  let receiverId = RACER_VAULT_CONTRACT_ID;
+  if (sellDepositAmount > 0n) {
+    // Tokens keep 14-30 TGas of ft_transfer_call; the router needs ~250 TGas for the swap chain
+    receiverId = planned.tokenIn;
+    actions.push(
+      transactions.functionCall(
+        'ft_transfer_call',
+        { receiver_id: RACER_VAULT_CONTRACT_ID, amount: sellDepositAmount.toString(), msg: JSON.stringify({ intent: intentPayload }) },
+        BigInt('300000000000000'),
+        1n
+      )
+    );
+  } else {
+    actions.push(
+      transactions.functionCall(
+        'execute_intent',
+        { intent: intentPayload },
+        BigInt('285000000000000'), // 285 TGas: snapshot → swap → balance check → payout chain (+10 for deposit <= 300 limit)
+        0n
+      )
+    );
+  }
 
   try {
     const res = await near.signAndSendTransactionAll(
       intentPayload.user,
-      RACER_VAULT_CONTRACT_ID,
+      receiverId,
       actions
     );
 

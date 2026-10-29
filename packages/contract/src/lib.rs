@@ -289,6 +289,9 @@ impl RacerbotVault {
 
     /// NEP-141 ft_on_transfer: tokens arrive at contract from user's wallet.
     /// msg = "user:<account_id>" when relayer deposits on behalf of a user.
+    /// msg = {"intent": Intent} deposits and trades in one transaction: the tokens are credited
+    /// to the sender and the intent starts in the same receipt. If the intent is rejected the
+    /// receipt fails and the token refunds the sender (NEP-141), so nothing is left behind.
     pub fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -300,6 +303,17 @@ impl RacerbotVault {
         // Incoming wNEAR would be counted as a settling sell's output: hand it back (NEP-141 refund)
         if token_id == WRAP_NEAR && self.wnear_gate_closed() {
             return PromiseOrValue::Value(amount);
+        }
+        if let Some(intent) = Self::parse_intent_msg(&msg) {
+            require!(intent.user == sender_id, "Intent user must be the sender of the deposit");
+            require!(intent.token_in == token_id, "Intent token_in must be the deposited token");
+            self.credit(&sender_id, &token_id, amount.0);
+            Self::emit("deposit", serde_json::json!({
+                "user": sender_id, "token": token_id, "amount": amount
+            }));
+            // Detached: the swap chain runs after this receipt; the deposit itself is fully accepted
+            let _ = self.start_intent(intent);
+            return PromiseOrValue::Value(U128(0));
         }
         let user: AccountId = if msg.starts_with("user:") {
             msg[5..].parse().unwrap_or(sender_id.clone())
@@ -408,7 +422,24 @@ impl RacerbotVault {
         let predecessor = env::predecessor_account_id();
         require!(predecessor == self.owner_id || predecessor == intent.user,
             "Only relayer or user can submit intents");
+        self.start_intent(intent)
+    }
 
+    /// `{"intent": Intent}` deposit message, if that is what `msg` holds.
+    fn parse_intent_msg(msg: &str) -> Option<Intent> {
+        #[derive(near_sdk::serde::Deserialize)]
+        #[serde(crate = "near_sdk::serde")]
+        struct IntentMsg {
+            intent: Intent,
+        }
+        if !msg.trim_start().starts_with('{') {
+            return None;
+        }
+        Some(serde_json::from_str::<IntentMsg>(msg).unwrap_or_else(|_| env::panic_str("Invalid intent message")).intent)
+    }
+
+    /// Validate, debit and dispatch an authorised intent (caller checks who may submit it).
+    fn start_intent(&mut self, intent: Intent) -> Promise {
         // 1. Deadline
         let now_sec = env::block_timestamp() / 1_000_000_000;
         require!(intent.deadline == 0 || now_sec <= intent.deadline, "Intent expired");
@@ -1943,6 +1974,82 @@ mod tests {
     fn test_reconcile_requires_a_reference() {
         let mut c = setup();
         c.reconcile_ledger(user(), "usdc.near".into(), U128(0), "near".into(), U128(1), " ".into());
+    }
+
+    // ── One-transaction sells: ft_transfer_call carrying an intent ───────────
+
+    fn as_token(token: &str) {
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(vault())
+            .predecessor_account_id(token.parse().unwrap())
+            .build());
+    }
+
+    fn sell_msg(nonce_byte: u8, amount: u128) -> String {
+        let mut i = intent_for(Venue::Dcl, "meme.near", WRAP_NEAR, nonce_byte);
+        i.amount_in = U128(amount);
+        serde_json::json!({ "intent": i }).to_string()
+    }
+
+    #[test]
+    fn test_deposit_with_intent_credits_and_starts_the_sell() {
+        let mut c = setup();
+        as_token("meme.near");
+        let res = c.ft_on_transfer(user(), U128(5_000), sell_msg(50, 5_000));
+        assert!(matches!(res, PromiseOrValue::Value(U128(0))), "deposit fully accepted");
+        assert_eq!(c.get_balance(&user(), "meme.near"), 0, "credited then debited by the intent");
+        assert!(c.is_token_locked(WRAP_NEAR), "sell to NEAR holds the wNEAR gate");
+        assert_eq!(c.inflight(), 1);
+        assert!(c.pending_swaps.get(&(c.nonce - 1)).is_some());
+    }
+
+    #[test]
+    fn test_deposit_larger_than_intent_keeps_the_rest_in_the_vault() {
+        let mut c = setup();
+        as_token("meme.near");
+        let _ = c.ft_on_transfer(user(), U128(7_000), sell_msg(51, 5_000));
+        assert_eq!(c.get_balance(&user(), "meme.near"), 2_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Intent user must be the sender")]
+    fn test_deposit_intent_for_someone_else_is_rejected() {
+        let mut c = setup();
+        as_token("meme.near");
+        let _ = c.ft_on_transfer("mallory.near".parse().unwrap(), U128(5_000), sell_msg(52, 5_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "Intent token_in must be the deposited token")]
+    fn test_deposit_intent_for_another_token_is_rejected() {
+        let mut c = setup();
+        as_token("other.near");
+        let _ = c.ft_on_transfer(user(), U128(5_000), sell_msg(53, 5_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "Insufficient vault balance")]
+    fn test_deposit_smaller_than_intent_is_rejected() {
+        let mut c = setup();
+        as_token("meme.near");
+        let _ = c.ft_on_transfer(user(), U128(4_000), sell_msg(54, 5_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid intent message")]
+    fn test_malformed_intent_message_is_rejected() {
+        let mut c = setup();
+        as_token("meme.near");
+        let _ = c.ft_on_transfer(user(), U128(5_000), "{\"intent\": 1}".into());
+    }
+
+    #[test]
+    fn test_plain_deposit_still_works() {
+        let mut c = setup();
+        as_token("meme.near");
+        let _ = c.ft_on_transfer(user(), U128(5_000), String::new());
+        assert_eq!(c.get_balance(&user(), "meme.near"), 5_000);
+        assert_eq!(c.inflight(), 0);
     }
 
     #[test]

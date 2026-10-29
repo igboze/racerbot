@@ -54,9 +54,12 @@ export function extractRouterEvents(outcome: any): RouterEvent[] {
 
 export function parseRouterOutcome(outcome: any): ParsedRouterOutcome {
   const events = extractRouterEvents(outcome);
-  const failure = outcome?.status && typeof outcome.status === 'object' && 'Failure' in outcome.status
-    ? JSON.stringify(outcome.status.Failure)
-    : '';
+  // A one-transaction sell (ft_transfer_call carrying the intent) that the router rejects fails
+  // inside a receipt while the transaction itself succeeds (the token refunds the sender)
+  const failures = [outcome?.status, ...(outcome?.receipts_outcome || []).map((ro: any) => ro?.outcome?.status)]
+    .filter((st: any) => st && typeof st === 'object' && 'Failure' in st)
+    .map((st: any) => JSON.stringify(st.Failure));
+  const failure = failures.find(f => /Smart contract panicked/.test(f)) ?? failures[0] ?? '';
   const reverted = failure ? (failure.match(/Smart contract panicked: ([^"\\]+)/)?.[1] ?? 'transaction failed') : undefined;
   const find = (name: string) => events.find(e => e.event === name);
 
