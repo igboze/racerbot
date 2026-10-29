@@ -2280,6 +2280,21 @@
     .verify-result[data-tone="ok"] { color: #34D399; }
     .verify-result[data-tone="bad"] { color: #FF6B73; }
     .receipts-empty { padding: 20px 16px; font-size: 13.5px; color: var(--color-text-muted); }
+    .conf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .conf-card { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .conf-card h4, .conf-subhead { margin: 0; font-size: 13px; font-weight: 600; color: var(--color-text-muted); }
+    .conf-subhead { margin: 20px 0 8px; }
+    .conf-big { font: 700 26px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-text); }
+    .conf-big small { font-size: 14px; color: var(--color-text-muted); margin-left: 6px; }
+    .conf-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .conf-input {
+      height: 44px; min-width: 0; flex: 1 1 120px; padding: 0 12px; border-radius: 8px;
+      border: 1px solid var(--color-border); background: var(--color-bg, #0F1320); color: var(--color-text);
+      font: 600 14px var(--font-mono);
+    }
+    .conf-input:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+    .conf-pool { display: flex; flex-wrap: wrap; gap: 6px; }
+    .conf-hint { font-size: 12.5px; line-height: 1.5; color: var(--color-text-subtle); margin: 0; }
     @media (max-width: 767px) {
       .receipt-item summary {
         grid-template-columns: minmax(0, 1fr) auto 20px;
@@ -4565,6 +4580,44 @@
           <p>Every private trade, as recorded by the Racer router on-chain. Open a trade to see each step, or check it against the chain yourself.</p>
         </div>
 
+        <div class="receipts-section" id="conf-section">
+          <h3>Confidential wallet</h3>
+          <p class="receipts-note" id="conf-note">Your private balance sits in NEAR Intents. Every buy runs from its own executor account, funded before you click, so your wallet never appears in a trade. When a position is fully sold, its NEAR returns here and the executor closes.</p>
+          <div id="conf-body" hidden>
+            <div class="conf-grid">
+              <div class="conf-card" aria-labelledby="conf-balance-label">
+                <h4 id="conf-balance-label">Private balance</h4>
+                <div class="conf-big"><span id="conf-balance">-</span><small>NEAR</small></div>
+                <div class="conf-row">
+                  <input class="conf-input" id="conf-deposit-amount" type="number" min="0.1" step="0.1" placeholder="Amount (NEAR)" aria-label="Deposit amount in NEAR">
+                  <button type="button" class="receipts-btn" onclick="confDeposit(this)">Deposit</button>
+                </div>
+                <div class="conf-row">
+                  <input class="conf-input" id="conf-withdraw-amount" type="number" min="0.01" step="0.1" placeholder="Amount (NEAR)" aria-label="Withdraw amount in NEAR">
+                  <input class="conf-input" id="conf-withdraw-to" type="text" placeholder="To (default: your wallet)" aria-label="Withdraw destination account">
+                  <button type="button" class="receipts-btn" onclick="confWithdraw(this)">Withdraw</button>
+                </div>
+                <p class="conf-hint">Deposits arrive in about 20 seconds; withdrawals in about 15. For more privacy, use round amounts and wait a while between depositing and trading.</p>
+              </div>
+              <div class="conf-card" aria-labelledby="conf-pool-label">
+                <h4 id="conf-pool-label">Ready to trade</h4>
+                <div class="conf-big"><span id="conf-pool-total">-</span><small>NEAR in executors</small></div>
+                <div class="conf-pool" id="conf-pool" aria-live="polite"></div>
+                <div class="conf-row">
+                  <label class="conf-hint" for="conf-pool-setting" style="flex-basis:100%">Pool size in NEAR, split into 1 NEAR executors</label>
+                  <input class="conf-input" id="conf-pool-setting" type="number" min="0.1" max="100" step="0.5" value="5">
+                  <button type="button" class="receipts-btn" onclick="confSavePool(this)">Save</button>
+                </div>
+                <p class="conf-hint">A buy uses the smallest ready executor that covers it, and a replacement is funded straight away (about 15 seconds). NEAR waiting here is visible on-chain but not linked to you.</p>
+              </div>
+            </div>
+            <h4 class="conf-subhead">Open positions</h4>
+            <ul class="vault-list" id="conf-positions" aria-live="polite"><li class="receipts-empty">No open positions.</li></ul>
+            <h4 class="conf-subhead">Moves in and out of your private balance</h4>
+            <ul class="vault-list" id="conf-moves" aria-live="polite"><li class="receipts-empty">No moves yet.</li></ul>
+          </div>
+        </div>
+
         <div class="receipts-section">
           <h3>Vault balance</h3>
           <p class="receipts-note" id="vault-balance-note">Tokens the router holds for your account, for example after a refunded trade. Private sells use this balance first.</p>
@@ -5097,7 +5150,114 @@
       }).join('');
     }
 
+    // ── Confidential wallet: private balance, ready pool, positions ──────────
+    const CONF_MOVE_LABEL = { deposit: 'Deposit', refill: 'Executor funded', return: 'Position returned', withdraw: 'Withdrawal' };
+    const CONF_STATUS = {
+      SUCCESS: { label: 'Done', tone: 'ok' }, REFUNDED: { label: 'Refunded', tone: 'warn' }, FAILED: { label: 'Failed', tone: 'bad' },
+      INCOMPLETE_DEPOSIT: { label: 'Incomplete', tone: 'bad' }, PROCESSING: { label: 'Moving', tone: 'live' },
+      KNOWN_DEPOSIT_TX: { label: 'Moving', tone: 'live' }, PENDING_DEPOSIT: { label: 'Waiting', tone: 'live' },
+    };
+    const nearFmt = (raw) => fmtUnits(raw || '0', 24, 4);
+
+    async function loadConfidential() {
+      const body = document.getElementById('conf-body');
+      const note = document.getElementById('conf-note');
+      if (!body || !note) return;
+      try {
+        const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (res.status === 503) { note.textContent = 'Confidential trading switches on once its contracts are deployed.'; body.hidden = true; return; }
+        if (res.status === 401) { note.textContent = data.error || 'Sign in with Telegram to use confidential trading.'; body.hidden = true; return; }
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        body.hidden = false;
+        document.getElementById('conf-balance').textContent = data.privateBalance === null || data.privateBalance === undefined ? '-' : nearFmt(data.privateBalance);
+        const pool = data.pool || [];
+        const ready = pool.filter(p => p.status === 'ready');
+        document.getElementById('conf-pool-total').textContent = nearFmt(ready.reduce((s, p) => s + BigInt(p.size), 0n).toString());
+        document.getElementById('conf-pool').innerHTML = pool.length ? pool.map(p => {
+          const tone = p.status === 'ready' ? 'ok' : 'live';
+          const label = p.status === 'ready' ? 'Ready' : p.status === 'claimed' ? 'Buying' : 'Funding';
+          return `<span class="status-chip" data-tone="${tone}">${escapeHtml(nearFmt(p.size))} NEAR · ${label}</span>`;
+        }).join('') : '<span class="conf-hint">No executors yet. Deposit, and the pool fills automatically.</span>';
+        const cap = data.account && data.account.settings ? BigInt(data.account.settings.poolCap || '0') : 0n;
+        if (cap > 0n) document.getElementById('conf-pool-setting').value = nearFmt(cap.toString()).replace(/,/g, '');
+        const positions = data.positions || [];
+        document.getElementById('conf-positions').innerHTML = positions.length ? positions.map(p => `
+          <li class="vault-row">
+            <span class="vault-token">${escapeHtml(p.symbol || p.token.split('.')[0].toUpperCase())}<small>${escapeHtml(p.token)} · held by ${escapeHtml(p.executor)}</small></span>
+            <span class="receipts-amount">${escapeHtml(fmtUnits(p.balance, p.decimals))}</span>
+          </li>`).join('') : '<li class="receipts-empty">No open positions. Buys made with Private on land here.</li>';
+        const moves = (data.moves || []).filter(m => m.kind !== 'refill' || m.status !== 'SUCCESS');
+        document.getElementById('conf-moves').innerHTML = moves.length ? moves.map(m => {
+          const st = CONF_STATUS[m.status] || { label: m.status, tone: 'neutral' };
+          return `<li class="vault-row">
+            <span class="vault-token">${escapeHtml(CONF_MOVE_LABEL[m.kind] || m.kind)}<small>${escapeHtml(new Date(m.at).toLocaleString())}${m.destination && m.kind === 'withdraw' ? ' · to ' + escapeHtml(m.destination) : ''}</small></span>
+            <span class="status-chip" data-tone="${st.tone}">${escapeHtml(st.label)}</span>
+            <span class="receipts-amount">${escapeHtml(nearFmt(m.amount))} NEAR</span>
+          </li>`;
+        }).join('') : '<li class="receipts-empty">No moves yet.</li>';
+      } catch (err) {
+        note.textContent = `Could not load the confidential wallet (${err.message || 'network error'}). Try again in a moment.`;
+      }
+    }
+
+    async function confPost(path, payload, btn, busyText) {
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = busyText;
+      try {
+        const res = await fetch(path, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
+        return data;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    }
+
+    async function confDeposit(btn) {
+      const amountNear = Number(document.getElementById('conf-deposit-amount').value);
+      if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return; }
+      try {
+        const data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
+        showToast(data.message || 'Deposit sent', 'success');
+        document.getElementById('conf-deposit-amount').value = '';
+        refreshUserBalance();
+        setTimeout(loadConfidential, 1500);
+      } catch (err) {
+        showToast(`Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function confWithdraw(btn) {
+      const amountNear = Number(document.getElementById('conf-withdraw-amount').value);
+      const destination = document.getElementById('conf-withdraw-to').value.trim();
+      if (!(amountNear > 0)) { showToast('Enter an amount to withdraw.', 'error'); return; }
+      try {
+        const data = await confPost('/alpha/confidential/withdraw', { amountNear, destination: destination || undefined }, btn, 'Withdrawing...');
+        showToast(data.message || 'Withdrawal sent', 'success');
+        document.getElementById('conf-withdraw-amount').value = '';
+        setTimeout(loadConfidential, 1500);
+      } catch (err) {
+        showToast(`Withdrawal failed: ${err.message}. Nothing left your private balance.`, 'error');
+      }
+    }
+
+    async function confSavePool(btn) {
+      const poolTotalNear = Number(document.getElementById('conf-pool-setting').value);
+      if (!(poolTotalNear >= 0.1 && poolTotalNear <= 100)) { showToast('Pool size must be between 0.1 and 100 NEAR.', 'error'); return; }
+      try {
+        await confPost('/alpha/confidential/settings', { poolTotalNear }, btn, 'Saving...');
+        showToast(`Pool set to ${poolTotalNear} NEAR. Executors are being funded from your private balance.`, 'success');
+        loadConfidential();
+      } catch (err) {
+        showToast(`Could not save: ${err.message}`, 'error');
+      }
+    }
+
     async function loadReceipts() {
+      loadConfidential();
       const vaultList = document.getElementById('vault-balance-list');
       const list = document.getElementById('receipt-list');
       try {

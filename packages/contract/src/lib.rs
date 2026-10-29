@@ -27,6 +27,8 @@ use near_sdk::{
 use near_sdk::json_types::U128;
 use near_sdk::store::{LookupMap, LookupSet};
 
+mod executors;
+
 // ── Gas budgets ───────────────────────────────────────────────────────────────
 const GAS_WRAP: Gas          = Gas::from_tgas(10);
 const GAS_SWAP: Gas          = Gas::from_tgas(80);
