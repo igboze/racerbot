@@ -2295,6 +2295,9 @@
     .conf-input:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
     .conf-pool { display: flex; flex-wrap: wrap; gap: 6px; }
     .conf-hint { font-size: 12.5px; line-height: 1.5; color: var(--color-text-subtle); margin: 0; }
+    .conf-xchain-result { display: flex; flex-direction: column; gap: 8px; }
+    .conf-xchain-result img { width: 148px; height: 148px; background: #fff; border-radius: 8px; padding: 6px; }
+    .conf-address { font: 12px var(--font-mono); word-break: break-all; color: var(--color-text); }
     @media (max-width: 767px) {
       .receipt-item summary {
         grid-template-columns: minmax(0, 1fr) auto 20px;
@@ -4610,6 +4613,19 @@
                 </div>
                 <p class="conf-hint">A buy uses the smallest ready executor that covers it, and a replacement is funded straight away (about 15 seconds). NEAR waiting here is visible on-chain but not linked to you.</p>
               </div>
+              <div class="conf-card" aria-labelledby="conf-xchain-label">
+                <h4 id="conf-xchain-label">Deposit from another chain</h4>
+                <div class="conf-row">
+                  <select class="conf-input" id="conf-xchain-chain" aria-label="Chain to send from" onchange="confLoadXchainTokens()"></select>
+                  <select class="conf-input" id="conf-xchain-token" aria-label="Token to send"></select>
+                </div>
+                <div class="conf-row">
+                  <input class="conf-input" id="conf-xchain-amount" type="number" min="0" step="any" placeholder="Amount" aria-label="Amount to send">
+                  <button type="button" class="receipts-btn" onclick="confXchainQuote(this)">Get address</button>
+                </div>
+                <div class="conf-xchain-result" id="conf-xchain-result" aria-live="polite" hidden></div>
+                <p class="conf-hint">Send SOL, BTC, USDC and more from any wallet. It arrives in your private balance as NEAR without passing through a public NEAR wallet. 1% fee, the same as regular deposits.</p>
+              </div>
             </div>
             <h4 class="conf-subhead">Open positions</h4>
             <ul class="vault-list" id="conf-positions" aria-live="polite"><li class="receipts-empty">No open positions.</li></ul>
@@ -5167,9 +5183,10 @@
         const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
         const data = await res.json();
         if (res.status === 503) { note.textContent = 'Confidential trading switches on once its contracts are deployed.'; body.hidden = true; return; }
-        if (res.status === 401) { note.textContent = data.error || 'Sign in with Telegram to use confidential trading.'; body.hidden = true; return; }
+        if (res.status === 401) { note.textContent = data.error || 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.'; body.hidden = true; return; }
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         body.hidden = false;
+        confLoadXchainChains();
         document.getElementById('conf-balance').textContent = data.privateBalance === null || data.privateBalance === undefined ? '-' : nearFmt(data.privateBalance);
         const pool = data.pool || [];
         const ready = pool.filter(p => p.status === 'ready');
@@ -5221,12 +5238,76 @@
       if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return; }
       try {
         const data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
+        if (data.requiresWalletSignature) {
+          // Signed in with your own wallet: it signs the deposit (wrap, register the address, send)
+          if (!window.RacerConnect || typeof window.RacerConnect.sendFunctionCalls !== 'function') {
+            throw new Error('Connect your NEAR wallet to approve the deposit.');
+          }
+          showToast('Approve the deposit in your wallet.', 'info');
+          const tx = await window.RacerConnect.sendFunctionCalls(data.transaction);
+          const done = await confPost('/alpha/confidential/deposit/submit', { depositAddress: data.depositAddress, txHash: tx.hash }, btn, 'Recording...');
+          data.message = done.message;
+        }
         showToast(data.message || 'Deposit sent', 'success');
         document.getElementById('conf-deposit-amount').value = '';
         refreshUserBalance();
         setTimeout(loadConfidential, 1500);
       } catch (err) {
         showToast(`Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    let confXchainLoaded = false;
+    async function confLoadXchainChains() {
+      const sel = document.getElementById('conf-xchain-chain');
+      if (!sel || confXchainLoaded) return;
+      try {
+        const data = await fetch('/deposit/chains').then(r => r.json());
+        sel.innerHTML = (data.chains || []).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        confXchainLoaded = true;
+        await confLoadXchainTokens();
+      } catch (err) {
+        sel.innerHTML = '<option value="">Chains unavailable</option>';
+      }
+    }
+
+    async function confLoadXchainTokens() {
+      const chain = document.getElementById('conf-xchain-chain').value;
+      const sel = document.getElementById('conf-xchain-token');
+      sel.innerHTML = '<option value="">Loading...</option>';
+      try {
+        const data = await fetch(`/deposit/tokens?chain=${encodeURIComponent(chain)}`).then(r => r.json());
+        sel.innerHTML = (data.tokens || []).map(t =>
+          `<option value="${escapeHtml(t.key)}">${escapeHtml(t.symbol)}${t.minDeposit && t.minDeposit.formatted ? ' (min ' + escapeHtml(t.minDeposit.formatted) + ')' : ''}</option>`
+        ).join('') || '<option value="">No tokens on this chain</option>';
+      } catch (err) {
+        sel.innerHTML = '<option value="">Tokens unavailable</option>';
+      }
+    }
+
+    async function confXchainQuote(btn) {
+      const tokenKey = document.getElementById('conf-xchain-token').value;
+      const amount = Number(document.getElementById('conf-xchain-amount').value);
+      if (!tokenKey) { showToast('Pick a token to deposit.', 'error'); return; }
+      if (!(amount > 0)) { showToast('Enter an amount to deposit.', 'error'); return; }
+      const box = document.getElementById('conf-xchain-result');
+      try {
+        const d = await confPost('/alpha/confidential/deposit/crosschain', { tokenKey, amount }, btn, 'Getting address...');
+        box.hidden = false;
+        box.innerHTML = `
+          <img src="${d.qrDataUrl}" alt="QR code of the deposit address">
+          <p class="conf-hint">Send exactly <b>${escapeHtml(d.amount)} ${escapeHtml(d.symbol)}</b> on ${escapeHtml(d.chain)} to:</p>
+          <code class="conf-address" id="conf-xchain-address">${escapeHtml(d.depositAddress)}</code>
+          ${d.depositMemo ? `<p class="conf-hint">Memo (required): <code class="conf-address">${escapeHtml(d.depositMemo)}</code></p>` : ''}
+          <div class="conf-row">
+            <button type="button" class="receipts-btn" onclick="navigator.clipboard.writeText(document.getElementById('conf-xchain-address').textContent).then(() => showToast('Address copied', 'success'))">Copy address</button>
+            ${d.walletLink ? `<a class="receipts-btn" href="${escapeHtml(d.walletLink)}" target="_blank" rel="noopener">Open in wallet</a>` : ''}
+          </div>
+          <p class="conf-hint">About ${escapeHtml(String(d.expectedNear))} NEAR arrives in your private balance (at least ${escapeHtml(String(d.minNear))}). This address is for this deposit only and expires in 30 minutes.</p>`;
+        setTimeout(loadConfidential, 5000);
+      } catch (err) {
+        box.hidden = true;
+        showToast(`Could not create the deposit: ${err.message}`, 'error');
       }
     }
 
@@ -8400,6 +8481,9 @@
 
     // ── NEAR Wallet Connect & RacerConnect Integration ─────────────────────────
     function getActiveUserAddress() {
+      if (window.RacerConnect && window.RacerConnect.user?.managedWallet) {
+        return window.RacerConnect.user.managedWallet;
+      }
       if (window.RacerConnect && window.RacerConnect.activeNearWallet) {
         return window.RacerConnect.activeNearWallet;
       }
@@ -8413,8 +8497,12 @@
       const addr = getActiveUserAddress();
       const headers = { 'Content-Type': 'application/json' };
       if (addr) headers['x-wallet-address'] = addr;
-      const token = localStorage.getItem('racer_auth_token');
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (window.RacerConnect && typeof window.RacerConnect.getAuthHeader === 'function') {
+        Object.assign(headers, window.RacerConnect.getAuthHeader());
+      } else {
+        const token = localStorage.getItem('racer_auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
       return headers;
     }
 
@@ -8460,6 +8548,98 @@
       const modal = document.getElementById('racer-connect-modal');
       if (modal) modal.classList.add('open');
       updateWalletUI();
+      loadTradingWallet();
+    }
+
+    // ── Trading wallet: a RacerBot-managed wallet for users who signed in with their own ─────────
+    // Only public addresses ever reach the page; the key is created and kept encrypted on the server.
+    function rememberManagedWallet(address) {
+      if (!window.RacerConnect || !window.RacerConnect.user) return;
+      window.RacerConnect.user.managedWallet = address || undefined;
+      try { localStorage.setItem('racer_user_profile', JSON.stringify(window.RacerConnect.user)); } catch (e) {}
+    }
+
+    async function loadTradingWallet() {
+      const box = document.getElementById('modal-trading-wallet');
+      const body = document.getElementById('trading-wallet-body');
+      if (!box || !body) return;
+      const headers = getAuthHeaders();
+      if (!headers.Authorization) { box.hidden = true; return; }
+      try {
+        const res = await fetch('/alpha/wallet', { headers });
+        const data = await res.json();
+        box.hidden = false;
+        if (res.status === 401) {
+          body.innerHTML = '<span style="color:var(--color-text-muted);">Reconnect your wallet and approve the sign-in message to trade from this account.</span>';
+          return;
+        }
+        if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
+        if (data.managed) {
+          rememberManagedWallet(data.address);
+          body.innerHTML = `
+            <div><span style="color:var(--color-text-muted);">RacerBot wallet</span><br>
+              <code id="trading-wallet-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all;"></code></div>
+            <div style="display:flex; gap:8px;">
+              <input id="trading-wallet-fund" type="number" min="0.01" step="0.1" placeholder="NEAR" aria-label="Amount to send from your connected wallet"
+                style="flex:1; height:36px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono);">
+              <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
+              <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
+            </div>
+            <span style="color:var(--color-text-subtle); font-size:12px;">Trades and private trading run from this wallet without wallet pop-ups. RacerBot keeps its key encrypted on the server; it is never sent to your browser.</span>`;
+          document.getElementById('trading-wallet-address').textContent = data.address;
+        } else {
+          rememberManagedWallet(null);
+          body.innerHTML = `
+            <span style="color:var(--color-text-muted);">You trade with your connected wallet, approving each trade in it. Want one-tap trading instead?</span>
+            <button type="button" class="btn-primary" style="height:40px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
+            <span style="color:var(--color-text-subtle); font-size:12px;">RacerBot creates a NEAR wallet for you and keeps its key encrypted on the server, like the Telegram bot. You sign in with your connected wallet as before; fund it whenever you like.</span>`;
+        }
+      } catch (err) {
+        box.hidden = false;
+        body.textContent = 'Could not load your trading wallet. Try again in a moment.';
+      }
+    }
+
+    async function createTradingWallet(btn) {
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.textContent = 'Creating...';
+      try {
+        const res = await fetch('/alpha/wallet/create', { method: 'POST', headers: getAuthHeaders(), body: '{}' });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
+        showToast(data.message || 'Wallet created', 'success');
+        rememberManagedWallet(data.address);
+        await loadTradingWallet();
+        updateWalletUI();
+        refreshUserBalance();
+      } catch (err) {
+        showToast(`Could not create the wallet: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    }
+
+    async function fundTradingWallet(btn) {
+      const amountNear = Number(document.getElementById('trading-wallet-fund').value);
+      const address = document.getElementById('trading-wallet-address')?.textContent;
+      if (!(amountNear > 0) || !address) { showToast('Enter an amount of NEAR to send.', 'error'); return; }
+      if (!window.RacerConnect || typeof window.RacerConnect.sendNearTransaction !== 'function') {
+        showToast('Connect your NEAR wallet to send from it.', 'error');
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await window.RacerConnect.sendNearTransaction({ receiverId: address, amountNear });
+        showToast(`Sent ${amountNear} NEAR to your RacerBot wallet.`, 'success');
+        document.getElementById('trading-wallet-fund').value = '';
+        setTimeout(refreshUserBalance, 2500);
+      } catch (err) {
+        showToast(`Transfer failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function closeConnectModal() {
@@ -8486,7 +8666,7 @@
       const mobileLabel = document.getElementById('mobile-connect-label');
       const mobileBtn = document.getElementById('mobile-header-connect-btn');
 
-      const activeAddr = nearWallet || (user && user.subaccountId) || (user && user.username);
+      const activeAddr = getActiveUserAddress() || (user && user.username);
       if (depositBtn) {
         depositBtn.style.display = activeAddr ? 'inline-flex' : 'none';
       }
@@ -8572,16 +8752,15 @@
         return;
       }
       try {
-        if (statusDiv) { statusDiv.textContent = 'Linking wallet...'; statusDiv.style.color = 'var(--color-racer-cyan)'; }
+        if (statusDiv) { statusDiv.textContent = 'Loading account view...'; statusDiv.style.color = 'var(--color-racer-cyan)'; }
+        localStorage.setItem('racer_connected_near_wallet', accountId);
         if (window.RacerConnect) {
-          await window.RacerConnect.linkSelectorAccount(accountId, 'Manual Direct Link');
-        } else {
-          localStorage.setItem('racer_connected_near_wallet', accountId);
+          window.RacerConnect.activeNearWallet = accountId;
         }
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
-        if (statusDiv) { statusDiv.textContent = 'Successfully connected!'; statusDiv.style.color = 'var(--color-primary)'; }
+        if (statusDiv) { statusDiv.textContent = 'Viewing account (read-only).'; statusDiv.style.color = 'var(--color-primary)'; }
         setTimeout(closeConnectModal, 1000);
       } catch (err) {
         if (statusDiv) { statusDiv.textContent = 'Error: ' + err.message; statusDiv.style.color = '#FF6B73'; }
@@ -8603,6 +8782,7 @@
 
     // ── Init on DOM Ready ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
+      loadTradingWallet().then(() => { updateWalletUI(); refreshUserBalance(); });
       // Immediately restore any locally cached balance to prevent visual flicker
       restoreCachedBalance();
 
@@ -8631,6 +8811,10 @@
 
       // Listen to wallet / auth events
       window.addEventListener('racer:auth-changed', () => {
+        loadTradingWallet().then(() => {
+          updateWalletUI();
+          refreshUserBalance();
+        });
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
@@ -8671,7 +8855,7 @@
 
         <div style="display:flex; align-items:center; gap:10px; margin:14px 0;">
           <div style="flex:1; height:1px; background:var(--color-border);"></div>
-          <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);">OR DIRECT INPUT</span>
+          <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);">OR VIEW AN ACCOUNT (READ-ONLY)</span>
           <div style="flex:1; height:1px; background:var(--color-border);"></div>
         </div>
 
@@ -8679,7 +8863,7 @@
         <div style="display:flex; gap:8px; margin-bottom:14px;">
           <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near" style="flex:1; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 12px; font-size:13px; font-family:var(--font-mono);">
           <button onclick="handleLinkSelectorWallet()" class="btn-secondary" style="height:40px; padding:0 14px; font-size:13px;">
-            <span>Link</span>
+            <span>View</span>
           </button>
         </div>
         <div id="wallet-link-status" style="font-size:12px; margin-bottom:10px;"></div>
@@ -8708,6 +8892,11 @@
           </div>
           <div style="font-weight:700; font-size:16px; color:#fff;" id="linked-username">Connected</div>
           <div style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); margin-top:4px;" id="linked-subaccount">user.near</div>
+        </div>
+
+        <div id="modal-trading-wallet" style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:14px; margin-bottom:16px;" hidden>
+          <div style="font-size:11.5px; color:var(--color-text-muted); font-family:var(--font-mono); margin-bottom:8px;">TRADING WALLET</div>
+          <div id="trading-wallet-body" style="display:flex; flex-direction:column; gap:10px; font-size:13px; line-height:1.5;"></div>
         </div>
 
         <div style="display:flex; gap:10px;">
