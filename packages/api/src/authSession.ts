@@ -349,12 +349,19 @@ export async function authenticateWalletUser(params: {
        LIMIT 1`,
       [accountId]
     );
-    const user = userResult.rows[0];
+    let user = userResult.rows[0];
     if (!user) {
-      return {
-        success: false,
-        reason: 'Connect your Telegram-managed RacerBot account first, then link this NEAR wallet.',
-      };
+      // A wallet with no Telegram account: it proved ownership above, so it gets its own account
+      // (RacerBot holds no key for it; the wallet signs its own transactions)
+      const created = await db.query(
+        `INSERT INTO users (id, subaccount_id, telegram_id, scoped_key_encrypted, username)
+         VALUES (uuid_generate_v4(), $1, 0, '', NULL)
+         ON CONFLICT (subaccount_id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id
+         RETURNING *`,
+        [accountId]
+      );
+      user = created.rows[0];
+      if (!user) return { success: false, reason: 'Could not create your account. Please try again.' };
     }
 
     const authToken = 'racer_tok_wallet_' + crypto.randomBytes(20).toString('hex');
