@@ -121,6 +121,34 @@ async function refreshTrackedWallets(): Promise<void> {
   }
 }
 
+const INTEAR_DEX = 'dex.intear.near';
+const NEARPUMPFUN_SUFFIX = '.nearpumpfun.near';
+
+/** Intear asset id ("near" or "nep141:<token>") as a token address ("near" stays "near") */
+function intearAsset(asset: unknown): string | null {
+  if (typeof asset !== 'string' || !asset) return null;
+  return asset === 'near' ? 'near' : asset.replace(/^nep141:/, '');
+}
+
+/**
+ * First input and final output of an Intear operations message: `{operations: [...]}`, the plain
+ * array form, or `deposit_near`'s `{operations: {operations: [...]}}`. Multi-hop routes (through
+ * token.intear.near) resolve to the token actually bought or sold.
+ */
+export function intearRoute(message: unknown): { tokenIn: string; tokenOut: string } | null {
+  let m: any = message;
+  if (typeof m === 'string') {
+    try { m = JSON.parse(m); } catch { return null; }
+  }
+  const ops = Array.isArray(m) ? m : Array.isArray(m?.operations) ? m.operations : Array.isArray(m?.operations?.operations) ? m.operations.operations : null;
+  if (!ops) return null;
+  const swaps = ops.map((o: any) => o?.SwapSimple ?? o?.Swap).filter(Boolean);
+  if (swaps.length === 0) return null;
+  const tokenIn = intearAsset(swaps[0].asset_in);
+  const tokenOut = intearAsset(swaps[swaps.length - 1].asset_out);
+  return tokenIn && tokenOut ? { tokenIn, tokenOut } : null;
+}
+
 export interface DetectedSwap {
   side: 'buy' | 'sell';
   tokenAddress: string;
@@ -333,7 +361,6 @@ async function executeCopyBuy(
         venue: 'suipump',
         slippage_pct: slippagePct,
         timestamp: Date.now(),
-        notify_user: false,
       };
     } else {
       const near = getNear();
@@ -369,7 +396,6 @@ async function executeCopyBuy(
         min_amount_out: minAmountOut,
         venue,
         timestamp: Date.now(),
-        notify_user: false,
         ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
         ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
       } as SwapEvent;
@@ -377,7 +403,8 @@ async function executeCopyBuy(
 
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
-    // 6. Mark fill as sent
+    // 6. Mark the fill as sent to the executor ('filled' counts toward the daily budget either way;
+    // the executor reports the on-chain outcome to the user itself)
     await updateCopyTradeFillResult(fill.id, 'filled', {
       amount_near: target.buy_amount_near,
     });
@@ -410,13 +437,13 @@ async function executeCopyBuy(
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
     const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
     const notifyMsg =
-      `🏎️ *Copy Trade Executed (BUY)!*\n\n` +
+      `🏎️ *Copy Trade Sent (BUY)*\n\n` +
       `🎯 *Copied*: \`${leaderWallet}\`\n` +
       `🪙 *Token*: ${tokenSymbol}\n` +
-      `💰 *Bought*: ${target.buy_amount_near.toFixed(2)} NEAR worth\n` +
+      `💰 *Buying*: ${target.buy_amount_near.toFixed(2)} NEAR worth\n` +
       `🏆 *Season 1*: +${Math.round(target.buy_amount_near * 1.5 + 25)} pts earned\n` +
       `🔗 [Source Tx on NearBlocks](${nearBlocks})\n\n` +
-      `_Use [Holdings] or [Token Card] to manage your position._`;
+      `_You'll get a confirmation with the amount received, or a message if the trade fails._`;
 
     await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
       type: 'notify_user',
@@ -500,7 +527,6 @@ async function executeCopySell(
         venue: 'suipump',
         slippage_pct: target.max_slippage_pct,
         timestamp: Date.now(),
-        notify_user: false,
       };
     } else {
       swapEvent = {
@@ -513,7 +539,6 @@ async function executeCopySell(
         venue,
         slippage_pct: target.max_slippage_pct,
         timestamp: Date.now(),
-        notify_user: false,
         ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
         ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
       } as SwapEvent;
@@ -526,12 +551,12 @@ async function executeCopySell(
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
     const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
     const notifyMsg =
-      `🏎️ *Copy Trade Executed (SELL)!*\n\n` +
+      `🏎️ *Copy Trade Sent (SELL)*\n\n` +
       `🎯 *Copied*: \`${leaderWallet}\`\n` +
       `🪙 *Token*: ${tokenSymbol}\n` +
-      `🔴 *Action*: Sold 100% of holdings\n` +
+      `🔴 *Action*: Selling 100% of holdings\n` +
       `🔗 [Source Tx on NearBlocks](${nearBlocks})\n\n` +
-      `_Your position has been exited in accordance with leader activity._`;
+      `_You'll get a confirmation once the sell settles, or a message if it fails._`;
 
     await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
       type: 'notify_user',
@@ -569,6 +594,26 @@ export function extractSwapDetails(
 
   for (const action of actions) {
     const args = action.args as any;
+
+    // ── NearPumpFun: each token contract is its own bonding curve (buy with NEAR, sell for NEAR) ──
+    if (receiverId.endsWith(NEARPUMPFUN_SUFFIX) && (action.methodName === 'buy' || action.methodName === 'sell')) {
+      const isBuy = action.methodName === 'buy';
+      return {
+        side: isBuy ? 'buy' : 'sell',
+        tokenAddress: receiverId,
+        tokenIn: isBuy ? 'wrap.near' : receiverId,
+        tokenOut: isBuy ? receiverId : 'wrap.near',
+        amountIn: (isBuy ? undefined : args?.tokens_in) as string | undefined,
+      };
+    }
+
+    // ── Intear: native NEAR in through deposit_near, routed by its operations ──
+    if (receiverId === INTEAR_DEX && action.methodName === 'deposit_near') {
+      const route = intearRoute(args?.operations);
+      if (route && isWrapNear(route.tokenIn) && !isWrapNear(route.tokenOut)) {
+        return { side: 'buy', tokenAddress: route.tokenOut, tokenIn: 'wrap.near', tokenOut: route.tokenOut };
+      }
+    }
 
     // ── A. Direct Launchpad Contract Actions (NearlyTrade, Meme.Cooking, Intear, OneTokenHub, NEARpad, etc.) ──
     if (LAUNCHPAD_CONTRACTS.has(receiverId)) {
@@ -613,6 +658,20 @@ export function extractSwapDetails(
       let tokenIn = tokenTransferred;
       let tokenOut: string | null = null;
       let amountIn = args?.amount as string | undefined;
+
+      // Intear swaps: the operations name the real input and output (any route)
+      if (targetReceiver === INTEAR_DEX) {
+        const route = intearRoute(msg);
+        if (route) {
+          if (isWrapNear(route.tokenIn) && !isWrapNear(route.tokenOut)) {
+            return { side: 'buy', tokenAddress: route.tokenOut, tokenIn: 'wrap.near', tokenOut: route.tokenOut, amountIn };
+          }
+          if (!isWrapNear(route.tokenIn) && isWrapNear(route.tokenOut)) {
+            return { side: 'sell', tokenAddress: route.tokenIn, tokenIn: route.tokenIn, tokenOut: 'wrap.near', amountIn };
+          }
+          return null;
+        }
+      }
 
       // 1. Target receiver is a Launchpad contract (NearlyTrade, Meme.Cooking, Intear, etc.)
       if (LAUNCHPAD_CONTRACTS.has(targetReceiver)) {
@@ -664,6 +723,9 @@ export function extractSwapDetails(
             tokenIn = refActions[0]?.token_in || tokenTransferred;
             tokenOut = refActions[refActions.length - 1]?.token_out || null;
             if (refActions[0]?.amount_in) amountIn = refActions[0].amount_in;
+          } else if (parsed?.Swap?.output_token || parsed?.SwapByOutput?.output_token) {
+            // Ref DCL (dclv2.ref-labs.near): {"Swap":{"pool_ids":[...],"output_token":"..."}}
+            tokenOut = parsed.Swap?.output_token || parsed.SwapByOutput?.output_token;
           } else if (parsed?.swap?.token_out || parsed?.swap?.output_token) {
             tokenOut = parsed.swap?.token_out || parsed.swap?.output_token;
             if (parsed.swap?.token_in) tokenIn = parsed.swap.token_in;
