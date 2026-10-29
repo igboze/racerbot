@@ -28,6 +28,7 @@
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.0",
+    "near-api-js-v7": "npm:near-api-js@7.3.1",
     "prettier": "^3.2.0",
     "turbo": "^2.0.0",
     "typescript": "^5.4.0",

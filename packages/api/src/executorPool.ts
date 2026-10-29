@@ -75,24 +75,56 @@ export interface ConfidentialTradeResult {
 
 // ── Relayer ───────────────────────────────────────────────────────────────────
 
-let relayerQueue: Promise<unknown> = Promise.resolve();
-let relayerKeyLoaded = false;
+interface RelayerLane {
+  account: string;
+  key: string;
+  queue: Promise<unknown>;
+  pending: number;
+  keyLoaded: boolean;
+}
 
-/** One relayer transaction at a time: a single access key cannot sign two nonces at once safely */
+/**
+ * Relayer accounts from EXECUTOR_RELAYERS (`acct1.near=ed25519:...,acct2.near=ed25519:...`), else
+ * the single EXECUTOR_RELAYER_ACCOUNT_ID / _PRIVATE_KEY. Each must be allowed with router.set_relayer.
+ */
+export function parseRelayers(spec: string | undefined, fallbackAccount: string, fallbackKey: string): { account: string; key: string }[] {
+  const lanes = (spec || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => {
+      const eq = item.indexOf('=');
+      return eq > 0 ? { account: item.slice(0, eq).trim(), key: item.slice(eq + 1).trim() } : null;
+    })
+    .filter((l): l is { account: string; key: string } => !!l && !!l.account && l.key.startsWith('ed25519:'));
+  if (lanes.length > 0) return lanes;
+  return fallbackKey ? [{ account: fallbackAccount, key: fallbackKey }] : [];
+}
+
+const relayerLanes: RelayerLane[] = parseRelayers(process.env.EXECUTOR_RELAYERS, RELAYER_ACCOUNT, RELAYER_KEY)
+  .map(l => ({ ...l, queue: Promise.resolve(), pending: 0, keyLoaded: false }));
+
+/**
+ * Sign with the least busy relayer. Each relayer account sends one transaction at a time (one
+ * access key cannot sign two nonces at once safely); several accounts let split and fleet buys
+ * go out together.
+ */
 async function relayerCall(receiver: string, method: string, args: object, gasTgas: number, deposit = 0n): Promise<any> {
+  if (relayerLanes.length === 0) throw new Error('Executor relayer key is not configured');
+  const lane = relayerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
+  lane.pending++;
   const run = async () => {
-    if (!RELAYER_KEY) throw new Error('Executor relayer key is not configured');
     const near = getNear();
-    if (!relayerKeyLoaded) {
-      await near.addKey(RELAYER_ACCOUNT, KeyPair.fromString(RELAYER_KEY as any));
-      relayerKeyLoaded = true;
+    if (!lane.keyLoaded) {
+      await near.addKey(lane.account, KeyPair.fromString(lane.key as any));
+      lane.keyLoaded = true;
     }
-    return near.signAndSendTransactionAll(RELAYER_ACCOUNT, receiver, [
+    return near.signAndSendTransactionAll(lane.account, receiver, [
       transactions.functionCall(method, args, BigInt(gasTgas) * TGAS, deposit),
     ]);
   };
-  const next = relayerQueue.then(run, run);
-  relayerQueue = next.catch(() => undefined);
+  const next = lane.queue.then(run, run).finally(() => { lane.pending--; });
+  lane.queue = next.catch(() => undefined);
   return next;
 }
 
@@ -434,7 +466,13 @@ export async function confidentialSell(p: {
       if (!sold) return { ok: false, executor: e.account_id, hash: outcome?.transaction?.hash, reason: failureOf(outcome) || 'The exchange rejected the sell' };
       // Close once nothing is left, however the sells were split (a partial sell can still empty it)
       const left = pct === 100 ? 0n : BigInt(await near.getTokenBalance(p.tokenAddress, e.account_id).catch(() => '1'));
-      if (left === 0n) void closeExecutor(e.account_id).catch(err => logger.warn(`Close of ${e.account_id} failed: ${err?.message}`));
+      if (left === 0n) {
+        // With rounded returns, also wait a random 5-60 s so the return is not timed with the sell
+        const delay = acct.round_returns ? 5_000 + Math.random() * 55_000 : 0;
+        setTimeout(() => {
+          closeExecutor(e.account_id).catch(err => logger.warn(`Close of ${e.account_id} failed: ${err?.message}`));
+        }, delay);
+      }
       return { ok: true, executor: e.account_id, hash: outcome?.transaction?.hash };
     } catch (err: any) {
       return { ok: false, executor: e.account_id, reason: err?.message || 'sell failed' };
@@ -566,20 +604,32 @@ export async function closeExecutor(executor: string): Promise<void> {
     return;
   }
 
+  // Rounded returns send a round amount now; the remainder follows on the worker's next pass
+  const send = acct.round_returns ? roundedReturn(amount) : amount;
   // Refunds of the return go back to the executor, which can exit again
-  const quote = await quoteShield(acct.private_account_id, amount, executor);
-  const sent = await relayerCall(ROUTER, 'exec_exit_to_intents', { executor, deposit_address: quote.depositAddress, amount: amount.toString() }, 150);
-  const exited = extractExecutorEvents(sent).find(ev => ev.event === 'exited');
+  const quote = await quoteShield(acct.private_account_id, send, executor);
+  const sent = await relayerCall(ROUTER, 'exec_exit_to_intents', { executor, deposit_address: quote.depositAddress, amount: send.toString() }, 150);
+  const events = extractExecutorEvents(sent);
+  const exited = events.find(ev => ev.event === 'exited');
+  const partial = events.find(ev => ev.event === 'exit_partial');
   const txHash = sent?.transaction?.hash;
   await insertConfidentialMove({
     user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: quote.depositAddress,
-    amount: amount.toString(), destination: acct.private_account_id, tx_hash: txHash,
+    amount: send.toString(), destination: acct.private_account_id, tx_hash: txHash,
   });
   if (txHash) void notifyDeposit(quote.depositAddress, txHash);
   await updateExecutor(executor, {
-    status: exited ? 'exited' : 'exiting', returned_amount: amount.toString(), event: exited ?? { event: 'exit_failed' },
-    tx_hash: txHash, last_error: exited ? null : failureOf(sent) || 'exit failed',
+    status: exited ? 'exited' : 'exiting', returned_amount: send.toString(), event: exited ?? partial ?? { event: 'exit_failed' },
+    tx_hash: txHash, last_error: exited || partial ? null : failureOf(sent) || 'exit failed',
   });
+}
+
+const ROUND_STEP = ONE_NEAR / 10n;
+
+/** The first part of a rounded return: whole 0.1 NEAR steps (amounts under 0.2 NEAR go in one piece) */
+export function roundedReturn(amount: bigint): bigint {
+  if (amount < 2n * ROUND_STEP) return amount;
+  return amount - (amount % ROUND_STEP);
 }
 
 /** Delete an exited executor once its close delay has passed (anyone may call finish_close) */
