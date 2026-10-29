@@ -120,7 +120,14 @@ import {
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
-import { handlePrivatePrompt, registerPrivateActions, type PrivatePromptAction } from './botPrivate.js';
+import {
+  handlePrivatePrompt,
+  isPrivateDeposit,
+  privatizeDepositPicker,
+  registerPrivateActions,
+  renderPrivateDepositCard,
+  type PrivatePromptAction,
+} from './botPrivate.js';
 import { EXECUTORS_ENABLED as PRIVATE_TRADING_ENABLED, confidentialBuy } from './executorPool.js';
 import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
 import {
@@ -240,6 +247,14 @@ export async function replyGroupDmRedirect(
 }
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
+
+/** The multi-chain deposit chain picker: a private deposit while the user started one from 🛡 Private */
+function depositChainPicker(telegramId: number | undefined, cat: Parameters<typeof buildDepositChainPickerMenu>[0] = 'popular') {
+  const menu = buildDepositChainPickerMenu(cat);
+  return telegramId && PRIVATE_TRADING_ENABLED && isPrivateDeposit(telegramId)
+    ? privatizeDepositPicker(menu)
+    : withSolanaDirectDepositRow(menu);
+}
 
 /** Adds a "Deposit SOL directly" row at the top of the multichain deposit picker. */
 function withSolanaDirectDepositRow<T extends { text: string; keyboard: any }>(menu: T): T {
@@ -3097,6 +3112,11 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
     return;
   }
 
+  if (PRIVATE_TRADING_ENABLED && isPrivateDeposit(telegramId)) {
+    await renderPrivateDepositCard(ctx, user, token, amount);
+    return;
+  }
+
   const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
   const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
 
@@ -3918,7 +3938,7 @@ export function setupRoutes(bot: Telegraf): void {
       await replyGroupDmRedirect(ctx, 'Multi-chain deposits');
       return;
     }
-    const menu = withSolanaDirectDepositRow(buildDepositChainPickerMenu('popular'));
+    const menu = depositChainPicker(ctx.from?.id, 'popular');
     const canEdit = typeof (ctx as any).editMessageText === 'function';
     if (canEdit && ctx.callbackQuery) {
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
@@ -3972,7 +3992,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const cat = (ctx as any).match[1] as any;
-    const menu = withSolanaDirectDepositRow(buildDepositChainPickerMenu(cat));
+    const menu = depositChainPicker(ctx.from?.id, cat);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_cat] editMessageText fallback:', err?.message);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
@@ -4184,6 +4204,7 @@ export function setupRoutes(bot: Telegraf): void {
   registerPrivateActions(bot, {
     setPrompt: (id, action) => userPendingActions.set(id, { action, expiresAt: Date.now() + 5 * 60_000 }),
     lookupRoute: (token) => getFastTokenRoute(token),
+    openDepositPicker: (ctx) => handleMultichainDeposit(ctx),
   });
 
   bot.action('menu_copy', async (ctx) => {

@@ -244,4 +244,5 @@ export {
   updateConfidentialMove,
   listOpenConfidentialMoves,
   listUserConfidentialMoves,
+  getUserConfidentialMove,
 } from './db.js';

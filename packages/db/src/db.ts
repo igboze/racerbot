@@ -4555,6 +4555,15 @@ export async function updateConfidentialMove(id: string, f: { status?: string; t
   );
 }
 
+export async function getUserConfidentialMove(userId: string, depositAddress: string): Promise<ConfidentialMoveRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM confidential_moves WHERE user_id = $1 AND deposit_address = $2 ORDER BY created_at DESC LIMIT 1`,
+    [userId, depositAddress]
+  );
+  return res.rows[0] ? mapMove(res.rows[0]) : null;
+}
+
 export async function listOpenConfidentialMoves(limit = 50): Promise<ConfidentialMoveRecord[]> {
   const db = await getDb();
   const res = await db.query(

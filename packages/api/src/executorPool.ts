@@ -17,6 +17,7 @@ import {
   createConfidentialAccount,
   getConfidentialAccount,
   getExecutor,
+  getUserConfidentialMove,
   insertConfidentialMove,
   insertExecutor,
   listExecutorsByStatus,
@@ -36,12 +37,15 @@ import {
   notifyDeposit,
   ownerHash,
   quoteShield,
+  quoteShieldFromAsset,
   unshield,
+  type MoveQuote,
   type PrivateAccountKeys,
 } from './intentsPrivate.js';
 import { planVaultHops, quoteMinimumOut, RACER_VAULT_CONTRACT_ID } from './racerVault.js';
 import { extractRouterEvents } from './routerEvents.js';
 import { encodeExecPlan, type ExecPlan, type ExecVenue } from './executorPlan.js';
+import { hasManagedWallet } from './webWallet.js';
 
 const logger = createLogger('executor-pool');
 
@@ -527,7 +531,6 @@ export async function confidentialOverview(user: UserRecord) {
   return {
     enabled: EXECUTORS_ENABLED,
     account: {
-      privateAccountId: acct.private_account_id,
       payoutAddress: acct.payout_address,
       settings: {
         poolSizes: acct.pool_sizes,
@@ -645,6 +648,7 @@ async function finishClose(e: ConfidentialExecutorRecord): Promise<void> {
 
 /** Deposit NEAR from the user's RacerBot wallet into their private balance (~19 s to settle) */
 export async function depositFromWallet(user: UserRecord, amount: bigint): Promise<{ depositAddress: string; txHash: string }> {
+  if (isExternalWallet(user)) throw new Error('Approve the deposit in your wallet');
   const acct = await ensureConfidentialAccount(user);
   const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
   const near = getNear();
@@ -661,6 +665,64 @@ export async function depositFromWallet(user: UserRecord, amount: bigint): Promi
   await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: quote.depositAddress, amount: amount.toString(), destination: acct.private_account_id, tx_hash: txHash });
   void notifyDeposit(quote.depositAddress, txHash);
   return { depositAddress: quote.depositAddress, txHash };
+}
+
+/** Signed in with their own NEAR wallet: RacerBot holds no key for it, so the user signs deposits themselves */
+export const isExternalWallet = (user: UserRecord): boolean => !hasManagedWallet(user);
+
+export interface WalletDeposit {
+  depositAddress: string;
+  amount: string;
+  /** One transaction to wrap.near for the user's wallet to sign: wrap, register the address, send */
+  transaction: { receiverId: string; actions: { methodName: string; args: object; gas: string; deposit: string }[] };
+}
+
+/** Deposit from an external wallet: RacerBot quotes, the user's wallet signs, refunds go back to that wallet */
+export async function quoteWalletDeposit(user: UserRecord, amount: bigint): Promise<WalletDeposit> {
+  const acct = await ensureConfidentialAccount(user);
+  const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
+  const to = quote.depositAddress;
+  await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: to, amount: amount.toString(), destination: acct.private_account_id });
+  return {
+    depositAddress: to,
+    amount: amount.toString(),
+    transaction: {
+      receiverId: 'wrap.near',
+      actions: [
+        { methodName: 'near_deposit', args: {}, gas: (10n * TGAS).toString(), deposit: amount.toString() },
+        { methodName: 'storage_deposit', args: { account_id: to, registration_only: true }, gas: (10n * TGAS).toString(), deposit: '1250000000000000000000' },
+        { methodName: 'ft_transfer', args: { receiver_id: to, amount: amount.toString() }, gas: (15n * TGAS).toString(), deposit: '1' },
+      ],
+    },
+  };
+}
+
+/** The wallet's transaction hash for a quoted deposit: lets 1Click pick it up straight away */
+export async function submitWalletDeposit(user: UserRecord, depositAddress: string, txHash: string): Promise<void> {
+  const move = await getUserConfidentialMove(user.id, depositAddress);
+  if (!move || move.kind !== 'deposit') throw new Error('No deposit was quoted for that address');
+  await updateConfidentialMove(move.id, { tx_hash: txHash });
+  void notifyDeposit(depositAddress, txHash);
+}
+
+/** RacerBot's fee on deposits from other chains, the same as public multi-chain deposits */
+const CROSSCHAIN_FEE = {
+  recipient: process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near',
+  fee: parseInt(process.env.RACER_FEE_BPS || '100', 10),
+};
+
+/**
+ * Deposit from another chain (SOL, BTC, USDC on Base...) straight into the private balance as NEAR.
+ * Nothing touches a public NEAR wallet on the way in; refunds return to the private balance.
+ */
+export async function quoteCrossChainDeposit(user: UserRecord, originAsset: string, amountRaw: string): Promise<MoveQuote> {
+  const acct = await ensureConfidentialAccount(user);
+  const quote = await quoteShieldFromAsset(acct.private_account_id, originAsset, amountRaw, [CROSSCHAIN_FEE]);
+  await insertConfidentialMove({
+    user_id: user.id, kind: 'deposit', deposit_address: quote.depositAddress,
+    amount: quote.amountOut || '0', destination: acct.private_account_id,
+  });
+  return quote;
 }
 
 /** Withdraw from the private balance to any NEAR account (~12 s) */

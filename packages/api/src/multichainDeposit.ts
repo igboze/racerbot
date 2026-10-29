@@ -296,6 +296,12 @@ export function getAmountSuggestions(token: OneClickToken, minAmount: number): s
   ];
 }
 
+/** A human amount in a token's base units, exact for decimal input (no float rounding past 6 places) */
+export function unitsToRaw(amount: number, decimals: number): string {
+  const [whole, frac = ''] = amount.toFixed(Math.min(decimals, 12)).split('.');
+  return (BigInt(whole) * 10n ** BigInt(decimals) + BigInt((frac + '0'.repeat(decimals)).slice(0, decimals) || '0')).toString();
+}
+
 export function getTokenByKey(key: string): OneClickToken | undefined {
   return tokenKeyMap.get(key);
 }

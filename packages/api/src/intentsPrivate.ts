@@ -139,6 +139,31 @@ export async function quoteShield(privateAccountId: string, amount: bigint, refu
 }
 
 /**
+ * Quote for depositing any 1Click asset, from any chain, straight into a private account as wNEAR.
+ * The sender transfers exactly `amountRaw` of `originAsset` to `depositAddress` (with `depositMemo`
+ * when the chain needs one). Refunds stay private: they return to the private account.
+ */
+export async function quoteShieldFromAsset(privateAccountId: string, originAsset: string, amountRaw: string,
+                                           appFees: { recipient: string; fee: number }[] = []): Promise<MoveQuote> {
+  return moveQuote(await api('POST', '/v0/quote', {
+    dry: false,
+    swapType: 'EXACT_INPUT',
+    slippageTolerance: 100,
+    originAsset,
+    depositType: 'ORIGIN_CHAIN',
+    destinationAsset: WNEAR_ASSET,
+    amount: amountRaw,
+    recipient: privateAccountId,
+    recipientType: 'CONFIDENTIAL_INTENTS',
+    refundTo: privateAccountId,
+    refundType: 'CONFIDENTIAL_INTENTS',
+    confidentiality: 'basic',
+    deadline: new Date(Date.now() + QUOTE_DEADLINE_MS).toISOString(),
+    ...(appFees.length ? { appFees } : {}),
+  }));
+}
+
+/**
  * Move `amount` from the private account to `recipient` on NEAR (arrives as native NEAR; a new
  * implicit or named account is created/credited). Refunds stay in the private account.
  */
