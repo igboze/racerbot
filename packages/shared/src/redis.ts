@@ -88,6 +88,18 @@ export interface SwapEvent {
   notify_user?: boolean;
   is_snipe?: boolean;
   timestamp?: number;
+  /** Set for copy trades: the executor settles this fill (status, points, rewards) from the outcome */
+  copy?: CopyFillMeta;
+}
+
+export interface CopyFillMeta {
+  fill_id: string;
+  copier_user_id: string;
+  token_address: string;
+  /** NEAR-equivalent volume for Season 1 points and the referral reward (0 for sells) */
+  points_volume_near: number;
+  leader_user_id?: string | null;
+  referrer_id?: string | null;
 }
 
 export interface AutoBuySignal {

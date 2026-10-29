@@ -2523,7 +2523,7 @@ export async function recordCopyTradeFill(params: {
 
 export async function updateCopyTradeFillResult(
   id: string,
-  status: 'filled' | 'failed' | 'skipped',
+  status: 'pending' | 'filled' | 'failed' | 'skipped',
   opts: { our_tx_hash?: string; amount_token?: number; amount_near?: number; skip_reason?: string } = {}
 ): Promise<void> {
   const db = await getDb();
@@ -2560,7 +2560,7 @@ export async function getCopyTradeDailySpend(copyTargetId: string, utcDateStr: s
   const res = await db.query(
     `SELECT COALESCE(SUM(amount_near), 0) AS total
      FROM copy_trade_fills
-     WHERE copy_target_id = $1 AND side = 'buy' AND status = 'filled'
+     WHERE copy_target_id = $1 AND side = 'buy' AND status IN ('pending', 'filled')
        AND (created_at AT TIME ZONE 'UTC')::date::text = $2`,
     [copyTargetId, utcDateStr]
   );

@@ -43,10 +43,6 @@ import {
   getCopyTradeDailySpend,
   getUserById,
   getUserBySolanaAddress,
-  getTokenReferral,
-  recordTokenReferral,
-  addTokenReferralReward,
-  awardPointsForCopyTrade,
   type CopyTradeTargetRecord,
 } from '@racerbot/db';
 
@@ -368,24 +364,21 @@ async function copyBuy(target: CopyTradeTargetRecord, leader: string, swap: Sola
       timestamp: Date.now(),
       notify_user: false,
     };
-    await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
-    await updateCopyTradeFillResult(fill.id, 'filled', { amount_near: amountSol });
-
-    // Points and referral rewards are NEAR-denominated: convert by USD value.
+    // Points and referral rewards are NEAR-denominated: convert by USD value. The executor awards
+    // them, and marks the fill filled or failed, once the swap's outcome is known.
     const [solUsd, nearUsd] = await Promise.all([getSolUsdPrice(), getNearUsdPrice().catch(() => 0)]);
     const nearEquivalent = nearUsd > 0 ? (amountSol * solUsd) / nearUsd : 0;
     const leaderUser = await getUserBySolanaAddress(leader).catch(() => null);
-    await awardPointsForCopyTrade(target.user_id, fill.id, nearEquivalent, leaderUser?.id ?? undefined).catch(() => {});
-    const reward = nearEquivalent * 0.015 * 0.05;
-    if (reward > 0) {
-      if (target.referrer_id && target.referrer_id !== target.user_id) {
-        const ref = await recordTokenReferral(target.user_id, swap.mint, target.referrer_id).catch(() => null);
-        if (ref) await addTokenReferralReward(ref.id, reward).catch(() => {});
-      } else {
-        const ref = await getTokenReferral(target.user_id, swap.mint).catch(() => null);
-        if (ref) await addTokenReferralReward(ref.id, reward).catch(() => {});
-      }
-    }
+    swapEvent.copy = {
+      fill_id: fill.id,
+      copier_user_id: target.user_id,
+      token_address: swap.mint,
+      points_volume_near: nearEquivalent,
+      leader_user_id: leaderUser?.id ?? null,
+      referrer_id: target.referrer_id ?? null,
+    };
+    await updateCopyTradeFillResult(fill.id, 'pending', { amount_near: amountSol });
+    await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
     const symbol = info?.symbol || swap.mint.slice(0, 6);
     await notify(target.user_id, 'copy_trade_filled', {
@@ -450,8 +443,8 @@ async function copySell(target: CopyTradeTargetRecord, leader: string, swap: Sol
       timestamp: Date.now(),
       notify_user: false,
     };
+    swapEvent.copy = { fill_id: fill.id, copier_user_id: target.user_id, token_address: swap.mint, points_volume_near: 0 };
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
-    await updateCopyTradeFillResult(fill.id, 'filled', { amount_near: 0 });
 
     const info = await getSolanaTokenInfo(swap.mint).catch(() => null);
     const symbol = info?.symbol || swap.mint.slice(0, 6);

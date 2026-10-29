@@ -355,6 +355,14 @@ describe('Copy Trading & Wallet Tracker', () => {
       expect(swapEvent.token_in).toBe('wrap.near');
       expect(swapEvent.token_out).toBe('dragon.tkn.near');
       expect(swapEvent.user_id).toBe('user-copy-1');
+      // The executor settles the fill and awards points only once the swap succeeds
+      expect(swapEvent.copy).toEqual({
+        fill_id: 'fill-2', copier_user_id: 'user-copy-1', token_address: 'dragon.tkn.near',
+        points_volume_near: 2.0, leader_user_id: null, referrer_id: null,
+      });
+      expect(swapEvent.notify_user).toBeUndefined();
+      expect(db.awardPointsForCopyTrade).not.toHaveBeenCalled();
+      expect(db.updateCopyTradeFillResult).toHaveBeenCalledWith('fill-2', 'pending', { amount_near: 2.0 });
     });
 
     it('triggers automated BUY for unbonded launchpad token', async () => {

@@ -29,7 +29,7 @@ import {
   getDistinctActiveBuyAlertTokens,
   recordSnipeTrigger,
 } from '@racerbot/db';
-import { initCopyTradeDetector, checkCopyTradeReceipt } from './copyTrade.js';
+import { initCopyTradeDetector, checkCopyTradeReceipt, observeCopyFlow } from './copyTrade.js';
 import { startSolanaCopyTrader } from './solanaCopyTrade.js';
 
 const logger = createLogger('detector');
@@ -217,6 +217,7 @@ async function main() {
               for (const log of logs) {
                 eventPairs.push({ log, receiverId, txHash });
               }
+              observeCopyFlow(item);
               // Copy-trade detection: check if signer or predecessor is a tracked wallet
               if (txHash && (realSigner || predecessorId)) {
                 const receiptActions = (item?.receipt?.receipt?.Action?.actions ?? []) as any[];
@@ -331,6 +332,7 @@ async function processBlock(height: number): Promise<void> {
           for (const log of logs) {
             eventPairs.push({ log, receiverId, txHash });
           }
+          observeCopyFlow(item);
           if (txHash && (realSigner || predecessorId)) {
             const receiptActions = (item?.receipt?.receipt?.Action?.actions ?? []) as any[];
             const parsedActions = receiptActions.map((a: any) => {

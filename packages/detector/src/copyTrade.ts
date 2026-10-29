@@ -33,12 +33,10 @@ import {
   getUserById,
   getUserBySubaccount,
   getOpenPositions,
-  getTokenReferral,
-  recordTokenReferral,
-  addTokenReferralReward,
-  awardPointsForCopyTrade,
   type CopyTradeTargetRecord,
 } from '@racerbot/db';
+
+import { flushFlows, observeReceipt } from './copyTradeFlow.js';
 
 const logger = createLogger('copy-detector');
 
@@ -98,9 +96,36 @@ const redis = createRedis(REDIS_URL);
 let trackedWallets = new Set<string>();
 const WALLET_REFRESH_MS = 60_000;
 
+/** Transactions the instant (message-based) path already copied; the balance path skips them */
+const handledTxs = new Map<string, number>();
+const HANDLED_TTL_MS = 5 * 60_000;
+
+export function isTrackedWallet(wallet: string): boolean {
+  return trackedWallets.has(wallet.trim().toLowerCase());
+}
+
+/**
+ * Feed every receipt execution outcome here (cheap: returns at once unless a tracked wallet signed it).
+ * Trades no venue parser recognised are found from the wallet's balance changes a few seconds later.
+ */
+export function observeCopyFlow(item: unknown): void {
+  observeReceipt(item, isTrackedWallet);
+}
+
+function flushCopyFlows(): void {
+  const now = Date.now();
+  for (const [tx, at] of handledTxs) if (now - at > HANDLED_TTL_MS) handledTxs.delete(tx);
+  for (const { wallet, txHash, swap } of flushFlows(now)) {
+    if (handledTxs.has(txHash)) continue;
+    logger.info('Copy-trade event detected from balance changes', { signer: wallet, side: swap.side, token: swap.tokenAddress, txHash });
+    dispatchCopyTrade(wallet, swap, txHash).catch(err => logger.error('Copy-trade dispatch failed', err as Error, { txHash }));
+  }
+}
+
 export async function initCopyTradeDetector(): Promise<void> {
   await refreshTrackedWallets();
   setInterval(refreshTrackedWallets, WALLET_REFRESH_MS);
+  setInterval(flushCopyFlows, 2_000);
   try {
     const subRedis = createRedis(REDIS_URL);
     await subRedis.subscribe('racerbot:refresh_tracked_wallets', async () => {
@@ -181,7 +206,13 @@ export async function checkCopyTradeReceipt(
     token: swap.tokenAddress,
     txHash,
   });
+  handledTxs.set(txHash, Date.now());
+  await dispatchCopyTrade(normalizedSigner, swap, txHash);
+}
 
+/** Copy or alert a detected trade for every follower of `normalizedSigner` */
+async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, txHash: string): Promise<void> {
+  const signerAccountId = normalizedSigner;
   // Load followers (with DB cache-hit courtesy of the in-memory set above)
   const followers = await getCopyTargetFollowersByWallet(normalizedSigner).catch(() => []);
   if (followers.length === 0) return;
@@ -401,37 +432,20 @@ async function executeCopyBuy(
       } as SwapEvent;
     }
 
-    await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
-
-    // 6. Mark the fill as sent to the executor ('filled' counts toward the daily budget either way;
-    // the executor reports the on-chain outcome to the user itself)
-    await updateCopyTradeFillResult(fill.id, 'filled', {
-      amount_near: target.buy_amount_near,
-    });
-
-    // 7. Season 1 Points: award copier + potential leader bonus
+    // 6. The executor settles the fill from the real outcome: 'filled' plus Season 1 points and the
+    // share-link referral reward only when the swap succeeds, 'failed' otherwise.
     const leaderUser = await getUserBySubaccount(leaderWallet).catch(() => null);
-    await awardPointsForCopyTrade(
-      target.user_id,
-      fill.id,
-      target.buy_amount_near,
-      leaderUser?.id ?? undefined
-    ).catch(() => {});
-
-    // 8. Group-link 5% fee reward
-    const botFeePct = 0.015;
-    const copyFeeReward = target.buy_amount_near * botFeePct * 0.05;
-    if (target.referrer_id && target.referrer_id !== target.user_id) {
-      const ref = await recordTokenReferral(target.user_id, tokenAddress, target.referrer_id).catch(() => null);
-      if (ref) {
-        await addTokenReferralReward(ref.id, copyFeeReward).catch(() => {});
-      }
-    } else {
-      const tokenReferral = await getTokenReferral(target.user_id, tokenAddress).catch(() => null);
-      if (tokenReferral) {
-        await addTokenReferralReward(tokenReferral.id, copyFeeReward).catch(() => {});
-      }
-    }
+    swapEvent.copy = {
+      fill_id: fill.id,
+      copier_user_id: target.user_id,
+      token_address: tokenAddress,
+      points_volume_near: target.buy_amount_near,
+      leader_user_id: leaderUser?.id ?? null,
+      referrer_id: target.referrer_id ?? null,
+    };
+    // Pending fills count toward the daily budget, so a burst of copies cannot overspend
+    await updateCopyTradeFillResult(fill.id, 'pending', { amount_near: target.buy_amount_near });
+    await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
     // 9. Notify copier
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
@@ -441,7 +455,7 @@ async function executeCopyBuy(
       `🎯 *Copied*: \`${leaderWallet}\`\n` +
       `🪙 *Token*: ${tokenSymbol}\n` +
       `💰 *Buying*: ${target.buy_amount_near.toFixed(2)} NEAR worth\n` +
-      `🏆 *Season 1*: +${Math.round(target.buy_amount_near * 1.5 + 25)} pts earned\n` +
+      `🏆 *Season 1*: +${Math.round(target.buy_amount_near * 1.5 + 25)} pts once the buy settles\n` +
       `🔗 [Source Tx on NearBlocks](${nearBlocks})\n\n` +
       `_You'll get a confirmation with the amount received, or a message if the trade fails._`;
 
@@ -544,9 +558,8 @@ async function executeCopySell(
       } as SwapEvent;
     }
 
+    swapEvent.copy = { fill_id: fill.id, copier_user_id: target.user_id, token_address: tokenAddress, points_volume_near: 0 };
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
-
-    await updateCopyTradeFillResult(fill.id, 'filled', { amount_near: 0 });
 
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
     const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
