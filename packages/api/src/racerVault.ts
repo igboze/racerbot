@@ -141,7 +141,7 @@ export function afterTransferFee(amount: string | bigint, pips: bigint): bigint 
   return (BigInt(amount) * (PIPS - pips)) / PIPS;
 }
 
-async function quoteMinimumOut(params: {
+export async function quoteMinimumOut(params: {
   tokenAddress: string;
   venue: string;
   isBuy: boolean;

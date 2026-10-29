@@ -1,0 +1,11 @@
+{
+  "name": "@racerbot/position-executor",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/lib.rs",
+  "scripts": {
+    "build": "cargo build --target wasm32-unknown-unknown --release",
+    "test": "cargo test",
+    "optimize": "npx --yes --package=binaryen@132.0.0 wasm-opt -Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --strip-debug target/wasm32-unknown-unknown/release/racerbot_position_executor.wasm -o target/racerbot_position_executor.opt.wasm"
+  }
+}
