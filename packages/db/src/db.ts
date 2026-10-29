@@ -4272,3 +4272,289 @@ function mapVaultIntentRow(row: any): RacerVaultIntentRecord {
   };
 }
 
+// ── Confidential trading: private balance accounts and per-position executors ──
+
+export type ExecutorStatus = 'creating' | 'funding' | 'ready' | 'claimed' | 'open' | 'exiting' | 'exited' | 'closed' | 'failed';
+export type ConfidentialMoveKind = 'deposit' | 'refill' | 'return' | 'withdraw';
+
+export interface ConfidentialAccountRecord {
+  user_id: string;
+  private_account_id: string;
+  public_key: string;
+  secret_key_encrypted: string;
+  payout_address: string;
+  owner_salt: string;
+  pool_sizes: string[];
+  auto_refill: boolean;
+  buy_mode: 'single' | 'split' | 'fleet';
+  fleet_stagger_max_sec: number;
+  round_returns: boolean;
+  pool_cap_yocto: string;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ConfidentialExecutorRecord {
+  account_id: string;
+  user_id: string;
+  size_yocto: string;
+  status: ExecutorStatus;
+  token: string | null;
+  venue: string | null;
+  position_group: string | null;
+  amount_spent: string | null;
+  fee_paid: string | null;
+  returned_amount: string | null;
+  last_error: string | null;
+  events: any[];
+  tx_hashes: string[];
+  created_at: Date;
+  funded_at: Date | null;
+  opened_at: Date | null;
+  exited_at: Date | null;
+  closed_at: Date | null;
+  updated_at: Date;
+}
+
+export interface ConfidentialMoveRecord {
+  id: string;
+  user_id: string;
+  kind: ConfidentialMoveKind;
+  executor_account_id: string | null;
+  deposit_address: string;
+  amount: string;
+  destination: string | null;
+  status: string;
+  tx_hash: string | null;
+  intent_hash: string | null;
+  details: any;
+  created_at: Date;
+  settled_at: Date | null;
+}
+
+const numStr = (v: any): string | null => (v == null ? null : String(v));
+
+function mapConfidentialAccount(row: any): ConfidentialAccountRecord {
+  return {
+    ...row,
+    pool_sizes: (row.pool_sizes || []).map(String),
+    pool_cap_yocto: String(row.pool_cap_yocto),
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+  };
+}
+
+function mapExecutor(row: any): ConfidentialExecutorRecord {
+  return {
+    ...row,
+    size_yocto: String(row.size_yocto),
+    amount_spent: numStr(row.amount_spent),
+    fee_paid: numStr(row.fee_paid),
+    returned_amount: numStr(row.returned_amount),
+    events: row.events || [],
+    tx_hashes: row.tx_hashes || [],
+  };
+}
+
+function mapMove(row: any): ConfidentialMoveRecord {
+  return { ...row, amount: String(row.amount) };
+}
+
+export async function getConfidentialAccount(userId: string): Promise<ConfidentialAccountRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM confidential_accounts WHERE user_id = $1', [userId]);
+  return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
+}
+
+export async function createConfidentialAccount(rec: {
+  user_id: string;
+  private_account_id: string;
+  public_key: string;
+  secret_key_encrypted: string;
+  payout_address: string;
+  owner_salt: string;
+}): Promise<ConfidentialAccountRecord> {
+  const db = await getDb();
+  // An existing account is kept as is: its key holds the user's private balance
+  const res = await db.query(
+    `INSERT INTO confidential_accounts (user_id, private_account_id, public_key, secret_key_encrypted, payout_address, owner_salt)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+     RETURNING *`,
+    [rec.user_id, rec.private_account_id, rec.public_key, rec.secret_key_encrypted, rec.payout_address, rec.owner_salt]
+  );
+  return mapConfidentialAccount(res.rows[0]);
+}
+
+export async function updateConfidentialSettings(userId: string, s: {
+  pool_sizes?: string[];
+  auto_refill?: boolean;
+  buy_mode?: 'single' | 'split' | 'fleet';
+  fleet_stagger_max_sec?: number;
+  round_returns?: boolean;
+  pool_cap_yocto?: string;
+  enabled?: boolean;
+}): Promise<ConfidentialAccountRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE confidential_accounts SET
+       pool_sizes = COALESCE($2::jsonb, pool_sizes),
+       auto_refill = COALESCE($3, auto_refill),
+       buy_mode = COALESCE($4, buy_mode),
+       fleet_stagger_max_sec = COALESCE($5, fleet_stagger_max_sec),
+       round_returns = COALESCE($6, round_returns),
+       pool_cap_yocto = COALESCE($7::numeric, pool_cap_yocto),
+       enabled = COALESCE($8, enabled),
+       updated_at = NOW()
+     WHERE user_id = $1 RETURNING *`,
+    [userId, s.pool_sizes ? JSON.stringify(s.pool_sizes) : null, s.auto_refill ?? null, s.buy_mode ?? null,
+     s.fleet_stagger_max_sec ?? null, s.round_returns ?? null, s.pool_cap_yocto ?? null, s.enabled ?? null]
+  );
+  return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
+}
+
+export async function insertExecutor(rec: { account_id: string; user_id: string; size_yocto: string }): Promise<ConfidentialExecutorRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO confidential_executors (account_id, user_id, size_yocto) VALUES ($1, $2, $3) RETURNING *`,
+    [rec.account_id, rec.user_id, rec.size_yocto]
+  );
+  return mapExecutor(res.rows[0]);
+}
+
+/** Update an executor; `event` and `tx_hash` are appended to its history */
+export async function updateExecutor(accountId: string, f: {
+  status?: ExecutorStatus;
+  token?: string;
+  venue?: string;
+  position_group?: string;
+  amount_spent?: string;
+  fee_paid?: string;
+  returned_amount?: string;
+  last_error?: string | null;
+  event?: any;
+  tx_hash?: string;
+}): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE confidential_executors SET
+       status = COALESCE($2, status),
+       token = COALESCE($3, token),
+       venue = COALESCE($4, venue),
+       position_group = COALESCE($5, position_group),
+       amount_spent = COALESCE($6::numeric, amount_spent),
+       fee_paid = COALESCE($7::numeric, fee_paid),
+       returned_amount = COALESCE($8::numeric, returned_amount),
+       last_error = CASE WHEN $9::boolean THEN $10 ELSE last_error END,
+       events = CASE WHEN $11::jsonb IS NULL THEN events ELSE events || $11::jsonb END,
+       tx_hashes = CASE WHEN $12::text IS NULL THEN tx_hashes ELSE tx_hashes || to_jsonb($12::text) END,
+       funded_at = CASE WHEN $2 = 'ready' AND funded_at IS NULL THEN NOW() ELSE funded_at END,
+       opened_at = CASE WHEN $2 = 'open' AND opened_at IS NULL THEN NOW() ELSE opened_at END,
+       exited_at = CASE WHEN $2 = 'exited' THEN NOW() ELSE exited_at END,
+       closed_at = CASE WHEN $2 = 'closed' THEN NOW() ELSE closed_at END,
+       updated_at = NOW()
+     WHERE account_id = $1`,
+    [accountId, f.status ?? null, f.token ?? null, f.venue ?? null, f.position_group ?? null, f.amount_spent ?? null,
+     f.fee_paid ?? null, f.returned_amount ?? null, f.last_error !== undefined, f.last_error ?? null,
+     f.event !== undefined ? JSON.stringify([f.event]) : null, f.tx_hash ?? null]
+  );
+}
+
+export async function getExecutor(accountId: string): Promise<ConfidentialExecutorRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM confidential_executors WHERE account_id = $1', [accountId]);
+  return res.rows[0] ? mapExecutor(res.rows[0]) : null;
+}
+
+export async function listUserExecutors(userId: string, statuses: ExecutorStatus[]): Promise<ConfidentialExecutorRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM confidential_executors WHERE user_id = $1 AND status = ANY($2) ORDER BY created_at',
+    [userId, statuses]
+  );
+  return res.rows.map(mapExecutor);
+}
+
+export async function listExecutorsByStatus(statuses: ExecutorStatus[], olderThanSec = 0, limit = 50): Promise<ConfidentialExecutorRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM confidential_executors
+     WHERE status = ANY($1) AND updated_at < NOW() - make_interval(secs => $2)
+     ORDER BY updated_at LIMIT $3`,
+    [statuses, olderThanSec, limit]
+  );
+  return res.rows.map(mapExecutor);
+}
+
+/**
+ * Atomically claim ready executors for a buy (two clicks can never take the same one).
+ * Claims one executor per requested size, in order; returns what it could claim.
+ */
+export async function claimReadyExecutors(userId: string, sizes: string[]): Promise<ConfidentialExecutorRecord[]> {
+  const db = await getDb();
+  const claimed: ConfidentialExecutorRecord[] = [];
+  for (const size of sizes) {
+    const res = await db.query(
+      `UPDATE confidential_executors SET status = 'claimed', updated_at = NOW()
+       WHERE account_id = (
+         SELECT account_id FROM confidential_executors
+         WHERE user_id = $1 AND status = 'ready' AND size_yocto = $2::numeric
+         ORDER BY funded_at LIMIT 1 FOR UPDATE SKIP LOCKED
+       ) RETURNING *`,
+      [userId, size]
+    );
+    if (res.rows[0]) claimed.push(mapExecutor(res.rows[0]));
+  }
+  return claimed;
+}
+
+export async function insertConfidentialMove(m: {
+  user_id: string;
+  kind: ConfidentialMoveKind;
+  executor_account_id?: string | null;
+  deposit_address: string;
+  amount: string;
+  destination?: string | null;
+  tx_hash?: string | null;
+  intent_hash?: string | null;
+}): Promise<ConfidentialMoveRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO confidential_moves (id, user_id, kind, executor_account_id, deposit_address, amount, destination, tx_hash, intent_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [randomUUID(), m.user_id, m.kind, m.executor_account_id ?? null, m.deposit_address, m.amount,
+     m.destination ?? null, m.tx_hash ?? null, m.intent_hash ?? null]
+  );
+  return mapMove(res.rows[0]);
+}
+
+export async function updateConfidentialMove(id: string, f: { status?: string; tx_hash?: string; details?: any }): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE confidential_moves SET
+       status = COALESCE($2, status),
+       tx_hash = COALESCE($3, tx_hash),
+       details = COALESCE($4::jsonb, details),
+       settled_at = CASE WHEN $2 IN ('SUCCESS', 'REFUNDED', 'FAILED', 'INCOMPLETE_DEPOSIT') THEN NOW() ELSE settled_at END,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [id, f.status ?? null, f.tx_hash ?? null, f.details !== undefined ? JSON.stringify(f.details) : null]
+  );
+}
+
+export async function listOpenConfidentialMoves(limit = 50): Promise<ConfidentialMoveRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM confidential_moves WHERE status NOT IN ('SUCCESS', 'REFUNDED', 'FAILED', 'INCOMPLETE_DEPOSIT')
+     ORDER BY created_at LIMIT $1`,
+    [limit]
+  );
+  return res.rows.map(mapMove);
+}
+
+export async function listUserConfidentialMoves(userId: string, limit = 50): Promise<ConfidentialMoveRecord[]> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM confidential_moves WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2', [userId, limit]);
+  return res.rows.map(mapMove);
+}

@@ -27,6 +27,8 @@ import {
   TREASURY_ACCOUNT_ID,
 } from '../config.js';
 import { executeShieldedVaultIntent } from '../racerVault.js';
+import { registerConfidentialRoutes } from './confidential.js';
+import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
 const logger = createLogger('api-routes');
 
@@ -933,7 +935,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
+    let executionRouting: 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
     let recipientAccountId: string | undefined;
 
@@ -998,6 +1000,38 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       } else {
         // fallback if someone passed amountNear instead
         calculatedAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+      }
+    }
+
+    // 2. Phase 1a: per-position executors funded from the user's NEAR Intents private balance.
+    // Sells use executors when the position is held in them; older vault positions fall through to 1b.
+    if (!onChainTxHash && isPrivateTrade && EXECUTORS_ENABLED && user.subaccount_id && user.scoped_key_encrypted) {
+      const position = isBuy ? null : await positionBalance(user.id, tokenAddress).catch(() => null);
+      if (isBuy || (position && position.total > 0n)) {
+        const common = {
+          user,
+          tokenAddress,
+          venue: String(venue),
+          slippagePct: Number(slippagePct) || 2,
+          poolId: clientPoolId ? Number(clientPoolId) : undefined,
+          dclPoolId: clientDclPoolId ? String(clientDclPoolId) : undefined,
+        };
+        const result = isBuy
+          ? await confidentialBuy({ ...common, amountYocto: BigInt(calculatedAmountIn) })
+          : await confidentialSell({
+              ...common,
+              // Sell the requested share of the whole position, spread over its executors
+              percent: Math.min(100, Number((BigInt(calculatedAmountIn) * 10_000n) / position!.total) / 100),
+            });
+        if (!result.success || result.txHashes.length === 0) {
+          res.status(400).json({ error: result.reason || 'Confidential trade failed. Nothing was spent from your wallet.' });
+          return;
+        }
+        onChainTxHash = result.txHashes[0];
+        executionRouting = 'RACER_EXECUTOR';
+        intentMessage = isBuy
+          ? `Bought privately through ${result.executors.length} executor${result.executors.length === 1 ? '' : 's'}`
+          : 'Sold privately; the NEAR returns to your private balance once the position closes';
       }
     }
 
@@ -3516,5 +3550,7 @@ router.get('/deposit/status', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+registerConfidentialRoutes(router, resolveAlphaUser);
 
 export default router;

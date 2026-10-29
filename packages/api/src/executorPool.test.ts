@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest';
+import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, extractExecutorEvents } from './executorPool.js';
+import { generatePrivateAccount, ownerHash } from './intentsPrivate.js';
+
+const NEAR = 10n ** 24n;
+const ready = (...sizes: bigint[]) => sizes.map((s, i) => ({ account_id: `e${i}`, size_yocto: s.toString() }) as any);
+
+describe('chooseSizes', () => {
+  it('single: the smallest executor that covers the amount', () => {
+    expect(chooseSizes(ready(5n * NEAR, NEAR, 2n * NEAR), NEAR + 1n, 'single')).toEqual([2n * NEAR]);
+    expect(chooseSizes(ready(NEAR, NEAR), NEAR, 'single')).toEqual([NEAR]);
+  });
+
+  it('single: nothing when no executor is big enough', () => {
+    expect(chooseSizes(ready(NEAR, NEAR), 3n * NEAR, 'single')).toBeNull();
+  });
+
+  it('split: largest first until the amount is covered', () => {
+    expect(chooseSizes(ready(NEAR, NEAR, 2n * NEAR), 3n * NEAR, 'split')).toEqual([2n * NEAR, NEAR]);
+    expect(chooseSizes(ready(NEAR), 2n * NEAR, 'split')).toBeNull();
+  });
+
+  it('fleet: an equal share for as many executors as can carry it', () => {
+    expect(chooseSizes(ready(NEAR, NEAR, NEAR, NEAR, NEAR), 5n * NEAR, 'fleet')).toHaveLength(5);
+    expect(chooseSizes(ready(NEAR, NEAR, NEAR), 2n * NEAR, 'fleet')).toHaveLength(3);
+  });
+});
+
+describe('intearHopsFromMessage', () => {
+  it('turns a two-hop operations message back into hops', () => {
+    const pool = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b.toString('base64'); };
+    const msg = JSON.stringify({
+      referrer: 'dex-aggregator.intear.near',
+      operations: [
+        { SwapSimple: { asset_in: 'near', asset_out: 'nep141:token.intear.near', message: pool(274) } },
+        { SwapSimple: { asset_in: 'nep141:token.intear.near', asset_out: 'nep141:meme.near', message: pool(9) } },
+        { Withdraw: { asset_id: 'nep141:meme.near' } },
+      ],
+    });
+    expect(intearHops(msg)).toEqual([
+      { pool_id: 274, token_in: 'near', token_out: 'token.intear.near' },
+      { pool_id: 9, token_in: 'token.intear.near', token_out: 'meme.near' },
+    ]);
+  });
+
+  it('returns null for messages without swaps', () => {
+    expect(intearHops('{}')).toBeNull();
+    expect(intearHops('not json')).toBeNull();
+  });
+});
+
+describe('extractExecutorEvents', () => {
+  it('keeps executor events with the account that emitted them', () => {
+    const ev = (standard: string, event: string) => `EVENT_JSON:${JSON.stringify({ standard, version: '1.0.0', event, data: { used: '5' } })}`;
+    const outcome = {
+      receipts_outcome: [
+        { outcome: { executor_id: 'racerbotrouter.near', logs: [ev('racerbot-vault', 'intent_submitted')] } },
+        { outcome: { executor_id: 'ab12.racerbotrouter.near', logs: [ev('racerbot-executor', 'bought'), 'plain log'] } },
+      ],
+    };
+    expect(extractExecutorEvents(outcome)).toEqual([{ event: 'bought', data: { used: '5' }, executor: 'ab12.racerbotrouter.near' }]);
+  });
+});
+
+describe('private accounts', () => {
+  it('the account id is the hex public key', () => {
+    const k = generatePrivateAccount();
+    expect(k.accountId).toMatch(/^[0-9a-f]{64}$/);
+    expect(k.publicKey.startsWith('ed25519:')).toBe(true);
+    expect(k.secretKey.startsWith('ed25519:')).toBe(true);
+  });
+
+  it('owner hash is sha256(salt + address), matching the executor contract', () => {
+    // sha256("s3cr3t-saltlunar-nexus-9768.racerbot.near"), as the executor tests compute it
+    expect(ownerHash('s3cr3t-salt', 'lunar-nexus-9768.racerbot.near')).toHaveLength(64);
+    expect(ownerHash('a', 'b.near')).not.toEqual(ownerHash('a', 'c.near'));
+    expect(ownerHash('a', 'b.near')).toEqual(ownerHash('a', 'b.near'));
+  });
+});

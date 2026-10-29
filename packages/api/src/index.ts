@@ -19,6 +19,7 @@ import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } from './depositWatcher.js';
 import { startMultichainDepositPoller } from './multichainDeposit.js';
 import { startReceiptReconciler } from './receipts.js';
+import { startConfidentialWorker } from './executorPool.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './workers.js';
@@ -518,6 +519,7 @@ async function main(): Promise<void> {
   const multichainPoller = startMultichainDepositPoller(bot, 10_000);
   // Resolve private trades left PENDING (timeouts, restarts) from their on-chain outcome
   const receiptReconciler = startReceiptReconciler(30_000);
+  const confidentialWorker = startConfidentialWorker(15_000);
 
   // ── Start background worker processes (detector, executor, triggers) ──────
   startBackgroundWorkers();
@@ -530,6 +532,7 @@ async function main(): Promise<void> {
     stopDepositWatcher();
     clearInterval(multichainPoller);
     clearInterval(receiptReconciler);
+    if (confidentialWorker) clearInterval(confidentialWorker);
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;
