@@ -94,7 +94,7 @@ async function rpc(method, params) {
   return j.result;
 }
 async function view(contract, method, args = {}) {
-  const r = await rpc('query', { request_type: 'call_function', finality: 'final', account_id: contract, method_name: method, args_base64: Buffer.from(JSON.stringify(args)).toString('base64') });
+  const r = await rpc('query', { request_type: 'call_function', finality: 'optimistic', account_id: contract, method_name: method, args_base64: Buffer.from(JSON.stringify(args)).toString('base64') });
   const text = Buffer.from(r.result).toString();
   return text ? JSON.parse(text) : null;
 }
