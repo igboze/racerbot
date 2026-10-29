@@ -37,6 +37,7 @@ import {
   // Copy Trading
   createCopyTradeTarget,
   getCopyTradeTargetsByUser,
+  getCopyTradeTargetById,
   updateCopyTradeTargetStatus,
   updateCopyTradeTarget,
   // DCA Orders
@@ -118,6 +119,7 @@ import {
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
+import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
 import {
   computePnL,
   fuzzyMatch,
@@ -3322,7 +3324,9 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       const isTokenShare = rawPayload.startsWith('t_');
-      const isCopyShare = rawPayload.startsWith('copy_');
+      // cp_<target id hex>: current copy-share links; copy_<wallet>[_<sharer id>]: older links
+      const copyShare = parseCopyShareParam(rawPayload);
+      const isCopyShare = copyShare !== null;
       const isBuyParam = rawPayload.startsWith('buy_');
       const isTokenParam = rawPayload.startsWith('token_') || rawPayload.startsWith('tkn_');
       const isBuyAlertCfg = rawPayload.startsWith('cfg_');
@@ -3562,12 +3566,23 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // 3. Copy Trading Deep Link (/start copy_wallet_near)
-      if (isCopyShare && rawPayload) {
-        const rawTarget = rawPayload.slice(5);
-        const targetWallet = decodeTelegramAccountId(rawTarget);
+      // 3. Copy Trading Deep Link (/start cp_<target id>, or older /start copy_<wallet>[_<sharer id>])
+      if (copyShare) {
+        let targetWallet = '';
+        let shareReferrer: string | null = null;
+        if (copyShare.kind === 'target') {
+          const shared = await getCopyTradeTargetById(copyShare.targetId).catch(() => null);
+          if (shared) {
+            targetWallet = shared.target_wallet;
+            shareReferrer = shared.user_id;
+          }
+        } else {
+          shareReferrer = copyShare.referrerId;
+          targetWallet = isSolanaAddress(copyShare.rawWallet) ? copyShare.rawWallet : decodeTelegramAccountId(copyShare.rawWallet);
+        }
+        if (shareReferrer === result.userId) shareReferrer = null;
 
-        if (targetWallet && isValidNearAccountId(targetWallet)) {
+        if (targetWallet && (isValidNearAccountId(targetWallet) || isSolanaAddress(targetWallet))) {
           const targets = await getCopyTradeTargetsByUser(result.userId).catch(() => []);
           const activeTargets = targets.filter(t => t.status !== 'stopped');
           if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
@@ -3578,13 +3593,13 @@ export function setupRoutes(bot: Telegraf): void {
             `👥 *Copy Trading & Wallet Tracker Invitation*\n\n` +
             `Target wallet: \`${targetWallet}\`\n\n` +
             `Choose how you would like to follow this wallet:\n\n` +
-            `• *⚡ Auto-Copy*: Mirror swaps automatically on DEXes with your configured NEAR budget.\n` +
+            `• *⚡ Auto-Copy*: Mirror swaps automatically with your configured ${snipeUnit(targetWallet)} budget.\n` +
             `• *👀 Wallet Tracker*: Get real-time alerts whenever this wallet trades, with 1-click manual buy/sell buttons without auto-buying.`,
             {
               parse_mode: 'Markdown',
               ...Markup.inlineKeyboard([
-                [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${targetWallet}`, 'success')],
-                [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${targetWallet}`, 'primary')],
+                [cb('⚡ Auto-Copy (Auto Buy/Sell)', copyModeData('copy', targetWallet, shareReferrer), 'success')],
+                [cb('👀 Wallet Tracker (Alerts Only)', copyModeData('track', targetWallet, shareReferrer), 'primary')],
                 [cb('🔙 Menu', 'menu_copy', 'primary')],
               ]),
             }
@@ -4192,13 +4207,18 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(/^copy_mode:(copy|track):([^:]+)(?::([^:]+))?$/, async (ctx) => {
     const mode = ctx.match![1];
-    // Solana wallets travel as short keys (t_...) to fit Telegram's 64-byte callback limit.
-    const wallet = resolveTokenAddressFromKey(ctx.match![2]);
-    if (/^t_[0-9a-f]{8,}/.test(wallet) && !wallet.includes('.')) {
+    // Wallet and referrer travel as short keys (t_...) to fit Telegram's 64-byte callback limit
+    // (see copyModeData); an unresolved key means the bot restarted since the buttons were sent.
+    const isUnresolvedKey = (key: string, resolved: string) => resolved === key && /^t_[0-9a-f]{8}.{4}$/.test(key);
+    const walletKey = ctx.match![2];
+    const wallet = resolveTokenAddressFromKey(walletKey);
+    if (isUnresolvedKey(walletKey, wallet)) {
       await ctx.answerCbQuery('Session expired. Please add the wallet again.').catch(() => {});
       return;
     }
-    const referrerId = ctx.match![3] || null;
+    const referrerKey = ctx.match![3] || '';
+    const resolvedReferrer = referrerKey ? resolveTokenAddressFromKey(referrerKey) : '';
+    const referrerId = resolvedReferrer && !isUnresolvedKey(referrerKey, resolvedReferrer) ? resolvedReferrer : null;
     const telegramId = ctx.from!.id;
 
     try {
@@ -4329,7 +4349,8 @@ export function setupRoutes(bot: Telegraf): void {
       const targets = await getCopyTradeTargetsByUser(user.id);
       const target = targets.find(t => t.id === targetId);
       if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
-      const shareDeepLink = `https://t.me/racertradingbot?start=copy_${target.target_wallet}_${user.id}`;
+      // The wallet itself cannot travel: Telegram start parameters allow only 64 chars of [A-Za-z0-9_-]
+      const shareDeepLink = `https://t.me/racertradingbot?start=${copyShareParam(target.id)}`;
       const shareText = `Copy trades from ${target.target_wallet} on RacerBot 🏎\n⚡ Automated instant execution on NEAR & SUI`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
       await ctx.answerCbQuery().catch(() => {});
@@ -11805,8 +11826,6 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'copy_wallet' && isSolanaAddress(rawText.trim())) {
         const wallet = rawText.trim();
-        const walletKey = getShortTokenKey(wallet);
-        const refIdParam = pending.copyReferrerId ? `:${pending.copyReferrerId}` : '';
         userPendingActions.delete(telegramId);
         await ctx.reply(
           `🎯 *Target Wallet (Solana)*: \`${wallet}\`\n\n` +
@@ -11816,8 +11835,8 @@ export function setupRoutes(bot: Telegraf): void {
           {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-              [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${walletKey}${refIdParam}`, 'success')],
-              [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${walletKey}${refIdParam}`, 'primary')],
+              [cb('⚡ Auto-Copy (Auto Buy/Sell)', copyModeData('copy', wallet, pending.copyReferrerId), 'success')],
+              [cb('👀 Wallet Tracker (Alerts Only)', copyModeData('track', wallet, pending.copyReferrerId), 'primary')],
               [cb('🔙 Cancel', 'menu_copy', 'primary')],
             ]),
           }
@@ -11831,7 +11850,6 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply('❌ Invalid NEAR account ID. Please enter a valid wallet like `trader.near` or a 64-char hex address.', { parse_mode: 'Markdown' });
           return;
         }
-        const refIdParam = pending.copyReferrerId ? `:${pending.copyReferrerId}` : '';
         userPendingActions.delete(telegramId);
         await ctx.reply(
           `🎯 *Target Wallet*: \`${wallet}\`\n\n` +
@@ -11841,8 +11859,8 @@ export function setupRoutes(bot: Telegraf): void {
           {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-              [cb('⚡ Auto-Copy (Auto Buy/Sell)', `copy_mode:copy:${wallet}${refIdParam}`, 'success')],
-              [cb('👀 Wallet Tracker (Alerts Only)', `copy_mode:track:${wallet}${refIdParam}`, 'primary')],
+              [cb('⚡ Auto-Copy (Auto Buy/Sell)', copyModeData('copy', wallet, pending.copyReferrerId), 'success')],
+              [cb('👀 Wallet Tracker (Alerts Only)', copyModeData('track', wallet, pending.copyReferrerId), 'primary')],
               [cb('🔙 Cancel', 'menu_copy', 'primary')],
             ]),
           }

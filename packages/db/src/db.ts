@@ -2435,6 +2435,12 @@ export async function getCopyTradeTargetsByUser(userId: string): Promise<CopyTra
   return res.rows.map(rowToCopyTarget);
 }
 
+export async function getCopyTradeTargetById(id: string): Promise<CopyTradeTargetRecord | null> {
+  const db = await getDb();
+  const res = await db.query(`SELECT * FROM copy_trade_targets WHERE id = $1`, [id]);
+  return res.rows[0] ? rowToCopyTarget(res.rows[0]) : null;
+}
+
 /** Returns all ACTIVE copy-targets for a specific watched wallet (detector hot-path). */
 export async function getCopyTargetFollowersByWallet(
   targetWallet: string

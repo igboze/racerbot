@@ -76,6 +76,7 @@ export {
   // Copy Trading
   createCopyTradeTarget,
   getCopyTradeTargetsByUser,
+  getCopyTradeTargetById,
   getCopyTargetFollowersByWallet,
   getAllActiveCopyTargetWallets,
   updateCopyTradeTargetStatus,
