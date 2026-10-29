@@ -4297,6 +4297,8 @@ export interface ConfidentialAccountRecord {
   round_returns: boolean;
   pool_cap_yocto: string;
   enabled: boolean;
+  /** Telegram bot buys run from private executors */
+  bot_private: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -4346,6 +4348,7 @@ function mapConfidentialAccount(row: any): ConfidentialAccountRecord {
     ...row,
     pool_sizes: (row.pool_sizes || []).map(String),
     pool_cap_yocto: String(row.pool_cap_yocto),
+    bot_private: row.bot_private === true,
     created_at: new Date(row.created_at),
     updated_at: new Date(row.updated_at),
   };
@@ -4401,6 +4404,7 @@ export async function updateConfidentialSettings(userId: string, s: {
   round_returns?: boolean;
   pool_cap_yocto?: string;
   enabled?: boolean;
+  bot_private?: boolean;
 }): Promise<ConfidentialAccountRecord | null> {
   const db = await getDb();
   const res = await db.query(
@@ -4412,10 +4416,12 @@ export async function updateConfidentialSettings(userId: string, s: {
        round_returns = COALESCE($6, round_returns),
        pool_cap_yocto = COALESCE($7::numeric, pool_cap_yocto),
        enabled = COALESCE($8, enabled),
+       bot_private = COALESCE($9, bot_private),
        updated_at = NOW()
      WHERE user_id = $1 RETURNING *`,
     [userId, s.pool_sizes ? JSON.stringify(s.pool_sizes) : null, s.auto_refill ?? null, s.buy_mode ?? null,
-     s.fleet_stagger_max_sec ?? null, s.round_returns ?? null, s.pool_cap_yocto ?? null, s.enabled ?? null]
+     s.fleet_stagger_max_sec ?? null, s.round_returns ?? null, s.pool_cap_yocto ?? null, s.enabled ?? null,
+     s.bot_private ?? null]
   );
   return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
 }

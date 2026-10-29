@@ -178,7 +178,7 @@ fn full_buy_pays_full_fee_and_records_value() {
     e.status = Status::Open;
     let (amount, swap, fee, before) = (NEAR, NEAR * 9850 / 10_000, NEAR * 150 / 10_000, 2 * NEAR);
     callback(CREATION + 2 * NEAR, vec![u128_result(0), u128_result(swap)]);
-    e.on_buy("c1".into(), amount, swap, 150, before, ResultKind::FtUsed, 1);
+    e.on_buy("c1".into(), amount, swap, 150, before, ResultKind::FtUsed, 1, false);
     assert_eq!(e.status, Status::Open);
     assert_eq!(e.value_after_buy, before - swap - fee);
 }
@@ -190,7 +190,7 @@ fn partial_buy_pays_fee_pro_rata() {
     // 1.5% on 1 NEAR: swap 0.985, fee 0.015; a quarter used pays a quarter of the fee
     let (amount, swap) = (NEAR, NEAR * 9850 / 10_000);
     callback(CREATION + 2 * NEAR, vec![u128_result(swap / 4)]);
-    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::FtUsed, 0);
+    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::FtUsed, 0, false);
     let fee_paid = (swap / 4) * 150 / 9_850;
     assert_eq!(e.value_after_buy, 2 * NEAR - swap / 4 - fee_paid);
     assert!(fee_paid.abs_diff((amount - swap) / 4) <= 1);
@@ -202,7 +202,7 @@ fn large_buy_fee_does_not_overflow() {
     e.status = Status::Open;
     let (amount, swap) = (10_000 * NEAR, 10_000 * NEAR * 9850 / 10_000);
     callback(CREATION + 20_000 * NEAR, vec![u128_result(swap)]);
-    e.on_buy("c1".into(), amount, swap, 150, 20_000 * NEAR, ResultKind::FtUsed, 0);
+    e.on_buy("c1".into(), amount, swap, 150, 20_000 * NEAR, ResultKind::FtUsed, 0, false);
     assert_eq!(e.value_after_buy, 20_000 * NEAR - amount);
 }
 
@@ -211,7 +211,7 @@ fn failed_buy_returns_to_ready_without_fee() {
     let mut e = setup();
     e.status = Status::Open;
     callback(CREATION + 2 * NEAR, vec![PromiseResult::Failed]);
-    e.on_buy("c1".into(), NEAR, NEAR, 0, 2 * NEAR, ResultKind::Attached, 0);
+    e.on_buy("c1".into(), NEAR, NEAR, 0, 2 * NEAR, ResultKind::Attached, 0, false);
     assert_eq!(e.status, Status::Ready);
     assert_eq!(e.value_after_buy, 0);
 }
@@ -222,7 +222,7 @@ fn attached_buy_success_spends_all() {
     e.status = Status::Open;
     let (amount, swap) = (NEAR, NEAR * 9850 / 10_000);
     callback(CREATION + 2 * NEAR, vec![PromiseResult::Successful(b"null".to_vec())]);
-    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::Attached, 0);
+    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::Attached, 0, false);
     assert_eq!(e.value_after_buy, 2 * NEAR - amount);
 }
 
@@ -311,9 +311,20 @@ fn failed_exit_requires_a_fresh_prepare() {
     let mut e = setup();
     e.status = Status::Exiting;
     callback(CREATION + 2 * NEAR, vec![PromiseResult::Failed]);
-    e.on_exit_sent(owner_addr(), NEAR);
+    e.on_exit_sent(owner_addr(), NEAR, 0, false);
     assert_eq!(e.status, Status::Exiting);
     assert_eq!(e.exit_amount, 0);
+}
+
+#[test]
+fn partial_exit_stays_exiting_until_the_rest_is_sent() {
+    let mut e = setup();
+    e.status = Status::Exiting;
+    e.exit_amount = NEAR / 4; // left after sending a rounded part
+    callback(CREATION + NEAR, vec![PromiseResult::Successful(vec![])]);
+    e.on_exit_sent(owner_addr(), NEAR, 0, false);
+    assert_eq!(e.status, Status::Exiting);
+    assert_eq!(e.exit_amount, NEAR / 4);
 }
 
 #[test]
@@ -321,7 +332,7 @@ fn successful_exit_marks_exited() {
     let mut e = setup();
     e.status = Status::Exiting;
     callback(CREATION + 2 * NEAR, vec![PromiseResult::Successful(vec![])]);
-    e.on_exit_sent(owner_addr(), NEAR);
+    e.on_exit_sent(owner_addr(), NEAR, 0, false);
     assert_eq!(e.status, Status::Exited);
     assert_eq!(e.exited_at_block, 1_000);
 }
@@ -543,4 +554,91 @@ fn read_u128_parses_quoted() {
 #[test]
 fn clean_strips_unsafe_characters() {
     assert_eq!(clean(r#"intent_1"},"x":1"#), "intent_1x1");
+}
+
+// ── Rolled-back receipts and close safety ────────────────────────────────────
+
+#[test]
+fn rolled_back_buy_unsets_wnear_registration() {
+    let mut e = setup();
+    set(router(), CREATION + 2 * NEAR);
+    e.buy(plan(Venue::Dcl, true), 150);
+    assert!(e.wnear_registered);
+    let reserve_after_buy = e.reserve;
+    // Token registration succeeded; the wrap-and-send receipt rolled back
+    callback(CREATION + 2 * NEAR, vec![PromiseResult::Successful(b"{}".to_vec()), PromiseResult::Failed]);
+    e.on_buy("c1".into(), NEAR, NEAR * 9850 / 10_000, 150, 2 * NEAR, ResultKind::FtUsed, 1, true);
+    assert_eq!(e.status, Status::Ready);
+    assert!(!e.wnear_registered);
+    assert_eq!(e.reserve, reserve_after_buy + STORAGE_DEPOSIT);
+    assert_eq!(e.tokens, vec![meme()]);
+}
+
+#[test]
+fn failed_token_registration_stops_tracking_the_token() {
+    let mut e = setup();
+    e.status = Status::Open;
+    e.tokens = vec![meme()];
+    let reserve = e.reserve;
+    callback(CREATION + 2 * NEAR, vec![PromiseResult::Failed, PromiseResult::Failed]);
+    e.on_buy("c1".into(), NEAR, NEAR, 0, 2 * NEAR, ResultKind::Attached, 1, false);
+    assert!(e.tokens.is_empty());
+    assert_eq!(e.reserve, reserve + STORAGE_DEPOSIT);
+}
+
+#[test]
+fn long_success_result_still_counts_as_bought() {
+    let mut e = setup();
+    e.status = Status::Open;
+    let (amount, swap) = (NEAR, NEAR * 9850 / 10_000);
+    callback(CREATION + 2 * NEAR, vec![PromiseResult::Successful(vec![b'x'; 1_000])]);
+    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::Attached, 0, false);
+    assert_eq!(e.status, Status::Open);
+    assert_eq!(e.value_after_buy, 2 * NEAR - amount);
+}
+
+#[test]
+#[should_panic(expected = "Too many tokens")]
+fn token_list_is_capped() {
+    let mut e = setup();
+    e.tokens = (0..MAX_TOKENS).map(|i| format!("t{}.near", i).parse().unwrap()).collect();
+    set(router(), CREATION + 2 * NEAR);
+    e.buy(plan(Venue::Dcl, true), 150);
+}
+
+#[test]
+fn rolled_back_intents_exit_restores_registrations() {
+    let mut e = setup();
+    e.status = Status::Exiting;
+    e.exit_amount = NEAR;
+    let reserve = e.reserve;
+    set(router(), CREATION + 2 * NEAR);
+    e.exit_to_intents("b2db50c1c15177555af28113fabc56a1be33a21adbea71b635b7a45e8b02e2d7".parse().unwrap(), NEAR);
+    assert!(e.wnear_registered);
+    assert_eq!(e.reserve, reserve - 2 * STORAGE_DEPOSIT);
+    callback(CREATION + 2 * NEAR, vec![PromiseResult::Failed]);
+    e.on_exit_sent(owner_addr(), NEAR, 2 * STORAGE_DEPOSIT, true);
+    assert!(!e.wnear_registered);
+    assert_eq!(e.reserve, reserve);
+    assert_eq!(e.status, Status::Exiting);
+}
+
+#[test]
+fn close_is_blocked_when_an_unregister_fails() {
+    let mut e = setup();
+    e.status = Status::Exited;
+    callback(CREATION, vec![PromiseResult::Successful(b"true".to_vec()), PromiseResult::Failed]);
+    match e.on_close_delete(2) {
+        PromiseOrValue::Value(()) => {}
+        PromiseOrValue::Promise(_) => panic!("must not delete"),
+    }
+    assert_eq!(e.status, Status::Exited);
+}
+
+#[test]
+fn close_deletes_when_unregisters_succeed_or_were_not_needed() {
+    let mut e = setup();
+    e.status = Status::Exited;
+    callback(CREATION, vec![PromiseResult::Successful(b"true".to_vec()), PromiseResult::Successful(b"false".to_vec())]);
+    assert!(matches!(e.on_close_delete(2), PromiseOrValue::Promise(_)));
 }

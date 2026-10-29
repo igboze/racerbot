@@ -259,3 +259,14 @@ fn large_sell_rate_capped() {
     call(owner(), 0);
     r.set_large_sell_fee_bps(201);
 }
+
+#[test]
+fn closed_executor_drops_its_record() {
+    let mut r = setup();
+    call(executor(), 0);
+    r.executor_closed();
+    assert!(r.executor_owner_hash(executor()).is_none());
+    // Anyone else calling it changes nothing
+    call(relayer(), 0);
+    r.executor_closed();
+}

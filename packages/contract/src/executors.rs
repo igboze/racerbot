@@ -147,6 +147,14 @@ impl RacerbotVault {
         Self::call_executor(executor, "send_token_to_owner", args, GAS_EXEC_EXIT)
     }
 
+    /// Executors call this as they delete themselves, which frees the router's record of them
+    pub fn executor_closed(&mut self) {
+        let executor = env::predecessor_account_id();
+        if env::storage_remove(&executor_key(&executor)) {
+            Self::emit("executor_closed", serde_json::json!({ "executor": executor }));
+        }
+    }
+
     // ═══════════════════════════ FEES ════════════════════════════════════════
 
     /// Executors pay their fee here (attached NEAR); fees reach the treasury in batches

@@ -37,6 +37,7 @@ import {
   // Copy Trading
   createCopyTradeTarget,
   getCopyTradeTargetsByUser,
+  getConfidentialAccount,
   getCopyTradeTargetById,
   updateCopyTradeTargetStatus,
   updateCopyTradeTarget,
@@ -119,6 +120,8 @@ import {
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
+import { handlePrivatePrompt, registerPrivateActions, type PrivatePromptAction } from './botPrivate.js';
+import { EXECUTORS_ENABLED as PRIVATE_TRADING_ENABLED, confidentialBuy } from './executorPool.js';
 import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
 import {
   computePnL,
@@ -291,7 +294,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
+  action: PrivatePromptAction | 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
     | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
     | 'sell_custom_tokens'
     // Stop Loss & Take Profit custom input
@@ -512,6 +515,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('🏆 Points', 'menu_points', 'success'),
     ],
     [
+      cb('🛡 Private', 'menu_private', 'success'),
       cb('⚙️ Settings', 'menu_settings', 'primary'),
     ],
     [
@@ -2710,6 +2714,32 @@ async function executeBuyHelper(
     }
   }
 
+  // Private mode: the buy runs from a pre-funded executor, so this wallet never appears in the trade
+  if (PRIVATE_TRADING_ENABLED) {
+    const privateAcct = await getConfidentialAccount(user.id).catch(() => null);
+    if (privateAcct?.bot_private) {
+      onProgress?.('submitting');
+      const res = await confidentialBuy({
+        user, tokenAddress, venue, amountYocto: BigInt(Math.round(amountNear * 1e6)) * 10n ** 18n,
+        slippagePct, poolId: effectiveRheaPoolId ?? undefined, dclPoolId: effectiveDclPoolId,
+      });
+      if (!res.success) throw new Error(res.reason || 'Private buy failed. Nothing was spent.');
+      const symbol = (info as any).symbol || tokenAddress.split('.')[0].toUpperCase();
+      return {
+        success: true,
+        amountNear,
+        tokenAddress,
+        tokenSymbol: symbol,
+        message:
+          `✅ *Private Buy Confirmed!*\n\n` +
+          `🪙 *${sanitizeMd(symbol)}*\n` +
+          `💸 Spent: \`${amountNear} NEAR\` from your private pool\n` +
+          `🛡 Held in ${res.executors.length} private executor${res.executors.length === 1 ? '' : 's'}: your wallet never appeared in the trade.\n\n` +
+          `_Manage it from 🛡 Private in the main menu._`,
+      };
+    }
+  }
+
   const amountInYocto = nearUtils.format.parseNearAmount(amountNear.toString()) ?? '0';
   const amountInBigInt = BigInt(amountInYocto);
 
@@ -4150,6 +4180,11 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── Copy Trading Actions ──────────────────────────────────────────────────
+
+  registerPrivateActions(bot, {
+    setPrompt: (id, action) => userPendingActions.set(id, { action, expiresAt: Date.now() + 5 * 60_000 }),
+    lookupRoute: (token) => getFastTokenRoute(token),
+  });
 
   bot.action('menu_copy', async (ctx) => {
     const telegramId = ctx.from!.id;
@@ -11821,6 +11856,14 @@ export function setupRoutes(bot: Telegraf): void {
             ]),
           }
         );
+        return;
+      }
+
+      if (pending.action === 'private_deposit' || pending.action === 'private_withdraw' || pending.action === 'private_pool') {
+        userPendingActions.delete(telegramId);
+        const privUser = await getUserByTelegramId(telegramId).catch(() => null);
+        if (!privUser) { await ctx.reply('❌ Run /start first.'); return; }
+        await handlePrivatePrompt(ctx, privUser, pending.action, rawText);
         return;
       }
 

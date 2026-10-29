@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, extractExecutorEvents } from './executorPool.js';
+import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, extractExecutorEvents, parseRelayers, roundedReturn } from './executorPool.js';
 import { generatePrivateAccount, ownerHash } from './intentsPrivate.js';
 
 const NEAR = 10n ** 24n;
@@ -75,5 +75,31 @@ describe('private accounts', () => {
     expect(ownerHash('s3cr3t-salt', 'lunar-nexus-9768.racerbot.near')).toHaveLength(64);
     expect(ownerHash('a', 'b.near')).not.toEqual(ownerHash('a', 'c.near'));
     expect(ownerHash('a', 'b.near')).toEqual(ownerHash('a', 'b.near'));
+  });
+});
+
+describe('roundedReturn', () => {
+  it('sends whole 0.1 NEAR steps first and keeps the rest for later', () => {
+    expect(roundedReturn(1_234_567n * 10n ** 18n)).toBe(12n * 10n ** 23n); // 1.234567 -> 1.2
+    expect(roundedReturn(5n * NEAR)).toBe(5n * NEAR);
+  });
+  it('sends small amounts in one piece', () => {
+    expect(roundedReturn(15n * 10n ** 22n)).toBe(15n * 10n ** 22n); // 0.15 NEAR
+  });
+});
+
+describe('parseRelayers', () => {
+  it('reads several relayer accounts', () => {
+    expect(parseRelayers('r1.near=ed25519:AAA, r2.near=ed25519:BBB', 'x', 'ed25519:Z')).toEqual([
+      { account: 'r1.near', key: 'ed25519:AAA' },
+      { account: 'r2.near', key: 'ed25519:BBB' },
+    ]);
+  });
+  it('falls back to the single relayer, or none', () => {
+    expect(parseRelayers('', 'racerbot.near', 'ed25519:Z')).toEqual([{ account: 'racerbot.near', key: 'ed25519:Z' }]);
+    expect(parseRelayers(undefined, 'racerbot.near', '')).toEqual([]);
+  });
+  it('skips malformed entries', () => {
+    expect(parseRelayers('nokey.near,bad.near=secp256k1:Q', 'f.near', 'ed25519:F')).toEqual([{ account: 'f.near', key: 'ed25519:F' }]);
   });
 });
