@@ -11,6 +11,7 @@
 //        (--venue Dcl --dcl "<token>|wrap.near|<fee>",  --venue Intear --pool <id>)
 //   node scripts/rehearse-executor.mjs sell --venue RefAmm --token <token> --pool <id> --send
 //   node scripts/rehearse-executor.mjs exit --send                (NEAR back to the owner)
+//   node scripts/rehearse-executor.mjs exit --prepare-only --send  (then quote the exact exit_amount)
 //   node scripts/rehearse-executor.mjs exit --intents <deposit address> --send
 //   node scripts/rehearse-executor.mjs close --send               (20+ blocks after the exit)
 //   node scripts/rehearse-executor.mjs state
@@ -161,7 +162,8 @@ if (step === 'state') {
     await call('prepare_exit', new Writer().u32(0).done(), 100);
   }
   const s = send ? await state() : before;
-  if (send && s?.status === 'Exiting') {
+  // --prepare-only: measure now, so a NEAR Intents quote can be made for the exact amount
+  if (send && s?.status === 'Exiting' && !argv.includes('--prepare-only')) {
     const intents = opt('intents');
     if (intents) await call('exit_to_intents', new Writer().str(intents).u128(s.exit_amount).done(), 100);
     else await call('exit_to_owner', new Writer().str(ownerId).str(salt()).done(), 100);
