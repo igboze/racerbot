@@ -14,9 +14,11 @@ import {
   depositFromWallet,
   ensureConfidentialAccount,
   poolSizesForTotal,
+  quoteCrossChainDeposit,
   refillPool,
   withdrawPrivate,
 } from './executorPool.js';
+import { generateQrBuffer, generateWalletDeepLink, SUPPORTED_CHAINS, unitsToRaw, type OneClickToken } from './multichainDeposit.js';
 
 const NEAR = 10n ** 24n;
 
@@ -80,6 +82,7 @@ export async function buildPrivateView(user: UserRecord): Promise<{ text: string
   const rows: any[] = [
     [Markup.button.callback(acct.bot_private ? '🛡 Private mode: ON' : '🛡 Private mode: OFF', 'pv_toggle')],
     [Markup.button.callback('📥 Deposit', 'pv_dep'), Markup.button.callback('📤 Withdraw', 'pv_wd')],
+    [Markup.button.callback('🌐 Deposit from another chain', 'pv_xchain')],
     [Markup.button.callback('⚙️ Pool size', 'pv_pool')],
   ];
   for (const [token, t] of [...byToken].slice(0, 8)) {
@@ -93,10 +96,75 @@ export async function buildPrivateView(user: UserRecord): Promise<{ text: string
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
+// ── Deposits from other chains ───────────────────────────────────────────────
+// The multi-chain picker (chain → token → amount) is shared with public deposits. Starting it from
+// the Private screen marks the user for a while, so the final quote goes to the private balance.
+
+const PRIVATE_DEPOSIT_TTL_MS = 15 * 60_000;
+const privateDepositUntil = new Map<number, number>();
+
+export function isPrivateDeposit(telegramId: number): boolean {
+  const until = privateDepositUntil.get(telegramId);
+  if (until && until > Date.now()) return true;
+  privateDepositUntil.delete(telegramId);
+  return false;
+}
+
+export function setPrivateDeposit(telegramId: number, on: boolean): void {
+  if (on) privateDepositUntil.set(telegramId, Date.now() + PRIVATE_DEPOSIT_TTL_MS);
+  else privateDepositUntil.delete(telegramId);
+}
+
+/** The chain picker, labelled as a private deposit, with a way back to an ordinary one */
+export function privatizeDepositPicker<T extends { text: string; keyboard: any }>(menu: T): T {
+  menu.text =
+    `🛡 <b>Private deposit from another chain</b>\n\n` +
+    `What you send arrives in your <b>private balance</b> as NEAR, without passing through a public NEAR wallet. ` +
+    `1% fee, the same as regular deposits.\n\n` +
+    `🪙 <b>Select the chain you are sending from:</b>`;
+  const rows = menu.keyboard?.reply_markup?.inline_keyboard;
+  if (Array.isArray(rows)) rows.unshift([Markup.button.callback('↩️ Deposit to my wallet instead', 'pv_xchain_off')]);
+  return menu;
+}
+
+/** Final step of a private cross-chain deposit: the one-time address, as a QR card */
+export async function renderPrivateDepositCard(ctx: any, user: UserRecord, token: OneClickToken, amount: number): Promise<void> {
+  const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
+  const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
+  const wait = await ctx.reply(`⏳ Getting a private deposit address for ${amount} ${token.symbol}...`).catch(() => null);
+  try {
+    const quote = await quoteCrossChainDeposit(user, token.assetId, unitsToRaw(amount, token.decimals));
+    setPrivateDeposit(ctx.from!.id, false);
+    const qr = await generateQrBuffer(quote.depositAddress);
+    const link = generateWalletDeepLink(token.blockchain, quote.depositAddress, amount);
+    const caption =
+      `🛡 <b>Private deposit address</b>\n\n` +
+      `Send exactly <code>${amount} ${token.symbol}</code> on ${chainName} to:\n` +
+      `<code>${quote.depositAddress}</code>\n` +
+      (quote.depositMemo ? `\n📝 <b>Memo (required):</b> <code>${quote.depositMemo}</code>\n` : '') +
+      `\n💰 About <b>${fmtNear(quote.amountOut)} NEAR</b> arrives in your private balance (at least ${fmtNear(quote.minAmountOut)}).\n` +
+      `🔒 It never passes through your public wallet. Refunds return to your private balance.\n` +
+      `⏱️ This address is for this deposit only and expires in 30 minutes.`;
+    const rows: any[] = [];
+    if (link && /^https?:\/\//.test(link)) rows.push([Markup.button.url(token.blockchain === 'sol' ? '🟣 Open in Phantom' : '🦊 Open in wallet', link)]);
+    rows.push([Markup.button.callback('🛡 Private', 'menu_private')]);
+    await ctx.replyWithPhoto({ source: qr }, { caption, parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
+  } catch (err: any) {
+    await ctx.reply(`❌ Could not create the private deposit: ${err?.message || 'unknown error'}`);
+  } finally {
+    if (wait) await ctx.deleteMessage(wait.message_id).catch(() => {});
+  }
+}
+
 /** Telegram callbacks for the Private screen. `setPrompt` stores the next text reply's meaning. */
 export function registerPrivateActions(
   bot: Telegraf,
-  deps: { setPrompt: (telegramId: number, action: PrivatePromptAction) => void; lookupRoute: RouteLookup },
+  deps: {
+    setPrompt: (telegramId: number, action: PrivatePromptAction) => void;
+    lookupRoute: RouteLookup;
+    /** Shows the multi-chain deposit picker (private or ordinary, by the user's mark) */
+    openDepositPicker: (ctx: any) => Promise<void>;
+  },
 ): void {
   const withUser = async (ctx: any): Promise<UserRecord | null> => {
     const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
@@ -136,6 +204,21 @@ export function registerPrivateActions(
   bot.action('pv_dep', prompt('private_deposit', '📥 How much NEAR should move from your wallet into your private balance? (e.g. `5`)'));
   bot.action('pv_wd', prompt('private_withdraw', '📤 How much NEAR should leave your private balance? Reply with an amount (e.g. `2`), optionally followed by a NEAR account to send it to. It goes to your RacerBot wallet by default.'));
   bot.action('pv_pool', prompt('private_pool', `⚙️ How much NEAR should stay ready in executors? (${fmtNear(POOL_LIMITS.min)}–${fmtNear(POOL_LIMITS.hardCap)}, split into 1 NEAR executors; e.g. \`5\`)`));
+
+  bot.action('pv_xchain', async (ctx) => {
+    const user = await withUser(ctx);
+    if (!user || !EXECUTORS_ENABLED) return;
+    await ctx.answerCbQuery().catch(() => {});
+    await ensureConfidentialAccount(user);
+    setPrivateDeposit(ctx.from!.id, true);
+    await deps.openDepositPicker(ctx);
+  });
+
+  bot.action('pv_xchain_off', async (ctx) => {
+    await ctx.answerCbQuery('Deposits go to your wallet again').catch(() => {});
+    setPrivateDeposit(ctx.from!.id, false);
+    await deps.openDepositPicker(ctx);
+  });
 
   bot.action(/^pv_sell:([^:]+):(50|100)$/, async (ctx) => {
     const user = await withUser(ctx);

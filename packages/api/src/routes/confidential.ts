@@ -11,10 +11,16 @@ import {
   confidentialOverview,
   depositFromWallet,
   ensureConfidentialAccount,
+  isExternalWallet,
   poolSizesForTotal,
+  quoteCrossChainDeposit,
+  quoteWalletDeposit,
   refillPool,
+  submitWalletDeposit,
   withdrawPrivate,
 } from '../executorPool.js';
+import { verifiedUser } from './verifiedUser.js';
+import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
 
 const logger = createLogger('confidential-routes');
 function nearToYocto(n: unknown): bigint | null {
@@ -24,12 +30,13 @@ function nearToYocto(n: unknown): bigint | null {
 }
 
 const toNear = (y: bigint) => Number(y / 10n ** 18n) / 1e6;
+const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$/;
 
-export function registerConfidentialRoutes(router: Router, resolveUser: (req: any) => Promise<UserRecord | null>): void {
+export function registerConfidentialRoutes(router: Router): void {
   const authed = async (req: any, res: any): Promise<UserRecord | null> => {
-    const user = await resolveUser(req);
-    if (!user?.subaccount_id || !user.scoped_key_encrypted) {
-      res.status(401).json({ error: 'Confidential trading needs a RacerBot-managed account. Sign in with Telegram.' });
+    const user = await verifiedUser(req).catch(() => null);
+    if (!user?.subaccount_id || !NEAR_ACCOUNT.test(user.subaccount_id)) {
+      res.status(401).json({ error: 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.' });
       return null;
     }
     if (!EXECUTORS_ENABLED) {
@@ -110,10 +117,73 @@ export function registerConfidentialRoutes(router: Router, resolveUser: (req: an
         res.status(400).json({ error: `Deposit at least ${toNear(POOL_LIMITS.min)} NEAR.` });
         return;
       }
+      if (isExternalWallet(user)) {
+        // RacerBot holds no key for this wallet: return the transaction for the user's wallet to sign
+        const quote = await quoteWalletDeposit(user, amount);
+        res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
+        return;
+      }
       const result = await depositFromWallet(user, amount);
       res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'Deposit failed' });
+    }
+  });
+
+  /** After the user's wallet signed a quoted deposit: hand 1Click the transaction so it settles straight away */
+  router.post('/alpha/confidential/deposit/submit', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      const { depositAddress, txHash } = req.body || {};
+      if (typeof depositAddress !== 'string' || typeof txHash !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,50}$/.test(txHash)) {
+        res.status(400).json({ error: 'depositAddress and a transaction hash are required.' });
+        return;
+      }
+      await submitWalletDeposit(user, depositAddress, txHash);
+      res.json({ success: true, message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Could not record the deposit' });
+    }
+  });
+
+  /**
+   * Deposit from another chain straight into the private balance. Body: `tokenKey` (from /deposit/tokens)
+   * and `amount` in that token's units. Returns the one-time address to send to.
+   */
+  router.post('/alpha/confidential/deposit/crosschain', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      const token = getTokenByKey(String(req.body?.tokenKey || ''));
+      const amount = Number(req.body?.amount);
+      if (!token) {
+        res.status(400).json({ error: 'Pick a token to deposit.' });
+        return;
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        res.status(400).json({ error: 'Enter an amount to deposit.' });
+        return;
+      }
+      const amountRaw = unitsToRaw(amount, token.decimals);
+      const quote = await quoteCrossChainDeposit(user, token.assetId, amountRaw);
+      const qr = await generateQrBuffer(quote.depositAddress);
+      const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
+      res.json({
+        success: true,
+        depositAddress: quote.depositAddress,
+        depositMemo: quote.depositMemo ?? null,
+        chain: chain?.name || token.blockchain,
+        symbol: token.symbol,
+        amount: String(amount),
+        expectedNear: toNear(BigInt(quote.amountOut || '0')),
+        minNear: toNear(BigInt(quote.minAmountOut || '0')),
+        timeEstimateSec: quote.timeEstimate ?? null,
+        qrDataUrl: `data:image/png;base64,${qr.toString('base64')}`,
+        walletLink: generateWalletDeepLink(token.blockchain, quote.depositAddress, amount) || null,
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Could not create the deposit' });
     }
   });
 
@@ -127,7 +197,7 @@ export function registerConfidentialRoutes(router: Router, resolveUser: (req: an
         return;
       }
       const destination = typeof req.body?.destination === 'string' && req.body.destination.trim() ? req.body.destination.trim() : undefined;
-      if (destination && !/^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$/.test(destination)) {
+      if (destination && !NEAR_ACCOUNT.test(destination)) {
         res.status(400).json({ error: 'That is not a valid NEAR account.' });
         return;
       }
