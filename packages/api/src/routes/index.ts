@@ -28,6 +28,8 @@ import {
 } from '../config.js';
 import { executeShieldedVaultIntent } from '../racerVault.js';
 import { registerConfidentialRoutes } from './confidential.js';
+import { registerWebWalletRoutes } from './webWallet.js';
+import { verifiedUser } from './verifiedUser.js';
 import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
 const logger = createLogger('api-routes');
@@ -425,7 +427,9 @@ export async function resolveAlphaUser(req: any) {
     } catch {}
   }
 
-  // 3. NEAR Connect Wallet Header
+  // 3. NEAR Connect Wallet Header: an unproven claim, so it may only stand for a wallet RacerBot holds
+  // no key for (anything that wallet does still needs its own signature). Accounts RacerBot manages
+  // and signs for are reachable only through a verified session above, never by naming them here.
   const walletHeader = req.headers['x-wallet-address'] || req.query.walletAddress || req.body?.walletAddress;
   if (walletHeader && typeof walletHeader === 'string' && walletHeader.trim()) {
     const cleanWallet = walletHeader.trim();
@@ -438,6 +442,7 @@ export async function resolveAlphaUser(req: any) {
         `SELECT * FROM users WHERE subaccount_id = $1 LIMIT 1`,
         [cleanWallet]
       );
+      if (uRes.rows[0]?.scoped_key_encrypted) return null;
       if (uRes.rows[0]) {
         // If users.username is default or empty, check if racer_alpha_traders has a custom handle
         if (!uRes.rows[0].username || uRes.rows[0].username === cleanWallet) {
@@ -468,14 +473,14 @@ export async function resolveAlphaUser(req: any) {
          RETURNING *`,
         [cleanWallet, customHandle]
       );
+      // ON CONFLICT returns the existing row, which may be a managed account created meanwhile
+      if (newU.rows[0]?.scoped_key_encrypted) return null;
       if (newU.rows[0]) return newU.rows[0];
-    } catch {}
-    return {
-      id: cleanWallet,
-      subaccount_id: cleanWallet,
-      username: null,
-      telegram_id: null,
-    };
+    } catch {
+      // Without the database we cannot tell a managed account from a plain wallet: refuse
+      return null;
+    }
+    return null;
   }
 
   return null;
@@ -1005,7 +1010,8 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
 
     // 2. Phase 1a: per-position executors funded from the user's NEAR Intents private balance.
     // Sells use executors when the position is held in them; older vault positions fall through to 1b.
-    if (!onChainTxHash && isPrivateTrade && EXECUTORS_ENABLED && user.subaccount_id && user.scoped_key_encrypted) {
+    const canUseExecutors = Boolean(user.scoped_key_encrypted) || Boolean(await verifiedUser(req).catch(() => null));
+    if (!onChainTxHash && isPrivateTrade && EXECUTORS_ENABLED && user.subaccount_id && canUseExecutors) {
       const position = isBuy ? null : await positionBalance(user.id, tokenAddress).catch(() => null);
       if (isBuy || (position && position.total > 0n)) {
         const common = {
@@ -3551,6 +3557,7 @@ router.get('/deposit/status', async (req, res) => {
   }
 });
 
-registerConfidentialRoutes(router, resolveAlphaUser);
+registerConfidentialRoutes(router);
+registerWebWalletRoutes(router);
 
 export default router;
