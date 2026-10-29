@@ -220,4 +220,4 @@ export type {
 } from './db.js';
 
 export type { RacerVaultIntentRecord } from './db.js';
-export { recordVaultIntent, updateVaultIntentStatus, getVaultIntentByCorrelationId, getUserVaultIntents } from './db.js';
+export { recordVaultIntent, updateVaultIntentStatus, getVaultIntentByCorrelationId, getUserVaultIntents, listPendingVaultIntents, markVaultIntentChecked, expireUnsentVaultIntents } from './db.js';

@@ -4088,6 +4088,13 @@ export interface RacerVaultIntentRecord {
   hops: any[];
   nonce: Buffer | Uint8Array;
   deadline: number;
+  /** Router events (EVENT_JSON) recorded for this trade, in execution order. */
+  events?: Array<{ event: string; data: Record<string, any> }>;
+  payout_token?: string;
+  payout_amount?: string;
+  refunded_amount?: string;
+  consumed_amount?: string;
+  checked_at?: Date;
   created_at: Date;
   updated_at: Date;
 }
@@ -4133,6 +4140,11 @@ export async function updateVaultIntentStatus(
     amount_out_formatted?: number;
     fee_amount?: string;
     failure_reason?: string;
+    events?: Array<{ event: string; data: Record<string, any> }>;
+    payout_token?: string;
+    payout_amount?: string;
+    refunded_amount?: string;
+    consumed_amount?: string;
   }
 ): Promise<void> {
   const db = await getDb();
@@ -4144,6 +4156,12 @@ export async function updateVaultIntentStatus(
          amount_out_formatted = COALESCE($4, amount_out_formatted),
          fee_amount = COALESCE($5, fee_amount),
          failure_reason = COALESCE($6, failure_reason),
+         events = COALESCE($8::jsonb, events),
+         payout_token = COALESCE($9, payout_token),
+         payout_amount = COALESCE($10, payout_amount),
+         refunded_amount = COALESCE($11, refunded_amount),
+         consumed_amount = COALESCE($12, consumed_amount),
+         checked_at = NOW(),
          updated_at = NOW()
      WHERE correlation_id = $7`,
     [
@@ -4154,8 +4172,51 @@ export async function updateVaultIntentStatus(
       update.fee_amount || null,
       update.failure_reason || null,
       correlationId,
+      update.events ? JSON.stringify(update.events) : null,
+      update.payout_token || null,
+      update.payout_amount || null,
+      update.refunded_amount || null,
+      update.consumed_amount || null,
     ]
   );
+}
+
+/**
+ * Trades for the background re-check, oldest first: unresolved ones (every 30s) and older
+ * resolved ones recorded before router events were stored (backfill, at most hourly).
+ */
+export async function listPendingVaultIntents(minAgeSeconds: number, limit: number = 25): Promise<RacerVaultIntentRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT * FROM racer_vault_intents
+     WHERE tx_hash IS NOT NULL
+       AND created_at < NOW() - make_interval(secs => $1)
+       AND (
+         (status = 'PENDING' AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '30 seconds'))
+         OR (status <> 'PENDING' AND events = '[]'::jsonb AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '1 hour'))
+       )
+     ORDER BY created_at ASC
+     LIMIT $2`,
+    [minAgeSeconds, limit]
+  );
+  return res.rows.map(mapVaultIntentRow);
+}
+
+/** Record that a trade was checked without a result, so the re-check backs off. */
+export async function markVaultIntentChecked(correlationId: string): Promise<void> {
+  const db = await getDb();
+  await db.query(`UPDATE racer_vault_intents SET checked_at = NOW() WHERE correlation_id = $1`, [correlationId]);
+}
+
+/** PENDING trades that never got a transaction and whose intent deadline has passed. */
+export async function expireUnsentVaultIntents(): Promise<number> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE racer_vault_intents
+     SET status = 'EXPIRED', failure_reason = COALESCE(failure_reason, 'Never sent on-chain'), updated_at = NOW()
+     WHERE status = 'PENDING' AND tx_hash IS NULL AND deadline < EXTRACT(EPOCH FROM NOW())::bigint - 60`
+  );
+  return res.rowCount ?? 0;
 }
 
 export async function getVaultIntentByCorrelationId(correlationId: string): Promise<RacerVaultIntentRecord | null> {
@@ -4200,6 +4261,12 @@ function mapVaultIntentRow(row: any): RacerVaultIntentRecord {
     hops: typeof row.hops === 'string' ? JSON.parse(row.hops) : (row.hops || []),
     nonce: row.nonce,
     deadline: parseInt(row.deadline, 10),
+    events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
+    payout_token: row.payout_token ?? undefined,
+    payout_amount: row.payout_amount ?? undefined,
+    refunded_amount: row.refunded_amount ?? undefined,
+    consumed_amount: row.consumed_amount ?? undefined,
+    checked_at: row.checked_at ? new Date(row.checked_at) : undefined,
     created_at: new Date(row.created_at),
     updated_at: new Date(row.updated_at),
   };

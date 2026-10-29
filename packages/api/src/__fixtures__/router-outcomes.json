@@ -1,0 +1,105 @@
+{
+ "settled_dcl_buy": {
+  "tx_hash": "5tzLV1NGQ5JUZZUZ9eRUT7RgwVmkLeWmV8enTiUAmrBY",
+  "status": {
+   "SuccessValue": "dHJ1ZQ=="
+  },
+  "receipts_outcome": [
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"deposit\",\"data\":{\"user\":\"lunar-nexus-9768.racerbot.near\",\"token\":\"near\",\"amount\":\"1000000000000000000000000\"}}",
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"intent_submitted\",\"data\":{\"correlation_id\":\"intent_1793189797138_a109940bb7ba\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"venue\":\"Dcl\",\"token_in\":\"wrap.near\",\"token_out\":\"batman-4.nearlytrade.near\",\"amount_in\":\"1000000000000000000000000\",\"min_amount_out\":\"0\",\"hops\":1,\"swap_nonce\":5}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"swap_settled\",\"data\":{\"correlation_id\":\"intent_1793189797138_a109940bb7ba\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"token_out\":\"batman-4.nearlytrade.near\",\"gross\":\"3258842721523216216554\",\"fee\":\"48882640822848243248\",\"net\":\"3209960080700367973306\",\"fee_bps\":150}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"payout_completed\",\"data\":{\"correlation_id\":\"intent_1793189797138_a109940bb7ba\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"token\":\"batman-4.nearlytrade.near\",\"amount\":\"3209960080700367973306\"}}"
+     ]
+    }
+   }
+  ]
+ },
+ "venue_refunded_sell": {
+  "tx_hash": "FmavSJ6RZQ6SSuYX8ftZKv4GsC8adqBWPaFnDsfz7Wpu",
+  "status": {
+   "SuccessValue": "IjAi"
+  },
+  "receipts_outcome": [
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"intent_submitted\",\"data\":{\"correlation_id\":\"intent_1793202119931_30f6e01556a6\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"venue\":\"Dcl\",\"token_in\":\"three-de86d6.launchpad.justhoot.near\",\"token_out\":\"wrap.near\",\"amount_in\":\"3750033276138261254544\",\"min_amount_out\":\"186336919409198907293089\",\"hops\":1,\"swap_nonce\":11}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"swap_failed\",\"data\":{\"correlation_id\":\"intent_1793202119931_30f6e01556a6\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"reason\":\"venue_refunded_input\",\"refunded_token\":\"three-de86d6.launchpad.justhoot.near\",\"refunded_amount\":\"3750033276138261254544\",\"consumed_amount\":\"0\"}}"
+     ]
+    }
+   }
+  ]
+ },
+ "slippage_refund_sell": {
+  "tx_hash": "C6zVgFpCNgn4WkbLZA4QLysTkviyqQUpGHxY1FLCCXhZ",
+  "status": {
+   "SuccessValue": "dHJ1ZQ=="
+  },
+  "receipts_outcome": [
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"intent_submitted\",\"data\":{\"correlation_id\":\"intent_1793228312564_c2dfa97fa1f9\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"venue\":\"Dcl\",\"token_in\":\"three-de86d6.launchpad.justhoot.near\",\"token_out\":\"wrap.near\",\"amount_in\":\"3750033276138261254544\",\"min_amount_out\":\"126617140260180734451543\",\"hops\":1,\"swap_nonce\":12}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"slippage_refund\",\"data\":{\"correlation_id\":\"intent_1793228312564_c2dfa97fa1f9\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"token_out\":\"wrap.near\",\"got\":\"99390195329199999999\",\"min\":\"126617140260180734451543\"}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"payout_completed\",\"data\":{\"correlation_id\":\"intent_1793228312564_c2dfa97fa1f9\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"token\":\"near\",\"amount\":\"99390195329199999999\"}}"
+     ]
+    }
+   }
+  ]
+ },
+ "zero_tokens_sell": {
+  "tx_hash": "8m6UaU3Kq7gESUSir2MBQjzP8m4b3xtbzT945ixkv766",
+  "status": {
+   "SuccessValue": "IjAi"
+  },
+  "receipts_outcome": [
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"intent_submitted\",\"data\":{\"correlation_id\":\"intent_1793198728528_e610249746f2\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"venue\":\"Dcl\",\"token_in\":\"17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1\",\"token_out\":\"wrap.near\",\"amount_in\":\"1351942\",\"min_amount_out\":\"289127043108709164221203\",\"hops\":1,\"swap_nonce\":7}}"
+     ]
+    }
+   },
+   {
+    "outcome": {
+     "logs": [
+      "EVENT_JSON:{\"standard\":\"racerbot-vault\",\"version\":\"1.0.0\",\"event\":\"swap_failed\",\"data\":{\"correlation_id\":\"intent_1793198728528_e610249746f2\",\"user\":\"lunar-nexus-9768.racerbot.near\",\"reason\":\"zero_tokens_received\",\"refunded_token\":\"17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1\",\"refunded_amount\":\"1351942\"}}"
+     ]
+    }
+   }
+  ]
+ }
+}
