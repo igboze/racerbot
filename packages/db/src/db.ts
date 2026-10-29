@@ -4181,19 +4181,31 @@ export async function updateVaultIntentStatus(
   );
 }
 
-/** Unresolved trades that have a transaction hash, oldest first, for the background re-check. */
+/**
+ * Trades for the background re-check, oldest first: unresolved ones (every 30s) and older
+ * resolved ones recorded before router events were stored (backfill, at most hourly).
+ */
 export async function listPendingVaultIntents(minAgeSeconds: number, limit: number = 25): Promise<RacerVaultIntentRecord[]> {
   const db = await getDb();
   const res = await db.query(
     `SELECT * FROM racer_vault_intents
-     WHERE status = 'PENDING' AND tx_hash IS NOT NULL
+     WHERE tx_hash IS NOT NULL
        AND created_at < NOW() - make_interval(secs => $1)
-       AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '30 seconds')
+       AND (
+         (status = 'PENDING' AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '30 seconds'))
+         OR (status <> 'PENDING' AND events = '[]'::jsonb AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '1 hour'))
+       )
      ORDER BY created_at ASC
      LIMIT $2`,
     [minAgeSeconds, limit]
   );
   return res.rows.map(mapVaultIntentRow);
+}
+
+/** Record that a trade was checked without a result, so the re-check backs off. */
+export async function markVaultIntentChecked(correlationId: string): Promise<void> {
+  const db = await getDb();
+  await db.query(`UPDATE racer_vault_intents SET checked_at = NOW() WHERE correlation_id = $1`, [correlationId]);
 }
 
 /** PENDING trades that never got a transaction and whose intent deadline has passed. */

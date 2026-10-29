@@ -3,6 +3,7 @@ import {
   expireUnsentVaultIntents,
   getUserVaultIntents,
   listPendingVaultIntents,
+  markVaultIntentChecked,
   updateVaultIntentStatus,
   type RacerVaultIntentRecord,
 } from '@racerbot/db';
@@ -112,13 +113,15 @@ export async function getReceiptsAndVault(accountId: string, limit = 50): Promis
   return { router: RACER_VAULT_CONTRACT_ID, accountId, receipts, balances: held };
 }
 
-/** Resolve one unresolved trade from its on-chain outcome. Returns true when its status changed. */
+/** Resolve a trade from its on-chain outcome (unresolved trades, and events for older ones). */
 export async function recheckIntent(r: RacerVaultIntentRecord): Promise<boolean> {
   if (!r.tx_hash) return false;
   const outcome = await getNear().waitForOutcome(r.tx_hash, r.account_id, 4_000).catch(() => null);
-  if (!outcome) return false;
-  const parsed = parseRouterOutcome(outcome);
-  if (parsed.status === 'PENDING') return false;
+  const parsed = outcome ? parseRouterOutcome(outcome) : null;
+  if (!parsed || parsed.status === 'PENDING') {
+    await markVaultIntentChecked(r.correlation_id);
+    return false;
+  }
   await updateVaultIntentStatus(r.correlation_id, {
     status: parsed.status,
     amount_out: parsed.netOut,
