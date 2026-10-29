@@ -18,6 +18,7 @@ import { startStarknetAlertsEngine } from './starknetAlerts.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } from './depositWatcher.js';
 import { startMultichainDepositPoller } from './multichainDeposit.js';
+import { startReceiptReconciler } from './receipts.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './workers.js';
@@ -515,6 +516,8 @@ async function main(): Promise<void> {
   // ── Real-time NEAR, SUI & Starknet native deposit watcher ─────────────────
   startDepositWatcher(12_000); // Check every 12s to protect RPC rate limits and keep bot instant
   const multichainPoller = startMultichainDepositPoller(bot, 10_000);
+  // Resolve private trades left PENDING (timeouts, restarts) from their on-chain outcome
+  const receiptReconciler = startReceiptReconciler(30_000);
 
   // ── Start background worker processes (detector, executor, triggers) ──────
   startBackgroundWorkers();
@@ -526,6 +529,7 @@ async function main(): Promise<void> {
     bot.stop(signal);
     stopDepositWatcher();
     clearInterval(multichainPoller);
+    clearInterval(receiptReconciler);
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;
