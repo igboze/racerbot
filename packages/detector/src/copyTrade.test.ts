@@ -23,7 +23,7 @@ vi.mock('@racerbot/shared', async (importOriginal: () => Promise<Record<string, 
 
 import * as db from '@racerbot/db';
 import * as shared from '@racerbot/shared';
-import { extractSwapDetails, checkCopyTradeReceipt, initCopyTradeDetector } from './copyTrade.js';
+import { extractSwapDetails, checkCopyTradeReceipt, initCopyTradeDetector, intearRoute } from './copyTrade.js';
 
 describe('Copy Trading & Wallet Tracker', () => {
   beforeEach(() => {
@@ -474,5 +474,98 @@ describe('Copy Trading & Wallet Tracker', () => {
       expect(swapEvent.token_out).toBe('wrap.near');
       expect(swapEvent.amount_in).toBe('500000000');
     });
+  });
+});
+
+// Real message shapes from each venue (DCL, Intear, NearPumpFun): buys must be recognised,
+// otherwise copy buys never fire and copy sells are skipped for lack of a position.
+describe('extractSwapDetails on real venue messages', () => {
+  const ftCall = (receiver: string, msg: unknown) =>
+    [{ methodName: 'ft_transfer_call', args: { receiver_id: receiver, amount: '1000', msg: typeof msg === 'string' ? msg : JSON.stringify(msg) } }];
+  const THREE = 'three-de86d6.launchpad.justhoot.near';
+  const DCL_POOL = `${THREE}|wrap.near|10000`;
+
+  it('DCL buy: wrap.near into dclv2 with Swap.output_token', () => {
+    const r = extractSwapDetails('wrap.near', ftCall('dclv2.ref-labs.near', { Swap: { pool_ids: [DCL_POOL], output_token: THREE, min_output_amount: '1' } }));
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: THREE, tokenIn: 'wrap.near' });
+  });
+
+  it('DCL buy is also recognised on the ft_on_transfer receipt at the pool', () => {
+    const r = extractSwapDetails('dclv2.ref-labs.near',
+      [{ methodName: 'ft_on_transfer', args: { sender_id: 'leader.near', amount: '1000', msg: JSON.stringify({ Swap: { pool_ids: [DCL_POOL], output_token: THREE } }) } }],
+      'wrap.near');
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: THREE });
+  });
+
+  it('DCL sell with skip_unwrap_near still a sell', () => {
+    const r = extractSwapDetails(THREE, ftCall('dclv2.ref-labs.near', { Swap: { pool_ids: [DCL_POOL], output_token: 'wrap.near', min_output_amount: '1', skip_unwrap_near: true } }));
+    expect(r).toMatchObject({ side: 'sell', tokenAddress: THREE });
+  });
+
+  it('DCL SwapByOutput buy', () => {
+    const r = extractSwapDetails('wrap.near', ftCall('dclv2.ref-labs.near', { SwapByOutput: { pool_ids: [DCL_POOL], output_token: THREE, output_amount: '5' } }));
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: THREE });
+  });
+
+  const intearOps = (assetIn: string, assetOut: string, viaIntear = false) => ({
+    referrer: 'dex-aggregator.intear.near',
+    operations: [
+      ...(viaIntear
+        ? [
+            { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: assetIn, asset_out: 'nep141:token.intear.near', amount: { Amount: { ExactIn: '1000' } }, message: 'EgEAAA==' } },
+            { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: 'nep141:token.intear.near', asset_out: assetOut, amount: 'OutputOfLastIn', message: 'CQAAAA==' } },
+          ]
+        : [{ SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: assetIn, asset_out: assetOut, amount: { Amount: { ExactIn: '1000' } }, message: 'EgEAAA==' } }]),
+      { Withdraw: { asset_id: assetOut, amount: { Full: { at_least: null } }, to: null, rescue_address: null } },
+    ],
+  });
+
+  it('Intear buy through deposit_near', () => {
+    const r = extractSwapDetails('dex.intear.near', [{ methodName: 'deposit_near', args: { operations: intearOps('near', 'nep141:cat.near') } }]);
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: 'cat.near', tokenIn: 'wrap.near' });
+  });
+
+  it('Intear two-hop buy resolves to the final token, not token.intear.near', () => {
+    const r = extractSwapDetails('dex.intear.near', [{ methodName: 'deposit_near', args: { operations: intearOps('near', 'nep141:cat.near', true) } }]);
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: 'cat.near' });
+  });
+
+  it('Intear sell through ft_transfer_call', () => {
+    const r = extractSwapDetails('cat.near', ftCall('dex.intear.near', intearOps('nep141:cat.near', 'near')));
+    expect(r).toMatchObject({ side: 'sell', tokenAddress: 'cat.near', tokenOut: 'wrap.near' });
+  });
+
+  it('Intear two-hop sell resolves to the token sold', () => {
+    const r = extractSwapDetails('cat.near', ftCall('dex.intear.near', intearOps('nep141:cat.near', 'near', true)));
+    expect(r).toMatchObject({ side: 'sell', tokenAddress: 'cat.near' });
+  });
+
+  it('Intear token-to-token swap is neither a buy nor a sell', () => {
+    expect(extractSwapDetails('cat.near', ftCall('dex.intear.near', intearOps('nep141:cat.near', 'nep141:dog.near')))).toBeNull();
+  });
+
+  it('intearRoute reads all message forms', () => {
+    const ops = intearOps('near', 'nep141:cat.near');
+    expect(intearRoute(ops)).toEqual({ tokenIn: 'near', tokenOut: 'cat.near' });
+    expect(intearRoute(ops.operations)).toEqual({ tokenIn: 'near', tokenOut: 'cat.near' });
+    expect(intearRoute(JSON.stringify(ops))).toEqual({ tokenIn: 'near', tokenOut: 'cat.near' });
+    expect(intearRoute({ operations: ops })).toEqual({ tokenIn: 'near', tokenOut: 'cat.near' });
+    expect(intearRoute('not json')).toBeNull();
+  });
+
+  it('NearPumpFun buy and sell on the token contract', () => {
+    expect(extractSwapDetails('cat.nearpumpfun.near', [{ methodName: 'buy', args: { min_tokens_out: '1', deadline_sec: 1 } }]))
+      .toMatchObject({ side: 'buy', tokenAddress: 'cat.nearpumpfun.near', tokenIn: 'wrap.near' });
+    expect(extractSwapDetails('cat.nearpumpfun.near', [{ methodName: 'sell', args: { tokens_in: '5', min_near_out: '1', deadline_sec: 1 } }]))
+      .toMatchObject({ side: 'sell', tokenAddress: 'cat.nearpumpfun.near', amountIn: '5' });
+  });
+
+  it('other calls on a NearPumpFun token are not trades', () => {
+    expect(extractSwapDetails('cat.nearpumpfun.near', [{ methodName: 'storage_deposit', args: {} }])).toBeNull();
+  });
+
+  it('Ref v2 buy still recognised', () => {
+    const r = extractSwapDetails('wrap.near', ftCall('v2.ref-finance.near', { force: 0, actions: [{ pool_id: 1, token_in: 'wrap.near', token_out: 'meme.near', amount_in: '1000', min_amount_out: '1' }] }));
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: 'meme.near' });
   });
 });
