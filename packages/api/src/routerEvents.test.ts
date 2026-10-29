@@ -49,6 +49,19 @@ describe('parseRouterOutcome edge cases', () => {
     expect(p.reverted).toMatch(/^Token busy/);
   });
 
+  it('a one-transaction sell rejected inside ft_on_transfer: transaction succeeds, receipt fails', () => {
+    const p = parseRouterOutcome({
+      status: { SuccessValue: 'IjAi' },
+      receipts_outcome: [
+        { outcome: { logs: [], status: { SuccessValue: '' } } },
+        { outcome: { logs: [], status: { Failure: { ActionError: { kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: Token busy: a sell to NEAR is settling, retry shortly' } } } } } } },
+      ],
+    });
+    expect(p.status).toBe('FAILED');
+    expect(p.tokenBusy).toBe(true);
+    expect(p.reverted).toMatch(/^Token busy/);
+  });
+
   it('a submitted intent with no outcome yet is PENDING', () => {
     expect(parseRouterOutcome(outcome([log('intent_submitted')])).status).toBe('PENDING');
   });
