@@ -550,6 +550,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let suiUsdFormatted = '$0';
   let strkBalFormatted = '0';
   let ethBalFormatted = '0';
+  let wrapNearFormatted = '0';
+  let nativeNearFormatted = '0';
   let solAddress = '';
   let solBalFormatted = '0';
   let solUsdFormatted = '$0';
@@ -564,6 +566,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     try {
       const b = await getUserBalances(telegramId, forceRefresh, user);
       nearBalFormatted = b.totalNearFormatted;
+      wrapNearFormatted = b.wrapNearFormatted || '0';
+      nativeNearFormatted = b.nativeNearFormatted || '0';
       subaccount = b.subaccountId || user.subaccount_id;
       suiAddress = b.suiAddress || user.sui_address || '';
       suiBalFormatted = b.suiBalanceFormatted || '0';
@@ -578,8 +582,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
       const rawNearUsd = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
       const rawSuiUsd = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-      const rawStrkUsd = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
-      const rawEthUsd = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
+      const rawStrkUsd = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.40);
+      const rawEthUsd = parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0);
 
       solAddress = b.solanaAddress || user.solana_address || '';
       solBalFormatted = b.solBalanceFormatted || '0';
@@ -613,6 +617,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
   if (nearVisible) {
     text += `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>${usdcBalFormatted}</b>\n`;
+    if (Number(wrapNearFormatted) > 0.0001) {
+      text += `   ↳ Native: ${nativeNearFormatted} Ⓝ | Wrapped: ${wrapNearFormatted} wNEAR\n`;
+    }
   }
   if (suiVisible) {
     text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
@@ -639,11 +646,18 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   }
   text = text.trimEnd();
 
-  const keyboard = Markup.inlineKeyboard([
+  const mainButtons: any[] = [
     [
       cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
     ],
+  ];
+
+  if (nearVisible && Number(wrapNearFormatted) > 0.001) {
+    mainButtons.push([cb(`🔄 Unwrap ${wrapNearFormatted} wNEAR`, 'wallet_unwrap', 'primary')]);
+  }
+
+  mainButtons.push(
     [
       cb('🎒 Your Bags', 'menu_holdings', 'primary'),
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
@@ -669,8 +683,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       Markup.button.url('📢 Updates', 'https://t.me/racertrading'),
       Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
     ],
-  ]);
+  );
 
+  const keyboard = Markup.inlineKeyboard(mainButtons);
   const res = { text, keyboard };
   mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
   return res;
@@ -783,8 +798,8 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
 
   const nearTotalUsdNum = nearVisible ? parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3) : 0;
   const suiTotalUsdNum = suiVisible ? parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0) : 0;
-  const strkTotalUsdNum = starknetVisible ? parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12) : 0;
-  const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * 2600.0 : 0;
+  const strkTotalUsdNum = starknetVisible ? parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.40) : 0;
+  const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0) : 0;
   const solTotalUsdNum = solanaVisible ? (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0) : 0;
   const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
   const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + usdcNearNum;
@@ -838,15 +853,18 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (nearVisible) {
     text += `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n`;
     text += `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n`;
+    text += `• Spendable: <b>${b.nativeNearFormatted} Ⓝ</b> (On-chain: ${b.onChainNearFormatted || b.nativeNearFormatted} Ⓝ, 0.05 Ⓝ reserved for storage)\n`;
     if (Number(b.wrapNearFormatted) > 0.0001) {
-      text += `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n`;
+      text += `• Wrapped: <b>${b.wrapNearFormatted} wNEAR</b>\n`;
     }
   }
   if (suiVisible) {
     text += `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n`;
   }
   if (starknetVisible && b.starknetAddress) {
-    text += `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n`;
+    const starkUsdSum = strkTotalUsdNum + ethTotalUsdNum;
+    const starkUsdStr = starkUsdSum >= 1000 ? `${(starkUsdSum / 1000).toFixed(2)}K` : `${starkUsdSum.toFixed(2)}`;
+    text += `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b> (${starkUsdStr})\n`;
   }
   if (solanaVisible && b.solanaAddress) {
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
@@ -1443,6 +1461,12 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     safetyBanner = `🛡️ *Security*: 🟢 Passed • ${contractType}\n`;
   }
 
+  // Thin liquidity warning for trades under $1,000 liquidity
+  const isLowLiquidity = (liqUsdRaw > 0 && liqUsdRaw < 1000) || (liqNum > 0 && liqNum * (tokenInfo.near_usd || 1) < 1000);
+  if (isLowLiquidity && !safety?.isHoneypot && !safety?.isDrained) {
+    safetyBanner += `⚠️ *Low Liquidity* (${liqUsdStr || `${liqUsdRaw.toFixed(0)}`}) — High slippage risk!\n\n`;
+  }
+
   // Mobile-optimized ultra-compact stats block (dense 4-line monospace under 28 chars wide)
   const priceCol = priceNearStr ? `${priceNearStr} ${nativeUnit}` : '0.00';
   const usdCol = priceUsdStr ? ` (${priceUsdStr})` : '';
@@ -1465,11 +1489,15 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
   statsBlock += '```\n';
 
+  const userSlippage = userRecord?.slippage_pct != null ? `${userRecord.slippage_pct}%` : '1.0%';
+  const slippageLine = `⚙️ *Slippage*: \`${userSlippage}\`\n`;
+
   let text =
     safetyBanner +
     `🪙 *${safeName}* (\`${safeSymbol}\`) • ${venueText.replace('💧 *Venue*: ', '').replace('💧 Venue: ', '')}\n` +
     `📝 \`${tokenInfo.address}\`\n` +
     statsBlock +
+    slippageLine +
     rateFooter +
     balanceText;
 
@@ -4074,6 +4102,7 @@ export function setupRoutes(bot: Telegraf): void {
   // ── Main Menu Actions ─────────────────────────────────────────────────────
   bot.action('menu_home', async (ctx) => {
     const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
     await ctx.answerCbQuery('Main Menu').catch(() => { });
     try {
       const menu = await buildMainMenu(telegramId, false);
@@ -4362,6 +4391,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(['menu_wallet', 'wallet', 'open_wallet'], async (ctx) => {
     const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
     await ctx.answerCbQuery().catch(() => { });
     try {
       const wallet = await buildWalletMenu(telegramId);
@@ -4381,6 +4411,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('menu_settings', async (ctx) => {
     const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
@@ -8453,6 +8484,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('wallet_refresh', async (ctx) => {
     const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
     try {
       await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => { });
       const wallet = await buildWalletMenu(telegramId, true);
@@ -8551,22 +8583,51 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 180000,
     });
     await ctx.answerCbQuery().catch(() => { });
+
+    const b = await getUserBalances(telegramId).catch(() => null);
+    let balSummary = '';
+    if (b) {
+      balSummary = '💳 *Available to Withdraw:*\n' +
+        '• ⬛ NEAR: `' + b.nativeNearFormatted + ' Ⓝ` (Total: ' + (b.onChainNearFormatted || b.nativeNearFormatted) + ' Ⓝ, 0.05 Ⓝ reserved for storage)\n';
+      if (Number(b.wrapNearFormatted || '0') > 0.0001) {
+        balSummary += '  _(+ ' + b.wrapNearFormatted + ' wNEAR will auto-unwrap on withdrawal)_\n';
+      }
+      if (b.suiBalanceFormatted && Number(b.suiBalanceFormatted) > 0) {
+        balSummary += '• 🔷 SUI: `' + b.suiBalanceFormatted + ' SUI`\n';
+      }
+      if (b.strkBalanceFormatted && Number(b.strkBalanceFormatted) > 0) {
+        balSummary += '• ✨ STRK: `' + b.strkBalanceFormatted + ' STRK`\n';
+      }
+      balSummary += '\n';
+    }
+
     await ctx.reply(
-      `💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n` +
-      `Reply with the recipient address, amount, and optional token, for example:\n` +
-      `• *NEAR*: \`mywallet.near 1.5\` or \`mywallet.near all\`\n` +
-      `• *Token*: \`mywallet.near 100 LONK\` or \`mywallet.near all blackdragon.tkn.near\`\n` +
-      `• *SUI*: \`0x1234...abcd 1.0 SUI\` or \`0x1234...abcd all SUI\`\n` +
-      `• *Starknet*: \`0x1234...abcd 10 STRK\` or \`0x1234...abcd all STRK\`\n\n` +
-      `_Or tap below to choose a token from your bags to send:_`,
+      '💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n' +
+      balSummary +
+      'Reply with the recipient address, amount, and optional token, for example:\n' +
+      '• *NEAR*: `mywallet.near 1.5` or `mywallet.near all`\n' +
+      '• *Token*: `mywallet.near 100 LONK` or `mywallet.near all blackdragon.tkn.near`\n' +
+      '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
+      '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n\n' +
+      '_Type /cancel or tap Cancel below to abort._',
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
           [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
-          [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
+          [cb('❌ Cancel', 'withdraw_cancel', 'primary'), cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
         ]),
       }
     );
+  });
+
+  bot.action('withdraw_cancel', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery('Withdrawal cancelled.').catch(() => { });
+    try {
+      const wallet = await buildWalletMenu(telegramId, false);
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => { });
+    } catch { }
   });
 
   bot.action('wallet_withdraw_tokens_list', async (ctx) => {

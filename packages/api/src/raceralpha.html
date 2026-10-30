@@ -32,11 +32,13 @@
     window.openConnectModal = function() {
       var modal = document.getElementById('racer-connect-modal');
       if (modal) modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
       if (typeof window.updateWalletUI === 'function') window.updateWalletUI();
     };
     window.closeConnectModal = function() {
       var modal = document.getElementById('racer-connect-modal');
       if (modal) modal.classList.remove('open');
+      document.body.style.overflow = '';
       if (window.RacerConnect && typeof window.RacerConnect.stopPairing === 'function') {
         window.RacerConnect.stopPairing();
       }
@@ -3401,6 +3403,18 @@
         color: #000 !important;
         border-radius: 8px !important;
       }
+
+      /* Mobile touch target minimums per design system */
+      .modal-box input,
+      .modal-box select,
+      .modal-box button,
+      .receipts-btn {
+        min-height: 44px;
+      }
+      .modal-box .btn-secondary,
+      .modal-box .btn-primary {
+        min-height: 44px;
+      }
     }
   </style>
   <script src="/assets/racer-config.js"></script>
@@ -5051,7 +5065,7 @@
           </div>
           <div style="display:flex; gap:8px;">
             <div style="position:relative; flex:1;">
-              <input type="number" id="deposit-amount-input" step="any" min="0" placeholder="0.00" oninput="handleDepositAmountInput()" style="width:100%; height:42px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; color:#fff; font-size:15px; font-family:var(--font-mono); padding:0 60px 0 12px; outline:none;">
+              <input type="number" id="deposit-amount-input" step="any" min="0" placeholder="0.00" oninput="handleDepositAmountInput()" style="width:100%; height:44px; min-height:44px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; color:#fff; font-size:15px; font-family:var(--font-mono); padding:0 60px 0 12px; outline:none;">
               <span id="deposit-token-symbol-badge" style="position:absolute; right:12px; top:12px; font-size:12px; font-family:var(--font-mono); font-weight:700; color:var(--color-racer-cyan);">SOL</span>
             </div>
             <div style="display:flex; gap:4px;">
@@ -6305,6 +6319,7 @@
 
       document.getElementById('modal-buy-feedback').style.display = 'none';
       document.getElementById('modal-buy-key').style.display = 'flex';
+      document.body.style.overflow = 'hidden';
     }
 
     function selectModalTier(tier) {
@@ -6328,6 +6343,7 @@
 
     function closeBuyKeyModal() {
       document.getElementById('modal-buy-key').style.display = 'none';
+      document.body.style.overflow = '';
     }
 
     async function executeKeyPurchase() {
@@ -8643,6 +8659,7 @@
     async function openDepositModal() {
       const modal = document.getElementById('modal-deposit');
       if (modal) modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
       
       const addr = getActiveUserAddress() || 'user.near';
       const depAccId = document.getElementById('deposit-account-id');
@@ -8659,6 +8676,7 @@
     function closeDepositModal() {
       const modal = document.getElementById('modal-deposit');
       if (modal) modal.style.display = 'none';
+      document.body.style.overflow = '';
       if (depositStatusPoller) {
         clearInterval(depositStatusPoller);
         depositStatusPoller = null;
@@ -9128,6 +9146,7 @@
     function openConnectModal() {
       const modal = document.getElementById('racer-connect-modal');
       if (modal) modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
       updateWalletUI();
       loadTradingWallet();
     }
@@ -9198,9 +9217,9 @@
                 <code id="trading-wallet-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all;"></code></div>
               <div style="display:flex; gap:8px;">
                 <input id="trading-wallet-fund" type="number" min="0.01" step="0.1" placeholder="NEAR" aria-label="Amount to send from your connected wallet"
-                  style="flex:1; height:36px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono);">
-                <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
-                <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
+                  style="flex:1; height:44px; min-height:44px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono);">
+                <button type="button" class="btn-secondary" style="height:44px; min-height:44px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
+                <button type="button" class="btn-secondary" style="height:44px; min-height:44px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
               </div>
               <span style="color:var(--color-text-subtle); font-size:12px;">Trades and private trading run from this wallet without wallet pop-ups. RacerBot keeps its key encrypted on the server; it is never sent to your browser.</span>`;
             const addrEl = document.getElementById('trading-wallet-address');
@@ -9217,7 +9236,7 @@
                 </span>
                 <div style="display:flex; align-items:center; gap:6px;">
                   <code style="font-family:var(--font-mono); font-size:11px; color:var(--color-racer-cyan);" title="${escapeHtml(data.address)}">${escapeHtml(shortAddr)}</code>
-                  <button type="button" class="btn-secondary btn-sm" style="height:22px; padding:0 6px; font-size:10px;" onclick="navigator.clipboard.writeText('${escapeHtml(data.address)}').then(() => showToast('RacerBot wallet address copied!', 'success'))">Copy</button>
+                  <button type="button" class="btn-secondary btn-sm" style="height:28px; min-height:28px; padding:2px 10px; font-size:11px;" onclick="navigator.clipboard.writeText('${escapeHtml(data.address)}').then(() => showToast('RacerBot wallet address copied!', 'success'))">Copy</button>
                 </div>
               </div>
               <div style="display:flex; gap:6px; align-items:center;">
@@ -9232,7 +9251,7 @@
           if (body) {
             body.innerHTML = `
               <span style="color:var(--color-text-muted);">You trade with your connected wallet, approving each trade in it. Want one-tap trading instead?</span>
-              <button type="button" class="btn-primary" style="height:40px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
+              <button type="button" class="btn-primary" style="height:44px; min-height:44px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
               <span style="color:var(--color-text-subtle); font-size:12px;">RacerBot creates a NEAR wallet for you and keeps its key encrypted on the server, like the Telegram bot. You sign in with your connected wallet as before; fund it whenever you like.</span>`;
           }
           if (inlineCard && inlineInner) {
@@ -9348,6 +9367,7 @@
     function closeConnectModal() {
       const modal = document.getElementById('racer-connect-modal');
       if (modal) modal.classList.remove('open');
+      document.body.style.overflow = '';
       if (window.RacerConnect) window.RacerConnect.stopPairing();
       const spinner = document.getElementById('pairing-spinner');
       if (spinner) spinner.style.display = 'none';
@@ -9484,6 +9504,42 @@
     }
 
     // ── Init on DOM Ready ──────────────────────────────────────────────────
+    // Global Keyboard & Modal Dismissal (Esc)
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        const connectModal = document.getElementById('racer-connect-modal');
+        if (connectModal && connectModal.classList.contains('open')) {
+          closeConnectModal();
+          return;
+        }
+        const buyKeyModal = document.getElementById('modal-buy-key');
+        if (buyKeyModal && buyKeyModal.style.display === 'flex') {
+          closeBuyKeyModal();
+          return;
+        }
+        const depositModal = document.getElementById('modal-deposit');
+        if (depositModal && depositModal.style.display === 'flex') {
+          closeDepositModal();
+          return;
+        }
+        const mobileDrawer = document.getElementById('mobile-nav-drawer');
+        if (mobileDrawer && mobileDrawer.classList.contains('open')) {
+          toggleMobileNav(false);
+          return;
+        }
+        const confDepositBox = document.getElementById('console-conf-deposit-box');
+        if (confDepositBox && !confDepositBox.hidden) {
+          confDepositBox.hidden = true;
+          return;
+        }
+        const confSettingsBox = document.getElementById('console-conf-settings-box');
+        if (confSettingsBox && !confSettingsBox.hidden) {
+          confSettingsBox.hidden = true;
+          return;
+        }
+      }
+    });
+
     document.addEventListener('DOMContentLoaded', () => {
       loadTradingWallet().then(() => { updateWalletUI(); refreshUserBalance(); loadConfidential(); });
       // Immediately restore any locally cached balance to prevent visual flicker
@@ -9568,8 +9624,8 @@
 
         <!-- Option 2: Enter Account ID Directly -->
         <div style="display:flex; gap:8px; margin-bottom:14px;">
-          <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near" style="flex:1; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 12px; font-size:13px; font-family:var(--font-mono);">
-          <button onclick="handleLinkSelectorWallet()" class="btn-secondary" style="height:40px; padding:0 14px; font-size:13px;">
+          <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near" style="flex:1; height:44px; min-height:44px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 12px; font-size:13px; font-family:var(--font-mono);">
+          <button onclick="handleLinkSelectorWallet()" class="btn-secondary" style="height:44px; min-height:44px; padding:0 14px; font-size:13px;">
             <span>View</span>
           </button>
         </div>
@@ -9582,7 +9638,7 @@
             <div style="font-size:13px; color:var(--color-racer-cyan); font-weight:600; margin-top:6px;">Waiting for Telegram confirmation...</div>
             <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
           </div>
-          <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-secondary" style="width:100%; height:40px; font-size:13px; justify-content:center;">
+          <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-secondary" style="width:100%; height:44px; min-height:44px; font-size:13px; justify-content:center;">
             <span>Pair with Telegram Bot</span>
           </button>
         </div>
@@ -9607,10 +9663,10 @@
         </div>
 
         <div style="display:flex; gap:10px;">
-          <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-primary" style="flex:1; height:40px; font-size:13px; justify-content:center;">
+          <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-primary" style="flex:1; height:44px; min-height:44px; font-size:13px; justify-content:center;">
             <span>Switch Wallet</span>
           </button>
-          <button onclick="handleDisconnect()" class="btn-secondary" style="height:40px; font-size:13px; padding:0 14px; color:var(--color-danger); border-color:rgba(255, 107, 115,0.3);">
+          <button onclick="handleDisconnect()" class="btn-secondary" style="height:44px; min-height:44px; font-size:13px; padding:0 14px; color:var(--color-danger); border-color:rgba(255, 107, 115,0.3);">
             <span>Disconnect</span>
           </button>
         </div>
