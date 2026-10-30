@@ -85,39 +85,34 @@
       --color-danger: #FF6B73;
 
       /* Typography */
-      --color-text: #f0f6fc;
-      --color-text-muted: #9ba8bc;
-      --color-text-subtle: #6e7681;
+      --color-text: #F1F4FA;
+      --color-text-muted: #A3ABC2;
+      --color-text-subtle: #96A0BA;
       --font-display: var(--font-sans);
       --font-family: var(--font-sans);
       --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
       --radius-sm: 6px;
-      --radius-md: 10px;
-      --radius-lg: 14px;
-      --radius-xl: 18px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 12px;
       --radius-full: 9999px;
 
-      --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.6);
-      --shadow-glow-cyan: 0 0 24px rgba(106, 204, 220, 0.22);
-      --shadow-glow-purple: 0 0 20px rgba(120, 96, 169, 0.22);
+      --shadow-card: none;
+      --shadow-glow-cyan: none;
+      --shadow-glow-purple: none;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    input::placeholder, textarea::placeholder { color: #96A0BA; opacity: 1; }
 
     body {
       background-color: var(--color-canvas);
-      background-image: 
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(106, 204, 220, 0.05), transparent 70%),
-        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-      background-size: 100% 100%, 48px 48px, 48px 48px;
       color: var(--color-text);
       font-family: var(--font-family);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-      background-attachment: fixed;
       overflow-x: clip;
       -webkit-font-smoothing: antialiased;
     }
@@ -239,7 +234,7 @@
       background: rgba(120, 96, 169, 0.16);
       border-color: rgba(120, 96, 169, 0.4);
       color: #ffffff;
-      box-shadow: 0 0 16px rgba(120, 96, 169, 0.2);
+      box-shadow: none;
     }
 
     .nav-item-btn.active svg {
@@ -405,8 +400,8 @@
       height: 6px;
       border-radius: 50%;
       background: var(--color-primary);
-      box-shadow: 0 0 8px var(--color-primary);
-      animation: pulse 2s infinite;
+      box-shadow: none;
+      animation: none;
     }
 
     @keyframes pulse {
@@ -523,14 +518,14 @@
       justify-content: center;
       gap: 8px;
       transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 100ms ease;
-      box-shadow: 0 0 14px rgba(120, 96, 169, 0.2);
+      box-shadow: none;
       white-space: nowrap;
     }
 
     .btn-wallet-connect:hover {
       background: rgba(120, 96, 169, 0.28);
       border-color: var(--color-racer-purple-light);
-      box-shadow: 0 0 20px rgba(120, 96, 169, 0.4);
+      box-shadow: none;
       transform: translateY(-1px);
     }
 
@@ -538,7 +533,7 @@
       background: rgba(52, 211, 153, 0.12);
       border-color: rgba(52, 211, 153, 0.45);
       color: var(--color-primary);
-      box-shadow: 0 0 12px rgba(52, 211, 153, 0.25);
+      box-shadow: none;
     }
 
     .racer-modal-backdrop {
@@ -582,7 +577,7 @@
 
     .search-box:focus-within {
       border-color: var(--color-racer-cyan);
-      box-shadow: 0 0 12px rgba(106, 204, 220, 0.2);
+      box-shadow: none;
     }
 
     .search-box input {
@@ -1299,7 +1294,7 @@
     .tier-card.selected {
       border-color: var(--color-racer-cyan);
       background: rgba(106, 204, 220, 0.04);
-      box-shadow: 0 0 20px rgba(106, 204, 220, 0.15);
+      box-shadow: none;
     }
 
     .tier-card-top {
@@ -1660,7 +1655,7 @@
       background: var(--color-primary);
       border-radius: 50%;
       display: inline-block;
-      animation: pulseDot 1.8s infinite;
+      animation: none;
     }
     .live-pulse-badge {
       display: inline-flex;
@@ -1816,23 +1811,24 @@
 
     .alpha-mode-tab {
       flex: 1;
-      padding: 8px;
-      border-radius: 6px;
-      border: 1px solid transparent;
-      font-size: 12.5px;
+      min-height: 44px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--color-surface-2);
       color: var(--color-text-muted);
-      transition: background-color 0.15s ease, color 0.15s ease;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }
     .alpha-mode-tab.buy.active {
       background: var(--color-primary);
-      color: #000000;
+      color: var(--color-on-primary);
       border-color: var(--color-primary);
     }
     .alpha-mode-tab.sell.active {
@@ -1842,63 +1838,157 @@
     }
 
     .alpha-preset-chips {
-      display: flex;
-      gap: 4px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+      gap: 6px;
       margin-top: 4px;
     }
     .alpha-chip {
-      flex: 1;
-      background: rgba(255, 255, 255, 0.05);
+      min-height: 44px;
+      background: var(--color-surface-2);
       border: 1px solid var(--color-border);
-      border-radius: 4px;
+      border-radius: 8px;
       color: var(--color-text-muted);
-      font-size: 10.5px;
+      font-size: 11.5px;
       font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
       font-weight: 600;
-      padding: 4px 0;
+      padding: 0 6px;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       text-align: center;
-      transition: background-color 0.15s ease, color 0.15s ease;
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }
     .alpha-chip:hover {
       background: rgba(106, 204, 220, 0.12);
-      color: #ffffff;
-      border-color: var(--color-racer-cyan);
+      color: var(--color-text);
+      border-color: var(--color-primary);
     }
 
     .alpha-est-output-box {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 10px;
-      background: rgba(0, 0, 0, 0.2);
-      border: 1px solid var(--color-border-subtle);
-      border-radius: 6px;
-      font-size: 11.5px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-border);
+      font-size: 12px;
       font-family: var(--font-mono);
-      margin-bottom: 8px;
+      font-variant-numeric: tabular-nums;
+      margin: 2px 0;
     }
     .est-label { color: var(--color-text-subtle); }
     .est-val { color: var(--color-racer-cyan); font-weight: 700; }
 
     .alpha-slippage-chips {
       display: flex;
-      gap: 4px;
+      gap: 6px;
     }
     .slip-chip {
-      background: rgba(255, 255, 255, 0.04);
+      min-height: 44px;
+      min-width: 48px;
+      background: var(--color-surface-2);
       border: 1px solid var(--color-border);
-      border-radius: 4px;
+      border-radius: 8px;
       color: var(--color-text-muted);
-      font-size: 10.5px;
+      font-size: 11.5px;
       font-family: var(--font-mono);
-      padding: 2px 6px;
+      font-variant-numeric: tabular-nums;
+      padding: 0 10px;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
     }
     .slip-chip.active {
-      background: rgba(52, 211, 153, 0.15);
+      background: rgba(106, 204, 220, 0.14);
       border-color: var(--color-primary);
       color: var(--color-primary);
+    }
+
+    /* Confidential Multi-Executor Strip inside Trading Console (no nested cards, 1px dividers) */
+    .console-conf-strip {
+      border-top: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-border);
+      padding: 12px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .console-conf-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .console-conf-metric-label {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--color-text-subtle);
+    }
+    .console-conf-metric-val {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-top: 2px;
+    }
+    .console-conf-pool-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .console-conf-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .console-conf-drawer {
+      border-top: 1px solid var(--color-border);
+      padding-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .console-conf-mode-group {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .console-conf-mode-btn {
+      min-height: 44px;
+      padding: 0 8px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-2);
+      color: var(--color-text-muted);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+    }
+    .console-conf-mode-btn.active {
+      border-color: var(--color-primary);
+      background: rgba(106, 204, 220, 0.14);
+      color: var(--color-primary);
+    }
+
+    ::selection {
+      background: rgba(106, 204, 220, 0.24);
+      color: var(--color-text);
+    }
+    :focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+    .alpha-m-val, .spot-val, .pos-table td, .conf-big, .slider-val-badge {
+      font-variant-numeric: tabular-nums;
     }
 
     .alpha-bottom-row {
@@ -2076,7 +2166,7 @@
     }
     .creator-step-card.active {
       border-color: rgba(106, 204, 220, 0.4);
-      box-shadow: 0 0 24px rgba(106, 204, 220, 0.08);
+      box-shadow: none;
     }
     .creator-step-header {
       display: flex;
@@ -2479,7 +2569,7 @@
     .chain-card-opt.selected {
       border-color: var(--color-racer-cyan);
       background: rgba(106, 204, 220, 0.1);
-      box-shadow: 0 0 12px rgba(106, 204, 220, 0.2);
+      box-shadow: none;
     }
 
     .token-select-list {
@@ -2511,7 +2601,7 @@
     .token-row-opt.selected {
       border-color: var(--color-primary);
       background: rgba(52, 211, 153, 0.1);
-      box-shadow: 0 0 12px rgba(52, 211, 153, 0.18);
+      box-shadow: none;
     }
 
     .quote-box {
@@ -2956,7 +3046,7 @@
 
       /* Deposit Tabs */
       .deposit-tab-bar {
-        background: #F3F4F6 !important;
+        background: var(--color-surface) !important;
         border: 1px solid var(--color-border) !important;
         border-radius: 10px !important;
         padding: 3px !important;
@@ -2964,11 +3054,11 @@
       .deposit-tab-btn {
         min-height: 44px !important;
         border-radius: 8px !important;
-        color: #6B7280 !important;
+        color: var(--color-text-2) !important;
         font-weight: 600 !important;
       }
       .deposit-tab-btn.active {
-        background: var(--color-surface-card) !important;
+        background: var(--color-surface-2) !important;
         color: var(--color-primary) !important;
         border: 1px solid var(--color-border) !important;
         box-shadow: none !important;
@@ -3385,7 +3475,7 @@
   border-radius: 50%;
   background: var(--color-primary);
   display: inline-block;
-  box-shadow: 0 0 6px var(--color-primary);
+  box-shadow: none;
 }
 .spotlight-contract-row {
   display: flex;
@@ -3620,7 +3710,7 @@
         <div class="trader-profile-header">
           <div class="profile-hero-left">
             <div class="profile-avatar-lg">
-              <img id="detail-avatar" src="" alt="Avatar">
+              <img id="detail-avatar" src="/assets/racer-logo.png" alt="Avatar">
             </div>
             <div class="profile-names-col">
               <div class="profile-name-title">
@@ -3819,12 +3909,12 @@
             <div class="alpha-metric-divider"></div>
             <div class="alpha-metric-item">
               <span class="alpha-m-label">24H LAUNCHPAD VOL</span>
-              <span class="alpha-m-val">$5,840,290</span>
+              <span class="alpha-m-val" id="alpha-24h-vol">--</span>
             </div>
             <div class="alpha-metric-divider"></div>
             <div class="alpha-metric-item">
               <span class="alpha-m-label">ACTIVE ALPHA CALLERS</span>
-              <span class="alpha-m-val" style="color:var(--color-racer-cyan);" id="alpha-active-traders-count">18 Traders</span>
+              <span class="alpha-m-val" style="color:var(--color-racer-cyan);" id="alpha-active-traders-count">--</span>
             </div>
             <div class="alpha-metric-divider"></div>
             <div class="alpha-metric-item">
@@ -4012,14 +4102,112 @@
             <!-- Trade Execution Card -->
             <div class="terminal-card" style="padding:16px;">
               <!-- Tab Switcher -->
-              <div style="display:flex; gap:6px; background:var(--color-surface); padding:3px; border-radius:8px; border:1px solid var(--color-border); margin-bottom:12px;">
-                <button type="button" class="deposit-tab-btn active" id="term-tab-dispatch" onclick="switchTerminalRightTab('dispatch')" style="flex:1; font-size:12px; padding:6px 8px; justify-content:center;">
+              <div style="display:flex; gap:6px; background:var(--color-surface-2); padding:4px; border-radius:8px; border:1px solid var(--color-border); margin-bottom:4px;">
+                <button type="button" class="deposit-tab-btn active" id="term-tab-dispatch" onclick="switchTerminalRightTab('dispatch')" style="flex:1; min-height:44px; font-size:12.5px; padding:0 10px; justify-content:center;">
                   <span>Private Trade</span>
                 </button>
-                <button type="button" class="deposit-tab-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')" style="flex:1; font-size:12px; padding:6px 8px; justify-content:center;">
+                <button type="button" class="deposit-tab-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')" style="flex:1; min-height:44px; font-size:12.5px; padding:0 10px; justify-content:center;">
                   <span>Copy Trading</span>
                 </button>
               </div>
+
+              <!-- Confidential Intents Pool & Multi-Executor Strip (No nested cards, 1px structural dividers) -->
+              <div class="console-conf-strip" id="console-conf-strip">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                  <span style="font-size:12px; font-weight:700; color:var(--color-text); display:flex; align-items:center; gap:6px;">
+                    <span class="live-dot" style="width:6px; height:6px;"></span>
+                    <span>Confidential Executor Pool</span>
+                  </span>
+                  <span id="console-conf-mode-pill" style="font-family:var(--font-mono); font-size:11px; color:var(--color-primary);">SPLIT MODE</span>
+                </div>
+
+                <div class="console-conf-metrics">
+                  <div>
+                    <div class="console-conf-metric-label">Private Balance (Intents)</div>
+                    <div class="console-conf-metric-val"><span id="console-conf-balance">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
+                  </div>
+                  <div>
+                    <div class="console-conf-metric-label">Ready Executors</div>
+                    <div class="console-conf-metric-val"><span id="console-conf-pool-summary">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
+                  </div>
+                </div>
+
+                <div class="console-conf-pool-chips" id="console-conf-pool-chips" aria-live="polite">
+                  <span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet to fund disposable executor wallets.</span>
+                </div>
+
+                <div class="console-conf-actions">
+                  <button type="button" class="btn-secondary" id="btn-toggle-console-deposit" onclick="toggleConsoleConfDrawer('deposit')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
+                    <span>Mass Deposit</span>
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-toggle-console-settings" onclick="toggleConsoleConfDrawer('settings')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
+                    <span>Executor Config</span>
+                  </button>
+                </div>
+
+                <!-- Collapsible Mass Deposit Drawer -->
+                <div class="console-conf-drawer" id="console-conf-deposit-box" hidden>
+                  <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
+                    Deposit NEAR into your Confidential Intents balance. The pool automatically spawns and funds disposable executor subaccounts so your wallet never appears on-chain in trades.
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <input type="number" id="console-conf-deposit-amount" min="0.1" step="0.5" value="5.0" placeholder="NEAR amount" aria-label="Deposit amount in NEAR"
+                      style="flex:1; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 12px; font-family:var(--font-mono); font-size:14px; font-weight:600;">
+                    <button type="button" class="btn-primary" onclick="confDepositFromConsole(this)" style="min-height:44px; padding:0 16px; font-size:12.5px; font-weight:700; white-space:nowrap;">
+                      <span>Deposit NEAR</span>
+                    </button>
+                  </div>
+                  <div class="alpha-preset-chips">
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='2'">2Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='5'">5Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='10'">10Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='25'">25Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='50'">50Ⓝ</button>
+                  </div>
+                  <button type="button" class="btn-secondary" onclick="openDepositModal()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
+                    <span>Cross-Chain Intents Deposit (SOL / ETH / BTC / USDC)</span>
+                  </button>
+                </div>
+
+                <!-- Collapsible Multi-Executor Config Drawer -->
+                <div class="console-conf-drawer" id="console-conf-settings-box" hidden>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div>
+                      <label for="console-conf-pool-cap" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Pool Cap (NEAR)</label>
+                      <input type="number" id="console-conf-pool-cap" min="0.1" max="100" step="0.5" value="5"
+                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <div>
+                      <label for="console-conf-stagger" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Fleet Stagger (0-10s)</label>
+                      <input type="number" id="console-conf-stagger" min="0" max="10" step="1" value="0"
+                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
+                    </div>
+                  </div>
+                  <div>
+                    <label for="console-conf-pool-sizes" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Custom Executor Sizes (Optional, up to 20)</label>
+                    <input type="text" id="console-conf-pool-sizes" placeholder="e.g. 1, 1, 2, 5 (leave blank for 1 NEAR each)"
+                      style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px; box-sizing:border-box;">
+                  </div>
+                  <div>
+                    <span style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Execution Mode</span>
+                    <div class="console-conf-mode-group" role="group" aria-label="Executor buy mode">
+                      <button type="button" class="console-conf-mode-btn" data-mode="single" onclick="selectConsoleConfBuyMode('single')">Single</button>
+                      <button type="button" class="console-conf-mode-btn active" data-mode="split" onclick="selectConsoleConfBuyMode('split')">Split</button>
+                      <button type="button" class="console-conf-mode-btn" data-mode="fleet" onclick="selectConsoleConfBuyMode('fleet')">Fleet</button>
+                    </div>
+                  </div>
+                  <label style="display:flex; align-items:center; gap:8px; min-height:44px; font-size:12px; color:var(--color-text); cursor:pointer;">
+                    <input type="checkbox" id="console-conf-round-returns" style="width:18px; height:18px; accent-color:var(--color-primary);">
+                    <span>Round returns (0.1 NEAR steps + random 5-60s exit delay on close)</span>
+                  </label>
+                  <button type="button" class="btn-primary" onclick="confSaveSettingsFromConsole(this)" style="min-height:44px; width:100%; justify-content:center; font-size:12.5px; font-weight:700;">
+                    <span>Save Multi-Executor Settings</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Hidden legacy container kept for compatibility -->
+              <div id="alpha-trading-wallet-card" style="display:none;"><div id="alpha-trading-wallet-inner"></div></div>
 
               <!-- Panel A: Private DEX Trading -->
               <div id="terminal-panel-dispatch" style="display:flex; flex-direction:column; gap:12px;">
@@ -4036,12 +4224,12 @@
                 <!-- Amount Input & Quick Chips -->
                 <div style="display:flex; flex-direction:column; gap:6px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <label id="alpha-amount-label" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
+                    <label id="alpha-amount-label" for="alpha-trade-amount" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
                     <span style="font-size:11px; color:var(--color-text-subtle);"><span id="alpha-balance-label">NEAR Balance:</span> <b id="alpha-wallet-balance" style="color:var(--color-text); font-family:var(--font-mono); font-weight:700;">-- Ⓝ</b></span>
                   </div>
                   <div style="position:relative;">
-                    <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();" style="width:100%; height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-weight:700;">
-                    <span id="alpha-trade-unit" style="position:absolute; right:12px; top:11px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700; text-transform:uppercase; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;">NEAR</span>
+                    <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();" style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-weight:700; box-sizing:border-box;">
+                    <span id="alpha-trade-unit" style="position:absolute; right:12px; top:13px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700; text-transform:uppercase; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;">NEAR</span>
                   </div>
                   
                   <div class="alpha-preset-chips" id="alpha-preset-chips-container">
@@ -4057,7 +4245,7 @@
                 <!-- Estimated Output Calculation -->
                 <div class="alpha-est-output-box">
                   <span class="est-label">Estimated Output:</span>
-                  <span class="est-val" id="alpha-est-tokens">≈ 29,761 BLACKDRAGON</span>
+                  <span class="est-val" id="alpha-est-tokens">--</span>
                 </div>
 
                 <!-- Slippage Selector -->
@@ -4071,23 +4259,23 @@
                   </div>
                 </div>
 
-                <!-- Decentralized Private Intent Shield Callout (Option B) -->
-                <div class="confidential-card" style="padding:10px; margin:2px 0;">
+                <!-- Decentralized Private Intent Shield Callout -->
+                <div style="border-top:1px solid var(--color-border); padding-top:10px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-text);">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                      <span id="intent-routing-badge">Private route</span>
+                      <span id="intent-routing-badge">Zero-trace executor route</span>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">CHECKING</span>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">EXECUTOR POOL</span>
                   </div>
-                  <div style="font-size:10.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;" id="intent-routing-desc">
-                    Checking which route this trade will use.
+                  <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px; line-height:1.45;" id="intent-routing-desc">
+                    Executed by a disposable executor subaccount funded from NEAR Intents. On sell, funds return to Intents and the executor self-deletes on-chain.
                   </div>
                 </div>
 
-                <div id="alpha-trade-feedback" style="display:none; padding:10px; border-radius:6px; font-size:11.5px; line-height:1.4;"></div>
+                <div id="alpha-trade-feedback" style="display:none; padding:10px; border-radius:8px; font-size:11.5px; line-height:1.45;"></div>
 
-                <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="executeRacerAlphaConsoleTrade()" style="width:100%; justify-content:center; height:44px; font-size:13.5px; font-weight:700;">
+                <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="executeRacerAlphaConsoleTrade()" style="width:100%; justify-content:center; min-height:44px; font-size:13.5px; font-weight:700;">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                   <span id="btn-alpha-label">Execute Private Trade</span>
                 </button>
@@ -4096,45 +4284,59 @@
               <!-- Panel B: Follower Copy Settings -->
               <div id="terminal-panel-copy" style="display:none; flex-direction:column; gap:14px;">
                 <div>
-                  <div style="font-size:15px; font-weight:700; color:#fff;">CONFIDENTIAL COPY TRADING</div>
-                  <div style="font-size:12px; color:var(--color-text-muted);">Auto-mirror verified Alpha Callers on-chain. Requires a paid Viewing Key.</div>
+                  <div style="font-size:15px; font-weight:700; color:var(--color-text);">CONFIDENTIAL COPY TRADING</div>
+                  <div style="font-size:12px; color:var(--color-text-muted);">Auto-mirror verified Alpha Callers on-chain through disposable executors. Requires a paid Viewing Key.</div>
                 </div>
 
                 <!-- Alpha Caller Selector -->
                 <div style="display:flex; flex-direction:column; gap:6px;">
-                  <label style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">SELECT ALPHA CALLER TO COPY</label>
-                  <select id="copy-trader-select" onchange="handleCopyTraderChange(this.value)" class="select-filter" style="width:100%; height:38px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; font-size:12.5px; font-weight:600; padding:0 10px;">
+                  <label for="copy-trader-select" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">SELECT ALPHA CALLER TO COPY</label>
+                  <select id="copy-trader-select" onchange="handleCopyTraderChange(this.value)" class="select-filter" style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); font-size:13px; font-weight:600; padding:0 10px;">
                     <option value="">Choose an Alpha Caller...</option>
                   </select>
                 </div>
 
                 <!-- Dynamic Gating State Card -->
-                <div id="copy-key-paywall-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(240, 173, 78,0.3); background:rgba(240, 173, 78,0.06);">
+                <div id="copy-key-paywall-card" style="display:none; padding:12px 0; border-top:1px solid var(--color-border); border-bottom:1px solid var(--color-border);">
                   <div style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--color-racer-gold);">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                     <span>Paid Viewing Key Required to Copy Trade</span>
                   </div>
-                  <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px; line-height:1.4;">
-                    You can trade any token privately in the <b>Private Trade</b> tab freely. However, to automatically copy this caller's private signals, you must hold their Viewing Key.
+                  <div style="font-size:11.5px; color:var(--color-text-muted); margin-top:4px; line-height:1.45;">
+                    You can trade any token privately in the <b>Private Trade</b> tab freely. To automatically copy this caller's private signals, unlock their Viewing Key.
                   </div>
-                  <button type="button" class="btn-primary" id="btn-buy-copy-key" onclick="openKeyPurchaseForSelectedTrader()" style="margin-top:10px; width:100%; height:36px; font-size:12px; justify-content:center;">
+                  <button type="button" class="btn-primary" id="btn-buy-copy-key" onclick="openKeyPurchaseForSelectedTrader()" style="margin-top:10px; width:100%; min-height:44px; font-size:12.5px; justify-content:center;">
                     <span>Purchase Viewing Key to Copy</span>
                   </button>
                 </div>
 
-                <div id="copy-key-active-card" class="confidential-card" style="display:none; padding:12px; border-color:rgba(52, 211, 153,0.3); background:rgba(52, 211, 153,0.06);">
-                  <div style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--color-text);">
+                <div id="copy-key-active-card" style="display:none; padding:12px 0; border-top:1px solid var(--color-border); border-bottom:1px solid var(--color-border);">
+                  <div style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--color-success);">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    <span id="copy-key-active-title">Viewing Key Active  -  Subscribed</span>
+                    <span id="copy-key-active-title">Viewing Key Active · Subscribed</span>
                   </div>
-                  <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px;">
-                    Your confidential copy trades will execute automatically on-chain via NEAR Intents whenever this caller broadcasts a trade.
+                  <div style="font-size:11.5px; color:var(--color-text-muted); margin-top:4px;">
+                    Your confidential copy trades execute automatically through your disposable executor pool whenever this caller broadcasts a signal.
+                  </div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <label for="copy-base-amount-near" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">BASE COPY AMOUNT (NEAR / TRADE)</label>
+                    <span style="font-size:10.5px; color:var(--color-text-subtle);">Scaled by Risk Multiplier</span>
+                  </div>
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="number" id="copy-base-amount-near" min="0.1" step="0.1" value="1.0" style="flex:1; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13.5px; font-weight:700;">
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('copy-base-amount-near').value='0.5'">0.5Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('copy-base-amount-near').value='1.0'">1.0Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('copy-base-amount-near').value='2.5'">2.5Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('copy-base-amount-near').value='5.0'">5.0Ⓝ</button>
                   </div>
                 </div>
 
                 <div class="slider-group">
                   <div class="slider-header">
-                    <label>Allocation</label>
+                    <label for="slider-alloc">Allocation</label>
                     <span class="slider-val-badge" id="slider-alloc-val">5%</span>
                   </div>
                   <input type="range" min="1" max="100" value="5" class="range-input" id="slider-alloc" oninput="updateSliderVal('slider-alloc', 'slider-alloc-val', '%')">
@@ -4143,7 +4345,7 @@
 
                 <div class="slider-group">
                   <div class="slider-header">
-                    <label>Risk Multiplier</label>
+                    <label for="slider-risk">Risk Multiplier</label>
                     <span class="slider-val-badge" id="slider-risk-val">1.0x</span>
                   </div>
                   <input type="range" min="0.5" max="3.0" step="0.1" value="1.0" class="range-input" id="slider-risk" oninput="updateSliderVal('slider-risk', 'slider-risk-val', 'x')">
@@ -4152,14 +4354,14 @@
 
                 <div class="slider-group">
                   <div class="slider-header">
-                    <label>Stop-Loss (Per Trade)</label>
+                    <label for="slider-sl">Stop-Loss (Per Trade)</label>
                     <span class="slider-val-badge" id="slider-sl-val">-8%</span>
                   </div>
                   <input type="range" min="-20" max="-2" value="-8" class="range-input" id="slider-sl" oninput="updateSliderVal('slider-sl', 'slider-sl-val', '%')">
                   <div style="font-size:10.5px; color:var(--color-text-subtle);">Automated risk exit threshold</div>
                 </div>
 
-                <div class="confidential-card" style="margin:4px 0;">
+                <div style="border-top:1px solid var(--color-border); padding-top:10px;">
                   <div style="font-size:11.5px; font-weight:700; color:var(--color-text); display:flex; align-items:center; gap:6px;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
                     <span>Copying is confidential</span>
@@ -4169,7 +4371,7 @@
                   </div>
                 </div>
 
-                <button type="button" class="btn-primary" id="btn-save-copy-settings" style="width:100%; justify-content:center; height:42px;" onclick="saveTerminalCopySettings()">
+                <button type="button" class="btn-primary" id="btn-save-copy-settings" style="width:100%; justify-content:center; min-height:44px;" onclick="saveTerminalCopySettings()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                   <span id="btn-save-copy-label">Save Copy Settings (Confidential)</span>
                 </button>
@@ -4182,17 +4384,25 @@
         <div class="alpha-bottom-row">
           <!-- Open Confidential Positions -->
           <div class="terminal-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
               <div>
-                <div style="font-size:14px; font-weight:700; color:#fff;">OPEN CONFIDENTIAL POSITIONS</div>
-                <div style="font-size:12px; color:var(--color-text); display:flex; align-items:center; gap:4px; margin-top:2px;">
+                <div style="font-size:14px; font-weight:700; color:var(--color-text);">OPEN CONFIDENTIAL POSITIONS</div>
+                <div style="font-size:12px; color:var(--color-text-muted); display:flex; align-items:center; gap:4px; margin-top:2px;">
                   <span class="live-dot" style="width:5px;height:5px;"></span>
-                  <span>Private • Visible only to viewing key holders</span>
+                  <span>Your disposable executor positions &amp; caller strategy positions</span>
                 </div>
               </div>
-              <div style="font-size:13px; font-family:var(--font-mono); color:var(--color-text-muted);">
-                Total P&amp;L: <b style="color:var(--color-text);" id="terminal-total-pnl">+$6,276.88 (+1.85%)</b>
+              <div style="font-size:13px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--color-text-muted);">
+                Total P&amp;L: <b style="color:var(--color-text);" id="terminal-total-pnl">--</b>
               </div>
+            </div>
+
+            <!-- User's Own Disposable Executor Positions (1-click Sell & Delete Executor) -->
+            <div id="console-executor-positions-wrap" style="border-top:1px solid var(--color-border); padding-top:12px;" hidden>
+              <div style="font-size:11.5px; font-weight:700; color:var(--color-primary); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:8px;">
+                Your Active Disposable Executor Positions (Auto-Delete on Close)
+              </div>
+              <div id="console-executor-positions-list" style="display:flex; flex-direction:column; gap:8px;"></div>
             </div>
 
             <div class="table-container">
@@ -4276,7 +4486,7 @@
             <div class="creator-step-card active" id="step1-volume-card">
               <div class="creator-step-header">
                 <span class="step-number-pill">STEP 1</span>
-                <span id="step1-status-pill" class="active-pill" style="font-size:10px;">Checking Volume...</span>
+                <span id="step1-status-pill" class="active-pill" style="font-size:11px; padding:4px 8px;">Checking Volume...</span>
               </div>
               <div>
                 <h3 style="font-family:var(--font-display); font-size:16px; font-weight:700; color:#fff;">$10,000 Volume Audit</h3>
@@ -4310,7 +4520,7 @@
             <div class="creator-step-card" id="step2-fee-card">
               <div class="creator-step-header">
                 <span class="step-number-pill">STEP 2</span>
-                <span id="step2-status-pill" class="active-pill" style="font-size:10px;">5.0 NEAR Entry Fee</span>
+                <span id="step2-status-pill" class="active-pill" style="font-size:11px; padding:4px 8px;">5.0 NEAR Entry Fee</span>
               </div>
               <div>
                 <h3 style="font-family:var(--font-display); font-size:16px; font-weight:700; color:#fff;">Platform Entry Fee</h3>
@@ -4563,7 +4773,7 @@
                   <button class="btn-secondary" onclick="copyTerminalLink()" style="padding:0 12px;">Copy</button>
                 </div>
 
-                <button class="btn-primary" style="margin-top:10px; width:100%; justify-content:center; background:linear-gradient(135deg, #6ACCDC, #7928ca); color:#fff; font-weight:700; border:none; box-shadow:0 0 16px rgba(106, 204, 220,0.35); padding:10px;" onclick="switchNav('terminal')">
+                <button class="btn-primary" style="margin-top:10px; width:100%; justify-content:center; background:linear-gradient(135deg, #6ACCDC, #7928ca); color:#fff; font-weight:700; border:none; box-shadow: none; padding:10px;" onclick="switchNav('terminal')">
                   <span>Launch Creator Trading Console</span>
                 </button>
 
@@ -4607,11 +4817,26 @@
                 <div class="conf-big"><span id="conf-pool-total">-</span><small>NEAR in executors</small></div>
                 <div class="conf-pool" id="conf-pool" aria-live="polite"></div>
                 <div class="conf-row">
-                  <label class="conf-hint" for="conf-pool-setting" style="flex-basis:100%">Pool size in NEAR, split into 1 NEAR executors</label>
+                  <label class="conf-hint" for="conf-pool-setting" style="flex-basis:100%">Pool size in NEAR (0.1 to 100 NEAR)</label>
                   <input class="conf-input" id="conf-pool-setting" type="number" min="0.1" max="100" step="0.5" value="5">
+                  <select class="conf-input" id="conf-buy-mode" aria-label="Executor buy mode">
+                    <option value="split">Split across pool</option>
+                    <option value="single">Single executor</option>
+                    <option value="fleet">Fleet parallel</option>
+                  </select>
+                </div>
+                <div class="conf-row">
+                  <input class="conf-input" id="conf-pool-sizes" type="text" placeholder="Custom sizes (e.g. 1, 1, 2, 5)" aria-label="Custom executor sizes in NEAR">
+                  <input class="conf-input" id="conf-stagger" type="number" min="0" max="10" step="1" value="0" placeholder="Stagger (0-10s)" aria-label="Fleet stagger seconds">
+                </div>
+                <div class="conf-row" style="justify-content:space-between;">
+                  <label style="display:flex; align-items:center; gap:8px; min-height:44px; font-size:12px; color:var(--color-text); cursor:pointer;">
+                    <input type="checkbox" id="conf-round-returns" style="width:18px; height:18px; accent-color:var(--color-primary);">
+                    <span>Round returns (0.1 NEAR chunks + random delay)</span>
+                  </label>
                   <button type="button" class="receipts-btn" onclick="confSavePool(this)">Save</button>
                 </div>
-                <p class="conf-hint">A buy uses the smallest ready executor that covers it, and a replacement is funded straight away (about 15 seconds). NEAR waiting here is visible on-chain but not linked to you.</p>
+                <p class="conf-hint">A buy uses ready executors in your chosen mode, and replacements are funded straight away (about 15 seconds). NEAR waiting here is visible on-chain but not linked to you.</p>
               </div>
               <div class="conf-card" aria-labelledby="conf-xchain-label">
                 <h4 id="conf-xchain-label">Deposit from another chain</h4>
@@ -4706,11 +4931,11 @@
     <div class="modal-window">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h3 style="font-family:var(--font-display); font-size:18px; font-weight:800; color:#fff;" id="modal-key-title">Buy Viewing Key</h3>
-        <button onclick="closeBuyKeyModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:18px;"></button>
+        <button onclick="closeBuyKeyModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:18px;" aria-label="Close modal">&times;</button>
       </div>
 
       <div style="display:flex; align-items:center; gap:12px; padding:12px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md);">
-        <img id="modal-key-avatar" src="" style="width:40px; height:40px; border-radius:8px; object-fit:cover;">
+        <img id="modal-key-avatar" src="/assets/racer-logo.png" style="width:40px; height:40px; border-radius:8px; object-fit:cover;">
         <div>
           <div style="font-weight:700; color:#fff;" id="modal-key-trader-name">Trader</div>
           <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);" id="modal-key-trader-handle">@handle</div>
@@ -4729,7 +4954,7 @@
             <b style="color:var(--color-racer-cyan); margin-top:2px;">3.5 NEAR</b>
           </button>
           <button class="btn-secondary" id="modal-tier-btn-premium" onclick="selectModalTier('premium')" style="flex-direction:column; font-size:11px; padding:10px 6px;">
-            <span>Institutional</span>
+            <span>Pro</span>
             <b style="color:var(--color-racer-cyan); margin-top:2px;">8.0 NEAR</b>
           </button>
         </div>
@@ -4773,7 +4998,7 @@
             </div>
           </div>
         </div>
-        <button onclick="closeDepositModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:22px; padding:4px; flex-shrink:0; line-height:1;"></button>
+        <button onclick="closeDepositModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:22px; padding:4px; flex-shrink:0; line-height:1;" aria-label="Close deposit modal">&times;</button>
       </div>
 
       <!-- Tab Selection: Cross-Chain vs Direct NEAR -->
@@ -4870,7 +5095,7 @@
           </div>
 
           <div style="display:flex; gap:14px; align-items:center; background:var(--color-surface); padding:12px; border-radius:var(--radius-md); border:1px solid var(--color-border);">
-            <img id="deposit-qr-code" src="" alt="QR" style="width:96px; height:96px; border-radius:6px; background:#fff; padding:4px;">
+            <img id="deposit-qr-code" src="/assets/racer-logo.png" alt="QR" style="width:96px; height:96px; border-radius:6px; background:#fff; padding:4px;">
             <div style="display:flex; flex-direction:column; gap:6px; flex:1; min-width:0;">
               <div style="font-size:11px; color:var(--color-text-muted);">Send exactly to this generated address on <b id="active-chain-name" style="color:#fff;">Solana</b>:</div>
               <code id="active-deposit-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all; user-select:all;">--</code>
@@ -4902,10 +5127,14 @@
         </div>
 
         <div style="padding:16px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); display:flex; flex-direction:column; gap:10px;">
-          <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); text-transform:uppercase;">Your Connected NEAR Account</div>
-          <div style="display:flex; align-items:center; justify-content:space-between;">
-            <code style="font-size:15px; color:var(--color-racer-cyan); font-family:var(--font-mono); font-weight:700;" id="deposit-account-id">user.racerbot.near</code>
+          <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); text-transform:uppercase;">Your RacerBot Trading Wallet (NEAR)</div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <code style="font-size:13.5px; color:var(--color-racer-cyan); font-family:var(--font-mono); font-weight:700; word-break:break-all;" id="deposit-account-id">user.racerbot.near</code>
             <button class="btn-secondary btn-sm" onclick="copyDepositAddress()">Copy</button>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:4px; align-items:center;">
+            <input type="number" id="direct-deposit-wallet-amount" min="0.1" step="0.5" value="2.5" placeholder="Amount in NEAR" style="flex:1; height:38px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono); font-size:13px;">
+            <button type="button" class="btn-primary btn-sm" style="height:38px; padding:0 14px; font-weight:700;" onclick="fundTradingWalletFromModal(this)">Send from Connected Wallet</button>
           </div>
         </div>
 
@@ -5174,86 +5403,356 @@
       KNOWN_DEPOSIT_TX: { label: 'Moving', tone: 'live' }, PENDING_DEPOSIT: { label: 'Waiting', tone: 'live' },
     };
     const nearFmt = (raw) => fmtUnits(raw || '0', 24, 4);
+    let currentConfBuyMode = 'split';
+    let lastConfidentialOverview = null;
+
+    function toggleConsoleConfDrawer(which) {
+      const depBox = document.getElementById('console-conf-deposit-box');
+      const setBox = document.getElementById('console-conf-settings-box');
+      const depBtn = document.getElementById('btn-toggle-console-deposit');
+      const setBtn = document.getElementById('btn-toggle-console-settings');
+      if (which === 'deposit' && depBox) {
+        const willOpen = depBox.hidden;
+        depBox.hidden = !willOpen;
+        if (setBox && willOpen) setBox.hidden = true;
+        if (depBtn) depBtn.style.borderColor = willOpen ? 'var(--color-primary)' : 'var(--color-border)';
+        if (setBtn && willOpen) setBtn.style.borderColor = 'var(--color-border)';
+      } else if (which === 'settings' && setBox) {
+        const willOpen = setBox.hidden;
+        setBox.hidden = !willOpen;
+        if (depBox && willOpen) depBox.hidden = true;
+        if (setBtn) setBtn.style.borderColor = willOpen ? 'var(--color-primary)' : 'var(--color-border)';
+        if (depBtn && willOpen) depBtn.style.borderColor = 'var(--color-border)';
+      }
+    }
+
+    function selectConsoleConfBuyMode(mode) {
+      currentConfBuyMode = ['single', 'split', 'fleet'].includes(mode) ? mode : 'split';
+      document.querySelectorAll('.console-conf-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === currentConfBuyMode);
+      });
+      const recSel = document.getElementById('conf-buy-mode');
+      if (recSel) recSel.value = currentConfBuyMode;
+      const modePill = document.getElementById('console-conf-mode-pill');
+      if (modePill) modePill.textContent = currentConfBuyMode.toUpperCase() + ' MODE';
+    }
 
     async function loadConfidential() {
       const body = document.getElementById('conf-body');
       const note = document.getElementById('conf-note');
-      if (!body || !note) return;
+      const consoleBalEl = document.getElementById('console-conf-balance');
+      const consolePoolEl = document.getElementById('console-conf-pool-summary');
+      const consoleChipsEl = document.getElementById('console-conf-pool-chips');
+      const consolePosWrap = document.getElementById('console-executor-positions-wrap');
+      const consolePosList = document.getElementById('console-executor-positions-list');
+
       try {
         const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
         const data = await res.json();
-        if (res.status === 503) { note.textContent = 'Confidential trading switches on once its contracts are deployed.'; body.hidden = true; return; }
-        if (res.status === 401) { note.textContent = data.error || 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.'; body.hidden = true; return; }
+        if (res.status === 503) {
+          if (note) note.textContent = 'Confidential trading switches on once its contracts are deployed.';
+          if (body) body.hidden = true;
+          if (consoleChipsEl) consoleChipsEl.innerHTML = '<span style="font-size:11.5px; color:var(--color-text-subtle);">Executor contracts are initializing.</span>';
+          return;
+        }
+        if (res.status === 401) {
+          const activeWallet = getActiveUserAddress();
+          if (note) note.textContent = data.error || 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.';
+          if (body) body.hidden = true;
+          if (consoleBalEl) consoleBalEl.textContent = '--';
+          if (consolePoolEl) consolePoolEl.textContent = '--';
+          if (consoleChipsEl) {
+            consoleChipsEl.innerHTML = activeWallet
+              ? `<div style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:8px; flex-wrap:wrap;">
+                   <span style="font-size:11.5px; color:var(--color-text-muted);">Approve a free wallet sign-in message for <b>${escapeHtml(activeWallet)}</b> to unlock your Confidential Pool &amp; Executor Wallets.</span>
+                   <button type="button" class="btn-primary" style="min-height:44px; padding:0 14px; font-size:12px;" onclick="verifyConnectedWalletSession(this)"><span>Verify Wallet Session</span></button>
+                 </div>`
+              : '<span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet and sign in to spawn disposable executor wallets.</span>';
+          }
+          if (consolePosWrap) consolePosWrap.hidden = true;
+          return;
+        }
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
-        body.hidden = false;
+        lastConfidentialOverview = data;
+        if (body) body.hidden = false;
         confLoadXchainChains();
-        document.getElementById('conf-balance').textContent = data.privateBalance === null || data.privateBalance === undefined ? '-' : nearFmt(data.privateBalance);
+
+        const privBalFmt = data.privateBalance === null || data.privateBalance === undefined ? '0' : nearFmt(data.privateBalance);
+        if (document.getElementById('conf-balance')) document.getElementById('conf-balance').textContent = privBalFmt;
+        if (consoleBalEl) consoleBalEl.textContent = privBalFmt;
+
         const pool = data.pool || [];
         const ready = pool.filter(p => p.status === 'ready');
-        document.getElementById('conf-pool-total').textContent = nearFmt(ready.reduce((s, p) => s + BigInt(p.size), 0n).toString());
-        document.getElementById('conf-pool').innerHTML = pool.length ? pool.map(p => {
+        const readyTotalFmt = nearFmt(ready.reduce((s, p) => s + BigInt(p.size || '0'), 0n).toString());
+        if (document.getElementById('conf-pool-total')) document.getElementById('conf-pool-total').textContent = readyTotalFmt;
+        if (consolePoolEl) consolePoolEl.textContent = `${readyTotalFmt} (${ready.length})`;
+
+        const chipHtml = pool.length ? pool.map(p => {
           const tone = p.status === 'ready' ? 'ok' : 'live';
           const label = p.status === 'ready' ? 'Ready' : p.status === 'claimed' ? 'Buying' : 'Funding';
           return `<span class="status-chip" data-tone="${tone}">${escapeHtml(nearFmt(p.size))} NEAR · ${label}</span>`;
-        }).join('') : '<span class="conf-hint">No executors yet. Deposit, and the pool fills automatically.</span>';
-        const cap = data.account && data.account.settings ? BigInt(data.account.settings.poolCap || '0') : 0n;
-        if (cap > 0n) document.getElementById('conf-pool-setting').value = nearFmt(cap.toString()).replace(/,/g, '');
+        }).join('') : '<span class="conf-hint">No ready executors yet. Deposit NEAR into your Private Balance to auto-spawn executors.</span>';
+
+        if (document.getElementById('conf-pool')) document.getElementById('conf-pool').innerHTML = chipHtml;
+        if (consoleChipsEl) consoleChipsEl.innerHTML = chipHtml;
+
+        if (data.account && data.account.settings) {
+          const s = data.account.settings;
+          const cap = BigInt(s.poolCap || '0');
+          if (cap > 0n) {
+            const capStr = nearFmt(cap.toString()).replace(/,/g, '');
+            const recCap = document.getElementById('conf-pool-setting');
+            const conCap = document.getElementById('console-conf-pool-cap');
+            if (recCap) recCap.value = capStr;
+            if (conCap) conCap.value = capStr;
+          }
+          if (Array.isArray(s.poolSizes) && s.poolSizes.length > 0) {
+            const sizesStr = s.poolSizes.map(v => nearFmt(v).replace(/,/g, '')).join(', ');
+            const recSizes = document.getElementById('conf-pool-sizes');
+            const conSizes = document.getElementById('console-conf-pool-sizes');
+            if (recSizes && !recSizes.matches(':focus')) recSizes.value = sizesStr;
+            if (conSizes && !conSizes.matches(':focus')) conSizes.value = sizesStr;
+          }
+          if (s.buyMode) selectConsoleConfBuyMode(s.buyMode);
+          if (s.fleetStaggerMaxSec !== undefined) {
+            const recStag = document.getElementById('conf-stagger');
+            const conStag = document.getElementById('console-conf-stagger');
+            if (recStag) recStag.value = s.fleetStaggerMaxSec;
+            if (conStag) conStag.value = s.fleetStaggerMaxSec;
+          }
+          const recRound = document.getElementById('conf-round-returns');
+          const conRound = document.getElementById('console-conf-round-returns');
+          if (recRound) recRound.checked = Boolean(s.roundReturns);
+          if (conRound) conRound.checked = Boolean(s.roundReturns);
+        }
+
         const positions = data.positions || [];
-        document.getElementById('conf-positions').innerHTML = positions.length ? positions.map(p => `
-          <li class="vault-row">
-            <span class="vault-token">${escapeHtml(p.symbol || p.token.split('.')[0].toUpperCase())}<small>${escapeHtml(p.token)} · held by ${escapeHtml(p.executor)}</small></span>
-            <span class="receipts-amount">${escapeHtml(fmtUnits(p.balance, p.decimals))}</span>
-          </li>`).join('') : '<li class="receipts-empty">No open positions. Buys made with Private on land here.</li>';
+        if (document.getElementById('conf-positions')) {
+          document.getElementById('conf-positions').innerHTML = positions.length ? positions.map(p => {
+            const sym = p.symbol || p.token.split('.')[0].toUpperCase();
+            return `
+              <li class="vault-row">
+                <span class="vault-token">${escapeHtml(sym)}<small>${escapeHtml(p.token)} · executor ${escapeHtml(p.executor)}</small></span>
+                <span class="receipts-amount">${escapeHtml(fmtUnits(p.balance, p.decimals))} ${escapeHtml(sym)}</span>
+                <button type="button" class="receipts-btn" onclick="sellAndCloseExecutorPosition('${escapeHtml(p.token)}', '${escapeHtml(sym)}', '${escapeHtml(p.venue || 'Ref Finance')}', this)">Sell &amp; Close</button>
+              </li>`;
+          }).join('') : '<li class="receipts-empty">No open positions. Buys made with Private on land here.</li>';
+        }
+
+        if (consolePosWrap && consolePosList) {
+          if (positions.length > 0) {
+            consolePosWrap.hidden = false;
+            consolePosList.innerHTML = positions.map(p => {
+              const sym = p.symbol || p.token.split('.')[0].toUpperCase();
+              const shortExec = p.executor.length > 22 ? p.executor.slice(0, 10) + '...' + p.executor.slice(-10) : p.executor;
+              return `
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 12px; background:var(--color-surface-2); border:1px solid var(--color-border); border-radius:8px;">
+                  <div>
+                    <div style="font-weight:700; font-size:13px; color:var(--color-text);">${escapeHtml(sym)} <span style="font-family:var(--font-mono); font-size:11.5px; color:var(--color-primary);">${escapeHtml(fmtUnits(p.balance, p.decimals))}</span></div>
+                    <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Executor: ${escapeHtml(shortExec)} ·Spent: ${escapeHtml(nearFmt(p.spent))} NEAR</div>
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn-secondary" style="min-height:44px; padding:0 12px; font-size:12px;" onclick="selectAlphaToken('${escapeHtml(p.token)}'); setRacerAlphaTradeSide('SELL');">
+                      <span>Load in Console</span>
+                    </button>
+                    <button type="button" class="btn-primary" style="min-height:44px; padding:0 14px; font-size:12px; background:var(--color-error-solid); color:#fff; border-color:var(--color-error-solid);" onclick="sellAndCloseExecutorPosition('${escapeHtml(p.token)}', '${escapeHtml(sym)}', '${escapeHtml(p.venue || 'Ref Finance')}', this)">
+                      <span>Sell 100% &amp; Delete Executor</span>
+                    </button>
+                  </div>
+                </div>`;
+            }).join('');
+          } else {
+            consolePosWrap.hidden = true;
+            consolePosList.innerHTML = '';
+          }
+        }
+
         const moves = (data.moves || []).filter(m => m.kind !== 'refill' || m.status !== 'SUCCESS');
-        document.getElementById('conf-moves').innerHTML = moves.length ? moves.map(m => {
-          const st = CONF_STATUS[m.status] || { label: m.status, tone: 'neutral' };
-          return `<li class="vault-row">
-            <span class="vault-token">${escapeHtml(CONF_MOVE_LABEL[m.kind] || m.kind)}<small>${escapeHtml(new Date(m.at).toLocaleString())}${m.destination && m.kind === 'withdraw' ? ' · to ' + escapeHtml(m.destination) : ''}</small></span>
-            <span class="status-chip" data-tone="${st.tone}">${escapeHtml(st.label)}</span>
-            <span class="receipts-amount">${escapeHtml(nearFmt(m.amount))} NEAR</span>
-          </li>`;
-        }).join('') : '<li class="receipts-empty">No moves yet.</li>';
+        if (document.getElementById('conf-moves')) {
+          document.getElementById('conf-moves').innerHTML = moves.length ? moves.map(m => {
+            const st = CONF_STATUS[m.status] || { label: m.status, tone: 'neutral' };
+            return `<li class="vault-row">
+              <span class="vault-token">${escapeHtml(CONF_MOVE_LABEL[m.kind] || m.kind)}<small>${escapeHtml(new Date(m.at).toLocaleString())}${m.destination && m.kind === 'withdraw' ? ' · to ' + escapeHtml(m.destination) : ''}</small></span>
+              <span class="status-chip" data-tone="${st.tone}">${escapeHtml(st.label)}</span>
+              <span class="receipts-amount">${escapeHtml(nearFmt(m.amount))} NEAR</span>
+            </li>`;
+          }).join('') : '<li class="receipts-empty">No moves yet.</li>';
+        }
       } catch (err) {
-        note.textContent = `Could not load the confidential wallet (${err.message || 'network error'}). Try again in a moment.`;
+        if (note) note.textContent = `Could not load the confidential wallet (${err.message || 'network error'}). Try again in a moment.`;
+      }
+    }
+
+    async function verifyConnectedWalletSession(btn) {
+      const prev = btn ? btn.innerHTML : '';
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span>Approve in wallet...</span>'; }
+      try {
+        if (window.RacerConnect && typeof window.RacerConnect.ensureWalletSession === 'function') {
+          const ok = await window.RacerConnect.ensureWalletSession();
+          if (!ok) {
+            await handleOpenNearWalletSelector();
+          }
+        } else {
+          await handleOpenNearWalletSelector();
+        }
+        await loadTradingWallet();
+        await loadConfidential();
+        updateWalletUI();
+      } catch (err) {
+        showToast(err.message || 'Could not verify wallet session.', 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = prev; }
       }
     }
 
     async function confPost(path, payload, btn, busyText) {
-      const label = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = busyText;
+      const label = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = busyText; }
       try {
+        if (!getAuthHeaders().Authorization && window.RacerConnect?.activeNearWallet && typeof window.RacerConnect.ensureWalletSession === 'function') {
+          await window.RacerConnect.ensureWalletSession();
+        }
         const res = await fetch(path, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
         return data;
       } finally {
-        btn.disabled = false;
-        btn.textContent = label;
+        if (btn) { btn.disabled = false; btn.textContent = label; }
       }
+    }
+
+    async function executeConfidentialNearDeposit(amountNear, btn) {
+      if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return false; }
+      const data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
+      if (data.requiresWalletSignature) {
+        if (!window.RacerConnect || typeof window.RacerConnect.sendFunctionCalls !== 'function') {
+          throw new Error('Connect your NEAR wallet to approve the deposit.');
+        }
+        showToast('Approve the confidential Intents deposit in your NEAR wallet.', 'info');
+        const tx = await window.RacerConnect.sendFunctionCalls(data.transaction);
+        const txHash = tx?.hash || tx?.transaction?.hash;
+        if (!txHash) throw new Error('Wallet did not return a transaction hash.');
+        const done = await confPost('/alpha/confidential/deposit/submit', { depositAddress: data.depositAddress, txHash }, btn, 'Recording...');
+        data.message = done.message;
+      }
+      showToast(data.message || `Deposited ${amountNear} NEAR into Confidential Pool. Spawning executors...`, 'success');
+      refreshUserBalance();
+      setTimeout(loadConfidential, 1500);
+      setTimeout(loadConfidential, 6000);
+      return true;
     }
 
     async function confDeposit(btn) {
       const amountNear = Number(document.getElementById('conf-deposit-amount').value);
-      if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return; }
       try {
-        const data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
-        if (data.requiresWalletSignature) {
-          // Signed in with your own wallet: it signs the deposit (wrap, register the address, send)
-          if (!window.RacerConnect || typeof window.RacerConnect.sendFunctionCalls !== 'function') {
-            throw new Error('Connect your NEAR wallet to approve the deposit.');
-          }
-          showToast('Approve the deposit in your wallet.', 'info');
-          const tx = await window.RacerConnect.sendFunctionCalls(data.transaction);
-          const done = await confPost('/alpha/confidential/deposit/submit', { depositAddress: data.depositAddress, txHash: tx.hash }, btn, 'Recording...');
-          data.message = done.message;
-        }
-        showToast(data.message || 'Deposit sent', 'success');
-        document.getElementById('conf-deposit-amount').value = '';
-        refreshUserBalance();
-        setTimeout(loadConfidential, 1500);
+        const ok = await executeConfidentialNearDeposit(amountNear, btn);
+        if (ok) document.getElementById('conf-deposit-amount').value = '';
       } catch (err) {
         showToast(`Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function confDepositFromConsole(btn) {
+      const input = document.getElementById('console-conf-deposit-amount');
+      const amountNear = Number(input?.value || '0');
+      try {
+        const ok = await executeConfidentialNearDeposit(amountNear, btn);
+        if (ok) {
+          const depBox = document.getElementById('console-conf-deposit-box');
+          if (depBox) depBox.hidden = true;
+        }
+      } catch (err) {
+        showToast(`Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    function parsePoolSizesInput(rawStr) {
+      if (!rawStr || !rawStr.trim()) return undefined;
+      const nums = rawStr.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n >= 0.1);
+      return nums.length > 0 ? nums.slice(0, 20) : undefined;
+    }
+
+    async function confSavePool(btn) {
+      const poolTotalNear = Number(document.getElementById('conf-pool-setting').value);
+      const buyMode = document.getElementById('conf-buy-mode')?.value || currentConfBuyMode;
+      const poolSizesNear = parsePoolSizesInput(document.getElementById('conf-pool-sizes')?.value || '');
+      const fleetStaggerMaxSec = Number(document.getElementById('conf-stagger')?.value || '0');
+      const roundReturns = Boolean(document.getElementById('conf-round-returns')?.checked);
+      if (!poolSizesNear && !(poolTotalNear >= 0.1 && poolTotalNear <= 100)) {
+        showToast('Pool size must be between 0.1 and 100 NEAR.', 'error');
+        return;
+      }
+      try {
+        await confPost('/alpha/confidential/settings', {
+          poolTotalNear: poolSizesNear ? undefined : poolTotalNear,
+          poolSizesNear,
+          buyMode,
+          fleetStaggerMaxSec,
+          roundReturns,
+        }, btn, 'Saving...');
+        showToast('Confidential multi-executor settings saved. Refilling pool from private balance.', 'success');
+        loadConfidential();
+      } catch (err) {
+        showToast(`Could not save: ${err.message}`, 'error');
+      }
+    }
+
+    async function confSaveSettingsFromConsole(btn) {
+      const poolTotalNear = Number(document.getElementById('console-conf-pool-cap')?.value || '5');
+      const poolSizesNear = parsePoolSizesInput(document.getElementById('console-conf-pool-sizes')?.value || '');
+      const fleetStaggerMaxSec = Number(document.getElementById('console-conf-stagger')?.value || '0');
+      const roundReturns = Boolean(document.getElementById('console-conf-round-returns')?.checked);
+      if (!poolSizesNear && !(poolTotalNear >= 0.1 && poolTotalNear <= 100)) {
+        showToast('Pool size must be between 0.1 and 100 NEAR.', 'error');
+        return;
+      }
+      try {
+        await confPost('/alpha/confidential/settings', {
+          poolTotalNear: poolSizesNear ? undefined : poolTotalNear,
+          poolSizesNear,
+          buyMode: currentConfBuyMode,
+          fleetStaggerMaxSec,
+          roundReturns,
+        }, btn, 'Saving...');
+        showToast(`Saved (${currentConfBuyMode.toUpperCase()} mode). Executors are being funded from your private balance.`, 'success');
+        const setBox = document.getElementById('console-conf-settings-box');
+        if (setBox) setBox.hidden = true;
+        loadConfidential();
+      } catch (err) {
+        showToast(`Could not save settings: ${err.message}`, 'error');
+      }
+    }
+
+    async function sellAndCloseExecutorPosition(tokenAddress, symbol, venue, btn) {
+      if (!tokenAddress) return;
+      const prev = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Selling & closing...'; }
+      try {
+        const res = await fetch('/alpha/trade/execute', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            tokenAddress,
+            tokenSymbol: symbol,
+            side: 'SELL',
+            sellPercent: 100,
+            venue: venue || 'Ref Finance',
+            slippagePct: selectedRacerAlphaSlippage || 2.5,
+            isPrivateTrade: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to sell executor position');
+        showToast(`Sold ${symbol} privately. Executor is returning NEAR to Intents and self-deleting on-chain.`, 'success');
+        loadConfidential();
+        refreshUserBalance();
+        if (selectedAlphaToken && selectedAlphaToken.address === tokenAddress) {
+          fetchUserTokenBalance(tokenAddress);
+        }
+      } catch (err) {
+        showToast(`Sell & close failed: ${err.message}`, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
       }
     }
 
@@ -5322,18 +5821,6 @@
         setTimeout(loadConfidential, 1500);
       } catch (err) {
         showToast(`Withdrawal failed: ${err.message}. Nothing left your private balance.`, 'error');
-      }
-    }
-
-    async function confSavePool(btn) {
-      const poolTotalNear = Number(document.getElementById('conf-pool-setting').value);
-      if (!(poolTotalNear >= 0.1 && poolTotalNear <= 100)) { showToast('Pool size must be between 0.1 and 100 NEAR.', 'error'); return; }
-      try {
-        await confPost('/alpha/confidential/settings', { poolTotalNear }, btn, 'Saving...');
-        showToast(`Pool set to ${poolTotalNear} NEAR. Executors are being funded from your private balance.`, 'success');
-        loadConfidential();
-      } catch (err) {
-        showToast(`Could not save: ${err.message}`, 'error');
       }
     }
 
@@ -5458,6 +5945,8 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         if (data.success && Array.isArray(data.traders)) {
           allTraders = data.traders;
+          const cntEl = document.getElementById('alpha-active-traders-count');
+          if (cntEl) cntEl.textContent = `${allTraders.length} ${allTraders.length === 1 ? 'Trader' : 'Traders'}`;
           renderTradersGrid(allTraders);
           populateTerminalSelect(allTraders);
         } else {
@@ -5910,6 +6399,10 @@
           : '';
         feedback.innerHTML = `Viewing Key Active on NEAR! Tier: <b>${selectedModalTierType.toUpperCase()}</b>${txBadge}`;
 
+        if (data.tradingWalletAddress && data.managed) {
+          rememberManagedWallet(data.tradingWalletAddress);
+          loadTradingWallet();
+        }
         if (currentTrader) {
           currentTrader.hasKey = true;
           currentTrader.heldTier = selectedModalTierType;
@@ -5967,6 +6460,9 @@
         const data = await res.json();
         if (data.success && Array.isArray(data.tokens)) {
           alphaTokens = data.tokens;
+          const totalVol24h = alphaTokens.reduce((sum, t) => sum + (parseFloat(t.volume24h) || 0), 0);
+          const volEl = document.getElementById('alpha-24h-vol');
+          if (volEl) volEl.textContent = totalVol24h > 0 ? '$' + Math.round(totalVol24h).toLocaleString() : '--';
           renderRacerAlphaTable();
           if (!selectedAlphaToken && alphaTokens.length > 0) {
             selectAlphaToken(alphaTokens[0].address);
@@ -6087,21 +6583,19 @@
     }
 
     function getTokenLogoHtml(tok, size = 28) {
-      let fallbackEmoji = '🪙';
       const sym = (tok?.symbol || '').toUpperCase();
-      const lp = (tok?.launchpad || '').toLowerCase();
-      fallbackEmoji = sym ? sym.slice(0, 2).toUpperCase() : 'TK';
+      const fallbackText = sym ? sym.slice(0, 2).toUpperCase() : 'TK';
       if (tok.icon && typeof tok.icon === 'string' && tok.icon.length > 5 && !tok.icon.includes('racer-logo') && !tok.icon.includes('assets.ref.finance') && !tok.icon.includes('raw.githubusercontent.com')) {
         return `
           <div class="alpha-tok-icon" style="width:${size}px; height:${size}px; border-radius:50%; overflow:hidden; position:relative; background:var(--color-surface-hover); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
             <img src="${escapeHtml(tok.icon)}" alt="${escapeHtml(tok.symbol)}" loading="lazy" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
-            <span style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:${Math.round(size * 0.48)}px;">${fallbackEmoji}</span>
+            <span style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:${Math.round(size * 0.42)}px; font-weight:700;">${fallbackText}</span>
           </div>
         `;
       }
       return `
-        <div class="alpha-tok-icon" style="width:${size}px; height:${size}px; font-size:${Math.round(size * 0.48)}px; flex-shrink:0;">
-          ${fallbackEmoji}
+        <div class="alpha-tok-icon" style="width:${size}px; height:${size}px; font-size:${Math.round(size * 0.42)}px; font-weight:700; flex-shrink:0;">
+          ${fallbackText}
         </div>
       `;
     }
@@ -6800,11 +7294,13 @@
         amountNear: amtNear,
         amountTokens: amtTokens,
         amountTokensRaw: amtTokensRaw,
+        sellPercent: !isBuy ? (currentSellPct || (isSelectedMaxSell ? 100 : undefined)) : undefined,
         tokenDecimals: tokenDecimals,
         poolId: selectedAlphaToken.poolId || selectedAlphaToken.pool_id || null,
         dclPoolId: selectedAlphaToken.dclPoolId || selectedAlphaToken.dcl_pool_id || null,
         priceNear: selectedAlphaToken.priceNear,
         venue: selectedAlphaToken.venue,
+        slippagePct: selectedRacerAlphaSlippage,
         routingPreference: (selectedAlphaToken.venue && selectedAlphaToken.venue.toLowerCase() !== 'defuse') ? 'vault' : 'auto',
         isPrivateTrade: true,
       });
@@ -6859,6 +7355,61 @@
           return;
         }
 
+        // If user needs to fund their Confidential Intents Pool to spawn disposable executors
+        if (data.needsConfidentialDeposit) {
+          const depAmt = Math.max(2, Number(((data.amountNear || amtNear || 1.0) * 1.05).toFixed(2)));
+          const depBox = document.getElementById('console-conf-deposit-box');
+          const depInput = document.getElementById('console-conf-deposit-amount');
+          if (depBox) depBox.hidden = false;
+          if (depInput) depInput.value = String(depAmt);
+          if (feedback) {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(106, 204, 220, 0.14)';
+            feedback.style.color = 'var(--color-racer-cyan)';
+            feedback.innerHTML = `<b>Confidential Executor Pool Needs Funding:</b> Approve the deposit of <b>${depAmt} NEAR</b> into your NEAR Intents Private Balance so disposable executor wallets can spawn and execute this trade with zero trace to your wallet.`;
+          }
+          const ok = await executeConfidentialNearDeposit(depAmt, btn);
+          if (ok && feedback) {
+            feedback.innerHTML = `<b>Private Balance Funded (${depAmt} NEAR):</b> Disposable executor subaccounts are spawning now (about 15 seconds). Click <b>Buy</b> again once a Ready Executor chip appears above.`;
+          }
+          return;
+        }
+
+        // If user needs to fund their RacerBot Trading Wallet from their connected browser wallet, prompt 1-click transfer and auto-retry trade
+        if (data.needsTradingWalletFunding && data.tradingWalletAddress) {
+          rememberManagedWallet(data.tradingWalletAddress);
+          loadTradingWallet();
+          updateWalletUI();
+          const fundAmt = Number(((amtNear || 1.0) + 0.15).toFixed(4));
+          if (window.RacerConnect && typeof window.RacerConnect.sendNearTransaction === 'function') {
+            if (btn) btn.innerHTML = `<span>Approve ${fundAmt} NEAR in your wallet...</span>`;
+            if (feedback) {
+              feedback.style.display = 'block';
+              feedback.style.background = 'rgba(106, 204, 220, 0.14)';
+              feedback.style.color = 'var(--color-racer-cyan)';
+              feedback.innerHTML = `<b>Step 1/2:</b> Approve transfer of <b>${fundAmt} NEAR</b> (${amtNear || 1.0} NEAR trade + gas reserve) from your connected wallet to your RacerBot Trading Wallet (<code>${escapeHtml(data.tradingWalletAddress.slice(0, 10))}...</code>)...`;
+            }
+            await window.RacerConnect.sendNearTransaction({
+              receiverId: data.tradingWalletAddress,
+              amountNear: fundAmt,
+            });
+            if (btn) btn.innerHTML = '<span>Executing Private Trade...</span>';
+            if (feedback) {
+              feedback.innerHTML = `<b>Step 2/2:</b> RacerBot wallet funded! Dispatching private ${selectedRacerAlphaSide} on-chain...`;
+            }
+            await new Promise(r => setTimeout(r, 2200));
+            res = await fetch('/alpha/trade/execute', {
+              method: 'POST',
+              headers: getAuthHeaders(),
+              body: tradePayload(),
+            });
+            data = await res.json();
+          } else {
+            openConnectModal();
+            throw new Error(data.error || 'Fund your RacerBot Trading Wallet to execute this trade.');
+          }
+        }
+
         // If user is connected via an external wallet (Meteor, MyNearWallet, etc.), prompt wallet approval
         if (data.requiresClientSignature && data.depositAddress) {
           if (btn) btn.innerHTML = '<span>Please confirm Intent Transfer in your wallet...</span>';
@@ -6866,7 +7417,7 @@
             feedback.style.display = 'block';
             feedback.style.background = 'rgba(106, 204, 220, 0.15)';
             feedback.style.color = 'var(--color-racer-cyan)';
-            feedback.innerHTML = `<span>Please approve confidential transfer of <b>${amtNear} NEAR</b> to stealth solver in your connected wallet...</span>`;
+            feedback.innerHTML = `<span>Please approve confidential transfer of <b>${amtNear} NEAR</b> to private solver in your connected wallet...</span>`;
           }
 
           if (!window.RacerConnect || typeof window.RacerConnect.sendNearTransaction !== 'function') {
@@ -6919,6 +7470,7 @@
           }
 
           refreshUserBalance();
+          loadConfidential();
           if (selectedAlphaToken) fetchUserTokenBalance(selectedAlphaToken.address);
           loadTerminalData();
           return;
@@ -6928,14 +7480,19 @@
           throw new Error(data.error || 'Trade execution failed.');
         }
 
+        const isExecutor = data.routing === 'RACER_EXECUTOR';
         const isIntent = data.routing === 'INTENT_SOLVER';
         const isVault = data.routing === 'RACER_SHIELDED_VAULT';
-        const routeLabel = isIntent
+        const routeLabel = isExecutor
+          ? 'Disposable Executor Pool (racerbotrouter.near)'
+          : isIntent
           ? 'Decentralized Private Intent (Defuse Solver)'
           : isVault
           ? 'Racer Shielded Router (racerbotrouter.near)'
           : `AMM Relayer (${escapeHtml(selectedAlphaToken.venue)})`;
-        const extraNote = isIntent
+        const extraNote = isExecutor
+          ? `<br><span style="font-size:11px; color:var(--color-racer-cyan);">${escapeHtml(data.message || 'Executed through disposable executor subaccount(s) with zero link to your wallet.')}</span>`
+          : isIntent
           ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Filled by a NEAR Intents solver</span>'
           : isVault
           ? '<br><span style="font-size:11px; color:var(--color-racer-cyan);">Atomic Multi-Hop On-Chain Settlement Confirmed via Deployed Contract!</span>'
@@ -6944,21 +7501,27 @@
         const txLink = data.txHash
           ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
           : '';
-        const deliveredTo = data.recipientAccountId
+        const deliveredTo = isExecutor && Array.isArray(data.executors) && data.executors.length
+          ? `<br><span style="font-size:11px;">Held in disposable executor(s): <b style="font-family:var(--font-mono);">${escapeHtml(data.executors.join(', '))}</b></span>`
+          : data.recipientAccountId
           ? `<br><span style="font-size:11px;">Delivered to <b style="font-family:var(--font-mono);">${escapeHtml(data.recipientAccountId)}</b></span>`
           : '';
         const routerNote = isVault && data.message
           ? `<br><span style="font-size:11px;">${escapeHtml(data.message)}</span>`
           : '';
 
+        const signalBroadcastNote = data.signalId
+          ? `<br><span style="font-size:11px; color:var(--color-racer-cyan);">Alpha Signal Broadcasted · <b>${data.autoCopyFillsCount || 0} subscriber auto-copy fill(s)</b></span>`
+          : '';
         if (feedback) {
           feedback.style.background = 'rgba(52, 211, 153, 0.15)';
           feedback.style.color = 'var(--color-primary)';
-          feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${deliveredTo}${routerNote}${txLink}`;
+          feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${deliveredTo}${routerNote}${signalBroadcastNote}${txLink}`;
         }
 
-        // Immediately update live wallet balance and terminal views
+        // Immediately update live wallet balance, confidential executor pool, and terminal views
         refreshUserBalance();
+        loadConfidential();
         if (selectedAlphaToken) fetchUserTokenBalance(selectedAlphaToken.address);
         loadTerminalData();
       } catch (err) {
@@ -7052,6 +7615,10 @@
                 document.getElementById('slider-sl').value = data.stopLossPct;
                 document.getElementById('slider-sl-val').textContent = data.stopLossPct + '%';
               }
+              if (data.autoCopyAmountNear) {
+                const amtEl = document.getElementById('copy-base-amount-near');
+                if (amtEl) amtEl.value = data.autoCopyAmountNear;
+              }
             }
           })
           .catch(() => {});
@@ -7082,8 +7649,9 @@
     }
 
     async function loadTerminalData() {
-      // Refresh Racer Alpha token list and live wallet balance in parallel
+      // Refresh Racer Alpha token list, confidential executor pool, and live wallet balance in parallel
       fetchRacerAlphaTokens();
+      loadConfidential();
 
       // Restore locally cached balance instantly to avoid any '-- Ⓝ' lag, then refresh
       const terminalAddr = getActiveUserAddress();
@@ -7196,6 +7764,7 @@
       const alloc = document.getElementById('slider-alloc').value;
       const risk = document.getElementById('slider-risk').value;
       const sl = document.getElementById('slider-sl').value;
+      const baseAmt = parseFloat(document.getElementById('copy-base-amount-near')?.value || '1.0') || 1.0;
 
       try {
         const res = await fetch('/alpha/copy-settings', {
@@ -7209,6 +7778,7 @@
             allocationPct: parseFloat(alloc),
             riskMultiplier: parseFloat(risk),
             stopLossPct: parseFloat(sl),
+            autoCopyAmountNear: baseAmt,
             autoCopyEnabled: true,
           }),
         });
@@ -7223,7 +7793,12 @@
           throw new Error(data.error || 'Failed to save copy settings');
         }
 
-        showToast('Confidential copy settings saved! You will automatically copy this Alpha Caller privately through NEAR Intents.', 'success');
+        if (data.tradingWalletAddress && data.managed) {
+          rememberManagedWallet(data.tradingWalletAddress);
+          loadTradingWallet();
+          updateWalletUI();
+        }
+        showToast('Confidential copy settings saved! Automated copy-trades will execute via your RacerBot wallet or Confidential Pool.', 'success');
       } catch (err) {
         showToast('Failed to save copy settings: ' + err.message, 'error');
       }
@@ -7954,8 +8529,14 @@
     }
 
     // ── View 5: My Viewing Keys Data Loader ────────────────────────────────
+    function openExplainerModal() {
+      switchNav('receipts');
+      showToast('Viewing Keys decrypt private alpha positions while keeping executor wallets unlinked.', 'info');
+    }
+
     async function loadMyViewingKeys() {
       const container = document.getElementById('mykeys-list-container');
+      const connectedWallet = getActiveUserAddress();
 
       // Guard: require a connected wallet before loading data
       if (!connectedWallet) {
@@ -8562,41 +9143,159 @@
     async function loadTradingWallet() {
       const box = document.getElementById('modal-trading-wallet');
       const body = document.getElementById('trading-wallet-body');
-      if (!box || !body) return;
+      const inlineCard = document.getElementById('alpha-trading-wallet-card');
+      const inlineInner = document.getElementById('alpha-trading-wallet-inner');
       const headers = getAuthHeaders();
-      if (!headers.Authorization) { box.hidden = true; return; }
+      const activeWallet = getActiveUserAddress();
+      if (!headers.Authorization) {
+        if (box) box.hidden = true;
+        if (inlineCard && inlineInner) {
+          if (activeWallet) {
+            inlineCard.style.display = 'block';
+            inlineInner.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div style="font-size:11px; color:var(--color-text-muted); line-height:1.35;">
+                  <b style="color:#fff;">External Wallet (${escapeHtml(activeWallet.slice(0, 14))})</b> · Approve a sign-in message to create a RacerBot Trading Wallet for 1-click private swaps &amp; PNL copy-trading.
+                </div>
+                <button type="button" class="btn-primary btn-sm" style="min-height:44px; padding:0 12px; font-size:11.5px; white-space:nowrap;" onclick="verifyConnectedWalletSession(this)">
+                  <span>Verify &amp; Create Wallet</span>
+                </button>
+              </div>`;
+          } else {
+            inlineCard.style.display = 'none';
+          }
+        }
+        return;
+      }
       try {
         const res = await fetch('/alpha/wallet', { headers });
         const data = await res.json();
-        box.hidden = false;
+        if (box) box.hidden = false;
         if (res.status === 401) {
-          body.innerHTML = '<span style="color:var(--color-text-muted);">Reconnect your wallet and approve the sign-in message to trade from this account.</span>';
+          if (body) body.innerHTML = '<span style="color:var(--color-text-muted);">Reconnect your wallet and approve the sign-in message to trade from this account.</span>';
+          if (inlineCard && inlineInner && activeWallet) {
+            inlineCard.style.display = 'block';
+            inlineInner.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div style="font-size:11px; color:var(--color-text-muted); line-height:1.35;">
+                  <b style="color:#fff;">External Wallet (${escapeHtml(activeWallet.slice(0, 14))})</b> · Approve a sign-in message to create a RacerBot Trading Wallet.
+                </div>
+                <button type="button" class="btn-primary btn-sm" style="min-height:44px; padding:0 12px; font-size:11.5px; white-space:nowrap;" onclick="verifyConnectedWalletSession(this)">
+                  <span>Verify Wallet</span>
+                </button>
+              </div>`;
+          } else if (inlineCard) {
+            inlineCard.style.display = 'none';
+          }
           return;
         }
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         if (data.managed) {
           rememberManagedWallet(data.address);
-          body.innerHTML = `
-            <div><span style="color:var(--color-text-muted);">RacerBot wallet</span><br>
-              <code id="trading-wallet-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all;"></code></div>
-            <div style="display:flex; gap:8px;">
-              <input id="trading-wallet-fund" type="number" min="0.01" step="0.1" placeholder="NEAR" aria-label="Amount to send from your connected wallet"
-                style="flex:1; height:36px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono);">
-              <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
-              <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
-            </div>
-            <span style="color:var(--color-text-subtle); font-size:12px;">Trades and private trading run from this wallet without wallet pop-ups. RacerBot keeps its key encrypted on the server; it is never sent to your browser.</span>`;
-          document.getElementById('trading-wallet-address').textContent = data.address;
+          if (body) {
+            body.innerHTML = `
+              <div><span style="color:var(--color-text-muted);">RacerBot wallet</span><br>
+                <code id="trading-wallet-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all;"></code></div>
+              <div style="display:flex; gap:8px;">
+                <input id="trading-wallet-fund" type="number" min="0.01" step="0.1" placeholder="NEAR" aria-label="Amount to send from your connected wallet"
+                  style="flex:1; height:36px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 10px; font-family:var(--font-mono);">
+                <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
+                <button type="button" class="btn-secondary" style="height:36px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
+              </div>
+              <span style="color:var(--color-text-subtle); font-size:12px;">Trades and private trading run from this wallet without wallet pop-ups. RacerBot keeps its key encrypted on the server; it is never sent to your browser.</span>`;
+            const addrEl = document.getElementById('trading-wallet-address');
+            if (addrEl) addrEl.textContent = data.address;
+          }
+          if (inlineCard && inlineInner) {
+            const shortAddr = data.address.length > 22 ? data.address.slice(0, 8) + '...' + data.address.slice(-6) : data.address;
+            const linkedWallet = Array.isArray(data.connectedWallets) && data.connectedWallets[0] ? data.connectedWallets[0] : '';
+            inlineCard.style.display = 'block';
+            inlineInner.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px;">
+                <span style="font-weight:700; color:#fff; font-size:11.5px; display:flex; align-items:center; gap:5px;">
+                  <span class="live-dot" style="width:5px; height:5px;"></span> RacerBot Trading Wallet
+                </span>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <code style="font-family:var(--font-mono); font-size:11px; color:var(--color-racer-cyan);" title="${escapeHtml(data.address)}">${escapeHtml(shortAddr)}</code>
+                  <button type="button" class="btn-secondary btn-sm" style="height:22px; padding:0 6px; font-size:10px;" onclick="navigator.clipboard.writeText('${escapeHtml(data.address)}').then(() => showToast('RacerBot wallet address copied!', 'success'))">Copy</button>
+                </div>
+              </div>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input id="inline-trading-wallet-fund" type="number" min="0.1" step="0.5" value="2.5" placeholder="NEAR" style="width:80px; height:30px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; font-family:var(--font-mono); font-size:12px;">
+                <button type="button" class="btn-secondary btn-sm" style="flex:1; height:30px; font-size:11px; justify-content:center; border-color:rgba(106, 204, 220, 0.35); color:var(--color-racer-cyan);" onclick="fundTradingWalletInline(this, '${escapeHtml(data.address)}')">
+                  <span>Fund from Connected Wallet${linkedWallet ? ' (' + escapeHtml(linkedWallet.slice(0, 12)) + ')' : ''}</span>
+                </button>
+              </div>`;
+          }
         } else {
           rememberManagedWallet(null);
-          body.innerHTML = `
-            <span style="color:var(--color-text-muted);">You trade with your connected wallet, approving each trade in it. Want one-tap trading instead?</span>
-            <button type="button" class="btn-primary" style="height:40px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
-            <span style="color:var(--color-text-subtle); font-size:12px;">RacerBot creates a NEAR wallet for you and keeps its key encrypted on the server, like the Telegram bot. You sign in with your connected wallet as before; fund it whenever you like.</span>`;
+          if (body) {
+            body.innerHTML = `
+              <span style="color:var(--color-text-muted);">You trade with your connected wallet, approving each trade in it. Want one-tap trading instead?</span>
+              <button type="button" class="btn-primary" style="height:40px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
+              <span style="color:var(--color-text-subtle); font-size:12px;">RacerBot creates a NEAR wallet for you and keeps its key encrypted on the server, like the Telegram bot. You sign in with your connected wallet as before; fund it whenever you like.</span>`;
+          }
+          if (inlineCard && inlineInner) {
+            inlineCard.style.display = 'block';
+            inlineInner.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <div style="font-size:11px; color:var(--color-text-muted); line-height:1.35;">
+                  <b style="color:#fff;">External Wallet Connected</b> - Create a free RacerBot Trading Wallet for 1-click private swaps &amp; automated PNL copy-trading.
+                </div>
+                <button type="button" class="btn-primary btn-sm" style="height:30px; padding:0 10px; font-size:11px; white-space:nowrap;" onclick="createTradingWallet(this)">
+                  <span>Create Wallet</span>
+                </button>
+              </div>`;
+          }
         }
       } catch (err) {
-        box.hidden = false;
-        body.textContent = 'Could not load your trading wallet. Try again in a moment.';
+        if (box) box.hidden = false;
+        if (body) body.textContent = 'Could not load your trading wallet. Try again in a moment.';
+      }
+    }
+
+    async function fundTradingWalletInline(btn, address) {
+      const amountNear = Number(document.getElementById('inline-trading-wallet-fund')?.value || '0');
+      if (!(amountNear > 0) || !address) { showToast('Enter an amount of NEAR to send.', 'error'); return; }
+      if (!window.RacerConnect || typeof window.RacerConnect.sendNearTransaction !== 'function') {
+        showToast('Connect your NEAR wallet to send from it.', 'error');
+        return;
+      }
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>Approve in wallet...</span>';
+      try {
+        await window.RacerConnect.sendNearTransaction({ receiverId: address, amountNear });
+        showToast(`Sent ${amountNear} NEAR to your RacerBot Trading Wallet!`, 'success');
+        setTimeout(refreshUserBalance, 2200);
+      } catch (err) {
+        showToast(`Transfer failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
+    }
+
+    async function fundTradingWalletFromModal(btn) {
+      const amountNear = Number(document.getElementById('direct-deposit-wallet-amount')?.value || '0');
+      const address = document.getElementById('deposit-account-id')?.textContent?.trim();
+      if (!(amountNear > 0) || !address) { showToast('Enter an amount of NEAR to send.', 'error'); return; }
+      if (!window.RacerConnect || typeof window.RacerConnect.sendNearTransaction !== 'function') {
+        showToast('Connect your NEAR wallet to send from it.', 'error');
+        return;
+      }
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>Approve in wallet...</span>';
+      try {
+        await window.RacerConnect.sendNearTransaction({ receiverId: address, amountNear });
+        showToast(`Sent ${amountNear} NEAR to ${address.slice(0, 10)}...!`, 'success');
+        setTimeout(refreshUserBalance, 2200);
+      } catch (err) {
+        showToast(`Transfer failed: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = prev;
       }
     }
 
@@ -8605,12 +9304,16 @@
       const label = btn.textContent;
       btn.textContent = 'Creating...';
       try {
+        if (!getAuthHeaders().Authorization && window.RacerConnect?.activeNearWallet && typeof window.RacerConnect.ensureWalletSession === 'function') {
+          await window.RacerConnect.ensureWalletSession();
+        }
         const res = await fetch('/alpha/wallet/create', { method: 'POST', headers: getAuthHeaders(), body: '{}' });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
         showToast(data.message || 'Wallet created', 'success');
         rememberManagedWallet(data.address);
         await loadTradingWallet();
+        await loadConfidential();
         updateWalletUI();
         refreshUserBalance();
       } catch (err) {
@@ -8782,13 +9485,14 @@
 
     // ── Init on DOM Ready ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
-      loadTradingWallet().then(() => { updateWalletUI(); refreshUserBalance(); });
+      loadTradingWallet().then(() => { updateWalletUI(); refreshUserBalance(); loadConfidential(); });
       // Immediately restore any locally cached balance to prevent visual flicker
       restoreCachedBalance();
 
       fetchTraders();
       fetchRacerAlphaTokens();
       refreshUserBalance();
+      loadConfidential();
       updateWalletUI();
 
       // Start live price polling (3.5s for selected token detail, 12s for full table refresh)
@@ -8814,15 +9518,18 @@
         loadTradingWallet().then(() => {
           updateWalletUI();
           refreshUserBalance();
+          loadConfidential();
         });
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
+        loadConfidential();
       });
       window.addEventListener('racer:wallet-linked', () => {
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
+        loadConfidential();
       });
 
       // Auto-refresh real on-chain balance every 10 seconds
@@ -8835,7 +9542,7 @@
     <div class="racer-modal-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
         <div style="display:flex; align-items:center; gap:8px;">
-          <span style="width:8px; height:8px; border-radius:50%; background:var(--color-primary); box-shadow:0 0 8px var(--color-primary); display:inline-block;"></span>
+          <span style="width:8px; height:8px; border-radius:50%; background:var(--color-primary); box-shadow: none; display:inline-block;"></span>
           <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#fff;">RacerBot Unified Connect</span>
         </div>
         <button onclick="closeConnectModal()" style="background:none; border:none; color:var(--color-text-muted); cursor:pointer; font-size:22px; line-height:1;">&times;</button>

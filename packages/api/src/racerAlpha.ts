@@ -26,8 +26,10 @@ export interface AlphaTrader {
   equityCurve?: number[];
   keyPriceNear: number;
   tierBasicPriceNear?: number;
+  tierViewPriceNear?: number;
   tierCopyPriceNear?: number;
   tierPremiumPriceNear?: number;
+  tierProPriceNear?: number;
   copyFeePct?: number;
   entryFeePaidNear?: number;
   verifiedTradeVolumeUsd?: number;
@@ -509,24 +511,25 @@ export async function buyViewingKey(
         const riskMult = options?.riskMultiplier || 1.5;
         const stopLoss = options?.stopLossPct || -8.0;
 
+        const copySellsDefault = selectedTier !== 'basic';
         if (pendingKey) {
           await client.query(
             `UPDATE racer_alpha_keys
              SET key_token = $1, price_paid_near = $2, tier = $3, auto_copy_enabled = $4, auto_copy_amount_near = $5,
-                 allocation_pct = $6, risk_multiplier = $7, stop_loss_pct = $8,
+                 allocation_pct = $6, risk_multiplier = $7, stop_loss_pct = $8, copy_sells = $9,
                  payment_status = 'pending', creator_tx_hash = NULL, treasury_tx_hash = NULL,
                  refund_tx_hash = NULL, payment_error = NULL, expires_at = NOW() + INTERVAL '30 days', created_at = NOW()
-             WHERE id = $9`,
-            [keyToken, priceToPay, selectedTier, autoCopy, autoCopyAmount, alloc, riskMult, stopLoss, keyId]
+             WHERE id = $10`,
+            [keyToken, priceToPay, selectedTier, autoCopy, autoCopyAmount, alloc, riskMult, stopLoss, copySellsDefault, keyId]
           );
         } else {
           await client.query(
             `INSERT INTO racer_alpha_keys (
                id, trader_id, buyer_user_id, buyer_telegram_id, price_paid_near, tier, key_token,
-               auto_copy_enabled, auto_copy_amount_near, allocation_pct, risk_multiplier, stop_loss_pct,
+               auto_copy_enabled, auto_copy_amount_near, allocation_pct, risk_multiplier, stop_loss_pct, copy_sells,
                expires_at, payment_status
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW() + INTERVAL '30 days', 'pending')`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW() + INTERVAL '30 days', 'pending')`,
             [
               keyId,
               trader.id,
@@ -540,6 +543,7 @@ export async function buyViewingKey(
               alloc,
               riskMult,
               stopLoss,
+              copySellsDefault,
             ]
           );
         }
@@ -578,7 +582,8 @@ export async function buyViewingKey(
     }
     isPlatformPayout = trader.userId === 'system_alpha';
     const creatorUser = isPlatformPayout ? null : await getUserById(trader.userId);
-    if (!isPlatformPayout && (!creatorUser?.subaccount_id?.trim() || !creatorUser.scoped_key_encrypted)) {
+    const creatorAccountId = trader.payoutWalletAddress?.trim() || creatorUser?.subaccount_id?.trim();
+    if (!isPlatformPayout && !creatorAccountId) {
       await failAlphaKeyPurchase(db, keyId, trader.id, 'failed', 'Creator payout account is not configured.');
       return { success: false, reason: 'This creator cannot receive payouts yet. Please try again later.' };
     }
@@ -587,7 +592,6 @@ export async function buyViewingKey(
       await failAlphaKeyPurchase(db, keyId, trader.id, 'failed', 'Buyer has no managed NEAR subaccount.');
       return { success: false, reason: 'A platform-managed NEAR subaccount is required to buy a viewing key.' };
     }
-    const creatorAccountId = creatorUser?.subaccount_id?.trim();
 
     const split = splitAlphaKeyPayment(priceToPay, isPlatformPayout);
     let creatorTxHash: string | undefined;
@@ -608,7 +612,7 @@ export async function buyViewingKey(
           [treasuryTxHash, keyId]
         );
       } else {
-        if (!creatorUser || !creatorAccountId) {
+        if (!creatorAccountId) {
           throw new Error('Creator payout account is not configured.');
         }
         const creatorTransfer = await transferNearFromUser(
@@ -1324,11 +1328,139 @@ export async function recordAlphaSignal(params: {
         ]
       );
       signalPersisted = true;
+      // ── Update Creator Confidential Positions & PNL Metrics ──
+      const nearUsd = await getNearUsdPrice().catch(() => 4.95);
+      let tokenPriceNear = Number(params.priceNear) > 0 ? Number(params.priceNear) : 0;
+      if (!(tokenPriceNear > 0)) {
+        const liveTok = cachedAlphaTokensList.tokens.find(t => t.address.toLowerCase() === params.tokenAddress.toLowerCase());
+        if (liveTok && liveTok.priceNear > 0) {
+          tokenPriceNear = liveTok.priceNear;
+        } else {
+          const info: any = await getTokenInfo(params.tokenAddress, false).catch(() => null);
+          tokenPriceNear = parseFloat(info?.price || '0') || 0;
+        }
+      }
+      const tokenPriceUsd = tokenPriceNear > 0 ? tokenPriceNear * nearUsd : 0.0001;
+      const tradeUsd = Math.max(0.01, (Number(params.amountNear) || 1.0) * nearUsd);
+      const tradeTokens = tokenPriceUsd > 0 ? tradeUsd / tokenPriceUsd : 1000;
+
+      const existingPosRes = await db.query(
+        `SELECT * FROM racer_alpha_positions WHERE trader_id = $1 AND LOWER(token_address) = LOWER($2) LIMIT 1`,
+        [params.traderId, params.tokenAddress]
+      ).catch(() => ({ rows: [] }));
+      const existingPos = existingPosRes.rows[0];
+
+      let realizedPnlPct = typeof params.pnlPct === 'number' ? params.pnlPct : null;
+
+      if (params.side === 'BUY') {
+        if (existingPos) {
+          const prevSize = Math.max(0, parseFloat(existingPos.size_tokens || '0'));
+          const prevEntry = Math.max(0.00000001, parseFloat(existingPos.entry_price_usd || String(tokenPriceUsd)));
+          const newSize = prevSize + tradeTokens;
+          const newEntry = newSize > 0 ? ((prevSize * prevEntry) + (tradeTokens * tokenPriceUsd)) / newSize : tokenPriceUsd;
+          const pnlUsd = (tokenPriceUsd - newEntry) * newSize;
+          const pnlPct = newEntry > 0 ? ((tokenPriceUsd - newEntry) / newEntry) * 100 : 0;
+          await db.query(
+            `UPDATE racer_alpha_positions
+             SET size_tokens = $1, entry_price_usd = $2, current_price_usd = $3, pnl_usd = $4, pnl_pct = $5, updated_at = NOW()
+             WHERE id = $6`,
+            [newSize.toFixed(6), newEntry.toFixed(10), tokenPriceUsd.toFixed(10), pnlUsd.toFixed(2), pnlPct.toFixed(2), existingPos.id]
+          ).catch(() => {});
+        } else {
+          await db.query(
+            `INSERT INTO racer_alpha_positions (
+               id, trader_id, symbol, token_address, side, size_tokens, entry_price_usd, current_price_usd, pnl_usd, pnl_pct, is_confidential
+             ) VALUES ($1, $2, $3, $4, 'LONG', $5, $6, $7, 0, 0, TRUE)`,
+            [
+              'pos_' + crypto.randomBytes(8).toString('hex'),
+              params.traderId,
+              (params.tokenSymbol || params.tokenAddress.split('.')[0]).toUpperCase().slice(0, 30),
+              params.tokenAddress,
+              tradeTokens.toFixed(6),
+              tokenPriceUsd.toFixed(10),
+              tokenPriceUsd.toFixed(10),
+            ]
+          ).catch(() => {});
+        }
+      } else {
+        // SELL: Compute realized PNL against entry_price_usd and reduce/close position
+        if (existingPos) {
+          const prevSize = Math.max(0, parseFloat(existingPos.size_tokens || '0'));
+          const entryUsd = Math.max(0.00000001, parseFloat(existingPos.entry_price_usd || String(tokenPriceUsd)));
+          if (realizedPnlPct === null && entryUsd > 0 && tokenPriceUsd > 0) {
+            realizedPnlPct = Number((((tokenPriceUsd - entryUsd) / entryUsd) * 100).toFixed(2));
+          }
+          const soldFraction = params.copySellPct && params.copySellPct > 0
+            ? Math.min(1, params.copySellPct / 100)
+            : (prevSize > 0 ? Math.min(1, tradeTokens / prevSize) : 1);
+          if (!params.copySellPct) {
+            params.copySellPct = Math.max(1, Math.min(100, Math.round(soldFraction * 100)));
+          }
+          const remainingTokens = prevSize * (1 - soldFraction);
+          if (remainingTokens <= prevSize * 0.02 || remainingTokens <= 0.0001) {
+            await db.query(`DELETE FROM racer_alpha_positions WHERE id = $1`, [existingPos.id]).catch(() => {});
+          } else {
+            const pnlUsd = (tokenPriceUsd - entryUsd) * remainingTokens;
+            const pnlPct = entryUsd > 0 ? ((tokenPriceUsd - entryUsd) / entryUsd) * 100 : 0;
+            await db.query(
+              `UPDATE racer_alpha_positions
+               SET size_tokens = $1, current_price_usd = $2, pnl_usd = $3, pnl_pct = $4, updated_at = NOW()
+               WHERE id = $5`,
+              [remainingTokens.toFixed(6), tokenPriceUsd.toFixed(10), pnlUsd.toFixed(2), pnlPct.toFixed(2), existingPos.id]
+            ).catch(() => {});
+          }
+        } else if (!params.copySellPct) {
+          params.copySellPct = 100;
+        }
+      }
+
+      if (realizedPnlPct !== null) {
+        await db.query(`UPDATE racer_alpha_signals SET pnl_pct = $1 WHERE id = $2`, [realizedPnlPct, signalId]).catch(() => {});
+      }
+
+      // Update creator aggregate PNL, win rate, volume, and equity curve
+      const traderStatsRes = await db.query(
+        `SELECT total_trades, winning_trades, verified_pnl_pct, equity_curve FROM racer_alpha_traders WHERE id = $1 LIMIT 1`,
+        [params.traderId]
+      ).catch(() => ({ rows: [] }));
+      const trRow = traderStatsRes.rows[0];
+      const prevTrades = parseInt(trRow?.total_trades || '0', 10);
+      const prevWins = parseInt(trRow?.winning_trades || '0', 10);
+      const prevPnlPct = parseFloat(trRow?.verified_pnl_pct || '0');
+      const isWin = realizedPnlPct !== null ? realizedPnlPct > 0 : false;
+      const newTrades = prevTrades + 1;
+      const newWins = prevWins + (isWin ? 1 : 0);
+      const newWinRate = newTrades > 0 ? Math.min(100, Number(((newWins / newTrades) * 100).toFixed(1))) : 0;
+      const newPnlPct = realizedPnlPct !== null
+        ? Number((prevPnlPct + realizedPnlPct * 0.25).toFixed(2))
+        : prevPnlPct;
+
+      let curve = [];
+      if (Array.isArray(trRow?.equity_curve)) curve = [...trRow.equity_curve];
+      else if (typeof trRow?.equity_curve === 'string') {
+        try { curve = JSON.parse(trRow.equity_curve); } catch {}
+      }
+      if (curve.length === 0) curve = [100];
+      const lastPoint = Number(curve[curve.length - 1]) || 100;
+      const nextPoint = realizedPnlPct !== null
+        ? Number(Math.max(10, lastPoint * (1 + (realizedPnlPct * 0.0025))).toFixed(2))
+        : lastPoint;
+      if (realizedPnlPct !== null || curve.length < 2) {
+        curve.push(nextPoint);
+        if (curve.length > 30) curve = curve.slice(-30);
+      }
+
       await db.query(
         `UPDATE racer_alpha_traders
-         SET total_trades = total_trades + 1, total_volume_near = total_volume_near + $1, updated_at = NOW()
-         WHERE id = $2`,
-        [params.amountNear, params.traderId]
+         SET total_trades = $1,
+             winning_trades = $2,
+             win_rate_pct = $3,
+             verified_pnl_pct = $4,
+             total_volume_near = total_volume_near + $5,
+             equity_curve = $6::jsonb,
+             updated_at = NOW()
+         WHERE id = $7`,
+        [newTrades, newWins, newWinRate, newPnlPct, params.amountNear, JSON.stringify(curve), params.traderId]
       ).catch((e) => logger.warn('Failed to update creator signal stats:', e?.message));
     } catch (e: any) {
       logger.warn('Failed to insert signal into DB:', e?.message);
@@ -1364,6 +1496,9 @@ export async function recordAlphaSignal(params: {
     dailyBudgetNear: number;
     maxSlippagePct: number;
     copySells: boolean;
+    allocationPct?: number;
+    riskMultiplier?: number;
+    stopLossPct?: number;
   }> = [];
 
   if (db && signalPersisted) {
@@ -1371,9 +1506,11 @@ export async function recordAlphaSignal(params: {
       `SELECT buyer_user_id AS "buyerUserId", buyer_telegram_id AS "buyerTelegramId",
               auto_copy_enabled AS "autoCopyEnabled", auto_copy_amount_near AS "autoCopyAmountNear",
               daily_budget_near AS "dailyBudgetNear", max_slippage_pct AS "maxSlippagePct",
-              copy_sells AS "copySells"
+              COALESCE(copy_sells, TRUE) AS "copySells",
+              allocation_pct AS "allocationPct", risk_multiplier AS "riskMultiplier", stop_loss_pct AS "stopLossPct"
        FROM racer_alpha_keys
-       WHERE trader_id = $1 AND payment_status = 'completed'`,
+       WHERE trader_id = $1 AND payment_status = 'completed'
+         AND (expires_at IS NULL OR expires_at > NOW())`,
       [params.traderId]
     ).catch((error) => {
       logger.warn('Failed to load alpha keyholders for signal:', error?.message);
@@ -1403,12 +1540,14 @@ export async function recordAlphaSignal(params: {
       ).catch(() => {});
     }
 
-    // 2. Automated copy execution if enabled
+    // 2. Automated copy execution if enabled (Supports Confidential Executor Pool, Shielded Router Vault, and RacerBot Managed Wallet)
     if (db && kh.autoCopyEnabled && params.side === 'BUY') {
-      const copyAmount = Number(kh.autoCopyAmountNear);
+      const baseAmount = Number(kh.autoCopyAmountNear) || 1.0;
+      const riskMult = Number(kh.riskMultiplier) > 0 ? Number(kh.riskMultiplier) : 1.0;
+      const copyAmount = Math.max(0.1, Number((baseAmount * riskMult).toFixed(4)));
       let reservedUsageDate: string | null = null;
       try {
-        const dailyCapNear = Number(kh.dailyBudgetNear);
+        const dailyCapNear = Number(kh.dailyBudgetNear) || 25.0;
         const usageDate = new Date().toISOString().slice(0, 10);
         if (!Number.isFinite(copyAmount) || copyAmount <= 0 ||
             !Number.isFinite(dailyCapNear) || dailyCapNear <= 0) {
@@ -1434,16 +1573,69 @@ export async function recordAlphaSignal(params: {
         reservedUsageDate = usageDate;
 
         const amountYocto = (BigInt(Math.floor(copyAmount * 1e6)) * 1000000000000000000n).toString();
+        const buyerUser = await getUserById(kh.buyerUserId).catch(() => null);
+        const slippage = Number(kh.maxSlippagePct) || 2;
+        let swapRes: { success: boolean; txHash?: string; reason?: string; routeLabel?: string } | null = null;
 
-        const swapRes: any = await publishSwap({
-          user_id: kh.buyerUserId,
-          token_in: 'near',
-          token_out: params.tokenAddress,
-          amount_in: amountYocto,
-          min_amount_out: '0',
-          venue: venue as any,
-          slippage_pct: Number(kh.maxSlippagePct) || 2,
-        }, undefined, { suppressAlphaSignal: true });
+        // 2a. Try Confidential Executor Pool first if enabled and funded
+        if (buyerUser) {
+          try {
+            const { EXECUTORS_ENABLED, confidentialBuy } = await import('./executorPool.js');
+            if (EXECUTORS_ENABLED) {
+              const confRes = await confidentialBuy({
+                user: buyerUser,
+                tokenAddress: params.tokenAddress,
+                venue: String(venue),
+                amountYocto: BigInt(amountYocto),
+                slippagePct: slippage,
+              });
+              if (confRes.success && confRes.txHashes.length > 0) {
+                swapRes = { success: true, txHash: confRes.txHashes[0], routeLabel: 'Confidential Executor' };
+              }
+            }
+          } catch {}
+        }
+
+        // 2b. Try Shielded Router Vault / Managed RacerBot Trading Wallet
+        if (!swapRes && buyerUser) {
+          const { hasManagedWallet } = await import('./webWallet.js');
+          if (hasManagedWallet(buyerUser)) {
+            try {
+              const { executeShieldedVaultIntent } = await import('./racerVault.js');
+              const vRes = await executeShieldedVaultIntent({
+                user: buyerUser,
+                tokenAddress: params.tokenAddress,
+                venue: venue as any,
+                side: 'BUY',
+                amountNear: copyAmount,
+                amountTokens: amountYocto,
+                slippagePct: slippage,
+              });
+              if (vRes.success && vRes.txHash) {
+                swapRes = { success: true, txHash: vRes.txHash, routeLabel: 'Shielded Router Vault' };
+              }
+            } catch {}
+
+            if (!swapRes) {
+              const ammRes: any = await publishSwap({
+                user_id: kh.buyerUserId,
+                token_in: 'near',
+                token_out: params.tokenAddress,
+                amount_in: amountYocto,
+                min_amount_out: '0',
+                venue: venue as any,
+                slippage_pct: slippage,
+              }, undefined, { suppressAlphaSignal: true });
+              if (ammRes && ammRes.success !== false) {
+                swapRes = { success: true, txHash: ammRes.txHash, routeLabel: venue.toUpperCase() };
+              } else {
+                swapRes = { success: false, reason: ammRes?.reason };
+              }
+            }
+          } else {
+            swapRes = { success: false, reason: 'Fund your RacerBot Trading Wallet or Confidential Pool to execute automated copy trades.' };
+          }
+        }
 
         if (swapRes && swapRes.success !== false) {
           reservedUsageDate = null;
@@ -1454,7 +1646,7 @@ export async function recordAlphaSignal(params: {
               `✅ <b>Auto-Copy Executed!</b>\n\n` +
               `🪙 <b>Token</b>: <code>${params.tokenAddress}</code>\n` +
               `💵 <b>Amount</b>: <code>${copyAmount} NEAR</code>\n` +
-              `🏛️ <b>Venue</b>: <code>${venue.toUpperCase()}</code>\n` +
+              `🛡️ <b>Route</b>: <code>${swapRes.routeLabel || venue.toUpperCase()}</code>\n` +
               (swapRes.txHash ? `🔗 <b>Tx</b>: <code>${swapRes.txHash.slice(0, 16)}...</code>\n` : ''),
               { parse_mode: 'HTML' }
             ).catch(() => {});
@@ -1466,7 +1658,7 @@ export async function recordAlphaSignal(params: {
           if (bot && kh.buyerTelegramId) {
             bot.telegram.sendMessage(
               kh.buyerTelegramId,
-              `❌ Auto-copy failed for ${params.tokenSymbol}; the reserved daily budget was restored.`,
+              `❌ Auto-copy failed for ${params.tokenSymbol}: ${swapRes?.reason || 'trade failed'}. Reserved daily budget restored.`,
               { parse_mode: 'HTML' }
             ).catch(() => {});
           }
@@ -1485,39 +1677,123 @@ export async function recordAlphaSignal(params: {
       db &&
       kh.autoCopyEnabled &&
       kh.copySells &&
-      params.side === 'SELL' &&
-      Number.isFinite(params.copySellPct) &&
-      Number(params.copySellPct) > 0
+      params.side === 'SELL'
     ) {
+      const sellPct = Number.isFinite(params.copySellPct) && Number(params.copySellPct) > 0
+        ? Math.min(100, Number(params.copySellPct))
+        : 100;
+      const slippage = Number(kh.maxSlippagePct) || 2;
       try {
-        const positions = await getOpenPositions(kh.buyerUserId);
-        const position = positions.find(
-          candidate => candidate.token_address.toLowerCase() === params.tokenAddress.toLowerCase()
-        );
-        if (!position) continue;
+        let soldOk = false;
+        let sellReason = '';
+        const buyerUser = await getUserById(kh.buyerUserId).catch(() => null);
 
-        const sellResult = await sellAtTarget(
-          kh.buyerUserId,
-          position.id,
-          Math.min(100, Number(params.copySellPct)),
-          undefined,
-          { suppressAlphaSignal: true, slippagePct: Number(kh.maxSlippagePct) || 2 }
-        );
-        if (sellResult.success) {
+        // 2a. Check if position is held in Confidential Executors
+        if (buyerUser) {
+          try {
+            const { EXECUTORS_ENABLED, positionBalance, confidentialSell } = await import('./executorPool.js');
+            if (EXECUTORS_ENABLED) {
+              const posBal = await positionBalance(kh.buyerUserId, params.tokenAddress).catch(() => null);
+              if (posBal && posBal.total > 0n) {
+                const confSellRes = await confidentialSell({
+                  user: buyerUser,
+                  tokenAddress: params.tokenAddress,
+                  venue: String(venue),
+                  percent: sellPct,
+                  slippagePct: slippage,
+                });
+                if (confSellRes.success && confSellRes.txHashes.length > 0) {
+                  soldOk = true;
+                } else {
+                  sellReason = confSellRes.reason || '';
+                }
+              }
+            }
+          } catch {}
+        }
+
+        // 2b. Check tracked DB positions (sellAtTarget)
+        if (!soldOk) {
+          const positions = await getOpenPositions(kh.buyerUserId);
+          const position = positions.find(
+            candidate => candidate.token_address.toLowerCase() === params.tokenAddress.toLowerCase()
+          );
+          if (position) {
+            const sellResult = await sellAtTarget(
+              kh.buyerUserId,
+              position.id,
+              sellPct,
+              undefined,
+              { suppressAlphaSignal: true, slippagePct: slippage }
+            );
+            if (sellResult.success) {
+              soldOk = true;
+            } else {
+              sellReason = sellResult.reason || '';
+            }
+          }
+        }
+
+        // 2c. Check on-chain token balance in RacerBot Managed Wallet / Shielded Vault
+        if (!soldOk && buyerUser && buyerUser.subaccount_id) {
+          const { hasManagedWallet } = await import('./webWallet.js');
+          if (hasManagedWallet(buyerUser)) {
+            const near = getNear();
+            const rawBal = await near.getTokenBalance(params.tokenAddress, buyerUser.subaccount_id).catch(() => '0');
+            if (BigInt(rawBal || '0') > 0n) {
+              const sellTokensRaw = ((BigInt(rawBal) * BigInt(Math.round(sellPct * 100))) / 10000n).toString();
+              if (BigInt(sellTokensRaw) > 0n) {
+                try {
+                  const { executeShieldedVaultIntent } = await import('./racerVault.js');
+                  const vSell = await executeShieldedVaultIntent({
+                    user: buyerUser,
+                    tokenAddress: params.tokenAddress,
+                    venue: venue as any,
+                    side: 'SELL',
+                    amountNear: 0,
+                    amountTokens: sellTokensRaw,
+                    slippagePct: slippage,
+                  });
+                  if (vSell.success && vSell.txHash) {
+                    soldOk = true;
+                  }
+                } catch {}
+                if (!soldOk) {
+                  const ammSell: any = await publishSwap({
+                    user_id: kh.buyerUserId,
+                    token_in: params.tokenAddress,
+                    token_out: 'wrap.near',
+                    amount_in: sellTokensRaw,
+                    min_amount_out: '0',
+                    venue: venue as any,
+                    slippage_pct: slippage,
+                  }, undefined, { suppressAlphaSignal: true });
+                  if (ammSell && ammSell.success !== false) {
+                    soldOk = true;
+                  } else {
+                    sellReason = ammSell?.reason || '';
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (soldOk) {
           autoCopyFillsCount++;
           if (bot && kh.buyerTelegramId) {
             bot.telegram.sendMessage(
               kh.buyerTelegramId,
               `✅ <b>Auto-Copy Sell Executed</b>\n\n` +
               `🪙 <b>Token</b>: <code>${params.tokenAddress}</code>\n` +
-              `📉 <b>Position sold</b>: <code>${Math.min(100, Number(params.copySellPct)).toFixed(2)}%</code>`,
+              `📉 <b>Position sold</b>: <code>${sellPct.toFixed(2)}%</code>`,
               { parse_mode: 'HTML' }
             ).catch(() => {});
           }
-        } else if (bot && kh.buyerTelegramId) {
+        } else if (sellReason && bot && kh.buyerTelegramId) {
           bot.telegram.sendMessage(
             kh.buyerTelegramId,
-            `❌ Auto-copy sell failed for ${params.tokenSymbol}: ${sellResult.reason || 'trade failed'}.`,
+            `❌ Auto-copy sell failed for ${params.tokenSymbol}: ${sellReason}.`,
             { parse_mode: 'HTML' }
           ).catch(() => {});
         }
@@ -1668,8 +1944,10 @@ function rowToTrader(r: any): AlphaTrader {
     equityCurve: equity.length > 0 ? equity : [0, 0],
     keyPriceNear: parseFloat(r.key_price_near || '3.5'),
     tierBasicPriceNear: parseFloat(r.tier_basic_price_near || '1.5'),
+    tierViewPriceNear: parseFloat(r.tier_basic_price_near || '1.5'),
     tierCopyPriceNear: parseFloat(r.tier_copy_price_near || r.key_price_near || '3.5'),
     tierPremiumPriceNear: parseFloat(r.tier_premium_price_near || '8.0'),
+    tierProPriceNear: parseFloat(r.tier_premium_price_near || '8.0'),
     copyFeePct: r.copy_fee_pct ? parseFloat(r.copy_fee_pct) : 0,
     entryFeePaidNear: r.entry_fee_paid_near ? parseFloat(r.entry_fee_paid_near) : 0,
     verifiedTradeVolumeUsd: r.verified_trade_volume_usd ? parseFloat(r.verified_trade_volume_usd) : 0,
@@ -1742,7 +2020,20 @@ export async function getAlphaTraderPositions(traderId: string, userId?: string)
 
   let totalPnlUsd = 0;
   const positions: AlphaPosition[] = rows.map((r: any) => {
-    const pnlUsd = parseFloat(r.pnl_usd || '0');
+    const sizeTokens = parseFloat(r.size_tokens || '0');
+    const entryPriceUsd = parseFloat(r.entry_price_usd || '0');
+    const liveToken = cachedAlphaTokensList.tokens.find(
+      t => t.address && r.token_address && t.address.toLowerCase() === String(r.token_address).toLowerCase()
+    );
+    const currentPriceUsd = (liveToken && liveToken.priceUsd > 0)
+      ? liveToken.priceUsd
+      : parseFloat(r.current_price_usd || '0');
+    const pnlUsd = (entryPriceUsd > 0 && currentPriceUsd > 0 && sizeTokens > 0)
+      ? Number(((currentPriceUsd - entryPriceUsd) * sizeTokens).toFixed(2))
+      : parseFloat(r.pnl_usd || '0');
+    const pnlPct = (entryPriceUsd > 0 && currentPriceUsd > 0)
+      ? Number((((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100).toFixed(2))
+      : parseFloat(r.pnl_pct || '0');
     totalPnlUsd += pnlUsd;
     let spark: number[] = [];
     if (Array.isArray(r.sparkline)) spark = r.sparkline;
@@ -1759,9 +2050,9 @@ export async function getAlphaTraderPositions(traderId: string, userId?: string)
         side: r.side as 'LONG' | 'SHORT',
         sizeTokens: 0,
         entryPriceUsd: 0,
-        currentPriceUsd: parseFloat(r.current_price_usd || '0'),
+        currentPriceUsd,
         pnlUsd: 0,
-        pnlPct: 0,
+        pnlPct,
         sparkline: spark,
         isLocked: true,
         updatedAt: r.updated_at || new Date().toISOString(),
@@ -1774,11 +2065,11 @@ export async function getAlphaTraderPositions(traderId: string, userId?: string)
       symbol: r.symbol,
       tokenAddress: r.token_address,
       side: r.side as 'LONG' | 'SHORT',
-      sizeTokens: parseFloat(r.size_tokens || '0'),
-      entryPriceUsd: parseFloat(r.entry_price_usd || '0'),
-      currentPriceUsd: parseFloat(r.current_price_usd || '0'),
+      sizeTokens,
+      entryPriceUsd,
+      currentPriceUsd,
       pnlUsd,
-      pnlPct: parseFloat(r.pnl_pct || '0'),
+      pnlPct,
       sparkline: spark,
       isLocked: false,
       updatedAt: r.updated_at || new Date().toISOString(),
@@ -1802,13 +2093,6 @@ export async function getAlphaTraderSwaps(traderId: string, userId?: string): Pr
   const isOwner = Boolean(userId && trader && (trader.userId === userId || trader.payoutWalletAddress === userId || trader.handle === userId));
   const hasAccess = isOwner || Boolean(keyInfo);
 
-  if (!hasAccess) {
-    return {
-      isLocked: true,
-      swaps: [],
-    };
-  }
-
   let dbSignals: any[] = [];
   if (db && trader) {
     const res = await db.query(
@@ -1816,6 +2100,19 @@ export async function getAlphaTraderSwaps(traderId: string, userId?: string): Pr
       [trader.id]
     ).catch(() => ({ rows: [] }));
     dbSignals = res.rows;
+  }
+
+  if (!hasAccess) {
+    return {
+      isLocked: true,
+      swaps: dbSignals.map((s: any) => ({
+        id: s.id,
+        createdAt: s.created_at,
+        side: s.side,
+        isLocked: true,
+        status: 'locked',
+      })),
+    };
   }
 
   if (dbSignals.length === 0) {
@@ -1828,10 +2125,21 @@ export async function getAlphaTraderSwaps(traderId: string, userId?: string): Pr
   return {
     isLocked: false,
     swaps: dbSignals.map((s: any) => ({
+      id: s.id,
+      createdAt: s.created_at,
+      side: s.side || 'BUY',
+      tokenSymbol: s.token_symbol,
+      tokenAddress: s.token_address,
+      venue: s.venue || 'NEAR Intents',
+      amountNear: Number(s.amount_near || 0),
+      priceNear: Number(s.price_near || 0),
+      pnlPct: s.pnl_pct != null ? Number(s.pnl_pct) : undefined,
+      txHash: s.tx_hash || undefined,
+      isLocked: false,
       time: new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      text: `Private Swap NEAR → ${s.token_symbol}`,
+      text: `Private ${s.side || 'Swap'} ${s.token_symbol}`,
       amount: `${s.amount_near} NEAR`,
-      usd: s.market_cap_usd ? `≈ $${Number(s.market_cap_usd).toLocaleString()} MCap` : 'Confidential Size',
+      usd: s.market_cap_usd ? `≈ ${Number(s.market_cap_usd).toLocaleString()} MCap` : 'Confidential Size',
       status: 'confirmed',
     })),
   };

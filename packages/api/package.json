@@ -4,7 +4,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc && node --input-type=module -e \"import fs from 'fs'; fs.copyFileSync('src/bubblemap.html', 'dist/bubblemap.html'); fs.copyFileSync('src/competition.html', 'dist/competition.html'); fs.copyFileSync('src/raceralpha.html', 'dist/raceralpha.html'); fs.copyFileSync('src/racer.html', 'dist/racer.html'); fs.copyFileSync('src/fleet.html', 'dist/fleet.html'); if(fs.existsSync('src/authenticIcons.json')) fs.copyFileSync('src/authenticIcons.json', 'dist/authenticIcons.json');\"",
+    "build": "tsc && node --input-type=module -e \"import fs from 'fs'; fs.copyFileSync('src/bubblemap.html', 'dist/bubblemap.html'); fs.copyFileSync('src/competition.html', 'dist/competition.html'); fs.copyFileSync('src/raceralpha.html', 'dist/raceralpha.html'); fs.copyFileSync('src/racer.html', 'dist/racer.html'); fs.copyFileSync('src/fleet.html', 'dist/fleet.html'); fs.copyFileSync('src/racerConnect.js', 'dist/racerConnect.js'); if(fs.existsSync('src/authenticIcons.json')) fs.copyFileSync('src/authenticIcons.json', 'dist/authenticIcons.json');\"",
 
     "dev": "node --watch dist/index.js",
     "start": "node dist/index.js"

@@ -626,16 +626,16 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
   if (nearVisible && subaccount) {
-    text += `📍 NEAR: <code>${subaccount}</code>\n`;
+    text += `📍 NEAR: <code>${subaccount}</code>\n\n`;
   }
   if (suiVisible && suiAddress) {
-    text += `💧 SUI: <code>${suiAddress}</code>\n`;
+    text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
   }
   if (starknetVisible && starknetAddress) {
-    text += `✨ STRK: <code>${starknetAddress}</code>\n`;
+    text += `✨ STRK: <code>${starknetAddress}</code>\n\n`;
   }
   if (solanaVisible && solAddress) {
-    text += `◎ SOL: <code>${solAddress}</code>\n`;
+    text += `◎ SOL: <code>${solAddress}</code>\n\n`;
   }
   text = text.trimEnd();
 
@@ -853,10 +853,10 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
-  if (nearVisible) text += `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>\n`;
-  if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n`;
-  if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n`;
-  if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n`;
+  if (nearVisible) text += `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>\n\n`;
+  if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n\n`;
+  if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n\n`;
+  if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n\n`;
   text = text.trimEnd();
 
   const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -5516,16 +5516,16 @@ export function setupRoutes(bot: Telegraf): void {
 
     let listText = `💳 <b>RaceFleet Subaccounts (${fleet.wallet_count} Wallets)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     for (const w of balances.wallets) {
-      listText += `• <b>W${w.walletIndex}</b>: <code>${w.accountId}</code>\n  💰 <b>${w.balanceNear.toFixed(3)} NEAR</b>\n`;
+      listText += `• <b>W${w.walletIndex}</b>: <code>${w.accountId}</code>\n  💰 <b>${w.balanceNear.toFixed(3)} NEAR</b>\n\n`;
     }
-    listText += `\nTotal: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n`;
+    listText += `Total: <b>${balances.totalNearFormatted} NEAR</b> (${balances.totalNearUsd})\n`;
     const solBal = await getSolanaFleetBalances(fleet).catch(() => null);
     if (solBal && solBal.wallets.length > 0) {
       listText += `\n◎ <b>Solana Fleet Wallets</b>\n`;
       for (const w of solBal.wallets) {
-        listText += `• <b>W${w.walletIndex}</b>: <code>${w.address}</code>\n  💰 <b>${w.sol.toFixed(4)} SOL</b>\n`;
+        listText += `• <b>W${w.walletIndex}</b>: <code>${w.address}</code>\n  💰 <b>${w.sol.toFixed(4)} SOL</b>\n\n`;
       }
-      listText += `\nTotal: <b>${solBal.totalSol.toFixed(4)} SOL</b>`;
+      listText += `Total: <b>${solBal.totalSol.toFixed(4)} SOL</b>`;
     }
 
     await ctx.reply(listText, {

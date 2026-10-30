@@ -223,7 +223,7 @@ const refilling = new Set<string>();
 
 /** Top the ready pool back up to the user's settings, within their private balance and cap */
 export async function refillPool(acct: ConfidentialAccountRecord): Promise<number> {
-  if (!acct.enabled || !acct.auto_refill || refilling.has(acct.user_id)) return 0;
+  if (!EXECUTORS_ENABLED || !acct.enabled || !acct.auto_refill || refilling.has(acct.user_id)) return 0;
   refilling.add(acct.user_id);
   try {
     const live = await listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed']);
@@ -507,7 +507,29 @@ export async function positionBalance(userId: string, token: string): Promise<{ 
 /** Everything the confidential wallet screen shows */
 export async function confidentialOverview(user: UserRecord) {
   const acct = await getConfidentialAccount(user.id);
-  if (!acct) return { enabled: EXECUTORS_ENABLED, account: null };
+  if (!acct) {
+    return {
+      enabled: EXECUTORS_ENABLED,
+      account: {
+        payoutAddress: user.subaccount_id,
+        settings: {
+          poolSizes: Array(5).fill(ONE_NEAR.toString()),
+          poolCap: (5n * ONE_NEAR).toString(),
+          autoRefill: true,
+          buyMode: 'split' as const,
+          fleetStaggerMaxSec: 0,
+          roundReturns: false,
+          enabled: true,
+        },
+      },
+      privateBalance: '0',
+      pool: [],
+      positions: [],
+      closing: [],
+      needsAttention: [],
+      moves: [],
+    };
+  }
   const [balance, executors, moves] = await Promise.all([
     privateBalance(acct).catch(() => null),
     listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed', 'open', 'exiting', 'exited', 'failed']),
@@ -759,6 +781,7 @@ async function workerTick(): Promise<void> {
       if (acct) void refillPool(acct).catch(err => logger.warn(`Refill after ${m.kind}: ${err?.message}`));
     }
   }
+  if (!EXECUTORS_ENABLED) return;
   // 2. Delete executors whose close delay has passed
   for (const e of await listExecutorsByStatus(['exited'], CLOSE_DELAY_MS / 1000, 20)) {
     await finishClose(e).catch(err => logger.warn(`finish_close ${e.account_id}: ${err?.message}`));
@@ -778,8 +801,7 @@ async function workerTick(): Promise<void> {
 
 export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | null {
   if (!EXECUTORS_ENABLED) {
-    logger.info('Confidential executors disabled (CONFIDENTIAL_EXECUTORS_ENABLED is not true)');
-    return null;
+    logger.info('Confidential executors disabled (CONFIDENTIAL_EXECUTORS_ENABLED is not true); running private-balance move reconciler only');
   }
   let running = false;
   return setInterval(async () => {

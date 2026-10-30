@@ -300,17 +300,37 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<voi
     throw new Error('The NEAR wallet signature is invalid.');
   }
 
-  const ownsAccountKey = await verifyFullKeyBelongsToUser({
-    publicKey: proof.publicKey,
-    accountId,
-    network: {
-      networkId: 'mainnet',
-      nodeUrl: process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com',
-      helperUrl: 'https://helper.mainnet.near.org',
-      explorerUrl: 'https://nearblocks.io',
-      indexerUrl: 'https://api.nearblocks.io',
-    },
-  });
+  const rpcCandidates = [
+    process.env.NEAR_RPC_URL,
+    ...(process.env.RPC_PROVIDERS || '').split(',').map(s => s.trim()),
+    'https://rpc.mainnet.fastnear.com',
+    'https://near.drpc.org',
+  ].filter((u): u is string => Boolean(u));
+
+  let ownsAccountKey = false;
+  let lastRpcErr: any = null;
+  for (const nodeUrl of rpcCandidates) {
+    try {
+      ownsAccountKey = await verifyFullKeyBelongsToUser({
+        publicKey: proof.publicKey,
+        accountId,
+        network: {
+          networkId: 'mainnet',
+          nodeUrl,
+          helperUrl: 'https://helper.mainnet.near.org',
+          explorerUrl: 'https://nearblocks.io',
+          indexerUrl: 'https://api.nearblocks.io',
+        },
+      });
+      lastRpcErr = null;
+      break;
+    } catch (err: any) {
+      lastRpcErr = err;
+    }
+  }
+  if (lastRpcErr) {
+    throw new Error('Could not verify your NEAR account key on RPC. Please try again.');
+  }
   if (!ownsAccountKey) {
     throw new Error('The signing key is not a full-access key for this NEAR account.');
   }
