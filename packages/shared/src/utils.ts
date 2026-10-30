@@ -335,6 +335,11 @@ export async function getNearUsdPrice(): Promise<number> {
   return nearUsdPrice || 5.16;
 }
 
+// ── Canonical NEAR USDC constants ────────────────────────────────────────────
+export const NEAR_USDC_CONTRACT = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+export const NEAR_USDC_DECIMALS = 6;
+export const NEAR_USDC_REF_POOL_ID = 4512;
+
 // ── NEAR account id validator ────────────────────────────────────────────────
 const NEAR_NAMED_ACCOUNT_RE = /^(([a-z0-9]+[-_])*[a-z0-9]+\.)*([a-z0-9]+[-_])*[a-z0-9]+$/;
 export function isValidNearAccountId(id: string): boolean {

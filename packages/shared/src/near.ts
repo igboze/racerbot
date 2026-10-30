@@ -1574,9 +1574,9 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
       return { rateInNear: 0.0003, poolId: 6518, decimals: 18 };
     }
-    if (pairedToken === 'usdt.tether-token.near' || pairedToken === 'usdc.near') {
+    if (pairedToken === 'usdt.tether-token.near' || pairedToken === 'usdc.near' || pairedToken === '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1') {
       try {
-        const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
+        const pId = pairedToken === '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1' ? 4512 : await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
         if (pId !== null) {
           const rh = await this.getRheaPoolReserves(pId, 'wrap.near', pairedToken);
           const nearRes = parseFloat(rh.reserveIn) / 1e24;

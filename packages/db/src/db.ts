@@ -44,6 +44,7 @@ export interface UserRecord {
   show_net_worth_on_card: boolean;
   /** Customizable quick buy amounts (e.g. '1, 5, 10' or '0.5, 2, 5') */
   custom_buy_amounts?: string | null;
+  near_trade_currency?: 'near' | 'usdc';
   last_near_balance?: number | null;
   last_sui_balance?: number | null;
   last_strk_balance?: number | null;
@@ -429,6 +430,7 @@ export async function getDb(): Promise<Pool> {
 export async function connectDb(): Promise<void> {
   await getDb();
   console.log('[DB] Connected');
+  await pool?.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS near_trade_currency TEXT NOT NULL DEFAULT 'near'").catch(() => {});
 }
 
 export async function disconnectDb(): Promise<void> {
@@ -1058,6 +1060,7 @@ export interface UpdateUserSettingsParams {
   /** Whether to show the user's personal net worth (investment / value) on PNL card images by default. */
   show_net_worth_on_card?: boolean;
   custom_buy_amounts?: string;
+  near_trade_currency?: 'near' | 'usdc';
 }
 
 export async function updateUserSettings(userId: string, params: UpdateUserSettingsParams): Promise<UserRecord> {
@@ -1101,6 +1104,10 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
   if (params.custom_buy_amounts !== undefined) {
     setParts.push(`custom_buy_amounts = $${idx++}`);
     values.push(params.custom_buy_amounts);
+  }
+  if (params.near_trade_currency !== undefined) {
+    setParts.push(`near_trade_currency = $${idx++}`);
+    values.push(params.near_trade_currency);
   }
 
   if (setParts.length === 0) {
@@ -1857,6 +1864,8 @@ function rowToUser(row: any): UserRecord {
     referral_code: row.referral_code,
     username: row.username,
     show_net_worth_on_card: row.show_net_worth_on_card === true, // defaults false
+    custom_buy_amounts: row.custom_buy_amounts ?? null,
+    near_trade_currency: row.near_trade_currency === 'usdc' ? 'usdc' : 'near',
     last_near_balance: row.last_near_balance != null ? parseFloat(row.last_near_balance) : null,
     last_sui_balance: row.last_sui_balance != null ? parseFloat(row.last_sui_balance) : null,
     last_strk_balance: row.last_strk_balance != null ? parseFloat(row.last_strk_balance) : null,

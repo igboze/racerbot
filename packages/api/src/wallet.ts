@@ -23,6 +23,8 @@ import {
   getShortTokenKey,
   registerShortTokenKey,
   isValidNearAccountId,
+  NEAR_USDC_CONTRACT,
+  NEAR_USDC_DECIMALS,
   parseTokenUnits,
   formatTokenUnits,
   generateStarknetWallet,
@@ -434,7 +436,7 @@ export async function getBatchTokenInfo(
             ),
           ]);
           if (info) result.set(addr, info);
-        } catch {}
+        } catch { }
       })
     );
   }
@@ -944,7 +946,7 @@ async function getMemeCookingTokenInfo(tokenAddress: string): Promise<{
       const hardCapNear = parseFloat(meme.hard_cap || '0') / 1e24;
       const softCapNear = parseFloat(meme.soft_cap || '0') / 1e24;
       const tokensToDistribute = parseFloat(meme.amount_to_be_distributed || meme.total_supply || '0') / Math.pow(10, dec);
-      
+
       const effectiveStakedNear = totalStakedNear > 0 ? totalStakedNear : (softCapNear > 0 ? softCapNear * 0.1 : 5);
       const price = tokensToDistribute > 0 ? effectiveStakedNear / tokensToDistribute : 0;
       const progress = hardCapNear > 0 ? Math.min(99.9, (totalStakedNear / hardCapNear) * 100) : 0;
@@ -1044,12 +1046,12 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     const tax = (dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined)
       ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
       : await getDexTax({
-          venue: dbCache.venue,
-          bonding_phase: dbCache.bonding_phase as any,
-          dcl_pool_id: dbCache.dcl_pool_id,
-          rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
-          chain: isSui ? 'sui' : 'near',
-        });
+        venue: dbCache.venue,
+        bonding_phase: dbCache.bonding_phase as any,
+        dcl_pool_id: dbCache.dcl_pool_id,
+        rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
+        chain: isSui ? 'sui' : 'near',
+      });
     const result: TokenInfoResult = {
       address: tokenAddress,
       chain: (dbCache.chain as any) || (isSui ? 'sui' : 'near'),
@@ -1114,987 +1116,987 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
   const fetchPromise = (async (): Promise<TokenInfoResult> => {
 
-  // ── Solana Token Resolution (Jupiter + pump.fun, no RPC) ────────────────────
-  if (isSolanaToken(tokenAddress)) {
-    const sol = await getSolanaTokenInfo(tokenAddress, forceRefresh);
-    if (!sol) {
-      throw new Error(`Solana token not found: ${tokenAddress}`);
-    }
-    const solUsd = sol.solUsd > 0 ? sol.solUsd : 150;
-    const venue =
-      sol.bondingPhase === 'prebonded' && sol.launchpad === 'pump.fun'
-        ? 'pumpfun'
-        : sol.launchpad === 'pump.fun'
-        ? 'pumpswap'
-        : 'jupiter';
-    const totalSupplyRaw = sol.totalSupply > 0
-      ? BigInt(Math.round(sol.totalSupply)) * 10n ** BigInt(sol.decimals)
-      : 0n;
-    const result: TokenInfoResult = {
-      address: tokenAddress,
-      chain: 'solana',
-      name: sol.name,
-      symbol: sol.symbol,
-      decimals: sol.decimals,
-      total_supply: totalSupplyRaw.toString(),
-      price: sol.priceSol > 0 ? sol.priceSol.toFixed(12) : '0',
-      price_usd: sol.priceUsd > 0 ? sol.priceUsd.toFixed(10) : '0',
-      icon: sol.icon,
-      price_24h_change: sol.priceChange24h,
-      volume_24h_usd: sol.volume24hUsd,
-      liquidity: sol.liquidityUsd > 0 ? (sol.liquidityUsd / solUsd).toFixed(2) : '0',
-      liquidity_usd: sol.liquidityUsd > 0 ? sol.liquidityUsd.toFixed(2) : '0',
-      market_cap: sol.marketCapUsd > 0 ? sol.marketCapUsd / solUsd : 0,
-      market_cap_usd: sol.marketCapUsd,
-      near_usd: solUsd,
-      sol_usd: solUsd,
-      venue,
-      bonding_phase: sol.bondingPhase,
-      bonding_progress_pct: sol.bondingProgressPct,
-      tradeable: true,
-      holders_count: sol.holders,
-      buys_count: sol.buys24h,
-      sells_count: sol.sells24h,
-      trades_timeframe: '24h',
-      total_txns: null,
-      buy_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
-      sell_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
-      launchpad: sol.launchpad || undefined,
-      sol_token_program: sol.tokenProgram,
-      sol_mint_authority_disabled: sol.mintAuthorityDisabled,
-      sol_freeze_authority_disabled: sol.freezeAuthorityDisabled,
-      sol_top_holders_pct: sol.topHoldersPct,
-    };
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-    tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-    upsertTokenCache({
-      token_address: tokenAddress,
-      chain: 'solana',
-      name: sol.name,
-      symbol: sol.symbol,
-      decimals: sol.decimals,
-      total_supply: totalSupplyRaw.toString(),
-      venue: venue as any,
-      bonding_phase: sol.bondingPhase,
-      bonding_progress_pct: sol.bondingProgressPct ?? undefined,
-      last_price: sol.priceSol,
-      last_liquidity: sol.liquidityUsd > 0 ? sol.liquidityUsd / solUsd : 0,
-      icon: sol.icon,
-    } as any).catch(() => {});
-    return result;
-  }
-
-  // ── Starknet Token Resolution (AVNU / Ekubo / Unruggable) ───────────────────
-  if (isStarknetToken(tokenAddress)) {
-    const isStrk = tokenAddress.toLowerCase() === 'strk' || tokenAddress.toLowerCase() === STRK_TOKEN_ADDRESS.toLowerCase();
-    const isEth = tokenAddress.toLowerCase() === 'eth' || tokenAddress.toLowerCase() === ETH_TOKEN_ADDRESS.toLowerCase();
-    const canonicalAddr = isStrk ? STRK_TOKEN_ADDRESS : (isEth ? ETH_TOKEN_ADDRESS : tokenAddress);
-
-    // Fetch live STRK USD price (default ~$0.40)
-    let strkUsd = 0.40;
-    try {
-      const geckoStrk = await fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${STRK_TOKEN_ADDRESS.toLowerCase()}`);
-      const fetchedPrice = parseFloat(geckoStrk?.data?.attributes?.price_usd || '0');
-      if (fetchedPrice > 0) strkUsd = fetchedPrice;
-    } catch { /* use default */ }
-
-    // Fetch token metadata from GeckoTerminal, pools endpoint, or on-chain
-    const [meta, dexscreenerData, geckoData, geckoPoolsData, launchpadInfo] = await Promise.all([
-      getStarknetTokenMetadata(canonicalAddr).catch(() => ({
-        address: canonicalAddr,
-        name: isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Starknet Token'),
-        symbol: isStrk ? 'STRK' : (isEth ? 'ETH' : 'TOKEN'),
-        decimals: 18,
-        totalSupply: '1000000000000000000000000000',
-      })),
-      fetchDexScreenerTokenData(canonicalAddr).catch(() => null),
-      fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`),
-      fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}/pools`),
-      detectStarknetLaunchpad(canonicalAddr).catch(() => ({
-        launchpad: 'none' as const,
-        name: 'AVNU Aggregator',
-        venue: 'avnu' as const,
-        isBonded: true,
-        bondingPhase: 'bonded' as const,
-      })),
-    ]);
-
-    const geckoAttr = (geckoData as any)?.data?.attributes;
-    const topPoolAttr = (geckoPoolsData as any)?.data?.[0]?.attributes;
-
-    let quotePriceNative = 0;
-    try {
-      const quote = await getStarknetAVNUQuote({
-        sellTokenAddress: STRK_TOKEN_ADDRESS,
-        buyTokenAddress: canonicalAddr,
-        sellAmount: 1000000000000000000n, // 1 STRK
-      }).catch(() => null);
-      if (quote && quote.buyAmount) {
-        const outHuman = Number(quote.buyAmount) / Math.pow(10, meta.decimals);
-        if (outHuman > 0) quotePriceNative = 1 / outHuman;
+    // ── Solana Token Resolution (Jupiter + pump.fun, no RPC) ────────────────────
+    if (isSolanaToken(tokenAddress)) {
+      const sol = await getSolanaTokenInfo(tokenAddress, forceRefresh);
+      if (!sol) {
+        throw new Error(`Solana token not found: ${tokenAddress}`);
       }
-    } catch { /* ignore */ }
+      const solUsd = sol.solUsd > 0 ? sol.solUsd : 150;
+      const venue =
+        sol.bondingPhase === 'prebonded' && sol.launchpad === 'pump.fun'
+          ? 'pumpfun'
+          : sol.launchpad === 'pump.fun'
+            ? 'pumpswap'
+            : 'jupiter';
+      const totalSupplyRaw = sol.totalSupply > 0
+        ? BigInt(Math.round(sol.totalSupply)) * 10n ** BigInt(sol.decimals)
+        : 0n;
+      const result: TokenInfoResult = {
+        address: tokenAddress,
+        chain: 'solana',
+        name: sol.name,
+        symbol: sol.symbol,
+        decimals: sol.decimals,
+        total_supply: totalSupplyRaw.toString(),
+        price: sol.priceSol > 0 ? sol.priceSol.toFixed(12) : '0',
+        price_usd: sol.priceUsd > 0 ? sol.priceUsd.toFixed(10) : '0',
+        icon: sol.icon,
+        price_24h_change: sol.priceChange24h,
+        volume_24h_usd: sol.volume24hUsd,
+        liquidity: sol.liquidityUsd > 0 ? (sol.liquidityUsd / solUsd).toFixed(2) : '0',
+        liquidity_usd: sol.liquidityUsd > 0 ? sol.liquidityUsd.toFixed(2) : '0',
+        market_cap: sol.marketCapUsd > 0 ? sol.marketCapUsd / solUsd : 0,
+        market_cap_usd: sol.marketCapUsd,
+        near_usd: solUsd,
+        sol_usd: solUsd,
+        venue,
+        bonding_phase: sol.bondingPhase,
+        bonding_progress_pct: sol.bondingProgressPct,
+        tradeable: true,
+        holders_count: sol.holders,
+        buys_count: sol.buys24h,
+        sells_count: sol.sells24h,
+        trades_timeframe: '24h',
+        total_txns: null,
+        buy_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
+        sell_tax_pct: sol.transferFeeBps ? sol.transferFeeBps / 100 : 0,
+        launchpad: sol.launchpad || undefined,
+        sol_token_program: sol.tokenProgram,
+        sol_mint_authority_disabled: sol.mintAuthorityDisabled,
+        sol_freeze_authority_disabled: sol.freezeAuthorityDisabled,
+        sol_top_holders_pct: sol.topHoldersPct,
+      };
+      tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      upsertTokenCache({
+        token_address: tokenAddress,
+        chain: 'solana',
+        name: sol.name,
+        symbol: sol.symbol,
+        decimals: sol.decimals,
+        total_supply: totalSupplyRaw.toString(),
+        venue: venue as any,
+        bonding_phase: sol.bondingPhase,
+        bonding_progress_pct: sol.bondingProgressPct ?? undefined,
+        last_price: sol.priceSol,
+        last_liquidity: sol.liquidityUsd > 0 ? sol.liquidityUsd / solUsd : 0,
+        icon: sol.icon,
+      } as any).catch(() => { });
+      return result;
+    }
 
-    // If AVNU quote failed and it's Launchy, query Launchy swapper router on-chain
-    if (quotePriceNative === 0 && launchpadInfo.launchpad === 'launchy') {
+    // ── Starknet Token Resolution (AVNU / Ekubo / Unruggable) ───────────────────
+    if (isStarknetToken(tokenAddress)) {
+      const isStrk = tokenAddress.toLowerCase() === 'strk' || tokenAddress.toLowerCase() === STRK_TOKEN_ADDRESS.toLowerCase();
+      const isEth = tokenAddress.toLowerCase() === 'eth' || tokenAddress.toLowerCase() === ETH_TOKEN_ADDRESS.toLowerCase();
+      const canonicalAddr = isStrk ? STRK_TOKEN_ADDRESS : (isEth ? ETH_TOKEN_ADDRESS : tokenAddress);
+
+      // Fetch live STRK USD price (default ~$0.40)
+      let strkUsd = 0.40;
       try {
-        const launchyQuote = await getLaunchyQuote(
-          canonicalAddr,
-          STRK_TOKEN_ADDRESS,
-          1000000000000000000n
-        ).catch(() => null);
-        if (launchyQuote && launchyQuote.outputAmount > 0n) {
-          const outHuman = Number(launchyQuote.outputAmount) / Math.pow(10, meta.decimals);
+        const geckoStrk = await fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${STRK_TOKEN_ADDRESS.toLowerCase()}`);
+        const fetchedPrice = parseFloat(geckoStrk?.data?.attributes?.price_usd || '0');
+        if (fetchedPrice > 0) strkUsd = fetchedPrice;
+      } catch { /* use default */ }
+
+      // Fetch token metadata from GeckoTerminal, pools endpoint, or on-chain
+      const [meta, dexscreenerData, geckoData, geckoPoolsData, launchpadInfo] = await Promise.all([
+        getStarknetTokenMetadata(canonicalAddr).catch(() => ({
+          address: canonicalAddr,
+          name: isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Starknet Token'),
+          symbol: isStrk ? 'STRK' : (isEth ? 'ETH' : 'TOKEN'),
+          decimals: 18,
+          totalSupply: '1000000000000000000000000000',
+        })),
+        fetchDexScreenerTokenData(canonicalAddr).catch(() => null),
+        fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}`),
+        fetchGeckoJson(`https://api.geckoterminal.com/api/v2/networks/starknet-alpha/tokens/${canonicalAddr.toLowerCase()}/pools`),
+        detectStarknetLaunchpad(canonicalAddr).catch(() => ({
+          launchpad: 'none' as const,
+          name: 'AVNU Aggregator',
+          venue: 'avnu' as const,
+          isBonded: true,
+          bondingPhase: 'bonded' as const,
+        })),
+      ]);
+
+      const geckoAttr = (geckoData as any)?.data?.attributes;
+      const topPoolAttr = (geckoPoolsData as any)?.data?.[0]?.attributes;
+
+      let quotePriceNative = 0;
+      try {
+        const quote = await getStarknetAVNUQuote({
+          sellTokenAddress: STRK_TOKEN_ADDRESS,
+          buyTokenAddress: canonicalAddr,
+          sellAmount: 1000000000000000000n, // 1 STRK
+        }).catch(() => null);
+        if (quote && quote.buyAmount) {
+          const outHuman = Number(quote.buyAmount) / Math.pow(10, meta.decimals);
           if (outHuman > 0) quotePriceNative = 1 / outHuman;
         }
       } catch { /* ignore */ }
-    }
 
-    // Fallback to top pool price in quote token if available
-    if (quotePriceNative === 0 && topPoolAttr?.base_token_price_quote_token) {
-      const p = parseFloat(topPoolAttr.base_token_price_quote_token);
-      if (p > 0) quotePriceNative = p;
-    }
-
-    // Prices
-    const priceUsdNum = parseFloat(geckoAttr?.price_usd || topPoolAttr?.base_token_price_usd || dexscreenerData?.priceUsd?.toString() || '0') ||
-      (quotePriceNative > 0 ? quotePriceNative * strkUsd : (isStrk ? strkUsd : 0));
-    const priceNativeNum = quotePriceNative > 0
-      ? quotePriceNative
-      : (strkUsd > 0 && priceUsdNum > 0 ? priceUsdNum / strkUsd : (isStrk ? 1 : 0.001));
-
-    // Liquidity
-    const liqUsdNum = parseFloat(geckoAttr?.total_reserve_in_usd || topPoolAttr?.reserve_in_usd || dexscreenerData?.liquidityUsd?.toString() || '0');
-    const liqNativeNum = strkUsd > 0 && liqUsdNum > 0 ? liqUsdNum / strkUsd : 0;
-
-    // Supply & Market Cap
-    const rawTotalSupply = geckoAttr?.total_supply
-      ? geckoAttr.total_supply.split('.')[0]
-      : (meta.totalSupply || '1000000000000000000000000000');
-    const supplyHuman = parseFloat(rawTotalSupply) / Math.pow(10, meta.decimals);
-    const mcapUsdNum = (priceUsdNum > 0 && supplyHuman > 0)
-      ? priceUsdNum * supplyHuman
-      : parseFloat(geckoAttr?.fdv_usd || topPoolAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0');
-    const mcapNativeNum = (priceNativeNum > 0 && supplyHuman > 0)
-      ? priceNativeNum * supplyHuman
-      : (strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : 0);
-
-    const tokenName =
-      geckoAttr?.name ||
-      topPoolAttr?.name?.split('/')[0]?.trim() ||
-      (meta.name && meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : (dexscreenerData as any)?.name) ||
-      (isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Unknown Token'));
-
-    const tokenSymbol = (
-      geckoAttr?.symbol ||
-      (meta.symbol && meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : (dexscreenerData as any)?.symbol) ||
-      (isStrk ? 'STRK' : (isEth ? 'ETH' : 'UNKNOWN'))
-    ).toUpperCase();
-
-    let resolvedVenue: VenueName = 'avnu';
-    if (launchpadInfo.launchpad === 'launchy') {
-      resolvedVenue = 'launchy';
-    } else if (launchpadInfo.launchpad === 'unruggable') {
-      resolvedVenue = 'unruggable';
-    } else if (launchpadInfo.launchpad === 'ekubo' || (dexscreenerData?.dexId as any) === 'ekubo') {
-      resolvedVenue = 'ekubo';
-    } else if (dexscreenerData?.dexId && isTradableVenue(dexscreenerData.dexId)) {
-      resolvedVenue = dexscreenerData.dexId as VenueName;
-    }
-
-    const result: TokenInfoResult = {
-      name: tokenName,
-      symbol: tokenSymbol,
-      decimals: meta.decimals,
-      total_supply: rawTotalSupply,
-      price: formatRawPriceString(priceNativeNum),
-      price_usd: formatRawUsdString(priceUsdNum),
-      liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / strkUsd).toFixed(2) : '0'),
-      liquidity_usd: liqUsdNum > 0 ? liqUsdNum.toFixed(2) : '0',
-      market_cap: Math.round(mcapNativeNum),
-      market_cap_usd: Math.round(mcapUsdNum),
-      near_usd: strkUsd,
-      strk_usd: strkUsd,
-      address: canonicalAddr,
-      chain: 'starknet',
-      venue: resolvedVenue,
-      tradeable: true,
-      bonding_phase: launchpadInfo.bondingPhase === 'bonding_curve' ? 'prebonded' : 'bonded',
-      launchpad: launchpadInfo.name !== 'AVNU Aggregator' && launchpadInfo.name !== 'Starknet DEX' ? launchpadInfo.name : undefined,
-    };
-
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
-    tokenInfoCache.set(canonicalAddr, { data: result, expiresAt: Date.now() + 10000 });
-    return result;
-  }
-
-  // ── SUI / SuiPump Token Resolution ──────────────────────────────────────────
-  if (isSuiToken(tokenAddress)) {
-    const [curve, suiUsd] = await Promise.all([
-      getSuiPumpCurveState(tokenAddress),
-      getSuiUsdPrice().catch(() => 2.0),
-    ]);
-
-    if (!curve) {
-      // Fallback: fetch on-chain CoinMetadata, DexScreener market data, Aftermath SOR route, and on-chain supply in parallel
-      const [meta, dexData, routerQuote, onChainSupply] = await Promise.all([
-        getSuiTokenMetadata(tokenAddress).catch(() => null),
-        fetchDexScreenerTokenData(tokenAddress).catch(() => null),
-        getSuiRouterQuote({
-          coinInType: '0x2::sui::SUI',
-          coinOutType: tokenAddress,
-          amountIn: 1_000_000_000n, // 1 SUI probe quote
-        }).catch(() => null),
-        getSuiTokenSupply(tokenAddress).catch(() => null),
-      ]);
-
-      if (meta || dexData || routerQuote) {
-        const decimals = meta?.decimals ?? (dexData as any)?.decimals ?? 9;
-        const name = meta?.name || (dexData as any)?.name || tokenAddress.split('::').pop() || 'Sui Token';
-        const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
-
-        let priceSui = 0;
-        if (dexData?.priceNative && dexData.priceNative > 0) {
-          priceSui = dexData.priceNative;
-        } else if (routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
-          priceSui = routerQuote.spotPrice;
-        } else if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
-          const inHuman = Number(routerQuote.amountIn) / 1e9;
-          const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
-          if (outHuman > 0) priceSui = inHuman / outHuman;
-        }
-
-        const priceUsd = priceSui > 0 ? priceSui * suiUsd : (dexData?.priceUsd || 0);
-        const venue = (dexData?.dexId || routerQuote?.venue || 'sui_dex').toLowerCase();
-
-        // Calculate accurate liquidity in SUI and USD
-        const liqSui = dexData?.liquidityNative && dexData.liquidityNative > 0
-          ? dexData.liquidityNative
-          : (dexData?.liquidityUsd && suiUsd > 0 ? dexData.liquidityUsd / suiUsd : 0);
-        const liqUsd = dexData?.liquidityUsd || (liqSui > 0 ? liqSui * suiUsd : 0);
-
-        // Derive accurate total supply
-        let totalSupply = onChainSupply;
-        if (!totalSupply) {
-          const capUsd = dexData?.fdvUsd || dexData?.marketCapUsd || 0;
-          const pUsd = priceUsd > 0 ? priceUsd : (dexData?.priceUsd || 0);
-          if (capUsd > 0 && pUsd > 0) {
-            const rawTokens = capUsd / pUsd;
-            try {
-              totalSupply = (BigInt(Math.round(rawTokens)) * BigInt(10 ** decimals)).toString();
-            } catch {
-              totalSupply = Math.round(rawTokens * Math.pow(10, decimals)).toString();
-            }
-          } else {
-            totalSupply = (1_000_000_000n * BigInt(10 ** decimals)).toString();
+      // If AVNU quote failed and it's Launchy, query Launchy swapper router on-chain
+      if (quotePriceNative === 0 && launchpadInfo.launchpad === 'launchy') {
+        try {
+          const launchyQuote = await getLaunchyQuote(
+            canonicalAddr,
+            STRK_TOKEN_ADDRESS,
+            1000000000000000000n
+          ).catch(() => null);
+          if (launchyQuote && launchyQuote.outputAmount > 0n) {
+            const outHuman = Number(launchyQuote.outputAmount) / Math.pow(10, meta.decimals);
+            if (outHuman > 0) quotePriceNative = 1 / outHuman;
           }
-        }
-
-        const supplyHuman = parseFloat(totalSupply) / Math.pow(10, decimals);
-        const mcapUsd = (priceUsd > 0 && supplyHuman > 0)
-          ? priceUsd * supplyHuman
-          : (dexData?.marketCapUsd || dexData?.fdvUsd || 0);
-        const mcapSui = (priceSui > 0 && supplyHuman > 0)
-          ? priceSui * supplyHuman
-          : (suiUsd > 0 && mcapUsd > 0 ? mcapUsd / suiUsd : 0);
-
-        const result: TokenInfoResult = {
-          address: tokenAddress,
-          chain: 'sui',
-          name,
-          symbol,
-          decimals,
-          total_supply: totalSupply,
-          price: formatRawPriceString(priceSui),
-          price_usd: priceUsd > 0 ? formatRawUsdString(priceUsd) : '0',
-          liquidity: liqSui > 0 ? liqSui.toFixed(2) : '0',
-          liquidity_usd: liqUsd > 0 ? liqUsd.toFixed(2) : '0',
-          market_cap: mcapSui,
-          market_cap_usd: mcapUsd,
-          near_usd: suiUsd,
-          sui_usd: suiUsd,
-          venue: venue as any,
-          bonding_phase: 'bonded',
-          tradeable: true,
-          sui_coin_type: tokenAddress,
-          buys_count: dexData?.buys24h ?? null,
-          sells_count: dexData?.sells24h ?? null,
-          trades_timeframe: '24h',
-          total_txns: null,
-        };
-        tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-        tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-
-        upsertTokenCache({
-          token_address: tokenAddress,
-          chain: 'sui',
-          name,
-          symbol,
-          decimals,
-          total_supply: totalSupply,
-          venue: venue as any,
-          bonding_phase: 'bonded',
-          last_price: priceSui,
-          last_liquidity: liqSui,
-        }).catch(() => {});
-
-        return result;
+        } catch { /* ignore */ }
       }
 
-      throw new Error(`Sui token or DEX pool not found: ${tokenAddress}`);
+      // Fallback to top pool price in quote token if available
+      if (quotePriceNative === 0 && topPoolAttr?.base_token_price_quote_token) {
+        const p = parseFloat(topPoolAttr.base_token_price_quote_token);
+        if (p > 0) quotePriceNative = p;
+      }
+
+      // Prices
+      const priceUsdNum = parseFloat(geckoAttr?.price_usd || topPoolAttr?.base_token_price_usd || dexscreenerData?.priceUsd?.toString() || '0') ||
+        (quotePriceNative > 0 ? quotePriceNative * strkUsd : (isStrk ? strkUsd : 0));
+      const priceNativeNum = quotePriceNative > 0
+        ? quotePriceNative
+        : (strkUsd > 0 && priceUsdNum > 0 ? priceUsdNum / strkUsd : (isStrk ? 1 : 0.001));
+
+      // Liquidity
+      const liqUsdNum = parseFloat(geckoAttr?.total_reserve_in_usd || topPoolAttr?.reserve_in_usd || dexscreenerData?.liquidityUsd?.toString() || '0');
+      const liqNativeNum = strkUsd > 0 && liqUsdNum > 0 ? liqUsdNum / strkUsd : 0;
+
+      // Supply & Market Cap
+      const rawTotalSupply = geckoAttr?.total_supply
+        ? geckoAttr.total_supply.split('.')[0]
+        : (meta.totalSupply || '1000000000000000000000000000');
+      const supplyHuman = parseFloat(rawTotalSupply) / Math.pow(10, meta.decimals);
+      const mcapUsdNum = (priceUsdNum > 0 && supplyHuman > 0)
+        ? priceUsdNum * supplyHuman
+        : parseFloat(geckoAttr?.fdv_usd || topPoolAttr?.fdv_usd || dexscreenerData?.marketCapUsd?.toString() || dexscreenerData?.fdvUsd?.toString() || '0');
+      const mcapNativeNum = (priceNativeNum > 0 && supplyHuman > 0)
+        ? priceNativeNum * supplyHuman
+        : (strkUsd > 0 && mcapUsdNum > 0 ? mcapUsdNum / strkUsd : 0);
+
+      const tokenName =
+        geckoAttr?.name ||
+        topPoolAttr?.name?.split('/')[0]?.trim() ||
+        (meta.name && meta.name !== 'Unknown' && meta.name !== 'Token' ? meta.name : (dexscreenerData as any)?.name) ||
+        (isStrk ? 'Starknet Token' : (isEth ? 'Ethereum' : 'Unknown Token'));
+
+      const tokenSymbol = (
+        geckoAttr?.symbol ||
+        (meta.symbol && meta.symbol !== 'UNKNOWN' && meta.symbol !== 'TOKEN' ? meta.symbol : (dexscreenerData as any)?.symbol) ||
+        (isStrk ? 'STRK' : (isEth ? 'ETH' : 'UNKNOWN'))
+      ).toUpperCase();
+
+      let resolvedVenue: VenueName = 'avnu';
+      if (launchpadInfo.launchpad === 'launchy') {
+        resolvedVenue = 'launchy';
+      } else if (launchpadInfo.launchpad === 'unruggable') {
+        resolvedVenue = 'unruggable';
+      } else if (launchpadInfo.launchpad === 'ekubo' || (dexscreenerData?.dexId as any) === 'ekubo') {
+        resolvedVenue = 'ekubo';
+      } else if (dexscreenerData?.dexId && isTradableVenue(dexscreenerData.dexId)) {
+        resolvedVenue = dexscreenerData.dexId as VenueName;
+      }
+
+      const result: TokenInfoResult = {
+        name: tokenName,
+        symbol: tokenSymbol,
+        decimals: meta.decimals,
+        total_supply: rawTotalSupply,
+        price: formatRawPriceString(priceNativeNum),
+        price_usd: formatRawUsdString(priceUsdNum),
+        liquidity: liqNativeNum > 0 ? liqNativeNum.toFixed(2) : (liqUsdNum > 0 ? (liqUsdNum / strkUsd).toFixed(2) : '0'),
+        liquidity_usd: liqUsdNum > 0 ? liqUsdNum.toFixed(2) : '0',
+        market_cap: Math.round(mcapNativeNum),
+        market_cap_usd: Math.round(mcapUsdNum),
+        near_usd: strkUsd,
+        strk_usd: strkUsd,
+        address: canonicalAddr,
+        chain: 'starknet',
+        venue: resolvedVenue,
+        tradeable: true,
+        bonding_phase: launchpadInfo.bondingPhase === 'bonding_curve' ? 'prebonded' : 'bonded',
+        launchpad: launchpadInfo.name !== 'AVNU Aggregator' && launchpadInfo.name !== 'Starknet DEX' ? launchpadInfo.name : undefined,
+      };
+
+      tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
+      tokenInfoCache.set(canonicalAddr, { data: result, expiresAt: Date.now() + 10000 });
+      return result;
     }
 
-    const priceSui = curve.lastPriceSui;
-    const priceUsd = priceSui * suiUsd;
-    const mcapSui = curve.marketCapSui;
-    const mcapUsd = mcapSui * suiUsd;
-    const liqSui = curve.reserveSui;
-    const liqUsd = liqSui * suiUsd;
-    const curveTotalSupply = (1_000_000_000n * BigInt(10 ** curve.decimals)).toString();
+    // ── SUI / SuiPump Token Resolution ──────────────────────────────────────────
+    if (isSuiToken(tokenAddress)) {
+      const [curve, suiUsd] = await Promise.all([
+        getSuiPumpCurveState(tokenAddress),
+        getSuiUsdPrice().catch(() => 2.0),
+      ]);
 
-    const result: TokenInfoResult = {
-      address: curve.tokenType || curve.curveId,
-      chain: 'sui',
-      name: curve.name,
-      symbol: curve.symbol,
-      decimals: curve.decimals,
-      total_supply: curveTotalSupply,
-      price: formatRawPriceString(priceSui),
-      price_usd: formatRawUsdString(priceUsd),
-      liquidity: liqSui.toFixed(4),
-      liquidity_usd: liqUsd.toFixed(2),
-      market_cap: mcapSui,
-      market_cap_usd: mcapUsd,
-      near_usd: suiUsd,
-      sui_usd: suiUsd,
-      venue: 'suipump',
-      bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
-      bonding_progress_pct: curve.bondingProgressPct,
-      tradeable: true,
-      sui_curve_address: curve.curveId,
-      sui_coin_type: curve.tokenType,
-      buys_count: curve.buys ?? null,
-      sells_count: curve.sells ?? null,
-      trades_timeframe: 'Curve',
-      total_txns: null,
-    };
+      if (!curve) {
+        // Fallback: fetch on-chain CoinMetadata, DexScreener market data, Aftermath SOR route, and on-chain supply in parallel
+        const [meta, dexData, routerQuote, onChainSupply] = await Promise.all([
+          getSuiTokenMetadata(tokenAddress).catch(() => null),
+          fetchDexScreenerTokenData(tokenAddress).catch(() => null),
+          getSuiRouterQuote({
+            coinInType: '0x2::sui::SUI',
+            coinOutType: tokenAddress,
+            amountIn: 1_000_000_000n, // 1 SUI probe quote
+          }).catch(() => null),
+          getSuiTokenSupply(tokenAddress).catch(() => null),
+        ]);
 
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-    if (curve.curveId) {
-      tokenInfoCache.set(curve.curveId, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+        if (meta || dexData || routerQuote) {
+          const decimals = meta?.decimals ?? (dexData as any)?.decimals ?? 9;
+          const name = meta?.name || (dexData as any)?.name || tokenAddress.split('::').pop() || 'Sui Token';
+          const symbol = meta?.symbol || (dexData as any)?.symbol || tokenAddress.split('::').pop() || 'SUI';
+
+          let priceSui = 0;
+          if (dexData?.priceNative && dexData.priceNative > 0) {
+            priceSui = dexData.priceNative;
+          } else if (routerQuote?.spotPrice && routerQuote.spotPrice > 0) {
+            priceSui = routerQuote.spotPrice;
+          } else if (routerQuote?.expectedAmountOut && routerQuote.expectedAmountOut > 0n) {
+            const inHuman = Number(routerQuote.amountIn) / 1e9;
+            const outHuman = Number(routerQuote.expectedAmountOut) / Math.pow(10, decimals);
+            if (outHuman > 0) priceSui = inHuman / outHuman;
+          }
+
+          const priceUsd = priceSui > 0 ? priceSui * suiUsd : (dexData?.priceUsd || 0);
+          const venue = (dexData?.dexId || routerQuote?.venue || 'sui_dex').toLowerCase();
+
+          // Calculate accurate liquidity in SUI and USD
+          const liqSui = dexData?.liquidityNative && dexData.liquidityNative > 0
+            ? dexData.liquidityNative
+            : (dexData?.liquidityUsd && suiUsd > 0 ? dexData.liquidityUsd / suiUsd : 0);
+          const liqUsd = dexData?.liquidityUsd || (liqSui > 0 ? liqSui * suiUsd : 0);
+
+          // Derive accurate total supply
+          let totalSupply = onChainSupply;
+          if (!totalSupply) {
+            const capUsd = dexData?.fdvUsd || dexData?.marketCapUsd || 0;
+            const pUsd = priceUsd > 0 ? priceUsd : (dexData?.priceUsd || 0);
+            if (capUsd > 0 && pUsd > 0) {
+              const rawTokens = capUsd / pUsd;
+              try {
+                totalSupply = (BigInt(Math.round(rawTokens)) * BigInt(10 ** decimals)).toString();
+              } catch {
+                totalSupply = Math.round(rawTokens * Math.pow(10, decimals)).toString();
+              }
+            } else {
+              totalSupply = (1_000_000_000n * BigInt(10 ** decimals)).toString();
+            }
+          }
+
+          const supplyHuman = parseFloat(totalSupply) / Math.pow(10, decimals);
+          const mcapUsd = (priceUsd > 0 && supplyHuman > 0)
+            ? priceUsd * supplyHuman
+            : (dexData?.marketCapUsd || dexData?.fdvUsd || 0);
+          const mcapSui = (priceSui > 0 && supplyHuman > 0)
+            ? priceSui * supplyHuman
+            : (suiUsd > 0 && mcapUsd > 0 ? mcapUsd / suiUsd : 0);
+
+          const result: TokenInfoResult = {
+            address: tokenAddress,
+            chain: 'sui',
+            name,
+            symbol,
+            decimals,
+            total_supply: totalSupply,
+            price: formatRawPriceString(priceSui),
+            price_usd: priceUsd > 0 ? formatRawUsdString(priceUsd) : '0',
+            liquidity: liqSui > 0 ? liqSui.toFixed(2) : '0',
+            liquidity_usd: liqUsd > 0 ? liqUsd.toFixed(2) : '0',
+            market_cap: mcapSui,
+            market_cap_usd: mcapUsd,
+            near_usd: suiUsd,
+            sui_usd: suiUsd,
+            venue: venue as any,
+            bonding_phase: 'bonded',
+            tradeable: true,
+            sui_coin_type: tokenAddress,
+            buys_count: dexData?.buys24h ?? null,
+            sells_count: dexData?.sells24h ?? null,
+            trades_timeframe: '24h',
+            total_txns: null,
+          };
+          tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+
+          upsertTokenCache({
+            token_address: tokenAddress,
+            chain: 'sui',
+            name,
+            symbol,
+            decimals,
+            total_supply: totalSupply,
+            venue: venue as any,
+            bonding_phase: 'bonded',
+            last_price: priceSui,
+            last_liquidity: liqSui,
+          }).catch(() => { });
+
+          return result;
+        }
+
+        throw new Error(`Sui token or DEX pool not found: ${tokenAddress}`);
+      }
+
+      const priceSui = curve.lastPriceSui;
+      const priceUsd = priceSui * suiUsd;
+      const mcapSui = curve.marketCapSui;
+      const mcapUsd = mcapSui * suiUsd;
+      const liqSui = curve.reserveSui;
+      const liqUsd = liqSui * suiUsd;
+      const curveTotalSupply = (1_000_000_000n * BigInt(10 ** curve.decimals)).toString();
+
+      const result: TokenInfoResult = {
+        address: curve.tokenType || curve.curveId,
+        chain: 'sui',
+        name: curve.name,
+        symbol: curve.symbol,
+        decimals: curve.decimals,
+        total_supply: curveTotalSupply,
+        price: formatRawPriceString(priceSui),
+        price_usd: formatRawUsdString(priceUsd),
+        liquidity: liqSui.toFixed(4),
+        liquidity_usd: liqUsd.toFixed(2),
+        market_cap: mcapSui,
+        market_cap_usd: mcapUsd,
+        near_usd: suiUsd,
+        sui_usd: suiUsd,
+        venue: 'suipump',
+        bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
+        bonding_progress_pct: curve.bondingProgressPct,
+        tradeable: true,
+        sui_curve_address: curve.curveId,
+        sui_coin_type: curve.tokenType,
+        buys_count: curve.buys ?? null,
+        sells_count: curve.sells ?? null,
+        trades_timeframe: 'Curve',
+        total_txns: null,
+      };
+
+      tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      if (curve.curveId) {
+        tokenInfoCache.set(curve.curveId, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      }
+      if (curve.tokenType) {
+        tokenInfoCache.set(curve.tokenType, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      }
+
+      upsertTokenCache({
+        token_address: curve.tokenType,
+        chain: 'sui',
+        name: curve.name,
+        symbol: curve.symbol,
+        decimals: curve.decimals,
+        total_supply: curve.reserveTokensRaw.toString(),
+        pool_address: curve.curveId,
+        venue: 'suipump',
+        bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
+        bonding_progress_pct: curve.bondingProgressPct,
+        last_price: priceSui,
+        last_liquidity: liqSui,
+      }).catch(() => { });
+
+      return result;
     }
-    if (curve.tokenType) {
-      tokenInfoCache.set(curve.tokenType, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-    }
 
-    upsertTokenCache({
-      token_address: curve.tokenType,
-      chain: 'sui',
-      name: curve.name,
-      symbol: curve.symbol,
-      decimals: curve.decimals,
-      total_supply: curve.reserveTokensRaw.toString(),
-      pool_address: curve.curveId,
-      venue: 'suipump',
-      bonding_phase: curve.graduated ? 'bonded' : 'prebonded',
-      bonding_progress_pct: curve.bondingProgressPct,
-      last_price: priceSui,
-      last_liquidity: liqSui,
-    }).catch(() => {});
+    // Fetch NEAR/USD price, DexScreener live market stats, on-chain holders, and total txns in parallel
+    const nearUsdPromise = getNearUsdPrice().catch(() => 0);
+    const dexDataPromise = fetchDexScreenerTokenData(tokenAddress).catch(() => null);
+    const holdersDataPromise = fetchTokenHoldersCount(tokenAddress).catch(() => null);
+    const totalTxnsPromise = fetchTokenTotalTxns(tokenAddress).catch(() => null);
 
-    return result;
-  }
-
-  // Fetch NEAR/USD price, DexScreener live market stats, on-chain holders, and total txns in parallel
-  const nearUsdPromise = getNearUsdPrice().catch(() => 0);
-  const dexDataPromise = fetchDexScreenerTokenData(tokenAddress).catch(() => null);
-  const holdersDataPromise = fetchTokenHoldersCount(tokenAddress).catch(() => null);
-  const totalTxnsPromise = fetchTokenTotalTxns(tokenAddress).catch(() => null);
-
-  // Always read the DB row (metadata + pool IDs are stable topology, reused
-  // below), but only ACCEPT its cached price when it's <15s old — and never
-  // on forceRefresh: callers asking for live data get live pool reads.
-  const dbCache = await getTokenCache(tokenAddress).catch(() => null);
-  if (
-    !forceRefresh &&
-    dbCache &&
-    dbCache.updated_at &&
-    Date.now() - dbCache.updated_at.getTime() < TOKEN_INFO_DB_MAX_AGE_MS &&
-    Number(dbCache.last_price || 0) > 0 &&
-    dbCache.total_supply &&
-    dbCache.total_supply !== '0'
-  ) {
-    const lastPrice = Number(dbCache.last_price || 0);
-    const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
-    const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
-    const dclParts = (dbCache.dcl_pool_id || '').split('|');
-    const cachedPaired = dclParts.length >= 2 ? (dclParts[0] === tokenAddress ? dclParts[1] : dclParts[0]) : null;
-    const cachedPairedSymbol = cachedPaired && cachedPaired !== 'wrap.near' && cachedPaired !== 'near' ? cachedPaired.split('.')[0].toUpperCase() : undefined;
-    const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
-      nearUsdPromise,
-      dexDataPromise,
-      holdersDataPromise,
-      totalTxnsPromise,
-    ]);
-    const tax = (dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined)
-      ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
-      : await getDexTax({
+    // Always read the DB row (metadata + pool IDs are stable topology, reused
+    // below), but only ACCEPT its cached price when it's <15s old — and never
+    // on forceRefresh: callers asking for live data get live pool reads.
+    const dbCache = await getTokenCache(tokenAddress).catch(() => null);
+    if (
+      !forceRefresh &&
+      dbCache &&
+      dbCache.updated_at &&
+      Date.now() - dbCache.updated_at.getTime() < TOKEN_INFO_DB_MAX_AGE_MS &&
+      Number(dbCache.last_price || 0) > 0 &&
+      dbCache.total_supply &&
+      dbCache.total_supply !== '0'
+    ) {
+      const lastPrice = Number(dbCache.last_price || 0);
+      const supply = parseFloat(dbCache.total_supply || '0') / Math.pow(10, dbCache.decimals || 18);
+      const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
+      const dclParts = (dbCache.dcl_pool_id || '').split('|');
+      const cachedPaired = dclParts.length >= 2 ? (dclParts[0] === tokenAddress ? dclParts[1] : dclParts[0]) : null;
+      const cachedPairedSymbol = cachedPaired && cachedPaired !== 'wrap.near' && cachedPaired !== 'near' ? cachedPaired.split('.')[0].toUpperCase() : undefined;
+      const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
+        nearUsdPromise,
+        dexDataPromise,
+        holdersDataPromise,
+        totalTxnsPromise,
+      ]);
+      const tax = (dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined)
+        ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+        : await getDexTax({
           venue: (dbCache.venue as any) ?? 'unknown',
           bonding_phase: dbCache.bonding_phase as any,
           dcl_pool_id: dbCache.dcl_pool_id,
           rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : null,
           chain: 'near',
         });
-    const result: TokenInfoResult = {
-      address: tokenAddress,
-      name: dbCache.name ?? '',
-      symbol: dbCache.symbol ?? '',
-      decimals: dbCache.decimals ?? 18,
-      total_supply: dbCache.total_supply ?? '0',
-      price: formatRawPriceString(lastPrice),
-      price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
-      price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
-      volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
-      liquidity: dbCache.last_liquidity?.toString() ?? '0',
-      liquidity_usd: nearUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nearUsd).toFixed(2) : '0',
-      market_cap: mcap,
-      market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
-      near_usd: nearUsd,
-      venue: (dbCache.venue as any) ?? 'unknown',
-      rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? Number(dbCache.dcl_pool_id) : null),
-      bonding_phase: (dbCache.bonding_phase as any) ?? null,
-      bonding_progress_pct:
-        dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined
-          ? Number(dbCache.bonding_progress_pct)
-          : null,
-      dcl_pool_id: (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null,
-      tradeable: isTradableVenue(dbCache.venue),
-      holders_count: holdersData?.count ?? null,
-      buys_count: dexData?.buys24h ?? null,
-      sells_count: dexData?.sells24h ?? null,
-      trades_timeframe: '24h',
-      total_txns: totalTxns ?? null,
-      buy_tax_pct: tax.buyTaxPct,
-      sell_tax_pct: tax.sellTaxPct,
-      paired_symbol: cachedPairedSymbol,
-      icon: dbCache.icon || (dexData as any)?.imageUrl || undefined,
-    };
-    // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
-    // 3s, not a fresh window. Stale data must never renew itself.
-    const remainingFreshMs = Math.max(2_000, TOKEN_INFO_DB_MAX_AGE_MS - (Date.now() - dbCache.updated_at.getTime()));
-    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + remainingFreshMs });
-    return result;
-  }
-
-  // Fetch ft_metadata & total_supply — if cached in memory or in DB, reuse without RPC call
-  let meta: { name: string; symbol: string; decimals: number; icon?: string };
-  let totalSupply = '0';
-
-  const inMem = tokenMetaCache.get(tokenAddress);
-  if (inMem && inMem.totalSupply && inMem.totalSupply !== '0') {
-    meta = { name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon };
-    totalSupply = inMem.totalSupply;
-  } else if (
-    dbCache &&
-    dbCache.name &&
-    dbCache.symbol &&
-    dbCache.decimals !== null &&
-    dbCache.decimals !== undefined &&
-    dbCache.total_supply &&
-    dbCache.total_supply !== '0'
-  ) {
-    meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals), icon: dbCache.icon || undefined };
-    totalSupply = dbCache.total_supply;
-    tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
-  } else {
-    try {
-      const [fetchedMeta, fetchedSupply] = await Promise.all([
-        inMem
-          ? Promise.resolve({ name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon })
-          : near.getTokenMetadata(tokenAddress),
-        near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
-      ]);
-      meta = {
-        name: fetchedMeta.name,
-        symbol: fetchedMeta.symbol,
-        decimals: fetchedMeta.decimals,
-        icon: fetchedMeta.icon || undefined,
+      const result: TokenInfoResult = {
+        address: tokenAddress,
+        name: dbCache.name ?? '',
+        symbol: dbCache.symbol ?? '',
+        decimals: dbCache.decimals ?? 18,
+        total_supply: dbCache.total_supply ?? '0',
+        price: formatRawPriceString(lastPrice),
+        price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
+        price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
+        volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
+        liquidity: dbCache.last_liquidity?.toString() ?? '0',
+        liquidity_usd: nearUsd > 0 ? (Number(dbCache.last_liquidity || 0) * nearUsd).toFixed(2) : '0',
+        market_cap: mcap,
+        market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
+        near_usd: nearUsd,
+        venue: (dbCache.venue as any) ?? 'unknown',
+        rhea_pool_id: dbCache.rhea_pool_id ? Number(dbCache.rhea_pool_id) : (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? Number(dbCache.dcl_pool_id) : null),
+        bonding_phase: (dbCache.bonding_phase as any) ?? null,
+        bonding_progress_pct:
+          dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined
+            ? Number(dbCache.bonding_progress_pct)
+            : null,
+        dcl_pool_id: (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null,
+        tradeable: isTradableVenue(dbCache.venue),
+        holders_count: holdersData?.count ?? null,
+        buys_count: dexData?.buys24h ?? null,
+        sells_count: dexData?.sells24h ?? null,
+        trades_timeframe: '24h',
+        total_txns: totalTxns ?? null,
+        buy_tax_pct: tax.buyTaxPct,
+        sell_tax_pct: tax.sellTaxPct,
+        paired_symbol: cachedPairedSymbol,
+        icon: dbCache.icon || (dexData as any)?.imageUrl || undefined,
       };
-      totalSupply = fetchedSupply;
+      // Cache only for the DB row's REMAINING freshness — a 12s-old row gets
+      // 3s, not a fresh window. Stale data must never renew itself.
+      const remainingFreshMs = Math.max(2_000, TOKEN_INFO_DB_MAX_AGE_MS - (Date.now() - dbCache.updated_at.getTime()));
+      tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + remainingFreshMs });
+      return result;
+    }
+
+    // Fetch ft_metadata & total_supply — if cached in memory or in DB, reuse without RPC call
+    let meta: { name: string; symbol: string; decimals: number; icon?: string };
+    let totalSupply = '0';
+
+    const inMem = tokenMetaCache.get(tokenAddress);
+    if (inMem && inMem.totalSupply && inMem.totalSupply !== '0') {
+      meta = { name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon };
+      totalSupply = inMem.totalSupply;
+    } else if (
+      dbCache &&
+      dbCache.name &&
+      dbCache.symbol &&
+      dbCache.decimals !== null &&
+      dbCache.decimals !== undefined &&
+      dbCache.total_supply &&
+      dbCache.total_supply !== '0'
+    ) {
+      meta = { name: dbCache.name, symbol: dbCache.symbol, decimals: Number(dbCache.decimals), icon: dbCache.icon || undefined };
+      totalSupply = dbCache.total_supply;
       tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
-    } catch {
-      // If RPC metadata fetch fails, fall back to DB cache data if available
-      if (dbCache && dbCache.name) {
-        meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18, icon: dbCache.icon || undefined };
-        totalSupply = dbCache.total_supply ?? '0';
-      } else {
-        // Last resort: return a minimal result so the caller can still identify the token
-        return {
-          address: tokenAddress,
-          name: 'Unknown',
-          symbol: '???',
-          decimals: 18,
-          total_supply: '0',
-          price: '0',
-          price_usd: '0',
-          liquidity: '0',
-          liquidity_usd: '0',
-          market_cap: 0,
-          market_cap_usd: 0,
-          near_usd: 0,
-          venue: 'unknown',
-          tradeable: false,
+    } else {
+      try {
+        const [fetchedMeta, fetchedSupply] = await Promise.all([
+          inMem
+            ? Promise.resolve({ name: inMem.name, symbol: inMem.symbol, decimals: inMem.decimals, icon: inMem.icon })
+            : near.getTokenMetadata(tokenAddress),
+          near.getTokenTotalSupply(tokenAddress).catch(() => '0'),
+        ]);
+        meta = {
+          name: fetchedMeta.name,
+          symbol: fetchedMeta.symbol,
+          decimals: fetchedMeta.decimals,
+          icon: fetchedMeta.icon || undefined,
         };
+        totalSupply = fetchedSupply;
+        tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
+      } catch {
+        // If RPC metadata fetch fails, fall back to DB cache data if available
+        if (dbCache && dbCache.name) {
+          meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18, icon: dbCache.icon || undefined };
+          totalSupply = dbCache.total_supply ?? '0';
+        } else {
+          // Last resort: return a minimal result so the caller can still identify the token
+          return {
+            address: tokenAddress,
+            name: 'Unknown',
+            symbol: '???',
+            decimals: 18,
+            total_supply: '0',
+            price: '0',
+            price_usd: '0',
+            liquidity: '0',
+            liquidity_usd: '0',
+            market_cap: 0,
+            market_cap_usd: 0,
+            near_usd: 0,
+            venue: 'unknown',
+            tradeable: false,
+          };
+        }
       }
     }
-  }
 
-  // Safety fallback: if totalSupply is still missing or '0', fetch directly from contract
-  if ((!totalSupply || totalSupply === '0') && tokenAddress) {
-    try {
-      const onChainSupply = await near.getTokenTotalSupply(tokenAddress).catch(() => '0');
-      if (onChainSupply && onChainSupply !== '0') {
-        totalSupply = onChainSupply;
-        tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
+    // Safety fallback: if totalSupply is still missing or '0', fetch directly from contract
+    if ((!totalSupply || totalSupply === '0') && tokenAddress) {
+      try {
+        const onChainSupply = await near.getTokenTotalSupply(tokenAddress).catch(() => '0');
+        if (onChainSupply && onChainSupply !== '0') {
+          totalSupply = onChainSupply;
+          tokenMetaCache.set(tokenAddress, { ...meta, totalSupply });
+        }
+      } catch { /* no-op */ }
+    }
+
+    let price = 0;
+    let liquidity = 0;
+    let venue: TokenInfoResult['venue'] = 'unknown';
+    let rheaPoolId: number | null = dbCache?.rhea_pool_id ?? null;
+    let bondingPhase: 'prebonded' | 'bonded' | null = (dbCache?.bonding_phase as any) ?? null;
+    let bondingProgressPct: number | null =
+      dbCache?.bonding_progress_pct !== null && dbCache?.bonding_progress_pct !== undefined
+        ? Number(dbCache.bonding_progress_pct)
+        : null;
+    let dclPoolId: string | null = null;
+    let intearPoolFee: number | undefined;
+    let pairedSymbol: string | undefined;
+    let priceInPaired: string | undefined;
+    let liquidityInPaired: string | undefined;
+    if (dbCache?.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
+      const parts = dbCache.dcl_pool_id.split('|');
+      const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
+      if (paired === 'wrap.near' || paired === 'near') {
+        dclPoolId = dbCache.dcl_pool_id;
       }
-    } catch { /* no-op */ }
-  }
-
-  let price = 0;
-  let liquidity = 0;
-  let venue: TokenInfoResult['venue'] = 'unknown';
-  let rheaPoolId: number | null = dbCache?.rhea_pool_id ?? null;
-  let bondingPhase: 'prebonded' | 'bonded' | null = (dbCache?.bonding_phase as any) ?? null;
-  let bondingProgressPct: number | null =
-    dbCache?.bonding_progress_pct !== null && dbCache?.bonding_progress_pct !== undefined
-      ? Number(dbCache.bonding_progress_pct)
-      : null;
-  let dclPoolId: string | null = null;
-  let intearPoolFee: number | undefined;
-  let pairedSymbol: string | undefined;
-  let priceInPaired: string | undefined;
-  let liquidityInPaired: string | undefined;
-  if (dbCache?.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
-    const parts = dbCache.dcl_pool_id.split('|');
-    const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
-    if (paired === 'wrap.near' || paired === 'near') {
-      dclPoolId = dbCache.dcl_pool_id;
     }
-  }
 
-  // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
-  if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
-    if (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
-      try {
-        const parts = dbCache.dcl_pool_id.split('|');
-        const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
-        if (paired === 'wrap.near' || paired === 'near') {
-          const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
-          if (st.price > 0 && st.liquidityNear >= 0.1) {
-            price = st.price;
-            liquidity = st.liquidityNear;
-            venue = 'rhea';
-            dclPoolId = dbCache.dcl_pool_id;
-          }
-        }
-      } catch { /* fallback to discovery below */ }
-    } else if (dbCache.rhea_pool_id) {
-      try {
-        const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
-        if (rh) {
-          const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
-          const tokenDecimals = (typeof meta !== 'undefined' && meta?.decimals !== undefined)
-            ? meta.decimals
-            : (dbCache?.decimals !== null && dbCache?.decimals !== undefined ? Number(dbCache.decimals) : 18);
-          const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, tokenDecimals);
-          const poolLiq = reserveNearHuman * 2;
-          // Trust cached simple pool if it has valid liquidity (> 0 NEAR).
-          if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq > 0) {
-            price = reserveNearHuman / reserveTokenHuman;
-            liquidity = poolLiq;
-            venue = 'rhea';
-            rheaPoolId = dbCache.rhea_pool_id;
-          }
-        }
-      } catch { /* fallback to discovery below */ }
-    }
-  }
-
-  // Step 1: Fast launchpad detection by token suffix (instant on-chain RPC lookup - skipped if price resolved by fast-path)
-  if (price <= 0) {
-    if (isMemeCookingToken(tokenAddress)) {
-      try {
-        const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({
-          price: 0,
-          liquidity: 0,
-          phase: 'unknown',
-          progress: 0,
-          totalSupply: '0',
-          decimals: undefined as number | undefined,
-          name: undefined as string | undefined,
-          symbol: undefined as string | undefined,
-          icon: undefined as string | undefined,
-        }));
-        if (mcInfo.price > 0 || mcInfo.liquidity > 0 || mcInfo.phase === 'bonded') {
-          venue = 'memecooking';
-          price = mcInfo.price;
-          liquidity = mcInfo.liquidity;
-          bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
-          bondingProgressPct = mcInfo.progress;
-          if (mcInfo.totalSupply && mcInfo.totalSupply !== '0') {
-            totalSupply = mcInfo.totalSupply;
-          }
-          if (mcInfo.decimals) {
-            meta.decimals = mcInfo.decimals;
-          }
-          if ((!meta.name || meta.name === 'Unknown') && mcInfo.name) {
-            meta.name = mcInfo.name;
-          }
-          if ((!meta.symbol || meta.symbol === '???') && mcInfo.symbol) {
-            meta.symbol = mcInfo.symbol;
-          }
-          if (!meta.icon && mcInfo.icon) {
-            meta.icon = mcInfo.icon;
-          }
-          if (mcInfo.phase === 'bonded') {
-            const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
-            if (rheaPool && rheaPool.price > 0) {
-              price = rheaPool.price;
-              liquidity = rheaPool.liquidityNear;
-              rheaPoolId = !rheaPool.isDcl && typeof rheaPool.poolId === 'number' ? rheaPool.poolId : null;
-              dclPoolId = rheaPool.isDcl ? String(rheaPool.poolId) : null;
+    // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
+    if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
+      if (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
+        try {
+          const parts = dbCache.dcl_pool_id.split('|');
+          const paired = parts.length >= 2 ? (parts[0] === tokenAddress ? parts[1] : parts[0]) : 'wrap.near';
+          if (paired === 'wrap.near' || paired === 'near') {
+            const st = await near.getDclPoolState(dbCache.dcl_pool_id, paired);
+            if (st.price > 0 && st.liquidityNear >= 0.1) {
+              price = st.price;
+              liquidity = st.liquidityNear;
+              venue = 'rhea';
+              dclPoolId = dbCache.dcl_pool_id;
             }
           }
-        }
-      } catch { /* no-op */ }
-    } else if (isIntearToken(tokenAddress) || (dbCache && dbCache.venue === 'intear')) {
-      try {
-        const intearState = await near.getIntearTokenState(tokenAddress);
-        if (intearState && (intearState.price > 0 || intearState.poolId != null)) {
-          venue = 'intear';
-          price = intearState.price;
-          liquidity = intearState.liquidityNear;
-          if (intearState.poolId != null) {
-            rheaPoolId = intearState.poolId;
-            dclPoolId = null;
+        } catch { /* fallback to discovery below */ }
+      } else if (dbCache.rhea_pool_id) {
+        try {
+          const rh = await near.getRheaPoolReserves(dbCache.rhea_pool_id, 'wrap.near', tokenAddress).catch(() => null);
+          if (rh) {
+            const reserveNearHuman = parseFloat(rh.reserveIn) / 1e24;
+            const tokenDecimals = (typeof meta !== 'undefined' && meta?.decimals !== undefined)
+              ? meta.decimals
+              : (dbCache?.decimals !== null && dbCache?.decimals !== undefined ? Number(dbCache.decimals) : 18);
+            const reserveTokenHuman = parseFloat(rh.reserveOut) / Math.pow(10, tokenDecimals);
+            const poolLiq = reserveNearHuman * 2;
+            // Trust cached simple pool if it has valid liquidity (> 0 NEAR).
+            if (reserveNearHuman > 0 && reserveTokenHuman > 0 && poolLiq > 0) {
+              price = reserveNearHuman / reserveTokenHuman;
+              liquidity = poolLiq;
+              venue = 'rhea';
+              rheaPoolId = dbCache.rhea_pool_id;
+            }
           }
-          if (intearState.feeBps != null) {
-            intearPoolFee = intearState.feeBps;
-          }
-          if (intearState.totalSupply && intearState.totalSupply !== '0') {
-            totalSupply = intearState.totalSupply;
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[API] Intear state lookup error for ${tokenAddress}:`, err?.message);
+        } catch { /* fallback to discovery below */ }
       }
-    } else if (tokenAddress.endsWith('.nearlytrade.near')) {
-      try {
-        const ntState = await near.getNearlytradeTokenState(tokenAddress);
-        if (ntState && ntState.price > 0) {
-          venue = 'nearlytrade';
-          price = ntState.price;
-          liquidity = ntState.liquidityNear;
-          bondingPhase = ntState.phase;
-          bondingProgressPct = ntState.bondingProgressPct;
-          dclPoolId = ntState.dclPoolId;
-          if (ntState.totalSupply && ntState.totalSupply !== '0') {
-            totalSupply = ntState.totalSupply;
+    }
+
+    // Step 1: Fast launchpad detection by token suffix (instant on-chain RPC lookup - skipped if price resolved by fast-path)
+    if (price <= 0) {
+      if (isMemeCookingToken(tokenAddress)) {
+        try {
+          const mcInfo = await getMemeCookingTokenInfo(tokenAddress).catch(() => ({
+            price: 0,
+            liquidity: 0,
+            phase: 'unknown',
+            progress: 0,
+            totalSupply: '0',
+            decimals: undefined as number | undefined,
+            name: undefined as string | undefined,
+            symbol: undefined as string | undefined,
+            icon: undefined as string | undefined,
+          }));
+          if (mcInfo.price > 0 || mcInfo.liquidity > 0 || mcInfo.phase === 'bonded') {
+            venue = 'memecooking';
+            price = mcInfo.price;
+            liquidity = mcInfo.liquidity;
+            bondingPhase = mcInfo.phase === 'bonded' ? 'bonded' : (mcInfo.phase === 'prebonded' ? 'prebonded' : null);
+            bondingProgressPct = mcInfo.progress;
+            if (mcInfo.totalSupply && mcInfo.totalSupply !== '0') {
+              totalSupply = mcInfo.totalSupply;
+            }
+            if (mcInfo.decimals) {
+              meta.decimals = mcInfo.decimals;
+            }
+            if ((!meta.name || meta.name === 'Unknown') && mcInfo.name) {
+              meta.name = mcInfo.name;
+            }
+            if ((!meta.symbol || meta.symbol === '???') && mcInfo.symbol) {
+              meta.symbol = mcInfo.symbol;
+            }
+            if (!meta.icon && mcInfo.icon) {
+              meta.icon = mcInfo.icon;
+            }
+            if (mcInfo.phase === 'bonded') {
+              const rheaPool = await near.findRheaPoolForToken(tokenAddress, true).catch(() => null);
+              if (rheaPool && rheaPool.price > 0) {
+                price = rheaPool.price;
+                liquidity = rheaPool.liquidityNear;
+                rheaPoolId = !rheaPool.isDcl && typeof rheaPool.poolId === 'number' ? rheaPool.poolId : null;
+                dclPoolId = rheaPool.isDcl ? String(rheaPool.poolId) : null;
+              }
+            }
           }
-          if (ntState.quoteSymbol && !ntState.quoteIsNear) {
-            pairedSymbol = ntState.quoteSymbol;
-            priceInPaired = ntState.priceInQuote > 0 ? ntState.priceInQuote.toString() : undefined;
-            liquidityInPaired = ntState.reserveQuoteHuman > 0 ? ntState.reserveQuoteHuman.toFixed(2) : undefined;
+        } catch { /* no-op */ }
+      } else if (isIntearToken(tokenAddress) || (dbCache && dbCache.venue === 'intear')) {
+        try {
+          const intearState = await near.getIntearTokenState(tokenAddress);
+          if (intearState && (intearState.price > 0 || intearState.poolId != null)) {
+            venue = 'intear';
+            price = intearState.price;
+            liquidity = intearState.liquidityNear;
+            if (intearState.poolId != null) {
+              rheaPoolId = intearState.poolId;
+              dclPoolId = null;
+            }
+            if (intearState.feeBps != null) {
+              intearPoolFee = intearState.feeBps;
+            }
+            if (intearState.totalSupply && intearState.totalSupply !== '0') {
+              totalSupply = intearState.totalSupply;
+            }
           }
+        } catch (err: any) {
+          console.warn(`[API] Intear state lookup error for ${tokenAddress}:`, err?.message);
         }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
-      try {
-        const smState = await near.getShardsmarketTokenState(tokenAddress);
-        const reserveNearYocto = parseFloat(smState.poolQuote || '0');
-        const reserveTokenRaw = parseFloat(smState.poolToken || '0');
-        if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
-          const reserveNearHuman = reserveNearYocto / 1e24;
-          const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
-          if (reserveTokenHuman > 0) {
-            price = reserveNearHuman / reserveTokenHuman;
-            liquidity = reserveNearHuman * 2;
-            venue = 'shardsmarket';
+      } else if (tokenAddress.endsWith('.nearlytrade.near')) {
+        try {
+          const ntState = await near.getNearlytradeTokenState(tokenAddress);
+          if (ntState && ntState.price > 0) {
+            venue = 'nearlytrade';
+            price = ntState.price;
+            liquidity = ntState.liquidityNear;
+            bondingPhase = ntState.phase;
+            bondingProgressPct = ntState.bondingProgressPct;
+            dclPoolId = ntState.dclPoolId;
+            if (ntState.totalSupply && ntState.totalSupply !== '0') {
+              totalSupply = ntState.totalSupply;
+            }
+            if (ntState.quoteSymbol && !ntState.quoteIsNear) {
+              pairedSymbol = ntState.quoteSymbol;
+              priceInPaired = ntState.priceInQuote > 0 ? ntState.priceInQuote.toString() : undefined;
+              liquidityInPaired = ntState.reserveQuoteHuman > 0 ? ntState.reserveQuoteHuman.toFixed(2) : undefined;
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
+        try {
+          const smState = await near.getShardsmarketTokenState(tokenAddress);
+          const reserveNearYocto = parseFloat(smState.poolQuote || '0');
+          const reserveTokenRaw = parseFloat(smState.poolToken || '0');
+          if (reserveNearYocto > 0 && reserveTokenRaw > 0) {
+            const reserveNearHuman = reserveNearYocto / 1e24;
+            const reserveTokenHuman = reserveTokenRaw / Math.pow(10, meta.decimals);
+            if (reserveTokenHuman > 0) {
+              price = reserveNearHuman / reserveTokenHuman;
+              liquidity = reserveNearHuman * 2;
+              venue = 'shardsmarket';
+              if (smState.totalSupply && smState.totalSupply !== '0') {
+                totalSupply = smState.totalSupply;
+              }
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.pad.onetokenhub.near') || tokenAddress.endsWith('.onetokenhub.near')) {
+        try {
+          const hubState = await near.getOneTokenHubState(tokenAddress);
+          if (hubState && hubState.price > 0) {
+            venue = 'onetokenhub';
+            price = hubState.price;
+            liquidity = hubState.liquidityNear;
+            dclPoolId = hubState.dclPoolId;
+            if (hubState.totalSupply && hubState.totalSupply !== '0') {
+              totalSupply = hubState.totalSupply;
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
+        try {
+          const padState = await near.getNEARpadState(tokenAddress);
+          if (padState && padState.price > 0) {
+            venue = 'nearpad';
+            price = padState.price;
+            liquidity = padState.liquidityNear;
+            dclPoolId = padState.dclPoolId;
+            if (padState.totalSupply && padState.totalSupply !== '0') {
+              totalSupply = padState.totalSupply;
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.gaypad.j1-racing.near') || tokenAddress.endsWith('.gaypad.near')) {
+        try {
+          const gpState = await near.getGaypadTokenState(tokenAddress);
+          if (gpState && gpState.price > 0) {
+            venue = 'gaypad';
+            price = gpState.price;
+            liquidity = gpState.liquidityNear;
+            bondingPhase = gpState.phase;
+            bondingProgressPct = gpState.bondingProgressPct;
+            if (gpState.totalSupply && gpState.totalSupply !== '0') {
+              totalSupply = gpState.totalSupply;
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
+        try {
+          const dclId = (await near.findDclPoolId(tokenAddress, 'wrap.near').catch(() => null)) || `${tokenAddress}|wrap.near|10000`;
+          const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
+          if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
+            venue = 'rhea';
+            price = dclState.price;
+            liquidity = dclState.liquidityNear;
+            dclPoolId = dclId;
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.launch.shoremarkets.near') || tokenAddress.endsWith('.shoremarkets.near')) {
+        try {
+          const smState = await near.getShoremarketsTokenState(tokenAddress);
+          if (smState && smState.price > 0) {
+            venue = 'shoremarkets';
+            price = smState.price;
+            liquidity = smState.liquidityNear;
+            bondingPhase = smState.phase;
+            bondingProgressPct = smState.bondingProgressPct;
+            dclPoolId = smState.dclPoolId;
             if (smState.totalSupply && smState.totalSupply !== '0') {
               totalSupply = smState.totalSupply;
             }
           }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.pad.onetokenhub.near') || tokenAddress.endsWith('.onetokenhub.near')) {
-      try {
-        const hubState = await near.getOneTokenHubState(tokenAddress);
-        if (hubState && hubState.price > 0) {
-          venue = 'onetokenhub';
-          price = hubState.price;
-          liquidity = hubState.liquidityNear;
-          dclPoolId = hubState.dclPoolId;
-          if (hubState.totalSupply && hubState.totalSupply !== '0') {
-            totalSupply = hubState.totalSupply;
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
+        try {
+          const ktState = await near.getKelytraTokenState(tokenAddress);
+          if (ktState && ktState.price > 0) {
+            venue = 'kelytra';
+            price = ktState.price;
+            liquidity = ktState.liquidityNear;
+            bondingPhase = ktState.phase;
+            bondingProgressPct = ktState.bondingProgressPct;
+            dclPoolId = ktState.dclPoolId;
+            if (ktState.totalSupply && ktState.totalSupply !== '0') {
+              totalSupply = ktState.totalSupply;
+            }
           }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
-      try {
-        const padState = await near.getNEARpadState(tokenAddress);
-        if (padState && padState.price > 0) {
-          venue = 'nearpad';
-          price = padState.price;
-          liquidity = padState.liquidityNear;
-          dclPoolId = padState.dclPoolId;
-          if (padState.totalSupply && padState.totalSupply !== '0') {
-            totalSupply = padState.totalSupply;
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.nearpumpfun.near') || tokenAddress === 'nearpumpfun.near') {
+        try {
+          const npState = await near.getNearpumpfunTokenState(tokenAddress);
+          if (npState && npState.price > 0) {
+            venue = 'nearpumpfun';
+            price = npState.price;
+            liquidity = npState.liquidityNear;
+            bondingPhase = npState.phase;
+            bondingProgressPct = npState.bondingProgressPct;
+            if (npState.totalSupply && npState.totalSupply !== '0') {
+              totalSupply = npState.totalSupply;
+            }
           }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.gaypad.j1-racing.near') || tokenAddress.endsWith('.gaypad.near')) {
-      try {
-        const gpState = await near.getGaypadTokenState(tokenAddress);
-        if (gpState && gpState.price > 0) {
-          venue = 'gaypad';
-          price = gpState.price;
-          liquidity = gpState.liquidityNear;
-          bondingPhase = gpState.phase;
-          bondingProgressPct = gpState.bondingProgressPct;
-          if (gpState.totalSupply && gpState.totalSupply !== '0') {
-            totalSupply = gpState.totalSupply;
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.qlyphs.near')) {
+        try {
+          const qlyphsState = await near.findRheaPoolForToken(tokenAddress);
+          if (qlyphsState && qlyphsState.price > 0) {
+            venue = 'qlyphs';
+            price = qlyphsState.price;
+            liquidity = qlyphsState.liquidityNear;
+            bondingPhase = 'bonded';
+            bondingProgressPct = 100;
+            dclPoolId = String(qlyphsState.poolId);
+            pairedSymbol = 'QTC';
           }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
+        } catch { /* no-op */ }
+      }
+    }
+
+    let rheaCandidate: { venue: 'rhea' | 'qlyphs'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
+    // Step 2: Only probe Rhea if price is still unknown or pool ID is not yet resolved
+    if ((venue === 'unknown' || bondingPhase === 'bonded') && (price <= 0 || (!rheaPoolId && !dclPoolId))) {
       try {
-        const dclId = (await near.findDclPoolId(tokenAddress, 'wrap.near').catch(() => null)) || `${tokenAddress}|wrap.near|10000`;
-        const dclState = await near.getDclPoolState(dclId, 'wrap.near').catch(() => null);
-        if (dclState && dclState.price > 0 && dclState.liquidityNear > 0) {
-          venue = 'rhea';
-          price = dclState.price;
-          liquidity = dclState.liquidityNear;
-          dclPoolId = dclId;
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.launch.shoremarkets.near') || tokenAddress.endsWith('.shoremarkets.near')) {
-      try {
-        const smState = await near.getShoremarketsTokenState(tokenAddress);
-        if (smState && smState.price > 0) {
-          venue = 'shoremarkets';
-          price = smState.price;
-          liquidity = smState.liquidityNear;
-          bondingPhase = smState.phase;
-          bondingProgressPct = smState.bondingProgressPct;
-          dclPoolId = smState.dclPoolId;
-          if (smState.totalSupply && smState.totalSupply !== '0') {
-            totalSupply = smState.totalSupply;
+        const rhea = await near.findRheaPoolForToken(tokenAddress);
+        if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
+          const isQlyphs = tokenAddress.endsWith('.qlyphs.near');
+          rheaCandidate = {
+            venue: isQlyphs ? 'qlyphs' : 'rhea',
+            price: rhea.price,
+            liquidity: rhea.liquidityNear,
+            rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
+            dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
+            poolFee: rhea.fee,
+          };
+          // Prefer Rhea if it has deeper liquidity or if venue was unknown
+          if (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded') {
+            venue = rheaCandidate.venue;
+            price = rheaCandidate.price;
+            liquidity = rheaCandidate.liquidity;
+            rheaPoolId = rheaCandidate.rheaPoolId;
+            dclPoolId = rheaCandidate.dclPoolId ?? dclPoolId;
           }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
-      try {
-        const ktState = await near.getKelytraTokenState(tokenAddress);
-        if (ktState && ktState.price > 0) {
-          venue = 'kelytra';
-          price = ktState.price;
-          liquidity = ktState.liquidityNear;
-          bondingPhase = ktState.phase;
-          bondingProgressPct = ktState.bondingProgressPct;
-          dclPoolId = ktState.dclPoolId;
-          if (ktState.totalSupply && ktState.totalSupply !== '0') {
-            totalSupply = ktState.totalSupply;
-          }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.nearpumpfun.near') || tokenAddress === 'nearpumpfun.near') {
-      try {
-        const npState = await near.getNearpumpfunTokenState(tokenAddress);
-        if (npState && npState.price > 0) {
-          venue = 'nearpumpfun';
-          price = npState.price;
-          liquidity = npState.liquidityNear;
-          bondingPhase = npState.phase;
-          bondingProgressPct = npState.bondingProgressPct;
-          if (npState.totalSupply && npState.totalSupply !== '0') {
-            totalSupply = npState.totalSupply;
-          }
-        }
-      } catch { /* no-op */ }
-    } else if (tokenAddress.endsWith('.qlyphs.near')) {
-      try {
-        const qlyphsState = await near.findRheaPoolForToken(tokenAddress);
-        if (qlyphsState && qlyphsState.price > 0) {
-          venue = 'qlyphs';
-          price = qlyphsState.price;
-          liquidity = qlyphsState.liquidityNear;
-          bondingPhase = 'bonded';
-          bondingProgressPct = 100;
-          dclPoolId = String(qlyphsState.poolId);
-          pairedSymbol = 'QTC';
         }
       } catch { /* no-op */ }
     }
-  }
 
-  let rheaCandidate: { venue: 'rhea' | 'qlyphs'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
-  // Step 2: Only probe Rhea if price is still unknown or pool ID is not yet resolved
-  if ((venue === 'unknown' || bondingPhase === 'bonded') && (price <= 0 || (!rheaPoolId && !dclPoolId))) {
-    try {
-      const rhea = await near.findRheaPoolForToken(tokenAddress);
-      if (rhea && rhea.poolId !== null && rhea.poolId !== undefined && rhea.price > 0) {
-        const isQlyphs = tokenAddress.endsWith('.qlyphs.near');
-        rheaCandidate = {
-          venue: isQlyphs ? 'qlyphs' : 'rhea',
-          price: rhea.price,
-          liquidity: rhea.liquidityNear,
-          rheaPoolId: !rhea.isDcl && typeof rhea.poolId === 'number' ? rhea.poolId : null,
-          dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
-          poolFee: rhea.fee,
-        };
-        // Prefer Rhea if it has deeper liquidity or if venue was unknown
-        if (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded') {
-          venue = rheaCandidate.venue;
-          price = rheaCandidate.price;
-          liquidity = rheaCandidate.liquidity;
-          rheaPoolId = rheaCandidate.rheaPoolId;
-          dclPoolId = rheaCandidate.dclPoolId ?? dclPoolId;
+    // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)
+    if (venue === 'unknown' && price <= 0) {
+      const [ntRes, hubRes, padRes, smRes, ktRes, intearRes] = await Promise.allSettled([
+        near.getNearlytradeTokenState(tokenAddress),
+        near.getOneTokenHubState(tokenAddress),
+        near.getNEARpadState(tokenAddress),
+        near.getShoremarketsTokenState(tokenAddress),
+        near.getKelytraTokenState(tokenAddress),
+        near.getIntearTokenState(tokenAddress),
+      ]);
+
+      if (ntRes.status === 'fulfilled' && ntRes.value && ntRes.value.price > 0) {
+        const ntState = ntRes.value;
+        venue = 'nearlytrade';
+        price = ntState.price;
+        liquidity = ntState.liquidityNear;
+        bondingPhase = ntState.phase;
+        bondingProgressPct = ntState.bondingProgressPct;
+        dclPoolId = ntState.dclPoolId;
+        if (ntState.totalSupply && ntState.totalSupply !== '0') {
+          totalSupply = ntState.totalSupply;
+        }
+      } else if (hubRes.status === 'fulfilled' && hubRes.value && hubRes.value.price > 0) {
+        const hubState = hubRes.value;
+        venue = 'onetokenhub';
+        price = hubState.price;
+        liquidity = hubState.liquidityNear;
+        dclPoolId = hubState.dclPoolId;
+        if (hubState.totalSupply && hubState.totalSupply !== '0') {
+          totalSupply = hubState.totalSupply;
+        }
+      } else if (padRes.status === 'fulfilled' && padRes.value && padRes.value.price > 0) {
+        const padState = padRes.value;
+        venue = 'nearpad';
+        price = padState.price;
+        liquidity = padState.liquidityNear;
+        dclPoolId = padState.dclPoolId;
+        if (padState.totalSupply && padState.totalSupply !== '0') {
+          totalSupply = padState.totalSupply;
+        }
+      } else if (smRes.status === 'fulfilled' && smRes.value && smRes.value.price > 0) {
+        const smState = smRes.value;
+        venue = 'shoremarkets';
+        price = smState.price;
+        liquidity = smState.liquidityNear;
+        bondingPhase = smState.phase;
+        bondingProgressPct = smState.bondingProgressPct;
+        dclPoolId = smState.dclPoolId;
+        if (smState.totalSupply && smState.totalSupply !== '0') {
+          totalSupply = smState.totalSupply;
+        }
+      } else if (ktRes.status === 'fulfilled' && ktRes.value && ktRes.value.price > 0) {
+        const ktState = ktRes.value;
+        venue = 'kelytra';
+        price = ktState.price;
+        liquidity = ktState.liquidityNear;
+        bondingPhase = ktState.phase;
+        bondingProgressPct = ktState.bondingProgressPct;
+        dclPoolId = ktState.dclPoolId;
+        if (ktState.totalSupply && ktState.totalSupply !== '0') {
+          totalSupply = ktState.totalSupply;
+        }
+      } else if (intearRes.status === 'fulfilled' && intearRes.value && (intearRes.value.price > 0 || intearRes.value.poolId != null)) {
+        const intearState = intearRes.value;
+        venue = 'intear';
+        price = intearState.price;
+        liquidity = intearState.liquidityNear;
+        if (intearState.poolId != null) {
+          rheaPoolId = intearState.poolId;
+          dclPoolId = null;
+        }
+        if (intearState.feeBps != null) {
+          intearPoolFee = intearState.feeBps;
+        }
+        if (intearState.totalSupply && intearState.totalSupply !== '0') {
+          totalSupply = intearState.totalSupply;
         }
       }
-    } catch { /* no-op */ }
-  }
+    }
 
-  // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)
-  if (venue === 'unknown' && price <= 0) {
-    const [ntRes, hubRes, padRes, smRes, ktRes, intearRes] = await Promise.allSettled([
-      near.getNearlytradeTokenState(tokenAddress),
-      near.getOneTokenHubState(tokenAddress),
-      near.getNEARpadState(tokenAddress),
-      near.getShoremarketsTokenState(tokenAddress),
-      near.getKelytraTokenState(tokenAddress),
-      near.getIntearTokenState(tokenAddress),
+    // Last-known-good fallback from DB cache
+    if (price <= 0 && dbCache && Number(dbCache.last_price || 0) > 0) {
+      price = Number(dbCache.last_price);
+      liquidity = Number(dbCache.last_liquidity || 0);
+      venue = (dbCache.venue as any) ?? venue;
+      rheaPoolId = rheaPoolId ?? dbCache.rhea_pool_id ?? (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? parseInt(dbCache.dcl_pool_id, 10) : null);
+      dclPoolId = dclPoolId ?? ((dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null);
+      bondingPhase = bondingPhase ?? (dbCache.bonding_phase as any) ?? null;
+      if (bondingProgressPct === null && dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined) {
+        bondingProgressPct = Number(dbCache.bonding_progress_pct);
+      }
+    }
+
+    const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
+      nearUsdPromise,
+      dexDataPromise,
+      holdersDataPromise,
+      totalTxnsPromise,
     ]);
 
-    if (ntRes.status === 'fulfilled' && ntRes.value && ntRes.value.price > 0) {
-      const ntState = ntRes.value;
-      venue = 'nearlytrade';
-      price = ntState.price;
-      liquidity = ntState.liquidityNear;
-      bondingPhase = ntState.phase;
-      bondingProgressPct = ntState.bondingProgressPct;
-      dclPoolId = ntState.dclPoolId;
-      if (ntState.totalSupply && ntState.totalSupply !== '0') {
-        totalSupply = ntState.totalSupply;
+    const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
+    const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
+
+    // Fallback to DexScreener price ONLY if on-chain price was not discovered (price <= 0)
+    if (price <= 0 && dexData) {
+      if (dexData.priceNative > 0) {
+        price = dexData.priceNative;
+      } else if (dexData.priceUsd > 0 && effectiveNearUsd > 0) {
+        price = dexData.priceUsd / effectiveNearUsd;
       }
-    } else if (hubRes.status === 'fulfilled' && hubRes.value && hubRes.value.price > 0) {
-      const hubState = hubRes.value;
-      venue = 'onetokenhub';
-      price = hubState.price;
-      liquidity = hubState.liquidityNear;
-      dclPoolId = hubState.dclPoolId;
-      if (hubState.totalSupply && hubState.totalSupply !== '0') {
-        totalSupply = hubState.totalSupply;
-      }
-    } else if (padRes.status === 'fulfilled' && padRes.value && padRes.value.price > 0) {
-      const padState = padRes.value;
-      venue = 'nearpad';
-      price = padState.price;
-      liquidity = padState.liquidityNear;
-      dclPoolId = padState.dclPoolId;
-      if (padState.totalSupply && padState.totalSupply !== '0') {
-        totalSupply = padState.totalSupply;
-      }
-    } else if (smRes.status === 'fulfilled' && smRes.value && smRes.value.price > 0) {
-      const smState = smRes.value;
-      venue = 'shoremarkets';
-      price = smState.price;
-      liquidity = smState.liquidityNear;
-      bondingPhase = smState.phase;
-      bondingProgressPct = smState.bondingProgressPct;
-      dclPoolId = smState.dclPoolId;
-      if (smState.totalSupply && smState.totalSupply !== '0') {
-        totalSupply = smState.totalSupply;
-      }
-    } else if (ktRes.status === 'fulfilled' && ktRes.value && ktRes.value.price > 0) {
-      const ktState = ktRes.value;
-      venue = 'kelytra';
-      price = ktState.price;
-      liquidity = ktState.liquidityNear;
-      bondingPhase = ktState.phase;
-      bondingProgressPct = ktState.bondingProgressPct;
-      dclPoolId = ktState.dclPoolId;
-      if (ktState.totalSupply && ktState.totalSupply !== '0') {
-        totalSupply = ktState.totalSupply;
-      }
-    } else if (intearRes.status === 'fulfilled' && intearRes.value && (intearRes.value.price > 0 || intearRes.value.poolId != null)) {
-      const intearState = intearRes.value;
-      venue = 'intear';
-      price = intearState.price;
-      liquidity = intearState.liquidityNear;
-      if (intearState.poolId != null) {
-        rheaPoolId = intearState.poolId;
-        dclPoolId = null;
-      }
-      if (intearState.feeBps != null) {
-        intearPoolFee = intearState.feeBps;
-      }
-      if (intearState.totalSupply && intearState.totalSupply !== '0') {
-        totalSupply = intearState.totalSupply;
+      if (venue === 'unknown') {
+        venue = 'rhea';
       }
     }
-  }
 
-  // Last-known-good fallback from DB cache
-  if (price <= 0 && dbCache && Number(dbCache.last_price || 0) > 0) {
-    price = Number(dbCache.last_price);
-    liquidity = Number(dbCache.last_liquidity || 0);
-    venue = (dbCache.venue as any) ?? venue;
-    rheaPoolId = rheaPoolId ?? dbCache.rhea_pool_id ?? (dbCache.dcl_pool_id && !dbCache.dcl_pool_id.includes('|') ? parseInt(dbCache.dcl_pool_id, 10) : null);
-    dclPoolId = dclPoolId ?? ((dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) ? dbCache.dcl_pool_id : null);
-    bondingPhase = bondingPhase ?? (dbCache.bonding_phase as any) ?? null;
-    if (bondingProgressPct === null && dbCache.bonding_progress_pct !== null && dbCache.bonding_progress_pct !== undefined) {
-      bondingProgressPct = Number(dbCache.bonding_progress_pct);
+    // Calculate Market Cap (authoritative on-chain math: price * supply)
+    const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
+    const marketCapUsd = marketCap > 0 && effectiveNearUsd > 0 ? marketCap * effectiveNearUsd : 0;
+
+    let finalPriceUsd = '0';
+    if (price > 0 && effectiveNearUsd > 0) {
+      const usdVal = price * effectiveNearUsd;
+      finalPriceUsd = usdVal < 0.000001 ? usdVal.toExponential(4) : usdVal.toFixed(8);
+    } else if (dexData && dexData.priceUsd > 0) {
+      finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
     }
-  }
 
-  const [nearUsd, dexData, holdersData, totalTxns] = await Promise.all([
-    nearUsdPromise,
-    dexDataPromise,
-    holdersDataPromise,
-    totalTxnsPromise,
-  ]);
+    const tradeable = isTradableVenue(venue);
 
-  const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
-  const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
-
-  // Fallback to DexScreener price ONLY if on-chain price was not discovered (price <= 0)
-  if (price <= 0 && dexData) {
-    if (dexData.priceNative > 0) {
-      price = dexData.priceNative;
-    } else if (dexData.priceUsd > 0 && effectiveNearUsd > 0) {
-      price = dexData.priceUsd / effectiveNearUsd;
-    }
-    if (venue === 'unknown') {
-      venue = 'rhea';
-    }
-  }
-
-  // Calculate Market Cap (authoritative on-chain math: price * supply)
-  const marketCap = price > 0 && supplyNum > 0 ? price * supplyNum : 0;
-  const marketCapUsd = marketCap > 0 && effectiveNearUsd > 0 ? marketCap * effectiveNearUsd : 0;
-
-  let finalPriceUsd = '0';
-  if (price > 0 && effectiveNearUsd > 0) {
-    const usdVal = price * effectiveNearUsd;
-    finalPriceUsd = usdVal < 0.000001 ? usdVal.toExponential(4) : usdVal.toFixed(8);
-  } else if (dexData && dexData.priceUsd > 0) {
-    finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
-  }
-
-  const tradeable = isTradableVenue(venue);
-
-  const tax = (intearPoolFee != null || rheaCandidate?.poolFee != null)
-    ? await getDexTax({
+    const tax = (intearPoolFee != null || rheaCandidate?.poolFee != null)
+      ? await getDexTax({
         venue,
         bonding_phase: bondingPhase,
         dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
@@ -2102,9 +2104,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
         chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
       })
-    : (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
-      ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
-      : await getDexTax({
+      : (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
+        ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+        : await getDexTax({
           venue,
           bonding_phase: bondingPhase,
           dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
@@ -2113,65 +2115,65 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
         });
 
-  const result: TokenInfoResult = {
-    address: tokenAddress,
-    name: meta.name,
-    symbol: meta.symbol,
-    decimals: meta.decimals,
-    total_supply: totalSupply,
-    price: price > 0 ? price.toFixed(12) : '0',
-    price_usd: finalPriceUsd,
-    price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
-    volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
-    liquidity: liquidity.toFixed(4),
-    liquidity_usd: liquidity > 0 && nearUsd > 0 ? (liquidity * nearUsd).toFixed(2) : '0',
-    market_cap: marketCap,
-    market_cap_usd: marketCapUsd,
-    near_usd: nearUsd,
-    venue,
-    rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId ?? null,
-    bonding_phase: bondingPhase,
-    bonding_progress_pct: bondingProgressPct,
-    dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId ?? null,
-    tradeable,
-    holders_count: holdersData?.count ?? null,
-    buys_count: dexData?.buys24h ?? null,
-    sells_count: dexData?.sells24h ?? null,
-    trades_timeframe: '24h',
-    total_txns: totalTxns ?? null,
-    buy_tax_pct: tax.buyTaxPct,
-    sell_tax_pct: tax.sellTaxPct,
-    paired_symbol: pairedSymbol,
-    price_in_paired: priceInPaired,
-    liquidity_in_paired: liquidityInPaired,
-    icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
-  };
-
-  tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-
-  // Async DB update (non-blocking)
-  setImmediate(() =>
-    upsertTokenCache({
-      token_address: tokenAddress,
+    const result: TokenInfoResult = {
+      address: tokenAddress,
       name: meta.name,
       symbol: meta.symbol,
       decimals: meta.decimals,
       total_supply: totalSupply,
-      pool_address: tokenAddress,
-      venue: venue as any,
-      rhea_pool_id: rheaPoolId,
+      price: price > 0 ? price.toFixed(12) : '0',
+      price_usd: finalPriceUsd,
+      price_24h_change: dexData?.priceChange24h !== undefined ? dexData.priceChange24h : undefined,
+      volume_24h_usd: dexData?.volume24hUsd !== undefined ? dexData.volume24hUsd : undefined,
+      liquidity: liquidity.toFixed(4),
+      liquidity_usd: liquidity > 0 && nearUsd > 0 ? (liquidity * nearUsd).toFixed(2) : '0',
+      market_cap: marketCap,
+      market_cap_usd: marketCapUsd,
+      near_usd: nearUsd,
+      venue,
+      rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId ?? null,
       bonding_phase: bondingPhase,
       bonding_progress_pct: bondingProgressPct,
-      dcl_pool_id: dclPoolId,
-      last_price: price,
-      last_liquidity: liquidity,
+      dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId ?? null,
+      tradeable,
+      holders_count: holdersData?.count ?? null,
+      buys_count: dexData?.buys24h ?? null,
+      sells_count: dexData?.sells24h ?? null,
+      trades_timeframe: '24h',
+      total_txns: totalTxns ?? null,
       buy_tax_pct: tax.buyTaxPct,
       sell_tax_pct: tax.sellTaxPct,
-      is_safe: true,
-      icon: result.icon || (meta as any)?.icon || (dexData as any)?.imageUrl || null,
-      updated_at: new Date(),
-    }).catch(() => {})
-  );
+      paired_symbol: pairedSymbol,
+      price_in_paired: priceInPaired,
+      liquidity_in_paired: liquidityInPaired,
+      icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
+    };
+
+    tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+
+    // Async DB update (non-blocking)
+    setImmediate(() =>
+      upsertTokenCache({
+        token_address: tokenAddress,
+        name: meta.name,
+        symbol: meta.symbol,
+        decimals: meta.decimals,
+        total_supply: totalSupply,
+        pool_address: tokenAddress,
+        venue: venue as any,
+        rhea_pool_id: rheaPoolId,
+        bonding_phase: bondingPhase,
+        bonding_progress_pct: bondingProgressPct,
+        dcl_pool_id: dclPoolId,
+        last_price: price,
+        last_liquidity: liquidity,
+        buy_tax_pct: tax.buyTaxPct,
+        sell_tax_pct: tax.sellTaxPct,
+        is_safe: true,
+        icon: result.icon || (meta as any)?.icon || (dexData as any)?.imageUrl || null,
+        updated_at: new Date(),
+      }).catch(() => { })
+    );
 
     return result;
   })();
@@ -2625,7 +2627,8 @@ export async function publishSwap(swapEvent: {
   pool_id?: number;
   slippage_pct?: number;
   quoted_at?: number;
-}, onProgress?: (stage: string) => void, options: { suppressAlphaSignal?: boolean } = {}): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
+  trade_currency?: 'near' | 'usdc';
+}, onProgress?: (stage: string) => void, options: { suppressAlphaSignal?: boolean } = {}): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
   if (!directExecutor) {
     const { SwapExecutor } = await import('@racerbot/executor');
     directExecutor = new SwapExecutor();
@@ -2660,7 +2663,7 @@ export async function publishSwap(swapEvent: {
       if (u?.solana_address) {
         invalidateSolanaBalanceCache(u.solana_address);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   if (
@@ -2683,8 +2686,8 @@ export async function publishSwap(swapEvent: {
       const tokenSymbol = result.tokenSymbol?.trim();
       const tokenName = result.tokenName?.trim() || tokenSymbol;
       if (!Number.isFinite(amountNear) || amountNear <= 0 ||
-          !Number.isFinite(priceNear) || priceNear <= 0 ||
-          !tokenSymbol || !tokenName) {
+        !Number.isFinite(priceNear) || priceNear <= 0 ||
+        !tokenSymbol || !tokenName) {
         return;
       }
 
@@ -2725,13 +2728,16 @@ export async function publishSwap(swapEvent: {
     tokenQty: result.tokenQty,
     priceNear: result.priceNear,
     nearSpent: result.nearSpent,
+    usdcSpent: result.usdcSpent,
     nearReceived: result.nearReceived,
+    usdcReceived: result.usdcReceived,
     sellPercent: result.sellPercent,
   };
 }
 
 export function invalidateBalanceCache(telegramId: number): void {
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
 }
 
 export function invalidateTokenInfoCache(tokenAddress: string): void {
@@ -2748,6 +2754,9 @@ export interface UserBalances {
   wrapNearUsd: string;
   totalNearFormatted: string;
   totalNearUsd: string;
+  usdcNearRaw?: string;
+  usdcNearFormatted?: string;
+  usdcNearUsd?: string;
   nearUsd: number;
   suiAddress?: string;
   suiBalanceMist?: string;
@@ -2793,7 +2802,9 @@ export async function getUserBalances(
       }
 
       const user = await ensureUserAllWallets(rawUser);
-      const subaccountId = user.subaccount_id;
+      const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
+      const subaccountId = activeNearWallet?.address || user.subaccount_id;
+      // resolved above via activeNearWallet?.address || user.subaccount_id
       const suiAddress = user.sui_address;
       const starknetAddress = user.starknet_address;
       const solanaAddress = user.solana_address;
@@ -2804,9 +2815,10 @@ export async function getUserBalances(
       let strkBal = '0';
       let ethBal = '0';
 
-      const [nativeRes, wrapRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
+      const [nativeRes, wrapRes, usdcRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
         withTimeout(near.getNearBalance(subaccountId), 2500, '0'),
         withTimeout(near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
+        withTimeout(near.view<string>(NEAR_USDC_CONTRACT, 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
         suiAddress
           ? withTimeout(getSuiBalance(suiAddress), 2000, { mist: 0n, sui: 0, formatted: '0.0000' })
           : Promise.resolve({ mist: 0n, sui: 0, formatted: '0.0000' }),
@@ -2841,10 +2853,12 @@ export async function getUserBalances(
 
       const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
       const suiPrice = suiUsd.status === 'fulfilled' ? suiUsd.value : 2.0;
+      const usdcNearRaw = usdcRes.status === 'fulfilled' ? (usdcRes.value || '0') : '0';
+      const usdcNear = Number(BigInt(usdcNearRaw)) / Math.pow(10, NEAR_USDC_DECIMALS);
 
       const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
       const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
-      
+
       // Subtract storage reserve (0.05 NEAR) from display balance to show spendable amount
       const storageReserve = 0.05;
       const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
@@ -2871,6 +2885,9 @@ export async function getUserBalances(
         totalNearFormatted: totalNear.toFixed(4),
         totalNearUsd: formatUSD(totalNear, nearPrice),
         nearUsd: nearPrice,
+        usdcNearRaw,
+        usdcNearFormatted: usdcNear.toFixed(2),
+        usdcNearUsd: formatUSD(usdcNear, 1.0),
         suiAddress: suiAddress ?? undefined,
         suiBalanceMist: suiMist.toString(),
         suiBalanceFormatted: spendableSui.toFixed(4),
@@ -2914,15 +2931,22 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
     throw new Error('User not found. Run /start first.');
   }
 
-  const [nativeNearYocto, wNearYocto] = await Promise.all([
-    near.getNearBalance(user.subaccount_id).catch(() => '0'),
-    near.getTokenBalance('wrap.near', user.subaccount_id).catch(() => '0'),
+  const activeNearWalletForTrade = await getActiveWallet(user.id, 'near').catch(() => null);
+  const nearAccountForTrade = activeNearWalletForTrade?.address || user.subaccount_id;
+  const [nativeNearYocto, wNearYocto, usdcRaw, nearUsdPrice] = await Promise.all([
+    near.getNearBalance(nearAccountForTrade).catch(() => '0'),
+    near.getTokenBalance('wrap.near', nearAccountForTrade).catch(() => '0'),
+    near.getTokenBalance(NEAR_USDC_CONTRACT, nearAccountForTrade).catch(() => '0'),
+    getNearUsdPrice().catch(() => 5.0),
   ]);
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
   const wNear = Number(BigInt(wNearYocto) / 1000000000000000000n) / 1e6;
   const spendableNative = Math.max(0, nativeNear - 0.05);
   // User must retain at least 0.035 native NEAR for network gas
-  const spendable = nativeNear >= 0.035 ? spendableNative + wNear : 0;
+  const usdcSpendableNear = ((Number(BigInt(usdcRaw || '0')) / Math.pow(10, NEAR_USDC_DECIMALS)) / (nearUsdPrice > 0 ? nearUsdPrice : 5.0)) * 0.985;
+  const spendable = nativeNear >= 0.035
+    ? (user.near_trade_currency === 'usdc' ? usdcSpendableNear : spendableNative + wNear + usdcSpendableNear)
+    : 0;
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;
@@ -3152,7 +3176,7 @@ export async function withdrawFunds(
   }
 
   // Auto-unwrap any wrap.near first
-  await unwrapUserWrapNear(telegramId).catch(() => {});
+  await unwrapUserWrapNear(telegramId).catch(() => { });
 
   const currentBalanceYocto = BigInt(await near.getNearBalance(subaccountId));
   const reserveYocto = BigInt('50000000000000000000000'); // 0.05 NEAR reserved
@@ -3292,6 +3316,7 @@ export async function withdrawSolanaFunds(
   }
   const sig = await transferSol(keypair, destination, lamports);
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   recordUserTrade(user.id, 'solana', 0);
   return { txHash: sig, amountWithdrawn: lamportsToSol(lamports).toFixed(4), destination };
 }
@@ -3328,7 +3353,7 @@ export async function withdrawSolanaTokenFunds(
   const info = await getSolanaTokenInfo(mint).catch(() => null);
   const decimals = held.decimals || info?.decimals || 6;
   let raw: bigint;
-  if (amount === undefined || amount === 'all' || amount === '' ) {
+  if (amount === undefined || amount === 'all' || amount === '') {
     raw = held.raw;
   } else {
     const human = typeof amount === 'number' ? amount : parseFloat(String(amount));
@@ -3346,9 +3371,10 @@ export async function withdrawSolanaTokenFunds(
     const remaining = held.raw - raw;
     await updatePosition(remaining <= 0n
       ? { position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }
-      : { position_id: pos.id, quantity_held: remaining.toString() }).catch(() => {});
+      : { position_id: pos.id, quantity_held: remaining.toString() }).catch(() => { });
   }
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   return {
     txHash: sig,
     amountWithdrawn: (Number(raw) / Math.pow(10, decimals)).toFixed(4),
@@ -3412,6 +3438,7 @@ export async function withdrawSuiFunds(
 
   // Invalidate balance caches
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
   suiTradeBalanceCache.delete(telegramId);
 
@@ -3551,6 +3578,7 @@ export async function withdrawStarknetFunds(
   invalidateStarknetBalanceCache(activeUserAddress);
   invalidateStarknetBalanceCache(canonicalToken);
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
 
   const formattedWithdrawn = formatTokenBalance(rawWithdrawAmount, decimals);
@@ -3706,6 +3734,7 @@ export async function withdrawTokenFunds(
 
     // Invalidate caches & update position
     balanceCache.delete(telegramId);
+    tradeBalanceCache.delete(telegramId);
     tradeBalanceCache.delete(telegramId);
     suiTradeBalanceCache.delete(telegramId);
 
@@ -4010,6 +4039,8 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
     discoveredTokens.delete('wrap.near');
     discoveredTokens.delete('near');
     discoveredTokens.delete('aurora');
+    discoveredTokens.delete(NEAR_USDC_CONTRACT);
+    discoveredTokens.delete('usdc.near');
 
     const existingTokens = Array.from(posMap.keys());
     const newDiscovered = Array.from(discoveredTokens).filter(t => !posMap.has(t));
@@ -4065,8 +4096,8 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
         const bal = balRes.status === 'fulfilled'
           ? balRes.value
           : (indexerBalances.has(tokenAddress)
-              ? { value: indexerBalances.get(tokenAddress)!, trusted: false }
-              : { value: '0', trusted: false });
+            ? { value: indexerBalances.get(tokenAddress)!, trusted: false }
+            : { value: '0', trusted: false });
         const rawBal = bal.value;
         const infoRes = infoResults[i];
         const info = infoRes.status === 'fulfilled' ? infoRes.value : null;
@@ -4169,9 +4200,9 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                 address: subaccountId,
                 chain: 'near',
                 positionId: newPos.id,
-              }).catch(() => {});
+              }).catch(() => { });
             }
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
     }
@@ -4181,7 +4212,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
       try {
         const suiClient = getSuiClient();
         const allBalances = await suiClient.getAllBalances({ owner: user.sui_address }).catch(() => []);
-        
+
         const suiIndexerBalances = new Map<string, string>();
         const suiDiscoveredTokens = new Set<string>();
 
@@ -4302,7 +4333,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                   address: user.sui_address,
                   chain: 'sui',
                   positionId: newPos.id,
-                }).catch(() => {});
+                }).catch(() => { });
               }
             }
           }
@@ -4333,14 +4364,14 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
             if (onChain === null) continue;
             if (onChain > 0n) {
               if (pos.quantity_held !== onChain.toString()) {
-                await updatePosition({ position_id: pos.id, quantity_held: onChain.toString() }).catch(() => {});
+                await updatePosition({ position_id: pos.id, quantity_held: onChain.toString() }).catch(() => { });
               }
               continue;
             }
-            await updatePosition({ position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+            await updatePosition({ position_id: pos.id, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => { });
             console.log(`[DEPOSIT] Closed Solana position ${pos.token_address} (user ${userId}): balance is 0`);
           } else if (pos.quantity_held !== h.raw.toString()) {
-            await updatePosition({ position_id: pos.id, quantity_held: h.raw.toString() }).catch(() => {});
+            await updatePosition({ position_id: pos.id, quantity_held: h.raw.toString() }).catch(() => { });
           }
         }
 
@@ -4372,7 +4403,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
             await db.query(
               'UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1',
               [newPos.id]
-            ).catch(() => {});
+            ).catch(() => { });
             newDepositsCount++;
             if (user.telegram_id) {
               notifyTokenDeposit(user.telegram_id, {
@@ -4382,7 +4413,7 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
                 address: user.solana_address,
                 chain: 'solana',
                 positionId: newPos.id,
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }
@@ -4654,9 +4685,10 @@ export async function importNearWallet(
   // Invalidate balance caches
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
 
   // Pre-warm storage check for Ref Finance
-  getRefStorageDepositNeeded(accountId).catch(() => {});
+  getRefStorageDepositNeeded(accountId).catch(() => { });
 
   return {
     wallet,
@@ -4677,6 +4709,7 @@ export async function switchActiveNearWallet(telegramId: number, walletId: strin
   const wallet = await setActiveWallet(user.id, 'near', walletId);
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   return wallet;
 }
 
@@ -4695,6 +4728,7 @@ export async function deleteUserNearWallet(telegramId: number, walletId: string)
   if (!user) throw new Error('User not found. Run /start first.');
   const result = await deleteUserWallet(user.id, walletId);
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
   return result;
 }
@@ -4752,6 +4786,7 @@ export async function importSuiWallet(
   // Invalidate balance caches
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
 
   return {
     wallet,
@@ -4770,6 +4805,7 @@ export async function switchActiveSuiWallet(telegramId: number, walletId: string
   if (!user) throw new Error('User not found. Run /start first.');
   const wallet = await setActiveWallet(user.id, 'sui', walletId);
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
   return wallet;
 }
@@ -4790,6 +4826,7 @@ export async function deleteUserSuiWallet(telegramId: number, walletId: string):
   const result = await deleteUserWallet(user.id, walletId);
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   return result;
 }
 
@@ -4804,6 +4841,7 @@ export async function switchActiveStarknetWallet(telegramId: number, walletId: s
   if (!user) throw new Error('User not found. Run /start first.');
   const wallet = await setActiveWallet(user.id, 'starknet', walletId);
   balanceCache.delete(telegramId);
+  tradeBalanceCache.delete(telegramId);
   if (wallet.address) {
     invalidateStarknetBalanceCache(wallet.address);
   }
