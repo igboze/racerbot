@@ -17,6 +17,7 @@ import {
   createConfidentialAccount,
   getConfidentialAccount,
   getExecutor,
+  getUserConfidentialMove,
   insertConfidentialMove,
   insertExecutor,
   listExecutorsByStatus,
@@ -36,12 +37,15 @@ import {
   notifyDeposit,
   ownerHash,
   quoteShield,
+  quoteShieldFromAsset,
   unshield,
+  type MoveQuote,
   type PrivateAccountKeys,
 } from './intentsPrivate.js';
 import { planVaultHops, quoteMinimumOut, RACER_VAULT_CONTRACT_ID } from './racerVault.js';
 import { extractRouterEvents } from './routerEvents.js';
 import { encodeExecPlan, type ExecPlan, type ExecVenue } from './executorPlan.js';
+import { hasManagedWallet } from './webWallet.js';
 
 const logger = createLogger('executor-pool');
 
@@ -75,24 +79,56 @@ export interface ConfidentialTradeResult {
 
 // ── Relayer ───────────────────────────────────────────────────────────────────
 
-let relayerQueue: Promise<unknown> = Promise.resolve();
-let relayerKeyLoaded = false;
+interface RelayerLane {
+  account: string;
+  key: string;
+  queue: Promise<unknown>;
+  pending: number;
+  keyLoaded: boolean;
+}
 
-/** One relayer transaction at a time: a single access key cannot sign two nonces at once safely */
+/**
+ * Relayer accounts from EXECUTOR_RELAYERS (`acct1.near=ed25519:...,acct2.near=ed25519:...`), else
+ * the single EXECUTOR_RELAYER_ACCOUNT_ID / _PRIVATE_KEY. Each must be allowed with router.set_relayer.
+ */
+export function parseRelayers(spec: string | undefined, fallbackAccount: string, fallbackKey: string): { account: string; key: string }[] {
+  const lanes = (spec || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => {
+      const eq = item.indexOf('=');
+      return eq > 0 ? { account: item.slice(0, eq).trim(), key: item.slice(eq + 1).trim() } : null;
+    })
+    .filter((l): l is { account: string; key: string } => !!l && !!l.account && l.key.startsWith('ed25519:'));
+  if (lanes.length > 0) return lanes;
+  return fallbackKey ? [{ account: fallbackAccount, key: fallbackKey }] : [];
+}
+
+const relayerLanes: RelayerLane[] = parseRelayers(process.env.EXECUTOR_RELAYERS, RELAYER_ACCOUNT, RELAYER_KEY)
+  .map(l => ({ ...l, queue: Promise.resolve(), pending: 0, keyLoaded: false }));
+
+/**
+ * Sign with the least busy relayer. Each relayer account sends one transaction at a time (one
+ * access key cannot sign two nonces at once safely); several accounts let split and fleet buys
+ * go out together.
+ */
 async function relayerCall(receiver: string, method: string, args: object, gasTgas: number, deposit = 0n): Promise<any> {
+  if (relayerLanes.length === 0) throw new Error('Executor relayer key is not configured');
+  const lane = relayerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
+  lane.pending++;
   const run = async () => {
-    if (!RELAYER_KEY) throw new Error('Executor relayer key is not configured');
     const near = getNear();
-    if (!relayerKeyLoaded) {
-      await near.addKey(RELAYER_ACCOUNT, KeyPair.fromString(RELAYER_KEY as any));
-      relayerKeyLoaded = true;
+    if (!lane.keyLoaded) {
+      await near.addKey(lane.account, KeyPair.fromString(lane.key as any));
+      lane.keyLoaded = true;
     }
-    return near.signAndSendTransactionAll(RELAYER_ACCOUNT, receiver, [
+    return near.signAndSendTransactionAll(lane.account, receiver, [
       transactions.functionCall(method, args, BigInt(gasTgas) * TGAS, deposit),
     ]);
   };
-  const next = relayerQueue.then(run, run);
-  relayerQueue = next.catch(() => undefined);
+  const next = lane.queue.then(run, run).finally(() => { lane.pending--; });
+  lane.queue = next.catch(() => undefined);
   return next;
 }
 
@@ -434,7 +470,13 @@ export async function confidentialSell(p: {
       if (!sold) return { ok: false, executor: e.account_id, hash: outcome?.transaction?.hash, reason: failureOf(outcome) || 'The exchange rejected the sell' };
       // Close once nothing is left, however the sells were split (a partial sell can still empty it)
       const left = pct === 100 ? 0n : BigInt(await near.getTokenBalance(p.tokenAddress, e.account_id).catch(() => '1'));
-      if (left === 0n) void closeExecutor(e.account_id).catch(err => logger.warn(`Close of ${e.account_id} failed: ${err?.message}`));
+      if (left === 0n) {
+        // With rounded returns, also wait a random 5-60 s so the return is not timed with the sell
+        const delay = acct.round_returns ? 5_000 + Math.random() * 55_000 : 0;
+        setTimeout(() => {
+          closeExecutor(e.account_id).catch(err => logger.warn(`Close of ${e.account_id} failed: ${err?.message}`));
+        }, delay);
+      }
       return { ok: true, executor: e.account_id, hash: outcome?.transaction?.hash };
     } catch (err: any) {
       return { ok: false, executor: e.account_id, reason: err?.message || 'sell failed' };
@@ -489,7 +531,6 @@ export async function confidentialOverview(user: UserRecord) {
   return {
     enabled: EXECUTORS_ENABLED,
     account: {
-      privateAccountId: acct.private_account_id,
       payoutAddress: acct.payout_address,
       settings: {
         poolSizes: acct.pool_sizes,
@@ -566,20 +607,32 @@ export async function closeExecutor(executor: string): Promise<void> {
     return;
   }
 
+  // Rounded returns send a round amount now; the remainder follows on the worker's next pass
+  const send = acct.round_returns ? roundedReturn(amount) : amount;
   // Refunds of the return go back to the executor, which can exit again
-  const quote = await quoteShield(acct.private_account_id, amount, executor);
-  const sent = await relayerCall(ROUTER, 'exec_exit_to_intents', { executor, deposit_address: quote.depositAddress, amount: amount.toString() }, 150);
-  const exited = extractExecutorEvents(sent).find(ev => ev.event === 'exited');
+  const quote = await quoteShield(acct.private_account_id, send, executor);
+  const sent = await relayerCall(ROUTER, 'exec_exit_to_intents', { executor, deposit_address: quote.depositAddress, amount: send.toString() }, 150);
+  const events = extractExecutorEvents(sent);
+  const exited = events.find(ev => ev.event === 'exited');
+  const partial = events.find(ev => ev.event === 'exit_partial');
   const txHash = sent?.transaction?.hash;
   await insertConfidentialMove({
     user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: quote.depositAddress,
-    amount: amount.toString(), destination: acct.private_account_id, tx_hash: txHash,
+    amount: send.toString(), destination: acct.private_account_id, tx_hash: txHash,
   });
   if (txHash) void notifyDeposit(quote.depositAddress, txHash);
   await updateExecutor(executor, {
-    status: exited ? 'exited' : 'exiting', returned_amount: amount.toString(), event: exited ?? { event: 'exit_failed' },
-    tx_hash: txHash, last_error: exited ? null : failureOf(sent) || 'exit failed',
+    status: exited ? 'exited' : 'exiting', returned_amount: send.toString(), event: exited ?? partial ?? { event: 'exit_failed' },
+    tx_hash: txHash, last_error: exited || partial ? null : failureOf(sent) || 'exit failed',
   });
+}
+
+const ROUND_STEP = ONE_NEAR / 10n;
+
+/** The first part of a rounded return: whole 0.1 NEAR steps (amounts under 0.2 NEAR go in one piece) */
+export function roundedReturn(amount: bigint): bigint {
+  if (amount < 2n * ROUND_STEP) return amount;
+  return amount - (amount % ROUND_STEP);
 }
 
 /** Delete an exited executor once its close delay has passed (anyone may call finish_close) */
@@ -595,6 +648,7 @@ async function finishClose(e: ConfidentialExecutorRecord): Promise<void> {
 
 /** Deposit NEAR from the user's RacerBot wallet into their private balance (~19 s to settle) */
 export async function depositFromWallet(user: UserRecord, amount: bigint): Promise<{ depositAddress: string; txHash: string }> {
+  if (isExternalWallet(user)) throw new Error('Approve the deposit in your wallet');
   const acct = await ensureConfidentialAccount(user);
   const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
   const near = getNear();
@@ -611,6 +665,64 @@ export async function depositFromWallet(user: UserRecord, amount: bigint): Promi
   await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: quote.depositAddress, amount: amount.toString(), destination: acct.private_account_id, tx_hash: txHash });
   void notifyDeposit(quote.depositAddress, txHash);
   return { depositAddress: quote.depositAddress, txHash };
+}
+
+/** Signed in with their own NEAR wallet: RacerBot holds no key for it, so the user signs deposits themselves */
+export const isExternalWallet = (user: UserRecord): boolean => !hasManagedWallet(user);
+
+export interface WalletDeposit {
+  depositAddress: string;
+  amount: string;
+  /** One transaction to wrap.near for the user's wallet to sign: wrap, register the address, send */
+  transaction: { receiverId: string; actions: { methodName: string; args: object; gas: string; deposit: string }[] };
+}
+
+/** Deposit from an external wallet: RacerBot quotes, the user's wallet signs, refunds go back to that wallet */
+export async function quoteWalletDeposit(user: UserRecord, amount: bigint): Promise<WalletDeposit> {
+  const acct = await ensureConfidentialAccount(user);
+  const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
+  const to = quote.depositAddress;
+  await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: to, amount: amount.toString(), destination: acct.private_account_id });
+  return {
+    depositAddress: to,
+    amount: amount.toString(),
+    transaction: {
+      receiverId: 'wrap.near',
+      actions: [
+        { methodName: 'near_deposit', args: {}, gas: (10n * TGAS).toString(), deposit: amount.toString() },
+        { methodName: 'storage_deposit', args: { account_id: to, registration_only: true }, gas: (10n * TGAS).toString(), deposit: '1250000000000000000000' },
+        { methodName: 'ft_transfer', args: { receiver_id: to, amount: amount.toString() }, gas: (15n * TGAS).toString(), deposit: '1' },
+      ],
+    },
+  };
+}
+
+/** The wallet's transaction hash for a quoted deposit: lets 1Click pick it up straight away */
+export async function submitWalletDeposit(user: UserRecord, depositAddress: string, txHash: string): Promise<void> {
+  const move = await getUserConfidentialMove(user.id, depositAddress);
+  if (!move || move.kind !== 'deposit') throw new Error('No deposit was quoted for that address');
+  await updateConfidentialMove(move.id, { tx_hash: txHash });
+  void notifyDeposit(depositAddress, txHash);
+}
+
+/** RacerBot's fee on deposits from other chains, the same as public multi-chain deposits */
+const CROSSCHAIN_FEE = {
+  recipient: process.env.RACER_FEE_RECIPIENT || process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near',
+  fee: parseInt(process.env.RACER_FEE_BPS || '100', 10),
+};
+
+/**
+ * Deposit from another chain (SOL, BTC, USDC on Base...) straight into the private balance as NEAR.
+ * Nothing touches a public NEAR wallet on the way in; refunds return to the private balance.
+ */
+export async function quoteCrossChainDeposit(user: UserRecord, originAsset: string, amountRaw: string): Promise<MoveQuote> {
+  const acct = await ensureConfidentialAccount(user);
+  const quote = await quoteShieldFromAsset(acct.private_account_id, originAsset, amountRaw, [CROSSCHAIN_FEE]);
+  await insertConfidentialMove({
+    user_id: user.id, kind: 'deposit', deposit_address: quote.depositAddress,
+    amount: quote.amountOut || '0', destination: acct.private_account_id,
+  });
+  return quote;
 }
 
 /** Withdraw from the private balance to any NEAR account (~12 s) */

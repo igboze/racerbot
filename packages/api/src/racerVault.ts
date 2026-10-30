@@ -969,7 +969,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
   }
 
   const userAccountId = params.user.subaccount_id || params.user.id;
-  if (!params.user.scoped_key_encrypted) {
+  if (!params.user.scoped_key_encrypted || params.user.scoped_key_encrypted === 'EXTERNAL_CONNECTED_WALLET') {
     // Externally connected wallets (Meteor, MyNearWallet, ...) have no server-held key, so the
     // server cannot sign for them; fail clearly instead of with an opaque decrypt error.
     return {
@@ -980,7 +980,7 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       tokenOut: isBuy ? params.tokenAddress : 'near',
       amountInFormatted: String(numNear),
       recipientAccountId: userAccountId,
-      reason: `Confidential trades run from a RacerBot-managed account, and ${userAccountId} is an external wallet without one. Sign in with Telegram to use your managed account.`,
+      reason: `One-tap trades run from a RacerBot-managed account, and ${userAccountId} is an external wallet without one. Open your wallet menu to create a RacerBot wallet, or sign in with Telegram.`,
     };
   }
   const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
