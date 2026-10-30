@@ -793,6 +793,7 @@ export class SwapExecutor {
     let nearShortfallFromUsdcYocto: bigint = 0n;
     let maxNativeDepositYocto: bigint | undefined = undefined;
     let usdcSpentHuman: number | undefined = undefined;
+    let capturedNativeBalStr: string | null = null;
     if (isBuyPath) {
       // Balance and honeypot safety audit are fetched concurrently
       const [nativeBalStr, wNearBalStr, usdcBalStr, safety] = await Promise.all([
@@ -801,6 +802,7 @@ export class SwapExecutor {
         this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountId).catch(() => '0') ?? '0',
         checkTokenSafety(token_out).catch(() => null),
       ]);
+      capturedNativeBalStr = nativeBalStr;
 
       if (safety?.isHoneypot || safety?.isDrained) {
         const title = safety?.isDrained ? 'a DRAINED / RUGGED POOL' : 'a MALICIOUS HONEYPOT';
@@ -1180,68 +1182,57 @@ export class SwapExecutor {
 
     const isGlobalBuy = token_in === 'wrap.near' || token_in === 'near';
     if (isGlobalBuy && token_out && token_out !== 'near' && token_out !== 'wrap.near') {
-      try {
-        await ensureStorage(token_out);
-      } catch (err: any) {
-        console.warn(`[EXECUTOR] Global pre-swap ensureStorage warning for ${token_out}:`, err?.message);
-      }
-      if (
+      const isRefVenue =
         venue === 'rhea' ||
         venue === 'ref' ||
         venue === 'memecooking' ||
         venue === 'gaypad' ||
         venue === 'kelytra' ||
-        venue === 'nearpumpfun'
-      ) {
-        try {
-          await ensureRefStorage(subaccountId);
-          await ensureRefTokenRegistered(token_out, subaccountId);
-        } catch (refErr: any) {
-          console.warn(`[EXECUTOR] Global pre-swap ensureRefStorage warning for ${token_out}:`, refErr?.message);
-        }
-      }
+        venue === 'nearpumpfun';
+
+      // ── SPEED OPTIMIZATION: Parallelize pre-swap registrations and quote checks ──
+      const viewFn = this.nearClient.view ? this.nearClient.view.bind(this.nearClient) : near.view.bind(near);
+      const usdcPoolId = NEAR_USDC_REF_POOL_ID;
+      const usdcQuotePromise = usdcToSwapRaw > 0n
+        ? viewFn<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: usdcPoolId,
+            token_in: NEAR_USDC_CONTRACT,
+            amount_in: usdcToSwapRaw.toString(),
+            token_out: 'wrap.near',
+          }).catch(() => null)
+        : Promise.resolve(null);
+
+      await Promise.all([
+        ensureStorage(token_out).catch((err: any) => {
+          console.warn(`[EXECUTOR] Global pre-swap ensureStorage warning for ${token_out}:`, err?.message);
+        }),
+        isRefVenue ? ensureRefStorage(subaccountId).catch(() => {}) : Promise.resolve(),
+        isRefVenue ? ensureRefTokenRegistered(token_out, subaccountId).catch(() => {}) : Promise.resolve(),
+        usdcToSwapRaw > 0n ? (
+          (this.nearClient.ensureStorageDeposit
+            ? this.nearClient.ensureStorageDeposit(subaccountId, 'wrap.near')
+            : near.ensureStorageDeposit(subaccountId, 'wrap.near'))
+            .then(() => this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near'))
+            .catch((storageErr: any) => console.warn(`[EXECUTOR] wrap.near storage warning:`, storageErr?.message))
+        ) : Promise.resolve(),
+        usdcToSwapRaw > 0n ? ensureRefTokenRegistered(NEAR_USDC_CONTRACT, subaccountId).catch(() => {}) : Promise.resolve(),
+      ]);
 
       if (usdcToSwapRaw > 0n) {
         console.log(
           `[EXECUTOR] Converting ${usdcSpentHuman?.toFixed(2)} USDC (${usdcToSwapRaw} raw) -> wrap.near for ${subaccountId} ` +
           `(shortfall=${(Number(nearShortfallFromUsdcYocto) / 1e24).toFixed(4)} NEAR, maxNativeDeposit=${maxNativeDepositYocto !== undefined ? (Number(maxNativeDepositYocto) / 1e24).toFixed(4) : 'unlimited'} NEAR)`
         );
-        try {
-          await (this.nearClient.ensureStorageDeposit
-            ? this.nearClient.ensureStorageDeposit(subaccountId, 'wrap.near')
-            : near.ensureStorageDeposit(subaccountId, 'wrap.near'));
-          this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near');
-        } catch (storageErr: any) {
-          console.warn(`[EXECUTOR] ensureStorage('wrap.near') warning before USDC swap:`, storageErr?.message);
-        }
-        try {
-          await ensureRefStorage(subaccountId);
-          await ensureRefTokenRegistered(NEAR_USDC_CONTRACT, subaccountId);
-        } catch (refUsdcErr: any) {
-          console.warn(`[EXECUTOR] ensureRefStorage before USDC swap warning:`, refUsdcErr?.message);
-        }
 
-        const usdcPoolId = NEAR_USDC_REF_POOL_ID;
         let expectedWNearFromUsdc = nearShortfallFromUsdcYocto;
         let minWNearFromUsdc = '1';
-        try {
-          const viewFn = this.nearClient.view ? this.nearClient.view.bind(this.nearClient) : near.view.bind(near);
-          const ret = await viewFn<string>('v2.ref-finance.near', 'get_return', {
-            pool_id: usdcPoolId,
-            token_in: NEAR_USDC_CONTRACT,
-            amount_in: usdcToSwapRaw.toString(),
-            token_out: 'wrap.near',
-          });
-          if (ret && BigInt(ret) > 0n) {
-            expectedWNearFromUsdc = BigInt(ret);
-            minWNearFromUsdc = calculateMinAmountOut(expectedWNearFromUsdc, Math.max(userSlippage, 2));
-          }
-        } catch { /* fallback to minWNearFromUsdc = '1' */ }
+        const quoteRet = await usdcQuotePromise;
+        if (typeof quoteRet === 'string' && /^\d+$/.test(quoteRet) && BigInt(quoteRet) > 0n) {
+          expectedWNearFromUsdc = BigInt(quoteRet);
+          minWNearFromUsdc = calculateMinAmountOut(expectedWNearFromUsdc, Math.max(userSlippage, 2));
+        }
 
-        const preUsdcWNearActualStr = isUsdcOnlyMode
-          ? (await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'))
-          : knownWNearBal.toString();
-        const preUsdcWNearStr = preUsdcWNearActualStr;
+        const preUsdcWNearStr = knownWNearBal.toString();
         const USDC_SWAP_GAS = BigInt('50000000000000'); // 50 Tgas (burns ~20 Tgas; requires only 0.05 NEAR prepaid gas)
         const usdcSwapActions = [
           transactions.functionCall(
@@ -1269,29 +1260,46 @@ export class SwapExecutor {
         ];
         const usdcSwapOutcome = await signAndSend(NEAR_USDC_CONTRACT, usdcSwapActions, undefined, true);
 
-        const postUsdcWNearStr = await (
-          this.nearClient.getTokenBalanceOnTradeRpc
-            ? this.nearClient.getTokenBalanceOnTradeRpc('wrap.near', subaccountId)
-            : this.nearClient.getTokenBalance('wrap.near', subaccountId)
-        ).catch(() => null);
-
-        const usdcCheck = determineSwapOutcome({
+        // First parse outcome directly from on-chain receipt logs to avoid extra RPC roundtrip
+        let usdcCheck = determineSwapOutcome({
           result: usdcSwapOutcome,
           subaccountId,
           isBuy: false,
           tokenOut: 'wrap.near',
           preBalance: preUsdcWNearStr,
-          postBalance: postUsdcWNearStr,
+          postBalance: null,
         });
+
+        let postUsdcWNearStr: string | null = null;
+        if (!usdcCheck.ok || !usdcCheck.netAmountOut) {
+          postUsdcWNearStr = await (
+            this.nearClient.getTokenBalanceOnTradeRpc
+              ? this.nearClient.getTokenBalanceOnTradeRpc('wrap.near', subaccountId)
+              : this.nearClient.getTokenBalance('wrap.near', subaccountId)
+          ).catch(() => null);
+
+          usdcCheck = determineSwapOutcome({
+            result: usdcSwapOutcome,
+            subaccountId,
+            isBuy: false,
+            tokenOut: 'wrap.near',
+            preBalance: preUsdcWNearStr,
+            postBalance: postUsdcWNearStr,
+          });
+        }
+
         if (!usdcCheck.ok) {
           throw new Error(`USDC -> NEAR conversion failed: ${usdcCheck.reason}`);
         }
 
-        // Wait briefly for cross-contract gas refunds from the USDC swap to credit back to the account.
-        // In NEAR, cross-contract receipts take 2-4 seconds to return unspent gas across shards.
-        if (this.nearClient.getNearBalance) {
+        // Fast refund guard: If user's initial native balance was already >= 0.13 NEAR,
+        // it is guaranteed to still hold >= 0.08 NEAR even after the 0.05 NEAR gas reservation.
+        // In that case, skip polling completely (0ms latency).
+        const nativeBalBeforeSwap = capturedNativeBalStr !== null ? BigInt(capturedNativeBalStr) : 0n;
+        const alreadyHasSufficientGas = nativeBalBeforeSwap >= BigInt(Math.ceil(0.13 * 1e24));
+        if (!alreadyHasSufficientGas && this.nearClient.getNearBalance) {
           const minGasFloorYocto = BigInt(Math.ceil(0.06 * 1e24)); // 0.06 NEAR
-          for (let refundAttempt = 0; refundAttempt < 8; refundAttempt++) {
+          for (let refundAttempt = 0; refundAttempt < 6; refundAttempt++) {
             const curBalStr = await (
               (this.nearClient as any).getNearBalanceOnTradeRpc
                 ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
@@ -1300,54 +1308,50 @@ export class SwapExecutor {
             if (curBalStr !== null && BigInt(curBalStr) >= minGasFloorYocto) {
               break;
             }
-            await new Promise((r) => setTimeout(r, 500));
+            await new Promise((r) => setTimeout(r, 250));
           }
         }
 
-        if (postUsdcWNearStr !== null && BigInt(postUsdcWNearStr) > BigInt(preUsdcWNearStr)) {
+        if (usdcCheck.netAmountOut && BigInt(usdcCheck.netAmountOut) > 0n) {
+          knownWNearBal = isUsdcOnlyMode ? BigInt(usdcCheck.netAmountOut) : knownWNearBal + BigInt(usdcCheck.netAmountOut);
+        } else if (postUsdcWNearStr !== null && BigInt(postUsdcWNearStr) > BigInt(preUsdcWNearStr)) {
           knownWNearBal = isUsdcOnlyMode ? BigInt(postUsdcWNearStr) - BigInt(preUsdcWNearStr) : BigInt(postUsdcWNearStr);
+        } else {
+          knownWNearBal = knownWNearBal + expectedWNearFromUsdc;
+        }
 
-
-        } else if (usdcCheck.netAmountOut && BigInt(usdcCheck.netAmountOut) > 0n) {
-
-            knownWNearBal = knownWNearBal + BigInt(usdcCheck.netAmountOut);
-          } else {
-            knownWNearBal = knownWNearBal + expectedWNearFromUsdc;
-          }
-
-          // Re-check native NEAR after storage registrations and USDC swap so near_deposit
-          // never exceeds remaining native balance minus gas reserve.
-          if (maxNativeDepositYocto !== undefined && maxNativeDepositYocto > 0n && this.nearClient.getNearBalance) {
-            const postUsdcNativeStr = await (
-              (this.nearClient as any).getNearBalanceOnTradeRpc
-                ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
-                : this.nearClient.getNearBalance(subaccountId)
-            ).catch(() => null);
-            if (postUsdcNativeStr !== null) {
-              const postNative = BigInt(postUsdcNativeStr);
-              const minGasAfterStorage = BigInt(Math.ceil(0.035 * 1e24));
-              const clampedMax = postNative > minGasAfterStorage ? postNative - minGasAfterStorage : 0n;
-              if (clampedMax < maxNativeDepositYocto) {
-                maxNativeDepositYocto = clampedMax;
-              }
+        // Re-check native NEAR after storage registrations and USDC swap if native deposit is needed
+        if (!isUsdcOnlyMode && maxNativeDepositYocto !== undefined && maxNativeDepositYocto > 0n && this.nearClient.getNearBalance) {
+          const postUsdcNativeStr = await (
+            (this.nearClient as any).getNearBalanceOnTradeRpc
+              ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
+              : this.nearClient.getNearBalance(subaccountId)
+          ).catch(() => null);
+          if (postUsdcNativeStr !== null) {
+            const postNative = BigInt(postUsdcNativeStr);
+            const minGasAfterStorage = BigInt(Math.ceil(0.035 * 1e24));
+            const clampedMax = postNative > minGasAfterStorage ? postNative - minGasAfterStorage : 0n;
+            if (clampedMax < maxNativeDepositYocto) {
+              maxNativeDepositYocto = clampedMax;
             }
           }
+        }
 
-          if (maxNativeDepositYocto !== undefined && maxNativeDepositYocto + knownWNearBal < amountInBigInt) {
-            const prevAmountIn = amountInBigInt;
-            amountInBigInt = maxNativeDepositYocto + knownWNearBal;
-            feeAmount = (amountInBigInt * 150n) / 10000n;
-            swapAmount = amountInBigInt - feeAmount;
-            if (prevAmountIn > 0n && BigInt(minOutAdj || '0') > 0n) {
-              const scaledMin = (BigInt(minOutAdj) * amountInBigInt) / prevAmountIn;
-              minOutAdj = (scaledMin > 0n ? scaledMin : 1n).toString();
-            }
+        if (maxNativeDepositYocto !== undefined && maxNativeDepositYocto + knownWNearBal < amountInBigInt) {
+          const prevAmountIn = amountInBigInt;
+          amountInBigInt = maxNativeDepositYocto + knownWNearBal;
+          feeAmount = (amountInBigInt * 150n) / 10000n;
+          swapAmount = amountInBigInt - feeAmount;
+          if (prevAmountIn > 0n && BigInt(minOutAdj || '0') > 0n) {
+            const scaledMin = (BigInt(minOutAdj) * amountInBigInt) / prevAmountIn;
+            minOutAdj = (scaledMin > 0n ? scaledMin : 1n).toString();
           }
+        }
 
-          this.activeTradeWNearState.set(subaccountId, {
-            wNearBal: knownWNearBal,
-            maxNativeDeposit: maxNativeDepositYocto,
-          });
+        this.activeTradeWNearState.set(subaccountId, {
+          wNearBal: knownWNearBal,
+          maxNativeDeposit: maxNativeDepositYocto,
+        });
 
           if (venue === 'intear' && maxNativeDepositYocto !== undefined && amountInBigInt > maxNativeDepositYocto) {
             const unwrapNeeded = amountInBigInt - maxNativeDepositYocto;
