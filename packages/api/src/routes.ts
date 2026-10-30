@@ -116,6 +116,7 @@ import {
   switchActiveStarknetWallet,
   renameUserStarknetWallet,
   prewarmStorageDeposit,
+  invalidateBalanceCache,
   formatCryptoPrice,
   type TokenInfoResult,
 } from './wallet.js';
@@ -163,6 +164,8 @@ import {
   getSolanaTokenInfo,
   solanaUiToRaw,
   SOL_MINT,
+  NEAR_USDC_CONTRACT,
+  NEAR_USDC_DECIMALS,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -243,7 +246,7 @@ export async function replyGroupDmRedirect(
       parse_mode: 'HTML',
       ...keyboard,
     }
-  ).catch(() => {});
+  ).catch(() => { });
 }
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
@@ -310,27 +313,27 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
   action: PrivatePromptAction | 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
-    | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
-    | 'sell_custom_tokens'
-    // Stop Loss & Take Profit custom input
-    | 'set_sl_custom' | 'set_tp_custom'
-    // Copy Trading wizard
-    | 'copy_wallet' | 'copy_amount' | 'copy_daily_budget'
-    // DCA wizard
-    | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
-    // Multi-Wallet Management
-    | 'import_near_key' | 'import_near_name' | 'import_near_confirm' | 'rename_near_wallet'
-    | 'import_sui_key' | 'import_sui_name' | 'import_sui_confirm' | 'rename_sui_wallet'
-    | 'rename_starknet_wallet'
-    // Buy Alert group setup
-    | 'set_group_token'
-    // Limit Order wizard
-    | 'lo_amount' | 'lo_target_value'
-    // RaceDrop wizard
-    | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
-    // RaceFleet wizard
-    | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_sell_pct' | 'fleet_lo_target_value' | 'fleet_lo_amount'
-    | 'deposit_custom_token' | 'deposit_custom_amount';
+  | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
+  | 'sell_custom_tokens'
+  // Stop Loss & Take Profit custom input
+  | 'set_sl_custom' | 'set_tp_custom'
+  // Copy Trading wizard
+  | 'copy_wallet' | 'copy_amount' | 'copy_daily_budget'
+  // DCA wizard
+  | 'dca_token' | 'dca_amount' | 'dca_interval' | 'dca_orders' | 'dca_price_guard'
+  // Multi-Wallet Management
+  | 'import_near_key' | 'import_near_name' | 'import_near_confirm' | 'rename_near_wallet'
+  | 'import_sui_key' | 'import_sui_name' | 'import_sui_confirm' | 'rename_sui_wallet'
+  | 'rename_starknet_wallet'
+  // Buy Alert group setup
+  | 'set_group_token'
+  // Limit Order wizard
+  | 'lo_amount' | 'lo_target_value'
+  // RaceDrop wizard
+  | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
+  // RaceFleet wizard
+  | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_sell_pct' | 'fleet_lo_target_value' | 'fleet_lo_amount'
+  | 'deposit_custom_token' | 'deposit_custom_amount';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -453,6 +456,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let starknetAddress = '';
   let nearBalFormatted = '0';
   let nearUsdFormatted = '$0';
+  let usdcBalFormatted = '0.00';
   let suiBalFormatted = '0';
   let suiUsdFormatted = '$0';
   let strkBalFormatted = '0';
@@ -471,6 +475,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     try {
       const b = await getUserBalances(telegramId, forceRefresh, user);
       nearBalFormatted = b.totalNearFormatted;
+      subaccount = b.subaccountId || user.subaccount_id;
       suiAddress = b.suiAddress || user.sui_address || '';
       suiBalFormatted = b.suiBalanceFormatted || '0';
       starknetAddress = b.starknetAddress || user.starknet_address || '';
@@ -485,7 +490,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       solBalFormatted = b.solBalanceFormatted || '0';
       const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
       solUsdFormatted = solTotalUsdNum >= 1000 ? `$${(solTotalUsdNum / 1000).toFixed(2)}K` : `$${solTotalUsdNum.toFixed(2)}`;
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum;
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + (parseFloat(b.usdcNearFormatted || '0') || 0);
+      usdcBalFormatted = b.usdcNearFormatted || '0.00';
 
       nearUsdFormatted = nearTotalUsdNum >= 1000 ? `$${(nearTotalUsdNum / 1000).toFixed(2)}K` : `$${nearTotalUsdNum.toFixed(2)}`;
       suiUsdFormatted = suiTotalUsdNum >= 1000 ? `$${(suiTotalUsdNum / 1000).toFixed(2)}K` : `$${suiTotalUsdNum.toFixed(2)}`;
@@ -498,7 +504,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const text =
     `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n` +
-    `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})\n` +
+    `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>$${usdcBalFormatted}</b>\n` +
     `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
     (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n` : '') +
     (solAddress ? `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n` : '') +
@@ -633,7 +639,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
 
   markUserActiveForDeposit(telegramId);
-  checkUserDepositNow(telegramId).catch(() => {});
+  checkUserDepositNow(telegramId).catch(() => { });
   let user = await getUserByTelegramId(telegramId);
   if (!user) {
     try {
@@ -650,14 +656,14 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
   const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
   const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum;
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + (parseFloat(b.usdcNearFormatted || '0') || 0);
   const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
     ? await Promise.all([
-        getUserWallets(user.id, 'near').catch(() => []),
-        getUserWallets(user.id, 'sui').catch(() => []),
-      ])
+      getUserWallets(user.id, 'near').catch(() => []),
+      getUserWallets(user.id, 'sui').catch(() => []),
+    ])
     : [[], []];
   const activeNearWallet = nearWallets.find(w => w.is_active) || nearWallets[0];
   const walletDisplayName = activeNearWallet ? activeNearWallet.name : 'Wallet 1';
@@ -700,6 +706,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const text =
     `💼 <b>${escapeHtml(walletDisplayName)}</b> ⭐\n` +
     `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
+    `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n` +
     (Number(b.wrapNearFormatted) > 0.0001 ? `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n` : '') +
     `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n` +
     (b.starknetAddress ? `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n` : '') +
@@ -1037,8 +1044,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isSolana = tokenInfo.chain === 'solana';
   const isStarknet = !isSolana && (tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress));
   const isSui = !isSolana && !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
-  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
-  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : 'N');
+  const isNearUsdcMode = !isSolana && !isStarknet && !isSui && userRecord?.near_trade_currency === 'usdc';
+  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isNearUsdcMode ? 'USDC' : 'NEAR'));
+  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isNearUsdcMode ? 'USDC' : 'N'));
+  const nearModeBuyPresets = isNearUsdcMode && !userRecord?.custom_buy_amounts ? [5, 15, 50] : parseBuyAmounts(userRecord?.custom_buy_amounts);
 
   // Check if user has an active RaceFleet and whether it holds this target token
   let fleet: any = null;
@@ -1058,10 +1067,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const balanceText = isSolana
     ? (b ? `💳 *SOL Wallet Balance*: \`${b.solBalanceFormatted || '0.0000'} SOL\` (\`${b.solBalanceUsd || '$0.00'}\`)\n\n` : '')
     : isStarknet
-    ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
-    : (isSui
-      ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
-      : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\`\n\n` : ''));
+      ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
+      : (isSui
+        ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
+        : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : ''));
 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
@@ -1236,10 +1245,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     mcUsdFormatted = mcUsdVal >= 1_000_000_000
       ? `$${(mcUsdVal / 1_000_000_000).toFixed(2)}B`
       : mcUsdVal >= 1_000_000
-      ? `$${(mcUsdVal / 1_000_000).toFixed(2)}M`
-      : mcUsdVal >= 1_000
-      ? `$${(mcUsdVal / 1_000).toFixed(2)}K`
-      : `$${mcUsdVal.toFixed(2)}`;
+        ? `$${(mcUsdVal / 1_000_000).toFixed(2)}M`
+        : mcUsdVal >= 1_000
+          ? `$${(mcUsdVal / 1_000).toFixed(2)}K`
+          : `$${mcUsdVal.toFixed(2)}`;
 
     if (mcNearVal >= 1_000_000) mcNearFormatted = `${(mcNearVal / 1_000_000).toFixed(2)}M ${nativeUnit}`;
     else if (mcNearVal >= 1_000) mcNearFormatted = `${(mcNearVal / 1_000).toFixed(2)}K ${nativeUnit}`;
@@ -1255,10 +1264,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const supplyStr = supplyHuman >= 1e9
     ? `${(supplyHuman / 1e9).toFixed(2)}B`
     : supplyHuman >= 1e6
-    ? `${(supplyHuman / 1e6).toFixed(2)}M`
-    : supplyHuman >= 1e3
-    ? `${(supplyHuman / 1e3).toFixed(2)}K`
-    : supplyHuman.toFixed(2);
+      ? `${(supplyHuman / 1e6).toFixed(2)}M`
+      : supplyHuman >= 1e3
+        ? `${(supplyHuman / 1e3).toFixed(2)}K`
+        : supplyHuman.toFixed(2);
 
   // -- Rate footnote --
   const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
@@ -1267,10 +1276,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const rateFooter = isSolana
     ? (solUsdRate && solUsdRate > 0 ? `_1 SOL ≈ $${solUsdRate.toFixed(2)}_\n` : '')
     : isStarknet
-    ? (strkUsdRate && strkUsdRate > 0 ? `_1 STRK ≈ $${strkUsdRate.toFixed(2)}_\n` : '')
-    : (isSui
-      ? (tokenInfo.sui_usd ? `_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)}_\n` : '')
-      : (nearUsdRate && nearUsdRate > 0 ? `_1 NEAR ≈ $${nearUsdRate.toFixed(2)}_\n` : ''));
+      ? (strkUsdRate && strkUsdRate > 0 ? `_1 STRK ≈ $${strkUsdRate.toFixed(2)}_\n` : '')
+      : (isSui
+        ? (tokenInfo.sui_usd ? `_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)}_\n` : '')
+        : (nearUsdRate && nearUsdRate > 0 ? `_1 NEAR ≈ $${nearUsdRate.toFixed(2)}_\n` : ''));
 
   let safetyBanner = '';
   if (safety?.isDrained) {
@@ -1470,13 +1479,17 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     }
 
     const defaultBuyPct = userRecord?.default_buy_pct ? Number(userRecord.default_buy_pct) : 10;
+    const nearCurrencyToggleRow = !isSolana && !isStarknet && !isSui
+      ? [[cb(isNearUsdcMode ? '💵 Mode: USDC Only (Tap for NEAR)' : '⬛ Mode: NEAR + USDC (Tap for USDC Only)', `toggle_token_currency:${shortKey}`, isNearUsdcMode ? 'success' : 'primary')]]
+      : [];
 
     if (holdsToken && userPosition) {
       text += `⚡ *Manage Position* (Personal & Fleet):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
-        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        ...nearCurrencyToggleRow,
+        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
@@ -1518,7 +1531,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...unlockedRiskRow,
         ...fleetActionRows,
         // Quick-buy fixed amounts for personal account
-        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        ...nearCurrencyToggleRow,
+        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1545,7 +1559,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
-        (isSolana ? SOLANA_BUY_PRESETS : parseBuyAmounts(userRecord?.custom_buy_amounts)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        ...nearCurrencyToggleRow,
+        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
         [
@@ -1684,7 +1699,7 @@ export async function deliverTokenDetail(
     ]) {
       try {
         await ctx.replyWithPhoto({ source: image }, opts);
-        await ctx.deleteMessage().catch(() => {});
+        await ctx.deleteMessage().catch(() => { });
         return;
       } catch (err: any) {
         console.warn('[token_detail] Photo send failed:', err?.description || err?.message);
@@ -1720,7 +1735,7 @@ export async function deliverTokenDetail(
     const callbackOnly = buttons
       .map((row: any[]) => (Array.isArray(row) ? row.filter((b: any) => b && !b.url) : []))
       .filter((row: any[]) => row.length > 0);
-    await ctx.reply(plain, Markup.inlineKeyboard(callbackOnly)).catch(() => ctx.reply(plain).catch(() => {}));
+    await ctx.reply(plain, Markup.inlineKeyboard(callbackOnly)).catch(() => ctx.reply(plain).catch(() => { }));
   }
 }
 
@@ -1757,8 +1772,8 @@ export async function buildDeepAuditCard(tokenAddress: string): Promise<{ text: 
   const standardVerdict = safety?.isAuditedLaunchpad
     ? `🛡️ *Audited Factory Token* (${safety.launchpadName || 'Verified'})\n  • Deployed from immutable launchpad factory bytecode.`
     : (isSui
-        ? '💧 *Sui Move Standard Coin*\n  • Native Sui coin with Move bytecode safety.'
-        : '📜 *Standard NEP-141 Verified*\n  • Implements ft_transfer, ft_transfer_call, ft_balance_of.');
+      ? '💧 *Sui Move Standard Coin*\n  • Native Sui coin with Move bytecode safety.'
+      : '📜 *Standard NEP-141 Verified*\n  • Implements ft_transfer, ft_transfer_call, ft_balance_of.');
 
   let lockVerdict = '';
   if (safety?.isAuditedLaunchpad) {
@@ -1819,7 +1834,7 @@ export async function sendPnlCardMessage(
     const position = await getPositionById(positionId);
     if (!position) {
       if (headerMsg) {
-        await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+        await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => { });
       }
       return;
     }
@@ -1898,12 +1913,12 @@ export async function sendPnlCardMessage(
     }
 
     await ctx.reply(fullText, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
-      await ctx.reply(fullText.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+      await ctx.reply(fullText.replace(/[*_`]/g, ''), keyboard).catch(() => { });
     });
   } catch (err: any) {
     console.error('[PNL_CARD] Error sending PNL card message:', err);
     if (headerMsg) {
-      await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.reply(headerMsg, { parse_mode: 'Markdown' }).catch(() => { });
     }
   }
 }
@@ -1923,13 +1938,21 @@ export function buildSettingsDashboard(user: UserRecord) {
     `• *Default Buy*: \`${buyPct}%\`\n` +
     `• *Default Sell*: \`${sellPct}%\`\n` +
     `• *Quick Buy Buttons*: \`${buyAmountsStr}\`\n` +
-    `• *Net Worth on PnL*: ${showNetWorth ? '🟢 Shown' : '🔴 Hidden'}`;
+    `• *Net Worth on PnL*: ${showNetWorth ? '🟢 Shown' : '🔴 Hidden'}\n` +
+    `• *NEAR Trade Mode*: ${user.near_trade_currency === 'usdc' ? '💵 USDC Only (Buy & Sell in USDC)' : '⬛ NEAR (Auto-combines USDC)'}`;
 
   const keyboard = Markup.inlineKeyboard([
     [
       cb(
         showNetWorth ? '👁 Net Worth: Shown' : '🙈 Net Worth: Hidden',
         'set:toggle_show_net_worth',
+        'primary'
+      ),
+    ],
+    [
+      cb(
+        user.near_trade_currency === 'usdc' ? '💵 NEAR Mode: USDC Only (Tap for NEAR)' : '⬛ NEAR Mode: NEAR + USDC (Tap for USDC Only)',
+        'set:toggle_near_currency',
         'primary'
       ),
     ],
@@ -2461,10 +2484,11 @@ async function executeBuyHelper(
     getFastTokenRoute(tokenAddress).catch(() => null),
     !isSuiHint && !isStarknetHint && !isSolanaHint && nearAccountToUse
       ? Promise.all([
-          near.getNearBalance(nearAccountToUse).catch(() => null),
-          near.getTokenBalance('wrap.near', nearAccountToUse).catch(() => '0'),
-        ])
-      : Promise.resolve([null, '0'] as [string | null, string]),
+        near.getNearBalance(nearAccountToUse).catch(() => null),
+        near.getTokenBalance('wrap.near', nearAccountToUse).catch(() => '0'),
+        near.getTokenBalance(NEAR_USDC_CONTRACT, nearAccountToUse).catch(() => '0'),
+      ])
+      : Promise.resolve([null, '0', '0'] as [string | null, string, string]),
     suiAddrToUse
       ? getSuiBalance(suiAddrToUse).catch(() => ({ mist: 0n, formatted: '0' }))
       : Promise.resolve({ mist: 0n, formatted: '0' }),
@@ -2615,8 +2639,8 @@ async function executeBuyHelper(
     const tokenQtyDisplay = tokenQtyHuman >= 1_000_000
       ? `${(tokenQtyHuman / 1_000_000).toFixed(3)}M`
       : tokenQtyHuman >= 1_000
-      ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
-      : tokenQtyHuman.toFixed(4);
+        ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
+        : tokenQtyHuman.toFixed(4);
 
     return {
       success: true,
@@ -2759,7 +2783,9 @@ async function executeBuyHelper(
   const amountInBigInt = BigInt(amountInYocto);
 
   // Pre-flight balance check: verify wallet retains at least $2.00 in NEAR after swap
-  const [nativeBalYoctoStr, wNearBalStr] = nearBalRes;
+  const [nativeBalYoctoStr, wNearBalStr, usdcBalStr] = nearBalRes;
+  let usdcUsedFormatted = '';
+  let nearPortionFormatted = '';
 
   if (nativeBalYoctoStr !== null && nativeBalYoctoStr !== undefined) {
     const nativeBal = BigInt(nativeBalYoctoStr);
@@ -2770,18 +2796,57 @@ async function executeBuyHelper(
     const minReserveNear = nearNeededForSwap > 0n ? 0.05 : 0.035;
     const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
     const totalNearRequired = nearNeededForSwap + minReserveYocto;
+    const isUsdcOnlyBuy = user.near_trade_currency === 'usdc';
 
-    if (nativeBal < totalNearRequired) {
-      const availNear = (Number(nativeBal) / 1e24).toFixed(4);
-      const availUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
-      const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
-      const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
-      const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
-      const requiredReserveNearStr = minReserveNear.toFixed(4);
+    if (isUsdcOnlyBuy) {
+      const usdcRaw = BigInt(usdcBalStr || '0');
+      const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+      const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
+      const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
+      const usdcMaxNearYocto = BigInt(Math.floor(usdcMaxNear * 1e24));
+      if (nativeBal < minGasYocto) {
+        throw new Error(`Insufficient NEAR for gas. USDC-Only mode still requires at least 0.035 NEAR in your wallet for network gas & storage. You currently have ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`);
+      }
+      if (usdcRaw <= 0n || (usdcMaxNearYocto * 102n) / 100n < amountInBigInt) {
+        const neededUsdc = ((Number(amountInBigInt) / 1e24) * effectiveNearUsd).toFixed(2);
+        throw new Error(`Insufficient USDC balance (USDC-Only Mode is active). You requested ~$${neededUsdc} USDC, but your wallet has ${usdcHuman.toFixed(2)} USDC. Deposit more USDC or switch to NEAR + USDC mode.`);
+      }
+      const usdcNeeded = Math.min(usdcHuman, ((Number(amountInBigInt) / 1e24) * effectiveNearUsd) / 0.985);
+      usdcUsedFormatted = usdcNeeded.toFixed(2);
+      nearPortionFormatted = '';
+    } else if (nativeBal < totalNearRequired) {
 
-      throw new Error(
-        `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availUsd} (${availNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
-      );
+
+      const usdcRaw = BigInt(usdcBalStr || '0');
+      const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+      const spendableNativeYocto = nativeBal > BigInt(Math.ceil(0.05 * 1e24)) ? nativeBal - BigInt(Math.ceil(0.05 * 1e24)) : 0n;
+      const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
+      const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
+      const usdcMaxNearYocto = BigInt(Math.floor(usdcMaxNear * 1e24));
+      const totalCombinedNearYocto = spendableNativeYocto + wNearBal + usdcMaxNearYocto;
+
+      if (nativeBal >= minGasYocto && usdcRaw > 0n && totalCombinedNearYocto >= amountInBigInt) {
+        const directNearPortionYocto = spendableNativeYocto + wNearBal;
+        const shortfallYocto = amountInBigInt > directNearPortionYocto ? amountInBigInt - directNearPortionYocto : 0n;
+        const shortfallNear = Number(shortfallYocto) / 1e24;
+        const usdcNeeded = Math.min(usdcHuman, (shortfallNear * effectiveNearUsd) / 0.985);
+        usdcUsedFormatted = usdcNeeded.toFixed(2);
+        const nearPortion = Number(directNearPortionYocto) / 1e24;
+        if (nearPortion >= 0.0001) {
+          nearPortionFormatted = nearPortion.toFixed(4);
+        }
+      } else {
+        const availNear = (Number(nativeBal) / 1e24).toFixed(4);
+        const availUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
+        const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
+        const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
+        const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
+        const requiredReserveNearStr = minReserveNear.toFixed(4);
+
+        throw new Error(
+          `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availUsd} (${availNear} NEAR${usdcHuman > 0 ? ` + ${usdcHuman.toFixed(2)} USDC` : ''}), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR/USDC.`
+        );
+      }
     }
   }
   const feeAmountBigInt = (amountInBigInt * 150n) / 10000n;
@@ -2811,6 +2876,7 @@ async function executeBuyHelper(
     pool_id: effectiveRheaPoolId,
     slippage_pct: slippagePct,
     quoted_at: quoteCompletedAt,
+    trade_currency: user.near_trade_currency,
   }, onProgress);
 
   if (swapResult.success === false) {
@@ -2848,7 +2914,7 @@ async function executeBuyHelper(
       `✅ *Buy Confirmed!*\n\n` +
       `🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n` +
       `📦 Received: \`${tokenQtyDisplay} ${sanitizeMd(tokenSym)}\`\n` +
-      `💸 Spent: \`${amountNear.toFixed(4)} NEAR\`\n` +
+      `💸 Spent: \`${(swapResult.usdcSpent || usdcUsedFormatted) ? (nearPortionFormatted ? `${nearPortionFormatted} NEAR + ${swapResult.usdcSpent || usdcUsedFormatted} USDC (~${amountNear.toFixed(4)} NEAR)` : `${swapResult.usdcSpent || usdcUsedFormatted} USDC (~${amountNear.toFixed(4)} NEAR)`) : `${amountNear.toFixed(4)} NEAR`}\`\n` +
       `💵 Entry: \`${priceDisplay}\`\n\n` +
       `📊 *Position*\n` +
       `💰 Value: \`${valueNear.toFixed(4)} NEAR\`\n` +
@@ -2899,7 +2965,7 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
   if (amountNear < 0.005) {
     throw new Error(`Available balance (${usableBalance.toFixed(4)} NEAR after gas/storage reserve) is too low to buy.`);
   }
-  return executeBuyHelper(telegramId, tokenAddress, Number(amountNear.toFixed(4)), onProgress);
+  return executeBuyHelper(telegramId, tokenAddress, Math.floor(amountNear * 10000) / 10000, onProgress);
 }
 
 async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string, tokenSymbol?: string, positionId?: string) {
@@ -3130,7 +3196,7 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
       amount,
     });
 
-    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => {});
+    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => { });
 
     // Generate QR Code PNG
     const qrBuffer = await generateQrBuffer(record.deposit_address);
@@ -3167,7 +3233,7 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
       reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
     });
   } catch (err: any) {
-    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => {});
+    if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => { });
     await ctx.reply(`❌ Failed to create deposit quote: ${getUserFriendlyError(err)}`);
   }
 }
@@ -3200,7 +3266,7 @@ export function setupRoutes(bot: Telegraf): void {
           show_alert: true,
           url: `https://t.me/${botUsername}?start=menu`,
         }
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
@@ -3333,14 +3399,14 @@ export function setupRoutes(bot: Telegraf): void {
                 [Markup.button.callback('💳 Manage Wallets', 'wallets_menu'), Markup.button.callback('🏎️ Main Menu', 'menu_home')],
               ]),
             }
-          ).catch(() => {});
+          ).catch(() => { });
           return;
         } else {
           await ctx.reply(
             `⚠️ <b>Session Expired or Invalid</b>\n\n` +
             `Please return to the WebApp and tap "Connect Telegram" to generate a fresh link.`,
             { parse_mode: 'HTML' }
-          ).catch(() => {});
+          ).catch(() => { });
           return;
         }
       }
@@ -3404,7 +3470,7 @@ export function setupRoutes(bot: Telegraf): void {
 
         try {
           const card = await buildTokenCard(customTokenAddress, telegramId);
-          prewarmTradePath(telegramId, customTokenAddress).catch(() => {});
+          prewarmTradePath(telegramId, customTokenAddress).catch(() => { });
           await sendTokenCard(ctx, card);
           return;
         } catch (cardErr: any) {
@@ -3559,7 +3625,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x') || isSolanaAddress(tokenAddress))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
-            prewarmTradePath(telegramId, tokenAddress).catch(() => {});
+            prewarmTradePath(telegramId, tokenAddress).catch(() => { });
             await sendTokenCard(ctx, card);
 
             if (quickBuyAmount && isValidNearAccountId(tokenAddress)) {
@@ -3607,7 +3673,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (tokenAddress && (isValidNearAccountId(tokenAddress) || tokenAddress.startsWith('0x') || isSolanaAddress(tokenAddress))) {
           try {
             const card = await buildTokenCard(tokenAddress, telegramId);
-            prewarmTradePath(telegramId, tokenAddress).catch(() => {});
+            prewarmTradePath(telegramId, tokenAddress).catch(() => { });
             await sendTokenCard(ctx, card);
             return;
           } catch (cardErr: any) {
@@ -3675,7 +3741,7 @@ export function setupRoutes(bot: Telegraf): void {
           try {
             const card = await buildTokenCard(shareRecord.token_address, telegramId);
             // Prewarm trade path in background
-            prewarmTradePath(telegramId, shareRecord.token_address).catch(() => {});
+            prewarmTradePath(telegramId, shareRecord.token_address).catch(() => { });
             await sendTokenCard(ctx, card);
             return;
           } catch (cardErr: any) {
@@ -3689,7 +3755,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (resolvedAddress && (isValidNearAccountId(resolvedAddress) || resolvedAddress.startsWith('0x'))) {
           try {
             const card = await buildTokenCard(resolvedAddress, telegramId);
-            prewarmTradePath(telegramId, resolvedAddress).catch(() => {});
+            prewarmTradePath(telegramId, resolvedAddress).catch(() => { });
             await sendTokenCard(ctx, card);
             return;
           } catch (cardErr: any) {
@@ -3773,7 +3839,7 @@ export function setupRoutes(bot: Telegraf): void {
       const traders = await getAlphaTraders(user?.id);
       const myTraders = traders.filter(t => t.hasKey);
 
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       if (myTraders.length === 0) {
         await ctx.reply(
           `🔑 <b>No Active Viewing Keys</b>\n\n` +
@@ -3809,7 +3875,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       });
     } catch {
-      await ctx.answerCbQuery('Failed to load keys').catch(() => {});
+      await ctx.answerCbQuery('Failed to load keys').catch(() => { });
     }
   });
 
@@ -3821,24 +3887,24 @@ export function setupRoutes(bot: Telegraf): void {
       const { approveTelegramVerification } = await import('./authSession.js');
       const ok = await approveTelegramVerification(requestId, telegramId);
       if (ok) {
-        await ctx.answerCbQuery('✅ Connection Approved!').catch(() => {});
+        await ctx.answerCbQuery('✅ Connection Approved!').catch(() => { });
         await ctx.editMessageText(
           `✅ <b>WebApp Connection Approved!</b>\n\n` +
           `Your Telegram identity has been safely verified and paired with the RacerBot WebApp.\n\n` +
           `• You can return to your browser to view alpha feeds, copy-trading, and wallet balances.\n` +
           `• Your private keys remain 100% secure.`,
           { parse_mode: 'HTML' }
-        ).catch(() => {});
+        ).catch(() => { });
       } else {
-        await ctx.answerCbQuery('⚠️ Request expired or invalid').catch(() => {});
+        await ctx.answerCbQuery('⚠️ Request expired or invalid').catch(() => { });
         await ctx.editMessageText(
           `⚠️ <b>Connection Request Expired</b>\n\n` +
           `This connection request has expired or does not match this Telegram account.`,
           { parse_mode: 'HTML' }
-        ).catch(() => {});
+        ).catch(() => { });
       }
     } catch (err: any) {
-      await ctx.answerCbQuery('Error processing approval').catch(() => {});
+      await ctx.answerCbQuery('Error processing approval').catch(() => { });
     }
   });
 
@@ -3848,25 +3914,25 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const { denyTelegramVerification } = await import('./authSession.js');
       await denyTelegramVerification(requestId, telegramId);
-      await ctx.answerCbQuery('⛔ Connection Rejected').catch(() => {});
+      await ctx.answerCbQuery('⛔ Connection Rejected').catch(() => { });
       await ctx.editMessageText(
         `⛔ <b>WebApp Connection Rejected</b>\n\n` +
         `This connection attempt was blocked. No browser session or external wallet was granted access to your account.`,
         { parse_mode: 'HTML' }
-      ).catch(() => {});
+      ).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
     }
   });
 
   // ── Main Menu Actions ─────────────────────────────────────────────────────
   bot.action('menu_home', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Main Menu').catch(() => {});
+    await ctx.answerCbQuery('Main Menu').catch(() => { });
     try {
       const menu = await buildMainMenu(telegramId, false);
       await ctx.editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
       });
     } catch {
       // handled
@@ -3875,7 +3941,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── Buy Alerts Panel ──────────────────────────────────────────────────────
   bot.action('menu_buyalerts', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const botUsername = ctx.botInfo?.username || 'racertradingbot';
     // ?startgroup= prompts the user to pick a group/channel from their list
     const addToGroupUrl = `https://t.me/${botUsername}?startgroup=setup_buyalerts&admin=post_messages+edit_messages+delete_messages`;
@@ -3908,30 +3974,30 @@ export function setupRoutes(bot: Telegraf): void {
     ]);
 
     await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
-      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => {});
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => { });
     });
   });
 
   bot.action(['menu_refresh', 'menu_home_refresh'], async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('🔄 Refreshing balance...').catch(() => {});
+    await ctx.answerCbQuery('🔄 Refreshing balance...').catch(() => { });
     try {
       const menu = await buildMainMenu(telegramId, true);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
-  
+
   // ── Universal 37-chain deposit routes (NEAR Intents 1Click) ───────────────
   const handleMultichainDeposit = async (ctx: Context) => {
     if (isGroupChat(ctx)) {
@@ -3942,16 +4008,16 @@ export function setupRoutes(bot: Telegraf): void {
     const canEdit = typeof (ctx as any).editMessageText === 'function';
     if (canEdit && ctx.callbackQuery) {
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
       });
     } else {
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     }
   };
 
   // Direct SOL deposit: shows the user's own Solana wallet address (no bridge, no conversion).
   bot.action('dep_sol_direct', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const telegramId = ctx.from!.id;
     try {
       let user = await getUserByTelegramId(telegramId);
@@ -3976,9 +4042,9 @@ export function setupRoutes(bot: Telegraf): void {
             [cb('💳 Wallet', 'menu_wallet', 'primary'), cb('🔙 Back', 'menu_multichain_deposit', 'primary')],
           ]),
         }
-      ).catch(() => {});
+      ).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -3986,32 +4052,32 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('menu_multichain_deposit', handleMultichainDeposit);
 
   bot.action('noop', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
   });
 
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const cat = (ctx as any).match[1] as any;
     const menu = depositChainPicker(ctx.from?.id, cat);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_cat] editMessageText fallback:', err?.message);
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     });
   });
 
   bot.action(/^dep_chain:([a-zA-Z0-9_]+)(?::([0-9]+))?$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const chainId = (ctx as any).match[1];
     const page = (ctx as any).match[2] ? parseInt((ctx as any).match[2], 10) : 0;
     const menu = buildDepositTokenPickerMenu(chainId, page);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_chain] editMessageText fallback:', err?.message);
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     });
   });
 
   bot.action(/^dep_tok:([a-zA-Z0-9_]+)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const tokenKey = (ctx as any).match[1];
     const telegramId = ctx.from!.id;
 
@@ -4025,7 +4091,7 @@ export function setupRoutes(bot: Telegraf): void {
     const menu = buildDepositAmountPickerMenu(tokenKey);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_tok] editMessageText fallback:', err?.message);
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     });
   });
 
@@ -4037,7 +4103,7 @@ export function setupRoutes(bot: Telegraf): void {
       depositChainId: chainId,
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✍️ <b>Enter Custom Token for ${chainId.toUpperCase()}</b>\n\n` +
       `Please reply with the token contract address or symbol (e.g. 'USDC' or CA):\n\n` +
@@ -4048,7 +4114,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(/^dep_amt:([a-zA-Z0-9_]+):([0-9.]+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const tokenKey = (ctx as any).match[1];
     const amt = parseFloat((ctx as any).match[2]);
     await renderDepositQuoteCard(ctx, telegramId, tokenKey, amt);
@@ -4065,7 +4131,7 @@ export function setupRoutes(bot: Telegraf): void {
       depositTokenKey: tokenKey,
       expiresAt: Date.now() + 10 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✍️ <b>Enter Custom Amount for ${token?.symbol || 'Token'}</b>\n\n` +
       `⚡ <b>Lowest Deposit Amount:</b> <code>${minDeposit.formatted}</code>\n\n` +
@@ -4077,7 +4143,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(/^dep_check:(.+)$/, async (ctx) => {
     const depositId = (ctx as any).match[1];
-    await ctx.answerCbQuery('Checking deposit on-chain...').catch(() => {});
+    await ctx.answerCbQuery('Checking deposit on-chain...').catch(() => { });
     try {
       const dep = await getRacerDepositById(depositId);
       if (!dep) {
@@ -4087,7 +4153,7 @@ export function setupRoutes(bot: Telegraf): void {
       const check = await check1ClickDepositStatus(dep.deposit_address);
       if (check.status === 'SUCCESS') {
         await updateRacerDeposit(dep.deposit_id, { status: 'SUCCESS', tx_hash: check.txHash, completed_at: new Date() });
-        await unwrapUserWrapNear(dep.telegram_id).catch(() => {});
+        await unwrapUserWrapNear(dep.telegram_id).catch(() => { });
         await ctx.reply(
           `✅ <b>Deposit Confirmed &amp; Settled!</b>\n\n` +
           `Your funds have arrived, settled in NEAR, and have been auto-unwrapped to native NEAR.\n\n` +
@@ -4150,20 +4216,20 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(['menu_wallet', 'wallet', 'open_wallet'], async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     try {
       const wallet = await buildWalletMenu(telegramId);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit && ctx.callbackQuery) {
         await (ctx as any).editMessageText(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
-          await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+          await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => { });
         });
       } else {
-        await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+        await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => { });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -4172,14 +4238,14 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       const dash = buildSettingsDashboard(user);
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -4188,14 +4254,14 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       const dash = await buildSnipeDashboard(user);
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -4212,16 +4278,16 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       const dash = await buildCopyTradingDashboard(user);
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(async () => {
-        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -4229,13 +4295,13 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
     const activeTargets = targets.filter(t => t.status !== 'stopped');
     if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.reply(
         `⚠️ *Maximum Targets Reached*\n\n` +
         `You are currently monitoring *${activeTargets.length}/${MAX_COPY_TARGETS_PER_USER}* wallets.\n` +
@@ -4248,7 +4314,7 @@ export function setupRoutes(bot: Telegraf): void {
       action: 'copy_wallet',
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `👥 *Add Target Wallet*\n\n` +
       `Enter the wallet address to copy or track:\n` +
@@ -4269,7 +4335,7 @@ export function setupRoutes(bot: Telegraf): void {
     const walletKey = ctx.match![2];
     const wallet = resolveTokenAddressFromKey(walletKey);
     if (isUnresolvedKey(walletKey, wallet)) {
-      await ctx.answerCbQuery('Session expired. Please add the wallet again.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please add the wallet again.').catch(() => { });
       return;
     }
     const referrerKey = ctx.match![3] || '';
@@ -4279,12 +4345,12 @@ export function setupRoutes(bot: Telegraf): void {
 
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
 
       const targets = await getCopyTradeTargetsByUser(user.id).catch(() => []);
       const activeTargets = targets.filter(t => t.status !== 'stopped');
       if (activeTargets.length >= MAX_COPY_TARGETS_PER_USER) {
-        await ctx.answerCbQuery().catch(() => {});
+        await ctx.answerCbQuery().catch(() => { });
         await ctx.reply(`⚠️ Maximum limit of ${MAX_COPY_TARGETS_PER_USER} targets reached.`);
         return;
       }
@@ -4300,7 +4366,7 @@ export function setupRoutes(bot: Telegraf): void {
           max_slippage_pct: 5.0,
           max_daily_budget_near: null,
         });
-        await ctx.answerCbQuery('👀 Wallet Tracker Activated!').catch(() => {});
+        await ctx.answerCbQuery('👀 Wallet Tracker Activated!').catch(() => { });
         await ctx.reply(
           `👀 *Wallet Tracker Activated!*\n\n` +
           `🎯 *Target Wallet*: \`${target.target_wallet}\`\n` +
@@ -4324,7 +4390,7 @@ export function setupRoutes(bot: Telegraf): void {
         copyReferrerId: referrerId ?? undefined,
         expiresAt: Date.now() + 5 * 60_000,
       });
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const copyIsSol = isSolanaAddress(wallet);
       if (copyIsSol && !user.solana_address) {
         await ctx.reply('❌ Your Solana wallet is not ready yet. Send /start and try again.');
@@ -4333,13 +4399,13 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         copyIsSol
           ? `✅ Target wallet: \`${wallet}\` (Solana)\n\n💰 *How much SOL should I spend each time this wallet buys?*\n\n` +
-            `Reply with a number (e.g. \`0.2\`):\n_Allowed range: 0.01 – 1,000 SOL_`
+          `Reply with a number (e.g. \`0.2\`):\n_Allowed range: 0.01 – 1,000 SOL_`
           : `✅ Target wallet: \`${wallet}\`\n\n💰 *How much NEAR should I spend each time this wallet buys?*\n\n` +
-            `Reply with a number (e.g. \`2\`):\n_Allowed range: 0.1 – 10,000 NEAR_`,
+          `Reply with a number (e.g. \`2\`):\n_Allowed range: 0.1 – 10,000 NEAR_`,
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4348,17 +4414,17 @@ export function setupRoutes(bot: Telegraf): void {
     const targetId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       const targets = await getCopyTradeTargetsByUser(user.id);
       const target = targets.find(t => t.id === targetId);
-      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => { }); return; }
       const nextTrackOnly = !target.track_only;
       await updateCopyTradeTarget(targetId, { track_only: nextTrackOnly });
-      await ctx.answerCbQuery(`Switched to ${nextTrackOnly ? '👀 Wallet Tracker mode' : '⚡ Auto-Copy mode'}`).catch(() => {});
+      await ctx.answerCbQuery(`Switched to ${nextTrackOnly ? '👀 Wallet Tracker mode' : '⚡ Auto-Copy mode'}`).catch(() => { });
       const dash = await buildCopyTradingDashboard(user);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4367,17 +4433,17 @@ export function setupRoutes(bot: Telegraf): void {
     const targetId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       const targets = await getCopyTradeTargetsByUser(user.id);
       const target = targets.find(t => t.id === targetId);
-      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => { }); return; }
       const nextStatus = target.status === 'paused' ? 'active' : 'paused';
       await updateCopyTradeTargetStatus(targetId, nextStatus);
-      await ctx.answerCbQuery(`Target ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => {});
+      await ctx.answerCbQuery(`Target ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => { });
       const dash = await buildCopyTradingDashboard(user);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4386,13 +4452,13 @@ export function setupRoutes(bot: Telegraf): void {
     const targetId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       await updateCopyTradeTargetStatus(targetId, 'stopped');
-      await ctx.answerCbQuery('Target stopped').catch(() => {});
+      await ctx.answerCbQuery('Target stopped').catch(() => { });
       const dash = await buildCopyTradingDashboard(user);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4401,15 +4467,15 @@ export function setupRoutes(bot: Telegraf): void {
     const targetId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       const targets = await getCopyTradeTargetsByUser(user.id);
       const target = targets.find(t => t.id === targetId);
-      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => {}); return; }
+      if (!target) { await ctx.answerCbQuery('Target not found.').catch(() => { }); return; }
       // The wallet itself cannot travel: Telegram start parameters allow only 64 chars of [A-Za-z0-9_-]
       const shareDeepLink = `https://t.me/racertradingbot?start=${copyShareParam(target.id)}`;
       const shareText = `Copy trades from ${target.target_wallet} on RacerBot 🏎\n⚡ Automated instant execution on NEAR & SUI`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.reply(
         `📤 *Share Copy Trading Link*\n\n` +
         `Earn *5% of trading bot fees* when others copy trade via your link!\n\n` +
@@ -4424,7 +4490,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       );
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4435,13 +4501,13 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       const dash = await buildDcaDashboard(user);
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(async () => {
-        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+        await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
       });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
@@ -4452,14 +4518,14 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, {
       action: 'dca_token',
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `🔁 *DCA Order Setup (Step 1/3)*\n\n` +
       `Enter the token Contract Address (CA):\n` +
@@ -4475,7 +4541,7 @@ export function setupRoutes(bot: Telegraf): void {
     const rawTokenParam = (ctx as any).match[1];
     const tokenCA = resolveTokenAddressFromKey(rawTokenParam);
     const shortKey = getShortTokenKey(tokenCA);
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const dcaNative = isSolanaToken(tokenCA) ? 'SOL' : 'NEAR';
     await ctx.reply(
       `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
@@ -4502,7 +4568,7 @@ export function setupRoutes(bot: Telegraf): void {
       dcaTokenAddress: tokenCA,
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const isSolDca = isSolanaToken(tokenCA);
     const promptMsg = side === 'buy'
       ? (isSolDca
@@ -4519,7 +4585,7 @@ export function setupRoutes(bot: Telegraf): void {
     const intervalSecs = parseInt((ctx as any).match[1], 10);
     const pending = userPendingActions.get(telegramId);
     if (!pending || pending.action !== 'dca_interval') {
-      await ctx.answerCbQuery('Session expired. Please restart DCA setup.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please restart DCA setup.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, {
@@ -4528,7 +4594,7 @@ export function setupRoutes(bot: Telegraf): void {
       dcaInterval: intervalSecs,
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery(`Interval: ${formatDcaInterval(intervalSecs)}`).catch(() => {});
+    await ctx.answerCbQuery(`Interval: ${formatDcaInterval(intervalSecs)}`).catch(() => { });
     await ctx.reply(
       `⏱️ *Interval set to ${formatDcaInterval(intervalSecs)}*\n\n` +
       `🔢 *How many orders should be executed?*\n\n` +
@@ -4542,17 +4608,17 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       const orders = await getDcaOrdersByUser(user.id);
       const order = orders.find(o => o.id === orderId);
-      if (!order) { await ctx.answerCbQuery('Order not found.').catch(() => {}); return; }
+      if (!order) { await ctx.answerCbQuery('Order not found.').catch(() => { }); return; }
       const nextStatus = order.status === 'paused' ? 'active' : 'paused';
       await updateDcaOrderStatus(orderId, nextStatus);
-      await ctx.answerCbQuery(`DCA order ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => {});
+      await ctx.answerCbQuery(`DCA order ${nextStatus === 'active' ? 'resumed' : 'paused'}`).catch(() => { });
       const dash = await buildDcaDashboard(user);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4561,13 +4627,13 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = (ctx as any).match[1];
     try {
       const user = await getUserByTelegramId(telegramId);
-      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
       await updateDcaOrderStatus(orderId, 'cancelled');
-      await ctx.answerCbQuery('DCA order cancelled').catch(() => {});
+      await ctx.answerCbQuery('DCA order cancelled').catch(() => { });
       const dash = await buildDcaDashboard(user);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4597,7 +4663,7 @@ export function setupRoutes(bot: Telegraf): void {
     const rawKey = (ctx as any).match[1];
     const tokenCA = resolveTokenAddressFromKey(rawKey);
     const shortKey = getShortTokenKey(tokenCA);
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `🎯 *Limit Order — ${tokenCA}*\n\n` +
       `Choose order direction:`,
@@ -4627,7 +4693,7 @@ export function setupRoutes(bot: Telegraf): void {
       loConditionType: 'price', // default, overridden by next step
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✅ Direction: ${side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n\n` +
       `📐 *Choose the trigger condition:*`,
@@ -4651,7 +4717,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || !pending.loSide) {
-      await ctx.answerCbQuery('Session expired. Start again.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Start again.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, {
@@ -4659,7 +4725,7 @@ export function setupRoutes(bot: Telegraf): void {
       loConditionType: condType,
       expiresAt: Date.now() + 5 * 60_000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
 
     const dip = pending.loSide === 'buy' ? 'drops to' : 'rises to';
     const loIsSol = isSolanaToken(tokenCA);
@@ -4685,11 +4751,11 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || !pending.loAmount || !pending.loTargetValue || !pending.loTokenAddress) {
-      await ctx.answerCbQuery('Session expired. Start again.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Start again.').catch(() => { });
       return;
     }
     const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
 
     const expiryDurations: Record<string, number | null> = {
       '24h': 24 * 60 * 60 * 1000,
@@ -4734,10 +4800,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     const targetType: 'mcap' | 'price' | 'percent_offset' =
       pending.loConditionType === 'market_cap' ? 'mcap' :
-      pending.loConditionType === 'percent_change' ? 'percent_offset' : 'price';
+        pending.loConditionType === 'percent_change' ? 'percent_offset' : 'price';
 
     try {
-      await ctx.answerCbQuery('Creating limit order...').catch(() => {});
+      await ctx.answerCbQuery('Creating limit order...').catch(() => { });
       const order = await createLimitOrder({
         user_id: user.id,
         token_address: pending.loTokenAddress!,
@@ -4776,7 +4842,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
       );
     } catch (err: any) {
-      await ctx.answerCbQuery('').catch(() => {});
+      await ctx.answerCbQuery('').catch(() => { });
       await ctx.reply(`❌ Failed to create limit order: ${getUserFriendlyError(err)}`);
     }
   });
@@ -4785,11 +4851,11 @@ export function setupRoutes(bot: Telegraf): void {
   async function renderUserLimitOrders(ctx: any, telegramId: number) {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery('Run /start first.').catch(() => {});
-      else await ctx.reply('Run /start first.').catch(() => {});
+      if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery('Run /start first.').catch(() => { });
+      else await ctx.reply('Run /start first.').catch(() => { });
       return;
     }
-    if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery().catch(() => {});
+    if (typeof ctx.answerCbQuery === 'function') await ctx.answerCbQuery().catch(() => { });
 
     const orders = await getLimitOrdersByUser(user.id).catch(() => [] as LimitOrderRecord[]);
     const active = orders.filter(o => o.status === 'active');
@@ -4837,22 +4903,22 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = (ctx as any).match[1];
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
     try {
       await cancelLimitOrder(orderId, user.id);
-      await ctx.answerCbQuery('✅ Limit order cancelled.').catch(() => {});
+      await ctx.answerCbQuery('✅ Limit order cancelled.').catch(() => { });
       const orders = await getLimitOrdersByUser(user.id).catch(() => [] as LimitOrderRecord[]);
       const active = orders.filter(o => o.status === 'active');
       if (active.length === 0) {
         await ctx.editMessageText('📋 *Your Limit Orders*\n\nNo active limit orders.', {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([[cb('🔙 Back', 'menu_home', 'primary')]]).reply_markup,
-        } as any).catch(() => {});
+        } as any).catch(() => { });
       } else {
-        await ctx.answerCbQuery('Order cancelled — refresh list.').catch(() => {});
+        await ctx.answerCbQuery('Order cancelled — refresh list.').catch(() => { });
       }
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4872,7 +4938,7 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('racefleet_menu', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const telegramId = ctx.from!.id;
     try {
       const dashboard = await buildRaceFleetDashboard(telegramId);
@@ -4886,13 +4952,13 @@ export function setupRoutes(bot: Telegraf): void {
         });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   bot.action(['fleet_holdings', 'fleet_holdings_refresh'], async (ctx) => {
     const isRefresh = (ctx as any).callbackQuery?.data === 'fleet_holdings_refresh';
-    await ctx.answerCbQuery(isRefresh ? 'Refreshing Fleet Holdings & PnL...' : undefined).catch(() => {});
+    await ctx.answerCbQuery(isRefresh ? 'Refreshing Fleet Holdings & PnL...' : undefined).catch(() => { });
     const telegramId = ctx.from!.id;
     try {
       const view = await buildFleetHoldingsView(telegramId, isRefresh);
@@ -4906,7 +4972,7 @@ export function setupRoutes(bot: Telegraf): void {
         });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4919,19 +4985,19 @@ export function setupRoutes(bot: Telegraf): void {
         ...view.keyboard,
       });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
   bot.action(/^fleet_deploy:(\d+)$/, async (ctx) => {
     const count = parseInt((ctx as any).match[1], 10) || 10;
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery(`Deploying ${count} fleet wallets on NEAR...`).catch(() => {});
+    await ctx.answerCbQuery(`Deploying ${count} fleet wallets on NEAR...`).catch(() => { });
     const loadingMsg = await ctx.reply(`⏳ <b>Deploying RaceFleet (${count} Wallets)...</b>\n\n• Deducting 2 NEAR subscription fee\n• Initializing named subaccounts on NEAR mainnet\n• Generating cryptographic access keys\n\n<i>This takes ~3–5 seconds...</i>`, { parse_mode: 'HTML' });
 
     try {
       const res = await deployRaceFleet(telegramId, count);
-      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => { });
 
       if (res.success && res.fleet) {
         await ctx.reply(
@@ -4952,13 +5018,13 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ <b>Deployment Failed:</b>\n\n${res.reason || 'Unknown error'}`, { parse_mode: 'HTML' });
       }
     } catch (err: any) {
-      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Deployment error: ${getUserFriendlyError(err)}`);
     }
   });
 
   bot.action(/^fleet_cockpit:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const shortKey = (ctx as any).match[1];
     const tokenAddress = resolveTokenAddressFromKey(shortKey);
     const telegramId = ctx.from!.id;
@@ -4979,7 +5045,7 @@ export function setupRoutes(bot: Telegraf): void {
         });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -4991,22 +5057,22 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress || isNaN(amt) || amt <= 0) {
-      await ctx.answerCbQuery('Invalid buy parameters').catch(() => {});
+      await ctx.answerCbQuery('Invalid buy parameters').catch(() => { });
       return;
     }
 
     const user = await getUserByTelegramId(telegramId).catch(() => null);
-    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => {}); return; }
+    if (!user) { await ctx.answerCbQuery('Run /start first.').catch(() => { }); return; }
     const fleet = await getRaceFleetByUserId(user.id);
-    if (!fleet) { await ctx.answerCbQuery('No active RaceFleet').catch(() => {}); return; }
+    if (!fleet) { await ctx.answerCbQuery('No active RaceFleet').catch(() => { }); return; }
 
     const fUnit = snipeUnit(tokenAddress);
-    await ctx.answerCbQuery(`Firing bundle buy across ${fleet.wallet_count} wallets...`).catch(() => {});
+    await ctx.answerCbQuery(`Firing bundle buy across ${fleet.wallet_count} wallets...`).catch(() => { });
     const executingMsg = await ctx.reply(`🏎️ <b>Firing Coordinated Bundle Buy...</b>\n\nSpending <b>${amt} ${fUnit} per wallet</b> across ${fleet.wallet_count} fleet wallets.\n<i>Broadcasting parallel on-chain transactions...</i>`, { parse_mode: 'HTML' });
 
     try {
       const res = await executeFleetBundleBuy(fleet.id, tokenAddress, amt, 3.0);
-      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => {});
+      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => { });
 
       if (res.success) {
         await ctx.reply(
@@ -5029,7 +5095,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ <b>Bundle Buy Failed:</b>\n\n${res.errors[0] || 'Unknown error'}`, { parse_mode: 'HTML' });
       }
     } catch (err: any) {
-      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => {});
+      if (executingMsg) await ctx.deleteMessage(executingMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Execution error: ${getUserFriendlyError(err)}`);
     }
   });
@@ -5040,13 +5106,13 @@ export function setupRoutes(bot: Telegraf): void {
     const shortKey = (ctx as any).match[1];
     const tokenAddress = resolveTokenAddressFromKey(shortKey);
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user || !tokenAddress) return;
     const fleet = await getRaceFleetByUserId(user.id).catch(() => null);
     if (!fleet) {
       const promo = buildFleetPromoCard();
-      await ctx.reply(promo.text, { parse_mode: 'HTML', ...promo.keyboard } as any).catch(() => {});
+      await ctx.reply(promo.text, { parse_mode: 'HTML', ...promo.keyboard } as any).catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, { action: 'fleet_custom_buy', fleetTokenAddress: tokenAddress, expiresAt: Date.now() + 180_000 });
@@ -5057,19 +5123,19 @@ export function setupRoutes(bot: Telegraf): void {
       `All ${fleet.wallet_count} fleet wallets buy at the same moment.\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
-    ).catch(() => {});
+    ).catch(() => { });
   });
 
   bot.action(/^fleet_sell_prompt:(.+)$/, async (ctx) => {
     const shortKey = (ctx as any).match[1];
     const tokenAddress = resolveTokenAddressFromKey(shortKey);
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user || !tokenAddress) return;
     const fleet = await getRaceFleetByUserId(user.id).catch(() => null);
     if (!fleet) {
-      await ctx.reply('❌ No RaceFleet found.').catch(() => {});
+      await ctx.reply('❌ No RaceFleet found.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, { action: 'fleet_sell_pct', fleetTokenAddress: tokenAddress, expiresAt: Date.now() + 180_000 });
@@ -5079,7 +5145,7 @@ export function setupRoutes(bot: Telegraf): void {
       `Every fleet wallet sells at the same moment.\n\n` +
       `<i>Type /cancel to abort.</i>`,
       { parse_mode: 'HTML' }
-    ).catch(() => {});
+    ).catch(() => { });
   });
 
   bot.action(/^fleet_custom_buy:(.+)$/, async (ctx) => {
@@ -5088,7 +5154,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      await ctx.answerCbQuery('Token address not found').catch(() => { });
       return;
     }
 
@@ -5114,7 +5180,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      await ctx.answerCbQuery('Token address not found').catch(() => { });
       return;
     }
 
@@ -5139,7 +5205,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token not found').catch(() => {});
+      await ctx.answerCbQuery('Token not found').catch(() => { });
       return;
     }
 
@@ -5150,12 +5216,12 @@ export function setupRoutes(bot: Telegraf): void {
 
     const spUnit = snipeUnit(tokenAddress);
     const spAmt = spUnit === 'SOL' ? 0.1 : 1.0;
-    await ctx.answerCbQuery(`Executing Protected Fleet Snipe (${spAmt} ${spUnit} each + 50% TP / 15% SL)...`).catch(() => {});
+    await ctx.answerCbQuery(`Executing Protected Fleet Snipe (${spAmt} ${spUnit} each + 50% TP / 15% SL)...`).catch(() => { });
     const loadingMsg = await ctx.reply(`🏎️ <b>Executing Protected Fleet Snipe...</b>\n\n1. Buying ${spAmt} ${spUnit} per wallet across ${fleet.wallet_count} wallets\n2. Attaching automated +50% Take Profit\n3. Attaching automated -15% Stop Loss`, { parse_mode: 'HTML' });
 
     try {
       const buyRes = await executeFleetBundleBuy(fleet.id, tokenAddress, spAmt, 3.0);
-      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => { });
 
       if (buyRes.success) {
         // TP/SL is measured from the entry price, so it must be stored (target_value);
@@ -5194,7 +5260,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ Snipe failed: ${buyRes.errors[0] || 'Unknown error'}`);
       }
     } catch (err: any) {
-      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+      if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Error: ${getUserFriendlyError(err)}`);
     }
   });
@@ -5206,7 +5272,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      await ctx.answerCbQuery('Token address not found').catch(() => { });
       return;
     }
 
@@ -5215,12 +5281,12 @@ export function setupRoutes(bot: Telegraf): void {
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) return;
 
-    await ctx.answerCbQuery(`Selling ${pct}% across all ${fleet.wallet_count} fleet wallets...`).catch(() => {});
+    await ctx.answerCbQuery(`Selling ${pct}% across all ${fleet.wallet_count} fleet wallets...`).catch(() => { });
     const statusMsg = await ctx.reply(`🔴 <b>Executing Coordinated Bundle Sell (${pct}%)...</b>\n\n<i>Swapping tokens back to ${snipeUnit(tokenAddress)} in parallel...</i>`, { parse_mode: 'HTML' });
 
     try {
       const res = await executeFleetBundleSell(fleet.id, tokenAddress, pct, 3.0);
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
 
       if (res.success) {
         await ctx.reply(
@@ -5240,7 +5306,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ Sell execution failed: ${res.errors[0] || 'No tokens available to sell'}`);
       }
     } catch (err: any) {
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Execution error: ${getUserFriendlyError(err)}`);
     }
   });
@@ -5262,12 +5328,12 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('fleet_sweep_prompt', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Sweeping all fleet funds to main wallet...').catch(() => {});
+    await ctx.answerCbQuery('Sweeping all fleet funds to main wallet...').catch(() => { });
     const statusMsg = await ctx.reply('⏳ <b>Sweeping all fleet balances back to main wallet...</b>', { parse_mode: 'HTML' });
 
     try {
       const res = await sweepFleetFunds(telegramId);
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
 
       if (res.success) {
         await ctx.reply(
@@ -5287,13 +5353,13 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`⚠️ No funds to sweep (or fleet wallets already empty).`);
       }
     } catch (err: any) {
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Sweep failed: ${getUserFriendlyError(err)}`);
     }
   });
 
   bot.action('fleet_wallets_list', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) return;
@@ -5328,7 +5394,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('fleet_export_keys', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Decrypting fleet private keys...').catch(() => {});
+    await ctx.answerCbQuery('Decrypting fleet private keys...').catch(() => { });
 
     try {
       const res = await exportFleetKeys(telegramId);
@@ -5370,7 +5436,7 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
 
     if (!tokenAddress) {
-      await ctx.answerCbQuery('Token address not found').catch(() => {});
+      await ctx.answerCbQuery('Token address not found').catch(() => { });
       return;
     }
 
@@ -5458,7 +5524,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (!user) return;
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) {
-      await ctx.answerCbQuery('No active RaceFleet found').catch(() => {});
+      await ctx.answerCbQuery('No active RaceFleet found').catch(() => { });
       return;
     }
 
@@ -5490,12 +5556,12 @@ export function setupRoutes(bot: Telegraf): void {
 
     const vbUnit = snipeUnit(tokenAddress);
     const vbAmt = vbUnit === 'SOL' ? 0.02 : 0.1;
-    await ctx.answerCbQuery('Generating volume bump...').catch(() => {});
+    await ctx.answerCbQuery('Generating volume bump...').catch(() => { });
     const msg = await ctx.reply(`🌊 <b>Running Volume Bump across ${fleet.wallet_count} wallets...</b>\n\nBuying ${vbAmt} ${vbUnit} per wallet to activate transaction count on-chain.`, { parse_mode: 'HTML' });
 
     try {
       const res = await executeFleetBundleBuy(fleet.id, tokenAddress, vbAmt, 3.0);
-      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => {});
+      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => { });
       if (res.success) {
         await ctx.reply(
           `✅ <b>Volume Bump Complete!</b>\n\n` +
@@ -5514,7 +5580,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ Volume bump failed: ${res.errors[0] || 'Unknown error'}`);
       }
     } catch (err: any) {
-      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => {});
+      if (msg) await ctx.deleteMessage(msg.message_id).catch(() => { });
       await ctx.reply(`❌ Error: ${getUserFriendlyError(err)}`);
     }
   });
@@ -5570,7 +5636,7 @@ export function setupRoutes(bot: Telegraf): void {
     const fleet = await getRaceFleetByUserId(user.id);
     if (!fleet) return;
 
-    await ctx.answerCbQuery('Processing renewal payment...').catch(() => {});
+    await ctx.answerCbQuery('Processing renewal payment...').catch(() => { });
     try {
       await withdrawFunds(telegramId, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
       const updated = await renewRaceFleet(fleet.id, 30);
@@ -5594,7 +5660,7 @@ export function setupRoutes(bot: Telegraf): void {
     const count = parseInt((ctx as any).match[1], 10) || 5;
     const telegramId = ctx.from!.id;
     const feeSol = await getFleetFeeInSol().catch(() => null);
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     if (!feeSol) {
       await ctx.reply('❌ Price feed unavailable right now. Please try again in a minute.');
       return;
@@ -5618,14 +5684,14 @@ export function setupRoutes(bot: Telegraf): void {
     const count = parseInt((ctx as any).match[1], 10) || 5;
     const telegramId = ctx.from!.id;
     if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_deploy_sol', 'buy')))) {
-      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      await ctx.answerCbQuery('Already processing…').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery('Paying subscription in SOL...').catch(() => {});
+    await ctx.answerCbQuery('Paying subscription in SOL...').catch(() => { });
     const loading = await ctx.reply('⏳ <b>Paying subscription and creating your Solana fleet wallets...</b>', { parse_mode: 'HTML' }).catch(() => null);
     try {
       const res = await deployRaceFleetWithSol(telegramId, count);
-      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => { });
       if (res.success && res.fleet) {
         await ctx.reply(
           `🚀 <b>RaceFleet Deployed on Solana!</b>\n\n` +
@@ -5646,7 +5712,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(`❌ <b>Deployment Failed:</b>\n\n${res.reason || 'Unknown error'}`, { parse_mode: 'HTML' });
       }
     } catch (err: any) {
-      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => { });
       await ctx.reply(`❌ Deployment error: ${getUserFriendlyError(err)}`);
     } finally {
       releaseInFlight(inFlightKey(telegramId, 'fleet_deploy_sol', 'buy'));
@@ -5655,7 +5721,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('fleet_fund_sol_prompt', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     userPendingActions.set(telegramId, { action: 'fleet_fund_sol_amt', expiresAt: Date.now() + 180_000 });
     await ctx.reply(
       `📥 <b>Fund Your Solana Fleet</b>\n\n` +
@@ -5669,14 +5735,14 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('fleet_sweep_sol', async (ctx) => {
     const telegramId = ctx.from!.id;
     if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_sweep_sol', 'buy')))) {
-      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      await ctx.answerCbQuery('Already processing…').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery('Sweeping Solana fleet to main wallet...').catch(() => {});
+    await ctx.answerCbQuery('Sweeping Solana fleet to main wallet...').catch(() => { });
     const statusMsg = await ctx.reply('⏳ <b>Sweeping all Solana fleet SOL back to your main wallet...</b>', { parse_mode: 'HTML' }).catch(() => null);
     try {
       const res = await sweepSolanaFleet(telegramId);
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
       if (res.success) {
         await ctx.reply(
           `🧹 <b>Solana Fleet Sweep Complete!</b>\n\n` +
@@ -5695,7 +5761,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(res.reason ? `⚠️ ${res.reason}` : '⚠️ No SOL to sweep (Solana fleet wallets are already empty).');
       }
     } catch (err: any) {
-      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
+      if (statusMsg) await ctx.deleteMessage(statusMsg.message_id).catch(() => { });
       await ctx.reply(`❌ Sweep failed: ${getUserFriendlyError(err)}`);
     } finally {
       releaseInFlight(inFlightKey(telegramId, 'fleet_sweep_sol', 'buy'));
@@ -5703,7 +5769,7 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   bot.action('fleet_renew_sol_prompt', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const feeSol = await getFleetFeeInSol().catch(() => null);
     if (!feeSol) {
       await ctx.reply('❌ Price feed unavailable right now. Please try again in a minute.');
@@ -5726,10 +5792,10 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('fleet_renew_sol_confirm', async (ctx) => {
     const telegramId = ctx.from!.id;
     if (!(await tryAcquireInFlight(inFlightKey(telegramId, 'fleet_renew_sol', 'buy')))) {
-      await ctx.answerCbQuery('Already processing…').catch(() => {});
+      await ctx.answerCbQuery('Already processing…').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery('Processing SOL renewal...').catch(() => {});
+    await ctx.answerCbQuery('Processing SOL renewal...').catch(() => { });
     try {
       const res = await renewRaceFleetWithSol(telegramId);
       if (res.success && res.expiresAt) {
@@ -5873,12 +5939,12 @@ export function setupRoutes(bot: Telegraf): void {
   ): Promise<void> {
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.reply('Use /start to set up your wallet first.').catch(() => {});
+      await ctx.reply('Use /start to set up your wallet first.').catch(() => { });
       return;
     }
     const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
     if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
-      await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`).catch(() => {});
+      await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`).catch(() => { });
       return;
     }
 
@@ -5891,7 +5957,7 @@ export function setupRoutes(bot: Telegraf): void {
     });
 
     if (user && !isSolanaAddress(tokenAddress)) {
-      prewarmStorageDeposit(user, tokenAddress).catch(() => {});
+      prewarmStorageDeposit(user, tokenAddress).catch(() => { });
     }
 
     // If a scheduled future time was chosen, do NOT fire immediately even if tradeable.
@@ -5919,7 +5985,7 @@ export function setupRoutes(bot: Telegraf): void {
             ],
           },
         }
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
@@ -5934,19 +6000,19 @@ export function setupRoutes(bot: Telegraf): void {
       const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
       try {
         const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => {});
-        await markSnipeOrderResult(order.id, true).catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+        if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => { });
+        await markSnipeOrderResult(order.id, true).catch(() => { });
         await ctx.reply(res.message, {
           parse_mode: 'Markdown',
           reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-        }).catch(() => {});
+        }).catch(() => { });
         if (res.positionId) {
-          await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+          await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => { });
         }
       } catch (err: any) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+        if (triggerId) await markSnipeTriggerFailed(triggerId, err?.message ?? 'buy_failed').catch(() => { });
         const msg = err?.message ?? '';
         const isAwaitingLiq = /no liquidity|not yet tradable|reserves.*positive|bonding phase/i.test(msg);
         if (isAwaitingLiq) {
@@ -5956,10 +6022,10 @@ export function setupRoutes(bot: Telegraf): void {
             `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n\n` +
             `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
             { parse_mode: 'Markdown' }
-          ).catch(() => {});
+          ).catch(() => { });
         } else {
-          await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => {});
-          await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`).catch(() => {});
+          await markSnipeOrderResult(order.id, false, err?.message ?? 'buy_failed').catch(() => { });
+          await ctx.reply(`❌ Snipe failed: ${getUserFriendlyError(err)}`).catch(() => { });
         }
       }
     } else {
@@ -5977,7 +6043,7 @@ export function setupRoutes(bot: Telegraf): void {
             ],
           },
         }
-      ).catch(() => {});
+      ).catch(() => { });
     }
   }
 
@@ -5991,10 +6057,10 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
     const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
     if (!tokenAddress || finalAmt <= 0) {
-      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await completeSnipeOrderCreation(ctx, telegramId, tokenAddress, finalAmt, null);
   });
 
@@ -6009,10 +6075,10 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
     const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
     if (!tokenAddress || finalAmt <= 0) {
-      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const executeAfter = new Date(Date.now() + mins * 60_000);
     await completeSnipeOrderCreation(ctx, telegramId, tokenAddress, finalAmt, executeAfter);
   });
@@ -6025,7 +6091,7 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = pending?.tokenAddress || cache?.tokenAddress;
     const finalAmt = isNaN(amt) ? (pending?.snipeAmount || cache?.amt || 0) : amt;
     if (!tokenAddress || finalAmt <= 0) {
-      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please start over.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, {
@@ -6037,7 +6103,7 @@ export function setupRoutes(bot: Telegraf): void {
     if (cache) {
       cache.expiresAt = Date.now() + 600_000;
     }
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const currentUtc = formatUtcTime();
     await ctx.reply(
       `🕒 *Enter Scheduled Time (UTC)*\n\n` +
@@ -6051,16 +6117,16 @@ export function setupRoutes(bot: Telegraf): void {
       `• \`2026-10-08 19:23\` (specific UTC date & time)\n\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
-    ).catch(() => {});
+    ).catch(() => { });
   });
 
   bot.action('snipe_time:cancel', async (ctx) => {
     const telegramId = ctx.from!.id;
     userPendingActions.delete(telegramId);
     snipeSetupCache.delete(telegramId);
-    await ctx.answerCbQuery('Cancelled.').catch(() => {});
+    await ctx.answerCbQuery('Cancelled.').catch(() => { });
     await ctx.editMessageText('❌ Snipe order setup cancelled.').catch(async () => {
-      await ctx.reply('❌ Snipe order setup cancelled.').catch(() => {});
+      await ctx.reply('❌ Snipe order setup cancelled.').catch(() => { });
     });
   });
 
@@ -6068,16 +6134,16 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
     if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
-      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `🎯 *Snipe by Token CA*\n\n` +
       `Reply with the token contract address:\n` +
@@ -6095,16 +6161,16 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
     if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
-      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress, expiresAt: Date.now() + 120_000 });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const quickIsSol = isSolanaAddress(tokenAddress);
     const meta = quickIsSol
       ? await getSolanaTokenInfo(tokenAddress).catch(() => null)
@@ -6123,16 +6189,16 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const activeCount = await countActiveSnipeOrders(user.id).catch(() => 0);
     if (activeCount >= MAX_ACTIVE_SNIPE_ORDERS_PER_USER) {
-      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => {});
+      await ctx.answerCbQuery(`Max ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders — cancel one first.`).catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, { action: 'snipe_dev_addr', expiresAt: Date.now() + 120_000 });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `👤 *Snipe by Deployer*\n\n` +
       `Reply with the dev's wallet address:\n` +
@@ -6148,11 +6214,11 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const orders = await getSnipeOrdersByUser(user.id).catch(() => []);
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     if (orders.length === 0) {
       await ctx.reply(
         `📋 *Snipe Orders*\n\n` +
@@ -6205,7 +6271,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     const text = `📋 *Snipe Orders (${orders.length})*\n\nTap any order below to view details or manage:\n\n` + lines.join('\n');
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(async () => {
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => {});
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => { });
     });
   });
 
@@ -6214,11 +6280,11 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = ctx.match![1];
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const o = await getSnipeOrderById(orderId, user.id).catch(() => null);
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     if (!o) {
       await ctx.reply('❌ Snipe order not found.', {
         reply_markup: { inline_keyboard: [[cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary')]] },
@@ -6236,8 +6302,8 @@ export function setupRoutes(bot: Telegraf): void {
     const dateStr = o.created_at ? new Date(o.created_at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'N/A';
     const timingStr = o.execute_after
       ? (new Date(o.execute_after) > new Date()
-          ? `⏰ Scheduled for ${formatUtcDateTime(new Date(o.execute_after))}`
-          : `⏰ Triggered after ${formatUtcDateTime(new Date(o.execute_after))}`)
+        ? `⏰ Scheduled for ${formatUtcDateTime(new Date(o.execute_after))}`
+        : `⏰ Triggered after ${formatUtcDateTime(new Date(o.execute_after))}`)
       : '⚡ Immediate on Liquidity';
 
     let errText = '';
@@ -6267,7 +6333,7 @@ export function setupRoutes(bot: Telegraf): void {
     ]);
 
     await ctx.editMessageText(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(async () => {
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => {});
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }).catch(() => { });
     });
   });
 
@@ -6276,11 +6342,11 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = ctx.match![1];
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const ok = await cancelSnipeOrder(orderId, user.id).catch(() => false);
-    await ctx.answerCbQuery(ok ? 'Snipe order cancelled.' : 'Order not found or already closed.').catch(() => {});
+    await ctx.answerCbQuery(ok ? 'Snipe order cancelled.' : 'Order not found or already closed.').catch(() => { });
     const buttons = [
       [cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
     ];
@@ -6292,7 +6358,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply('✅ *Snipe Order Cancelled Successfully.*', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: buttons },
-        }).catch(() => {});
+        }).catch(() => { });
       });
     }
   });
@@ -6302,11 +6368,11 @@ export function setupRoutes(bot: Telegraf): void {
     const orderId = ctx.match![1];
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const ok = await deleteSnipeOrder(orderId, user.id).catch(() => false);
-    await ctx.answerCbQuery(ok ? 'Order removed.' : 'Order not found.').catch(() => {});
+    await ctx.answerCbQuery(ok ? 'Order removed.' : 'Order not found.').catch(() => { });
     const buttons = [
       [cb('📋 Back to Snipe Orders', 'snipe_orders', 'primary'), cb('🎯 Snipe Rules', 'menu_snipe', 'primary')],
     ];
@@ -6318,7 +6384,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply('🗑️ *Order Removed from History.*', {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: buttons },
-        }).catch(() => {});
+        }).catch(() => { });
       });
     }
   });
@@ -6327,12 +6393,12 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const view = await buildPointsView(telegramId);
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.editMessageText(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(async () => {
-        await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+        await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -6340,9 +6406,9 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const view = await buildPointsView(telegramId);
-      await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+      await ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(getUserFriendlyError(err)).catch(() => {});
+      await ctx.reply(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -6450,7 +6516,7 @@ export function setupRoutes(bot: Telegraf): void {
               status: 'closed',
               closed_at: new Date(),
               quantity_held: '0',
-            }).catch(() => {});
+            }).catch(() => { });
             console.log(`[HOLDINGS] Cleared confirmed zero balance token ${pos.token_address} (user ${user.id})`);
             continue;
           } else if (rawBal && rawBal !== pos.quantity_held) {
@@ -6458,7 +6524,7 @@ export function setupRoutes(bot: Telegraf): void {
             updatePosition({
               position_id: pos.id,
               quantity_held: rawBal,
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
         activePositions.push(pos);
@@ -6505,10 +6571,10 @@ export function setupRoutes(bot: Telegraf): void {
       const nativeUsdRate = isSolanaPosH
         ? (info?.sol_usd || info?.near_usd || 150)
         : isStarknetPos
-        ? (info?.strk_usd || 0.12)
-        : isSuiPos
-        ? (info?.sui_usd || 2.0)
-        : (info?.near_usd || 4.3);
+          ? (info?.strk_usd || 0.12)
+          : isSuiPos
+            ? (info?.sui_usd || 2.0)
+            : (info?.near_usd || 4.3);
 
       let humanQuantity = 0;
       try {
@@ -6530,7 +6596,7 @@ export function setupRoutes(bot: Telegraf): void {
       // If quantity is negligible or value is < $0.001 while quantity is tiny (< 0.000001),
       // this is sold dust. Auto-close position in background and omit from holdings list!
       let rawBigCheck = 0n;
-      try { rawBigCheck = BigInt((pos.quantity_held || '0').split('.')[0]); } catch {}
+      try { rawBigCheck = BigInt((pos.quantity_held || '0').split('.')[0]); } catch { }
       const isDust = rawBigCheck <= 0n || humanQuantity <= 0 || (currentPrice > 0 && tokenValueUsd < 0.001 && humanQuantity < 0.000001);
       if (isDust) {
         updatePosition({
@@ -6538,7 +6604,7 @@ export function setupRoutes(bot: Telegraf): void {
           status: 'closed',
           closed_at: new Date(),
           quantity_held: '0',
-        }).catch(() => {});
+        }).catch(() => { });
         return null;
       }
 
@@ -6593,7 +6659,7 @@ export function setupRoutes(bot: Telegraf): void {
           updatePosition({
             position_id: pos.id,
             avg_entry_price: fillAvgEntry.toString(),
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } else if ((entryPrice <= 0 || entryPrice > 1e6) && currentPrice > 0) {
         entryPrice = currentPrice;
@@ -6601,7 +6667,7 @@ export function setupRoutes(bot: Telegraf): void {
         updatePosition({
           position_id: pos.id,
           avg_entry_price: currentPrice.toString(),
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       let pnlDisplay = '+0.0%';
@@ -6701,20 +6767,20 @@ export function setupRoutes(bot: Telegraf): void {
       const valStr = item.tokenValueUsd >= 1000
         ? `$${(item.tokenValueUsd / 1000).toFixed(2)}K`
         : item.tokenValueUsd >= 0.01
-        ? `$${item.tokenValueUsd.toFixed(2)}`
-        : item.tokenValueUsd > 0
-        ? formatCryptoPrice(item.tokenValueUsd, '$')
-        : '$0.00';
+          ? `$${item.tokenValueUsd.toFixed(2)}`
+          : item.tokenValueUsd > 0
+            ? formatCryptoPrice(item.tokenValueUsd, '$')
+            : '$0.00';
       return `${item.emoji} *${item.displayLabel}*: \`${item.formattedQty}\` • \`${valStr}\` (${item.pnlDisplay})`;
     }).join('\n');
 
     const totalUsdDisplay = totalPortfolioValueUsd >= 1000
       ? `$${(totalPortfolioValueUsd / 1000).toFixed(2)}K`
       : totalPortfolioValueUsd >= 0.01
-      ? `$${totalPortfolioValueUsd.toFixed(2)}`
-      : totalPortfolioValueUsd > 0
-      ? formatCryptoPrice(totalPortfolioValueUsd, '$')
-      : `$0.00`;
+        ? `$${totalPortfolioValueUsd.toFixed(2)}`
+        : totalPortfolioValueUsd > 0
+          ? formatCryptoPrice(totalPortfolioValueUsd, '$')
+          : `$0.00`;
 
     const pageHeader = totalPages > 1 ? ` (Page ${currentPage + 1}/${totalPages})` : '';
     const msg =
@@ -6745,15 +6811,15 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
         if (typeof (ctx as any).answerCbQuery === 'function') {
-          await (ctx as any).answerCbQuery('Please run /start first.').catch(() => {});
+          await (ctx as any).answerCbQuery('Please run /start first.').catch(() => { });
         } else {
-          await ctx.reply('Please run /start first.').catch(() => {});
+          await ctx.reply('Please run /start first.').catch(() => { });
         }
         return;
       }
 
       if (typeof (ctx as any).answerCbQuery === 'function') {
-        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing...' : '💼 Loading holdings...').catch(() => {});
+        await (ctx as any).answerCbQuery(isRefresh ? '🔄 Refreshing...' : '💼 Loading holdings...').catch(() => { });
       }
 
       // 1. Build holdings view immediately (fast paint without blocking on background scans)
@@ -6764,10 +6830,10 @@ export function setupRoutes(bot: Telegraf): void {
         await (ctx as any).editMessageText(view.msg, { parse_mode: 'Markdown', ...view.keyboard })
           .catch(async (err: any) => {
             if (err?.message?.includes('message is not modified')) return;
-            await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+            await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => { });
           });
       } else {
-        await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+        await ctx.reply(view.msg, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => { });
       }
 
       // 2. Background wallet deposit sync (detached — does not delay rendering)
@@ -6775,7 +6841,7 @@ export function setupRoutes(bot: Telegraf): void {
         console.warn(`[HOLDINGS] Background deposit sync error for ${user.subaccount_id}:`, err?.message || err);
       });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   }
 
@@ -6784,36 +6850,36 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       await handleHoldings(ctx, false, 0);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   bot.action(/^holdings_page:(\d+)$/, async (ctx) => {
     try {
       const page = parseInt(ctx.match![1], 10) || 0;
-      await (ctx as any).answerCbQuery?.().catch(() => {});
+      await (ctx as any).answerCbQuery?.().catch(() => { });
       await handleHoldings(ctx, false, page);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   bot.action(/^refresh_holdings(?::(\d+))?$/, async (ctx) => {
     try {
       const page = ctx.match?.[1] ? parseInt(ctx.match[1], 10) : 0;
-      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => { });
       await handleHoldings(ctx, true, page);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   bot.action('menu_holdings_refresh', async (ctx) => {
     try {
-      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => { });
       await handleHoldings(ctx, true, 0);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -6821,14 +6887,14 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       await handleHoldings(ctx, false, 0);
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
   // ── import_token_prompt — Prompt user to paste token CA ───────────────────────
   bot.action('import_token_prompt', async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const telegramId = ctx.from!.id;
       userPendingActions.set(telegramId, {
         action: 'import_token',
@@ -6843,21 +6909,21 @@ export function setupRoutes(bot: Telegraf): void {
         '• *Starknet*: `0x0...`\n\n' +
         '_Send the address within 2 minutes to import it into your holdings._',
         { parse_mode: 'Markdown' }
-      ).catch(() => {});
+      ).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   // ── token_detail — Individual token detail modal with PNL card ────────────────
   bot.action(/^token_detail:([^:]+)(?::([01]))?$/, async (ctx) => {
     const positionId = ctx.match![1];
-    const nwParam    = ctx.match![2];
+    const nwParam = ctx.match![2];
     const telegramId = ctx.from!.id;
     try {
       const user = await getUserByTelegramId(telegramId);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
 
@@ -6865,7 +6931,7 @@ export function setupRoutes(bot: Telegraf): void {
         ? nwParam === '1'
         : Boolean(user.show_net_worth_on_card);
 
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const positions = await getOpenPositions(user.id).catch(() => []);
       const position = positions.find(p => p.id === positionId);
       if (!position) {
@@ -6884,7 +6950,7 @@ export function setupRoutes(bot: Telegraf): void {
         }
         await ctx.reply('This token is no longer in your holdings. Tap below to refresh.', {
           ...Markup.inlineKeyboard([[cb('🎒 Refresh Holdings', 'refresh_holdings', 'primary')]]),
-        }).catch(() => {});
+        }).catch(() => { });
         return;
       }
 
@@ -6968,7 +7034,7 @@ export function setupRoutes(bot: Telegraf): void {
           status: 'closed',
           closed_at: new Date(),
           quantity_held: '0',
-        }).catch(() => {});
+        }).catch(() => { });
         const sym = position.token_address.length > 14 ? position.token_address.slice(0, 12) + '...' : position.token_address;
         await ctx.reply(
           `ℹ️ You no longer hold *${sanitizeMd(sym)}* in your wallet (balance is 0).\nIt has been removed from your holdings.`,
@@ -6979,7 +7045,7 @@ export function setupRoutes(bot: Telegraf): void {
               [Markup.button.callback('🔙 Main Menu', 'menu_home')],
             ]),
           }
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
 
@@ -6988,7 +7054,7 @@ export function setupRoutes(bot: Telegraf): void {
         updatePosition({
           position_id: position.id,
           quantity_held: liveRawBal,
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       // Every network call below is time-boxed. Tokens that arrive by external
@@ -7018,17 +7084,17 @@ export function setupRoutes(bot: Telegraf): void {
       const liveNativeUsd = isSolanaPos
         ? (info?.sol_usd || await withTimeout(getSolUsdPrice(), 3000).catch(() => 150))
         : isStarknetPos
-        ? (info?.strk_usd || 0.12)
-        : isSuiPos
-        ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
-        : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
+          ? (info?.strk_usd || 0.12)
+          : isSuiPos
+            ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
+            : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
       const usdRate = isSolanaPos
         ? (info?.sol_usd || liveNativeUsd)
         : isStarknetPos
-        ? (info?.strk_usd || liveNativeUsd)
-        : isSuiPos
-        ? (info?.sui_usd || liveNativeUsd)
-        : (info?.near_usd || liveNativeUsd);
+          ? (info?.strk_usd || liveNativeUsd)
+          : isSuiPos
+            ? (info?.sui_usd || liveNativeUsd)
+            : (info?.near_usd || liveNativeUsd);
 
       const decimals = info?.decimals ?? (isSolanaPos ? 6 : isSuiPos ? 9 : 18);
       let mcNative = info?.market_cap || 0;
@@ -7118,7 +7184,7 @@ export function setupRoutes(bot: Telegraf): void {
           updatePosition({
             position_id: position.id,
             avg_entry_price: fillAvgEntry.toString(),
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } else if (entryPrice <= 0 && currentPrice > 0) {
         entryPrice = currentPrice;
@@ -7126,7 +7192,7 @@ export function setupRoutes(bot: Telegraf): void {
         updatePosition({
           position_id: position.id,
           avg_entry_price: currentPrice.toString(),
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       const externalTokens = (position.is_external_deposit && humanQuantity > totalBuyTokensHuman)
@@ -7251,7 +7317,7 @@ export function setupRoutes(bot: Telegraf): void {
       // Buy buttons (Green 🟢)
       const detailBuyAmounts = isSolanaPos ? SOLANA_BUY_PRESETS : parseBuyAmounts(user?.custom_buy_amounts);
       buttons.push(detailBuyAmounts.map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')));
-      
+
       const customTradeRow: any[] = [
         cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success'),
         cb('🔴 Sell X Tokens', `sell_custom_prompt:${positionId}`, 'danger'),
@@ -7336,7 +7402,7 @@ export function setupRoutes(bot: Telegraf): void {
       await deliverTokenDetail(ctx, msg, buttons, pnlCardImage);
     } catch (err: any) {
       console.error('[token_detail] Error loading token details:', err?.message || err);
-      await ctx.reply('Error loading token details. Please try again.').catch(() => {});
+      await ctx.reply('Error loading token details. Please try again.').catch(() => { });
     }
   });
 
@@ -7348,12 +7414,12 @@ export function setupRoutes(bot: Telegraf): void {
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.answerCbQuery('Position not found.').catch(() => {});
+        await ctx.answerCbQuery('Position not found.').catch(() => { });
         return;
       }
 
@@ -7370,7 +7436,7 @@ export function setupRoutes(bot: Telegraf): void {
         expiresAt: Date.now() + 120_000,
       });
 
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.reply(
         `💸 *Sell Custom Amount of $${sym}*\n\n` +
         `💼 *Your Current Balance*: \`${formattedQty} ${sym}\`\n\n` +
@@ -7380,9 +7446,9 @@ export function setupRoutes(bot: Telegraf): void {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([[cb('🔙 Cancel', `token_refresh:${shortKey}`, 'primary')]])
         }
-      ).catch(() => {});
+      ).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -7393,22 +7459,22 @@ export function setupRoutes(bot: Telegraf): void {
 
     const user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+      await ctx.answerCbQuery('Please run /start first.').catch(() => { });
       return;
     }
     const position = await getPositionById(positionId).catch(() => null);
     if (!position || position.user_id !== user.id) {
-      await ctx.answerCbQuery('Position not found.').catch(() => {});
+      await ctx.answerCbQuery('Position not found.').catch(() => { });
       return;
     }
     const tokenAddress = position.token_address;
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
     if (!(await tryAcquireInFlight(guardKey))) {
-      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => { });
       return;
     }
-    await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => {});
+    await ctx.answerCbQuery('⚡ Processing sell initial order...').catch(() => { });
 
     (async () => {
       let procMsg: any = null;
@@ -7421,8 +7487,8 @@ export function setupRoutes(bot: Telegraf): void {
         const buys = fills.filter(f => f.side === 'buy');
 
         if (buys.length === 0) {
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          await ctx.reply('No buy history found for this position.').catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+          await ctx.reply('No buy history found for this position.').catch(() => { });
           return;
         }
 
@@ -7462,15 +7528,15 @@ export function setupRoutes(bot: Telegraf): void {
         }
 
         if (currentPrice === 0) {
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+          await ctx.reply('Cannot calculate sell amount - current price is 0.').catch(() => { });
           return;
         }
 
         const currentHeld = toHuman(livePosition.quantity_held);
         if (currentHeld === 0) {
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          await ctx.reply('No tokens held in this position.').catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+          await ctx.reply('No tokens held in this position.').catch(() => { });
           return;
         }
 
@@ -7481,38 +7547,38 @@ export function setupRoutes(bot: Telegraf): void {
 
         const result = await sellAtTarget(user.id, positionId, adjustedPercentage, onStage);
 
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
 
         if (result.success) {
           await sendPnlCardMessage(
             ctx,
             positionId,
-            `✅ *Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).*`
-          ).catch(() => {});
+            `✅ *Sold initial investment of \`${totalInitialInvestment.toFixed(4)} NEAR\` worth of tokens (\`${adjustedPercentage.toFixed(1)}%\`).*${result.usdcReceived && result.usdcReceived > 0 ? `\n💵 *Received*: \`+${result.usdcReceived.toFixed(2)} USDC\`` : ''}`
+          ).catch(() => { });
         } else {
-          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => { });
         }
       } catch (err: any) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
         console.error('[SELL_INITIAL] Error:', err);
-        await ctx.reply('Error processing sell. Please try again.').catch(() => {});
+        await ctx.reply('Error processing sell. Please try again.').catch(() => { });
       } finally {
         await releaseInFlight(guardKey);
       }
     })().catch(async (err: any) => {
       await releaseInFlight(guardKey);
       console.error('[SELL_INITIAL] Unhandled detached error:', err?.message || err);
-      ctx.reply('Error processing sell. Please try again.').catch(() => {});
+      ctx.reply('Error processing sell. Please try again.').catch(() => { });
     });
   });
 
   // ── menu_positions — Redirect to holdings for backwards compatibility ───────
   bot.action('menu_positions', async (ctx) => {
     try {
-      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => {});
+      await (ctx as any).answerCbQuery?.('🔄 Refreshing holdings...').catch(() => { });
       await handleHoldings(ctx, true);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -7527,7 +7593,7 @@ export function setupRoutes(bot: Telegraf): void {
       if (!user) { await ctx.reply('Use /start first.'); return; }
 
       // Background sync of external deposits
-      setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => {}));
+      setImmediate(() => syncUserTokenDeposits(user.id, user.subaccount_id).catch(() => { }));
 
       let timeFilter = '';
       let periodLabel = '24 Hours';
@@ -7570,7 +7636,7 @@ export function setupRoutes(bot: Telegraf): void {
           try {
             const info = await getTokenInfo(tokenAddr as string, false);
             if (info) tokenInfoMap.set(tokenAddr as string, info);
-          } catch {}
+          } catch { }
         })
       );
 
@@ -7702,35 +7768,35 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async (err: any) => {
           if (err?.message?.includes('message is not modified')) return;
           await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
-            await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+            await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => { });
           });
         });
       } else {
         await ctx.reply(msg, { parse_mode: 'Markdown', ...keyboard }).catch(async () => {
-          await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => {});
+          await ctx.reply(msg.replace(/[*_`]/g, ''), keyboard).catch(() => { });
         });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   };
 
   bot.action(/^pnl_tf:(24h|7d|30d|all)$/, async (ctx) => {
     try {
       const tf = ctx.match![1] as PnlTimeframe;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await handlePnl(ctx, tf);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
   bot.action(['menu_pnl', 'refresh_pnl'], async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await handlePnl(ctx, '24h');
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -7738,7 +7804,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       await handlePnl(ctx, '24h');
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -7751,9 +7817,9 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     try {
       const wallet = await buildWalletMenu(telegramId);
-      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => {});
+      await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   };
 
@@ -7776,29 +7842,29 @@ export function setupRoutes(bot: Telegraf): void {
           console.warn('[handleWallets] editMessageText failed, retrying with reply:', err?.message);
           await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (replyErr: any) => {
             console.error('[handleWallets] HTML reply failed, falling back to plain text:', replyErr?.message);
-            await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => {});
+            await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => { });
           });
         });
       } else {
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (replyErr: any) => {
           console.error('[handleWallets] HTML reply failed, falling back to plain text:', replyErr?.message);
-          await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => {});
+          await ctx.reply(menu.text.replace(/<[^>]+>/g, ''), menu.keyboard).catch(() => { });
         });
       }
     } catch (err: any) {
       console.error('[handleWallets] Critical failure:', err);
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   };
 
   bot.command(['wallets', 'importwallet', 'import'], handleWallets);
   bot.action(['wallets_menu', 'import_wallet', 'import_wallet_menu', 'wallet_modal', 'wallets'], async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await handleWallets(ctx);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -7814,24 +7880,24 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Check if already active
       if (currentWallet && currentWallet.id === walletId) {
-        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => { });
         return;
       }
 
       const switched = await switchActiveNearWallet(telegramId, walletId);
-      await ctx.answerCbQuery(`⚡ Switched active wallet to ${switched.name}!`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Switched active wallet to ${switched.name}!`).catch(() => { });
       const menu = await buildWalletsManagementMenu(telegramId);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
         await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
-          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+          await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
         });
       } else {
-        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
       }
     } catch (err: any) {
-      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -7845,7 +7911,7 @@ export function setupRoutes(bot: Telegraf): void {
       action: 'import_near_key',
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `📥 <b>Import NEAR Wallet</b>\n\n` +
       `Please reply with your NEAR account private key (e.g. <code>ed25519:...</code> or base58 string).\n\n` +
@@ -7861,12 +7927,12 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || pending.action !== 'import_near_confirm') {
-      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => { });
       return;
     }
 
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const res = await importNearWallet(
         telegramId,
         pending.importNearPrivateKey!,
@@ -7900,12 +7966,12 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || pending.action !== 'import_near_confirm') {
-      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => { });
       return;
     }
 
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const res = await importNearWallet(
         telegramId,
         pending.importNearPrivateKey!,
@@ -7943,7 +8009,7 @@ export function setupRoutes(bot: Telegraf): void {
       renameWalletId: walletId,
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✏️ <b>Rename Wallet</b>\n\n` +
       `Please reply with the new name for this wallet (e.g. <i>Sniper</i>, <i>Main</i>, <i>Degen</i>):\n\n` +
@@ -7957,7 +8023,7 @@ export function setupRoutes(bot: Telegraf): void {
     const walletId = ctx.match![1];
     try {
       const res = await deleteUserNearWallet(telegramId, walletId);
-      await ctx.answerCbQuery('Wallet deleted.').catch(() => {});
+      await ctx.answerCbQuery('Wallet deleted.').catch(() => { });
       let msg = `🗑️ Wallet deleted successfully.`;
       if (res.fallbackWallet) {
         msg += ` Active wallet switched to <b>${res.fallbackWallet.name}</b>.`;
@@ -7966,7 +8032,7 @@ export function setupRoutes(bot: Telegraf): void {
       const menu = await buildWalletsManagementMenu(telegramId);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
-      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -7983,12 +8049,12 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Check if already active
       if (currentWallet && currentWallet.id === walletId) {
-        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => { });
         return;
       }
 
       const switched = await switchActiveSuiWallet(telegramId, walletId);
-      await ctx.answerCbQuery(`⚡ Switched active SUI wallet to ${switched.name}!`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Switched active SUI wallet to ${switched.name}!`).catch(() => { });
       const menu = await buildWalletsManagementMenu(telegramId);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
@@ -7999,7 +8065,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
       }
     } catch (err: any) {
-      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -8014,7 +8080,7 @@ export function setupRoutes(bot: Telegraf): void {
       action: 'import_sui_key',
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `📥 <b>Import SUI Wallet</b>\n\n` +
       `Please reply with your SUI private key.\n\n` +
@@ -8032,12 +8098,12 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || pending.action !== 'import_sui_confirm') {
-      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => { });
       return;
     }
 
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const res = await importSuiWallet(
         telegramId,
         pending.importSuiPrivateKey!,
@@ -8065,12 +8131,12 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
     if (!pending || pending.action !== 'import_sui_confirm') {
-      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => {});
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => { });
       return;
     }
 
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       const res = await importSuiWallet(
         telegramId,
         pending.importSuiPrivateKey!,
@@ -8102,7 +8168,7 @@ export function setupRoutes(bot: Telegraf): void {
       renameSuiWalletId: walletId,
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✏️ <b>Rename SUI Wallet</b>\n\n` +
       `Please reply with the new name for this wallet (e.g. <i>Sui Whale</i>, <i>Sniper</i>, <i>Degen</i>):\n\n` +
@@ -8116,7 +8182,7 @@ export function setupRoutes(bot: Telegraf): void {
     const walletId = ctx.match![1];
     try {
       const res = await deleteUserSuiWallet(telegramId, walletId);
-      await ctx.answerCbQuery('Wallet deleted.').catch(() => {});
+      await ctx.answerCbQuery('Wallet deleted.').catch(() => { });
       let msg = `🗑️ SUI wallet deleted successfully.`;
       if (res.fallbackWallet) {
         msg += ` Active SUI wallet switched to <b>${res.fallbackWallet.name}</b>.`;
@@ -8125,7 +8191,7 @@ export function setupRoutes(bot: Telegraf): void {
       const menu = await buildWalletsManagementMenu(telegramId);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
-      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -8144,19 +8210,19 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'HTML' }
       );
       const menu = await buildWalletsManagementMenu(telegramId);
-      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   };
 
   bot.command('newstarknet', handleNewStarknet);
   bot.action('wallet_new_starknet', async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await handleNewStarknet(ctx);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8172,12 +8238,12 @@ export function setupRoutes(bot: Telegraf): void {
 
       // Check if already active
       if (currentWallet && currentWallet.id === walletId) {
-        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => {});
+        await ctx.answerCbQuery(`✓ ${currentWallet.name} is already active`).catch(() => { });
         return;
       }
 
       const switched = await switchActiveStarknetWallet(telegramId, walletId);
-      await ctx.answerCbQuery(`⚡ Switched active Starknet wallet to ${switched.name}!`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Switched active Starknet wallet to ${switched.name}!`).catch(() => { });
       const menu = await buildWalletsManagementMenu(telegramId);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
@@ -8188,7 +8254,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
       }
     } catch (err: any) {
-      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => {});
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
   });
@@ -8201,7 +8267,7 @@ export function setupRoutes(bot: Telegraf): void {
       renameStarknetWalletId: walletId,
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✏️ <b>Rename Starknet Wallet</b>\n\n` +
       `Please reply with the new name for this wallet (e.g. <i>Starknet Main</i>, <i>Sniper</i>, <i>Degen</i>):\n\n` +
@@ -8215,7 +8281,7 @@ export function setupRoutes(bot: Telegraf): void {
     const chosenAccount = ctx.match![1];
     const pending = userPendingActions.get(telegramId);
     if (!pending || !pending.importNearPrivateKey) {
-      await ctx.answerCbQuery('Session expired. Please try importing again.').catch(() => {});
+      await ctx.answerCbQuery('Session expired. Please try importing again.').catch(() => { });
       return;
     }
     userPendingActions.set(telegramId, {
@@ -8224,7 +8290,7 @@ export function setupRoutes(bot: Telegraf): void {
       importNearAccountId: chosenAccount,
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `✅ Selected account: <code>${chosenAccount}</code>\n\n` +
       `Please reply with a nickname for this wallet (e.g. <i>Sniper</i>, <i>Main</i>, <i>Degen</i>):\n\n` +
@@ -8236,7 +8302,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('wallet_refresh', async (ctx) => {
     const telegramId = ctx.from!.id;
     try {
-      await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Refreshing wallet...').catch(() => { });
       const wallet = await buildWalletMenu(telegramId, true);
       const canEdit = typeof (ctx as any).editMessageText === 'function';
       if (canEdit) {
@@ -8248,13 +8314,13 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(wallet.text, { parse_mode: 'HTML', ...wallet.keyboard });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
   bot.action('wallet_unwrap', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Unwrapping wNEAR...').catch(() => {});
+    await ctx.answerCbQuery('Unwrapping wNEAR...').catch(() => { });
     try {
       const res = await unwrapUserWrapNear(telegramId);
       if (res.unwrappedAmount === '0') {
@@ -8332,7 +8398,7 @@ export function setupRoutes(bot: Telegraf): void {
       action: 'withdraw',
       expiresAt: Date.now() + 180000,
     });
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     await ctx.reply(
       `💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n` +
       `Reply with the recipient address, amount, and optional token, for example:\n` +
@@ -8353,7 +8419,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action('wallet_withdraw_tokens_list', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const user = await getUserByTelegramId(telegramId);
     if (!user) {
       await ctx.reply('Please run /start first.');
@@ -8407,7 +8473,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^send_token_prompt:([^:]+)$/, async (ctx) => {
     const positionId = ctx.match![1];
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery().catch(() => { });
     const user = await getUserByTelegramId(telegramId);
     if (!user) {
       await ctx.reply('Please run /start first.');
@@ -8530,10 +8596,10 @@ export function setupRoutes(bot: Telegraf): void {
           result.chain === 'solana'
             ? `https://solscan.io/tx/${result.txHash}`
             : result.chain === 'starknet'
-            ? `https://voyager.online/tx/${result.txHash}`
-            : result.chain === 'sui'
-            ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
-            : `https://nearblocks.io/txns/${result.txHash}`;
+              ? `https://voyager.online/tx/${result.txHash}`
+              : result.chain === 'sui'
+                ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+                : `https://nearblocks.io/txns/${result.txHash}`;
         const explorerName = result.chain === 'solana' ? 'Solscan' : result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
 
         await ctx.reply(
@@ -8641,9 +8707,60 @@ export function setupRoutes(bot: Telegraf): void {
       if (!user) return;
       const newStatus = !user.auto_buy_enabled;
       const updated = await updateUserSettings(user.id, { auto_buy_enabled: newStatus });
-      await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => {});
+      await ctx.answerCbQuery(`Auto-buy ${newStatus ? 'enabled' : 'disabled'}`).catch(() => { });
       const dash = await buildSnipeDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action('set:toggle_near_currency', async (ctx) => {
+    try {
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const nextMode = user.near_trade_currency === 'usdc' ? 'near' : 'usdc';
+      const updated = await updateUserSettings(user.id, { near_trade_currency: nextMode });
+      invalidateBalanceCache(telegramId);
+      await ctx.answerCbQuery(nextMode === 'usdc' ? '💵 NEAR Mode set to USDC Only (Buy & Sell in USDC)' : '⬛ NEAR Mode set to NEAR + USDC').catch(() => { });
+      const dash = buildSettingsDashboard(updated);
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action(/^toggle_token_currency:(.+)$/, async (ctx) => {
+    try {
+      const rawTokenParam = ctx.match![1];
+      const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const nextMode = user.near_trade_currency === 'usdc' ? 'near' : 'usdc';
+      await updateUserSettings(user.id, { near_trade_currency: nextMode });
+      invalidateBalanceCache(telegramId);
+      await ctx.answerCbQuery(nextMode === 'usdc' ? '💵 Switched to USDC-Only Mode (Buy & Sell in USDC)' : '⬛ Switched to NEAR + USDC Mode').catch(() => {});
+      const card = await buildTokenCard(tokenAddress, telegramId);
+      const cbMsg = (ctx as any).callbackQuery?.message;
+      const isPhoto = !!cbMsg?.photo;
+      if (isPhoto && typeof (ctx as any).editMessageCaption === 'function') {
+        await (ctx as any).editMessageCaption(card.text, {
+          parse_mode: 'Markdown',
+          reply_markup: card.keyboard?.reply_markup,
+        }).catch(async () => {
+          await ctx.editMessageReplyMarkup(card.keyboard?.reply_markup).catch(() => {});
+        });
+      } else {
+        await ctx.editMessageText(card.text, {
+          parse_mode: 'Markdown',
+          link_preview_options: { is_disabled: true },
+          ...card.keyboard,
+        }).catch(async () => {
+          await ctx.editMessageReplyMarkup(card.keyboard?.reply_markup).catch(() => {});
+        });
+      }
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
     }
@@ -8656,11 +8773,11 @@ export function setupRoutes(bot: Telegraf): void {
       if (!user) return;
       const current = Boolean(user.show_net_worth_on_card);
       const updated = await updateUserSettings(user.id, { show_net_worth_on_card: !current });
-      await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => {});
+      await ctx.answerCbQuery(`Net worth on cards ${!current ? 'shown' : 'hidden'}`).catch(() => { });
       const dash = buildSettingsDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8668,11 +8785,11 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const showNw = ctx.match![2] === '1';
-      await ctx.answerCbQuery(showNw ? 'Showing net worth...' : 'Hiding net worth...').catch(() => {});
-      await ctx.deleteMessage().catch(() => {});
+      await ctx.answerCbQuery(showNw ? 'Showing net worth...' : 'Hiding net worth...').catch(() => { });
+      await ctx.deleteMessage().catch(() => { });
       await sendPnlCardMessage(ctx, positionId, undefined, showNw);
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8683,11 +8800,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { slippage_pct: slip });
-      await ctx.answerCbQuery(`Slippage set to ${slip}%`).catch(() => {});
+      await ctx.answerCbQuery(`Slippage set to ${slip}%`).catch(() => { });
       const dash = buildSettingsDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8698,11 +8815,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
-      await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => {});
+      await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => { });
       const dash = await buildSnipeDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8713,11 +8830,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { auto_buy_min_liquidity_near: liq });
-      await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => {});
+      await ctx.answerCbQuery(`Min liquidity set to ${liq} NEAR`).catch(() => { });
       const dash = await buildSnipeDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8728,11 +8845,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { default_buy_pct: pct });
-      await ctx.answerCbQuery(`Default buy set to ${pct}%`).catch(() => {});
+      await ctx.answerCbQuery(`Default buy set to ${pct}%`).catch(() => { });
       const dash = buildSettingsDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8743,11 +8860,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { default_sell_pct: pct });
-      await ctx.answerCbQuery(`Default sell set to ${pct}%`).catch(() => {});
+      await ctx.answerCbQuery(`Default sell set to ${pct}%`).catch(() => { });
       const dash = buildSettingsDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8759,11 +8876,11 @@ export function setupRoutes(bot: Telegraf): void {
       if (!user) return;
       const cleanAmounts = parseBuyAmounts(rawAmounts).join(', ');
       const updated = await updateUserSettings(user.id, { custom_buy_amounts: cleanAmounts });
-      await ctx.answerCbQuery(`Buy buttons set to ${cleanAmounts}`).catch(() => {});
+      await ctx.answerCbQuery(`Buy buttons set to ${cleanAmounts}`).catch(() => { });
       const dash = buildSettingsDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8774,7 +8891,7 @@ export function setupRoutes(bot: Telegraf): void {
         action: 'custom_buy_amounts',
         expiresAt: Date.now() + 120000,
       });
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.reply(
         '💰 *Customize Quick Buy Buttons*\n\n' +
         'Reply with your preferred buy amounts separated by commas or spaces.\n\n' +
@@ -8785,9 +8902,9 @@ export function setupRoutes(bot: Telegraf): void {
         '• Whale: `100, 250, 500`\n\n' +
         '_These amounts will immediately appear as your 1-tap buy buttons on all token trade cards._',
         { parse_mode: 'Markdown' }
-      ).catch(() => {});
+      ).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8798,10 +8915,10 @@ export function setupRoutes(bot: Telegraf): void {
         action: 'custom_slippage',
         expiresAt: Date.now() + 120000,
       });
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5` or up to `100`):', { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.reply('✏️ *Enter Slippage Tolerance*\n\nReply with your desired slippage percentage (e.g. `2.5` or up to `100`):', { parse_mode: 'Markdown' }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8812,10 +8929,10 @@ export function setupRoutes(bot: Telegraf): void {
         action: 'custom_auto_buy',
         expiresAt: Date.now() + 120000,
       });
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8826,10 +8943,10 @@ export function setupRoutes(bot: Telegraf): void {
         action: 'custom_min_liq',
         expiresAt: Date.now() + 120000,
       });
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.reply('✏️ *Enter Min Pool Liquidity*\n\nReply with the minimum pool liquidity in NEAR (e.g. `200` or `500`):', { parse_mode: 'Markdown' }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8840,11 +8957,11 @@ export function setupRoutes(bot: Telegraf): void {
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { auto_buy_max_market_cap_usd: mcap });
-      await ctx.answerCbQuery(`Max market cap set to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}`).catch(() => {});
+      await ctx.answerCbQuery(`Max market cap set to ${mcap > 0 ? '$' + mcap.toLocaleString() : 'No Limit'}`).catch(() => { });
       const dash = await buildSnipeDashboard(updated);
-      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => {});
+      await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8855,10 +8972,10 @@ export function setupRoutes(bot: Telegraf): void {
         action: 'custom_max_mcap',
         expiresAt: Date.now() + 120000,
       });
-      await ctx.answerCbQuery().catch(() => {});
-      await ctx.reply('✏️ *Enter Max Market Cap ($ USD)*\n\nReply with your maximum token market cap in USD (e.g. `50000` for $50k, or `0` for no limit):', { parse_mode: 'Markdown' }).catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.reply('✏️ *Enter Max Market Cap ($ USD)*\n\nReply with your maximum token market cap in USD (e.g. `50000` for $50k, or `0` for no limit):', { parse_mode: 'Markdown' }).catch(() => { });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -8887,7 +9004,7 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
     const telegramId = ctx.from!.id;
     try {
-      await ctx.answerCbQuery('🔄 Refreshing token...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Refreshing token...').catch(() => { });
       const card = await buildTokenCard(tokenAddress, telegramId, true);
 
       const cbMsg = (ctx as any).callbackQuery?.message;
@@ -8913,7 +9030,7 @@ export function setupRoutes(bot: Telegraf): void {
         await sendTokenCard(ctx, card);
       }
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -8929,7 +9046,7 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action(/^audit:(.+)$/, async (ctx) => {
     const rawParam = ctx.match![1];
     const tokenAddress = resolveTokenAddressFromKey(rawParam);
-    await ctx.answerCbQuery('🔍 Running deep security audit...').catch(() => {});
+    await ctx.answerCbQuery('🔍 Running deep security audit...').catch(() => { });
     try {
       const card = await buildDeepAuditCard(tokenAddress);
       if (typeof (ctx as any).editMessageText === 'function') {
@@ -8940,7 +9057,7 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
       }
     } catch (err: any) {
-      await ctx.reply(`❌ Security audit failed: ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ Security audit failed: ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -8955,12 +9072,23 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const rawTokenParam = ctx.match![1];
       const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
-      const amountVal = parseFloat(ctx.match![2]);
+      const rawClickedAmt = parseFloat(ctx.match![2]);
+      let amountVal = rawClickedAmt;
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
       const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
-      console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
+      let displayAmt = rawClickedAmt;
+      let displayUnit = unit;
+      if (unit === 'NEAR') {
+        const buyUser = await getUserByTelegramId(telegramId).catch(() => null);
+        if (buyUser?.near_trade_currency === 'usdc') {
+          const nearUsdForFixed = (await getNearUsdPrice().catch(() => 0)) || 5.0;
+          amountVal = Math.floor((rawClickedAmt / nearUsdForFixed) * 1e6) / 1e6;
+          displayUnit = 'USDC';
+        }
+      }
+      console.log(`[BUY_FIXED] Click: user=${telegramId}, token=${tokenAddress}, amount=${displayAmt} ${displayUnit} (${amountVal} ${unit})`);
 
       // In-flight guard: reject a duplicate tap while a trade for this token is running.
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -8969,16 +9097,16 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
         return;
       }
-      await ctx.answerCbQuery(`⚡ Processing buy order for ${amountVal} ${unit}...`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Processing buy order for ${displayAmt} ${displayUnit}...`).catch(() => {});
 
       (async () => {
-        const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${amountVal} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
+        const procMsg = await ctx.reply(`⏳ *Processing Buy Order...*\n\nExchanging \`${displayAmt} ${displayUnit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
         const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
         try {
           console.log(`[BUY_FIXED] Starting executeBuyHelper: user=${telegramId}, token=${tokenAddress}, amount=${amountVal} ${unit}`);
           const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
           console.log(`[BUY_FIXED] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
 
           await ctx.reply(res.message, {
             parse_mode: 'Markdown',
@@ -8986,15 +9114,15 @@ export function setupRoutes(bot: Telegraf): void {
           }).catch(async () => {
             await ctx.reply(res.message.replace(/[*_`]/g, ''), {
               reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-            }).catch(() => {});
+            }).catch(() => { });
           });
           if (res.positionId) {
-            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => { });
           }
         } catch (err: any) {
           console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
         } finally {
           await releaseInFlight(guardKey);
         }
@@ -9006,7 +9134,7 @@ export function setupRoutes(bot: Telegraf): void {
       });
     } catch (outerErr: any) {
       console.error('[BUY_FIXED] Outer handler error:', outerErr);
-      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => { });
     }
   });
 
@@ -9026,10 +9154,10 @@ export function setupRoutes(bot: Telegraf): void {
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
       if (!(await tryAcquireInFlight(guardKey))) {
         console.warn(`[BUY_PCT] Duplicate tap rejected: guardKey=${guardKey}`);
-        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => { });
         return;
       }
-      await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Processing buy order for ${pct}% of balance...`).catch(() => { });
 
       (async () => {
         const procMsg = await ctx.reply(`⏳ *Processing Buy Order (${pct}%)...*\n\nExchanging ${unit} for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
@@ -9038,7 +9166,7 @@ export function setupRoutes(bot: Telegraf): void {
           console.log(`[BUY_PCT] Starting executeBuyPctHelper: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
           const res = await executeBuyPctHelper(telegramId, tokenAddress, pct, onStage);
           console.log(`[BUY_PCT] Success: user=${telegramId}, token=${tokenAddress}, pos=${res.positionId}`);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
 
           await ctx.reply(res.message, {
             parse_mode: 'Markdown',
@@ -9046,15 +9174,15 @@ export function setupRoutes(bot: Telegraf): void {
           }).catch(async () => {
             await ctx.reply(res.message.replace(/[*_`]/g, ''), {
               reply_markup: await buildBuySuccessKeyboard(telegramId, tokenAddress, res.tokenSymbol, res.positionId),
-            }).catch(() => {});
+            }).catch(() => { });
           });
           if (res.positionId) {
-            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => {});
+            await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol).catch(() => { });
           }
         } catch (err: any) {
           console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
         } finally {
           await releaseInFlight(guardKey);
         }
@@ -9064,7 +9192,7 @@ export function setupRoutes(bot: Telegraf): void {
       });
     } catch (outerErr: any) {
       console.error('[BUY_PCT] Outer handler error:', outerErr);
-      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => { });
     }
   });
 
@@ -9082,21 +9210,21 @@ export function setupRoutes(bot: Telegraf): void {
         tokenAddress,
         expiresAt: Date.now() + 180000,
       });
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.reply(
         `✏️ *Custom Buy Amount*\n\n` +
         `Token: \`${tokenAddress}\`\n\n` +
-        `Reply with the amount in ${unit} you want to buy (e.g. \`2.5\`):\n` +
+        `Reply with the amount in ${unit === 'NEAR' ? 'NEAR or USDC (e.g. `2.5` or `10 USDC` or `$10`)' : `${unit} you want to buy (e.g. \`2.5\`)`}:\n` +
         `_Type /cancel to abort._`,
         { parse_mode: 'Markdown' }
       ).catch(async () => {
         await ctx.reply(
           `Custom Buy Amount\n\nToken: ${tokenAddress}\n\nReply with the amount in ${unit} you want to buy (e.g. 2.5):\nType /cancel to abort.`
-        ).catch(() => {});
+        ).catch(() => { });
       });
     } catch (outerErr: any) {
       console.error('[BUY_CUSTOM_PROMPT] Outer handler error:', outerErr);
-      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => { });
     }
   });
 
@@ -9113,12 +9241,16 @@ export function setupRoutes(bot: Telegraf): void {
     const isStk = isStarknetToken(tokenAddress);
     const isSui = !isStk && isSuiToken(tokenAddress);
     const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
-    const amountVal = parseFloat(args[1] ?? '0');
+    const rawAmtStr = args.slice(1).join(' ').trim();
+    const isUsdcArg = unit === 'NEAR' && (/^\$/.test(rawAmtStr) || /usdc|usd/i.test(rawAmtStr));
+    const parsedNum = parseFloat(rawAmtStr.replace(/[^0-9.]/g, '') || '0');
+    const nearUsdForCmd = isUsdcArg && parsedNum > 0 ? await getNearUsdPrice().catch(() => 0) : 0;
+    const amountVal = isUsdcArg && nearUsdForCmd > 0 ? Number((parsedNum / nearUsdForCmd).toFixed(6)) : parsedNum;
 
     if (amountVal <= 0) {
       try {
         const card = await buildTokenCard(tokenAddress, telegramId);
-        prewarmTradePath(telegramId, tokenAddress).catch(() => {});
+        prewarmTradePath(telegramId, tokenAddress).catch(() => { });
         await sendTokenCard(ctx, card);
       } catch {
         await ctx.reply(`Specify amount in ${unit}: /buy <token_ca> <amount>`);
@@ -9128,7 +9260,7 @@ export function setupRoutes(bot: Telegraf): void {
 
     const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
     if (!(await tryAcquireInFlight(guardKey))) {
-      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+      await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => { });
       return;
     }
 
@@ -9137,7 +9269,7 @@ export function setupRoutes(bot: Telegraf): void {
       const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
       try {
         const res = await executeBuyHelper(telegramId, tokenAddress, amountVal, onStage);
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
 
         await ctx.reply(res.message, {
           parse_mode: 'Markdown',
@@ -9147,8 +9279,8 @@ export function setupRoutes(bot: Telegraf): void {
           await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol);
         }
       } catch (err: any) {
-        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
-        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+        if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
       } finally {
         await releaseInFlight(guardKey);
       }
@@ -9223,27 +9355,27 @@ export function setupRoutes(bot: Telegraf): void {
       const telegramId = ctx.from!.id;
       console.log(`[SELL] Click: user=${telegramId}, positionId=${positionId}, pct=${pct}%`);
       const user = await getUserByTelegramId(telegramId).catch(() => null);
-      if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => {}); return; }
+      if (!user) { await ctx.answerCbQuery('Wallet not found.').catch(() => { }); return; }
 
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.answerCbQuery('Position not found.').catch(() => {});
+        await ctx.answerCbQuery('Position not found.').catch(() => { });
         return;
       }
       const tokenAddress = position.token_address;
 
       const guardKey = inFlightKey(telegramId, tokenAddress, 'sell');
       if (!(await tryAcquireInFlight(guardKey))) {
-        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => {});
+        await ctx.answerCbQuery('A trade for this token is already in progress.').catch(() => { });
         return;
       }
-      await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => {});
+      await ctx.answerCbQuery(`⚡ Processing sell order (${pct}%)...`).catch(() => { });
 
       (async () => {
         const procMsg = await ctx.reply(`⏳ *Processing Sell Order (${pct}%)...*\n\nSelling position on DEX...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => null);
         const onStage = makeStageEditor(ctx, procMsg, `Processing Sell Order (${pct}%)`);
 
-        let result: { success: boolean; reason?: string } = { success: false, reason: 'Unknown error' };
+        let result: { success: boolean; reason?: string; usdcReceived?: number } = { success: false, reason: 'Unknown error' };
         try {
           console.log(`[SELL] Starting sellAtTarget: user=${user.id}, positionId=${positionId}, pct=${pct}%, token=${tokenAddress}`);
           result = await sellAtTarget(user.id, positionId, pct, onStage);
@@ -9252,7 +9384,7 @@ export function setupRoutes(bot: Telegraf): void {
           console.error(`[SELL] sellAtTarget threw: user=${user.id}, error=${err?.message}`, err);
           result = { success: false, reason: err.message || 'Swap execution failed' };
         } finally {
-          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+          if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
           await releaseInFlight(guardKey);
         }
 
@@ -9263,20 +9395,23 @@ export function setupRoutes(bot: Telegraf): void {
               status: 'closed',
               closed_at: new Date(),
               quantity_held: '0',
-            }).catch(() => {});
+            }).catch(() => { });
           }
-          await sendPnlCardMessage(ctx, positionId, `✅ *Sell Order Executed!* (${pct}%)`).catch(() => {});
+          const sellPctHeader = result.usdcReceived && result.usdcReceived > 0
+            ? `✅ *Sell Order Executed!* (${pct}%)\n💵 *Received*: \`+${result.usdcReceived.toFixed(2)} USDC\``
+            : `✅ *Sell Order Executed!* (${pct}%)`;
+          await sendPnlCardMessage(ctx, positionId, sellPctHeader).catch(() => { });
         } else {
-          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+          await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => { });
         }
       })().catch(async (err: any) => {
         await releaseInFlight(guardKey);
         console.error('[SELL] Unhandled detached sell error:', err?.message || err);
-        ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => {});
+        ctx.reply('❌ Sell failed unexpectedly. Please check /positions and retry.').catch(() => { });
       });
     } catch (outerErr: any) {
       console.error('[SELL] Outer handler error:', outerErr);
-      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(outerErr)).catch(() => { });
     }
   });
 
@@ -9338,7 +9473,7 @@ export function setupRoutes(bot: Telegraf): void {
                 amount_near: amountNear,
               }).catch(() => null);
               if (order) {
-                if (!querySol) prewarmStorageDeposit(user, query).catch(() => {});
+                if (!querySol) prewarmStorageDeposit(user, query).catch(() => { });
                 await ctx.reply(
                   `🎯 *Snipe Armed!*\n\n` +
                   `🪙 Token: \`${query}\`\n` +
@@ -9365,7 +9500,7 @@ export function setupRoutes(bot: Telegraf): void {
             token_address: query,
             amount_near: amountNear,
           });
-          if (!querySol) prewarmStorageDeposit(user, query).catch(() => {});
+          if (!querySol) prewarmStorageDeposit(user, query).catch(() => { });
           await ctx.reply(
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${query}\`\n` +
@@ -9414,13 +9549,13 @@ export function setupRoutes(bot: Telegraf): void {
     const amountNear = parseFloat(ctx.match![2]);
     const telegramId = ctx.from!.id;
 
-    await ctx.answerCbQuery('Processing snipe order...').catch(() => {});
+    await ctx.answerCbQuery('Processing snipe order...').catch(() => { });
     const snipeMsgId = (ctx.callbackQuery as any)?.message?.message_id ?? null;
-    await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => {});
+    await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => { });
     const onStage = makeStageEditor(ctx, snipeMsgId ? { message_id: snipeMsgId } : null, 'Processing Snipe Order');
     try {
       const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
-      await ctx.deleteMessage().catch(() => {});
+      await ctx.deleteMessage().catch(() => { });
 
       await ctx.reply(res.message, {
         parse_mode: 'Markdown',
@@ -9430,13 +9565,13 @@ export function setupRoutes(bot: Telegraf): void {
         await sendPostBuySlTpPrompt(ctx, res.positionId, tokenAddress, res.tokenSymbol);
       }
     } catch (err: any) {
-      await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.editMessageText(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
   bot.action('snipe_cancel', async (ctx) => {
-    await ctx.answerCbQuery('Cancelled.').catch(() => {});
-    await ctx.editMessageText('Snipe cancelled.').catch(() => {});
+    await ctx.answerCbQuery('Cancelled.').catch(() => { });
+    await ctx.editMessageText('Snipe cancelled.').catch(() => { });
   });
 
   // ── /export & /rotatekey ──────────────────────────────────────────────────
@@ -9484,15 +9619,15 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('export_prompt', handleExportPrompt);
 
   bot.action('export_cancel', async (ctx) => {
-    await ctx.answerCbQuery('Export cancelled.').catch(() => {});
-    await ctx.editMessageText('Export cancelled.').catch(() => {});
+    await ctx.answerCbQuery('Export cancelled.').catch(() => { });
+    await ctx.editMessageText('Export cancelled.').catch(() => { });
   });
 
   bot.action('export_confirm', async (ctx) => {
     const telegramId = ctx.from!.id;
     let user = await getUserByTelegramId(telegramId).catch(() => null);
     if (!user) {
-      await ctx.answerCbQuery('Wallet not found.').catch(() => {});
+      await ctx.answerCbQuery('Wallet not found.').catch(() => { });
       return;
     }
     if (!user.starknet_address || !user.starknet_private_key_enc || !user.solana_address) {
@@ -9503,8 +9638,8 @@ export function setupRoutes(bot: Telegraf): void {
     const last = lastExportTime.get(telegramId);
     if (last && Date.now() - last < EXPORT_COOLDOWN_MS) {
       const remainingSec = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - last)) / 1000);
-      await ctx.answerCbQuery(`Cooldown active. Wait ${remainingSec}s.`).catch(() => {});
-      await ctx.editMessageText(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`).catch(() => {});
+      await ctx.answerCbQuery(`Cooldown active. Wait ${remainingSec}s.`).catch(() => { });
+      await ctx.editMessageText(`⏳ Export is on cooldown. Please wait ${remainingSec}s before requesting again.`).catch(() => { });
       return;
     }
 
@@ -9526,23 +9661,23 @@ export function setupRoutes(bot: Telegraf): void {
       if (user.sui_private_key_enc) {
         try {
           rawSuiKey = decrypt(user.sui_private_key_enc, MASTER_KEY);
-        } catch {}
+        } catch { }
       }
       let rawStarknetKey = '';
       if (user.starknet_private_key_enc) {
         try {
           rawStarknetKey = decrypt(user.starknet_private_key_enc, MASTER_KEY);
-        } catch {}
+        } catch { }
       }
 
       let rawSolanaKey = '';
       if (user.solana_private_key_enc) {
         try {
           rawSolanaKey = exportSolanaPrivateKey(user.solana_private_key_enc, MASTER_KEY);
-        } catch {}
+        } catch { }
       }
 
-      await ctx.answerCbQuery('Keys decrypted.').catch(() => {});
+      await ctx.answerCbQuery('Keys decrypted.').catch(() => { });
 
       let keyHtml =
         `🔑 <b>NEAR Private Key</b>${nearName} (<code>${user.subaccount_id}</code>):\n` +
@@ -9613,13 +9748,13 @@ export function setupRoutes(bot: Telegraf): void {
   bot.action('rotate_prompt', handleRotatePrompt);
 
   bot.action('rotate_cancel', async (ctx) => {
-    await ctx.answerCbQuery('Cancelled.').catch(() => {});
-    await ctx.editMessageText('Key rotation cancelled.').catch(() => {});
+    await ctx.answerCbQuery('Cancelled.').catch(() => { });
+    await ctx.editMessageText('Key rotation cancelled.').catch(() => { });
   });
 
   bot.action('rotate_confirm', async (ctx) => {
     const telegramId = ctx.from!.id;
-    await ctx.answerCbQuery('Rotating key on-chain...').catch(() => {});
+    await ctx.answerCbQuery('Rotating key on-chain...').catch(() => { });
     await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
     try {
       const res = await rotateUserKey(telegramId);
@@ -9764,7 +9899,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
       if (!user.referral_code) {
@@ -9773,14 +9908,14 @@ export function setupRoutes(bot: Telegraf): void {
         user.referral_code = code;
       }
       const view = await buildReferralView(user);
-      await ctx.answerCbQuery('🔄 Updated!').catch(() => {});
+      await ctx.answerCbQuery('🔄 Updated!').catch(() => { });
       await ctx.editMessageText(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch((err: any) => {
         if (!err?.message?.includes('message is not modified')) {
-          ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => {});
+          ctx.reply(view.text, { parse_mode: 'Markdown', ...view.keyboard }).catch(() => { });
         }
       });
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -9789,13 +9924,13 @@ export function setupRoutes(bot: Telegraf): void {
     const telegramId = ctx.from!.id;
     const guardKey = `referral_claim:${telegramId}`;
     if (!(await tryAcquireInFlight(guardKey))) {
-      await ctx.answerCbQuery('Claim already in progress — please wait.').catch(() => {});
+      await ctx.answerCbQuery('Claim already in progress — please wait.').catch(() => { });
       return;
     }
     try {
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) {
-        await ctx.answerCbQuery('Please run /start first.').catch(() => {});
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
         return;
       }
 
@@ -9809,7 +9944,7 @@ export function setupRoutes(bot: Telegraf): void {
       const claimableNear = Math.max(0, totalEarned - totalClaimed);
 
       if (claimableNear <= 0) {
-        await ctx.answerCbQuery('No rewards to claim yet — share your link to start earning!').catch(() => {});
+        await ctx.answerCbQuery('No rewards to claim yet — share your link to start earning!').catch(() => { });
         return;
       }
 
@@ -9818,11 +9953,11 @@ export function setupRoutes(bot: Telegraf): void {
       if (claimableUsd < REFERRAL_CLAIM_MIN_USD) {
         await ctx.answerCbQuery(
           `Minimum claim is $${REFERRAL_CLAIM_MIN_USD} — you have $${claimableUsd.toFixed(2)} (${claimableNear.toFixed(4)} NEAR).`
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
 
-      await ctx.answerCbQuery('💸 Processing your claim...').catch(() => {});
+      await ctx.answerCbQuery('💸 Processing your claim...').catch(() => { });
 
       // Pay first, then record — a failed payout must never mark rewards claimed
       const { txHash } = await payReferralReward(user.subaccount_id, claimableNear);
@@ -9836,7 +9971,7 @@ export function setupRoutes(bot: Telegraf): void {
         { parse_mode: 'Markdown' }
       );
     } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     } finally {
       await releaseInFlight(guardKey);
     }
@@ -9844,7 +9979,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── /audit & /scan & /honeypot: Deep Contract Safety & Honeypot Analysis ──
   bot.command(['audit', 'scan', 'honeypot'], async (ctx) => {
-    const rawText = ctx.message.text.trim();
+    let rawText = ctx.message.text.trim();
     const parts = rawText.split(/\s+/).slice(1);
     const token = parts[0]?.trim();
     if (!token) {
@@ -9863,11 +9998,11 @@ export function setupRoutes(bot: Telegraf): void {
     const loading = await ctx.reply(`🔍 <i>Inspecting contract bytecode for <code>${tokenAddress}</code>...</i>`, { parse_mode: 'HTML' }).catch(() => null);
     try {
       const card = await buildDeepAuditCard(tokenAddress);
-      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => { });
       await ctx.reply(card.text, { parse_mode: 'Markdown', ...card.keyboard });
     } catch (err: any) {
-      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => {});
-      await ctx.reply(`❌ Security audit failed: ${getUserFriendlyError(err)}`).catch(() => {});
+      if (loading) await ctx.deleteMessage(loading.message_id).catch(() => { });
+      await ctx.reply(`❌ Security audit failed: ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -9951,12 +10086,12 @@ export function setupRoutes(bot: Telegraf): void {
   // SL/TP Dismiss / Skip
   bot.action('sl_tp_dismiss', async (ctx) => {
     try {
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
       await ctx.deleteMessage().catch(async () => {
-        await ctx.editMessageText('🛡️ _SL/TP setup skipped. You can always set them from /positions anytime._', { parse_mode: 'Markdown' }).catch(() => {});
+        await ctx.editMessageText('🛡️ _SL/TP setup skipped. You can always set them from /positions anytime._', { parse_mode: 'Markdown' }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -9965,7 +10100,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
@@ -10009,10 +10144,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(msg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10021,14 +10156,14 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
 
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.reply('Position not found.').catch(() => {});
+        await ctx.reply('Position not found.').catch(() => { });
         return;
       }
 
@@ -10084,10 +10219,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(msg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10096,14 +10231,14 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
 
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.reply('Position not found.').catch(() => {});
+        await ctx.reply('Position not found.').catch(() => { });
         return;
       }
 
@@ -10112,58 +10247,58 @@ export function setupRoutes(bot: Telegraf): void {
         getTriggersByPosition(positionId).catch(() => []),
       ]);
 
-    const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
-    const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
-    const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
-    const entryPrice = parseFloat(position.avg_entry_price || '0');
+      const symbol = info?.symbol ? sanitizeMd(info.symbol) : 'Token';
+      const isSuiPos = position.chain === 'sui' || isSuiToken(position.token_address);
+      const nativeUnit = isSuiPos ? 'SUI' : 'NEAR';
+      const entryPrice = parseFloat(position.avg_entry_price || '0');
 
-    const tpTrigger = triggers.find(t => t.type === 'take_profit');
-    const currentTpStr = tpTrigger ? `\n• Current Take Profit: \`+${tpTrigger.target_value}%\`` : '';
+      const tpTrigger = triggers.find(t => t.type === 'take_profit');
+      const currentTpStr = tpTrigger ? `\n• Current Take Profit: \`+${tpTrigger.target_value}%\`` : '';
 
-    const priceInfoStr = entryPrice > 0
-      ? `\n💵 Entry: \`${entryPrice.toFixed(6)} ${nativeUnit}\``
-      : '';
+      const priceInfoStr = entryPrice > 0
+        ? `\n💵 Entry: \`${entryPrice.toFixed(6)} ${nativeUnit}\``
+        : '';
 
-    const msg =
-      `📈 *Take Profit for ${symbol}*\n` +
-      priceInfoStr +
-      currentTpStr + `\n\n` +
-      `*Step 1 — Profit target:*\n` +
-      `Select how much the price must rise from entry to trigger a sell.\n\n` +
-      `*Step 2 — Sell quantity:*\n` +
-      `_After selecting a target %, tap how much of your position to sell._`;
+      const msg =
+        `📈 *Take Profit for ${symbol}*\n` +
+        priceInfoStr +
+        currentTpStr + `\n\n` +
+        `*Step 1 — Profit target:*\n` +
+        `Select how much the price must rise from entry to trigger a sell.\n\n` +
+        `*Step 2 — Sell quantity:*\n` +
+        `_After selecting a target %, tap how much of your position to sell._`;
 
-    const buttons: any[] = [
-      [
-        cb('+25%', `set_tp:${positionId}:25`, 'success'),
-        cb('+50%', `set_tp:${positionId}:50`, 'success'),
-        cb('+100%', `set_tp:${positionId}:100`, 'success'),
-      ],
-      [
-        cb('+200%', `set_tp:${positionId}:200`, 'success'),
-        cb('+500%', `set_tp:${positionId}:500`, 'success'),
-        cb('✏️ Custom %', `tp_custom_prompt:${positionId}`),
-      ],
-    ];
+      const buttons: any[] = [
+        [
+          cb('+25%', `set_tp:${positionId}:25`, 'success'),
+          cb('+50%', `set_tp:${positionId}:50`, 'success'),
+          cb('+100%', `set_tp:${positionId}:100`, 'success'),
+        ],
+        [
+          cb('+200%', `set_tp:${positionId}:200`, 'success'),
+          cb('+500%', `set_tp:${positionId}:500`, 'success'),
+          cb('✏️ Custom %', `tp_custom_prompt:${positionId}`),
+        ],
+      ];
 
-    const bottomRow: any[] = [];
-    if (tpTrigger) {
-      bottomRow.push(cb('❌ Cancel TP', `cancel_tp:${positionId}`, 'danger'));
-    }
-    bottomRow.push(cb('🔙 Back', `sl_tp_menu:${positionId}`, 'primary'));
-    buttons.push(bottomRow);
+      const bottomRow: any[] = [];
+      if (tpTrigger) {
+        bottomRow.push(cb('❌ Cancel TP', `cancel_tp:${positionId}`, 'danger'));
+      }
+      bottomRow.push(cb('🔙 Back', `sl_tp_menu:${positionId}`, 'primary'));
+      buttons.push(bottomRow);
 
-    await ctx.editMessageText(msg, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-    }).catch(async () => {
-      await ctx.reply(msg, {
+      await ctx.editMessageText(msg, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-      }).catch(() => {});
-    });
+      }).catch(async () => {
+        await ctx.reply(msg, {
+          parse_mode: 'Markdown',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        }).catch(() => { });
+      });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10175,14 +10310,14 @@ export function setupRoutes(bot: Telegraf): void {
       const pct = parseFloat(ctx.match![2]);
       const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
 
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.reply('Position not found.').catch(() => {});
+        await ctx.reply('Position not found.').catch(() => { });
         return;
       }
 
@@ -10214,7 +10349,7 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply(sellQtyMsg, {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-          }).catch(() => {});
+          }).catch(() => { });
         });
         return;
       }
@@ -10262,10 +10397,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(msg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10277,14 +10412,14 @@ export function setupRoutes(bot: Telegraf): void {
       const pct = parseFloat(ctx.match![2]);
       const sellPct = ctx.match![3] ? parseFloat(ctx.match![3]) : 100;
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
 
       const position = await getPositionById(positionId).catch(() => null);
       if (!position || position.user_id !== user.id) {
-        await ctx.reply('Position not found.').catch(() => {});
+        await ctx.reply('Position not found.').catch(() => { });
         return;
       }
 
@@ -10314,7 +10449,7 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply(sellQtyMsg, {
             parse_mode: 'Markdown',
             reply_markup: Markup.inlineKeyboard(sellQtyButtons).reply_markup,
-          }).catch(() => {});
+          }).catch(() => { });
         });
         return;
       }
@@ -10362,10 +10497,10 @@ export function setupRoutes(bot: Telegraf): void {
         await ctx.reply(msg, {
           parse_mode: 'Markdown',
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10374,7 +10509,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery('Stop Loss cancelled.').catch(() => {});
+      await ctx.answerCbQuery('Stop Loss cancelled.').catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
@@ -10393,10 +10528,10 @@ export function setupRoutes(bot: Telegraf): void {
       }).catch(async () => {
         await ctx.reply('❌ Stop Loss removed for this position.', {
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10405,7 +10540,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery('Take Profit cancelled.').catch(() => {});
+      await ctx.answerCbQuery('Take Profit cancelled.').catch(() => { });
 
       const user = await getUserByTelegramId(telegramId).catch(() => null);
       if (!user) return;
@@ -10424,10 +10559,10 @@ export function setupRoutes(bot: Telegraf): void {
       }).catch(async () => {
         await ctx.reply('❌ Take Profit removed for this position.', {
           reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-        }).catch(() => {});
+        }).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10436,7 +10571,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       userPendingActions.set(telegramId, {
         action: 'set_sl_custom',
@@ -10463,10 +10598,10 @@ export function setupRoutes(bot: Telegraf): void {
               [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
             ]).reply_markup,
           }
-        ).catch(() => {});
+        ).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10475,7 +10610,7 @@ export function setupRoutes(bot: Telegraf): void {
     try {
       const positionId = ctx.match![1];
       const telegramId = ctx.from!.id;
-      await ctx.answerCbQuery().catch(() => {});
+      await ctx.answerCbQuery().catch(() => { });
 
       userPendingActions.set(telegramId, {
         action: 'set_tp_custom',
@@ -10502,10 +10637,10 @@ export function setupRoutes(bot: Telegraf): void {
               [cb('❌ Cancel', `sl_tp_menu:${positionId}`)],
             ]).reply_markup,
           }
-        ).catch(() => {});
+        ).catch(() => { });
       });
     } catch (err: any) {
-      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => {});
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
   });
 
@@ -10613,7 +10748,7 @@ export function setupRoutes(bot: Telegraf): void {
     // CRITICAL: Public groups must never process arbitrary text, prompt wizards, or token CA pastes
     if (isGroupChat(ctx)) return;
 
-    const rawText = ctx.message.text.trim();
+    let rawText = ctx.message.text.trim();
     if (rawText.startsWith('/')) return; // Handled by command dispatch
 
     const telegramId = ctx.from.id;
@@ -10699,7 +10834,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'import_near_key') {
         // Delete message containing private key immediately for security!
-        await ctx.deleteMessage().catch(() => {});
+        await ctx.deleteMessage().catch(() => { });
 
         const parts = rawText.split(/\s+/).filter(Boolean);
         let explicitAccount: string | undefined;
@@ -10826,7 +10961,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       if (pending.action === 'import_sui_key') {
         // Delete message containing private key immediately for security!
-        await ctx.deleteMessage().catch(() => {});
+        await ctx.deleteMessage().catch(() => { });
 
         try {
           const kp = restoreSuiKeypairFromSecret(rawText);
@@ -10924,6 +11059,15 @@ export function setupRoutes(bot: Telegraf): void {
       }
 
       if (pending.action === 'buy_custom_near' && pending.tokenAddress) {
+        const trimmedBuyInput = rawText.trim();
+        const isNearTokenBuy = !isSolanaToken(pending.tokenAddress) && !isStarknetToken(pending.tokenAddress) && !isSuiToken(pending.tokenAddress);
+        const isExplicitNearInput = /\bnear\b/i.test(trimmedBuyInput);
+        const buyCustomUser = isNearTokenBuy ? await getUserByTelegramId(telegramId).catch(() => null) : null;
+        const isUsdcBuyInput = isNearTokenBuy && (/^\$/.test(trimmedBuyInput) || /usdc|usd/i.test(trimmedBuyInput) || (!isExplicitNearInput && buyCustomUser?.near_trade_currency === 'usdc'));
+        const parsedBuyNum = parseFloat(trimmedBuyInput.replace(/[^0-9.]/g, ''));
+        const nearUsdForBuy = isUsdcBuyInput && !isNaN(parsedBuyNum) && parsedBuyNum > 0 ? ((await getNearUsdPrice().catch(() => 0)) || 5.0) : 0;
+        const customAmt = isUsdcBuyInput && nearUsdForBuy > 0 ? Math.floor((parsedBuyNum / nearUsdForBuy) * 1e6) / 1e6 : parsedBuyNum;
+        if (!isNaN(customAmt) && customAmt > 0) rawText = String(customAmt);
         const amt = parseFloat(rawText);
         if (isNaN(amt) || amt <= 0) {
           await ctx.reply('❌ Invalid amount. Buy cancelled.');
@@ -10943,7 +11087,7 @@ export function setupRoutes(bot: Telegraf): void {
           const onStage = makeStageEditor(ctx, procMsg, 'Processing Buy Order');
           try {
             const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
 
             await ctx.reply(res.message, {
               parse_mode: 'Markdown',
@@ -10954,7 +11098,7 @@ export function setupRoutes(bot: Telegraf): void {
             }
           } catch (err: any) {
             console.warn(`[BUY] Buy failed for ${tokenAddress}:`, err?.message || err);
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
             try {
               await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
             } catch {
@@ -11101,20 +11245,22 @@ export function setupRoutes(bot: Telegraf): void {
           const onStage = makeStageEditor(ctx, procMsg, 'Processing Sell Order');
           try {
             const result = await sellAtTarget(user.id, positionId, percentage, onStage);
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
             if (result.success) {
               await sendPnlCardMessage(
                 ctx,
                 positionId,
-                `✅ *Successfully sold \`${tokensToSell.toLocaleString()} ${sym}\` (\`${percentage.toFixed(1)}%\`)!*`
-              ).catch(() => {});
+                result.usdcReceived && result.usdcReceived > 0
+                  ? `✅ *Successfully sold \`${tokensToSell.toLocaleString()} ${sym}\` (\`${percentage.toFixed(1)}%\`)!*\n💵 *Received*: \`+${result.usdcReceived.toFixed(2)} USDC\``
+                  : `✅ *Successfully sold \`${tokensToSell.toLocaleString()} ${sym}\` (\`${percentage.toFixed(1)}%\`)!*`
+              ).catch(() => { });
             } else {
-              await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => {});
+              await ctx.reply(`❌ Sell failed: ${result.reason || 'Unknown error'}`).catch(() => { });
             }
           } catch (err: any) {
-            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => {});
+            if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
             console.error('[SELL_CUSTOM] Error:', err);
-            await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+            await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
           } finally {
             await releaseInFlight(guardKey);
           }

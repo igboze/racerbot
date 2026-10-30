@@ -9,6 +9,10 @@ import {
   computePnL,
   formatHoldDuration,
   calculateMinOutAdj,
+  calculateMinAmountOut,
+  NEAR_USDC_CONTRACT,
+  NEAR_USDC_DECIMALS,
+  NEAR_USDC_REF_POOL_ID,
   parseMemeCookingId,
   getNearUsdPrice,
   getSuiUsdPrice,
@@ -358,10 +362,11 @@ export async function ensureRefTokenRegistered(tokenAddress: string, accountId?:
 // ── Swap execution ────────────────────────────────────────────────────────────
 
 export class SwapExecutor {
+  private activeTradeWNearState = new Map<string, { wNearBal: bigint; maxNativeDeposit?: bigint }>();
   constructor(
     private redisClient: RedisClient = redis,
     private nearClient: MultiRpcNear = near
-  ) {}
+  ) { }
 
   /**
    * Helper to build atomic actions on wrap.near for buy orders.
@@ -390,15 +395,23 @@ export class SwapExecutor {
     swapGas: bigint = DEFAULT_SWAP_GAS,
     cachedWNearBal?: bigint
   ): Promise<any[]> {
-    const wNearBal = cachedWNearBal !== undefined
-      ? cachedWNearBal
+    const stateOverride = this.activeTradeWNearState.get(subaccountId);
+    const effectiveCachedWNear = stateOverride !== undefined ? stateOverride.wNearBal : cachedWNearBal;
+    const wNearBal = effectiveCachedWNear !== undefined
+      ? effectiveCachedWNear
       : BigInt((await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0')) || '0');
     const totalSpend = amountInBigInt; // === feeAmount + swapAmount by construction
     const DEPOSIT_BUFFER = BigInt('10000000000000000000000'); // 0.01 NEAR stale-read headroom
     const shortfallWithBuffer = totalSpend + DEPOSIT_BUFFER - wNearBal;
     let depositNeeded = shortfallWithBuffer <= 0n ? 0n
       : shortfallWithBuffer > totalSpend ? totalSpend
-      : shortfallWithBuffer;
+        : shortfallWithBuffer;
+    if (stateOverride?.maxNativeDeposit !== undefined && depositNeeded > stateOverride.maxNativeDeposit) {
+      depositNeeded = totalSpend > wNearBal ? totalSpend - wNearBal : 0n;
+      if (depositNeeded > stateOverride.maxNativeDeposit) {
+        depositNeeded = stateOverride.maxNativeDeposit;
+      }
+    }
 
     // Check if account is registered for storage on wrap.near.
     // If not registered, wrap.near automatically deducts its 0.00125 NEAR storage registration fee
@@ -408,7 +421,7 @@ export class SwapExecutor {
     const isWrapRegistered = this.nearClient.checkStorageRegistered
       ? await this.nearClient.checkStorageRegistered(subaccountId, 'wrap.near').catch(() => false)
       : true;
-    if (!isWrapRegistered && depositNeeded > 0n) {
+    if (!isWrapRegistered && depositNeeded > 0n && stateOverride?.maxNativeDeposit === undefined) {
       depositNeeded += WRAP_NEAR_STORAGE_FEE;
       this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near');
     }
@@ -456,7 +469,7 @@ export class SwapExecutor {
    * Execute a swap event with observability: records a trade_attempts row with
    * per-stage timings, updated on success/failure. Throws propagate unchanged.
    */
-  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
+  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
     const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
 
     // Record the attempt WITHOUT blocking the trade — the DB insert overlaps
@@ -484,7 +497,7 @@ export class SwapExecutor {
     // the 'confirming_slow' progress ping keeps the user informed at 15s.
     const TRADE_DEADLINE_MS = 210_000;
     const timings: Record<string, number> = {};
-    let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }>;
+    let inner: Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }>;
     try {
       inner = this.executeInner(event, timings, onProgress);
     } catch (err: any) {
@@ -499,7 +512,7 @@ export class SwapExecutor {
       throw err;
     }
 
-    let result: { txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number };
+    let result: { txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number };
     let deadlineTimer: NodeJS.Timeout | null = null;
     try {
       result = await Promise.race([
@@ -551,7 +564,7 @@ export class SwapExecutor {
     return result;
   }
 
-  private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; nearReceived?: number; sellPercent?: number }> {
+  private async executeInner(event: SwapEvent, timings: Record<string, number>, onProgress?: (stage: string) => void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
     const t0 = Date.now();
     const { user_id, token_in, token_out, amount_in, min_amount_out, venue } = event;
 
@@ -742,17 +755,18 @@ export class SwapExecutor {
     // If activeWallet address is different from user.subaccount_id and activeWallet is not an imported wallet,
     // verify which account has the funds before executing to avoid "Insufficient balance" when user has funds in subaccount_id.
     if (activeWallet && !activeWallet.is_imported && user.subaccount_id && activeWallet.address !== user.subaccount_id) {
-      const [activeBalStr, subaccountBalStr] = await Promise.all([
+      const [activeBalStr, subaccountBalStr, activeUsdcBalStr] = await Promise.all([
         this.nearClient.getNearBalance?.(activeWallet.address).catch(() => '0') ?? '0',
         this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
+        this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, activeWallet.address).catch(() => '0') ?? '0',
       ]);
       const activeBal = BigInt(activeBalStr || '0');
       const subaccountBal = BigInt(subaccountBalStr || '0');
-      if (subaccountBal > activeBal) {
+      if (subaccountBal > activeBal && BigInt(activeUsdcBalStr || '0') === 0n) {
         console.warn(`[EXECUTOR] Wallet desync for user ${user_id}: activeWallet=${activeWallet.address} (${activeBalStr} yocto) vs subaccount_id=${user.subaccount_id} (${subaccountBalStr} yocto). Auto-switching to funded subaccount.`);
         subaccountToUse = user.subaccount_id;
         keyEncToUse = user.scoped_key_encrypted;
-        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => {});
+        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => { });
       }
     }
 
@@ -764,18 +778,26 @@ export class SwapExecutor {
     }
 
     const { subaccountId } = warm;
+    this.activeTradeWNearState.delete(subaccountId);
 
     // Resolve the user's slippage preference (event field wins, then user record).
     const userSlippage = event.slippage_pct ?? user.slippage_pct ?? 2;
 
     // Pre-flight balance check: verify the account has sufficient native balance before burning gas or broadcasting
     const isBuyPath = token_in === 'wrap.near' || token_in === 'near';
+    const isUsdcOnlyMode = (event.trade_currency ?? (user as any).near_trade_currency) === 'usdc';
+    let usdcReceivedHuman: number | undefined = undefined;
     let knownWNearBal: bigint = 0n;
+    let usdcToSwapRaw: bigint = 0n;
+    let nearShortfallFromUsdcYocto: bigint = 0n;
+    let maxNativeDepositYocto: bigint | undefined = undefined;
+    let usdcSpentHuman: number | undefined = undefined;
     if (isBuyPath) {
       // Balance and honeypot safety audit are fetched concurrently
-      const [nativeBalStr, wNearBalStr, safety] = await Promise.all([
+      const [nativeBalStr, wNearBalStr, usdcBalStr, safety] = await Promise.all([
         this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
         this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+        this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountId).catch(() => '0') ?? '0',
         checkTokenSafety(token_out).catch(() => null),
       ]);
 
@@ -806,17 +828,66 @@ export class SwapExecutor {
         const minReserveYocto = BigInt(Math.ceil(minReserveNear * 1e24));
         const totalNearRequired = nearNeededForSwap + minReserveYocto;
 
-        if (nativeBal < totalNearRequired) {
-          const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
-          const availableUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
-          const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
-          const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
-          const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
-          const requiredReserveNearStr = minReserveNear.toFixed(4);
+        if (isUsdcOnlyMode) {
+          const usdcBal = BigInt(usdcBalStr || '0');
+          const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+          const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
+          const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
+            ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
+            : 0n;
+          if (nativeBal < minGasYocto) {
+            throw new Error(
+              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.0350 NEAR (~$${(0.035 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
+            );
+          }
+          if (usdcBal > 0n && (usdcMaxNearYocto * 102n) / 100n >= amountInBigInt) {
+            const shortfallNearHuman = Number(amountInBigInt) / 1e24;
+            const neededUsdcRaw = BigInt(
+              Math.max(1, Math.ceil(shortfallNearHuman * effectiveNearUsd * 1.015 * Math.pow(10, NEAR_USDC_DECIMALS)))
+            );
+            usdcToSwapRaw = neededUsdcRaw > usdcBal ? usdcBal : neededUsdcRaw;
+            nearShortfallFromUsdcYocto = amountInBigInt;
+            maxNativeDepositYocto = 0n;
+            knownWNearBal = 0n;
+            usdcSpentHuman = Number(usdcToSwapRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
+          } else {
+            const reqUsd = ((Number(amountInBigInt) / 1e24) * effectiveNearUsd).toFixed(2);
+            throw new Error(
+              `Insufficient USDC balance (USDC-Only Mode is active). You have ${usdcHuman.toFixed(2)} USDC (~${(Number(usdcMaxNearYocto) / 1e24).toFixed(4)} NEAR), which is less than the requested ~$${reqUsd} USDC (${(Number(amountInBigInt) / 1e24).toFixed(4)} NEAR). Deposit more USDC or switch to NEAR mode in ⚙️ Settings.`
+            );
+          }
+        } else if (nativeBal < totalNearRequired) {
+          const usdcBal = BigInt(usdcBalStr || '0');
+          const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+          const wrapReserveYocto = BigInt(Math.ceil(0.05 * 1e24));
+          const spendableNativeYocto = nativeBal > wrapReserveYocto ? nativeBal - wrapReserveYocto : 0n;
+          const availableNearYocto = spendableNativeYocto + wNearBal;
+          const shortfallYocto = amountInBigInt > availableNearYocto ? amountInBigInt - availableNearYocto : 0n;
+          const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
+          const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
+            ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
+            : 0n;
+          if (nativeBal >= minGasYocto && usdcBal > 0n && shortfallYocto > 0n && availableNearYocto + usdcMaxNearYocto >= amountInBigInt) {
+            const shortfallNearHuman = Number(shortfallYocto) / 1e24;
+            const neededUsdcRaw = BigInt(
+              Math.max(1, Math.ceil(shortfallNearHuman * effectiveNearUsd * 1.015 * Math.pow(10, NEAR_USDC_DECIMALS)))
+            );
+            usdcToSwapRaw = neededUsdcRaw > usdcBal ? usdcBal : neededUsdcRaw;
+            nearShortfallFromUsdcYocto = shortfallYocto;
+            maxNativeDepositYocto = spendableNativeYocto;
+            usdcSpentHuman = Number(usdcToSwapRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
+          } else {
+            const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
+            const availableUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
+            const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
+            const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
+            const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
+            const requiredReserveNearStr = minReserveNear.toFixed(4);
 
-          throw new Error(
-            `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
-          );
+            throw new Error(
+              `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
+            );
+          }
         }
       }
     } else {
@@ -1019,10 +1090,10 @@ export class SwapExecutor {
       }
     }
 
-    const amountInBigInt = BigInt(amount_in);
     // 1.5% fee = 150 bps
-    const feeAmount = (amountInBigInt * 150n) / 10000n;
-    const swapAmount = amountInBigInt - feeAmount;
+    let amountInBigInt = BigInt(amount_in);
+    let feeAmount = (amountInBigInt * 150n) / 10000n;
+    let swapAmount = amountInBigInt - feeAmount;
 
     if (isBuyPath && swapAmount <= 0n) {
       throw new Error(`Amount too small after fee: ${amount_in}`);
@@ -1072,14 +1143,14 @@ export class SwapExecutor {
     const freshQuote = quoteFresh
       ? null
       : await near.computeMinAmountOut(
-          venue as any,
-          token_in,
-          token_out,
-          (isBuyPath ? swapAmount : amountInBigInt).toString(),
-          userSlippage,
-          (event as any).pool_id ?? null,
-          dclPoolId
-        ).catch(() => null);
+        venue as any,
+        token_in,
+        token_out,
+        (isBuyPath ? swapAmount : amountInBigInt).toString(),
+        userSlippage,
+        (event as any).pool_id ?? null,
+        dclPoolId
+      ).catch(() => null);
     if (freshQuote && BigInt(freshQuote.expectedOutput) < BigInt(minOutAdj)) {
       if ((event as any).trigger_type === 'stop_loss') {
         console.log(`[EXECUTOR] Stop-loss price slipped below initial quote; updating min_amount_out to fresh quote ${freshQuote.minAmountOut} to prioritize exit`);
@@ -1128,206 +1199,405 @@ export class SwapExecutor {
           console.warn(`[EXECUTOR] Global pre-swap ensureRefStorage warning for ${token_out}:`, refErr?.message);
         }
       }
-    }
 
-    if (venue === 'nearlytrade') {
-      // Resolve the route (direct wNEAR pair or multihop via a non-NEAR quote asset).
-      const ntState = preloadedNtState ?? await near.getNearlytradeTokenState(
-        token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
-      );
-      console.log(
-        `[EXECUTOR] NearlyTrade route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
-        ` pool=${ntState.pool_id} quote=${ntState.quote} quoteIsNear=${ntState.quoteIsNear} live=${ntState.live}`
-      );
-
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-
-      if (isBuy) {
-        // Ensure storage for token_out (and the quote asset when non-NEAR).
-        // Do NOT call ensureStorage('wrap.near') on buy: near_deposit inside
-        // buildWrapNearBuyActions registers wrap.near storage atomically, so
-        // a separate storage_deposit tx is redundant and causes a neverSeen
-        // timeout for new users whose wrap.near account doesn't exist yet.
-        await ensureStorage(token_out);
-
-        // Also ensure storage for the quote asset when it's non-NEAR (so hop1 output can land)
-        if (!ntState.quoteIsNear) {
-          await ensureStorage(ntState.quote);
+      if (usdcToSwapRaw > 0n) {
+        console.log(
+          `[EXECUTOR] Converting ${usdcSpentHuman?.toFixed(2)} USDC (${usdcToSwapRaw} raw) -> wrap.near for ${subaccountId} ` +
+          `(shortfall=${(Number(nearShortfallFromUsdcYocto) / 1e24).toFixed(4)} NEAR, maxNativeDeposit=${maxNativeDepositYocto !== undefined ? (Number(maxNativeDepositYocto) / 1e24).toFixed(4) : 'unlimited'} NEAR)`
+        );
+        try {
+          await (this.nearClient.ensureStorageDeposit
+            ? this.nearClient.ensureStorageDeposit(subaccountId, 'wrap.near')
+            : near.ensureStorageDeposit(subaccountId, 'wrap.near'));
+          this.nearClient.markStorageRegistered?.(subaccountId, 'wrap.near');
+        } catch (storageErr: any) {
+          console.warn(`[EXECUTOR] ensureStorage('wrap.near') warning before USDC swap:`, storageErr?.message);
+        }
+        try {
+          await ensureRefStorage(subaccountId);
+          await ensureRefTokenRegistered(NEAR_USDC_CONTRACT, subaccountId);
+        } catch (refUsdcErr: any) {
+          console.warn(`[EXECUTOR] ensureRefStorage before USDC swap warning:`, refUsdcErr?.message);
         }
 
-        if (ntState.quoteIsNear) {
-          // ── Direct path: wNEAR → launch token via NearlyTrade DCL (or Rhea if explicitly specified) ──
-          const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
-          const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
+        const usdcPoolId = NEAR_USDC_REF_POOL_ID;
+        let expectedWNearFromUsdc = nearShortfallFromUsdcYocto;
+        let minWNearFromUsdc = '1';
+        try {
+          const viewFn = this.nearClient.view ? this.nearClient.view.bind(this.nearClient) : near.view.bind(near);
+          const ret = await viewFn<string>('v2.ref-finance.near', 'get_return', {
+            pool_id: usdcPoolId,
+            token_in: NEAR_USDC_CONTRACT,
+            amount_in: usdcToSwapRaw.toString(),
+            token_out: 'wrap.near',
+          });
+          if (ret && BigInt(ret) > 0n) {
+            expectedWNearFromUsdc = BigInt(ret);
+            minWNearFromUsdc = calculateMinAmountOut(expectedWNearFromUsdc, Math.max(userSlippage, 2));
+          }
+        } catch { /* fallback to minWNearFromUsdc = '1' */ }
 
-          if (effectiveDclPoolId) {
-            // Verify the pool is actually wNEAR-paired
-            const poolTokens = effectiveDclPoolId.split('|').slice(0, 2);
-            const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
-            if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
+        const preUsdcWNearActualStr = isUsdcOnlyMode
+          ? (await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'))
+          : knownWNearBal.toString();
+        const preUsdcWNearStr = preUsdcWNearActualStr;
+        const usdcSwapActions = [
+          transactions.functionCall(
+            'ft_transfer_call',
+            {
+              receiver_id: 'v2.ref-finance.near',
+              amount: usdcToSwapRaw.toString(),
+              msg: JSON.stringify({
+                force: 0,
+                actions: [
+                  {
+                    pool_id: usdcPoolId,
+                    token_in: NEAR_USDC_CONTRACT,
+                    token_out: 'wrap.near',
+                    amount_in: usdcToSwapRaw.toString(),
+                    min_amount_out: minWNearFromUsdc,
+                  },
+                ],
+                referral_id: null,
+              }),
+            },
+            DEFAULT_SWAP_GAS,
+            BigInt('1')
+          ),
+        ];
+        const usdcSwapOutcome = await signAndSend(NEAR_USDC_CONTRACT, usdcSwapActions, undefined, true);
+
+        const postUsdcWNearStr = await (
+          this.nearClient.getTokenBalanceOnTradeRpc
+            ? this.nearClient.getTokenBalanceOnTradeRpc('wrap.near', subaccountId)
+            : this.nearClient.getTokenBalance('wrap.near', subaccountId)
+        ).catch(() => null);
+
+        const usdcCheck = determineSwapOutcome({
+          result: usdcSwapOutcome,
+          subaccountId,
+          isBuy: false,
+          tokenOut: 'wrap.near',
+          preBalance: preUsdcWNearStr,
+          postBalance: postUsdcWNearStr,
+        });
+        if (!usdcCheck.ok) {
+          throw new Error(`USDC -> NEAR conversion failed: ${usdcCheck.reason}`);
+        }
+
+        if (postUsdcWNearStr !== null && BigInt(postUsdcWNearStr) > BigInt(preUsdcWNearStr)) {
+          knownWNearBal = isUsdcOnlyMode ? BigInt(postUsdcWNearStr) - BigInt(preUsdcWNearStr) : BigInt(postUsdcWNearStr);
+
+
+        } else if (usdcCheck.netAmountOut && BigInt(usdcCheck.netAmountOut) > 0n) {
+
+            knownWNearBal = knownWNearBal + BigInt(usdcCheck.netAmountOut);
+          } else {
+            knownWNearBal = knownWNearBal + expectedWNearFromUsdc;
+          }
+
+          // Re-check native NEAR after storage registrations and USDC swap so near_deposit
+          // never exceeds remaining native balance minus gas reserve.
+          if (maxNativeDepositYocto !== undefined && maxNativeDepositYocto > 0n && this.nearClient.getNearBalance) {
+            const postUsdcNativeStr = await (
+              (this.nearClient as any).getNearBalanceOnTradeRpc
+                ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
+                : this.nearClient.getNearBalance(subaccountId)
+            ).catch(() => null);
+            if (postUsdcNativeStr !== null) {
+              const postNative = BigInt(postUsdcNativeStr);
+              const minGasAfterStorage = BigInt(Math.ceil(0.035 * 1e24));
+              const clampedMax = postNative > minGasAfterStorage ? postNative - minGasAfterStorage : 0n;
+              if (clampedMax < maxNativeDepositYocto) {
+                maxNativeDepositYocto = clampedMax;
+              }
+            }
+          }
+
+          if (maxNativeDepositYocto !== undefined && maxNativeDepositYocto + knownWNearBal < amountInBigInt) {
+            const prevAmountIn = amountInBigInt;
+            amountInBigInt = maxNativeDepositYocto + knownWNearBal;
+            feeAmount = (amountInBigInt * 150n) / 10000n;
+            swapAmount = amountInBigInt - feeAmount;
+            if (prevAmountIn > 0n && BigInt(minOutAdj || '0') > 0n) {
+              const scaledMin = (BigInt(minOutAdj) * amountInBigInt) / prevAmountIn;
+              minOutAdj = (scaledMin > 0n ? scaledMin : 1n).toString();
+            }
+          }
+
+          this.activeTradeWNearState.set(subaccountId, {
+            wNearBal: knownWNearBal,
+            maxNativeDeposit: maxNativeDepositYocto,
+          });
+
+          if (venue === 'intear' && maxNativeDepositYocto !== undefined && amountInBigInt > maxNativeDepositYocto) {
+            const unwrapNeeded = amountInBigInt - maxNativeDepositYocto;
+            const unwrapAmt = unwrapNeeded <= knownWNearBal ? unwrapNeeded : knownWNearBal;
+            if (unwrapAmt > 0n) {
+              await signAndSend('wrap.near', [
+                transactions.functionCall(
+                  'near_withdraw',
+                  { amount: unwrapAmt.toString() },
+                  BigInt('30000000000000'),
+                  BigInt('1')
+                ),
+              ], 30_000, true);
+              knownWNearBal -= unwrapAmt;
+              maxNativeDepositYocto += unwrapAmt;
+              this.activeTradeWNearState.set(subaccountId, {
+                wNearBal: knownWNearBal,
+                maxNativeDeposit: maxNativeDepositYocto,
+              });
+            }
+          }
+        }
+      }
+
+      if (venue === 'nearlytrade') {
+        // Resolve the route (direct wNEAR pair or multihop via a non-NEAR quote asset).
+        const ntState = preloadedNtState ?? await near.getNearlytradeTokenState(
+          token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
+        );
+        console.log(
+          `[EXECUTOR] NearlyTrade route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
+          ` pool=${ntState.pool_id} quote=${ntState.quote} quoteIsNear=${ntState.quoteIsNear} live=${ntState.live}`
+        );
+
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+
+        if (isBuy) {
+          // Ensure storage for token_out (and the quote asset when non-NEAR).
+          // Do NOT call ensureStorage('wrap.near') on buy: near_deposit inside
+          // buildWrapNearBuyActions registers wrap.near storage atomically, so
+          // a separate storage_deposit tx is redundant and causes a neverSeen
+          // timeout for new users whose wrap.near account doesn't exist yet.
+          await ensureStorage(token_out);
+
+          // Also ensure storage for the quote asset when it's non-NEAR (so hop1 output can land)
+          if (!ntState.quoteIsNear) {
+            await ensureStorage(ntState.quote);
+          }
+
+          if (ntState.quoteIsNear) {
+            // ── Direct path: wNEAR → launch token via NearlyTrade DCL (or Rhea if explicitly specified) ──
+            const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
+            const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
+
+            if (effectiveDclPoolId) {
+              // Verify the pool is actually wNEAR-paired
+              const poolTokens = effectiveDclPoolId.split('|').slice(0, 2);
+              const nonTokenSide = poolTokens.find((t: string) => t !== token_out);
+              if (!poolTokens.includes('wrap.near') && !poolTokens.includes('near')) {
+                throw new Error(
+                  `Token ${token_out} is in a DCL pool paired with ${nonTokenSide}, not NEAR/wNEAR.`
+                );
+              }
+              console.log(`[EXECUTOR] NearlyTrade route=direct-dcl pool=${effectiveDclPoolId}`);
+              const actions = await this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'dclv2.ref-labs.near',
+                JSON.stringify({
+                  Swap: {
+                    pool_ids: [effectiveDclPoolId],
+                    output_token: token_out,
+                    min_output_amount: minOutAdj,
+                    swap_out_recipient: subaccountId,
+                  },
+                }),
+                DEFAULT_SWAP_GAS,
+                knownWNearBal
+              );
+              result = await signAndSend('wrap.near', actions);
+            } else if (explicitRheaPoolId) {
+              console.log(`[EXECUTOR] NearlyTrade route=direct-rhea pool=${explicitRheaPoolId}`);
+              const actions = await this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'v2.ref-finance.near',
+                JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: explicitRheaPoolId,
+                      token_in: 'wrap.near',
+                      token_out,
+                      amount_in: swapAmount.toString(),
+                      min_amount_out: minOutAdj,
+                      min_output_amount: minOutAdj,
+                    },
+                  ],
+                }),
+                undefined,
+                knownWNearBal
+              );
+              result = await signAndSend('wrap.near', actions);
+            } else {
               throw new Error(
-                `Token ${token_out} is in a DCL pool paired with ${nonTokenSide}, not NEAR/wNEAR.`
+                `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
               );
             }
-            console.log(`[EXECUTOR] NearlyTrade route=direct-dcl pool=${effectiveDclPoolId}`);
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'dclv2.ref-labs.near',
-              JSON.stringify({
-                Swap: {
-                  pool_ids: [effectiveDclPoolId],
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                  swap_out_recipient: subaccountId,
-                },
-              }),
-              DEFAULT_SWAP_GAS,
-              knownWNearBal
-            );
-            result = await signAndSend('wrap.near', actions);
-          } else if (explicitRheaPoolId) {
-            console.log(`[EXECUTOR] NearlyTrade route=direct-rhea pool=${explicitRheaPoolId}`);
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'v2.ref-finance.near',
-              JSON.stringify({
-                actions: [
-                  {
-                    pool_id: explicitRheaPoolId,
-                    token_in: 'wrap.near',
-                    token_out,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: minOutAdj,
+          } else {
+            const route = await near.planNearlytradeRoute(token_out);
+            if (route.kind !== 'multihop') throw new Error('Expected multihop route');
+
+            if (route.hop1.type === 'dcl') {
+              // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
+              const poolIds = [route.hop1.poolId, route.launchPoolId];
+              console.log(
+                `[EXECUTOR] NearlyTrade route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
+              );
+              const actions = await this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'dclv2.ref-labs.near',
+                JSON.stringify({
+                  Swap: {
+                    pool_ids: poolIds,
+                    output_token: token_out,
                     min_output_amount: minOutAdj,
+                    swap_out_recipient: subaccountId,
                   },
-                ],
-              }),
-              undefined,
-              knownWNearBal
-            );
-            result = await signAndSend('wrap.near', actions);
-          } else {
-            throw new Error(
-              `Token ${token_out} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
-            );
-          }
-        } else {
-          const route = await near.planNearlytradeRoute(token_out);
-          if (route.kind !== 'multihop') throw new Error('Expected multihop route');
+                }),
+                DEFAULT_SWAP_GAS,
+                knownWNearBal
+              );
+              result = await signAndSend('wrap.near', actions);
+            } else {
+              // Fallback: Two-transaction path: wNEAR → quote (v2 AMM) → launch token (DCL)
+              const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
-          if (route.hop1.type === 'dcl') {
-            // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
-            const poolIds = [route.hop1.poolId, route.launchPoolId];
-            console.log(
-              `[EXECUTOR] NearlyTrade route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
-            );
-            const actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'dclv2.ref-labs.near',
-              JSON.stringify({
-                Swap: {
-                  pool_ids: poolIds,
-                  output_token: token_out,
-                  min_output_amount: minOutAdj,
-                  swap_out_recipient: subaccountId,
-                },
-              }),
-              DEFAULT_SWAP_GAS,
-              knownWNearBal
-            );
-            result = await signAndSend('wrap.near', actions);
-          } else {
-            // Fallback: Two-transaction path: wNEAR → quote (v2 AMM) → launch token (DCL)
-            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+              console.log(
+                `[EXECUTOR] NearlyTrade route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
+                ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
+              );
 
-            console.log(
-              `[EXECUTOR] NearlyTrade route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
-              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
-            );
+              // Ensure quote storage and Ref Finance registration before step 1
+              await ensureStorage(route.quote);
+              await ensureRefStorage(subaccountId);
+              await ensureRefTokenRegistered(route.quote, subaccountId);
 
-            // Ensure quote storage and Ref Finance registration before step 1
-            await ensureStorage(route.quote);
-            await ensureRefStorage(subaccountId);
-            await ensureRefTokenRegistered(route.quote, subaccountId);
+              // Tx 1: wNEAR → quote via Ref v2
+              let tx1Result: any;
+              const tx1Actions = await this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'v2.ref-finance.near',
+                JSON.stringify({
+                  actions: [
+                    {
+                      pool_id: Number(route.hop1.poolId),
+                      token_in: 'wrap.near',
+                      token_out: route.quote,
+                      amount_in: swapAmount.toString(),
+                      min_amount_out: minHop1,
+                    },
+                  ],
+                })
+              );
+              tx1Result = await signAndSend('wrap.near', tx1Actions);
 
-            // Tx 1: wNEAR → quote via Ref v2
-            let tx1Result: any;
-            const tx1Actions = await this.buildWrapNearBuyActions(
-              subaccountId,
-              amountInBigInt,
-              feeAmount,
-              swapAmount,
-              'v2.ref-finance.near',
-              JSON.stringify({
-                actions: [
-                  {
-                    pool_id: Number(route.hop1.poolId),
-                    token_in: 'wrap.near',
-                    token_out: route.quote,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: minHop1,
-                  },
-                ],
-              })
-            );
-            tx1Result = await signAndSend('wrap.near', tx1Actions);
+              console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
-            console.log(`[EXECUTOR] NearlyTrade hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
+              // Read how much quote we actually received in the wallet
+              let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+              let quoteBalBigInt = BigInt(quoteBal || '0');
 
-            // Read how much quote we actually received in the wallet
-            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-            let quoteBalBigInt = BigInt(quoteBal || '0');
+              // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
+              if (quoteBalBigInt <= 0n) {
+                const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+                const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
+                if (refQuoteBal > 0n) {
+                  console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
+                  await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                    transactions.functionCall(
+                      'withdraw',
+                      { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
+                      DEFAULT_SWAP_GAS,
+                      BigInt('1')
+                    ),
+                  ], 30_000);
+                  quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+                  quoteBalBigInt = BigInt(quoteBal || '0');
+                }
+              }
 
-            // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
-            if (quoteBalBigInt <= 0n) {
-              const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
-              const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
-              if (refQuoteBal > 0n) {
-                console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
-                await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+              if (quoteBalBigInt <= 0n) {
+                const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+                throw new Error(
+                  `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
+                  `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
+                );
+              }
+
+              // Tx 2: quote → launch token via launch DCL pool
+              let tx2Result: any;
+              try {
+                const tx2Actions = [
                   transactions.functionCall(
-                    'withdraw',
-                    { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
+                    'ft_transfer_call',
+                    {
+                      receiver_id: 'dclv2.ref-labs.near',
+                      amount: quoteBalBigInt.toString(),
+                      msg: JSON.stringify({
+                        Swap: {
+                          pool_ids: [route.launchPoolId],
+                          output_token: token_out,
+                          min_output_amount: minOutAdj,
+                        },
+                      }),
+                    },
                     DEFAULT_SWAP_GAS,
                     BigInt('1')
                   ),
-                ], 30_000);
-                quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-                quoteBalBigInt = BigInt(quoteBal || '0');
+                ];
+                tx2Result = await signAndSend(route.quote, tx2Actions);
+              } catch (tx2Err: any) {
+                const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+                // Step 2 failed — do NOT record a fill or position for the launch token.
+                // Return a failure reason telling the user about the quote balance.
+                const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(6);
+                throw new Error(
+                  `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
+                  `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+                );
               }
+              result = tx2Result;
             }
+          }
+        } else {
+          // ── Sell token on Rhea or DCL for wrap.near ────────────────────
+          await ensureStorage(token_in);
+          await ensureStorage('wrap.near');
+          if (!ntState.quoteIsNear) {
+            await ensureStorage(ntState.quote);
+          }
 
-            if (quoteBalBigInt <= 0n) {
-              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-              throw new Error(
-                `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
-                `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
-              );
-            }
+          if (ntState.quoteIsNear) {
+            // Direct sell via NearlyTrade DCL (or Rhea if explicitly specified)
+            const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
+            const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
 
-            // Tx 2: quote → launch token via launch DCL pool
-            let tx2Result: any;
-            try {
-              const tx2Actions = [
+            if (effectiveDclPoolId) {
+              const actions = [
                 transactions.functionCall(
                   'ft_transfer_call',
                   {
                     receiver_id: 'dclv2.ref-labs.near',
-                    amount: quoteBalBigInt.toString(),
+                    amount: amountInBigInt.toString(),
                     msg: JSON.stringify({
                       Swap: {
-                        pool_ids: [route.launchPoolId],
-                        output_token: token_out,
-                        min_output_amount: minOutAdj,
+                        pool_ids: [effectiveDclPoolId],
+                        output_token: 'wrap.near',
+                        min_output_amount: min_amount_out,
+                        swap_out_recipient: subaccountId,
                       },
                     }),
                   },
@@ -1335,221 +1605,174 @@ export class SwapExecutor {
                   BigInt('1')
                 ),
               ];
-              tx2Result = await signAndSend(route.quote, tx2Actions);
-            } catch (tx2Err: any) {
-              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-              // Step 2 failed — do NOT record a fill or position for the launch token.
-              // Return a failure reason telling the user about the quote balance.
-              const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(6);
+              result = await signAndSend(token_in, actions);
+            } else if (explicitRheaPoolId) {
+              const actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'v2.ref-finance.near',
+                    amount: amountInBigInt.toString(),
+                    msg: JSON.stringify({
+                      actions: [
+                        {
+                          pool_id: explicitRheaPoolId,
+                          token_in,
+                          token_out: 'wrap.near',
+                          amount_in: amountInBigInt.toString(),
+                          min_amount_out: min_amount_out,
+                        },
+                      ],
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              result = await signAndSend(token_in, actions);
+            } else {
               throw new Error(
-                `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
-                `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+                `Token ${token_in} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
               );
             }
-            result = tx2Result;
-          }
-        }
-      } else {
-        // ── Sell token on Rhea or DCL for wrap.near ────────────────────
-        await ensureStorage(token_in);
-        await ensureStorage('wrap.near');
-        if (!ntState.quoteIsNear) {
-          await ensureStorage(ntState.quote);
-        }
-
-        if (ntState.quoteIsNear) {
-          // Direct sell via NearlyTrade DCL (or Rhea if explicitly specified)
-          const effectiveDclPoolId = dclPoolId || ntState.dclPoolId;
-          const explicitRheaPoolId = typeof (event as any).pool_id === 'number' ? (event as any).pool_id : null;
-
-          if (effectiveDclPoolId) {
-            const actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [effectiveDclPoolId],
-                      output_token: 'wrap.near',
-                      min_output_amount: min_amount_out,
-                      swap_out_recipient: subaccountId,
-                    },
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend(token_in, actions);
-          } else if (explicitRheaPoolId) {
-            const actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'v2.ref-finance.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    actions: [
-                      {
-                        pool_id: explicitRheaPoolId,
-                        token_in,
-                        token_out: 'wrap.near',
-                        amount_in: amountInBigInt.toString(),
-                        min_amount_out: min_amount_out,
-                      },
-                    ],
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend(token_in, actions);
           } else {
-            throw new Error(
-              `Token ${token_in} is not yet tradable. It's still in the launchpad/bonding phase. Wait for it to bond and create a pool on Rhea or NearlyTrade DCL.`
-            );
-          }
-        } else {
-          const route = await near.planNearlytradeRoute(token_in);
-          if (route.kind !== 'multihop') throw new Error('Expected multihop route');
+            const route = await near.planNearlytradeRoute(token_in);
+            if (route.kind !== 'multihop') throw new Error('Expected multihop route');
 
-          if (route.hop1.type === 'dcl') {
-            // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
-            const poolIds = [route.launchPoolId, route.hop1.poolId];
-            console.log(
-              `[EXECUTOR] NearlyTrade route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
-            );
-            const actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: poolIds,
-                      output_token: 'wrap.near',
-                      min_output_amount: min_amount_out,
-                      swap_out_recipient: subaccountId,
-                    },
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend(token_in, actions);
-          } else {
-            // Fallback: Two-transaction sell: launch token (DCL) → quote → wNEAR (Ref v2 AMM)
-            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
-
-            console.log(
-              `[EXECUTOR] NearlyTrade route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
-              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
-            );
-
-            // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
-            await ensureStorage(route.quote);
-            await ensureStorage('wrap.near');
-            await ensureRefStorage(subaccountId);
-            await ensureRefTokenRegistered(route.quote, subaccountId);
-            await ensureRefTokenRegistered('wrap.near', subaccountId);
-
-            // Tx 1: launch token → quote via launch DCL pool
-            const tx1Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [route.launchPoolId],
-                      output_token: route.quote,
-                      min_output_amount: minHop1,
-                    },
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            await signAndSend(token_in, tx1Actions);
-
-            // Read quote balance and forward to Ref for wNEAR
-            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-            let quoteBalBigInt = BigInt(quoteBal || '0');
-            if (quoteBalBigInt <= 0n) {
-              throw new Error(
-                `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+            if (route.hop1.type === 'dcl') {
+              // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
+              const poolIds = [route.launchPoolId, route.hop1.poolId];
+              console.log(
+                `[EXECUTOR] NearlyTrade route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
               );
-            }
-
-            // Re-quote hop 2 with actual quoteBalBigInt received
-            const hop2Quote = await near.computeMinAmountOut(
-              'ref',
-              route.quote,
-              'wrap.near',
-              quoteBalBigInt.toString(),
-              userSlippage,
-              Number(route.hop1.poolId)
-            ).catch(() => null);
-            const minTx2 = hop2Quote ? hop2Quote.minAmountOut : '1';
-
-            const tx2Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'v2.ref-finance.near',
-                  amount: quoteBalBigInt.toString(),
-                  msg: JSON.stringify({
-                    actions: [
-                      {
-                        pool_id: Number(route.hop1.poolId),
-                        token_in: route.quote,
-                        token_out: 'wrap.near',
-                        amount_in: quoteBalBigInt.toString(),
-                        min_amount_out: minTx2,
+              const actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'dclv2.ref-labs.near',
+                    amount: amountInBigInt.toString(),
+                    msg: JSON.stringify({
+                      Swap: {
+                        pool_ids: poolIds,
+                        output_token: 'wrap.near',
+                        min_output_amount: min_amount_out,
+                        swap_out_recipient: subaccountId,
                       },
-                    ],
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            try {
-              result = await signAndSend(route.quote, tx2Actions);
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              result = await signAndSend(token_in, actions);
+            } else {
+              // Fallback: Two-transaction sell: launch token (DCL) → quote → wNEAR (Ref v2 AMM)
+              const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
-              // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
-              const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
-              const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
-              if (refWnearBal > 0n) {
-                console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
-                await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
-                  transactions.functionCall(
-                    'withdraw',
-                    { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
-                    DEFAULT_SWAP_GAS,
-                    BigInt('1')
-                  ),
-                ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
+              console.log(
+                `[EXECUTOR] NearlyTrade route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
+                ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
+              );
+
+              // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
+              await ensureStorage(route.quote);
+              await ensureStorage('wrap.near');
+              await ensureRefStorage(subaccountId);
+              await ensureRefTokenRegistered(route.quote, subaccountId);
+              await ensureRefTokenRegistered('wrap.near', subaccountId);
+
+              // Tx 1: launch token → quote via launch DCL pool
+              const tx1Actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'dclv2.ref-labs.near',
+                    amount: amountInBigInt.toString(),
+                    msg: JSON.stringify({
+                      Swap: {
+                        pool_ids: [route.launchPoolId],
+                        output_token: route.quote,
+                        min_output_amount: minHop1,
+                      },
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              await signAndSend(token_in, tx1Actions);
+
+              // Read quote balance and forward to Ref for wNEAR
+              let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+              let quoteBalBigInt = BigInt(quoteBal || '0');
+              if (quoteBalBigInt <= 0n) {
+                throw new Error(
+                  `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+                );
               }
-            } catch (tx2Err: any) {
-              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-              const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(4);
-              throw new Error(
-                `Two-transaction sell: step 1 (${token_in} → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → NEAR) failed: ` +
-                `${tx2Err.message}. Your wallet holds ${heldAmount} ${quoteMeta.symbol}.`
-              );
+
+              // Re-quote hop 2 with actual quoteBalBigInt received
+              const hop2Quote = await near.computeMinAmountOut(
+                'ref',
+                route.quote,
+                'wrap.near',
+                quoteBalBigInt.toString(),
+                userSlippage,
+                Number(route.hop1.poolId)
+              ).catch(() => null);
+              const minTx2 = hop2Quote ? hop2Quote.minAmountOut : '1';
+
+              const tx2Actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'v2.ref-finance.near',
+                    amount: quoteBalBigInt.toString(),
+                    msg: JSON.stringify({
+                      actions: [
+                        {
+                          pool_id: Number(route.hop1.poolId),
+                          token_in: route.quote,
+                          token_out: 'wrap.near',
+                          amount_in: quoteBalBigInt.toString(),
+                          min_amount_out: minTx2,
+                        },
+                      ],
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              try {
+                result = await signAndSend(route.quote, tx2Actions);
+
+                // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
+                const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+                const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
+                if (refWnearBal > 0n) {
+                  console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
+                  await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                    transactions.functionCall(
+                      'withdraw',
+                      { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
+                      DEFAULT_SWAP_GAS,
+                      BigInt('1')
+                    ),
+                  ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
+                }
+              } catch (tx2Err: any) {
+                const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+                const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, ntState.quoteDecimals)).toFixed(4);
+                throw new Error(
+                  `Two-transaction sell: step 1 (${token_in} → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → NEAR) failed: ` +
+                  `${tx2Err.message}. Your wallet holds ${heldAmount} ${quoteMeta.symbol}.`
+                );
+              }
             }
           }
         }
-      }
-    } else if (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs') {
+      } else if (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs') {
         const isBuyTarget = token_in === 'wrap.near' || token_in === 'near';
         const targetTokenQ = isBuyTarget ? token_out : token_in;
         const pinnedSimplePool = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
@@ -1830,37 +2053,37 @@ export class SwapExecutor {
           if (isBuy) {
             const rheaActions = (intermediateToken && intermediatePoolId)
               ? [
-                  {
-                    pool_id: intermediatePoolId,
-                    token_in: 'wrap.near',
-                    token_out: intermediateToken,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: '0',
-                  },
-                  {
-                    pool_id: rheaPoolId,
-                    token_in: intermediateToken,
-                    token_out,
-                    min_amount_out: minOutAdj,
-                  },
-                ]
+                {
+                  pool_id: intermediatePoolId,
+                  token_in: 'wrap.near',
+                  token_out: intermediateToken,
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: '0',
+                },
+                {
+                  pool_id: rheaPoolId,
+                  token_in: intermediateToken,
+                  token_out,
+                  min_amount_out: minOutAdj,
+                },
+              ]
               : [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in: 'wrap.near',
-                    token_out,
-                    amount_in: swapAmount.toString(),
-                    min_amount_out: minOutAdj,
-                    min_output_amount: minOutAdj,
-                  },
-                ];
+                {
+                  pool_id: rheaPoolId,
+                  token_in: 'wrap.near',
+                  token_out,
+                  amount_in: swapAmount.toString(),
+                  min_amount_out: minOutAdj,
+                  min_output_amount: minOutAdj,
+                },
+              ];
 
             const [, actions] = await Promise.all([
               intermediateToken
                 ? Promise.all([
-                    ensureStorage(token_out),
-                    ensureStorage(intermediateToken),
-                  ])
+                  ensureStorage(token_out),
+                  ensureStorage(intermediateToken),
+                ])
                 : ensureStorage(token_out),
               this.buildWrapNearBuyActions(
                 subaccountId,
@@ -1889,37 +2112,256 @@ export class SwapExecutor {
 
             const rheaActions = (intermediateToken && intermediatePoolId)
               ? [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in,
-                    token_out: intermediateToken,
-                    amount_in: amountInBigInt.toString(),
-                    min_amount_out: '0',
-                  },
-                  {
-                    pool_id: intermediatePoolId,
-                    token_in: intermediateToken,
-                    token_out: 'wrap.near',
-                    min_amount_out: min_amount_out,
-                  },
-                ]
+                {
+                  pool_id: rheaPoolId,
+                  token_in,
+                  token_out: intermediateToken,
+                  amount_in: amountInBigInt.toString(),
+                  min_amount_out: '0',
+                },
+                {
+                  pool_id: intermediatePoolId,
+                  token_in: intermediateToken,
+                  token_out: 'wrap.near',
+                  min_amount_out: min_amount_out,
+                },
+              ]
               : [
-                  {
-                    pool_id: rheaPoolId,
-                    token_in,
-                    token_out: 'wrap.near',
-                    amount_in: amountInBigInt.toString(),
-                    min_amount_out: min_amount_out,
-                  },
-                ];
+                {
+                  pool_id: rheaPoolId,
+                  token_in,
+                  token_out: 'wrap.near',
+                  amount_in: amountInBigInt.toString(),
+                  min_amount_out: min_amount_out,
+                },
+              ];
+
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+
+            result = await signAndSend(token_in, actions);
+          }
+        }
+      } else if (venue === 'intear') {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        const targetToken = isBuy ? token_out : token_in;
+        const pinnedPoolId = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
+        const intearState = await near.getIntearTokenState(targetToken).catch(() => null);
+        const poolId = (typeof pinnedPoolId === 'number' && pinnedPoolId >= 0)
+          ? pinnedPoolId
+          : (intearState?.poolId ?? (await near.findIntearPoolId(targetToken).catch(() => null)));
+        if (poolId === null || poolId === undefined || typeof poolId !== 'number' || poolId < 0) {
+          throw new Error(`No Intear pool found for token ${targetToken}.`);
+        }
+        const poolBuf = Buffer.alloc(4);
+        poolBuf.writeUInt32LE(poolId, 0);
+        const poolMsg = poolBuf.toString('base64');
+
+        const pairedAsset = intearState?.pairedAsset ?? 'near';
+        const isPairedWithIntear = pairedAsset === 'token.intear.near';
+
+        if (isBuy) {
+          await ensureStorage(token_out);
+
+          let operations: any[];
+          if (isPairedWithIntear) {
+            const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
+            const intearNearBuf = Buffer.alloc(4);
+            intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
+            const intearPoolMsg = intearNearBuf.toString('base64');
+
+            operations = [
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: 'near',
+                  asset_out: 'nep141:token.intear.near',
+                  amount: { Amount: { ExactIn: swapAmount.toString() } },
+                  constraint: null,
+                  message: intearPoolMsg,
+                },
+              },
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: 'nep141:token.intear.near',
+                  asset_out: `nep141:${token_out}`,
+                  amount: 'OutputOfLastIn',
+                  constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
+                  message: poolMsg,
+                },
+              },
+              {
+                Withdraw: {
+                  asset_id: `nep141:${token_out}`,
+                  amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
+                  to: null,
+                  rescue_address: null,
+                },
+              },
+            ];
+          } else {
+            operations = [
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: 'near',
+                  asset_out: `nep141:${token_out}`,
+                  amount: { Amount: { ExactIn: swapAmount.toString() } },
+                  constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
+                  message: poolMsg,
+                },
+              },
+              {
+                Withdraw: {
+                  asset_id: `nep141:${token_out}`,
+                  amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
+                  to: null,
+                  rescue_address: null,
+                },
+              },
+            ];
+          }
+
+          // Buy on dex.intear.near
+          // dex.intear.near requires the receiving account to have the output asset registered in internal balances
+          // for rescue address validation during Withdraw. Batch storage_deposit + register_assets atomically if not yet registered.
+          const actions: transactions.Action[] = [];
+          const cacheKey = `${subaccountId}:nep141:${token_out}`;
+          const isRegisteredOnIntear = intearRegisteredCache.has(cacheKey) || (await near.areIntearAssetsRegistered(subaccountId, [token_out]).catch(() => false));
+
+          if (!isRegisteredOnIntear) {
+            const storageBal = await near.getIntearStorageBalance(subaccountId).catch(() => null);
+            const available = BigInt(storageBal?.available ?? '0');
+            // Minimum deposit on dex.intear.near is 0.005 NEAR (5e21 yocto). Each registered asset costs ~0.001 NEAR.
+            if (available < BigInt('2000000000000000000000')) {
+              actions.push(
+                transactions.functionCall(
+                  'storage_deposit',
+                  { account_id: subaccountId },
+                  BigInt('20000000000000'), // 20 Tgas
+                  BigInt('5000000000000000000000') // 0.005 NEAR
+                )
+              );
+            }
+            actions.push(
+              transactions.functionCall(
+                'register_assets',
+                { asset_ids: [`nep141:${token_out}`] },
+                BigInt('20000000000000'), // 20 Tgas
+                BigInt('1') // 1 yocto
+              )
+            );
+          }
+
+          actions.push(
+            transactions.functionCall(
+              'deposit_near',
+              {
+                operations: {
+                  referrer: 'dex-aggregator.intear.near',
+                  operations,
+                },
+              },
+              DEFAULT_SWAP_GAS,
+              swapAmount
+            )
+          );
+
+          result = await signAndSend('dex.intear.near', actions);
+          near.markIntearAssetRegistered(subaccountId, token_out);
+
+          if (feeAmount > 0n) {
+            try {
+              await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
+            } catch (err: any) {
+              console.warn('[EXECUTOR] Intear fee transfer error:', err?.message);
+            }
+          }
+        } else {
+          // Sell token on dex.intear.near
+          // Ensure subaccount has 'near' registered on dex.intear.near so Withdraw of 'near' never fails
+          await near.ensureIntearAssetRegistered(subaccountId, 'near');
+          let operations: any[];
+          if (isPairedWithIntear) {
+            const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
+            const intearNearBuf = Buffer.alloc(4);
+            intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
+            const intearPoolMsg = intearNearBuf.toString('base64');
+
+            operations = [
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: `nep141:${token_in}`,
+                  asset_out: 'nep141:token.intear.near',
+                  amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                  constraint: null,
+                  message: poolMsg,
+                },
+              },
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: 'nep141:token.intear.near',
+                  asset_out: 'near',
+                  amount: 'OutputOfLastIn',
+                  constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                  message: intearPoolMsg,
+                },
+              },
+              {
+                Withdraw: {
+                  asset_id: 'near',
+                  amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                  to: null,
+                  rescue_address: null,
+                },
+              },
+            ];
+          } else {
+            operations = [
+              {
+                SwapSimple: {
+                  dex_id: 'slimedragon.near/xyk',
+                  asset_in: `nep141:${token_in}`,
+                  asset_out: 'near',
+                  amount: { Amount: { ExactIn: amountInBigInt.toString() } },
+                  constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
+                  message: poolMsg,
+                },
+              },
+              {
+                Withdraw: {
+                  asset_id: 'near',
+                  amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
+                  to: null,
+                  rescue_address: null,
+                },
+              },
+            ];
+          }
 
           const actions = [
             transactions.functionCall(
               'ft_transfer_call',
               {
-                receiver_id: 'v2.ref-finance.near',
+                receiver_id: 'dex.intear.near',
                 amount: amountInBigInt.toString(),
-                msg: JSON.stringify({ force: 0, actions: rheaActions, referral_id: null }),
+                msg: JSON.stringify({
+                  referrer: 'dex-aggregator.intear.near',
+                  operations,
+                }),
               },
               DEFAULT_SWAP_GAS,
               BigInt('1')
@@ -1928,290 +2370,17 @@ export class SwapExecutor {
 
           result = await signAndSend(token_in, actions);
         }
-      }
-    } else if (venue === 'intear') {
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      const targetToken = isBuy ? token_out : token_in;
-      const pinnedPoolId = (event as any).pool_id ?? (event as any).rhea_pool_id ?? null;
-      const intearState = await near.getIntearTokenState(targetToken).catch(() => null);
-      const poolId = (typeof pinnedPoolId === 'number' && pinnedPoolId >= 0)
-        ? pinnedPoolId
-        : (intearState?.poolId ?? (await near.findIntearPoolId(targetToken).catch(() => null)));
-      if (poolId === null || poolId === undefined || typeof poolId !== 'number' || poolId < 0) {
-        throw new Error(`No Intear pool found for token ${targetToken}.`);
-      }
-      const poolBuf = Buffer.alloc(4);
-      poolBuf.writeUInt32LE(poolId, 0);
-      const poolMsg = poolBuf.toString('base64');
-
-      const pairedAsset = intearState?.pairedAsset ?? 'near';
-      const isPairedWithIntear = pairedAsset === 'token.intear.near';
-
-      if (isBuy) {
-        await ensureStorage(token_out);
-
-        let operations: any[];
-        if (isPairedWithIntear) {
-          const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
-          const intearNearBuf = Buffer.alloc(4);
-          intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
-          const intearPoolMsg = intearNearBuf.toString('base64');
-
-          operations = [
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: 'near',
-                asset_out: 'nep141:token.intear.near',
-                amount: { Amount: { ExactIn: swapAmount.toString() } },
-                constraint: null,
-                message: intearPoolMsg,
-              },
-            },
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: 'nep141:token.intear.near',
-                asset_out: `nep141:${token_out}`,
-                amount: 'OutputOfLastIn',
-                constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
-                message: poolMsg,
-              },
-            },
-            {
-              Withdraw: {
-                asset_id: `nep141:${token_out}`,
-                amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                to: null,
-                rescue_address: null,
-              },
-            },
-          ];
-        } else {
-          operations = [
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: 'near',
-                asset_out: `nep141:${token_out}`,
-                amount: { Amount: { ExactIn: swapAmount.toString() } },
-                constraint: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null,
-                message: poolMsg,
-              },
-            },
-            {
-              Withdraw: {
-                asset_id: `nep141:${token_out}`,
-                amount: { Full: { at_least: minOutAdj && BigInt(minOutAdj) > 0n ? minOutAdj : null } },
-                to: null,
-                rescue_address: null,
-              },
-            },
-          ];
+      } else if (venue === 'onetokenhub') {
+        // OneTokenHub: DCL on dclv2.ref-labs.near with the launch's pool_id
+        if (!dclPoolId) {
+          const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+          const hubState = await near.getOneTokenHubState(tokenTarget);
+          dclPoolId = hubState.dclPoolId;
+        }
+        if (!dclPoolId) {
+          throw new Error(`No DCL pool found for OneTokenHub token`);
         }
 
-        // Buy on dex.intear.near
-        // dex.intear.near requires the receiving account to have the output asset registered in internal balances
-        // for rescue address validation during Withdraw. Batch storage_deposit + register_assets atomically if not yet registered.
-        const actions: transactions.Action[] = [];
-        const cacheKey = `${subaccountId}:nep141:${token_out}`;
-        const isRegisteredOnIntear = intearRegisteredCache.has(cacheKey) || (await near.areIntearAssetsRegistered(subaccountId, [token_out]).catch(() => false));
-
-        if (!isRegisteredOnIntear) {
-          const storageBal = await near.getIntearStorageBalance(subaccountId).catch(() => null);
-          const available = BigInt(storageBal?.available ?? '0');
-          // Minimum deposit on dex.intear.near is 0.005 NEAR (5e21 yocto). Each registered asset costs ~0.001 NEAR.
-          if (available < BigInt('2000000000000000000000')) {
-            actions.push(
-              transactions.functionCall(
-                'storage_deposit',
-                { account_id: subaccountId },
-                BigInt('20000000000000'), // 20 Tgas
-                BigInt('5000000000000000000000') // 0.005 NEAR
-              )
-            );
-          }
-          actions.push(
-            transactions.functionCall(
-              'register_assets',
-              { asset_ids: [`nep141:${token_out}`] },
-              BigInt('20000000000000'), // 20 Tgas
-              BigInt('1') // 1 yocto
-            )
-          );
-        }
-
-        actions.push(
-          transactions.functionCall(
-            'deposit_near',
-            {
-              operations: {
-                referrer: 'dex-aggregator.intear.near',
-                operations,
-              },
-            },
-            DEFAULT_SWAP_GAS,
-            swapAmount
-          )
-        );
-
-        result = await signAndSend('dex.intear.near', actions);
-        near.markIntearAssetRegistered(subaccountId, token_out);
-
-        if (feeAmount > 0n) {
-          try {
-            await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
-          } catch (err: any) {
-            console.warn('[EXECUTOR] Intear fee transfer error:', err?.message);
-          }
-        }
-      } else {
-        // Sell token on dex.intear.near
-        // Ensure subaccount has 'near' registered on dex.intear.near so Withdraw of 'near' never fails
-        await near.ensureIntearAssetRegistered(subaccountId, 'near');
-        let operations: any[];
-        if (isPairedWithIntear) {
-          const intearNearPoolId = (await near.findIntearPoolId('token.intear.near').catch(() => 274)) || 274;
-          const intearNearBuf = Buffer.alloc(4);
-          intearNearBuf.writeUInt32LE(intearNearPoolId, 0);
-          const intearPoolMsg = intearNearBuf.toString('base64');
-
-          operations = [
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: `nep141:${token_in}`,
-                asset_out: 'nep141:token.intear.near',
-                amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                constraint: null,
-                message: poolMsg,
-              },
-            },
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: 'nep141:token.intear.near',
-                asset_out: 'near',
-                amount: 'OutputOfLastIn',
-                constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
-                message: intearPoolMsg,
-              },
-            },
-            {
-              Withdraw: {
-                asset_id: 'near',
-                amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                to: null,
-                rescue_address: null,
-              },
-            },
-          ];
-        } else {
-          operations = [
-            {
-              SwapSimple: {
-                dex_id: 'slimedragon.near/xyk',
-                asset_in: `nep141:${token_in}`,
-                asset_out: 'near',
-                amount: { Amount: { ExactIn: amountInBigInt.toString() } },
-                constraint: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null,
-                message: poolMsg,
-              },
-            },
-            {
-              Withdraw: {
-                asset_id: 'near',
-                amount: { Full: { at_least: min_amount_out && BigInt(min_amount_out) > 0n ? min_amount_out : null } },
-                to: null,
-                rescue_address: null,
-              },
-            },
-          ];
-        }
-
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dex.intear.near',
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({
-                referrer: 'dex-aggregator.intear.near',
-                operations,
-              }),
-            },
-            DEFAULT_SWAP_GAS,
-            BigInt('1')
-          ),
-        ];
-
-        result = await signAndSend(token_in, actions);
-      }
-    } else if (venue === 'onetokenhub') {
-      // OneTokenHub: DCL on dclv2.ref-labs.near with the launch's pool_id
-      if (!dclPoolId) {
-        const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
-        const hubState = await near.getOneTokenHubState(tokenTarget);
-        dclPoolId = hubState.dclPoolId;
-      }
-      if (!dclPoolId) {
-        throw new Error(`No DCL pool found for OneTokenHub token`);
-      }
-
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      if (isBuy) {
-        await ensureStorage(token_out);
-
-        const actions = await this.buildWrapNearBuyActions(
-          subaccountId,
-          amountInBigInt,
-          feeAmount,
-          swapAmount,
-          'dclv2.ref-labs.near',
-          JSON.stringify({
-            Swap: {
-              pool_ids: [dclPoolId],
-              output_token: token_out,
-              min_output_amount: minOutAdj,
-            },
-          })
-        );
-
-        result = await signAndSend('wrap.near', actions);
-      } else {
-        // Sell OneTokenHub token for the paired quote token
-        await ensureStorage(token_out);
-
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: 'dclv2.ref-labs.near',
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({
-                Swap: {
-                  pool_ids: [dclPoolId],
-                  output_token: token_out,
-                  min_output_amount: min_amount_out,
-                },
-              }),
-            },
-            DEFAULT_SWAP_GAS,
-            BigInt('1')
-          ),
-        ];
-
-        result = await signAndSend(token_in, actions);
-      }
-    } else if (venue === 'nearpad') {
-      // NEARpad: swaps execute on Ref DCL (dclv2.ref-labs.near)
-      if (!dclPoolId) {
-        const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
-        const padState = await near.getNEARpadState(tokenTarget).catch(() => null);
-        dclPoolId = padState?.dclPoolId ?? (await near.findDclPoolId('wrap.near', tokenTarget).catch(() => null));
-      }
-
-      if (dclPoolId) {
         const isBuy = token_in === 'wrap.near' || token_in === 'near';
         if (isBuy) {
           await ensureStorage(token_out);
@@ -2233,9 +2402,8 @@ export class SwapExecutor {
 
           result = await signAndSend('wrap.near', actions);
         } else {
-          // Sell NEARpad token
-          await ensureStorage(token_in);
-          await ensureStorage('wrap.near');
+          // Sell OneTokenHub token for the paired quote token
+          await ensureStorage(token_out);
 
           const actions = [
             transactions.functionCall(
@@ -2246,7 +2414,7 @@ export class SwapExecutor {
                 msg: JSON.stringify({
                   Swap: {
                     pool_ids: [dclPoolId],
-                    output_token: 'wrap.near',
+                    output_token: token_out,
                     min_output_amount: min_amount_out,
                   },
                 }),
@@ -2258,754 +2426,19 @@ export class SwapExecutor {
 
           result = await signAndSend(token_in, actions);
         }
-      } else {
-        throw new Error('DCL pool not found for NEARpad token');
-      }
-    } else if (venue === 'shoremarkets') {
-      const smState = await near.getShoremarketsTokenState(
-        token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
-      );
-      console.log(
-        `[EXECUTOR] ShoreMarkets route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
-        ` pool=${smState.pool_id} quote=${smState.quote} quoteIsNear=${smState.quoteIsNear} live=${smState.live}`
-      );
-
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-
-      if (isBuy) {
-        await ensureStorage(token_out);
-
-        const route = await near.planShoremarketsRoute(token_out);
-
-        if (smState.quoteIsNear || route.kind === 'direct') {
-          const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
-          if (!effectiveDclPoolId) {
-            throw new Error(`DCL pool not found for ShoreMarkets token ${token_out}`);
-          }
-          console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl pool=${effectiveDclPoolId}`);
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'dclv2.ref-labs.near',
-            JSON.stringify({
-              Swap: {
-                pool_ids: [effectiveDclPoolId],
-                output_token: token_out,
-                min_output_amount: minOutAdj,
-              },
-            }),
-            undefined,
-            knownWNearBal
-          );
-          result = await signAndSend('wrap.near', actions);
-        } else if (route.hop1.type === 'dcl') {
-          // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
-          const poolIds = [route.hop1.poolId, route.launchPoolId];
-          console.log(
-            `[EXECUTOR] ShoreMarkets route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
-          );
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'dclv2.ref-labs.near',
-            JSON.stringify({
-              Swap: {
-                pool_ids: poolIds,
-                output_token: token_out,
-                min_output_amount: minOutAdj,
-              },
-            }),
-            DEFAULT_SWAP_GAS,
-            knownWNearBal
-          );
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          await ensureStorage(smState.quote);
-          await ensureRefStorage(subaccountId);
-          await ensureRefTokenRegistered(route.quote, subaccountId);
-          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
-
-          console.log(
-            `[EXECUTOR] ShoreMarkets route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
-            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
-          );
-
-          // Tx 1: wNEAR -> quote
-          const tx1Actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'v2.ref-finance.near',
-            JSON.stringify({
-              actions: [
-                {
-                  pool_id: Number(route.hop1.poolId),
-                  token_in: 'wrap.near',
-                  token_out: route.quote,
-                  amount_in: swapAmount.toString(),
-                  min_amount_out: minHop1,
-                },
-              ],
-            })
-          );
-          const tx1Result = await signAndSend('wrap.near', tx1Actions);
-
-          console.log(`[EXECUTOR] ShoreMarkets hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
-
-          let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          let quoteBalBigInt = BigInt(quoteBal || '0');
-
-          // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
-          if (quoteBalBigInt <= 0n) {
-            const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
-            const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
-            if (refQuoteBal > 0n) {
-              console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
-              await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
-                transactions.functionCall(
-                  'withdraw',
-                  { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
-                  DEFAULT_SWAP_GAS,
-                  BigInt('1')
-                ),
-              ], 30_000);
-              quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-              quoteBalBigInt = BigInt(quoteBal || '0');
-            }
-          }
-
-          if (quoteBalBigInt <= 0n) {
-            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-            throw new Error(
-              `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
-              `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
-            );
-          }
-
-          // Tx 2: quote -> launch token
-          let tx2Result: any;
-          try {
-            const tx2Actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'dclv2.ref-labs.near',
-                  amount: quoteBalBigInt.toString(),
-                  msg: JSON.stringify({
-                    Swap: {
-                      pool_ids: [route.launchPoolId],
-                      output_token: token_out,
-                      min_output_amount: minOutAdj,
-                    },
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            tx2Result = await signAndSend(route.quote, tx2Actions);
-          } catch (tx2Err: any) {
-            const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
-            const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, smState.quoteDecimals)).toFixed(6);
-            throw new Error(
-              `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
-              `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
-            );
-          }
-          result = tx2Result;
-        }
-      } else {
-        // Sell ShoreMarkets token
-        await ensureStorage(token_in);
-        await ensureStorage('wrap.near');
-
-        const route = await near.planShoremarketsRoute(token_in);
-
-        if (smState.quoteIsNear || route.kind === 'direct') {
-          const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
-          if (!effectiveDclPoolId) {
-            throw new Error(`DCL pool not found for ShoreMarkets token ${token_in}`);
-          }
-          console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl-sell pool=${effectiveDclPoolId}`);
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [effectiveDclPoolId],
-                    output_token: 'wrap.near',
-                    min_output_amount: min_amount_out,
-                  },
-                }),
-              },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, actions);
-        } else if (route.hop1.type === 'dcl') {
-          // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
-          const poolIds = [route.launchPoolId, route.hop1.poolId];
-          console.log(
-            `[EXECUTOR] ShoreMarkets route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
-          );
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: poolIds,
-                    output_token: 'wrap.near',
-                    min_output_amount: min_amount_out,
-                  },
-                }),
-              },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, actions);
-        } else {
-          await ensureStorage(smState.quote);
-          const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
-
-          console.log(
-            `[EXECUTOR] ShoreMarkets route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
-            ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
-          );
-
-          // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
-          await ensureStorage(smState.quote);
-          await ensureStorage('wrap.near');
-          await ensureRefStorage(subaccountId);
-          await ensureRefTokenRegistered(route.quote, subaccountId);
-          await ensureRefTokenRegistered('wrap.near', subaccountId);
-
-          // Tx 1: token -> quote
-          const tx1Actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'dclv2.ref-labs.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({
-                  Swap: {
-                    pool_ids: [route.launchPoolId],
-                    output_token: route.quote,
-                    min_output_amount: minHop1,
-                  },
-                }),
-              },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            ),
-          ];
-          await signAndSend(token_in, tx1Actions);
-
-          let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
-          let quoteBalBigInt = BigInt(quoteBal || '0');
-          if (quoteBalBigInt <= 0n) {
-            throw new Error(
-              `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
-            );
-          }
-
-          // Tx 2: quote -> wNEAR
-          const tx2Actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'v2.ref-finance.near',
-                amount: quoteBalBigInt.toString(),
-                msg: JSON.stringify({
-                  actions: [
-                    {
-                      pool_id: Number(route.hop1.poolId),
-                      token_in: route.quote,
-                      token_out: 'wrap.near',
-                      amount_in: quoteBalBigInt.toString(),
-                      min_amount_out: min_amount_out,
-                    },
-                  ],
-                }),
-              },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            ),
-          ];
-          const tx2Result = await signAndSend(route.quote, tx2Actions);
-
-          // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
-          const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
-          const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
-          if (refWnearBal > 0n) {
-            console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
-            await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
-              transactions.functionCall(
-                'withdraw',
-                { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
-          }
-
-          result = tx2Result;
-        }
-      }
-    } else if (venue === 'gaypad') {
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      const targetToken = isBuy ? token_out : token_in;
-      // First check if token is on Rhea (Rule 1)
-      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
-      if (rhea && typeof rhea.poolId === 'number') {
-        const rheaPoolId = rhea.poolId;
-        const isMultiHopJambo = rhea.intermediateToken === 'jambo-1679.meme-cooking.near';
-        if (isBuy) {
-          await ensureStorage(token_out);
-          const rheaActions = isMultiHopJambo
-            ? [
-                { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
-                { pool_id: rheaPoolId, token_in: 'jambo-1679.meme-cooking.near', token_out, min_amount_out: minOutAdj },
-              ]
-            : [
-                { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
-              ];
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
-          );
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          await ensureStorage('wrap.near');
-          const rheaActions = isMultiHopJambo
-            ? [
-                { pool_id: rheaPoolId, token_in, token_out: 'jambo-1679.meme-cooking.near', amount_in: amountInBigInt.toString(), min_amount_out: '0' },
-                { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
-              ]
-            : [
-                { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
-              ];
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
-              DEFAULT_SWAP_GAS, BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, actions);
-        }
-      } else {
-        // Pre-bonded on Gaypad
-        if (isBuy) {
-          await ensureStorage(token_out);
-          await ensureStorage('jambo-1679.meme-cooking.near');
-          // Swap wrap.near -> jambo on Ref, then jambo -> gaypad
-          const buyActions = await this.buildWrapNearBuyActions(
-            subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near',
-            JSON.stringify({
-              actions: [
-                { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
-              ],
-            }),
-            DEFAULT_SWAP_GAS
-          );
-          result = await signAndSend('wrap.near', buyActions);
-          // Transfer jambo to gaypad.j1-racing.near
-          const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
-          if (BigInt(jamboBal || '0') > 0n) {
-            const gpAction = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'gaypad.j1-racing.near',
-                  amount: jamboBal,
-                  msg: JSON.stringify({ token: token_out, min_swap_amount: minOutAdj }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend('jambo-1679.meme-cooking.near', gpAction);
-          }
-        } else {
-          await ensureStorage('jambo-1679.meme-cooking.near');
-          await ensureStorage('wrap.near');
-          // Sell token on gaypad for jambo
-          const gpAction = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              {
-                receiver_id: 'gaypad.j1-racing.near',
-                amount: amountInBigInt.toString(),
-                msg: JSON.stringify({ token: 'jambo-1679.meme-cooking.near', min_swap_amount: '0' }),
-              },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, gpAction);
-          // Then swap jambo to wrap.near via Ref 6518
-          const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
-          if (BigInt(jamboBal || '0') > 0n) {
-            const sellJamboAction = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'v2.ref-finance.near',
-                  amount: jamboBal,
-                  msg: JSON.stringify({
-                    actions: [
-                      { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
-                    ],
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-            result = await signAndSend('jambo-1679.meme-cooking.near', sellJamboAction);
-          }
-        }
-      }
-    } else if (venue === 'kelytra') {
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      const targetToken = isBuy ? token_out : token_in;
-      // First check if token has graduated / bonded to Rhea
-      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
-      if (rhea && typeof rhea.poolId === 'number') {
-        const rheaPoolId = rhea.poolId;
-        if (isBuy) {
-          await ensureStorage(token_out);
-          const rheaActions = [
-            { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
-          ];
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
-          );
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          await ensureStorage('wrap.near');
-          const rheaActions = [
-            { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
-          ];
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
-              DEFAULT_SWAP_GAS, BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, actions);
-        }
-      } else {
-        // Pre-bonded on Kelytra bonding curve (exchange.kelytradevs.near)
-        const KELYTRA_EXCHANGE = 'exchange.kelytradevs.near';
-        const ktState = await near.getKelytraTokenState(targetToken);
-        const marketId = ktState.launchId;
-
-        if (isBuy) {
-          await ensureStorage(token_out);
-          const [regWrap, regToken] = await Promise.all([
-            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
-            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null),
-          ]);
-          if (!regWrap) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
-            ]);
-          }
-          if (!regToken) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall('register_balance', { token_id: token_out, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
-            ]);
-          }
-
-          const buyActions = await this.buildWrapNearBuyActions(
-            subaccountId, amountInBigInt, feeAmount, swapAmount,
-            KELYTRA_EXCHANGE, 'deposit', DEFAULT_SWAP_GAS
-          );
-          await signAndSend('wrap.near', buyActions);
-
-          const swapAction = [
-            transactions.functionCall(
-              'terminal_swap',
-              {
-                kind: 'curve',
-                market_id: marketId,
-                direction: true,
-                max_input: swapAmount.toString(),
-                min_out: minOutAdj,
-                deadline: String((Date.now() + 120_000) * 1_000_000),
-              },
-              BigInt('150000000000000'),
-              BigInt('1')
-            ),
-          ];
-          result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
-
-          const outBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null);
-          const availableOut = outBal?.available || '0';
-          if (BigInt(availableOut) > 0n) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall(
-                'withdraw',
-                { amount: availableOut, token_id: token_out },
-                BigInt('80000000000000'),
-                BigInt('1')
-              ),
-            ]);
-          }
-        } else {
-          await ensureStorage('wrap.near');
-          const [regToken, regWrap] = await Promise.all([
-            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_in }).catch(() => null),
-            near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
-          ]);
-          if (!regToken) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall('register_balance', { token_id: token_in, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
-            ]);
-          }
-          if (!regWrap) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
-            ]);
-          }
-
-          const depositAction = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              { receiver_id: KELYTRA_EXCHANGE, amount: amountInBigInt.toString(), msg: 'deposit' },
-              BigInt('150000000000000'),
-              BigInt('1')
-            ),
-          ];
-          await signAndSend(token_in, depositAction);
-
-          const swapAction = [
-            transactions.functionCall(
-              'terminal_swap',
-              {
-                kind: 'curve',
-                market_id: marketId,
-                direction: false,
-                max_input: amountInBigInt.toString(),
-                min_out: min_amount_out,
-                deadline: String((Date.now() + 120_000) * 1_000_000),
-              },
-              BigInt('150000000000000'),
-              BigInt('1')
-            ),
-          ];
-          result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
-
-          const wrapBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null);
-          const availableWrap = wrapBal?.available || '0';
-          if (BigInt(availableWrap) > 0n) {
-            await signAndSend(KELYTRA_EXCHANGE, [
-              transactions.functionCall(
-                'withdraw',
-                { amount: availableWrap, token_id: 'wrap.near' },
-                BigInt('80000000000000'),
-                BigInt('1')
-              ),
-            ]);
-          }
-        }
-      }
-    } else if (venue === 'nearpumpfun') {
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      const targetToken = isBuy ? token_out : token_in;
-
-      const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
-      if (rhea && typeof rhea.poolId === 'number') {
-        const rheaPoolId = rhea.poolId;
-        if (isBuy) {
-          await ensureStorage(token_out);
-          const rheaActions = [
-            { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
-          ];
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId, amountInBigInt, feeAmount, swapAmount,
-            'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
-          );
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          await ensureStorage('wrap.near');
-          const rheaActions = [
-            { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
-          ];
-          const actions = [
-            transactions.functionCall(
-              'ft_transfer_call',
-              { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
-              DEFAULT_SWAP_GAS, BigInt('1')
-            ),
-          ];
-          result = await signAndSend(token_in, actions);
-        }
-      } else {
-        const deadlineSec = Math.floor(Date.now() / 1000) + 120;
-        if (isBuy) {
-          await ensureStorage(token_out);
-          const buyActions = [
-            transactions.functionCall(
-              'buy',
-              { min_tokens_out: minOutAdj || '0', deadline_sec: deadlineSec },
-              DEFAULT_SWAP_GAS,
-              swapAmount
-            )
-          ];
-          result = await signAndSend(token_out, buyActions);
-          if (feeAmount > 0n) {
-            try {
-              await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
-            } catch (err: any) {
-              console.warn('[EXECUTOR] NearPumpFun fee transfer error:', err?.message);
-            }
-          }
-        } else {
-          const sellActions = [
-            transactions.functionCall(
-              'sell',
-              { tokens_in: amountInBigInt.toString(), min_near_out: min_amount_out || '0', deadline_sec: deadlineSec },
-              DEFAULT_SWAP_GAS,
-              BigInt('1')
-            )
-          ];
-          result = await signAndSend(token_in, sellActions);
-        }
-      }
-    } else if (venue === 'memecooking') {
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      const targetToken = isBuy ? token_out : token_in;
-
-      const memeId = parseMemeCookingId(targetToken);
-
-      // Check if token is pre-bonded (active auction) or bonded (DEX pool)
-      let isPrebonded = false;
-      if (memeId !== null) {
-        try {
-          const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
-          if (meme) {
-            isPrebonded = true;
-          }
-        } catch { /* no-op */ }
-      }
-
-      if (isPrebonded) {
-        if (isBuy) {
-          const actions = await this.buildWrapNearBuyActions(
-            subaccountId,
-            amountInBigInt,
-            feeAmount,
-            swapAmount,
-            'meme-cooking.near',
-            JSON.stringify({ Deposit: { meme_id: memeId } }),
-            DEFAULT_SWAP_GAS
-          );
-
-          result = await signAndSend('wrap.near', actions);
-        } else {
-          const actions = [
-            transactions.functionCall(
-              'withdraw',
-              {
-                meme_id: memeId,
-                amount: amountInBigInt.toString(),
-              },
-              BigInt('150000000000000'),
-              BigInt('0')
-            ),
-          ];
-
-          result = await signAndSend('meme-cooking.near', actions);
-        }
-      } else {
-        // Bonded phase — trade on Rhea Finance / Ref Finance AMM simple pool or DCL pool
-        let rheaPoolId: number | null = (event as any).pool_id ?? null;
-        if (!rheaPoolId) {
-          try {
-            rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
-            if (!rheaPoolId && !dclPoolId) {
-              dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
-            }
-          } catch { /* no-op */ }
+      } else if (venue === 'nearpad') {
+        // NEARpad: swaps execute on Ref DCL (dclv2.ref-labs.near)
+        if (!dclPoolId) {
+          const tokenTarget = token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in;
+          const padState = await near.getNEARpadState(tokenTarget).catch(() => null);
+          dclPoolId = padState?.dclPoolId ?? (await near.findDclPoolId('wrap.near', tokenTarget).catch(() => null));
         }
 
-        if (rheaPoolId) {
-          if (isBuy) {
-            const [, actions] = await Promise.all([
-              ensureStorage(token_out),
-              this.buildWrapNearBuyActions(
-                subaccountId,
-                amountInBigInt,
-                feeAmount,
-                swapAmount,
-                'v2.ref-finance.near',
-                JSON.stringify({
-                  actions: [
-                    {
-                      pool_id: rheaPoolId,
-                      token_in: 'wrap.near',
-                      token_out,
-                      amount_in: swapAmount.toString(),
-                      min_amount_out: minOutAdj,
-                      min_output_amount: minOutAdj,
-                    },
-                  ],
-                })
-              ),
-            ]);
-
-            result = await signAndSend('wrap.near', actions);
-          } else {
-            const actions = [
-              transactions.functionCall(
-                'ft_transfer_call',
-                {
-                  receiver_id: 'v2.ref-finance.near',
-                  amount: amountInBigInt.toString(),
-                  msg: JSON.stringify({
-                    actions: [
-                      {
-                        pool_id: rheaPoolId,
-                        token_in,
-                        token_out: 'wrap.near',
-                        min_amount_out: min_amount_out,
-                        min_output_amount: min_amount_out,
-                      },
-                    ],
-                  }),
-                },
-                DEFAULT_SWAP_GAS,
-                BigInt('1')
-              ),
-            ];
-
-            result = await signAndSend(token_in, actions);
-          }
-        } else if (dclPoolId) {
+        if (dclPoolId) {
+          const isBuy = token_in === 'wrap.near' || token_in === 'near';
           if (isBuy) {
             await ensureStorage(token_out);
-            // dclv2.ref-labs.near expects the Swap action wrapper — the same
-            // schema the rhea/ref DCL branch uses. The previous flat
-            // {pool_id, token_in, token_out} format was rejected by the
-            // contract, so bonded Meme.Cooking DCL trades always reverted.
+
             const actions = await this.buildWrapNearBuyActions(
               subaccountId,
               amountInBigInt,
@@ -3023,6 +2456,10 @@ export class SwapExecutor {
 
             result = await signAndSend('wrap.near', actions);
           } else {
+            // Sell NEARpad token
+            await ensureStorage(token_in);
+            await ensureStorage('wrap.near');
+
             const actions = [
               transactions.functionCall(
                 'ft_transfer_call',
@@ -3045,308 +2482,1231 @@ export class SwapExecutor {
             result = await signAndSend(token_in, actions);
           }
         } else {
-          throw new Error(`No Rhea or DCL pool found for bonded Meme.Cooking token ${targetToken}.`);
+          throw new Error('DCL pool not found for NEARpad token');
         }
-      }
-    } else {
-      // Shardsmarket
-      const isBuy = token_in === 'wrap.near' || token_in === 'near';
-      if (isBuy) {
-        await ensureStorage(token_out);
-
-        const actions = await this.buildWrapNearBuyActions(
-          subaccountId,
-          amountInBigInt,
-          feeAmount,
-          swapAmount,
-          token_out,
-          JSON.stringify({ min_amount_out: minOutAdj }),
-          DEFAULT_SWAP_GAS
+      } else if (venue === 'shoremarkets') {
+        const smState = await near.getShoremarketsTokenState(
+          token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in
+        );
+        console.log(
+          `[EXECUTOR] ShoreMarkets route: token=${token_in === 'wrap.near' || token_in === 'near' ? token_out : token_in}` +
+          ` pool=${smState.pool_id} quote=${smState.quote} quoteIsNear=${smState.quoteIsNear} live=${smState.live}`
         );
 
-        result = await signAndSend('wrap.near', actions);
-      } else {
-        const actions = [
-          transactions.functionCall(
-            'ft_transfer_call',
-            {
-              receiver_id: token_in,
-              amount: amountInBigInt.toString(),
-              msg: JSON.stringify({ min_amount_out: min_amount_out }),
-            },
-            DEFAULT_SWAP_GAS,
-            BigInt('1')
-          ),
-        ];
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
 
-        result = await signAndSend(token_in, actions);
-      }
-    }
+        if (isBuy) {
+          await ensureStorage(token_out);
 
-    const txHash = result.transaction.hash;
-    console.log(`[EXECUTOR] Direct swap submitted: user=${user_id} venue=${venue} txHash=${txHash}`);
+          const route = await near.planShoremarketsRoute(token_out);
 
-    const isBuy = token_in === 'wrap.near' || token_in === 'near';
-
-    // FIX 3: determine the REAL received amount. The balance delta of the
-    // output token (read before signing and again now) is authoritative;
-    // parsed receipt logs are a fallback when balance reads are unavailable.
-    // The old code fell back to min_amount_out — recording fills for tokens
-    // the user never received — and never happens again.
-    //
-    // FIX 4: the post-trade read goes to the SAME pinned trade RPC that
-    // confirmed the transaction, retried briefly. The hedged read RPCs can
-    // lag a block behind and return the pre-swap balance, which made
-    // successful on-chain swaps look like refunds (delta = 0 → "swap
-    // produced no tokens" for a trade the user actually received).
-    let postOutBalance: string | null = null;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      postOutBalance = await near.getTokenBalanceOnTradeRpc(outTokenForBalance, subaccountId).catch(() => null);
-      if (postOutBalance !== null) {
-        // With a pre-balance to compare against, keep polling until the
-        // increase is visible (or the retry budget runs out). Without one,
-        // a single read is all we can do — the receipt logs will decide.
-        if (capturedPreOutBalance === null || BigInt(postOutBalance) > BigInt(capturedPreOutBalance)) {
-          break;
-        }
-      }
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 300));
-    }
-    const swapOutcome = determineSwapOutcome({
-      result,
-      subaccountId,
-      isBuy,
-      tokenOut: token_out,
-      preBalance: capturedPreOutBalance,
-      postBalance: postOutBalance,
-    });
-
-    if (!swapOutcome.ok) {
-      const failReason = swapOutcome.reason ?? 'Transaction failed or slippage breach';
-      if (swapOutcome.detail) {
-        console.warn(`[EXECUTOR] Failure detail txHash=${txHash}:`, swapOutcome.detail);
-      }
-
-      // Slippage-breach retry: re-quote with +2pp slippage and try once more.
-      // The failed transaction reverted on-chain, so no funds moved; this only
-      // rescues trades caught by fast price movement between quote and execution.
-      const isSlippageBreach = failReason.startsWith('Slippage too high') || failReason.includes('refunded your input') || failReason.includes('Price moved beyond your slippage setting');
-      if (isSlippageBreach && !(event as any).__slippage_retry) {
-        const bumpedSlippage = userSlippage + 2;
-        const bumpedQuote = await near.computeMinAmountOut(
-          venue as any,
-          token_in,
-          token_out,
-          (isBuyPath ? swapAmount : amountInBigInt).toString(),
-          bumpedSlippage,
-          (event as any).pool_id ?? null,
-          dclPoolId
-        ).catch(() => null);
-        if (bumpedQuote) {
-          console.log(`[EXECUTOR] Retrying with ${bumpedSlippage}% slippage (user setting ${userSlippage}%) user=${user_id}`);
-          const retryEvent = {
-            ...event,
-            min_amount_out: bumpedQuote.minAmountOut,
-            slippage_pct: bumpedSlippage,
-            __slippage_retry: true,
-          } as SwapEvent;
-          const retryResult = await this.execute(retryEvent).catch(() => null);
-          if (retryResult && retryResult.success) {
-            return { ...retryResult, reason: `Executed with ${bumpedSlippage}% slippage after price moved.` };
-          }
-          console.warn(`[EXECUTOR] Slippage-bump retry also failed user=${user_id}`);
-        }
-      }
-
-      // Storage registration self-healing retry: if the transaction reverted on-chain
-      // due to missing storage registration, explicitly register storage and retry trade once
-      const isRegistrationFailure =
-        failReason.includes('registered with this token contract') ||
-        failReason.includes('not registered') ||
-        failReason.includes('account is not registered') ||
-        failReason.includes('storage deposit');
-      if (isRegistrationFailure && !(event as any).__storage_retry) {
-        console.log(`[EXECUTOR] Swap reverted on-chain due to missing storage registration. Forcing storage_deposit and retrying trade... user=${user_id}`);
-        try {
-          if (token_out && token_out !== 'near' && token_out !== 'wrap.near') {
-            await near.ensureStorageDeposit(subaccountId, token_out);
-          }
-          if (
-            venue === 'rhea' ||
-            venue === 'ref' ||
-            venue === 'memecooking' ||
-            venue === 'gaypad' ||
-            venue === 'kelytra' ||
-            venue === 'nearpumpfun'
-          ) {
+          if (smState.quoteIsNear || route.kind === 'direct') {
+            const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
+            if (!effectiveDclPoolId) {
+              throw new Error(`DCL pool not found for ShoreMarkets token ${token_out}`);
+            }
+            console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl pool=${effectiveDclPoolId}`);
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: [effectiveDclPoolId],
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
+              }),
+              undefined,
+              knownWNearBal
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else if (route.hop1.type === 'dcl') {
+            // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
+            const poolIds = [route.hop1.poolId, route.launchPoolId];
+            console.log(
+              `[EXECUTOR] ShoreMarkets route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
+            );
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'dclv2.ref-labs.near',
+              JSON.stringify({
+                Swap: {
+                  pool_ids: poolIds,
+                  output_token: token_out,
+                  min_output_amount: minOutAdj,
+                },
+              }),
+              DEFAULT_SWAP_GAS,
+              knownWNearBal
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            await ensureStorage(smState.quote);
             await ensureRefStorage(subaccountId);
-            await ensureRefTokenRegistered(token_out, subaccountId);
-          }
-          const retryEvent = {
-            ...event,
-            __storage_retry: true,
-          } as SwapEvent;
-          const retryResult = await this.execute(retryEvent).catch(() => null);
-          if (retryResult && retryResult.success) {
-            return { ...retryResult, reason: 'Executed successfully after automatic wallet token registration.' };
-          }
-        } catch (regErr: any) {
-          console.warn(`[EXECUTOR] Automatic storage registration retry failed: ${regErr?.message}`);
-        }
-      }
+            await ensureRefTokenRegistered(route.quote, subaccountId);
+            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
 
-      if ((event as any).trigger_id) {
-        try {
-          const db = await getDb();
-          await db.query("UPDATE triggers SET status = 'active' WHERE id = $1", [(event as any).trigger_id]);
-          console.log(`[EXECUTOR] Re-armed failed trigger ${(event as any).trigger_id} so it can retry`);
-        } catch (rearmErr: any) {
-          console.warn('[EXECUTOR] Failed to re-arm trigger:', rearmErr.message);
-        }
-      }
+            console.log(
+              `[EXECUTOR] ShoreMarkets route=two-tx-buy hop1=${route.hop1.type}:${route.hop1.poolId}` +
+              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${minOutAdj}`
+            );
 
-      console.warn(`[EXECUTOR] Trade failed: txHash=${txHash} reason=${failReason}`);
-      await this.notifyUser(user_id, 'trade_failed' as any, {
-        txHash,
-        reason: failReason,
-        token: token_out !== 'near' && token_out !== 'wrap.near' ? token_out : token_in,
-        is_sell: token_in !== 'near' && token_in !== 'wrap.near',
-        trigger_id: (event as any).trigger_id,
-      });
-      return { txHash, success: false, reason: failReason };
-    }
+            // Tx 1: wNEAR -> quote
+            const tx1Actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  {
+                    pool_id: Number(route.hop1.poolId),
+                    token_in: 'wrap.near',
+                    token_out: route.quote,
+                    amount_in: swapAmount.toString(),
+                    min_amount_out: minHop1,
+                  },
+                ],
+              })
+            );
+            const tx1Result = await signAndSend('wrap.near', tx1Actions);
 
-    const netAmountOut = swapOutcome.netAmountOut!;
-    let onChainFeeYocto = feeAmount.toString();
+            console.log(`[EXECUTOR] ShoreMarkets hop1 tx submitted: txHash=${tx1Result?.transaction?.hash}`);
 
-    // Fast sell settlement:
-    // When the sell outputs wNEAR (Ref/Rhea/NearlyTrade/etc.), we collect the 1.5% fee
-    // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
-    // This makes sell execution 2-4 seconds faster.
-    // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
-    if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun' || venue === 'intear') && BigInt(netAmountOut) > 0n) {
-      let sellFeeBps = 150n;
-      try {
-        const nearUsdPrice = await getNearUsdPrice().catch(() => 4.5);
-        const proceedsNear = Number(BigInt(netAmountOut)) / 1e24;
-        const proceedsUsd = proceedsNear * nearUsdPrice;
-        if (proceedsUsd > 200) {
-          sellFeeBps = 200n; // 2% fee for sells above $200
-        }
-      } catch {
-        sellFeeBps = 150n;
-      }
-      const sellFeeNear = (BigInt(netAmountOut) * sellFeeBps) / 10000n;
-      if (sellFeeNear > 0n) {
-        onChainFeeYocto = sellFeeNear.toString();
+            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            let quoteBalBigInt = BigInt(quoteBal || '0');
 
-        // SPEED OPTIMIZATION:
-        // Dispatch the secondary treasury fee transfer in the background without blocking
-        // the fill confirmation and user response! This eliminates 5.0s of post-signing latency
-        // so sell trades confirm and return in ~5.5s instead of ~11.0s.
-        const dispatchFee = async () => {
-          try {
-            // Query current balances to determine whether to pay via native NEAR or wNEAR
-            const [currNativeBalStr, currWNearBalStr] = await Promise.all([
-              this.nearClient.getNearBalance?.(subaccountId).catch(() => '0') ?? '0',
-              this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
-            ]);
-            const currNativeBal = BigInt(currNativeBalStr || '0');
-            const currWNearBal = BigInt(currWNearBalStr || '0');
-
-            let paidNativeNear = venue === 'nearpumpfun' || venue === 'intear' || venue === 'kelytra';
-            if (capturedPreOutBalance !== null && postOutBalance !== null) {
-              const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
-              if (wNearDelta === 0n) {
-                paidNativeNear = true;
+            // If quote tokens were retained in Ref v2 internal deposit balance, withdraw them to the wallet
+            if (quoteBalBigInt <= 0n) {
+              const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+              const refQuoteBal = refDeposits?.[route.quote] ? BigInt(refDeposits[route.quote]) : 0n;
+              if (refQuoteBal > 0n) {
+                console.log(`[EXECUTOR] Withdrawing ${refQuoteBal} ${route.quote} from Ref internal deposit for ${subaccountId}...`);
+                await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                  transactions.functionCall(
+                    'withdraw',
+                    { token_id: route.quote, amount: refQuoteBal.toString(), unregister: false },
+                    DEFAULT_SWAP_GAS,
+                    BigInt('1')
+                  ),
+                ], 30_000);
+                quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+                quoteBalBigInt = BigInt(quoteBal || '0');
               }
             }
-            if (currWNearBal < sellFeeNear && currNativeBal >= sellFeeNear) {
-              paidNativeNear = true;
+
+            if (quoteBalBigInt <= 0n) {
+              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+              throw new Error(
+                `Two-transaction buy step 1 succeeded but step 2 was skipped because no ${quoteMeta.symbol} balance was detected. ` +
+                `Your wallet may now hold ${quoteMeta.symbol}. You can sell it back manually.`
+              );
             }
 
-            if (paidNativeNear) {
+            // Tx 2: quote -> launch token
+            let tx2Result: any;
+            try {
+              const tx2Actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'dclv2.ref-labs.near',
+                    amount: quoteBalBigInt.toString(),
+                    msg: JSON.stringify({
+                      Swap: {
+                        pool_ids: [route.launchPoolId],
+                        output_token: token_out,
+                        min_output_amount: minOutAdj,
+                      },
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              tx2Result = await signAndSend(route.quote, tx2Actions);
+            } catch (tx2Err: any) {
+              const quoteMeta = await near.getTokenMetadata(route.quote).catch(() => ({ symbol: route.quote }));
+              const heldAmount = (Number(quoteBalBigInt) / Math.pow(10, smState.quoteDecimals)).toFixed(6);
+              throw new Error(
+                `Two-transaction buy: step 1 (wNEAR → ${quoteMeta.symbol}) succeeded, but step 2 (${quoteMeta.symbol} → ${token_out}) failed: ` +
+                `${tx2Err.message}. Your wallet now holds approximately ${heldAmount} ${quoteMeta.symbol}. You can sell it back.`
+              );
+            }
+            result = tx2Result;
+          }
+        } else {
+          // Sell ShoreMarkets token
+          await ensureStorage(token_in);
+          await ensureStorage('wrap.near');
+
+          const route = await near.planShoremarketsRoute(token_in);
+
+          if (smState.quoteIsNear || route.kind === 'direct') {
+            const effectiveDclPoolId = dclPoolId || smState.dclPoolId;
+            if (!effectiveDclPoolId) {
+              throw new Error(`DCL pool not found for ShoreMarkets token ${token_in}`);
+            }
+            console.log(`[EXECUTOR] ShoreMarkets route=direct-dcl-sell pool=${effectiveDclPoolId}`);
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [effectiveDclPoolId],
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          } else if (route.hop1.type === 'dcl') {
+            // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
+            const poolIds = [route.launchPoolId, route.hop1.poolId];
+            console.log(
+              `[EXECUTOR] ShoreMarkets route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
+            );
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: poolIds,
+                      output_token: 'wrap.near',
+                      min_output_amount: min_amount_out,
+                    },
+                  }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          } else {
+            await ensureStorage(smState.quote);
+            const minHop1: string = (freshQuote as any)?.minHop1AmountOut ?? '1';
+
+            console.log(
+              `[EXECUTOR] ShoreMarkets route=two-tx-sell hop1=${route.hop1.type}:${route.hop1.poolId}` +
+              ` launchPool=${route.launchPoolId} quote=${route.quote} minHop1=${minHop1} minOut=${min_amount_out}`
+            );
+
+            // Ensure storage for quote and wrap.near on wallet, and Ref storage/registration
+            await ensureStorage(smState.quote);
+            await ensureStorage('wrap.near');
+            await ensureRefStorage(subaccountId);
+            await ensureRefTokenRegistered(route.quote, subaccountId);
+            await ensureRefTokenRegistered('wrap.near', subaccountId);
+
+            // Tx 1: token -> quote
+            const tx1Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'dclv2.ref-labs.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({
+                    Swap: {
+                      pool_ids: [route.launchPoolId],
+                      output_token: route.quote,
+                      min_output_amount: minHop1,
+                    },
+                  }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+            await signAndSend(token_in, tx1Actions);
+
+            let quoteBal = await near.getTokenBalance(route.quote, subaccountId).catch(() => '0');
+            let quoteBalBigInt = BigInt(quoteBal || '0');
+            if (quoteBalBigInt <= 0n) {
+              throw new Error(
+                `Two-transaction sell: step 1 (${token_in} → ${route.quote}) succeeded but no ${route.quote} balance detected. Cannot complete step 2.`
+              );
+            }
+
+            // Tx 2: quote -> wNEAR
+            const tx2Actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'v2.ref-finance.near',
+                  amount: quoteBalBigInt.toString(),
+                  msg: JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: Number(route.hop1.poolId),
+                        token_in: route.quote,
+                        token_out: 'wrap.near',
+                        amount_in: quoteBalBigInt.toString(),
+                        min_amount_out: min_amount_out,
+                      },
+                    ],
+                  }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+            const tx2Result = await signAndSend(route.quote, tx2Actions);
+
+            // If wNEAR landed in Ref internal deposits, withdraw it to user's wallet
+            const refDeposits = (await near.view<Record<string, string>>('v2.ref-finance.near', 'get_deposits', { account_id: subaccountId }).catch(() => ({} as Record<string, string>))) as Record<string, string>;
+            const refWnearBal = refDeposits?.['wrap.near'] ? BigInt(refDeposits['wrap.near']) : 0n;
+            if (refWnearBal > 0n) {
+              console.log(`[EXECUTOR] Withdrawing ${refWnearBal} wrap.near from Ref internal deposit for ${subaccountId}...`);
+              await near.signAndSendTransactionAll(subaccountId, 'v2.ref-finance.near', [
+                transactions.functionCall(
+                  'withdraw',
+                  { token_id: 'wrap.near', amount: refWnearBal.toString(), unregister: false },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ], 30_000).catch((e: any) => console.warn('[EXECUTOR] Ref withdraw wrap.near non-fatal:', e?.message));
+            }
+
+            result = tx2Result;
+          }
+        }
+      } else if (venue === 'gaypad') {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        const targetToken = isBuy ? token_out : token_in;
+        // First check if token is on Rhea (Rule 1)
+        const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+        if (rhea && typeof rhea.poolId === 'number') {
+          const rheaPoolId = rhea.poolId;
+          const isMultiHopJambo = rhea.intermediateToken === 'jambo-1679.meme-cooking.near';
+          if (isBuy) {
+            await ensureStorage(token_out);
+            const rheaActions = isMultiHopJambo
+              ? [
+                { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
+                { pool_id: rheaPoolId, token_in: 'jambo-1679.meme-cooking.near', token_out, min_amount_out: minOutAdj },
+              ]
+              : [
+                { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+              ];
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId, amountInBigInt, feeAmount, swapAmount,
+              'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            await ensureStorage('wrap.near');
+            const rheaActions = isMultiHopJambo
+              ? [
+                { pool_id: rheaPoolId, token_in, token_out: 'jambo-1679.meme-cooking.near', amount_in: amountInBigInt.toString(), min_amount_out: '0' },
+                { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
+              ]
+              : [
+                { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+              ];
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+                DEFAULT_SWAP_GAS, BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          }
+        } else {
+          // Pre-bonded on Gaypad
+          if (isBuy) {
+            await ensureStorage(token_out);
+            await ensureStorage('jambo-1679.meme-cooking.near');
+            // Swap wrap.near -> jambo on Ref, then jambo -> gaypad
+            const buyActions = await this.buildWrapNearBuyActions(
+              subaccountId, amountInBigInt, feeAmount, swapAmount,
+              'v2.ref-finance.near',
+              JSON.stringify({
+                actions: [
+                  { pool_id: 6518, token_in: 'wrap.near', token_out: 'jambo-1679.meme-cooking.near', amount_in: swapAmount.toString(), min_amount_out: '0' },
+                ],
+              }),
+              DEFAULT_SWAP_GAS
+            );
+            result = await signAndSend('wrap.near', buyActions);
+            // Transfer jambo to gaypad.j1-racing.near
+            const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
+            if (BigInt(jamboBal || '0') > 0n) {
+              const gpAction = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'gaypad.j1-racing.near',
+                    amount: jamboBal,
+                    msg: JSON.stringify({ token: token_out, min_swap_amount: minOutAdj }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              result = await signAndSend('jambo-1679.meme-cooking.near', gpAction);
+            }
+          } else {
+            await ensureStorage('jambo-1679.meme-cooking.near');
+            await ensureStorage('wrap.near');
+            // Sell token on gaypad for jambo
+            const gpAction = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                {
+                  receiver_id: 'gaypad.j1-racing.near',
+                  amount: amountInBigInt.toString(),
+                  msg: JSON.stringify({ token: 'jambo-1679.meme-cooking.near', min_swap_amount: '0' }),
+                },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, gpAction);
+            // Then swap jambo to wrap.near via Ref 6518
+            const jamboBal = await near.view<string>('jambo-1679.meme-cooking.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
+            if (BigInt(jamboBal || '0') > 0n) {
+              const sellJamboAction = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'v2.ref-finance.near',
+                    amount: jamboBal,
+                    msg: JSON.stringify({
+                      actions: [
+                        { pool_id: 6518, token_in: 'jambo-1679.meme-cooking.near', token_out: 'wrap.near', min_amount_out: min_amount_out },
+                      ],
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+              result = await signAndSend('jambo-1679.meme-cooking.near', sellJamboAction);
+            }
+          }
+        }
+      } else if (venue === 'kelytra') {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        const targetToken = isBuy ? token_out : token_in;
+        // First check if token has graduated / bonded to Rhea
+        const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+        if (rhea && typeof rhea.poolId === 'number') {
+          const rheaPoolId = rhea.poolId;
+          if (isBuy) {
+            await ensureStorage(token_out);
+            const rheaActions = [
+              { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+            ];
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId, amountInBigInt, feeAmount, swapAmount,
+              'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            await ensureStorage('wrap.near');
+            const rheaActions = [
+              { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+            ];
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+                DEFAULT_SWAP_GAS, BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          }
+        } else {
+          // Pre-bonded on Kelytra bonding curve (exchange.kelytradevs.near)
+          const KELYTRA_EXCHANGE = 'exchange.kelytradevs.near';
+          const ktState = await near.getKelytraTokenState(targetToken);
+          const marketId = ktState.launchId;
+
+          if (isBuy) {
+            await ensureStorage(token_out);
+            const [regWrap, regToken] = await Promise.all([
+              near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
+              near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null),
+            ]);
+            if (!regWrap) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+              ]);
+            }
+            if (!regToken) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall('register_balance', { token_id: token_out, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+              ]);
+            }
+
+            const buyActions = await this.buildWrapNearBuyActions(
+              subaccountId, amountInBigInt, feeAmount, swapAmount,
+              KELYTRA_EXCHANGE, 'deposit', DEFAULT_SWAP_GAS
+            );
+            await signAndSend('wrap.near', buyActions);
+
+            const swapAction = [
+              transactions.functionCall(
+                'terminal_swap',
+                {
+                  kind: 'curve',
+                  market_id: marketId,
+                  direction: true,
+                  max_input: swapAmount.toString(),
+                  min_out: minOutAdj,
+                  deadline: String((Date.now() + 120_000) * 1_000_000),
+                },
+                BigInt('150000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
+
+            const outBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_out }).catch(() => null);
+            const availableOut = outBal?.available || '0';
+            if (BigInt(availableOut) > 0n) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall(
+                  'withdraw',
+                  { amount: availableOut, token_id: token_out },
+                  BigInt('80000000000000'),
+                  BigInt('1')
+                ),
+              ]);
+            }
+          } else {
+            await ensureStorage('wrap.near');
+            const [regToken, regWrap] = await Promise.all([
+              near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: token_in }).catch(() => null),
+              near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null),
+            ]);
+            if (!regToken) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall('register_balance', { token_id: token_in, account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+              ]);
+            }
+            if (!regWrap) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall('register_balance', { token_id: 'wrap.near', account_id: subaccountId }, BigInt('30000000000000'), BigInt('20000000000000000000000'))
+              ]);
+            }
+
+            const depositAction = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                { receiver_id: KELYTRA_EXCHANGE, amount: amountInBigInt.toString(), msg: 'deposit' },
+                BigInt('150000000000000'),
+                BigInt('1')
+              ),
+            ];
+            await signAndSend(token_in, depositAction);
+
+            const swapAction = [
+              transactions.functionCall(
+                'terminal_swap',
+                {
+                  kind: 'curve',
+                  market_id: marketId,
+                  direction: false,
+                  max_input: amountInBigInt.toString(),
+                  min_out: min_amount_out,
+                  deadline: String((Date.now() + 120_000) * 1_000_000),
+                },
+                BigInt('150000000000000'),
+                BigInt('1')
+              ),
+            ];
+            result = await signAndSend(KELYTRA_EXCHANGE, swapAction);
+
+            const wrapBal = await near.view<any>(KELYTRA_EXCHANGE, 'get_balance', { account_id: subaccountId, token_id: 'wrap.near' }).catch(() => null);
+            const availableWrap = wrapBal?.available || '0';
+            if (BigInt(availableWrap) > 0n) {
+              await signAndSend(KELYTRA_EXCHANGE, [
+                transactions.functionCall(
+                  'withdraw',
+                  { amount: availableWrap, token_id: 'wrap.near' },
+                  BigInt('80000000000000'),
+                  BigInt('1')
+                ),
+              ]);
+            }
+          }
+        }
+      } else if (venue === 'nearpumpfun') {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        const targetToken = isBuy ? token_out : token_in;
+
+        const rhea = await near.findRheaPoolForToken(targetToken).catch(() => null);
+        if (rhea && typeof rhea.poolId === 'number') {
+          const rheaPoolId = rhea.poolId;
+          if (isBuy) {
+            await ensureStorage(token_out);
+            const rheaActions = [
+              { pool_id: rheaPoolId, token_in: 'wrap.near', token_out, amount_in: swapAmount.toString(), min_amount_out: minOutAdj, min_output_amount: minOutAdj },
+            ];
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId, amountInBigInt, feeAmount, swapAmount,
+              'v2.ref-finance.near', JSON.stringify({ actions: rheaActions }), DEFAULT_SWAP_GAS
+            );
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            await ensureStorage('wrap.near');
+            const rheaActions = [
+              { pool_id: rheaPoolId, token_in, token_out: 'wrap.near', amount_in: amountInBigInt.toString(), min_amount_out: min_amount_out, min_output_amount: min_amount_out },
+            ];
+            const actions = [
+              transactions.functionCall(
+                'ft_transfer_call',
+                { receiver_id: 'v2.ref-finance.near', amount: amountInBigInt.toString(), msg: JSON.stringify({ actions: rheaActions }) },
+                DEFAULT_SWAP_GAS, BigInt('1')
+              ),
+            ];
+            result = await signAndSend(token_in, actions);
+          }
+        } else {
+          const deadlineSec = Math.floor(Date.now() / 1000) + 120;
+          if (isBuy) {
+            await ensureStorage(token_out);
+            if (usdcToSwapRaw > 0n && maxNativeDepositYocto !== undefined && amountInBigInt > maxNativeDepositYocto && knownWNearBal > 0n) {
+              const unwrapNeeded = amountInBigInt - maxNativeDepositYocto;
+              const unwrapAmt = unwrapNeeded <= knownWNearBal ? unwrapNeeded : knownWNearBal;
+              if (unwrapAmt > 0n) {
+                await signAndSend('wrap.near', [
+                  transactions.functionCall('near_withdraw', { amount: unwrapAmt.toString() }, BigInt('30000000000000'), BigInt('1')),
+                ], 30_000, true);
+                knownWNearBal -= unwrapAmt;
+                maxNativeDepositYocto += unwrapAmt;
+                this.activeTradeWNearState.set(subaccountId, { wNearBal: knownWNearBal, maxNativeDeposit: maxNativeDepositYocto });
+              }
+            }
+            const buyActions = [
+              transactions.functionCall(
+                'buy',
+                { min_tokens_out: minOutAdj || '0', deadline_sec: deadlineSec },
+                DEFAULT_SWAP_GAS,
+                swapAmount
+              )
+            ];
+            result = await signAndSend(token_out, buyActions);
+            if (feeAmount > 0n) {
               try {
-                await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
-                console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR sent to treasury for ${subaccountId}`);
-              } catch (nativeErr: any) {
-                console.warn(`[EXECUTOR] Native sell fee failed for ${subaccountId}, attempting wNEAR fallback:`, nativeErr?.message);
-                if (currWNearBal >= sellFeeNear) {
+                await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(feeAmount)], 10_000, true);
+              } catch (err: any) {
+                console.warn('[EXECUTOR] NearPumpFun fee transfer error:', err?.message);
+              }
+            }
+          } else {
+            const sellActions = [
+              transactions.functionCall(
+                'sell',
+                { tokens_in: amountInBigInt.toString(), min_near_out: min_amount_out || '0', deadline_sec: deadlineSec },
+                DEFAULT_SWAP_GAS,
+                BigInt('1')
+              )
+            ];
+            result = await signAndSend(token_in, sellActions);
+          }
+        }
+      } else if (venue === 'memecooking') {
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        const targetToken = isBuy ? token_out : token_in;
+
+        const memeId = parseMemeCookingId(targetToken);
+
+        // Check if token is pre-bonded (active auction) or bonded (DEX pool)
+        let isPrebonded = false;
+        if (memeId !== null) {
+          try {
+            const meme = await near.view<any>('meme-cooking.near', 'get_meme', { meme_id: memeId }).catch(() => null);
+            if (meme) {
+              isPrebonded = true;
+            }
+          } catch { /* no-op */ }
+        }
+
+        if (isPrebonded) {
+          if (isBuy) {
+            const actions = await this.buildWrapNearBuyActions(
+              subaccountId,
+              amountInBigInt,
+              feeAmount,
+              swapAmount,
+              'meme-cooking.near',
+              JSON.stringify({ Deposit: { meme_id: memeId } }),
+              DEFAULT_SWAP_GAS
+            );
+
+            result = await signAndSend('wrap.near', actions);
+          } else {
+            const actions = [
+              transactions.functionCall(
+                'withdraw',
+                {
+                  meme_id: memeId,
+                  amount: amountInBigInt.toString(),
+                },
+                BigInt('150000000000000'),
+                BigInt('0')
+              ),
+            ];
+
+            result = await signAndSend('meme-cooking.near', actions);
+          }
+        } else {
+          // Bonded phase — trade on Rhea Finance / Ref Finance AMM simple pool or DCL pool
+          let rheaPoolId: number | null = (event as any).pool_id ?? null;
+          if (!rheaPoolId) {
+            try {
+              rheaPoolId = await near.findRheaPoolId('wrap.near', targetToken).catch(() => null);
+              if (!rheaPoolId && !dclPoolId) {
+                dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
+              }
+            } catch { /* no-op */ }
+          }
+
+          if (rheaPoolId) {
+            if (isBuy) {
+              const [, actions] = await Promise.all([
+                ensureStorage(token_out),
+                this.buildWrapNearBuyActions(
+                  subaccountId,
+                  amountInBigInt,
+                  feeAmount,
+                  swapAmount,
+                  'v2.ref-finance.near',
+                  JSON.stringify({
+                    actions: [
+                      {
+                        pool_id: rheaPoolId,
+                        token_in: 'wrap.near',
+                        token_out,
+                        amount_in: swapAmount.toString(),
+                        min_amount_out: minOutAdj,
+                        min_output_amount: minOutAdj,
+                      },
+                    ],
+                  })
+                ),
+              ]);
+
+              result = await signAndSend('wrap.near', actions);
+            } else {
+              const actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'v2.ref-finance.near',
+                    amount: amountInBigInt.toString(),
+                    msg: JSON.stringify({
+                      actions: [
+                        {
+                          pool_id: rheaPoolId,
+                          token_in,
+                          token_out: 'wrap.near',
+                          min_amount_out: min_amount_out,
+                          min_output_amount: min_amount_out,
+                        },
+                      ],
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+
+              result = await signAndSend(token_in, actions);
+            }
+          } else if (dclPoolId) {
+            if (isBuy) {
+              await ensureStorage(token_out);
+              // dclv2.ref-labs.near expects the Swap action wrapper — the same
+              // schema the rhea/ref DCL branch uses. The previous flat
+              // {pool_id, token_in, token_out} format was rejected by the
+              // contract, so bonded Meme.Cooking DCL trades always reverted.
+              const actions = await this.buildWrapNearBuyActions(
+                subaccountId,
+                amountInBigInt,
+                feeAmount,
+                swapAmount,
+                'dclv2.ref-labs.near',
+                JSON.stringify({
+                  Swap: {
+                    pool_ids: [dclPoolId],
+                    output_token: token_out,
+                    min_output_amount: minOutAdj,
+                  },
+                })
+              );
+
+              result = await signAndSend('wrap.near', actions);
+            } else {
+              const actions = [
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'dclv2.ref-labs.near',
+                    amount: amountInBigInt.toString(),
+                    msg: JSON.stringify({
+                      Swap: {
+                        pool_ids: [dclPoolId],
+                        output_token: 'wrap.near',
+                        min_output_amount: min_amount_out,
+                      },
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                ),
+              ];
+
+              result = await signAndSend(token_in, actions);
+            }
+          } else {
+            throw new Error(`No Rhea or DCL pool found for bonded Meme.Cooking token ${targetToken}.`);
+          }
+        }
+      } else {
+        // Shardsmarket
+        const isBuy = token_in === 'wrap.near' || token_in === 'near';
+        if (isBuy) {
+          await ensureStorage(token_out);
+
+          const actions = await this.buildWrapNearBuyActions(
+            subaccountId,
+            amountInBigInt,
+            feeAmount,
+            swapAmount,
+            token_out,
+            JSON.stringify({ min_amount_out: minOutAdj }),
+            DEFAULT_SWAP_GAS
+          );
+
+          result = await signAndSend('wrap.near', actions);
+        } else {
+          const actions = [
+            transactions.functionCall(
+              'ft_transfer_call',
+              {
+                receiver_id: token_in,
+                amount: amountInBigInt.toString(),
+                msg: JSON.stringify({ min_amount_out: min_amount_out }),
+              },
+              DEFAULT_SWAP_GAS,
+              BigInt('1')
+            ),
+          ];
+
+          result = await signAndSend(token_in, actions);
+        }
+      }
+
+      const txHash = result.transaction.hash;
+      console.log(`[EXECUTOR] Direct swap submitted: user=${user_id} venue=${venue} txHash=${txHash}`);
+
+      const isBuy = token_in === 'wrap.near' || token_in === 'near';
+
+      // FIX 3: determine the REAL received amount. The balance delta of the
+      // output token (read before signing and again now) is authoritative;
+      // parsed receipt logs are a fallback when balance reads are unavailable.
+      // The old code fell back to min_amount_out — recording fills for tokens
+      // the user never received — and never happens again.
+      //
+      // FIX 4: the post-trade read goes to the SAME pinned trade RPC that
+      // confirmed the transaction, retried briefly. The hedged read RPCs can
+      // lag a block behind and return the pre-swap balance, which made
+      // successful on-chain swaps look like refunds (delta = 0 → "swap
+      // produced no tokens" for a trade the user actually received).
+      let postOutBalance: string | null = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        postOutBalance = await near.getTokenBalanceOnTradeRpc(outTokenForBalance, subaccountId).catch(() => null);
+        if (postOutBalance !== null) {
+          // With a pre-balance to compare against, keep polling until the
+          // increase is visible (or the retry budget runs out). Without one,
+          // a single read is all we can do — the receipt logs will decide.
+          if (capturedPreOutBalance === null || BigInt(postOutBalance) > BigInt(capturedPreOutBalance)) {
+            break;
+          }
+        }
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 300));
+      }
+      const swapOutcome = determineSwapOutcome({
+        result,
+        subaccountId,
+        isBuy,
+        tokenOut: token_out,
+        preBalance: capturedPreOutBalance,
+        postBalance: postOutBalance,
+      });
+
+      if (!swapOutcome.ok) {
+        const failReason = swapOutcome.reason ?? 'Transaction failed or slippage breach';
+        if (swapOutcome.detail) {
+          console.warn(`[EXECUTOR] Failure detail txHash=${txHash}:`, swapOutcome.detail);
+        }
+
+        // Slippage-breach retry: re-quote with +2pp slippage and try once more.
+        // The failed transaction reverted on-chain, so no funds moved; this only
+        // rescues trades caught by fast price movement between quote and execution.
+        const isSlippageBreach = failReason.startsWith('Slippage too high') || failReason.includes('refunded your input') || failReason.includes('Price moved beyond your slippage setting');
+        if (isSlippageBreach && !(event as any).__slippage_retry) {
+          const bumpedSlippage = userSlippage + 2;
+          const bumpedQuote = await near.computeMinAmountOut(
+            venue as any,
+            token_in,
+            token_out,
+            (isBuyPath ? swapAmount : amountInBigInt).toString(),
+            bumpedSlippage,
+            (event as any).pool_id ?? null,
+            dclPoolId
+          ).catch(() => null);
+          if (bumpedQuote) {
+            console.log(`[EXECUTOR] Retrying with ${bumpedSlippage}% slippage (user setting ${userSlippage}%) user=${user_id}`);
+            const retryEvent = {
+              ...event,
+              min_amount_out: bumpedQuote.minAmountOut,
+              slippage_pct: bumpedSlippage,
+              __slippage_retry: true,
+            } as SwapEvent;
+            const retryResult = await this.execute(retryEvent).catch(() => null);
+            if (retryResult && retryResult.success) {
+              return { ...retryResult, reason: `Executed with ${bumpedSlippage}% slippage after price moved.` };
+            }
+            console.warn(`[EXECUTOR] Slippage-bump retry also failed user=${user_id}`);
+          }
+        }
+
+        // Storage registration self-healing retry: if the transaction reverted on-chain
+        // due to missing storage registration, explicitly register storage and retry trade once
+        const isRegistrationFailure =
+          failReason.includes('registered with this token contract') ||
+          failReason.includes('not registered') ||
+          failReason.includes('account is not registered') ||
+          failReason.includes('storage deposit');
+        if (isRegistrationFailure && !(event as any).__storage_retry) {
+          console.log(`[EXECUTOR] Swap reverted on-chain due to missing storage registration. Forcing storage_deposit and retrying trade... user=${user_id}`);
+          try {
+            if (token_out && token_out !== 'near' && token_out !== 'wrap.near') {
+              await near.ensureStorageDeposit(subaccountId, token_out);
+            }
+            if (
+              venue === 'rhea' ||
+              venue === 'ref' ||
+              venue === 'memecooking' ||
+              venue === 'gaypad' ||
+              venue === 'kelytra' ||
+              venue === 'nearpumpfun'
+            ) {
+              await ensureRefStorage(subaccountId);
+              await ensureRefTokenRegistered(token_out, subaccountId);
+            }
+            const retryEvent = {
+              ...event,
+              __storage_retry: true,
+            } as SwapEvent;
+            const retryResult = await this.execute(retryEvent).catch(() => null);
+            if (retryResult && retryResult.success) {
+              return { ...retryResult, reason: 'Executed successfully after automatic wallet token registration.' };
+            }
+          } catch (regErr: any) {
+            console.warn(`[EXECUTOR] Automatic storage registration retry failed: ${regErr?.message}`);
+          }
+        }
+
+        if ((event as any).trigger_id) {
+          try {
+            const db = await getDb();
+            await db.query("UPDATE triggers SET status = 'active' WHERE id = $1", [(event as any).trigger_id]);
+            console.log(`[EXECUTOR] Re-armed failed trigger ${(event as any).trigger_id} so it can retry`);
+          } catch (rearmErr: any) {
+            console.warn('[EXECUTOR] Failed to re-arm trigger:', rearmErr.message);
+          }
+        }
+
+        console.warn(`[EXECUTOR] Trade failed: txHash=${txHash} reason=${failReason}`);
+        await this.notifyUser(user_id, 'trade_failed' as any, {
+          txHash,
+          reason: failReason,
+          token: token_out !== 'near' && token_out !== 'wrap.near' ? token_out : token_in,
+          is_sell: token_in !== 'near' && token_in !== 'wrap.near',
+          trigger_id: (event as any).trigger_id,
+        });
+        return { txHash, success: false, reason: failReason };
+      }
+
+      const netAmountOut = swapOutcome.netAmountOut!;
+      let onChainFeeYocto = feeAmount.toString();
+
+      // Fast sell settlement:
+      // When the sell outputs wNEAR (Ref/Rhea/NearlyTrade/etc.), we collect the 1.5% fee
+      // directly in wNEAR and skip the slow auto-unwrap transaction entirely!
+      // This makes sell execution 2-4 seconds faster.
+      // Users can unwrap wNEAR anytime in /wallet or via /unwrap, or use it directly on their next buy.
+      if (!isBuy && (venue === 'nearlytrade' || venue === 'rhea' || venue === 'ref' || venue === 'onetokenhub' || venue === 'nearpad' || venue === 'gaypad' || venue === 'memecooking' || venue === 'shoremarkets' || venue === 'kelytra' || venue === 'nearpumpfun' || venue === 'intear') && BigInt(netAmountOut) > 0n) {
+        let sellFeeBps = 150n;
+        try {
+          const nearUsdPrice = await getNearUsdPrice().catch(() => 4.5);
+          const proceedsNear = Number(BigInt(netAmountOut)) / 1e24;
+          const proceedsUsd = proceedsNear * nearUsdPrice;
+          if (proceedsUsd > 200) {
+            sellFeeBps = 200n; // 2% fee for sells above $200
+          }
+        } catch {
+          sellFeeBps = 150n;
+        }
+        const sellFeeNear = (BigInt(netAmountOut) * sellFeeBps) / 10000n;
+        let effectiveSellFeeNear = sellFeeNear;
+        if (isUsdcOnlyMode) {
+          onChainFeeYocto = sellFeeNear.toString();
+          const netAfterFeeYocto = BigInt(netAmountOut) > sellFeeNear ? BigInt(netAmountOut) - sellFeeNear : 0n;
+          if (netAfterFeeYocto > 0n) {
+            try {
+              await ensureStorage(NEAR_USDC_CONTRACT).catch((e: any) => console.warn('[EXECUTOR] ensureStorage(USDC) on sell:', e?.message));
+              await ensureRefStorage(subaccountId).catch((e: any) => console.warn('[EXECUTOR] ensureRefStorage on USDC sell:', e?.message));
+              await ensureRefTokenRegistered(NEAR_USDC_CONTRACT, subaccountId).catch((e: any) => console.warn('[EXECUTOR] ensureRefTokenRegistered(USDC) on sell:', e?.message));
+
+              let paidNativeOnSell = venue === 'intear' || (venue === 'nearpumpfun' && capturedPreOutBalance !== null && postOutBalance !== null && BigInt(postOutBalance) === BigInt(capturedPreOutBalance));
+              effectiveSellFeeNear = sellFeeNear;
+              let effectiveNetAfterFeeYocto = netAfterFeeYocto;
+              let nativeDepositOnSellYocto = BigInt(netAmountOut);
+              if (paidNativeOnSell) {
+                const currNativeStr = await (
+                  (this.nearClient as any).getNearBalanceOnTradeRpc
+                    ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
+                    : this.nearClient.getNearBalance?.(subaccountId)
+                ).catch(() => null);
+                if (currNativeStr !== null) {
+                  const currNative = BigInt(currNativeStr);
+                  const minGasReserve = BigInt(Math.ceil(0.035 * 1e24));
+                  const maxWrap = currNative > minGasReserve ? currNative - minGasReserve : 0n;
+                  if (maxWrap < nativeDepositOnSellYocto) {
+                    nativeDepositOnSellYocto = maxWrap;
+                    effectiveSellFeeNear = (nativeDepositOnSellYocto * sellFeeBps) / 10000n;
+                    effectiveNetAfterFeeYocto = nativeDepositOnSellYocto - effectiveSellFeeNear;
+                  }
+                }
+              } else {
+                const availWNearStr = postOutBalance ?? (await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => null));
+                if (availWNearStr !== null && BigInt(availWNearStr) > 0n && BigInt(availWNearStr) < BigInt(netAmountOut)) {
+                  const availWNear = BigInt(availWNearStr);
+                  effectiveSellFeeNear = (availWNear * sellFeeBps) / 10000n;
+                  effectiveNetAfterFeeYocto = availWNear - effectiveSellFeeNear;
+                }
+              }
+              onChainFeeYocto = effectiveSellFeeNear.toString();
+              
+              let expectedUsdcRaw = 0n;
+              let minUsdcOut = '1';
+              try {
+                const viewFn = this.nearClient.view ? this.nearClient.view.bind(this.nearClient) : near.view.bind(near);
+                const ret = await viewFn<string>('v2.ref-finance.near', 'get_return', {
+                  pool_id: NEAR_USDC_REF_POOL_ID,
+                  token_in: 'wrap.near',
+                  amount_in: effectiveNetAfterFeeYocto.toString(),
+                  token_out: NEAR_USDC_CONTRACT,
+                });
+                if (ret && BigInt(ret) > 0n) {
+                  expectedUsdcRaw = BigInt(ret);
+                  minUsdcOut = calculateMinAmountOut(expectedUsdcRaw, Math.max(userSlippage, 2));
+                }
+              } catch { /* fallback to minUsdcOut = '1' */ }
+
+              const preUsdcBalStr = await this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountId).catch(() => '0') ?? '0';
+              const usdcSettleActions: any[] = [];
+              if (paidNativeOnSell) {
+                usdcSettleActions.push(
+                  transactions.functionCall('near_deposit', {}, BigInt('10000000000000'), nativeDepositOnSellYocto)
+                );
+              }
+              if (sellFeeNear > 0n) {
+                usdcSettleActions.push(
+                  transactions.functionCall(
+                    'ft_transfer',
+                    { receiver_id: TREASURY_ACCOUNT_ID, amount: effectiveSellFeeNear.toString() },
+                    BigInt('20000000000000'),
+                    BigInt('1')
+                  )
+                );
+              }
+              usdcSettleActions.push(
+                transactions.functionCall(
+                  'ft_transfer_call',
+                  {
+                    receiver_id: 'v2.ref-finance.near',
+                    amount: effectiveNetAfterFeeYocto.toString(),
+                    msg: JSON.stringify({
+                      force: 0,
+                      actions: [
+                        {
+                          pool_id: NEAR_USDC_REF_POOL_ID,
+                          token_in: 'wrap.near',
+                          token_out: NEAR_USDC_CONTRACT,
+                          amount_in: effectiveNetAfterFeeYocto.toString(),
+                          min_amount_out: minUsdcOut,
+                        },
+                      ],
+                      referral_id: null,
+                    }),
+                  },
+                  DEFAULT_SWAP_GAS,
+                  BigInt('1')
+                )
+              );
+              const usdcSettleOutcome = await signAndSend('wrap.near', usdcSettleActions, undefined, true);
+              const postUsdcBalStr = await (
+                this.nearClient.getTokenBalanceOnTradeRpc
+                  ? this.nearClient.getTokenBalanceOnTradeRpc(NEAR_USDC_CONTRACT, subaccountId)
+                  : this.nearClient.getTokenBalance(NEAR_USDC_CONTRACT, subaccountId)
+              ).catch(() => null);
+              const usdcOutCheck = determineSwapOutcome({
+                result: usdcSettleOutcome,
+                subaccountId,
+                isBuy: true,
+                tokenOut: NEAR_USDC_CONTRACT,
+                preBalance: preUsdcBalStr,
+                postBalance: postUsdcBalStr,
+              });
+              if (postUsdcBalStr !== null && BigInt(postUsdcBalStr) > BigInt(preUsdcBalStr || '0')) {
+                const deltaUsdc = BigInt(postUsdcBalStr) - BigInt(preUsdcBalStr || '0');
+                usdcReceivedHuman = Number(deltaUsdc) / Math.pow(10, NEAR_USDC_DECIMALS);
+              } else if (usdcOutCheck.ok && usdcOutCheck.netAmountOut && BigInt(usdcOutCheck.netAmountOut) > 0n) {
+                usdcReceivedHuman = Number(BigInt(usdcOutCheck.netAmountOut)) / Math.pow(10, NEAR_USDC_DECIMALS);
+              } else if (usdcOutCheck.ok && expectedUsdcRaw > 0n) {
+                usdcReceivedHuman = Number(expectedUsdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
+              }
+              console.log(`[EXECUTOR] Settled sell proceeds into ${usdcReceivedHuman?.toFixed(2)} USDC for ${subaccountId}`);
+            } catch (usdcSettleErr: any) {
+              console.warn(`[EXECUTOR] USDC sell settlement fallback warning for ${subaccountId} (proceeds remain in wNEAR):`, usdcSettleErr?.message);
+            }
+          }
+        } else if (sellFeeNear > 0n) {
+          onChainFeeYocto = sellFeeNear.toString();
+
+          // SPEED OPTIMIZATION:
+          // Dispatch the secondary treasury fee transfer in the background without blocking
+          // the fill confirmation and user response! This eliminates 5.0s of post-signing latency
+          // so sell trades confirm and return in ~5.5s instead of ~11.0s.
+          const dispatchFee = async () => {
+            try {
+              // Query current balances to determine whether to pay via native NEAR or wNEAR
+              const [currNativeBalStr, currWNearBalStr] = await Promise.all([
+                this.nearClient.getNearBalance?.(subaccountId).catch(() => '0') ?? '0',
+                this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+              ]);
+              const currNativeBal = BigInt(currNativeBalStr || '0');
+              const currWNearBal = BigInt(currWNearBalStr || '0');
+
+              let paidNativeNear = venue === 'nearpumpfun' || venue === 'intear' || venue === 'kelytra';
+              if (capturedPreOutBalance !== null && postOutBalance !== null) {
+                const wNearDelta = BigInt(postOutBalance) - BigInt(capturedPreOutBalance);
+                if (wNearDelta === 0n) {
+                  paidNativeNear = true;
+                }
+              }
+              if (currWNearBal < sellFeeNear && currNativeBal >= sellFeeNear) {
+                paidNativeNear = true;
+              }
+
+              if (paidNativeNear) {
+                try {
+                  await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
+                  console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR sent to treasury for ${subaccountId}`);
+                } catch (nativeErr: any) {
+                  console.warn(`[EXECUTOR] Native sell fee failed for ${subaccountId}, attempting wNEAR fallback:`, nativeErr?.message);
+                  if (currWNearBal >= sellFeeNear) {
+                    try {
+                      await signAndSend('wrap.near', [
+                        transactions.functionCall(
+                          'ft_transfer',
+                          { receiver_id: TREASURY_ACCOUNT_ID, amount: effectiveSellFeeNear.toString() },
+                          BigInt('20000000000000'),
+                          BigInt('1')
+                        ),
+                      ], 10_000, true);
+                      console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR fallback sent to treasury for ${subaccountId}`);
+                    } catch (wNearErr: any) {
+                      console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both native and wNEAR) for ${subaccountId}:`, wNearErr?.message);
+                    }
+                  }
+                }
+              } else {
+                try {
+                  await signAndSend('wrap.near', [
+                    transactions.functionCall(
+                      'ft_transfer',
+                      { receiver_id: TREASURY_ACCOUNT_ID, amount: effectiveSellFeeNear.toString() },
+                      BigInt('20000000000000'),
+                      BigInt('1')
+                    ),
+                  ], 10_000, true);
+                  console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR sent to treasury for ${subaccountId}`);
+                } catch (wNearErr: any) {
+                  console.warn(`[EXECUTOR] wNEAR sell fee failed for ${subaccountId}, attempting native NEAR fallback:`, wNearErr?.message);
                   try {
-                    await signAndSend('wrap.near', [
-                      transactions.functionCall(
-                        'ft_transfer',
-                        { receiver_id: TREASURY_ACCOUNT_ID, amount: sellFeeNear.toString() },
-                        BigInt('20000000000000'),
-                        BigInt('1')
-                      ),
-                    ], 10_000, true);
-                    console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR fallback sent to treasury for ${subaccountId}`);
-                  } catch (wNearErr: any) {
-                    console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both native and wNEAR) for ${subaccountId}:`, wNearErr?.message);
+                    await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
+                    console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR fallback sent to treasury for ${subaccountId}`);
+                  } catch (nativeErr: any) {
+                    console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both wNEAR and native) for ${subaccountId}:`, nativeErr?.message);
                   }
                 }
               }
-            } else {
-              try {
-                await signAndSend('wrap.near', [
-                  transactions.functionCall(
-                    'ft_transfer',
-                    { receiver_id: TREASURY_ACCOUNT_ID, amount: sellFeeNear.toString() },
-                    BigInt('20000000000000'),
-                    BigInt('1')
-                  ),
-                ], 10_000, true);
-                console.log(`[EXECUTOR] Sell fee ${sellFeeNear} wNEAR sent to treasury for ${subaccountId}`);
-              } catch (wNearErr: any) {
-                console.warn(`[EXECUTOR] wNEAR sell fee failed for ${subaccountId}, attempting native NEAR fallback:`, wNearErr?.message);
-                try {
-                  await signAndSend(TREASURY_ACCOUNT_ID, [transactions.transfer(sellFeeNear)], 10_000, true);
-                  console.log(`[EXECUTOR] Sell fee ${sellFeeNear} native NEAR fallback sent to treasury for ${subaccountId}`);
-                } catch (nativeErr: any) {
-                  console.error(`[EXECUTOR] SELL FEE TRANSFER FAILED (both wNEAR and native) for ${subaccountId}:`, nativeErr?.message);
-                }
-              }
+            } catch (feeErr: any) {
+              console.error(`[EXECUTOR] Background sell fee dispatch error for ${subaccountId}:`, feeErr?.message);
             }
-          } catch (feeErr: any) {
-            console.error(`[EXECUTOR] Background sell fee dispatch error for ${subaccountId}:`, feeErr?.message);
-          }
-        };
+          };
 
-        dispatchFee().catch(err => console.error(`[EXECUTOR] Uncaught background sell fee error for ${subaccountId}:`, err?.message));
+          dispatchFee().catch(err => console.error(`[EXECUTOR] Uncaught background sell fee error for ${subaccountId}:`, err?.message));
+        }
       }
+
+      // Record the fill and update position with real on-chain output
+      const fillData = await this.recordFill(
+        user_id,
+        token_in,
+        token_out,
+        isGlobalBuy ? amountInBigInt.toString() : amount_in,
+        netAmountOut,
+        onChainFeeYocto,
+        venue,
+        txHash,
+        event
+      ).catch(err => {
+        console.error('[EXECUTOR] recordFill error:', err.message);
+        return undefined;
+      });
+
+      timings.post_ms = Date.now() - (timings.signStart ?? t0) - (timings.sign_ms ?? 0);
+      this.activeTradeWNearState.delete(subaccountId);
+
+      return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent, usdcSpent: usdcSpentHuman, nearReceived: fillData?.nearReceived, usdcReceived: usdcReceivedHuman, sellPercent: fillData?.sellPercent };
     }
-
-    // Record the fill and update position with real on-chain output
-    const fillData = await this.recordFill(
-      user_id,
-      token_in,
-      token_out,
-      amount_in,
-      netAmountOut,
-      onChainFeeYocto,
-      venue,
-      txHash,
-      event
-    ).catch(err => {
-      console.error('[EXECUTOR] recordFill error:', err.message);
-      return undefined;
-    });
-
-    timings.post_ms = Date.now() - (timings.signStart ?? t0) - (timings.sign_ms ?? 0);
-
-    return { txHash, success: true, positionId: fillData?.positionId, tokenName: fillData?.tokenName, tokenSymbol: fillData?.tokenSymbol, tokenQty: fillData?.tokenQty, priceNear: fillData?.priceNear, nearSpent: fillData?.nearSpent, nearReceived: fillData?.nearReceived, sellPercent: fillData?.sellPercent };
-  }
 
   /**
    * Auto-buy flow: rug check first, then execute.
    * Fail closed — any rug check exception = skip the buy.
    */
-  async autoBuy(signal: AutoBuySignal): Promise<{ success: boolean; reason?: string }> {
-    const { user_id, token_address, amount_near, venue } = signal;
+  async autoBuy(signal: AutoBuySignal): Promise < { success: boolean; reason?: string } > {
+      const { user_id, token_address, amount_near, venue } = signal;
 
-    // Fail closed on unknown/unsupported venue — never guess a swap path
-    if (!isTradableVenue(venue)) {
+      // Fail closed on unknown/unsupported venue — never guess a swap path
+      if(!isTradableVenue(venue)) {
       return { success: false, reason: `unsupported_venue:${venue}` };
     }
 
@@ -3431,13 +3791,14 @@ export class SwapExecutor {
     const activeWallet = await getActiveWallet(user_id, 'near').catch(() => null);
     let subaccountToCheck = activeWallet?.address || user?.subaccount_id;
     if (activeWallet && !activeWallet.is_imported && user?.subaccount_id && activeWallet.address !== user.subaccount_id) {
-      const [activeBalStr, subaccountBalStr] = await Promise.all([
+      const [activeBalStr, subaccountBalStr, activeUsdcBalStr] = await Promise.all([
         this.nearClient.getNearBalance?.(activeWallet.address).catch(() => '0') ?? '0',
         this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
+        this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, activeWallet.address).catch(() => '0') ?? '0',
       ]);
-      if (BigInt(subaccountBalStr || '0') > BigInt(activeBalStr || '0')) {
+      if (BigInt(subaccountBalStr || '0') > BigInt(activeBalStr || '0') && BigInt(activeUsdcBalStr || '0') === 0n) {
         subaccountToCheck = user.subaccount_id;
-        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => {});
+        syncUserActiveWallet(user_id, 'near', user.subaccount_id, user.scoped_key_encrypted).catch(() => { });
       }
     }
     if (!user || !subaccountToCheck) {
@@ -3477,16 +3838,25 @@ export class SwapExecutor {
     }
 
     // Pre-flight balance check: Ensure user actually has spendable balance before executing
-    const [nativeBalStr, wNearBalStr] = await Promise.all([
+    const [nativeBalStr, wNearBalStr, usdcBalStr, autoBuyNearUsd] = await Promise.all([
       this.nearClient.getNearBalance?.(subaccountToCheck).catch(() => '0') ?? '0',
       this.nearClient.getTokenBalance('wrap.near', subaccountToCheck).catch(() => '0'),
+      this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountToCheck).catch(() => '0') ?? '0',
+      getNearUsdPrice().catch(() => 5.0),
     ]);
 
     const nativeBal = BigInt(nativeBalStr || '0');
     const wNearBal = BigInt(wNearBalStr || '0');
     const MIN_RESERVE_YOCTO = 50000000000000000000000n; // 0.05 NEAR reserve (covers 0.0315-0.045 NEAR gas reserve + storage)
     const availableNative = nativeBal > MIN_RESERVE_YOCTO ? nativeBal - MIN_RESERVE_YOCTO : 0n;
-    const totalSpendableYocto = availableNative + wNearBal;
+    const usdcBalAuto = BigInt(usdcBalStr || '0');
+    const effNearUsdAuto = autoBuyNearUsd > 0 ? autoBuyNearUsd : 5.0;
+    const usdcNearYoctoAuto = usdcBalAuto > 0n
+      ? BigInt(Math.floor(((Number(usdcBalAuto) / Math.pow(10, NEAR_USDC_DECIMALS)) / effNearUsdAuto) * 0.985 * 1e24))
+      : 0n;
+    const totalSpendableYocto = (user as any)?.near_trade_currency === 'usdc'
+      ? usdcNearYoctoAuto
+      : availableNative + wNearBal + usdcNearYoctoAuto;
     const MIN_SPEND_YOCTO = 10000000000000000000000n; // 0.01 NEAR minimum trade size
 
     // Must have at least 0.035 native NEAR to pay for gas even if paying with wNEAR
@@ -3511,7 +3881,7 @@ export class SwapExecutor {
 
     // Clamp buy amount to available balance so trade succeeds instead of failing on insufficient funds
     if (finalInYocto > totalSpendableYocto) {
-      console.log(`[EXECUTOR] Auto-buy user ${user_id} requested ${amount_near} NEAR, but spendable balance is ${(Number(totalSpendableYocto)/1e24).toFixed(4)} NEAR. Clamping buy amount.`);
+      console.log(`[EXECUTOR] Auto-buy user ${user_id} requested ${amount_near} NEAR, but spendable balance is ${(Number(totalSpendableYocto) / 1e24).toFixed(4)} NEAR. Clamping buy amount.`);
       finalInYocto = totalSpendableYocto;
     }
 
@@ -3936,7 +4306,7 @@ export class SwapExecutor {
                 venue,
                 txHash,
               },
-            }).catch(() => {});
+            }).catch(() => { });
           }
         } catch (err: any) {
           console.warn('[ACTIVITY] Error publishing buy event:', err?.message || err);
@@ -4103,7 +4473,7 @@ export class SwapExecutor {
                 venue,
                 txHash,
               },
-            }).catch(() => {});
+            }).catch(() => { });
           }
         } catch (err: any) {
           console.warn('[ACTIVITY] Error publishing sell event:', err?.message || err);

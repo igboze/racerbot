@@ -87,6 +87,8 @@ export interface SwapEvent {
    */
   notify_user?: boolean;
   is_snipe?: boolean;
+  /** Optional override for NEAR trade currency ('near' | 'usdc') */
+  trade_currency?: 'near' | 'usdc';
   timestamp?: number;
   /** Set for copy trades: the executor settles this fill (status, points, rewards) from the outcome */
   copy?: CopyFillMeta;

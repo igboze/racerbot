@@ -1,0 +1,2 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS near_trade_currency TEXT NOT NULL DEFAULT 'near';
+

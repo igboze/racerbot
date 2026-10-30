@@ -12,7 +12,8 @@ export async function sellAtTarget(
   percentage: number,
   onProgress?: (stage: string) => void,
   options: { suppressAlphaSignal?: boolean; slippagePct?: number } = {}
-): Promise<{ success: boolean; reason?: string }> {
+): Promise<{ success: boolean; reason?: string; usdcReceived?: number; nearReceived?: number }> {
+
   if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) {
     return { success: false, reason: 'invalid_sell_percentage' };
   }
@@ -78,7 +79,7 @@ export async function sellAtTarget(
         quantity_held: '0',
       }).catch(() => {});
     }
-    return { success: true };
+    return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
   // Starknet Chain Execution Route
@@ -108,7 +109,7 @@ export async function sellAtTarget(
         quantity_held: '0',
       }).catch(() => {});
     }
-    return { success: true };
+    return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
   // Sui Chain Execution Route
@@ -138,7 +139,7 @@ export async function sellAtTarget(
         quantity_held: '0',
       }).catch(() => {});
     }
-    return { success: true };
+    return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
   if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra', 'nearpumpfun'].includes(info.venue)) {
@@ -229,6 +230,7 @@ export async function sellAtTarget(
     pool_id: bestRheaPoolId,
     slippage_pct: slippagePct,
     quoted_at: quoteCompletedAt, // executor skips its second quote while < 2s old
+    trade_currency: user?.near_trade_currency,
   };
 
   const swapResult = await publishSwap(swapEvent, onProgress, options);
@@ -248,5 +250,5 @@ export async function sellAtTarget(
     }).catch(() => {});
   }
 
-  return { success: true };
+  return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
 }
