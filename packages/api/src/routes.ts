@@ -442,6 +442,95 @@ function sanitizeMd(str: string): string {
 // ── Helper: Build Main Menu ──────────────────────────────────────────────────
 const mainMenuCache = new Map<number, { data: { text: string; keyboard: any }; expiresAt: number }>();
 
+// ── Chain Visibility Helpers ────────────────────────────────────────────────
+export const ALL_SUPPORTED_CHAINS = [
+  { id: 'near', name: 'NEAR Protocol', symbol: 'NEAR', icon: '⬛' },
+  { id: 'solana', name: 'Solana', symbol: 'SOL', icon: '🟣' },
+  { id: 'sui', name: 'Sui Network', symbol: 'SUI', icon: '🔷' },
+  { id: 'starknet', name: 'Starknet', symbol: 'STRK', icon: '✨' },
+] as const;
+
+export type SupportedChainId = typeof ALL_SUPPORTED_CHAINS[number]['id'];
+
+export function isChainVisible(user: { hidden_chains?: string[] } | null | undefined, chain: string): boolean {
+  if (!user || !user.hidden_chains || !Array.isArray(user.hidden_chains) || user.hidden_chains.length === 0) {
+    return true;
+  }
+  return !user.hidden_chains.includes(chain);
+}
+
+export function getVisibleChains(user: { hidden_chains?: string[] } | null | undefined): string[] {
+  const hidden = new Set(user?.hidden_chains || []);
+  return ALL_SUPPORTED_CHAINS.map(c => c.id).filter(id => !hidden.has(id));
+}
+
+export function formatActiveChainsSummary(user: { hidden_chains?: string[] } | null | undefined): string {
+  const visible = getVisibleChains(user);
+  if (visible.length === ALL_SUPPORTED_CHAINS.length) return '🌐 All Chains';
+  return visible.map(id => {
+    const c = ALL_SUPPORTED_CHAINS.find(item => item.id === id);
+    return c ? `${c.icon} ${c.symbol}` : id;
+  }).join(' • ');
+}
+
+export function buildActiveChainsMenu(user: UserRecord) {
+  const hidden = new Set(user.hidden_chains || []);
+
+  let text =
+    '🌐 *Active Chains & Visibility*\n\n' +
+    'Customize which chains appear across your menus, wallet balances, and token holdings.\n' +
+    'Hiding a chain keeps your wallet & funds 100% safe while giving you a clean, dedicated single-chain or customized multi-chain experience.\n\n' +
+    '*Current Status:*\n';
+
+  for (const c of ALL_SUPPORTED_CHAINS) {
+    const isVis = !hidden.has(c.id);
+    text += `${c.icon} *${c.name}* (${c.symbol}): ${isVis ? '🟢 *Visible*' : '🔴 *Hidden*'}\n`;
+  }
+
+  text += '\n💡 _Tip: Tap any chain below to toggle its visibility, or tap a preset for instant 1-tap single-chain mode._';
+
+  const buttons: any[] = [
+    [
+      cb(
+        `${!hidden.has('near') ? '🟢' : '🔴'} ⬛ NEAR`,
+        'toggle_chain_vis:near',
+        !hidden.has('near') ? 'success' : 'primary'
+      ),
+      cb(
+        `${!hidden.has('solana') ? '🟢' : '🔴'} 🟣 Solana`,
+        'toggle_chain_vis:solana',
+        !hidden.has('solana') ? 'success' : 'primary'
+      ),
+    ],
+    [
+      cb(
+        `${!hidden.has('sui') ? '🟢' : '🔴'} 🔷 Sui`,
+        'toggle_chain_vis:sui',
+        !hidden.has('sui') ? 'success' : 'primary'
+      ),
+      cb(
+        `${!hidden.has('starknet') ? '🟢' : '🔴'} ✨ Starknet`,
+        'toggle_chain_vis:starknet',
+        !hidden.has('starknet') ? 'success' : 'primary'
+      ),
+    ],
+    [
+      cb('⬛ NEAR Only', 'preset_chain_vis:near', 'primary'),
+      cb('🟣 Solana Only', 'preset_chain_vis:solana', 'primary'),
+    ],
+    [
+      cb('🔷 Sui Only', 'preset_chain_vis:sui', 'primary'),
+      cb('🌐 Show All Chains', 'preset_chain_vis:all', 'primary'),
+    ],
+    [
+      cb('⚙️ Settings', 'menu_settings', 'primary'),
+      cb('🔙 Main Menu', 'menu_home', 'primary'),
+    ],
+  ];
+
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
+}
+
 export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   if (!forceRefresh) {
     const cached = mainMenuCache.get(telegramId);
@@ -482,37 +571,73 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       strkBalFormatted = b.strkBalanceFormatted || '0';
       ethBalFormatted = b.ethBalanceFormatted || '0';
 
-      const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
-      const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-      const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
-      const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
+      const nearVisible = isChainVisible(user, 'near');
+      const suiVisible = isChainVisible(user, 'sui');
+      const starknetVisible = isChainVisible(user, 'starknet');
+      const solanaVisible = isChainVisible(user, 'solana');
+
+      const rawNearUsd = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
+      const rawSuiUsd = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
+      const rawStrkUsd = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
+      const rawEthUsd = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
+
       solAddress = b.solanaAddress || user.solana_address || '';
       solBalFormatted = b.solBalanceFormatted || '0';
-      const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
-      solUsdFormatted = solTotalUsdNum >= 1000 ? `$${(solTotalUsdNum / 1000).toFixed(2)}K` : `$${solTotalUsdNum.toFixed(2)}`;
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + (parseFloat(b.usdcNearFormatted || '0') || 0);
+      const rawSolUsd = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
+
+      const nearTotalUsdNum = nearVisible ? rawNearUsd : 0;
+      const suiTotalUsdNum = suiVisible ? rawSuiUsd : 0;
+      const strkTotalUsdNum = starknetVisible ? rawStrkUsd : 0;
+      const ethTotalUsdNum = starknetVisible ? rawEthUsd : 0;
+      const solTotalUsdNum = solanaVisible ? rawSolUsd : 0;
+      const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
+
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + usdcNearNum;
       usdcBalFormatted = b.usdcNearFormatted || '0.00';
 
-      nearUsdFormatted = nearTotalUsdNum >= 1000 ? `$${(nearTotalUsdNum / 1000).toFixed(2)}K` : `$${nearTotalUsdNum.toFixed(2)}`;
-      suiUsdFormatted = suiTotalUsdNum >= 1000 ? `$${(suiTotalUsdNum / 1000).toFixed(2)}K` : `$${suiTotalUsdNum.toFixed(2)}`;
+      nearUsdFormatted = rawNearUsd >= 1000 ? `${(rawNearUsd / 1000).toFixed(2)}K` : `${rawNearUsd.toFixed(2)}`;
+      suiUsdFormatted = rawSuiUsd >= 1000 ? `${(rawSuiUsd / 1000).toFixed(2)}K` : `${rawSuiUsd.toFixed(2)}`;
+      solUsdFormatted = rawSolUsd >= 1000 ? `${(rawSolUsd / 1000).toFixed(2)}K` : `${rawSolUsd.toFixed(2)}`;
     } catch {
       nearBalFormatted = '0';
     }
   }
 
-  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
+  const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
 
-  const text =
-    `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n` +
-    `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>$${usdcBalFormatted}</b>\n` +
-    `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n` +
-    (starknetAddress ? `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n` : '') +
-    (solAddress ? `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n` : '') +
-    `💰 Total: <b>${totalUsdStr}</b>\n\n` +
-    `📍 NEAR: <code>${subaccount}</code>` +
-    (suiAddress ? `\n💧 SUI: <code>${suiAddress}</code>` : '') +
-    (starknetAddress ? `\n✨ STRK: <code>${starknetAddress}</code>` : '') +
-    (solAddress ? `\n◎ SOL: <code>${solAddress}</code>` : '');
+  const nearVisible = isChainVisible(user, 'near');
+  const suiVisible = isChainVisible(user, 'sui');
+  const starknetVisible = isChainVisible(user, 'starknet');
+  const solanaVisible = isChainVisible(user, 'solana');
+
+  let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
+  if (nearVisible) {
+    text += `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>${usdcBalFormatted}</b>\n`;
+  }
+  if (suiVisible) {
+    text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
+  }
+  if (starknetVisible && starknetAddress) {
+    text += `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n`;
+  }
+  if (solanaVisible && solAddress) {
+    text += `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n`;
+  }
+  text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
+
+  if (nearVisible && subaccount) {
+    text += `📍 NEAR: <code>${subaccount}</code>\n`;
+  }
+  if (suiVisible && suiAddress) {
+    text += `💧 SUI: <code>${suiAddress}</code>\n`;
+  }
+  if (starknetVisible && starknetAddress) {
+    text += `✨ STRK: <code>${starknetAddress}</code>\n`;
+  }
+  if (solanaVisible && solAddress) {
+    text += `◎ SOL: <code>${solAddress}</code>\n`;
+  }
+  text = text.trimEnd();
 
   const keyboard = Markup.inlineKeyboard([
     [
@@ -651,13 +776,19 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
 
   const b = await getUserBalances(telegramId, forceRefresh, user);
-  const nearTotalUsdNum = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
-  const suiTotalUsdNum = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
-  const strkTotalUsdNum = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12);
-  const ethTotalUsdNum = parseFloat(b.ethBalanceFormatted || '0') * 2600.0;
-  const solTotalUsdNum = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + (parseFloat(b.usdcNearFormatted || '0') || 0);
-  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
+  const nearVisible = isChainVisible(user, 'near');
+  const suiVisible = isChainVisible(user, 'sui');
+  const starknetVisible = isChainVisible(user, 'starknet');
+  const solanaVisible = isChainVisible(user, 'solana');
+
+  const nearTotalUsdNum = nearVisible ? parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3) : 0;
+  const suiTotalUsdNum = suiVisible ? parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0) : 0;
+  const strkTotalUsdNum = starknetVisible ? parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.12) : 0;
+  const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * 2600.0 : 0;
+  const solTotalUsdNum = solanaVisible ? (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0) : 0;
+  const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + usdcNearNum;
+  const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
     ? await Promise.all([
@@ -680,7 +811,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     ],
   ];
 
-  if (Number(b.wrapNearFormatted) > 0.0001) {
+  if (nearVisible && Number(b.wrapNearFormatted) > 0.0001) {
     buttons.push([cb(`🔄 Unwrap ${b.wrapNearFormatted} wNEAR`, 'wallet_unwrap', 'primary')]);
   }
 
@@ -703,19 +834,30 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     Markup.button.url('𝕏 X', 'https://x.com/racertradingbot'),
   ]);
 
-  const text =
-    `💼 <b>${escapeHtml(walletDisplayName)}</b> ⭐\n` +
-    `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n` +
-    `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n` +
-    (Number(b.wrapNearFormatted) > 0.0001 ? `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n` : '') +
-    `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n` +
-    (b.starknetAddress ? `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n` : '') +
-    (b.solanaAddress ? `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n` : '') +
-    `💰 Total: <b>${totalUsdStr}</b>\n\n` +
-    `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>` +
-    (b.suiAddress ? `\n💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>` : '') +
-    (b.starknetAddress ? `\n✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>` : '') +
-    (b.solanaAddress ? `\n◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>` : '');
+  let text = `💼 <b>${escapeHtml(walletDisplayName)}</b> ⭐\n`;
+  if (nearVisible) {
+    text += `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n`;
+    text += `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n`;
+    if (Number(b.wrapNearFormatted) > 0.0001) {
+      text += `• Native: ${b.nativeNearFormatted} Ⓝ | Wrapped: ${b.wrapNearFormatted} wNEAR\n`;
+    }
+  }
+  if (suiVisible) {
+    text += `🔷 SUI: <b>${b.suiBalanceFormatted || '0.0000'}</b> 💧 (${b.suiBalanceUsd || '$0.00'})\n`;
+  }
+  if (starknetVisible && b.starknetAddress) {
+    text += `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b>\n`;
+  }
+  if (solanaVisible && b.solanaAddress) {
+    text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
+  }
+  text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
+
+  if (nearVisible) text += `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>\n`;
+  if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n`;
+  if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n`;
+  if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n`;
+  text = text.trimEnd();
 
   const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
   walletMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
@@ -1932,8 +2074,11 @@ export function buildSettingsDashboard(user: UserRecord) {
   const buyAmounts = parseBuyAmounts(user.custom_buy_amounts);
   const buyAmountsStr = buyAmounts.join(', ');
 
+  const activeChainsSummary = formatActiveChainsSummary(user);
+
   const text =
     `⚙️ *Trading Settings*\n\n` +
+    `• *Active Chains*: \`${activeChainsSummary}\`\n` +
     `• *Slippage*: \`${slip}%\`\n` +
     `• *Default Buy*: \`${buyPct}%\`\n` +
     `• *Default Sell*: \`${sellPct}%\`\n` +
@@ -1943,6 +2088,7 @@ export function buildSettingsDashboard(user: UserRecord) {
 
   const keyboard = Markup.inlineKeyboard([
     [
+      cb('🌐 Active Chains / Visibility', 'menu_active_chains', 'primary'),
       cb(
         showNetWorth ? '👁 Net Worth: Shown' : '🙈 Net Worth: Hidden',
         'set:toggle_show_net_worth',
@@ -6422,6 +6568,12 @@ export function setupRoutes(bot: Telegraf): void {
     // Fetch all open positions (including previously synced wallet deposits)
     let positions: PositionRecord[] = await getOpenPositions(user.id).catch(() => []);
 
+    // Filter positions according to user's visible chains
+    positions = positions.filter((pos) => {
+      const chain = pos.chain || (isSolanaToken(pos.token_address) ? 'solana' : isStarknetToken(pos.token_address) ? 'starknet' : isSuiToken(pos.token_address) ? 'sui' : 'near');
+      return isChainVisible(user, chain);
+    });
+
     const emptyKeyboard = Markup.inlineKeyboard([
       [
         cb('🔄 Refresh', 'refresh_holdings:0', 'primary'),
@@ -8698,6 +8850,119 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.command('settings', handleSettings);
   bot.command('filters', handleSettings);
+
+  const handleActiveChains = async (ctx: Context) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.reply('Please run /start first.');
+        return;
+      }
+      const menu = buildActiveChainsMenu(user);
+      await ctx.reply(menu.text, { parse_mode: 'Markdown', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  };
+
+  bot.command(['chains', 'chain', 'activechains'], handleActiveChains);
+
+  bot.action('menu_active_chains', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await ctx.answerCbQuery('Please run /start first.').catch(() => { });
+        return;
+      }
+      const menu = buildActiveChainsMenu(user);
+      await ctx.answerCbQuery().catch(() => { });
+      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action(/^toggle_chain_vis:(.+)$/, async (ctx) => {
+    try {
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const targetChain = ctx.match[1];
+      const hiddenList = Array.isArray(user.hidden_chains) ? [...user.hidden_chains] : [];
+      const isCurrentlyHidden = hiddenList.includes(targetChain);
+
+      if (!isCurrentlyHidden) {
+        // Trying to hide this chain: verify at least one visible chain remains
+        const visibleCount = ALL_SUPPORTED_CHAINS.filter(c => !hiddenList.includes(c.id)).length;
+        if (visibleCount <= 1) {
+          await ctx.answerCbQuery('⚠️ At least one chain must remain visible!', { show_alert: true }).catch(() => { });
+          return;
+        }
+        hiddenList.push(targetChain);
+      } else {
+        // Unhide this chain
+        const idx = hiddenList.indexOf(targetChain);
+        if (idx !== -1) hiddenList.splice(idx, 1);
+      }
+
+      const updated = await updateUserSettings(user.id, { hidden_chains: hiddenList });
+      mainMenuCache.delete(telegramId);
+      walletMenuCache.delete(telegramId);
+      invalidateBalanceCache(telegramId);
+
+      const chainObj = ALL_SUPPORTED_CHAINS.find(c => c.id === targetChain);
+      const chainName = chainObj ? chainObj.name : targetChain;
+      const statusText = !isCurrentlyHidden ? `Hidden ${chainName}` : `Enabled ${chainName}`;
+      await ctx.answerCbQuery(`✅ ${statusText}`).catch(() => { });
+
+      const menu = buildActiveChainsMenu(updated);
+      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action(/^preset_chain_vis:(.+)$/, async (ctx) => {
+    try {
+      const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) return;
+      const preset = ctx.match[1];
+      let newHidden: string[] = [];
+
+      if (preset === 'near') {
+        newHidden = ['solana', 'sui', 'starknet'];
+      } else if (preset === 'solana') {
+        newHidden = ['near', 'sui', 'starknet'];
+      } else if (preset === 'sui') {
+        newHidden = ['near', 'solana', 'starknet'];
+      } else if (preset === 'all') {
+        newHidden = [];
+      } else {
+        return;
+      }
+
+      const updated = await updateUserSettings(user.id, { hidden_chains: newHidden });
+      mainMenuCache.delete(telegramId);
+      walletMenuCache.delete(telegramId);
+      invalidateBalanceCache(telegramId);
+
+      const presetLabels = {
+        near: '⬛ NEAR Only mode enabled',
+        solana: '🟣 Solana Only mode enabled',
+        sui: '🔷 Sui Only mode enabled',
+        all: '🌐 All chains enabled',
+      };
+      await ctx.answerCbQuery(`✅ ${presetLabels[preset] || 'Preset applied'}`).catch(() => { });
+
+      const menu = buildActiveChainsMenu(updated);
+      await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
 
   // Settings Dashboard Button Actions
   bot.action('set:toggle_auto_buy', async (ctx) => {

@@ -45,6 +45,7 @@ export interface UserRecord {
   /** Customizable quick buy amounts (e.g. '1, 5, 10' or '0.5, 2, 5') */
   custom_buy_amounts?: string | null;
   near_trade_currency?: 'near' | 'usdc';
+  hidden_chains?: string[];
   last_near_balance?: number | null;
   last_sui_balance?: number | null;
   last_strk_balance?: number | null;
@@ -1061,6 +1062,7 @@ export interface UpdateUserSettingsParams {
   show_net_worth_on_card?: boolean;
   custom_buy_amounts?: string;
   near_trade_currency?: 'near' | 'usdc';
+  hidden_chains?: string[];
 }
 
 export async function updateUserSettings(userId: string, params: UpdateUserSettingsParams): Promise<UserRecord> {
@@ -1866,6 +1868,7 @@ function rowToUser(row: any): UserRecord {
     show_net_worth_on_card: row.show_net_worth_on_card === true, // defaults false
     custom_buy_amounts: row.custom_buy_amounts ?? null,
     near_trade_currency: row.near_trade_currency === 'usdc' ? 'usdc' : 'near',
+    hidden_chains: Array.isArray(row.hidden_chains) ? row.hidden_chains : [],
     last_near_balance: row.last_near_balance != null ? parseFloat(row.last_near_balance) : null,
     last_sui_balance: row.last_sui_balance != null ? parseFloat(row.last_sui_balance) : null,
     last_strk_balance: row.last_strk_balance != null ? parseFloat(row.last_strk_balance) : null,
