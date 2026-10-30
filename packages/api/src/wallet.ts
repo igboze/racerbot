@@ -3178,14 +3178,39 @@ export async function withdrawFunds(
     throw new Error('Invalid destination account address.');
   }
 
-  // Auto-unwrap any wrap.near first
-  await unwrapUserWrapNear(telegramId).catch(() => { });
+  // Auto-unwrap any wrap.near first. Sells (DCL, USDC routes) pay out in wNEAR, which the wallet
+  // screen counts as NEAR, so it has to be native before we measure what can be sent.
+  const balanceBeforeYocto = BigInt(await near.getNearBalance(subaccountId, 0).catch(() => '0'));
+  const wrapBeforeYocto = BigInt(
+    (await near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0')) || '0'
+  );
+  let unwrapError: string | null = null;
+  if (wrapBeforeYocto > 0n) {
+    await unwrapUserWrapNear(telegramId).catch((err: any) => {
+      unwrapError = err?.message || 'unwrap failed';
+    });
+  }
 
-  const currentBalanceYocto = BigInt(await near.getNearBalance(subaccountId));
+  // Read a fresh balance (no cache). After an unwrap, RPC nodes can lag a block or two behind the
+  // transaction, so wait until the unwrapped NEAR shows up instead of measuring the old balance.
+  let currentBalanceYocto = BigInt(await near.getNearBalance(subaccountId, 0));
+  if (wrapBeforeYocto > 0n && !unwrapError) {
+    // Unwrap gas is far below 0.01 NEAR; reaching this means the unwrap has landed
+    const expectedMin = balanceBeforeYocto + wrapBeforeYocto - 10_000_000_000_000_000_000_000n;
+    for (let i = 0; i < 8 && currentBalanceYocto < expectedMin; i++) {
+      await new Promise((r) => setTimeout(r, 750));
+      currentBalanceYocto = BigInt(await near.getNearBalance(subaccountId, 0).catch(() => currentBalanceYocto.toString()));
+    }
+  }
+  invalidateBalanceCache(telegramId);
   const reserveYocto = BigInt('50000000000000000000000'); // 0.05 NEAR reserved
+  const fmtNear = (y: bigint) => (Number(y / 1000000000000000000n) / 1e6).toFixed(4);
+  const stillWrappedNote = unwrapError
+    ? ` ${fmtNear(wrapBeforeYocto)} wNEAR could not be unwrapped right now (${unwrapError}); tap 🔄 Unwrap in your wallet and try again.`
+    : '';
 
   if (currentBalanceYocto <= reserveYocto) {
-    throw new Error('Insufficient balance to withdraw. A minimum of 0.05 NEAR must remain to cover on-chain account storage.');
+    throw new Error(`Insufficient balance to withdraw. A minimum of 0.05 NEAR must remain to cover on-chain account storage.${stillWrappedNote}`);
   }
 
   const maxWithdrawableYocto = currentBalanceYocto - reserveYocto;
@@ -3196,8 +3221,7 @@ export async function withdrawFunds(
   } else {
     withdrawYocto = BigInt(Math.floor(amountNear * 1e6)) * 1000000000000000000n;
     if (withdrawYocto > maxWithdrawableYocto) {
-      const maxFormatted = (Number(maxWithdrawableYocto / 1000000000000000000n) / 1e6).toFixed(4);
-      throw new Error(`Amount exceeds maximum withdrawable balance (${maxFormatted} NEAR after storage reserve).`);
+      throw new Error(`Amount exceeds maximum withdrawable balance (${fmtNear(maxWithdrawableYocto)} NEAR after the 0.05 NEAR storage reserve). Use "all" to send everything.${stillWrappedNote}`);
     }
   }
 
