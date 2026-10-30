@@ -39,10 +39,6 @@ export function registerConfidentialRoutes(router: Router): void {
       res.status(401).json({ error: 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.' });
       return null;
     }
-    if (!EXECUTORS_ENABLED) {
-      res.status(503).json({ error: 'Confidential trading is not switched on yet.' });
-      return null;
-    }
     return user;
   };
 
@@ -117,14 +113,25 @@ export function registerConfidentialRoutes(router: Router): void {
         res.status(400).json({ error: `Deposit at least ${toNear(POOL_LIMITS.min)} NEAR.` });
         return;
       }
-      if (isExternalWallet(user)) {
-        // RacerBot holds no key for this wallet: return the transaction for the user's wallet to sign
+      if (isExternalWallet(user) || req.body?.fromConnectedWallet === true) {
+        // RacerBot holds no key for this wallet (or user chose connected wallet signing):
+        // return the transaction for the user's wallet to sign
         const quote = await quoteWalletDeposit(user, amount);
         res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
         return;
       }
-      const result = await depositFromWallet(user, amount);
-      res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
+      try {
+        const result = await depositFromWallet(user, amount);
+        res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
+      } catch (depErr: any) {
+        const msg = String(depErr?.message || '');
+        if (/does not exist|not enough balance|insufficient|LackBalanceForState/i.test(msg)) {
+          const quote = await quoteWalletDeposit(user, amount);
+          res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
+          return;
+        }
+        throw depErr;
+      }
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'Deposit failed' });
     }

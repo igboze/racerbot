@@ -512,10 +512,12 @@
         };
       }
 
+      const nonceBytes = Uint8Array.from(atob(challengeData.nonce), (c) => c.charCodeAt(0));
       const signed = await wallet.signMessage({
+        signerId: accountId,
         accountId,
         message: challengeData.message,
-        nonce: challengeData.nonce,
+        nonce: nonceBytes,
         recipient: challengeData.recipient,
       });
 
@@ -528,6 +530,16 @@
         publicKey: signed?.publicKey || '',
         signature: signed?.signature || '',
       };
+    }
+
+    /**
+     * Ensure an active connected NEAR wallet has a verified session token
+     */
+    async ensureWalletSession() {
+      if (this.token || this.isTelegramMiniApp()) return true;
+      if (!this.activeNearWallet) return false;
+      await this.connectSelectorAccount(this.activeNearWallet, "NEAR Connect", true);
+      return Boolean(this.token);
     }
 
     /**

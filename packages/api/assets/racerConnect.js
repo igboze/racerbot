@@ -20,7 +20,15 @@
   const WALLET_KEY = 'racer_connected_near_wallet';
   const PLATFORM_FEE_PCT = 1.5;
   const TREASURY_ACCOUNT = 'racerbottreasury.near';
-  const isWalletAuthToken = (token) => /^racer_tok_wallet_[a-f0-9_]{16,64}$/.test(token || '');
+  const isWalletAuthToken = (token) => /^racer_tok_wallet_[a-f0-9]{40}$/.test(token || '');
+
+  /** The transaction hash from whatever shape a wallet's signAndSendTransaction returns */
+  function txHashOf(outcome) {
+    if (typeof outcome === 'string') return outcome;
+    if (!outcome || typeof outcome !== 'object') return null;
+    return outcome.transaction?.hash || outcome.transaction_outcome?.id || outcome.hash ||
+      (Array.isArray(outcome.transactions) ? outcome.transactions[0]?.transaction?.hash : null) || null;
+  }
 
   class RacerConnectClient {
     constructor() {
@@ -88,9 +96,6 @@
     getAuthHeader() {
       if (this.token) {
         return { Authorization: `Bearer ${this.token}` };
-      }
-      if (this.activeNearWallet) {
-        return { Authorization: `Bearer racer_tok_wallet_${this.activeNearWallet.replace(/[^a-zA-Z0-9]/g, '_')}` };
       }
       if (this.isTelegramMiniApp()) {
         return { Authorization: `tma ${window.Telegram.WebApp.initData}` };
@@ -425,7 +430,9 @@
               const walletName = connected.wallet?.manifest?.name || 'NEAR Connect';
               if (!this.activeNearWallet || this.activeNearWallet !== accountId) {
                 console.log('[RacerConnect] Restored session from NearConnector:', accountId, walletName);
-                await this.connectSelectorAccount(accountId, walletName, false);
+                this.activeNearWallet = accountId;
+                localStorage.setItem(WALLET_KEY, accountId);
+                this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
               }
             }
           } catch (e) {
@@ -505,10 +512,12 @@
         };
       }
 
+      const nonceBytes = Uint8Array.from(atob(challengeData.nonce), (c) => c.charCodeAt(0));
       const signed = await wallet.signMessage({
+        signerId: accountId,
         accountId,
         message: challengeData.message,
-        nonce: challengeData.nonce,
+        nonce: nonceBytes,
         recipient: challengeData.recipient,
       });
 
@@ -521,6 +530,16 @@
         publicKey: signed?.publicKey || '',
         signature: signed?.signature || '',
       };
+    }
+
+    /**
+     * Ensure an active connected NEAR wallet has a verified session token
+     */
+    async ensureWalletSession() {
+      if (this.token || this.isTelegramMiniApp()) return true;
+      if (!this.activeNearWallet) return false;
+      await this.connectSelectorAccount(this.activeNearWallet, "NEAR Connect", true);
+      return Boolean(this.token);
     }
 
     /**
@@ -540,45 +559,45 @@
           }
         }
 
-        const res = await fetch('/api/auth/wallet-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId, walletName, proof }),
-        });
+        if (proof && proof.signature) {
+          const res = await fetch('/api/auth/wallet-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId, walletName, proof }),
+          });
 
-        const data = await res.json();
-        if (res.ok && data.success && data.authToken && data.user) {
-          this.token = data.authToken;
-          this.authToken = data.authToken;
-          this.user = data.user;
-          this.activeNearWallet = accountId;
-          localStorage.setItem(STORAGE_KEY, data.authToken);
-          localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-          localStorage.setItem(WALLET_KEY, accountId);
+          const data = await res.json();
+          if (res.ok && data.success && data.authToken && data.user) {
+            this.token = data.authToken;
+            this.authToken = data.authToken;
+            this.user = data.user;
+            this.activeNearWallet = accountId;
+            localStorage.setItem(STORAGE_KEY, data.authToken);
+            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+            localStorage.setItem(WALLET_KEY, accountId);
 
-          this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
-          this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
-          return this.user;
-        } else {
-          // Direct resilient wallet session fallback
-          const fallbackToken = 'racer_tok_wallet_' + accountId.replace(/[^a-zA-Z0-9]/g, '_');
-          const fallbackUser = {
+            this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+            this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+            return this.user;
+          }
+        }
+
+        // Wallet connected on-chain without a signed challenge session: keep address without faking a token
+        if (!this.user) {
+          this.user = {
             id: 'u-wallet-' + accountId.replace(/[^a-zA-Z0-9]/g, '_'),
             username: accountId,
             subaccountId: accountId,
             address: accountId,
           };
-          this.token = fallbackToken;
-          this.user = fallbackUser;
-          this.activeNearWallet = accountId;
-          localStorage.setItem(STORAGE_KEY, fallbackToken);
-          localStorage.setItem(USER_KEY, JSON.stringify(fallbackUser));
-          localStorage.setItem(WALLET_KEY, accountId);
-
-          this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
-          this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
-          return this.user;
+          localStorage.setItem(USER_KEY, JSON.stringify(this.user));
         }
+        this.activeNearWallet = accountId;
+        localStorage.setItem(WALLET_KEY, accountId);
+
+        this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+        return this.user;
       } catch (err) {
         console.error('[RacerConnect] Error connecting account:', err);
         this.activeNearWallet = accountId;
@@ -683,21 +702,7 @@
         ],
       });
 
-      let hash = null;
-      if (outcome && typeof outcome === 'object') {
-        if (outcome.transaction && outcome.transaction.hash) {
-          hash = outcome.transaction.hash;
-        } else if (outcome.transaction_outcome && outcome.transaction_outcome.id) {
-          hash = outcome.transaction_outcome.id;
-        } else if (outcome.hash) {
-          hash = outcome.hash;
-        } else if (Array.isArray(outcome.transactions) && outcome.transactions[0]?.transaction?.hash) {
-          hash = outcome.transactions[0].transaction.hash;
-        }
-      } else if (typeof outcome === 'string') {
-        hash = outcome;
-      }
-
+      const hash = txHashOf(outcome);
       return {
         success: true,
         hash: hash || outcome?.id || outcome,
@@ -705,6 +710,34 @@
         transaction: { hash: hash || outcome?.id || outcome },
         outcome,
       };
+    }
+
+    /**
+     * Sign one transaction of function calls with the connected wallet.
+     * `actions`: [{ methodName, args, gas, deposit }] with gas and deposit as strings.
+     */
+    async sendFunctionCalls({ receiverId, actions }) {
+      if (!this.nearConnector) {
+        await this.initNearConnect(false);
+      }
+      let wallet = await this.getNearWallet();
+      if (!wallet || typeof wallet.signAndSendTransaction !== 'function') {
+        await this.openNearWalletSelector();
+        wallet = await this.getNearWallet();
+        if (!wallet || typeof wallet.signAndSendTransaction !== 'function') {
+          throw new Error('Please connect your NEAR wallet (Meteor, HOT, Intear, etc.) to approve transaction.');
+        }
+      }
+      const outcome = await wallet.signAndSendTransaction({
+        receiverId,
+        actions: actions.map(a => ({
+          type: 'FunctionCall',
+          params: { methodName: a.methodName, args: a.args || {}, gas: String(a.gas), deposit: String(a.deposit || '0') },
+        })),
+      });
+      const hash = txHashOf(outcome);
+      if (!hash) throw new Error('The wallet did not return a transaction hash.');
+      return { success: true, hash, txHash: hash, outcome };
     }
 
     /**

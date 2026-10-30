@@ -184,14 +184,7 @@ async function main(): Promise<void> {
     });
   }
 
-  app.use('/assets', express.static(path.resolve(__dirname, '..', '..', 'assets')));
-  app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
-  app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
-  app.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
-  app.use('/assets', express.static(path.resolve(process.cwd(), 'packages', 'api', 'assets')));
-
-  // Serve racerConnect.js client SDK — must be accessible as /assets/racerConnect.js
-  // The file lives in src/ at dev time and in the compiled dist alongside index.js at runtime.
+  // Serve racerConnect.js client SDK BEFORE express.static('/assets') so the canonical src/dist copy is always served
   app.get('/assets/racerConnect.js', (_req, res) => {
     const candidates = [
       path.resolve(__dirname, 'racerConnect.js'),           // runtime (compiled)
@@ -203,12 +196,18 @@ async function main(): Promise<void> {
     const target = candidates.find(f => fs.existsSync(f));
     if (target) {
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(target);
     } else {
       res.status(404).send('// racerConnect.js not found');
     }
   });
+
+  app.use('/assets', express.static(path.resolve(__dirname, '..', '..', 'assets')));
+  app.use('/assets', express.static(path.resolve(__dirname, '..', 'assets')));
+  app.use('/assets', express.static(path.resolve(__dirname, 'assets')));
+  app.use('/assets', express.static(path.resolve(process.cwd(), 'assets')));
+  app.use('/assets', express.static(path.resolve(process.cwd(), 'packages', 'api', 'assets')));
 
   // Dedicated handler for Racer Logo assets to ensure they never 404
   app.get(['/assets/racer-logo.png', '/assets/logo.png', '/assets/racerbot-logo.png'], (_req, res) => {
