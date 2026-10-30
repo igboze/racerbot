@@ -14,3 +14,6 @@ docs/
 scratch*
 *.scratch.*
 *.vsix
+
+# Keys written by deploy scripts
+.secrets/

@@ -14,7 +14,7 @@
  */
 
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use near_sdk::{env, near, require, AccountId, Gas, NearToken, Promise, PromiseOrValue};
+use near_sdk::{env, near, require, AccountId, Gas, NearToken, Promise, PromiseError, PromiseOrValue};
 
 /// Concatenate pieces into a String without core::fmt (keeps the global contract small)
 macro_rules! cat {
@@ -91,6 +91,8 @@ const RESERVE_BUFFER: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 pub const OWNER_EXIT_AFTER_NS: u64 = 7 * 24 * 3600 * 1_000_000_000;
 /// Default sell fee for the owner's safety exit (the bot's standard rate)
 const DEFAULT_SELL_FEE_BPS: u32 = 150;
+/// Tokens one executor may track (each failed buy of a new token adds one; the close checks them all)
+const MAX_TOKENS: usize = 4;
 
 const STORAGE_DEPOSIT: u128 = 1_250_000_000_000_000_000_000; // 0.00125 NEAR
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
@@ -104,7 +106,8 @@ const GAS_FT_XFER: Gas = Gas::from_tgas(15);
 const GAS_FEE: Gas = Gas::from_tgas(5);
 const GAS_CB_TRADE: Gas = Gas::from_tgas(25);
 const GAS_CB_EXIT: Gas = Gas::from_tgas(40);
-const GAS_CB_CLOSE: Gas = Gas::from_tgas(60);
+const GAS_CB_CLOSE: Gas = Gas::from_tgas(80);
+const GAS_CB_DELETE: Gas = Gas::from_tgas(20);
 const GAS_CB_SMALL: Gas = Gas::from_tgas(10);
 const GAS_CB_SWEEP: Gas = Gas::from_tgas(25);
 
@@ -243,11 +246,15 @@ impl PositionExecutor {
         let mut registration_cost = 0u128;
         let mut setup: Option<Promise> = None;
         if !self.tokens.contains(&plan.token) {
+            require!(self.tokens.len() < MAX_TOKENS, "Too many tokens: exit this executor");
             setup = Some(Self::register_with(&plan.token));
             self.tokens.push(plan.token.clone());
             registration_cost += STORAGE_DEPOSIT;
         }
+        let wnear_before = self.wnear_registered;
         let (swap, kind) = self.build_buy(&plan, swap_amount, &mut registration_cost);
+        // If the swap receipt rolls back, so does a wNEAR registration inside it
+        let wnear_in_swap = !wnear_before && self.wnear_registered;
         self.spend_reserve(registration_cost);
         // A queued registration joins the swap, which makes the swap's result index 1
         let result_index: u64 = if setup.is_some() { 1 } else { 0 };
@@ -260,7 +267,7 @@ impl PositionExecutor {
         joined.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(GAS_CB_TRADE)
-                .on_buy(plan.correlation_id, amount_in, swap_amount, fee_bps, value_before, kind, result_index),
+                .on_buy(plan.correlation_id, amount_in, swap_amount, fee_bps, value_before, kind, result_index, wnear_in_swap),
         )
     }
 
@@ -305,13 +312,15 @@ impl PositionExecutor {
         require!(amount > 0 && amount <= self.exit_amount, "Amount above the measured exit amount");
         self.exit_amount -= amount;
         let mut p = Promise::new(wnear());
-        if !self.wnear_registered {
+        let wnear_in_batch = !self.wnear_registered;
+        if wnear_in_batch {
             p = p.function_call("storage_deposit".to_string(), self_registration_args(), NearToken::from_yoctonear(STORAGE_DEPOSIT), GAS_STORAGE);
             self.wnear_registered = true;
             self.spend_reserve(STORAGE_DEPOSIT);
         }
         // The deposit address's registration is RacerBot's cost too
         self.spend_reserve(STORAGE_DEPOSIT);
+        let registrations = if wnear_in_batch { 2 * STORAGE_DEPOSIT } else { STORAGE_DEPOSIT };
         p.function_call("storage_deposit".to_string(),
                 cat!(r#"{"account_id":""#, deposit_address, r#"","registration_only":true}"#).into_bytes(),
                 NearToken::from_yoctonear(STORAGE_DEPOSIT), GAS_STORAGE)
@@ -319,7 +328,7 @@ impl PositionExecutor {
             .function_call("ft_transfer".to_string(),
                 cat!(r#"{"receiver_id":""#, deposit_address, r#"","amount":""#, amount, r#""}"#).into_bytes(),
                 ONE_YOCTO, GAS_FT_XFER)
-            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_exit_sent(deposit_address, amount))
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_exit_sent(deposit_address, amount, registrations, wnear_in_batch))
     }
 
     /// Step 2b: send the measured NEAR to the owner (fast withdraw, publicly linked).
@@ -374,15 +383,27 @@ impl PositionExecutor {
     #[private]
     pub fn on_buy(&mut self, #[serializer(borsh)] correlation_id: String, #[serializer(borsh)] amount_in: u128,
                   #[serializer(borsh)] swap_amount: u128, #[serializer(borsh)] fee_bps: u32,
-                  #[serializer(borsh)] value_before: u128, #[serializer(borsh)] kind: ResultKind, #[serializer(borsh)] result_index: u64) {
+                  #[serializer(borsh)] value_before: u128, #[serializer(borsh)] kind: ResultKind, #[serializer(borsh)] result_index: u64,
+                  #[serializer(borsh)] wnear_in_swap: bool) {
+        let swap_failed = failed(result_index);
         let used = match kind {
             ResultKind::FtUsed => read_u128(result_index).unwrap_or(0).min(swap_amount),
-            ResultKind::Attached => if env::promise_result_checked(result_index, 256).is_ok() { swap_amount } else { 0 },
+            ResultKind::Attached => if swap_failed { 0 } else { swap_amount },
         };
         if used == 0 {
             // Nothing bought: the input is back (native, or as wNEAR from a refunded ft_transfer_call)
             self.status = Status::Ready;
-            if kind == ResultKind::FtUsed {
+            if result_index == 1 && failed(0) {
+                // The token's registration was refunded: stop tracking it, or the close check could never pass
+                self.tokens.pop();
+                self.reserve += STORAGE_DEPOSIT;
+            }
+            if swap_failed && wnear_in_swap {
+                // The wrap-and-send receipt rolled back, its wNEAR registration with it (the deposit is refunded)
+                self.wnear_registered = false;
+                self.reserve += STORAGE_DEPOSIT;
+            }
+            if kind == ResultKind::FtUsed && !swap_failed {
                 Promise::new(wnear())
                     .function_call("near_withdraw".to_string(), cat!(r#"{"amount":""#, swap_amount, r#""}"#).into_bytes(), ONE_YOCTO, GAS_WRAP)
                     .detach();
@@ -402,7 +423,7 @@ impl PositionExecutor {
     #[private]
     pub fn on_sell(&mut self, #[serializer(borsh)] correlation_id: String, #[serializer(borsh)] amount_in: u128,
                    #[serializer(borsh)] result_index: u64) {
-        let ok = env::promise_result_checked(result_index, 256).is_ok();
+        let ok = !failed(result_index);
         // ft_transfer_call returns the amount used; a refunded sell leaves the tokens here
         let used = read_u128(result_index).unwrap_or(if ok { amount_in } else { 0 });
         emit(if used > 0 { "sold" } else { "sell_failed" }, &cat!(r#"{"correlation_id":""#, clean(&correlation_id), r#"","amount_in":""#, amount_in, r#"","used":""#, used, r#""}"#));
@@ -442,15 +463,26 @@ impl PositionExecutor {
     }
 
     #[private]
-    pub fn on_exit_sent(&mut self, #[serializer(borsh)] to: AccountId, #[serializer(borsh)] amount: u128) {
-        if env::promise_result_checked(0, 256).is_ok() {
+    pub fn on_exit_sent(&mut self, #[serializer(borsh)] to: AccountId, #[serializer(borsh)] amount: u128,
+                        #[serializer(borsh)] registrations: u128, #[serializer(borsh)] wnear_in_batch: bool) {
+        if !failed(0) {
+            if self.exit_amount > 0 {
+                // Part of the measured NEAR is still here (a rounded return sends the rest later)
+                emit("exit_partial", &cat!(r#"{"to":""#, to, r#"","amount":""#, amount, r#"","remaining":""#, self.exit_amount, r#""}"#));
+                return;
+            }
             self.status = Status::Exited;
             self.exited_at_block = env::block_height();
             emit("exited", &cat!(r#"{"to":""#, to, r#"","amount":""#, amount, r#""}"#));
         } else {
-            // The NEAR (or wNEAR) is back here: prepare_exit measures it again (no second fee)
+            // The whole receipt rolled back: the NEAR and the registration deposits are back here, and
+            // the registrations never happened. prepare_exit measures again (no second fee).
             self.status = Status::Exiting;
             self.exit_amount = 0;
+            self.reserve += registrations;
+            if wnear_in_batch {
+                self.wnear_registered = false;
+            }
             emit("exit_failed", &cat!(r#"{"to":""#, to, r#"","amount":""#, amount, r#""}"#));
         }
     }
@@ -466,7 +498,7 @@ impl PositionExecutor {
         if self.wnear_registered {
             registered.push(wnear());
         }
-        let delete = Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_close_delete();
+        let delete = Self::ext(env::current_account_id()).with_static_gas(GAS_CB_DELETE).on_close_delete(registered.len() as u64);
         let mut unregister: Option<Promise> = None;
         for t in registered {
             // Never force: a non-zero balance makes this fail instead of burning tokens
@@ -480,9 +512,21 @@ impl PositionExecutor {
     }
 
     #[private]
-    pub fn on_close_delete(&mut self) -> Promise {
+    pub fn on_close_delete(&mut self, #[serializer(borsh)] unregistered: u64) -> PromiseOrValue<()> {
+        // A failed unregister means a balance arrived after the check: keep the account so it can be
+        // swept (a `false` result, not registered, is fine)
+        for i in 0..unregistered {
+            if failed(i) {
+                emit("close_blocked", "{}");
+                return PromiseOrValue::Value(());
+            }
+        }
         emit("closed", &cat!(r#"{"beneficiary":""#, self.router, r#""}"#));
-        Promise::new(env::current_account_id()).delete_account(self.router.clone())
+        // Let the router drop its record of this executor (frees the router's storage)
+        Promise::new(self.router.clone())
+            .function_call("executor_closed".to_string(), b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_FEE)
+            .detach();
+        PromiseOrValue::Promise(Promise::new(env::current_account_id()).delete_account(self.router.clone()))
     }
 
     #[private]
@@ -552,7 +596,7 @@ impl PositionExecutor {
         self.exit_amount = 0;
         Promise::new(to.clone())
             .transfer(NearToken::from_yoctonear(amount))
-            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_exit_sent(to, amount))
+            .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_exit_sent(to, amount, 0, false))
     }
 
     fn pay_fee(&self, amount: u128) {
@@ -667,6 +711,11 @@ fn emit(event: &str, data: &str) {
 /// Keep only characters that are safe inside a JSON string without escaping
 fn clean(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').take(64).collect()
+}
+
+/// Whether a promise failed. A result too long to read still succeeded.
+fn failed(index: u64) -> bool {
+    matches!(env::promise_result_checked(index, 0), Err(PromiseError::Failed))
 }
 
 /// Parse a JSON U128 result: a quoted decimal string
