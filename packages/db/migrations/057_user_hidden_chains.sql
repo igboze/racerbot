@@ -1,0 +1,2 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_chains TEXT[] NOT NULL DEFAULT '{}';
+
