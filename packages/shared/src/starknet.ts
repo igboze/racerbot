@@ -930,3 +930,47 @@ export async function getStrkUsdPrice(): Promise<number> {
 
   return cachedStrkUsdPrice || 0.40;
 }
+
+let cachedEthUsdPrice = 2600.0;
+let lastEthUsdFetch = 0;
+
+export async function getEthUsdPrice(): Promise<number> {
+  if (Date.now() - lastEthUsdFetch < 60_000 && cachedEthUsdPrice > 0) {
+    return cachedEthUsdPrice;
+  }
+  const sources = [
+    fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { signal: AbortSignal.timeout(2000) })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const p = parseFloat(d?.price);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+    fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', { signal: AbortSignal.timeout(2000) })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const p = parseFloat(d?.data?.amount);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+    fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', { signal: AbortSignal.timeout(2000) })
+      .then((r) => r.json())
+      .then((d: any) => {
+        const p = Number(d?.ethereum?.usd);
+        if (!(p > 0)) throw new Error('invalid price');
+        return p;
+      }),
+  ];
+
+  try {
+    const fastest = await Promise.any(sources);
+    if (fastest > 0) {
+      cachedEthUsdPrice = fastest;
+      lastEthUsdFetch = Date.now();
+      return cachedEthUsdPrice;
+    }
+  } catch {}
+
+  return cachedEthUsdPrice || 2600.0;
+}
+

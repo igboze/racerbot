@@ -66,8 +66,7 @@ import {
   computeStarknetAccountAddress,
   type GeneratedStarknetWallet,
   type VenueName,
-  isTradableVenue,
-} from '@racerbot/shared';
+  isTradableVenue,  getStrkUsdPrice,  getEthUsdPrice,} from '@racerbot/shared';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
 import { CallData, uint256, ec, cairo } from 'starknet';
@@ -2757,6 +2756,7 @@ export interface UserBalances {
   wrapNearUsd: string;
   totalNearFormatted: string;
   totalNearUsd: string;
+  onChainNearFormatted?: string;
   usdcNearRaw?: string;
   usdcNearFormatted?: string;
   usdcNearUsd?: string;
@@ -2770,6 +2770,7 @@ export interface UserBalances {
   strkBalanceFormatted?: string;
   ethBalanceFormatted?: string;
   strkUsd?: number;
+  ethUsd?: number;
   solanaAddress?: string;
   solBalanceLamports?: string;
   solBalanceFormatted?: string;
@@ -2818,7 +2819,7 @@ export async function getUserBalances(
       let strkBal = '0';
       let ethBal = '0';
 
-      const [nativeRes, wrapRes, usdcRes, suiRes, starknetRes, nearUsd, suiUsd] = await Promise.allSettled([
+      const [nativeRes, wrapRes, usdcRes, suiRes, starknetRes, nearUsd, suiUsd, strkUsdRes, ethUsdRes] = await Promise.allSettled([
         withTimeout(near.getNearBalance(subaccountId), 2500, '0'),
         withTimeout(near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
         withTimeout(near.view<string>(NEAR_USDC_CONTRACT, 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
@@ -2830,6 +2831,8 @@ export async function getUserBalances(
           : Promise.resolve({ strk: 0n, eth: 0n, strkFormatted: '0.0000', ethFormatted: '0.0000' }),
         withTimeout(getNearUsdPrice(), 2500, 4.9),
         withTimeout(getSuiUsdPrice(), 2500, 2.0),
+        withTimeout(getStrkUsdPrice(), 2500, 0.40),
+        withTimeout(getEthUsdPrice(), 2500, 2600.0),
       ]);
       const [solRes, solUsdRes] = await Promise.allSettled([
         solanaAddress
@@ -2856,6 +2859,8 @@ export async function getUserBalances(
 
       const nearPrice = nearUsd.status === 'fulfilled' ? nearUsd.value : 4.9;
       const suiPrice = suiUsd.status === 'fulfilled' ? suiUsd.value : 2.0;
+      const strkPrice = strkUsdRes.status === 'fulfilled' ? strkUsdRes.value : 0.40;
+      const ethPrice = ethUsdRes.status === 'fulfilled' ? ethUsdRes.value : 2600.0;
       const usdcNearRaw = usdcRes.status === 'fulfilled' ? (usdcRes.value || '0') : '0';
       const usdcNear = Number(BigInt(usdcNearRaw)) / Math.pow(10, NEAR_USDC_DECIMALS);
 
@@ -2887,6 +2892,7 @@ export async function getUserBalances(
         wrapNearUsd: formatUSD(wrapNear, nearPrice),
         totalNearFormatted: totalNear.toFixed(4),
         totalNearUsd: formatUSD(totalNear, nearPrice),
+        onChainNearFormatted: nativeNear.toFixed(4),
         nearUsd: nearPrice,
         usdcNearRaw,
         usdcNearFormatted: usdcNear.toFixed(2),
@@ -2899,7 +2905,8 @@ export async function getUserBalances(
         starknetAddress: starknetAddress ?? undefined,
         strkBalanceFormatted: parseFloat(strkBal).toFixed(4),
         ethBalanceFormatted: parseFloat(ethBal).toFixed(4),
-        strkUsd: 0.12,
+        strkUsd: strkPrice,
+        ethUsd: ethPrice,
         solanaAddress: solanaAddress ?? undefined,
         solBalanceLamports: solLamports !== null ? solLamports.toString() : undefined,
         solBalanceFormatted: solLamports !== null ? lamportsToSol(solLamports).toFixed(4) : '…',
@@ -3014,13 +3021,16 @@ export async function unwrapUserWrapNear(telegramId: number): Promise<{ success:
     throw new Error('User not found. Run /start first.');
   }
 
-  const subaccountId = user.subaccount_id;
+  const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
+  const subaccountId = activeNearWallet?.address || user.subaccount_id;
+  const encryptedKey = activeNearWallet?.encrypted_private_key || user.scoped_key_encrypted;
+
   const wrapBal = await near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }).catch(() => '0');
   if (!wrapBal || wrapBal === '0') {
     return { success: true, unwrappedAmount: '0' };
   }
 
-  const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+  const privateKey = decrypt(encryptedKey, MASTER_KEY);
   const keyPair = KeyPair.fromString(privateKey as any);
 
   return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
@@ -3172,7 +3182,9 @@ export async function withdrawFunds(
     throw new Error('User not found. Run /start first.');
   }
 
-  const subaccountId = user.subaccount_id;
+  const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
+  const subaccountId = activeNearWallet?.address || user.subaccount_id;
+  const encryptedKey = activeNearWallet?.encrypted_private_key || user.scoped_key_encrypted;
   destination = destination.trim();
   if (!destination || destination === subaccountId) {
     throw new Error('Invalid destination account address.');
@@ -3229,7 +3241,7 @@ export async function withdrawFunds(
     throw new Error('Withdrawal amount must be greater than 0.');
   }
 
-  const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+  const privateKey = decrypt(encryptedKey, MASTER_KEY);
   const keyPair = KeyPair.fromString(privateKey as any);
 
   return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
@@ -3787,10 +3799,14 @@ export async function withdrawTokenFunds(
   }
 
   // ── NEAR NEP-141 Token Withdrawal ─────────────────────────────────────────
+  const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
+  const nearSenderAccount = activeNearWallet?.address || user.subaccount_id;
+  const nearSenderKey = activeNearWallet?.encrypted_private_key || user.scoped_key_encrypted;
+
   if (!isValidNearAccountId(destination)) {
     throw new Error('Invalid destination NEAR account address.');
   }
-  if (destination === user.subaccount_id) {
+  if (destination === nearSenderAccount) {
     throw new Error('Cannot withdraw to your own wallet address.');
   }
 
@@ -3804,7 +3820,7 @@ export async function withdrawTokenFunds(
   const symbol = metadata.symbol || resolvedAddress.split('.')[0].toUpperCase();
 
   // Fetch user's token balance
-  const balanceRaw = await near.getTokenBalance(resolvedAddress, user.subaccount_id).catch(() => '0');
+  const balanceRaw = await near.getTokenBalance(resolvedAddress, nearSenderAccount).catch(() => '0');
   const rawBalBig = BigInt(balanceRaw || '0');
   if (rawBalBig <= 0n) {
     throw new Error(`You have 0 ${symbol} in your wallet.`);
@@ -3842,7 +3858,7 @@ export async function withdrawTokenFunds(
   }
 
   // Pre-flight check: ensure user has enough native NEAR for gas and storage deposit
-  const userNearYocto = BigInt(await near.getNearBalance(user.subaccount_id).catch(() => '0'));
+  const userNearYocto = BigInt(await near.getNearBalance(nearSenderAccount).catch(() => '0'));
   const gasReserveYocto = BigInt('15000000000000000000000'); // 0.015 NEAR gas
   const totalNeededNearYocto = (needsRegistration ? minDeposit : 0n) + gasReserveYocto;
   if (userNearYocto < totalNeededNearYocto) {
@@ -3878,10 +3894,10 @@ export async function withdrawTokenFunds(
     )
   );
 
-  const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
+  const privateKey = decrypt(nearSenderKey, MASTER_KEY);
   const keyPair = KeyPair.fromString(privateKey as any);
 
-  const res = await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
+  const res = await connectWithNearRpcFailover(nearSenderAccount, keyPair, async (account) => {
     return await account.signAndSendTransaction({
       receiverId: resolvedAddress,
       actions,
