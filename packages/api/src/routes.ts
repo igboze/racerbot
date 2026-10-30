@@ -2800,12 +2800,12 @@ async function executeBuyHelper(
 
     if (isUsdcOnlyBuy) {
       const usdcRaw = BigInt(usdcBalStr || '0');
-      const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+      const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
       const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
       const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
       const usdcMaxNearYocto = BigInt(Math.floor(usdcMaxNear * 1e24));
       if (nativeBal < minGasYocto) {
-        throw new Error(`Insufficient NEAR for gas. USDC-Only mode still requires at least 0.035 NEAR in your wallet for network gas & storage. You currently have ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`);
+        throw new Error(`Insufficient NEAR for gas. USDC-Only mode still requires at least 0.08 NEAR in your wallet for network gas & storage. You currently have ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`);
       }
       if (usdcRaw <= 0n || (usdcMaxNearYocto * 102n) / 100n < amountInBigInt) {
         const neededUsdc = ((Number(amountInBigInt) / 1e24) * effectiveNearUsd).toFixed(2);
@@ -2818,7 +2818,7 @@ async function executeBuyHelper(
 
 
       const usdcRaw = BigInt(usdcBalStr || '0');
-      const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+      const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
       const spendableNativeYocto = nativeBal > BigInt(Math.ceil(0.05 * 1e24)) ? nativeBal - BigInt(Math.ceil(0.05 * 1e24)) : 0n;
       const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
       const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;

@@ -438,11 +438,12 @@ export class SwapExecutor {
       );
     }
 
+    const effectiveSwapGas = swapGas === DEFAULT_SWAP_GAS ? BigInt('90000000000000') : swapGas;
     actions.push(
       transactions.functionCall(
         'ft_transfer',
         { receiver_id: TREASURY_ACCOUNT_ID, amount: feeAmount.toString() },
-        BigInt('20000000000000'),
+        BigInt('10000000000000'), // 10 Tgas (burns ~2.5 Tgas)
         BigInt('1')
       ),
       transactions.functionCall(
@@ -452,7 +453,7 @@ export class SwapExecutor {
           amount: swapAmount.toString(),
           msg: dexMsg,
         },
-        swapGas,
+        effectiveSwapGas,
         BigInt('1')
       )
     );
@@ -830,14 +831,14 @@ export class SwapExecutor {
 
         if (isUsdcOnlyMode) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+          const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
           const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
           const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
             ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
             : 0n;
           if (nativeBal < minGasYocto) {
             throw new Error(
-              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.0350 NEAR (~$${(0.035 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
+              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.0800 NEAR (~${(0.08 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
             );
           }
           if (usdcBal > 0n && (usdcMaxNearYocto * 102n) / 100n >= amountInBigInt) {
@@ -858,7 +859,7 @@ export class SwapExecutor {
           }
         } else if (nativeBal < totalNearRequired) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          const minGasYocto = BigInt(Math.ceil(0.035 * 1e24));
+          const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
           const wrapReserveYocto = BigInt(Math.ceil(0.05 * 1e24));
           const spendableNativeYocto = nativeBal > wrapReserveYocto ? nativeBal - wrapReserveYocto : 0n;
           const availableNearYocto = spendableNativeYocto + wNearBal;
@@ -1241,6 +1242,7 @@ export class SwapExecutor {
           ? (await this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'))
           : knownWNearBal.toString();
         const preUsdcWNearStr = preUsdcWNearActualStr;
+        const USDC_SWAP_GAS = BigInt('50000000000000'); // 50 Tgas (burns ~20 Tgas; requires only 0.05 NEAR prepaid gas)
         const usdcSwapActions = [
           transactions.functionCall(
             'ft_transfer_call',
@@ -1261,7 +1263,7 @@ export class SwapExecutor {
                 referral_id: null,
               }),
             },
-            DEFAULT_SWAP_GAS,
+            USDC_SWAP_GAS,
             BigInt('1')
           ),
         ];
@@ -1283,6 +1285,23 @@ export class SwapExecutor {
         });
         if (!usdcCheck.ok) {
           throw new Error(`USDC -> NEAR conversion failed: ${usdcCheck.reason}`);
+        }
+
+        // Wait briefly for cross-contract gas refunds from the USDC swap to credit back to the account.
+        // In NEAR, cross-contract receipts take 2-4 seconds to return unspent gas across shards.
+        if (this.nearClient.getNearBalance) {
+          const minGasFloorYocto = BigInt(Math.ceil(0.06 * 1e24)); // 0.06 NEAR
+          for (let refundAttempt = 0; refundAttempt < 8; refundAttempt++) {
+            const curBalStr = await (
+              (this.nearClient as any).getNearBalanceOnTradeRpc
+                ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
+                : this.nearClient.getNearBalance(subaccountId)
+            ).catch(() => null);
+            if (curBalStr !== null && BigInt(curBalStr) >= minGasFloorYocto) {
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
         }
 
         if (postUsdcWNearStr !== null && BigInt(postUsdcWNearStr) > BigInt(preUsdcWNearStr)) {

@@ -301,7 +301,9 @@ async function processUserDeposit(
         });
 
         // Safety Net Dual Auto-Unwrap: If user has wrapNear from multichain deposit, unwrap automatically
-        if (currentWrapNear !== null && currentWrapNear >= 0.005) {
+        // Do NOT auto-unwrap if user is in USDC-Only mode or in active trade cooldown!
+        const isUsdcMode = user.near_trade_currency === 'usdc';
+        if (currentWrapNear !== null && currentWrapNear >= 0.005 && !isUsdcMode && getRecentSellProceeds(userId, telegramId, 'near') === 0) {
           // Record unwrap cooldown for 60 seconds so shifting from wNEAR to native NEAR doesn't trigger a secondary delta alert
           recordUserTrade(userId, 'near', currentWrapNear);
           unwrapUserWrapNear(telegramId).catch((err: any) => {
