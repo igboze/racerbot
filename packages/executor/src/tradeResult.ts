@@ -25,9 +25,9 @@ export interface SwapOutcomeInput {
   isBuy: boolean;
   tokenOut: string;
   /** Output-token balance read before signing, as a decimal string. null when unavailable. */
-  preBalance: string | null;
+  preBalance?: string | null;
   /** Output-token balance read after confirmation, as a decimal string. null when unavailable. */
-  postBalance: string | null;
+  postBalance?: string | null;
 }
 
 export interface SwapOutcome {
@@ -245,7 +245,7 @@ export function determineSwapOutcome(input: SwapOutcomeInput): SwapOutcome {
 
   // 3. Balance delta is the fallback evidence when the logs carry nothing
   // recognizable.
-  if (preBalance !== null && postBalance !== null) {
+  if (preBalance != null && postBalance != null) {
     const delta = BigInt(postBalance) - BigInt(preBalance);
     if (delta <= 0n) {
       return {

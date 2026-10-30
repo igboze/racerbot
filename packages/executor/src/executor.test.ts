@@ -488,6 +488,7 @@ describe('buildWrapNearBuyActions deposit buffering', () => {
       min_amount_out: '1',
       venue: 'rhea',
       pool_id: 123,
+      trade_currency: 'usdc',
     });
 
     expect(res.success).toBe(true);
