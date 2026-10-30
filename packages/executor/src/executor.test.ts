@@ -437,7 +437,7 @@ describe('buildWrapNearBuyActions deposit buffering', () => {
         functionCall: vi.fn().mockResolvedValue({}),
         sendMoney: vi.fn().mockResolvedValue({}),
       }),
-      getNearBalance: vi.fn().mockResolvedValue((9n * 10n ** 22n).toString()), // 0.09 NEAR (gas only)
+      getNearBalance: vi.fn().mockResolvedValue((15n * 10n ** 22n).toString()), // 0.15 NEAR (enough for 100 Tgas USDC swap gas floor of 0.12 NEAR)
       getTokenBalance: vi.fn().mockImplementation(async (token: string) => {
         if (token === NEAR_USDC) return (50_000_000n).toString(); // 50 USDC
         if (token === 'wrap.near') return wNearDynamic.toString();
@@ -590,7 +590,7 @@ describe('buildWrapNearBuyActions deposit buffering', () => {
     const NEAR_USDC = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
     const sentTxs: { receiverId: string; actions: any[] }[] = [];
     const twoNear = 2n * ONE;
-    const minGasOnlyYocto = 90n * 10n ** 21n; // 0.09 NEAR
+    const minGasOnlyYocto = 15n * 10n ** 22n; // 0.15 NEAR (meets 0.12 NEAR gas floor for 100 Tgas USDC swap)
 
     const mockNear = {
       getAccount: vi.fn().mockResolvedValue({

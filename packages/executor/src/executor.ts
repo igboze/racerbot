@@ -833,14 +833,15 @@ export class SwapExecutor {
 
         if (isUsdcOnlyMode) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
+          // USDC swap uses 100 Tgas = 0.10 NEAR; require 0.12 NEAR so account never runs dry mid-swap
+          const minGasYocto = BigInt(Math.ceil(0.12 * 1e24));
           const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
           const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
             ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
             : 0n;
           if (nativeBal < minGasYocto) {
             throw new Error(
-              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.0800 NEAR (~${(0.08 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
+              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.12 NEAR (~${(0.12 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
             );
           }
           if (usdcBal > 0n && (usdcMaxNearYocto * 102n) / 100n >= amountInBigInt) {
@@ -861,7 +862,8 @@ export class SwapExecutor {
           }
         } else if (nativeBal < totalNearRequired) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
+          // USDC top-up path also uses 100 Tgas for USDC→wNEAR; need 0.12 NEAR minimum
+          const minGasYocto = BigInt(Math.ceil(0.12 * 1e24));
           const wrapReserveYocto = BigInt(Math.ceil(0.05 * 1e24));
           const spendableNativeYocto = nativeBal > wrapReserveYocto ? nativeBal - wrapReserveYocto : 0n;
           const availableNearYocto = spendableNativeYocto + wNearBal;
@@ -1233,7 +1235,11 @@ export class SwapExecutor {
         }
 
         const preUsdcWNearStr = knownWNearBal.toString();
-        const USDC_SWAP_GAS = BigInt('50000000000000'); // 50 Tgas (burns ~20 Tgas; requires only 0.05 NEAR prepaid gas)
+        // ft_transfer_call on the USDC contract fires 3 cross-contract calls:
+        //   1. USDC.ft_transfer_call → 2. Ref.ft_on_transfer (swap) → 3. USDC.ft_resolve_transfer
+        // Ref Finance recommends ≥100 Tgas for single-hop swaps routed through ft_transfer_call.
+        // 50 Tgas was too tight causing "ran out of gas" on busy blocks or when Ref is under load.
+        const USDC_SWAP_GAS = BigInt('100000000000000'); // 100 Tgas (safe for USDC→wNEAR single-hop)
         const usdcSwapActions = [
           transactions.functionCall(
             'ft_transfer_call',
@@ -1291,12 +1297,12 @@ export class SwapExecutor {
         if (!usdcCheck.ok) {
           throw new Error(`USDC -> NEAR conversion failed: ${usdcCheck.reason}`);
         }
-
-        // Fast refund guard: If user's initial native balance was already >= 0.13 NEAR,
-        // it is guaranteed to still hold >= 0.08 NEAR even after the 0.05 NEAR gas reservation.
+        // Fast refund guard: If user's initial native balance was already >= 0.22 NEAR,
+        // it is guaranteed to still hold >= 0.12 NEAR even after the 0.10 NEAR gas reservation (100 Tgas).
         // In that case, skip polling completely (0ms latency).
+
         const nativeBalBeforeSwap = capturedNativeBalStr !== null ? BigInt(capturedNativeBalStr) : 0n;
-        const alreadyHasSufficientGas = nativeBalBeforeSwap >= BigInt(Math.ceil(0.13 * 1e24));
+        const alreadyHasSufficientGas = nativeBalBeforeSwap >= BigInt(Math.ceil(0.22 * 1e24));
         if (!alreadyHasSufficientGas && this.nearClient.getNearBalance) {
           const minGasFloorYocto = BigInt(Math.ceil(0.06 * 1e24)); // 0.06 NEAR
           for (let refundAttempt = 0; refundAttempt < 6; refundAttempt++) {
