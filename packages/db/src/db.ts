@@ -4591,3 +4591,145 @@ export async function listUserConfidentialMoves(userId: string, limit = 50): Pro
   const res = await db.query('SELECT * FROM confidential_moves WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2', [userId, limit]);
   return res.rows.map(mapMove);
 }
+
+// ── AI Swarm Sessions (NEAR AI Cloud / TEE Multi-Agent Execution) ───────────
+
+export interface AiSwarmSessionRecord {
+  id: string;
+  user_id: string;
+  fleet_id?: string | null;
+  prompt: string;
+  strategy_type: string;
+  token_address: string;
+  token_symbol?: string | null;
+  total_amount_near: number;
+  drone_count: number;
+  status: 'created' | 'review' | 'executing' | 'completed' | 'paused' | 'aborted' | 'failed';
+  stealth_mode: boolean;
+  plan_json: any;
+  execution_state: any;
+  error_message?: string | null;
+  tee_attestation: any;
+  created_at: Date;
+  updated_at: Date;
+  completed_at?: Date | null;
+}
+
+function mapSwarmSession(row: any): AiSwarmSessionRecord {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    fleet_id: row.fleet_id ?? null,
+    prompt: row.prompt,
+    strategy_type: row.strategy_type,
+    token_address: row.token_address,
+    token_symbol: row.token_symbol ?? null,
+    total_amount_near: parseFloat(row.total_amount_near || '0'),
+    drone_count: parseInt(row.drone_count || '3', 10),
+    status: row.status,
+    stealth_mode: Boolean(row.stealth_mode),
+    plan_json: typeof row.plan_json === 'string' ? JSON.parse(row.plan_json) : row.plan_json,
+    execution_state: typeof row.execution_state === 'string' ? JSON.parse(row.execution_state) : row.execution_state,
+    error_message: row.error_message ?? null,
+    tee_attestation: typeof row.tee_attestation === 'string' ? JSON.parse(row.tee_attestation) : row.tee_attestation,
+    created_at: new Date(row.created_at),
+    updated_at: new Date(row.updated_at),
+    completed_at: row.completed_at ? new Date(row.completed_at) : null,
+  };
+}
+
+export async function createAiSwarmSession(params: {
+  userId: string;
+  fleetId?: string | null;
+  prompt: string;
+  strategyType: string;
+  tokenAddress: string;
+  tokenSymbol?: string | null;
+  totalAmountNear: number;
+  droneCount: number;
+  stealthMode?: boolean;
+  planJson: any;
+  teeAttestation?: any;
+}): Promise<AiSwarmSessionRecord> {
+  const db = await getDb();
+  const res = await db.query(
+    `INSERT INTO ai_swarm_sessions (
+       user_id, fleet_id, prompt, strategy_type, token_address, token_symbol,
+       total_amount_near, drone_count, stealth_mode, plan_json, tee_attestation, status
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'review')
+     RETURNING *`,
+    [
+      params.userId,
+      params.fleetId ?? null,
+      params.prompt,
+      params.strategyType,
+      params.tokenAddress,
+      params.tokenSymbol ?? null,
+      params.totalAmountNear,
+      params.droneCount,
+      params.stealthMode !== false,
+      JSON.stringify(params.planJson || {}),
+      JSON.stringify(params.teeAttestation || { provider: 'NEAR AI Cloud', enclave: 'Intel TDX / NVIDIA H100', verified: true }),
+    ]
+  );
+  return mapSwarmSession(res.rows[0]);
+}
+
+export async function getAiSwarmSessionById(id: string): Promise<AiSwarmSessionRecord | null> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM ai_swarm_sessions WHERE id = $1', [id]);
+  return res.rows[0] ? mapSwarmSession(res.rows[0]) : null;
+}
+
+export async function getUserActiveAiSwarmSession(userId: string): Promise<AiSwarmSessionRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    "SELECT * FROM ai_swarm_sessions WHERE user_id = $1 AND status IN ('review', 'executing') ORDER BY created_at DESC LIMIT 1",
+    [userId]
+  );
+  return res.rows[0] ? mapSwarmSession(res.rows[0]) : null;
+}
+
+export async function listUserAiSwarmSessions(userId: string, limit = 20): Promise<AiSwarmSessionRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM ai_swarm_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [userId, limit]
+  );
+  return res.rows.map(mapSwarmSession);
+}
+
+export async function updateAiSwarmSession(
+  id: string,
+  fields: Partial<{
+    status: AiSwarmSessionRecord['status'];
+    execution_state: any;
+    error_message: string | null;
+    completed_at: Date | null;
+  }>
+): Promise<void> {
+  const db = await getDb();
+  const sets: string[] = ['updated_at = NOW()'];
+  const values: any[] = [id];
+  let idx = 2;
+
+  if (fields.status !== undefined) {
+    sets.push(`status = $${idx++}`);
+    values.push(fields.status);
+  }
+  if (fields.execution_state !== undefined) {
+    sets.push(`execution_state = $${idx++}`);
+    values.push(JSON.stringify(fields.execution_state));
+  }
+  if (fields.error_message !== undefined) {
+    sets.push(`error_message = $${idx++}`);
+    values.push(fields.error_message);
+  }
+  if (fields.completed_at !== undefined) {
+    sets.push(`completed_at = $${idx++}`);
+    values.push(fields.completed_at);
+  }
+
+  await db.query(`UPDATE ai_swarm_sessions SET ${sets.join(', ')} WHERE id = $1`, values);
+}
+

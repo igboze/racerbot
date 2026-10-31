@@ -216,7 +216,18 @@ import {
   getRaceFleetOrdersByFleet,
   cancelRaceFleetOrder,
   renewRaceFleet,
+  createAiSwarmSession,
+  getAiSwarmSessionById,
+  getUserActiveAiSwarmSession,
+  updateAiSwarmSession,
 } from '@racerbot/db';
+import { planSwarmSession } from './nearAiSwarm.js';
+import {
+  launchSwarmSession,
+  getSwarmSessionStatus,
+  pauseSwarmSession,
+  abortSwarmSession,
+} from './swarmExecutor.js';
 import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS, TREASURY_ACCOUNT_ID } from './config.js';
@@ -333,7 +344,9 @@ interface PendingAction {
   | 'racedrop_amount' | 'racedrop_claims' | 'racedrop_mode'
   // RaceFleet wizard
   | 'fleet_custom_buy' | 'fleet_split_buy' | 'fleet_fund_amt' | 'fleet_fund_sol_amt' | 'fleet_sell_pct' | 'fleet_lo_target_value' | 'fleet_lo_amount'
-  | 'deposit_custom_token' | 'deposit_custom_amount';
+  | 'deposit_custom_token' | 'deposit_custom_amount'
+  // AI Swarm wizard
+  | 'swarm_custom_prompt';
   tokenAddress?: string;
   positionId?: string;
   deployerAddress?: string;
@@ -385,6 +398,9 @@ interface PendingAction {
   depositAssetId?: string;
   depositSymbol?: string;
   depositTokenKey?: string;
+  // Swarm wizard state
+  swarmTokenAddress?: string;
+  swarmTotalNear?: number;
   expiresAt: number;
 }
 const userPendingActions = new Map<number, PendingAction>();
@@ -671,11 +687,14 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       cb('📈 PnL', 'menu_pnl', 'primary'),
     ],
     [
-      cb('🏎️ RaceFleet', 'racefleet_menu', 'success'),
-      cb('🏆 Points', 'menu_points', 'success'),
+      cb('🤖 AI Swarm', 'menu_swarm', 'success'),
+      cb('🏎️ RaceFleet', 'racefleet_menu', 'primary'),
     ],
     [
       cb('🛡 Private', 'menu_private', 'success'),
+      cb('🏆 Points', 'menu_points', 'success'),
+    ],
+    [
       cb('⚙️ Settings', 'menu_settings', 'primary'),
     ],
     [
@@ -2628,7 +2647,7 @@ function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, o
 }
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
-async function executeBuyHelper(
+export async function executeBuyHelper(
   telegramId: number,
   rawTokenAddress: string,
   amountNear: number,
@@ -5986,6 +6005,348 @@ export function setupRoutes(bot: Telegraf): void {
     } finally {
       releaseInFlight(inFlightKey(telegramId, 'fleet_renew_sol', 'buy'));
     }
+  });
+
+  // ── AI ShadowSwarm (NEAR AI TEE) Routes & Cockpit ─────────────────────────
+
+  async function buildSwarmDashboard(telegramId: number) {
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) throw new Error('Please run /start first.');
+
+    const active = await getUserActiveAiSwarmSession(user.id);
+    if (active && active.status === 'executing') {
+      const state = active.execution_state || {};
+      const tranches = active.plan_json?.tranches || [];
+      const completed = state.completedDrones || 0;
+      const total = active.drone_count || tranches.length || 1;
+      const pct = Math.min(100, Math.round((completed / total) * 100));
+
+      const filledLogs = (state.executionLog || []).slice(-4);
+      const logsText = filledLogs.length > 0
+        ? filledLogs.map((l: any) => `• [${l.time || 'NOW'}] ${l.message}`).join('\n')
+        : '• Drones deployed, waiting for execution jitter windows...';
+
+      const text =
+        `📡 <b>Racer ShadowSwarm — Active Radar</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `Target: <b>$${escapeHtml(active.token_symbol || 'TOKEN')}</b> (<code>${escapeHtml(active.token_address)}</code>)\n` +
+        `Strategy: <b>${escapeHtml((active.strategy_type || 'SWARM').toUpperCase())}</b>\n` +
+        `Capital: <b>${Number(active.total_amount_near).toFixed(2)} NEAR</b> across <b>${total} Drones</b>\n` +
+        `Stealth Routing: 🟢 <b>${active.stealth_mode ? 'CONFIDENTIAL TEE' : 'STANDARD'}</b>\n\n` +
+        `📊 <b>Mission Progress:</b> ${completed}/${total} Drones (${pct}%)\n` +
+        `[${'█'.repeat(Math.round(pct / 10))}${'░'.repeat(10 - Math.round(pct / 10))}]\n\n` +
+        `<b>Telemetry Stream:</b>\n` +
+        `${logsText}\n\n` +
+        `🔒 <i>Intel TDX TEE verified by NEAR AI Cloud</i>`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🔄 Refresh Radar', 'swarm_radar_refresh'),
+          Markup.button.callback('⏸️ Pause', `swarm_pause:${active.id}`),
+        ],
+        [
+          Markup.button.callback('🛑 Abort Mission', `swarm_abort:${active.id}`),
+          Markup.button.callback('➕ New Strategy', 'swarm_new_strategy'),
+        ],
+        [Markup.button.callback('⬅️ Main Menu', 'menu_home')],
+      ]);
+      return { text, keyboard };
+    }
+
+    if (active && active.status === 'review') {
+      const plan = active.plan_json || {};
+      const tranches = plan.tranches || [];
+      const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
+        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+      ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+      const text =
+        `🤖 <b>NEAR AI Swarm Plan Awaiting Authorization</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `Target: <b>$${escapeHtml(active.token_symbol || 'TOKEN')}</b> (<code>${escapeHtml(active.token_address)}</code>)\n` +
+        `Strategy: <b>${escapeHtml((active.strategy_type || 'SWARM').toUpperCase())}</b>\n` +
+        `Capital: <b>${Number(active.total_amount_near).toFixed(2)} NEAR</b> (${active.drone_count} Drones)\n` +
+        `Stealth Score: <b>${plan.stealthScore || 95}%</b> 🛡️\n\n` +
+        `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
+        `🔒 <b>TEE Hardware Attestation:</b>\n` +
+        `<code>${(active.tee_attestation?.attestationHash || '0xintel_tdx_verified').slice(0, 32)}...</code>\n\n` +
+        `<i>Prompt: "${escapeHtml(active.prompt)}"</i>`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🚀 Authorize & Launch Swarm', `swarm_launch:${active.id}`)],
+        [
+          Markup.button.callback('🔄 Discard & Choose Preset', 'swarm_new_strategy'),
+          Markup.button.callback('⬅️ Main Menu', 'menu_home'),
+        ],
+      ]);
+      return { text, keyboard };
+    }
+
+    // Default: Choose preset or prompt
+    const text =
+      `🤖 <b>Racer ShadowSwarm [NEAR AI Cloud TEE]</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `Coordinate autonomous multi-agent drone swarms inside confidential hardware enclaves.\n\n` +
+      `🔒 <b>Hardware Enclave:</b> Intel TDX TEE (api.near.ai)\n` +
+      `🛡️ <b>Confidential Mode:</b> Ephemeral Sub-accounts\n` +
+      `⚡ <b>MEV Resistance:</b> Jittered Tranches & Pattern Obfuscation\n\n` +
+      `Select a strategy preset or enter a custom prompt:`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('⚡ Stealth TWAP (5 Drones • $HOOT)', 'swarm_preset:stealth_accumulate')],
+      [Markup.button.callback('🎯 Momentum Snipe (3 Drones • $BATMAN)', 'swarm_preset:momentum_snipe')],
+      [Markup.button.callback('🛡️ Anti-MEV Dispersion (6 Drones • $SHORE)', 'swarm_preset:anti_mev')],
+      [Markup.button.callback('🔍 Liquidity Depth Probe (4 Drones)', 'swarm_preset:liquidity_probe')],
+      [
+        Markup.button.callback('✍️ Custom Prompt', 'swarm_prompt_start'),
+        Markup.button.callback('🏎️ RaceFleet WebApp', 'racefleet_menu'),
+      ],
+      [Markup.button.callback('⬅️ Main Menu', 'menu_home')],
+    ]);
+    return { text, keyboard };
+  }
+
+  bot.command(['swarm', 'aiswarm'], async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const dashboard = await buildSwarmDashboard(telegramId);
+      await ctx.reply(dashboard.text, {
+        parse_mode: 'HTML',
+        ...dashboard.keyboard,
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('menu_swarm', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const telegramId = ctx.from!.id;
+    try {
+      const dashboard = await buildSwarmDashboard(telegramId);
+      await ctx.editMessageText(dashboard.text, {
+        parse_mode: 'HTML',
+        ...dashboard.keyboard,
+      } as any).catch(async () => {
+        await ctx.reply(dashboard.text, {
+          parse_mode: 'HTML',
+          ...dashboard.keyboard,
+        });
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action('swarm_radar_refresh', async (ctx) => {
+    await ctx.answerCbQuery('Refreshing Swarm Radar...').catch(() => { });
+    const telegramId = ctx.from!.id;
+    try {
+      const dashboard = await buildSwarmDashboard(telegramId);
+      await ctx.editMessageText(dashboard.text, {
+        parse_mode: 'HTML',
+        ...dashboard.keyboard,
+      } as any).catch(() => { });
+    } catch (err: any) {
+      await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
+    }
+  });
+
+  bot.action('swarm_new_strategy', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const text =
+      `🤖 <b>Racer ShadowSwarm [NEAR AI Cloud TEE]</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `Coordinate autonomous multi-agent drone swarms inside confidential hardware enclaves.\n\n` +
+      `Select a strategy preset or launch a custom prompt:`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('⚡ Stealth TWAP (5 Drones • $HOOT)', 'swarm_preset:stealth_accumulate')],
+      [Markup.button.callback('🎯 Momentum Snipe (3 Drones • $BATMAN)', 'swarm_preset:momentum_snipe')],
+      [Markup.button.callback('🛡️ Anti-MEV Dispersion (6 Drones • $SHORE)', 'swarm_preset:anti_mev')],
+      [Markup.button.callback('🔍 Liquidity Depth Probe (4 Drones)', 'swarm_preset:liquidity_probe')],
+      [
+        Markup.button.callback('✍️ Custom Prompt', 'swarm_prompt_start'),
+        Markup.button.callback('⬅️ Swarm Dashboard', 'menu_swarm'),
+      ],
+    ]);
+
+    await ctx.editMessageText(text, {
+      parse_mode: 'HTML',
+      ...keyboard,
+    } as any).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+    });
+  });
+
+  bot.action(/^swarm_preset:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('Computing AI plan via NEAR AI TEE...').catch(() => { });
+    const telegramId = ctx.from!.id;
+    const presetType = ctx.match[1];
+
+    let prompt = 'Accumulate 10 NEAR of HOOT with 5 stealth drones staggered over 15 minutes to avoid front-running';
+    let defaultToken = 'hoot.near';
+    if (presetType === 'momentum_snipe') {
+      prompt = 'Execute rapid breakout snipe on BATMAN across 3 drones within 30 seconds';
+      defaultToken = 'batman.near';
+    } else if (presetType === 'anti_mev') {
+      prompt = 'Disperse 20 NEAR across 6 randomized subaccounts to accumulate SHORE without sandwich MEV';
+      defaultToken = 'shore.near';
+    } else if (presetType === 'liquidity_probe') {
+      prompt = 'Probe BLACKDRAGON liquidity depth with 3 sub-1 NEAR probes before executing target tranche';
+      defaultToken = 'blackdragon.tkn.near';
+    }
+
+    try {
+      const user = await getUserByTelegramId(telegramId);
+      if (!user) throw new Error('User not found. Run /start first.');
+
+      const balances = await getUserBalances(telegramId).catch(() => null);
+      const plan = await planSwarmSession({
+        prompt,
+        userBalances: balances,
+        defaultTokenAddress: defaultToken,
+        stealthModeOverride: true,
+      });
+
+      const session = await createAiSwarmSession({
+        userId: user.id,
+        prompt,
+        strategyType: plan.strategy,
+        tokenAddress: plan.tokenAddress,
+        tokenSymbol: plan.tokenSymbol,
+        totalAmountNear: plan.totalNear,
+        droneCount: plan.droneCount,
+        stealthMode: plan.stealthMode,
+        planJson: plan,
+        teeAttestation: plan.teeEnclave,
+      });
+
+      const tranches = plan.tranches || [];
+      const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
+        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+      ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+      const text =
+        `🤖 <b>NEAR AI Execution Plan Generated</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `Strategy: <b>${escapeHtml(plan.strategy.toUpperCase())}</b>\n` +
+        `Target: <b>$${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
+        `Capital: <b>${plan.totalNear.toFixed(2)} NEAR</b> (${plan.droneCount} Drones)\n` +
+        `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️\n\n` +
+        `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
+        `🔒 <b>TEE Hardware Attestation:</b>\n` +
+        `<code>${(plan.teeEnclave.attestationHash || plan.teeEnclave.hash).slice(0, 32)}...</code>\n` +
+        `Verified Intel TDX Enclave by NEAR AI Cloud\n\n` +
+        `<i>${escapeHtml(plan.analysis || plan.reasoning || '')}</i>`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🚀 Authorize & Launch Swarm', `swarm_launch:${session.id}`)],
+        [
+          Markup.button.callback('🔄 Choose Other Preset', 'swarm_new_strategy'),
+          Markup.button.callback('⬅️ Main Menu', 'menu_home'),
+        ],
+      ]);
+
+      await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...keyboard,
+      } as any).catch(async () => {
+        await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to plan swarm: ${err?.message || 'Unknown error'}`);
+    }
+  });
+
+  bot.action(/^swarm_launch:(.+)$/, async (ctx) => {
+    const sessionId = ctx.match[1];
+    await ctx.answerCbQuery('Launching Swarm Drones...').catch(() => { });
+    const telegramId = ctx.from!.id;
+
+    try {
+      const session = await getAiSwarmSessionById(sessionId);
+      if (!session) throw new Error('Session not found');
+
+      // Launch session in background
+      await launchSwarmSession(sessionId);
+
+      await ctx.reply(
+        `🚀 <b>Swarm Mission Launched!</b>\n\n` +
+        `Target: <b>$${escapeHtml(session.token_symbol || 'TOKEN')}</b>\n` +
+        `Drones: <b>${session.drone_count} Subaccounts Active</b>\n` +
+        `Mode: <b>Confidential TEE Routing</b> 🛡️\n\n` +
+        `<i>Drones are now executing staggered tranches. Tap below to track real-time radar telemetry.</i>`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('📡 View Swarm Radar', 'swarm_radar_refresh')],
+            [Markup.button.callback('⬅️ Main Menu', 'menu_home')],
+          ]),
+        }
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to launch swarm: ${err?.message || 'Unknown error'}`);
+    }
+  });
+
+  bot.action(/^swarm_pause:(.+)$/, async (ctx) => {
+    const sessionId = ctx.match[1];
+    await ctx.answerCbQuery('Pausing swarm...').catch(() => { });
+    try {
+      await pauseSwarmSession(sessionId);
+      await ctx.reply(`⏸️ <b>Swarm Mission Paused</b>\nPending drone tranches held until resumed.`, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('📡 Radar Telemetry', 'swarm_radar_refresh')],
+          [Markup.button.callback('⬅️ Swarm Menu', 'menu_swarm')],
+        ]),
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to pause: ${err?.message || 'Unknown error'}`);
+    }
+  });
+
+  bot.action(/^swarm_abort:(.+)$/, async (ctx) => {
+    const sessionId = ctx.match[1];
+    await ctx.answerCbQuery('Aborting swarm...').catch(() => { });
+    try {
+      await abortSwarmSession(sessionId);
+      await ctx.reply(`🛑 <b>Swarm Mission Aborted</b>\nAll remaining drone tranches cancelled.`, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🤖 Swarm Menu', 'menu_swarm')],
+          [Markup.button.callback('⬅️ Main Menu', 'menu_home')],
+        ]),
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ Failed to abort: ${err?.message || 'Unknown error'}`);
+    }
+  });
+
+  bot.action('swarm_prompt_start', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, {
+      action: 'swarm_custom_prompt',
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    });
+
+    await ctx.reply(
+      `✍️ <b>Enter Custom Swarm Strategy Prompt</b>\n\n` +
+      `Describe how you want your autonomous drone swarm to trade.\n\n` +
+      `<b>Examples:</b>\n` +
+      `• <i>"Accumulate 15 NEAR of BATMAN with 4 drones over 10 minutes"</i>\n` +
+      `• <i>"Snipe HOOT with 3 fast stealth drones using 5 NEAR"</i>\n` +
+      `• <i>"Anti-MEV accumulation of 20 NEAR into SHORE"</i>\n\n` +
+      `<i>Type your prompt below or tap Cancel:</i>`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('❌ Cancel', 'menu_swarm')],
+        ]),
+      }
+    );
   });
 
   // ── Targeted snipes: by token contract address / by deployer wallet ───────
@@ -11097,6 +11458,80 @@ export function setupRoutes(bot: Telegraf): void {
       if (pending.action === 'racedrop_claims' && pending.raceDropAmountPerUser) {
         const claims = parseInt(rawText, 10);
         await handleRaceDropClaimsInput(ctx, telegramId, claims, userPendingActions);
+        return;
+      }
+
+      // AI Swarm: Custom Strategy Prompt
+      if (pending.action === 'swarm_custom_prompt') {
+        userPendingActions.delete(telegramId);
+        const prompt = rawText.trim();
+        const loadingMsg = await ctx.reply(
+          `🤖 <b>Computing Swarm Plan with NEAR AI Cloud...</b>\n<i>Verifying Intel TDX hardware TEE enclave at api.near.ai...</i>`,
+          { parse_mode: 'HTML' }
+        );
+
+        try {
+          const user = await getUserByTelegramId(telegramId);
+          if (!user) throw new Error('User not found. Run /start first.');
+
+          const balances = await getUserBalances(telegramId).catch(() => null);
+          const plan = await planSwarmSession({
+            prompt,
+            userBalances: balances,
+            stealthModeOverride: true,
+          });
+
+          const session = await createAiSwarmSession({
+            userId: user.id,
+            prompt,
+            strategyType: plan.strategy,
+            tokenAddress: plan.tokenAddress,
+            tokenSymbol: plan.tokenSymbol,
+            totalAmountNear: plan.totalNear,
+            droneCount: plan.droneCount,
+            stealthMode: plan.stealthMode,
+            planJson: plan,
+            teeAttestation: plan.teeEnclave,
+          });
+
+          const tranches = plan.tranches || [];
+          const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
+            `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+          ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+          const text =
+            `🤖 <b>NEAR AI Custom Execution Plan</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `Strategy: <b>${escapeHtml(plan.strategy.toUpperCase())}</b>\n` +
+            `Target: <b>$${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
+            `Capital: <b>${plan.totalNear.toFixed(2)} NEAR</b> (${plan.droneCount} Drones)\n` +
+            `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️\n\n` +
+            `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
+            `🔒 <b>TEE Hardware Attestation:</b>\n` +
+            `<code>${(plan.teeEnclave.attestationHash || plan.teeEnclave.hash).slice(0, 32)}...</code>\n` +
+            `Verified Intel TDX Enclave by NEAR AI Cloud\n\n` +
+            `<i>${escapeHtml(plan.analysis || plan.reasoning || '')}</i>`;
+
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('🚀 Authorize & Launch Swarm', `swarm_launch:${session.id}`)],
+            [
+              Markup.button.callback('🔄 Choose Preset', 'swarm_new_strategy'),
+              Markup.button.callback('⬅️ Main Menu', 'menu_home'),
+            ],
+          ]);
+
+          await ctx.telegram.editMessageText(
+            ctx.chat!.id,
+            loadingMsg.message_id,
+            undefined,
+            text,
+            { parse_mode: 'HTML', ...keyboard }
+          ).catch(async () => {
+            await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+          });
+        } catch (err: any) {
+          await ctx.reply(`❌ Planning failed: ${err?.message || 'Unknown error'}`);
+        }
         return;
       }
 

@@ -246,3 +246,11 @@ export {
   listUserConfidentialMoves,
   getUserConfidentialMove,
 } from './db.js';
+export {
+  createAiSwarmSession,
+  getAiSwarmSessionById,
+  getUserActiveAiSwarmSession,
+  listUserAiSwarmSessions,
+  updateAiSwarmSession,
+  type AiSwarmSessionRecord,
+} from './db.js';
