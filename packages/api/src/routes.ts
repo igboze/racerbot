@@ -6064,7 +6064,7 @@ export function setupRoutes(bot: Telegraf): void {
         `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
       ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
 
-      const trig = plan.exitTrigger || plan.exit_trigger;
+      const trig = plan.exitTrigger || (plan as any).exit_trigger;
       const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
       const text =
@@ -6234,7 +6234,7 @@ export function setupRoutes(bot: Telegraf): void {
         `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
       ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
 
-      const trig = plan.exitTrigger || plan.exit_trigger;
+      const trig = plan.exitTrigger || (plan as any).exit_trigger;
       const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
       const text =
@@ -11509,7 +11509,7 @@ export function setupRoutes(bot: Telegraf): void {
             `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
           ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
 
-          const trig = plan.exitTrigger || plan.exit_trigger;
+          const trig = plan.exitTrigger || (plan as any).exit_trigger;
           const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
           const text =

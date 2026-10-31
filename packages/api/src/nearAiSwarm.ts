@@ -142,7 +142,7 @@ export async function resolveTokenAddressAsync(query: string): Promise<string | 
         if (res.rows?.[0]?.token_address) {
           return res.rows[0].token_address;
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -156,9 +156,14 @@ export async function resolveTokenAddressAsync(query: string): Promise<string | 
 export function extractExitTrigger(prompt: string): SwarmExitTrigger | null {
   if (!prompt) return null;
 
-  // 1. Market Cap Trigger (e.g. "sell at 100k market cap", "exit at 50,000 NEAR MC", "sell 50% when mc reaches $1M")
-  const mcMatch = prompt.match(/(?:sell|exit|take\s*profit)?\s*(\d+%)?\s*(?:at|when|if)?\s*(?:market\s*cap|mc)\s*(?:reaches|hits|is|>=|>)?\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?/i)
-    || prompt.match(/(?:market\s*cap|mc)\s*(?:of|reaches|hits|is|>=|>)\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+  // 1. Market Cap Trigger - handles both word orders:
+  // Order A: number before market cap (e.g. 'sell at 100k market cap', 'exit at 50,000 NEAR MC', 'sell 50% at 150k mc', 'at $1M MC')
+  const numBeforeMc = /(?:sell|exit|dump|tp)?\s*(\d+%)?\s*(?:at|when|if)?\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?\s*(?:near|usd|\$)?\s*(?:market\s*cap|mc\b)/i;
+
+  // Order B: market cap before number (e.g. 'market cap reaches 250k', 'mc of $1M', 'mc > 500k', 'when mc hits 100k')
+  const mcBeforeNum = /(?:sell|exit|dump|tp)?\s*(\d+%)?\s*(?:at|when|if)?\s*(?:market\s*cap|mc\b)\s*(?:of|reaches|hits|is|>=|>|at)?\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?/i;
+
+  const mcMatch = prompt.match(numBeforeMc) || prompt.match(mcBeforeNum);
 
   if (mcMatch) {
     const sellPctStr = mcMatch[1] ? mcMatch[1].replace('%', '') : '100';
@@ -213,23 +218,43 @@ export function extractExitTrigger(prompt: string): SwarmExitTrigger | null {
  * Parses amount in NEAR from prompt (e.g. "buy 50 NEAR of...", "100 N", "25 near")
  */
 function extractNearAmount(prompt: string, defaultAmount = 10): number {
-  const match = prompt.match(/(\d+(\.\d+)?)\s*(near|Ⓝ|n\b)/i) || prompt.match(/(\d+(\.\d+)?)/);
-  if (match) {
-    const parsed = parseFloat(match[1]);
-    if (!isNaN(parsed) && parsed > 0) {
-      return Math.min(10000, Math.max(0.1, parsed));
+  // 1. Explicit amount with NEAR or N or Ⓝ
+  const explicit = prompt.match(/(?:buy|spend|use|accumulate|deposit)?\s*(\d+(?:\.\d+)?)\s*(?:near|Ⓝ|\bn\b)/i)
+    || prompt.match(/(\d+(?:\.\d+)?)\s*(?:near|Ⓝ|\bn\b)/i);
+  if (explicit) {
+    const val = parseFloat(explicit[1]);
+    if (!isNaN(val) && val > 0) return Math.min(10000, Math.max(0.1, val));
+  }
+
+  // 2. Fallback: look for a number that is NOT attached to drones, wallets, time, mc, %, etc.
+  const words = prompt.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].replace(/[^\d.]/g, '');
+    const num = parseFloat(w);
+    if (!isNaN(num) && num > 0) {
+      const nextWord = (words[i + 1] || '').toLowerCase();
+      const currWord = words[i].toLowerCase();
+      if (currWord.includes('%') || currWord.includes('x') || currWord.includes('k') || currWord.includes('m')) continue;
+      if (/^(drones?|wallets?|workers?|executors?|sub-?accounts?|mins?|minutes?|secs?|seconds?|hrs?|hours?|mc|market|cap|x|%)/i.test(nextWord)) continue;
+      return Math.min(10000, Math.max(0.1, num));
     }
   }
+
   return defaultAmount;
 }
+
+const wordToNum: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12
+};
 
 /**
  * Extracts drone count from prompt (e.g. "across 4 wallets", "3 drones", "5 stealth drones", "6 randomized subaccounts")
  */
 function extractDroneCount(prompt: string, defaultDrones = 3): number {
-  const match = prompt.match(/\b(\d+)\s*(?:[a-z0-9-]+\s+){0,2}(?:drones?|wallets?|workers?|executors?|sub-?accounts?)\b/i);
+  const match = prompt.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s*(?:[a-z0-9-]+\s+){0,2}(?:drones?|wallets?|workers?|executors?|sub-?accounts?)\b/i);
   if (match) {
-    const parsed = parseInt(match[1], 10);
+    const raw = match[1].toLowerCase();
+    const parsed = wordToNum[raw] || parseInt(raw, 10);
     if (!isNaN(parsed) && parsed >= 1 && parsed <= 12) {
       return parsed;
     }
@@ -363,13 +388,13 @@ export async function planSwarmSession(params: {
 
   const exitTrigger = aiResult?.exit_trigger?.target_value
     ? {
-        type: aiResult.exit_trigger.type || 'market_cap',
-        targetValue: aiResult.exit_trigger.target_value,
-        targetDisplay: aiResult.exit_trigger.type === 'market_cap'
-          ? `${aiResult.exit_trigger.target_value >= 1_000_000 ? (aiResult.exit_trigger.target_value / 1_000_000).toFixed(2) + 'M' : aiResult.exit_trigger.target_value >= 1_000 ? (aiResult.exit_trigger.target_value / 1_000).toFixed(1) + 'K' : aiResult.exit_trigger.target_value} MC`
-          : `${aiResult.exit_trigger.target_value}%`,
-        sellPct: aiResult.exit_trigger.sell_pct || 100,
-      }
+      type: aiResult.exit_trigger.type || 'market_cap',
+      targetValue: aiResult.exit_trigger.target_value,
+      targetDisplay: aiResult.exit_trigger.type === 'market_cap'
+        ? `${aiResult.exit_trigger.target_value >= 1_000_000 ? (aiResult.exit_trigger.target_value / 1_000_000).toFixed(2) + 'M' : aiResult.exit_trigger.target_value >= 1_000 ? (aiResult.exit_trigger.target_value / 1_000).toFixed(1) + 'K' : aiResult.exit_trigger.target_value} MC`
+        : `${aiResult.exit_trigger.target_value}%`,
+      sellPct: aiResult.exit_trigger.sell_pct || 100,
+    }
     : extractExitTrigger(prompt);
 
   // 4. Extract or fallback to smart parameters
@@ -432,7 +457,7 @@ export async function planSwarmSession(params: {
 
     remainingNear -= trancheAmt;
 
-    // Stagger delays monotonically (0s for first drone, then random 15s to 33s intervals)
+    // Stagger delays monotonically (0s for first drone, then each drone adds 15s to 33s)
     if (i > 0) {
       accumulatedDelay += Math.round(15 + Math.random() * 18);
     }
@@ -493,7 +518,6 @@ export async function planSwarmSession(params: {
     stealthMode,
     tranches,
     exitTrigger: exitTrigger || null,
-    exit_trigger: exitTrigger || null,
     teeEnclave: {
       provider: 'NEAR AI Cloud (TEE Intel TDX)',
       enclaveType: 'Intel TDX / NVIDIA H100 Confidential Computing',
