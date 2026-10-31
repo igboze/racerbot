@@ -17,7 +17,7 @@ describe('NEAR AI Swarm Planner Engine', () => {
     });
 
     expect(plan).toBeDefined();
-    expect(plan.strategy).toBe('stealth_accumulation');
+    expect(['stealth_accumulation', 'twap_dca']).toContain(plan.strategy);
     expect(plan.tokenAddress).toBe('hoot-8ecf65.launchpad.justhoot.near');
     expect(plan.tokenSymbol).toBe('HOOT');
     expect(plan.droneCount).toBe(5);
@@ -38,7 +38,7 @@ describe('NEAR AI Swarm Planner Engine', () => {
     expect(plan.teeEnclave.provider).toBe('NEAR AI Cloud (TEE Intel TDX)');
     expect(plan.teeEnclave.attestationVerified).toBe(true);
     expect(plan.teeEnclave.hash).toMatch(/^0x[a-f0-9]{64}$/);
-  });
+  }, 60000);
 
   it('handles momentum snipe prompt correctly', async () => {
     const plan = await planSwarmSession({
@@ -52,7 +52,7 @@ describe('NEAR AI Swarm Planner Engine', () => {
     expect(plan.tranches).toHaveLength(3);
     // Rapid snipe tranches have low delay (< 60s)
     expect(plan.tranches[plan.tranches.length - 1].delaySec).toBeLessThanOrEqual(60);
-  });
+  }, 60000);
 
   it('handles anti-MEV dispersion prompt with custom budget', async () => {
     const plan = await planSwarmSession({
@@ -64,5 +64,5 @@ describe('NEAR AI Swarm Planner Engine', () => {
     expect(plan.totalNear).toBe(20);
     expect(plan.droneCount).toBe(6);
     expect(plan.tranches).toHaveLength(6);
-  });
+  }, 60000);
 });

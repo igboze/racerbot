@@ -170,6 +170,10 @@ async function main(): Promise<void> {
           res.status(403).send('Forbidden');
           return;
         }
+      } else if (process.env.NODE_ENV === 'production') {
+        logger.warn('Rejected webhook request: TELEGRAM_WEBHOOK_SECRET is missing in production environment');
+        res.status(403).send('Forbidden: Webhook secret required in production');
+        return;
       }
 
       // Immediately acknowledge HTTP 200 so Telegram clears the pending update instantly

@@ -410,6 +410,8 @@ export async function getDb(): Promise<Pool> {
 
   const rawUrl = (process.env.DATABASE_URL || '').trim();
   const connectionString = rawUrl || 'postgres://localhost:5432/racerbot';
+  const isRemote = rawUrl && !rawUrl.includes('localhost') && !rawUrl.includes('127.0.0.1');
+  const useSsl = isRemote || rawUrl.includes('neon.tech') || rawUrl.includes('sslmode=require');
 
   pool = new Pool({
     connectionString,
@@ -417,6 +419,7 @@ export async function getDb(): Promise<Pool> {
     max: parseInt(process.env.POOL_MAX || '35'),
     idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '15000'),
     connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '6000'),
+    ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
   pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
   pool.on('connect', () => {
