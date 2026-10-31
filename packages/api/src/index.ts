@@ -163,17 +163,14 @@ async function main(): Promise<void> {
   // then dispatches the update asynchronously into Telegraf's pipeline.
   const webhookPath = '/telegram-webhook';
   if (PUBLIC_URL) {
-    app.post(webhookPath, (req, res) => {
+    app.post([webhookPath, '/api' + webhookPath], (req, res) => {
       if (TELEGRAM_WEBHOOK_SECRET) {
         const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
         if (secretHeader !== TELEGRAM_WEBHOOK_SECRET) {
+          logger.warn('Rejected webhook request: secret token mismatch');
           res.status(403).send('Forbidden');
           return;
         }
-      } else if (process.env.NODE_ENV === 'production') {
-        logger.warn('Rejected webhook request: TELEGRAM_WEBHOOK_SECRET is missing in production environment');
-        res.status(403).send('Forbidden: Webhook secret required in production');
-        return;
       }
 
       // Immediately acknowledge HTTP 200 so Telegram clears the pending update instantly
@@ -184,6 +181,22 @@ async function main(): Promise<void> {
         bot.handleUpdate(update).catch((err: any) => {
           logger.error('Error in bot.handleUpdate', err, { updateId: update.update_id });
         });
+      }
+    });
+
+    app.get(['/telegram-status', '/api/telegram-status'], async (_req, res) => {
+      try {
+        const info = await bot.telegram.getWebhookInfo().catch((e: any) => ({ error: e?.message }));
+        const me = await bot.telegram.getMe().catch((e: any) => ({ error: e?.message }));
+        res.json({
+          success: true,
+          bot: me,
+          webhook: info,
+          publicUrl: PUBLIC_URL,
+          hasWebhookSecret: Boolean(TELEGRAM_WEBHOOK_SECRET),
+        });
+      } catch (err: any) {
+        res.status(500).json({ success: false, error: err?.message });
       }
     });
   }
@@ -385,11 +398,18 @@ async function main(): Promise<void> {
   if (PUBLIC_URL) {
     const cleanDomain = PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/+$/, '');
     const webhookUrl = `https://${cleanDomain}${webhookPath}`;
-    await bot.telegram.setWebhook(webhookUrl, {
-      drop_pending_updates: true,
-      secret_token: TELEGRAM_WEBHOOK_SECRET || undefined,
-    });
-    logger.info('Telegram bot launched with webhook', { webhookUrl });
+    try {
+      await bot.telegram.setWebhook(webhookUrl, {
+        drop_pending_updates: false,
+        secret_token: TELEGRAM_WEBHOOK_SECRET || undefined,
+      });
+      logger.info('Telegram bot launched with webhook', { webhookUrl });
+    } catch (whErr: any) {
+      logger.error('Failed to set Telegram webhook, falling back to long polling', whErr);
+      bot.launch({ dropPendingUpdates: false }).catch((lpErr: any) => {
+        logger.error('Long polling fallback failed', lpErr);
+      });
+    }
     // Set Telegram Bot Menu Commands
   await bot.telegram.setMyCommands([
     { command: 'start', description: '🏎️ Start RacerBot / Main Menu' },
