@@ -2652,7 +2652,7 @@ export async function executeBuyHelper(
   rawTokenAddress: string,
   amountNear: number,
   onProgress?: (stage: string) => void
-): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number }> {
+): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; txHash?: string }> {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   const user = await getUserByTelegramId(telegramId);
   if (!user) {
@@ -2962,6 +2962,7 @@ export async function executeBuyHelper(
         amountNear,
         tokenAddress,
         tokenSymbol: symbol,
+        txHash: res.txHashes?.[0],
         message:
           `✅ *Private Buy Confirmed!*\n\n` +
           `🪙 *${sanitizeMd(symbol)}*\n` +
@@ -3103,6 +3104,7 @@ export async function executeBuyHelper(
     tokenQty: swapResult.tokenQty,
     priceNear: swapResult.priceNear,
     nearSpent: swapResult.nearSpent,
+    txHash: swapResult.txHash,
     message:
       `✅ *Buy Confirmed!*\n\n` +
       `🪙 *${sanitizeMd(tokenName)}* (${sanitizeMd(tokenSym)})\n` +

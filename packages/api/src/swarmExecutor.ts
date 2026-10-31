@@ -27,6 +27,7 @@ export interface SwarmExecutionStatus {
   tokensAcquired: string;
   activeDrones: number;
   tranches: any[];
+  executionLog: any[];
 }
 
 /**
@@ -39,9 +40,9 @@ export async function getSwarmSessionStatus(sessionId: string): Promise<SwarmExe
   const plan = session.plan_json || {};
   const state = session.execution_state || {};
   const tranches = state.tranche_status || plan.tranches || [];
-  const completed = state.completed_tranches || 0;
+  const completed = state.completed_tranches ?? state.completedDrones ?? 0;
   const total = tranches.length || plan.drone_count || 1;
-  const progressPct = Math.round((completed / total) * 100);
+  const progressPct = Math.min(100, Math.round((completed / total) * 100));
 
   return {
     sessionId: session.id,
@@ -51,8 +52,9 @@ export async function getSwarmSessionStatus(sessionId: string): Promise<SwarmExe
     progressPct,
     filledNear: parseFloat(state.filled_amount_near || '0'),
     tokensAcquired: state.tokens_acquired || '0',
-    activeDrones: session.status === 'executing' ? (total - completed) : 0,
+    activeDrones: session.status === 'executing' ? Math.max(0, total - completed) : 0,
     tranches,
+    executionLog: Array.isArray(state.executionLog) ? state.executionLog : [],
   };
 }
 
@@ -137,25 +139,26 @@ async function executeTranche(
     await updateAiSwarmSession(sessionId, { execution_state: { ...state, tranche_status: tranches } });
   }
 
-  let txHash = 'mock_tx_' + Math.random().toString(36).substring(2, 10);
+  let txHash: string | null = null;
   let filledSuccess = false;
+  let errorReason: string | null = null;
+  let tokenQtyAcquired = '0';
 
   try {
     // Execute trade through Racer's execution engine
     // In stealth mode, trade is isolated without exposing master account
-    const tradeRes = await executeBuyHelper(telegramId, session.token_address, tranche.amountNear)
-      .then(r => ({ success: r.success, txHash: (r as any).txHash || txHash }))
-      .catch((err: any) => {
-        logger.warn(`Tranche live trade fallback for ${session.token_address}: ${err?.message}`);
-        return { success: true, txHash };
-      });
+    const tradeRes = await executeBuyHelper(telegramId, session.token_address, tranche.amountNear);
 
     if (tradeRes?.success) {
       filledSuccess = true;
-      if (tradeRes.txHash) txHash = tradeRes.txHash;
+      txHash = tradeRes.txHash || null;
+      tokenQtyAcquired = tradeRes.tokenQty || '0';
+    } else {
+      errorReason = tradeRes?.message || 'Swap did not complete';
     }
   } catch (err: any) {
-    logger.warn(`Tranche ${trancheIndex} failed: ${err?.message}`);
+    errorReason = err?.message || 'Transaction failed on-chain';
+    logger.warn(`Tranche ${trancheIndex} failed for ${session.token_address}: ${errorReason}`);
   }
 
   // Update status after execution
@@ -168,11 +171,28 @@ async function executeTranche(
   if (curTranches[trancheIndex]) {
     curTranches[trancheIndex].status = filledSuccess ? 'filled' : 'failed';
     curTranches[trancheIndex].txHash = txHash;
+    if (errorReason) curTranches[trancheIndex].error = errorReason;
   }
 
   const completed = (curState.completed_tranches || 0) + 1;
   const filledAmt = (parseFloat(curState.filled_amount_near || '0') + (filledSuccess ? tranche.amountNear : 0));
   const isFinished = completed >= curTranches.length;
+
+  const nowStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const logEntry = filledSuccess
+    ? {
+        time: nowStr,
+        status: 'success',
+        message: `Drone #${trancheIndex + 1} (${tranche.droneName || 'Drone'}) filled ${tranche.amountNear.toFixed(2)} NEAR on-chain${txHash ? ` [${txHash.slice(0, 10)}...]` : ''}`,
+        txHash,
+      }
+    : {
+        time: nowStr,
+        status: 'failed',
+        message: `Drone #${trancheIndex + 1} (${tranche.droneName || 'Drone'}) failed: ${(errorReason || 'Execution error').slice(0, 70)}`,
+      };
+
+  const curLogs = Array.isArray(curState.executionLog) ? [...curState.executionLog, logEntry] : [logEntry];
 
   await updateAiSwarmSession(sessionId, {
     status: isFinished ? 'completed' : 'executing',
@@ -180,14 +200,16 @@ async function executeTranche(
     execution_state: {
       ...curState,
       completed_tranches: completed,
+      completedDrones: completed,
       filled_amount_near: parseFloat(filledAmt.toFixed(3)),
       tranche_status: curTranches,
+      executionLog: curLogs,
     },
   });
 
   if (isFinished) {
     activeSwarmTimers.delete(sessionId);
-    logger.info(`Swarm session ${sessionId} completed successfully!`);
+    logger.info(`Swarm session ${sessionId} completed: ${completed}/${curTranches.length} tranches executed`);
   }
 }
 
