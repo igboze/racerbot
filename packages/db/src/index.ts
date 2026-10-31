@@ -13,6 +13,7 @@ export {
   getUserByStarknetAddress,
   getUserBySolanaAddress,
   setUserSolanaWalletIfMissing,
+  setUserEvmWalletIfMissing,
   updateUserScopedKey,
   updateUserSuiWallet,
   updateUserStarknetWallet,

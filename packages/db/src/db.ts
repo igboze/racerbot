@@ -27,6 +27,8 @@ export interface UserRecord {
   starknet_private_key_enc?: string | null;
   solana_address?: string | null;
   solana_private_key_enc?: string | null;
+  evm_address?: string | null;
+  evm_private_key_enc?: string | null;
   default_buy_pct: number | null;
   default_sell_pct: number | null;
   fee_tier: string;
@@ -717,6 +719,52 @@ export async function setUserSolanaWalletIfMissing(
          ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
         [userId, address, encryptedPrivateKey]
       ).catch((err: any) => console.warn('[DB] user_wallets solana insert warning:', err?.message));
+    }
+  }
+  invalidateUserCache(userId);
+  return { address, encryptedPrivateKey, created };
+}
+
+
+/**
+ * Gives an existing user a unified EVM wallet (HyperEVM & Elysium) ONLY if they do not have one yet.
+ * The update is conditional (`evm_address IS NULL`), preventing overwriting any existing funded wallet.
+ */
+export async function setUserEvmWalletIfMissing(
+  userId: string,
+  evmAddress: string,
+  evmPrivateKeyEnc: string,
+): Promise<{ address: string; encryptedPrivateKey: string; created: boolean }> {
+  const db = await getDb();
+  const upd = await db.query(
+    `UPDATE users SET evm_address = $1, evm_private_key_enc = $2
+     WHERE id = $3 AND evm_address IS NULL
+     RETURNING evm_address, evm_private_key_enc`,
+    [evmAddress, evmPrivateKeyEnc, userId]
+  );
+  let address = evmAddress;
+  let encryptedPrivateKey = evmPrivateKeyEnc;
+  let created = upd.rows.length > 0;
+  if (!created) {
+    const cur = await db.query('SELECT evm_address, evm_private_key_enc FROM users WHERE id = $1', [userId]);
+    address = cur.rows[0]?.evm_address;
+    encryptedPrivateKey = cur.rows[0]?.evm_private_key_enc;
+  }
+  if (address && encryptedPrivateKey) {
+    for (const chain of ['hyperevm', 'elysium']) {
+      const active = await db.query(
+        'SELECT id FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE LIMIT 1',
+        [userId, chain]
+      ).catch(() => ({ rows: [] as any[] }));
+      if (active.rows.length === 0) {
+        const walletName = chain === 'hyperevm' ? 'HyperEVM Wallet' : 'Elysium Wallet';
+        await db.query(
+          `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+           VALUES ($1, $2, $3, $4, $5, FALSE, TRUE)
+           ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE`,
+          [userId, chain, address, walletName, encryptedPrivateKey]
+        ).catch((err: any) => console.warn(`[DB] user_wallets ${chain} insert warning:`, err?.message));
+      }
     }
   }
   invalidateUserCache(userId);
@@ -1853,6 +1901,8 @@ function rowToUser(row: any): UserRecord {
     starknet_private_key_enc: row.starknet_private_key_enc ?? null,
     solana_address: row.solana_address ?? null,
     solana_private_key_enc: row.solana_private_key_enc ?? null,
+    evm_address: row.evm_address ?? null,
+    evm_private_key_enc: row.evm_private_key_enc ?? null,
     default_buy_pct: row.default_buy_pct != null ? parseFloat(row.default_buy_pct) : null,
     default_sell_pct: row.default_sell_pct != null ? parseFloat(row.default_sell_pct) : null,
     fee_tier: row.fee_tier,

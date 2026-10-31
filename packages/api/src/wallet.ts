@@ -70,7 +70,18 @@ import {
   getStrkUsdPrice,
   getEthUsdPrice,
   redactSecrets,
+  generateEvmWallet,
+  getEvmWalletFromEncrypted,
+  isValidEvmAddress,
+  getHypeBalance,
+  getErc20TokenInfo,
+  getErc20Balance,
+  getEvmProvider,
+  type EvmChain,
+  HYPE_SYMBOL,
 } from '@racerbot/shared';
+import { ethers } from 'ethers';
+import { executeEvmSwap, type EvmSwapExecutionResult } from '@racerbot/executor';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
 import { CallData, uint256, ec, cairo } from 'starknet';
@@ -82,6 +93,7 @@ import {
   updateUserSuiWallet,
   updateUserStarknetWallet,
   setUserSolanaWalletIfMissing,
+  setUserEvmWalletIfMissing,
   getUserByStarknetAddress,
   getTokenCache,
   findTokenAddressByShortKey,
@@ -2210,6 +2222,105 @@ export interface OnboardResult {
  * that already exists is NEVER replaced: the DB write only happens when
  * solana_address is still empty.
  */
+/**
+ * Ensures user record has an initialized unified EVM wallet (HyperEVM & Elysium).
+ * If missing, generates a new EVM secp256k1 keypair and saves to DB.
+ */
+export async function ensureUserEvmWallet(user: UserRecord): Promise<UserRecord> {
+  if (user.evm_address && user.evm_private_key_enc) return user;
+  const wallet = generateEvmWallet(MASTER_KEY);
+  const stored = await setUserEvmWalletIfMissing(user.id, wallet.address, wallet.encryptedPrivateKey);
+  user.evm_address = stored.address;
+  user.evm_private_key_enc = stored.encryptedPrivateKey;
+  if (stored.created) console.log(`[EVM] Created unified EVM wallet ${stored.address} for existing user ${user.id}`);
+  return user;
+}
+
+export async function getUserEvmBalances(user: UserRecord): Promise<{
+  address: string;
+  hyperevm: { raw: bigint; formatted: string; human: number };
+  elysium: { raw: bigint; formatted: string; human: number };
+}> {
+  const address = user.evm_address;
+  if (!address) {
+    return {
+      address: '',
+      hyperevm: { raw: 0n, formatted: '0.0', human: 0 },
+      elysium: { raw: 0n, formatted: '0.0', human: 0 },
+    };
+  }
+
+  const isTestnet = process.env.NODE_ENV !== 'production';
+  const [hyperevm, elysium] = await Promise.all([
+    getHypeBalance(address, 'hyperevm', isTestnet),
+    getHypeBalance(address, 'elysium', true),
+  ]);
+
+  return { address, hyperevm, elysium };
+}
+
+export async function withdrawEvmHype(
+  user: UserRecord,
+  chain: EvmChain,
+  toAddress: string,
+  amountHype: number
+): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  if (!user.evm_address || !user.evm_private_key_enc) {
+    return { success: false, error: 'EVM wallet not configured.' };
+  }
+  if (!isValidEvmAddress(toAddress)) {
+    return { success: false, error: 'Invalid recipient EVM address.' };
+  }
+
+  const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+  const provider = getEvmProvider(chain, isTestnet);
+  const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
+
+  const value = ethers.parseEther(amountHype.toString());
+  const balance = await provider.getBalance(user.evm_address);
+
+  const feeEstimate = ethers.parseEther('0.001');
+  if (balance < value + feeEstimate) {
+    return {
+      success: false,
+      error: `Insufficient balance for transfer + gas fee. Balance: ${ethers.formatEther(balance)} HYPE`,
+    };
+  }
+
+  try {
+    const tx = await signer.sendTransaction({
+      to: toAddress,
+      value,
+    });
+    const receipt = await tx.wait(1);
+    return { success: true, txHash: receipt?.hash || tx.hash };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Transaction failed' };
+  }
+}
+
+export async function executeEvmTrade(
+  user: UserRecord,
+  chain: EvmChain,
+  tokenAddress: string,
+  amount: number,
+  side: 'buy' | 'sell',
+  slippagePct = 2
+): Promise<EvmSwapExecutionResult> {
+  const ensuredUser = await ensureUserEvmWallet(user);
+  return await executeEvmSwap({
+    type: 'execute_swap',
+    user_id: ensuredUser.id,
+    token_in: side === 'buy' ? HYPE_SYMBOL : tokenAddress,
+    token_out: side === 'buy' ? tokenAddress : HYPE_SYMBOL,
+    amount_in: String(amount),
+    min_amount_out: '0',
+    venue: `${chain}_dex` as any,
+    slippage_pct: slippagePct,
+    chain,
+  });
+}
+
 export async function ensureUserSolanaWallet(user: UserRecord): Promise<UserRecord> {
   if (user.solana_address && user.solana_private_key_enc) return user;
   const wallet = generateSolanaWallet(MASTER_KEY);

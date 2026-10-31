@@ -8377,6 +8377,65 @@ export function setupRoutes(bot: Telegraf): void {
     }
   };
 
+
+  // ── /launchpads — Elysium & HyperEVM Launchpad Hub ──────────────────────
+  const handleLaunchpads = async (ctx: Context) => {
+    const text =
+`🚀 <b>Elysium & HyperEVM Launchpads Hub</b> 🏛️
+
+Explore active token launchpads running on Elysium's 100ms L2 and HyperEVM:
+
+1️⃣ <b>CorePad</b> (<code>corepad.app</code>)
+• 800M tokens on constant-product curve
+• 60s Launch Guard (Max 1% per address)
+• Direct graduation to HyperCore HIP-1 Spot Orderbook
+
+2️⃣ <b>BunnyPad</b> (<code>bunnypad.fun</code>)
+• Instant 1-click token launch
+• 100% supply paired in automated liquidity pool
+• Initial MC ~$3,000
+
+3️⃣ <b>Updraft</b> (<code>updraft-weld.vercel.app</code>)
+• "One Wire, One Price" pooled round
+• Zero front-running: all commits execute at uniform $T_0$ avg price
+• On-chain verifiable fairness certificate
+
+4️⃣ <b>PerpMe & Citadel</b>
+• High-speed memecoin discovery
+• Native AMM liquidity migration
+
+💡 <i>Paste any Elysium or HyperEVM token contract address (0x...) to view liquidity, honeypot safety, and execute instant 1-click buys!</i>`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.url('🛡️ CorePad', 'https://corepad.app'),
+        Markup.button.url('🐰 BunnyPad', 'https://www.bunnypad.fun'),
+      ],
+      [
+        Markup.button.url('🌪️ Updraft', 'https://updraft-weld.vercel.app'),
+        Markup.button.url('📈 PerpMe', 'https://perpme.fun/elysium'),
+      ],
+      [
+        cb('💼 Wallet / Balance', 'menu_wallet', 'primary'),
+        cb('🔙 Main Menu', 'menu_home', 'primary'),
+      ],
+    ]);
+
+    if (ctx.callbackQuery && typeof (ctx as any).editMessageText === 'function') {
+      await (ctx as any).editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(() => {
+        ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+      });
+    } else {
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+    }
+  };
+
+  bot.command('launchpads', handleLaunchpads);
+  bot.action('launchpads_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await handleLaunchpads(ctx);
+  });
+
   bot.command('wallet', handleWallet);
   bot.command('balance', handleWallet);
 

@@ -94,7 +94,7 @@ export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
 }
 
-export type SupportedChain = 'near' | 'sui' | 'starknet' | 'solana';
+export type SupportedChain = 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
 
 export interface SwapRequest {
   user_id: string;

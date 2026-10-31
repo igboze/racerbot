@@ -209,3 +209,5 @@ if (isDirectRun) {
 }
 
 export { addUserKey, warmAllKeys, SwapExecutor, ensureRefStorage, ensureRefTokenRegistered, RefRegistrationTracker } from './executor.js';
+
+export { executeEvmSwap, type EvmSwapExecutionResult } from './evmExecutor.js';
