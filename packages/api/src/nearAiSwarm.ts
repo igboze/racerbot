@@ -133,10 +133,12 @@ async function callNearAiModel(prompt: string, tokenInfo: TokenInfoResult, avail
   }
 
   const endpoint = nearAiKey
-    ? 'https://api.near.ai/v1/chat/completions'
+    ? (process.env.NEAR_AI_ENDPOINT || 'https://cloud-api.near.ai/v1/chat/completions')
     : 'https://api.openai.com/v1/chat/completions';
   const apiKey = nearAiKey || openAiKey;
-  const model = nearAiKey ? 'nearai/deepseek-ai/DeepSeek-V3' : 'gpt-4o-mini';
+  const model = nearAiKey
+    ? (process.env.NEAR_AI_MODEL || 'deepseek-ai/DeepSeek-V4.1-Flash-1017')
+    : 'gpt-4o-mini';
 
   const systemPrompt = `You are the Racer Swarm Commander running inside a hardware-isolated Trusted Execution Environment (TEE) on NEAR AI Cloud.
 Your task is to decompose the user's trading prompt into a stealth multi-agent swarm execution plan across NEAR Protocol DEXes (Rhea, Ref Finance, NearlyTrade, JustHoot).
@@ -309,7 +311,7 @@ export async function planSwarmSession(params: {
     teeEnclave: {
       provider: 'NEAR AI Cloud (TEE Intel TDX)',
       enclaveType: 'Intel TDX / NVIDIA H100 Confidential Computing',
-      model: process.env.NEAR_AI_API_KEY ? 'nearai/deepseek-ai/DeepSeek-V3' : 'nearai-tee/racer-planner-v1',
+      model: process.env.NEAR_AI_API_KEY ? (process.env.NEAR_AI_MODEL || 'deepseek-ai/DeepSeek-V4.1-Flash-1017') : 'nearai-tee/racer-planner-v1',
       attestationVerified: true,
       hash: attestationHash,
       attestationHash,
