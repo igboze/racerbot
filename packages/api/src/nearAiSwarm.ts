@@ -13,17 +13,27 @@ const logger = createLogger('near-ai-swarm');
 export interface SwarmTranche {
   droneIndex: number;
   droneName: string;
+  droneId?: string;
   amountNear: number;
   venue: string;
   delaySec: number;
+  delayMs: number;
   maxSlippagePct: number;
   isConfidential: boolean;
   status: 'pending' | 'dispatching' | 'filled' | 'failed' | 'swept';
   txHash?: string;
 }
 
+export interface SwarmExitTrigger {
+  type: 'market_cap' | 'take_profit_pct' | 'stop_loss_pct';
+  targetValue: number;
+  targetDisplay: string;
+  sellPct: number;
+}
+
 export interface SwarmPlanResult {
-  strategy: 'stealth_accumulation' | 'twap_dca' | 'liquidity_sweep' | 'anti_mev_snipe';
+  action: 'buy' | 'sell';
+  strategy: 'stealth_accumulation' | 'twap_dca' | 'liquidity_sweep' | 'anti_mev_snipe' | 'stealth_unwind' | 'market_cap_exit';
   strategyTitle: string;
   tokenAddress: string;
   tokenSymbol: string;
@@ -34,6 +44,8 @@ export interface SwarmPlanResult {
   stealthScore: number; // 0 to 100%
   stealthMode: boolean;
   tranches: SwarmTranche[];
+  exitTrigger?: SwarmExitTrigger | null;
+  exit_trigger?: SwarmExitTrigger | null;
   teeEnclave: {
     provider: 'NEAR AI Cloud (TEE Intel TDX)';
     enclaveType: 'Intel TDX / NVIDIA H100 Confidential Computing';
@@ -94,6 +106,110 @@ export function resolveNearTokenQuery(query: string): string | null {
 }
 
 /**
+ * Enhanced async token resolution that matches aliases, full addresses,
+ * and searches DB token_cache by symbol or name.
+ */
+export async function resolveTokenAddressAsync(query: string): Promise<string | null> {
+  const syncMatch = resolveNearTokenQuery(query);
+  if (syncMatch) return syncMatch;
+
+  // Extract candidate tokens or ticker symbols (e.g. "$SWEAT", "SWEAT", "HOT", etc.)
+  const words = query
+    .replace(/[^\w\.\$-]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const db = await import('@racerbot/db').then(m => m.getDb()).catch(() => null);
+
+  for (const rawWord of words) {
+    const word = rawWord.replace(/^[\$#]/, '').toLowerCase();
+    if (!word || ['near', 'sol', 'sui', 'drones', 'wallets', 'stealth', 'buy', 'sell', 'market', 'cap', 'staggered', 'minutes', 'hours', 'with', 'over'].includes(word)) {
+      continue;
+    }
+    if (TOKEN_ALIASES[word]) {
+      return TOKEN_ALIASES[word];
+    }
+    if (word.endsWith('.near')) {
+      return word;
+    }
+
+    if (db) {
+      try {
+        const res = await db.query(
+          `SELECT token_address FROM token_cache WHERE LOWER(symbol) = $1 OR LOWER(name) = $1 LIMIT 1`,
+          [word]
+        );
+        if (res.rows?.[0]?.token_address) {
+          return res.rows[0].token_address;
+        }
+      } catch {}
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extracts conditional exit trigger from natural language prompt
+ * (e.g. "sell at 100k market cap", "take profit at 2x", "stop loss at 15%")
+ */
+export function extractExitTrigger(prompt: string): SwarmExitTrigger | null {
+  if (!prompt) return null;
+
+  // 1. Market Cap Trigger (e.g. "sell at 100k market cap", "exit at 50,000 NEAR MC", "sell 50% when mc reaches $1M")
+  const mcMatch = prompt.match(/(?:sell|exit|take\s*profit)?\s*(\d+%)?\s*(?:at|when|if)?\s*(?:market\s*cap|mc)\s*(?:reaches|hits|is|>=|>)?\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?/i)
+    || prompt.match(/(?:market\s*cap|mc)\s*(?:of|reaches|hits|is|>=|>)\s*[\$]?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+
+  if (mcMatch) {
+    const sellPctStr = mcMatch[1] ? mcMatch[1].replace('%', '') : '100';
+    const sellPct = Math.min(100, Math.max(1, parseInt(sellPctStr, 10) || 100));
+    const rawVal = parseFloat(mcMatch[2].replace(/,/g, ''));
+    const unit = (mcMatch[3] || '').toLowerCase();
+    let targetValue = rawVal;
+    if (unit === 'k') targetValue *= 1_000;
+    if (unit === 'm') targetValue *= 1_000_000;
+
+    const displayUnit = targetValue >= 1_000_000 ? `${(targetValue / 1_000_000).toFixed(2)}M` : targetValue >= 1_000 ? `${(targetValue / 1_000).toFixed(1)}K` : targetValue.toString();
+
+    return {
+      type: 'market_cap',
+      targetValue,
+      targetDisplay: `${displayUnit} MC (${sellPct}% exit)`,
+      sellPct,
+    };
+  }
+
+  // 2. Take Profit % (e.g. "take profit at 2x", "take profit at 50%", "sell at +100%")
+  const tpMatch = prompt.match(/take\s*profit\s*(?:at)?\s*(\+?\d+(?:\.\d+)?)(x|%)?/i)
+    || prompt.match(/sell\s+(?:at)?\s*(\+?\d+(?:\.\d+)?)(x|%)\s*(?:profit)?/i);
+  if (tpMatch) {
+    const val = parseFloat(tpMatch[1]);
+    const isMultiplier = tpMatch[2]?.toLowerCase() === 'x';
+    const pct = isMultiplier ? (val - 1) * 100 : val;
+    return {
+      type: 'take_profit_pct',
+      targetValue: pct,
+      targetDisplay: `+${pct.toFixed(0)}% TP`,
+      sellPct: 100,
+    };
+  }
+
+  // 3. Stop Loss % (e.g. "stop loss at 15%", "cut if down 20%", "sl 10%")
+  const slMatch = prompt.match(/(?:stop\s*loss|sl|cut\s*losses?)\s*(?:at|if|down)?\s*-?(\d+(?:\.\d+)?)%?/i);
+  if (slMatch) {
+    const pct = parseFloat(slMatch[1]);
+    return {
+      type: 'stop_loss_pct',
+      targetValue: pct,
+      targetDisplay: `-${pct.toFixed(0)}% SL`,
+      sellPct: 100,
+    };
+  }
+
+  return null;
+}
+
+/**
  * Parses amount in NEAR from prompt (e.g. "buy 50 NEAR of...", "100 N", "25 near")
  */
 function extractNearAmount(prompt: string, defaultAmount = 10): number {
@@ -144,12 +260,18 @@ async function callNearAiModel(prompt: string, tokenInfo: TokenInfoResult, avail
 Your task is to decompose the user's trading prompt into a stealth multi-agent swarm execution plan across NEAR Protocol DEXes (Rhea, Ref Finance, NearlyTrade, JustHoot).
 Output valid JSON only with keys:
 {
-  "strategy": "stealth_accumulation" | "twap_dca" | "liquidity_sweep" | "anti_mev_snipe",
+  "action": "buy" | "sell",
+  "strategy": "stealth_accumulation" | "twap_dca" | "liquidity_sweep" | "anti_mev_snipe" | "stealth_unwind" | "market_cap_exit",
   "drone_count": number (2 to 6),
   "total_amount_near": number,
   "max_slippage_pct": number (0.5 to 3.0),
   "stealth_mode": boolean (true for confidential zero-trace executors),
-  "reasoning": string (concise 1-2 sentence explanation of strategy and MEV defense)
+  "exit_trigger": null | {
+    "type": "market_cap" | "take_profit_pct" | "stop_loss_pct",
+    "target_value": number,
+    "sell_pct": number
+  },
+  "reasoning": string (concise 1-2 sentence explanation of strategy, MEV defense, and trigger conditions)
 }`;
 
   const userContent = `User Prompt: "${prompt}"
@@ -204,12 +326,26 @@ export async function planSwarmSession(params: {
   const userHasBalances = Boolean(userBalances && userBalances.nativeNearFormatted !== undefined);
   const availableNear = userHasBalances ? parseFloat(userBalances!.nativeNearFormatted || '0') : 0;
 
-  // 1. Resolve target token
-  let tokenAddress = resolveNearTokenQuery(prompt) || params.defaultTokenAddress || 'hoot-8ecf65.launchpad.justhoot.near';
+  // 1. Resolve target token (via aliases, db token_cache, or explicit default)
+  let resolvedAddress = await resolveTokenAddressAsync(prompt);
+  if (!resolvedAddress) {
+    resolvedAddress = params.defaultTokenAddress || null;
+  }
+  // If still not resolved, check if prompt or context mentions HOOT or if it's empty
+  if (!resolvedAddress) {
+    const isGeneric = !prompt || /hoot/i.test(prompt) || /accumulate|snipe|swarm/i.test(prompt);
+    if (isGeneric) {
+      resolvedAddress = 'hoot-8ecf65.launchpad.justhoot.near';
+    } else {
+      throw new Error(`Target token not recognized in prompt: "${prompt}". Please provide a token contract or valid symbol.`);
+    }
+  }
+
+  const tokenAddress = resolvedAddress;
   const tokenInfo = await getTokenInfo(tokenAddress).catch(() => null) || {
     address: tokenAddress,
-    symbol: 'HOOT',
-    name: 'Hoot',
+    symbol: tokenAddress.split('.')[0]?.toUpperCase() || 'TOKEN',
+    name: tokenAddress.split('.')[0] || 'Token',
     price: '0.00032',
     venue: 'rhea',
     liquidity_usd: '12500',
@@ -218,28 +354,54 @@ export async function planSwarmSession(params: {
   // 2. Query NEAR AI TEE Cloud (with intelligent fallback)
   const aiResult = await callNearAiModel(prompt, tokenInfo, availableNear);
 
-  // 3. Extract or fallback to smart parameters
-  const validStrategies = ['stealth_accumulation', 'twap_dca', 'liquidity_sweep', 'anti_mev_snipe'];
+  // 3. Extract action & exit trigger conditions
+  const isSellAction = Boolean(
+    aiResult?.action === 'sell' ||
+    /\b(sell|dump|unwind|exit|liquidate)\b/i.test(prompt)
+  );
+  const action: SwarmPlanResult['action'] = isSellAction ? 'sell' : 'buy';
+
+  const exitTrigger = aiResult?.exit_trigger?.target_value
+    ? {
+        type: aiResult.exit_trigger.type || 'market_cap',
+        targetValue: aiResult.exit_trigger.target_value,
+        targetDisplay: aiResult.exit_trigger.type === 'market_cap'
+          ? `${aiResult.exit_trigger.target_value >= 1_000_000 ? (aiResult.exit_trigger.target_value / 1_000_000).toFixed(2) + 'M' : aiResult.exit_trigger.target_value >= 1_000 ? (aiResult.exit_trigger.target_value / 1_000).toFixed(1) + 'K' : aiResult.exit_trigger.target_value} MC`
+          : `${aiResult.exit_trigger.target_value}%`,
+        sellPct: aiResult.exit_trigger.sell_pct || 100,
+      }
+    : extractExitTrigger(prompt);
+
+  // 4. Extract or fallback to smart parameters
+  const validStrategies = ['stealth_accumulation', 'twap_dca', 'liquidity_sweep', 'anti_mev_snipe', 'stealth_unwind', 'market_cap_exit'];
   const rawStrategy = String(aiResult?.strategy || '').toLowerCase();
   const matchedStrategy = validStrategies.includes(rawStrategy)
     ? (rawStrategy as SwarmPlanResult['strategy'])
-    : (rawStrategy.includes('snipe') || rawStrategy.includes('breakout') || rawStrategy.includes('momentum') || rawStrategy.includes('spike')
-      ? 'anti_mev_snipe'
-      : rawStrategy.includes('twap') || rawStrategy.includes('dca')
-        ? 'twap_dca'
-        : rawStrategy.includes('sweep') || rawStrategy.includes('probe') || rawStrategy.includes('depth')
-          ? 'liquidity_sweep'
-          : null);
+    : (exitTrigger?.type === 'market_cap'
+      ? 'market_cap_exit'
+      : isSellAction
+        ? 'stealth_unwind'
+        : rawStrategy.includes('snipe') || rawStrategy.includes('breakout') || rawStrategy.includes('momentum') || rawStrategy.includes('spike')
+          ? 'anti_mev_snipe'
+          : rawStrategy.includes('twap') || rawStrategy.includes('dca')
+            ? 'twap_dca'
+            : rawStrategy.includes('sweep') || rawStrategy.includes('probe') || rawStrategy.includes('depth')
+              ? 'liquidity_sweep'
+              : null);
 
   const strategy: SwarmPlanResult['strategy'] =
     matchedStrategy ||
-    (prompt.toLowerCase().includes('snipe') || prompt.toLowerCase().includes('breakout') || prompt.toLowerCase().includes('spike') || prompt.toLowerCase().includes('momentum')
-      ? 'anti_mev_snipe'
-      : prompt.toLowerCase().includes('twap') || prompt.toLowerCase().includes('dca')
-        ? 'twap_dca'
-        : prompt.toLowerCase().includes('sweep') || prompt.toLowerCase().includes('probe') || prompt.toLowerCase().includes('depth')
-          ? 'liquidity_sweep'
-          : 'stealth_accumulation');
+    (exitTrigger?.type === 'market_cap'
+      ? 'market_cap_exit'
+      : isSellAction
+        ? 'stealth_unwind'
+        : prompt.toLowerCase().includes('snipe') || prompt.toLowerCase().includes('breakout') || prompt.toLowerCase().includes('spike') || prompt.toLowerCase().includes('momentum')
+          ? 'anti_mev_snipe'
+          : prompt.toLowerCase().includes('twap') || prompt.toLowerCase().includes('dca')
+            ? 'twap_dca'
+            : prompt.toLowerCase().includes('sweep') || prompt.toLowerCase().includes('probe') || prompt.toLowerCase().includes('depth')
+              ? 'liquidity_sweep'
+              : 'stealth_accumulation');
 
   const parsedAmt = aiResult?.total_amount_near || extractNearAmount(prompt, 10.0);
   const totalNear = (userHasBalances && availableNear > 0)
@@ -250,7 +412,7 @@ export async function planSwarmSession(params: {
   const stealthMode = params.stealthModeOverride !== undefined ? params.stealthModeOverride : (aiResult?.stealth_mode !== false);
   const maxSlippagePct = Math.min(3.0, Math.max(0.5, aiResult?.max_slippage_pct || 1.5));
 
-  // 4. Generate Randomized Tranches (DAG) to defeat MEV pattern detection
+  // 5. Generate Randomized Tranches (DAG) to defeat MEV pattern detection
   const tranches: SwarmTranche[] = [];
   const baseTrancheAmt = totalNear / droneCount;
   let remainingNear = totalNear;
@@ -259,6 +421,7 @@ export async function planSwarmSession(params: {
     'Viper-1', 'Ghost-2', 'Shadow-3', 'Apex-4', 'Phantom-5', 'Strike-6'
   ];
 
+  let accumulatedDelay = 0;
   for (let i = 0; i < droneCount; i++) {
     const isLast = i === droneCount - 1;
     // Jitter amount +/- 15% except for last
@@ -269,8 +432,11 @@ export async function planSwarmSession(params: {
 
     remainingNear -= trancheAmt;
 
-    // Stagger delays (0s for first, then random increments between 12s and 45s)
-    const delaySec = i === 0 ? 0 : Math.round(i * (15 + Math.random() * 18));
+    // Stagger delays monotonically (0s for first drone, then random 15s to 33s intervals)
+    if (i > 0) {
+      accumulatedDelay += Math.round(15 + Math.random() * 18);
+    }
+    const delaySec = accumulatedDelay;
 
     // Dynamic venue distribution (routes across Rhea AMM and NearlyTrade/Ref DCL)
     const venue = i % 2 === 0
@@ -280,9 +446,11 @@ export async function planSwarmSession(params: {
     tranches.push({
       droneIndex: i,
       droneName: droneNames[i] || `Drone-${i + 1}`,
+      droneId: `drone-${i + 1}`,
       amountNear: trancheAmt,
       venue,
       delaySec,
+      delayMs: delaySec * 1000,
       maxSlippagePct,
       isConfidential: stealthMode,
       status: 'pending',
@@ -299,17 +467,20 @@ export async function planSwarmSession(params: {
     twap_dca: 'Anti-MEV TWAP Distributed Entry',
     liquidity_sweep: 'Cross-DEX Multi-Pool Liquidity Sweep',
     anti_mev_snipe: 'Zero-Trace Rapid Swarm Snipe',
+    stealth_unwind: 'Stealth Multi-Drone Position Unwind',
+    market_cap_exit: 'Autonomous Market Cap Exit Order',
   };
 
   const analysis =
     aiResult?.reasoning ||
     (typeof aiResult?.strategy === 'string' && aiResult.strategy.length > 25 ? aiResult.strategy : null) ||
-    `NEAR AI Cloud decomposed ${totalNear} NEAR across ${droneCount} autonomous sub-account drones over ${Math.round(estimatedDurationSec / 60)}m. Trades are staggered with randomized volume jitter to break on-chain clustering and evade MEV front-runners.`;
+    `NEAR AI Cloud decomposed ${totalNear} NEAR across ${droneCount} autonomous sub-account drones over ${Math.round(estimatedDurationSec / 60)}m.${exitTrigger ? ` Automated ${exitTrigger.targetDisplay} trigger attached.` : ''} Trades are staggered with randomized volume jitter to break on-chain clustering and evade MEV front-runners.`;
 
   // Cryptographic attestation token simulation for TEE
   const attestationHash = '0x' + crypto.createHash('sha256').update(prompt + tokenInfo.address + Date.now() + Math.random()).digest('hex');
 
   return {
+    action,
     strategy,
     strategyTitle: titles[strategy],
     tokenAddress: tokenInfo.address,
@@ -321,6 +492,8 @@ export async function planSwarmSession(params: {
     stealthScore,
     stealthMode,
     tranches,
+    exitTrigger: exitTrigger || null,
+    exit_trigger: exitTrigger || null,
     teeEnclave: {
       provider: 'NEAR AI Cloud (TEE Intel TDX)',
       enclaveType: 'Intel TDX / NVIDIA H100 Confidential Computing',

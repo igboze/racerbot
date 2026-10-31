@@ -2648,15 +2648,17 @@ function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, o
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
 export async function executeBuyHelper(
-  telegramId: number,
+  userIdOrTelegramId: number | string,
   rawTokenAddress: string,
   amountNear: number,
   onProgress?: (stage: string) => void
 ): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; txHash?: string }> {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
-  const user = await getUserByTelegramId(telegramId);
+  const user = typeof userIdOrTelegramId === 'string'
+    ? await getUserById(userIdOrTelegramId)
+    : await getUserByTelegramId(userIdOrTelegramId);
   if (!user) {
-    throw new Error('Please run /start to set up your trading wallet first.');
+    throw new Error('Please run /start or connect your trading wallet first.');
   }
 
   if (amountNear < 0.001) {
@@ -6059,16 +6061,19 @@ export function setupRoutes(bot: Telegraf): void {
       const plan = active.plan_json || {};
       const tranches = plan.tranches || [];
       const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
-        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
       ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+      const trig = plan.exitTrigger || plan.exit_trigger;
+      const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
       const text =
         `🤖 <b>NEAR AI Swarm Plan Awaiting Authorization</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `Target: <b>$${escapeHtml(active.token_symbol || 'TOKEN')}</b> (<code>${escapeHtml(active.token_address)}</code>)\n` +
+        `Target: <b>${escapeHtml(active.token_symbol || 'TOKEN')}</b> (<code>${escapeHtml(active.token_address)}</code>)\n` +
         `Strategy: <b>${escapeHtml((active.strategy_type || 'SWARM').toUpperCase())}</b>\n` +
         `Capital: <b>${Number(active.total_amount_near).toFixed(2)} NEAR</b> (${active.drone_count} Drones)\n` +
-        `Stealth Score: <b>${plan.stealthScore || 95}%</b> 🛡️\n\n` +
+        `Stealth Score: <b>${plan.stealthScore || 95}%</b> 🛡️${exitInfo}\n\n` +
         `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
         `🔒 <b>TEE Hardware Attestation:</b>\n` +
         `<code>${(active.tee_attestation?.attestationHash || '0xintel_tdx_verified').slice(0, 32)}...</code>\n\n` +
@@ -6226,16 +6231,19 @@ export function setupRoutes(bot: Telegraf): void {
 
       const tranches = plan.tranches || [];
       const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
-        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+        `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
       ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+      const trig = plan.exitTrigger || plan.exit_trigger;
+      const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
       const text =
         `🤖 <b>NEAR AI Execution Plan Generated</b>\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `Strategy: <b>${escapeHtml(plan.strategy.toUpperCase())}</b>\n` +
-        `Target: <b>$${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
+        `Strategy: <b>${escapeHtml((plan.strategyTitle || plan.strategy).toUpperCase())}</b>\n` +
+        `Target: <b>${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
         `Capital: <b>${plan.totalNear.toFixed(2)} NEAR</b> (${plan.droneCount} Drones)\n` +
-        `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️\n\n` +
+        `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️${exitInfo}\n\n` +
         `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
         `🔒 <b>TEE Hardware Attestation:</b>\n` +
         `<code>${(plan.teeEnclave.attestationHash || plan.teeEnclave.hash).slice(0, 32)}...</code>\n` +
@@ -11498,16 +11506,19 @@ export function setupRoutes(bot: Telegraf): void {
 
           const tranches = plan.tranches || [];
           const tranchesText = tranches.slice(0, 5).map((t: any, i: number) =>
-            `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${Math.round(t.delayMs / 1000)}s jitter)`
+            `• Drone #${i + 1}: <b>${t.amountNear.toFixed(2)} NEAR</b> (+${t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0)}s jitter)`
           ).join('\n') + (tranches.length > 5 ? `\n• ...and ${tranches.length - 5} more drone tranches` : '');
+
+          const trig = plan.exitTrigger || plan.exit_trigger;
+          const exitInfo = trig ? `\n🎯 Exit Trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>` : '';
 
           const text =
             `🤖 <b>NEAR AI Custom Execution Plan</b>\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
-            `Strategy: <b>${escapeHtml(plan.strategy.toUpperCase())}</b>\n` +
-            `Target: <b>$${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
+            `Strategy: <b>${escapeHtml((plan.strategyTitle || plan.strategy).toUpperCase())}</b>\n` +
+            `Target: <b>${escapeHtml(plan.tokenSymbol)}</b> (<code>${escapeHtml(plan.tokenAddress)}</code>)\n` +
             `Capital: <b>${plan.totalNear.toFixed(2)} NEAR</b> (${plan.droneCount} Drones)\n` +
-            `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️\n\n` +
+            `Stealth Score: <b>${plan.stealthScore}%</b> 🛡️${exitInfo}\n\n` +
             `<b>Drone Tranches:</b>\n${tranchesText}\n\n` +
             `🔒 <b>TEE Hardware Attestation:</b>\n` +
             `<code>${(plan.teeEnclave.attestationHash || plan.teeEnclave.hash).slice(0, 32)}...</code>\n` +

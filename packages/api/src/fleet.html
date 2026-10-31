@@ -1834,29 +1834,38 @@
 
     function renderSwarmPlan(plan) {
       document.getElementById('swarm-plan-preview').style.display = 'block';
-      document.getElementById('swarm-plan-strategy-title').textContent = (plan.strategy || 'TWAP Accumulation').toUpperCase();
-      document.getElementById('swarm-plan-stealth-badge').textContent = (plan.stealthScore || 95) + '% Stealth';
-      document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || 'Autonomous multi-drone execution staggered to eliminate front-running risk.';
+      const strategyName = plan.strategyTitle || (plan.strategy || 'TWAP Accumulation').replace(/_/g, ' ').toUpperCase();
+      document.getElementById('swarm-plan-strategy-title').textContent = strategyName;
+      
+      let badgeHtml = (plan.stealthScore || 95) + '% Stealth';
+      if (plan.exitTrigger) {
+        badgeHtml += ` · 🎯 ${plan.exitTrigger.targetDisplay}`;
+      }
+      document.getElementById('swarm-plan-stealth-badge').textContent = badgeHtml;
+      document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || 'Autonomous multi-drone execution staggered to eliminate front-running risk.';
 
       if (plan.teeEnclave) {
-        document.getElementById('swarm-tee-env').textContent = plan.teeEnclave.hardware || 'Intel TDX Enclave';
-        document.getElementById('swarm-tee-hash').textContent = plan.teeEnclave.attestationHash || '0x' + Math.random().toString(16).slice(2);
+        document.getElementById('swarm-tee-env').textContent = plan.teeEnclave.provider || plan.teeEnclave.hardware || 'Intel TDX Enclave';
+        document.getElementById('swarm-tee-hash').textContent = plan.teeEnclave.attestationHash || plan.teeEnclave.hash || '0x' + Math.random().toString(16).slice(2);
       }
 
       const tranchesList = document.getElementById('swarm-tranches-list');
       if (tranchesList && plan.tranches) {
-        tranchesList.innerHTML = plan.tranches.map((t, idx) => `
+        tranchesList.innerHTML = plan.tranches.map((t, idx) => {
+          const delaySec = t.delaySec !== undefined ? t.delaySec : (t.delayMs ? Math.round(t.delayMs / 1000) : 0);
+          return `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:4px; font-size:12px; font-family:var(--font-mono);">
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="color:var(--color-primary); font-weight:700;">#${idx + 1}</span>
-              <span style="color:var(--color-text);">${t.droneId || ('drone-' + (idx+1))}</span>
+              <span style="color:var(--color-text);">${t.droneName || t.droneId || ('Drone-' + (idx+1))}</span>
             </div>
             <div style="display:flex; align-items:center; gap:12px;">
               <span style="color:var(--color-text);">${t.amountNear.toFixed(2)} NEAR</span>
-              <span style="color:var(--color-text-subtle); font-size:11px;">+${Math.round(t.delayMs / 1000)}s jitter</span>
+              <span style="color:var(--color-text-subtle); font-size:11px;">+${delaySec}s jitter</span>
             </div>
           </div>
-        `).join('');
+        `;
+        }).join('');
       }
     }
 

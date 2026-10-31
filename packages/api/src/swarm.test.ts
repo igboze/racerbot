@@ -65,4 +65,38 @@ describe('NEAR AI Swarm Planner Engine', () => {
     expect(plan.droneCount).toBe(6);
     expect(plan.tranches).toHaveLength(6);
   }, 60000);
+
+  it('correctly extracts market cap exit trigger and populates delayMs and delaySec', async () => {
+    const plan = await planSwarmSession({
+      prompt: 'Accumulate 15 NEAR of HOOT with 4 stealth drones and sell 100% when market cap reaches 250k',
+      stealthModeOverride: true,
+    });
+
+    expect(plan.tokenSymbol).toBe('HOOT');
+    expect(plan.totalNear).toBe(15);
+    expect(plan.droneCount).toBe(4);
+    expect(plan.exitTrigger).toBeDefined();
+    expect(plan.exitTrigger?.type).toBe('market_cap');
+    expect(plan.exitTrigger?.targetValue).toBe(250000);
+    expect(plan.exitTrigger?.sellPct).toBe(100);
+
+    // Verify delayMs and delaySec are defined and in sync on all tranches
+    for (const t of plan.tranches) {
+      expect(t.delaySec).toBeDefined();
+      expect(t.delayMs).toBe(t.delaySec * 1000);
+      expect(t.droneId).toBeDefined();
+    }
+  }, 60000);
+
+  it('correctly extracts take-profit trigger from prompt', async () => {
+    const plan = await planSwarmSession({
+      prompt: 'Snipe 5 NEAR of BATMAN with 3 drones and take profit at 2x',
+      stealthModeOverride: true,
+    });
+
+    expect(plan.tokenSymbol).toBe('BATMAN');
+    expect(plan.exitTrigger).toBeDefined();
+    expect(plan.exitTrigger?.type).toBe('take_profit_pct');
+    expect(plan.exitTrigger?.targetValue).toBe(100);
+  }, 60000);
 });

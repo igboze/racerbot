@@ -104,7 +104,7 @@ export async function launchSwarmSession(sessionId: string): Promise<boolean> {
 
     const timer = setTimeout(async () => {
       try {
-        await executeTranche(sessionId, user.telegram_id, tranche, i);
+        await executeTranche(sessionId, user.id || user.telegram_id, tranche, i);
       } catch (err: any) {
         logger.error(`Error executing drone tranche ${i} in swarm ${sessionId}:`, err);
       }
@@ -121,7 +121,7 @@ export async function launchSwarmSession(sessionId: string): Promise<boolean> {
  */
 async function executeTranche(
   sessionId: string,
-  telegramId: number,
+  userIdentifier: string | number,
   tranche: any,
   trancheIndex: number
 ): Promise<void> {
@@ -143,16 +143,37 @@ async function executeTranche(
   let filledSuccess = false;
   let errorReason: string | null = null;
   let tokenQtyAcquired = '0';
+  let createdPositionId: string | null = null;
 
   try {
     // Execute trade through Racer's execution engine
     // In stealth mode, trade is isolated without exposing master account
-    const tradeRes = await executeBuyHelper(telegramId, session.token_address, tranche.amountNear);
+    const tradeRes = await executeBuyHelper(userIdentifier, session.token_address, tranche.amountNear);
 
     if (tradeRes?.success) {
       filledSuccess = true;
       txHash = tradeRes.txHash || null;
       tokenQtyAcquired = tradeRes.tokenQty || '0';
+      createdPositionId = tradeRes.positionId || null;
+
+      // Auto-attach conditional exit trigger (e.g. Market Cap or TP/SL) if requested in the AI plan
+      const plan = session.plan_json || {};
+      const exitTrigger = plan.exitTrigger || plan.exit_trigger;
+      if (exitTrigger && createdPositionId) {
+        try {
+          const { createTrigger } = await import('@racerbot/db');
+          await createTrigger({
+            user_id: session.user_id,
+            position_id: createdPositionId,
+            type: exitTrigger.type || 'market_cap',
+            target_value: exitTrigger.targetValue,
+            sell_pct: exitTrigger.sellPct || 100,
+          });
+          logger.info(`Auto-registered exit trigger (${exitTrigger.type}: ${exitTrigger.targetValue}) for swarm position ${createdPositionId}`);
+        } catch (trigErr: any) {
+          logger.warn(`Failed to auto-register exit trigger for position ${createdPositionId}:`, trigErr?.message || trigErr);
+        }
+      }
     } else {
       errorReason = tradeRes?.message || 'Swap did not complete';
     }
