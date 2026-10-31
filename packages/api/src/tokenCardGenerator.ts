@@ -63,12 +63,47 @@ function loadAssetBase64(name: string): string | null {
 }
 
 /**
- * Pre-fetches an HTTP/HTTPS image URL and converts it to a base64 Data URI
- * so Satori can render remote token icons reliably without HTTP failure.
+ * Strict SSRF protection: blocks private IPs, cloud metadata endpoints (169.254.169.254),
+ * local loopbacks, and non-HTTPS protocols.
+ */
+export function isSafeExternalImageUrl(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.lan') ||
+      /^127\./.test(hostname) ||
+      /^10\./.test(hostname) ||
+      /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^169\.254\./.test(hostname) ||
+      hostname === '0.0.0.0' ||
+      hostname === '[::1]' ||
+      hostname.startsWith('fc') ||
+      hostname.startsWith('fe80')
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pre-fetches an HTTPS image URL and converts it to a base64 Data URI
+ * with strict SSRF validation so Satori can render remote token icons reliably.
  */
 async function fetchImageAsBase64(url: string): Promise<string | null> {
   if (!url) return null;
   if (url.startsWith('data:')) return url;
+  if (!isSafeExternalImageUrl(url)) return null;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3500); // 3.5s max wait

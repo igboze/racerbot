@@ -15,6 +15,7 @@ import {
   pauseSwarmSession,
   abortSwarmSession,
 } from '../swarmExecutor.js';
+import { verifiedUser } from './verifiedUser.js';
 
 const logger = createLogger('swarm-routes');
 
@@ -22,56 +23,12 @@ export function createSwarmRouter(): Router {
   const router = Router();
 
   /**
-   * Helper to resolve user from auth header, token, or body
+   * Cryptographically verified user resolver:
+   * Only accepts verified TMA initData or valid server-issued Bearer session tokens.
+   * Never accepts unauthenticated spoofable headers or fallbacks to arbitrary users.
    */
   async function resolveUser(req: Request) {
-    if ((req as any).userId) {
-      const u = await getUserById((req as any).userId);
-      if (u) return u;
-    }
-
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.replace(/^Bearer\s+/, '') || (req.query?.token as string) || req.body?.authToken;
-    if (token) {
-      try {
-        const { verifyAuthToken } = await import('../authSession.js');
-        const sess = await verifyAuthToken(token);
-        if (sess?.userId) {
-          const u = await getUserById(sess.userId);
-          if (u) return u;
-        }
-      } catch {}
-    }
-
-    const telegramId = req.headers['x-telegram-id']
-      ? parseInt(req.headers['x-telegram-id'] as string, 10)
-      : (req.body?.telegramId ? parseInt(req.body.telegramId, 10) : Number(req.query?.telegramId) || null);
-
-    if (telegramId && !isNaN(telegramId)) {
-      const u = await getUserByTelegramId(telegramId);
-      if (u) return u;
-    }
-    const userId = (req.headers['x-user-id'] as string) || req.body?.userId;
-    if (userId) {
-      const u = await getUserById(userId);
-      if (u) return u;
-    }
-
-    const username = (req.body?.username as string) || (req.query?.username as string);
-    const { getDb } = await import('@racerbot/db');
-    const db = await getDb().catch(() => null);
-    if (db && username) {
-      const cleanUser = username.replace(/^@/, '');
-      const res = await db.query('SELECT * FROM users WHERE username = $1 OR subaccount_id = $1 LIMIT 1', [cleanUser]);
-      if (res.rows[0]) return res.rows[0];
-    }
-
-    // Fallback in demo/dev mode: get first active user or latest user
-    if (db) {
-      const res = await db.query('SELECT * FROM users ORDER BY created_at DESC LIMIT 1');
-      if (res.rows[0]) return res.rows[0];
-    }
-    return null;
+    return await verifiedUser(req);
   }
 
   /**
@@ -133,6 +90,23 @@ export function createSwarmRouter(): Router {
         return;
       }
 
+      const user = await resolveUser(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+        return;
+      }
+
+      const existingSession = await getAiSwarmSessionById(sessionId);
+      if (!existingSession) {
+        res.status(404).json({ success: false, error: 'Swarm session not found' });
+        return;
+      }
+
+      if (existingSession.user_id !== user.id) {
+        res.status(403).json({ success: false, error: 'Forbidden: You do not own this swarm session' });
+        return;
+      }
+
       await launchSwarmSession(sessionId);
       const status = await getSwarmSessionStatus(sessionId);
       if (!status) {
@@ -168,6 +142,23 @@ export function createSwarmRouter(): Router {
   router.get('/status/:sessionId', async (req: Request, res: Response): Promise<void> => {
     try {
       const sessionId = req.params.sessionId;
+      const user = await resolveUser(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+        return;
+      }
+
+      const sessionRec = await getAiSwarmSessionById(sessionId);
+      if (!sessionRec) {
+        res.status(404).json({ success: false, error: 'Swarm session not found' });
+        return;
+      }
+
+      if (sessionRec.user_id !== user.id) {
+        res.status(403).json({ success: false, error: 'Forbidden: You do not own this swarm session' });
+        return;
+      }
+
       const status = await getSwarmSessionStatus(sessionId);
       if (!status) {
         res.status(404).json({ success: false, error: 'Swarm session not found' });
@@ -204,6 +195,24 @@ export function createSwarmRouter(): Router {
         res.status(400).json({ success: false, error: 'Missing sessionId' });
         return;
       }
+
+      const user = await resolveUser(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+        return;
+      }
+
+      const sessionRec = await getAiSwarmSessionById(sessionId);
+      if (!sessionRec) {
+        res.status(404).json({ success: false, error: 'Swarm session not found' });
+        return;
+      }
+
+      if (sessionRec.user_id !== user.id) {
+        res.status(403).json({ success: false, error: 'Forbidden: You do not own this swarm session' });
+        return;
+      }
+
       await pauseSwarmSession(sessionId);
       res.json({ success: true, message: 'Swarm paused' });
     } catch (err: any) {
@@ -221,6 +230,24 @@ export function createSwarmRouter(): Router {
         res.status(400).json({ success: false, error: 'Missing sessionId' });
         return;
       }
+
+      const user = await resolveUser(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Unauthorized: Authentication required' });
+        return;
+      }
+
+      const sessionRec = await getAiSwarmSessionById(sessionId);
+      if (!sessionRec) {
+        res.status(404).json({ success: false, error: 'Swarm session not found' });
+        return;
+      }
+
+      if (sessionRec.user_id !== user.id) {
+        res.status(403).json({ success: false, error: 'Forbidden: You do not own this swarm session' });
+        return;
+      }
+
       await abortSwarmSession(sessionId);
       res.json({ success: true, message: 'Swarm aborted' });
     } catch (err: any) {

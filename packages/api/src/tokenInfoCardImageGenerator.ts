@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { TokenInfoCardData } from './tokenInfoCardData.js';
+import { isSafeExternalImageUrl } from './tokenCardGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,8 +114,8 @@ export async function resolveTokenIconDataUri(tokenAddress: string, iconCandidat
     return src;
   }
 
-  // 2. HTTP / HTTPS image URL
-  if (src.startsWith('http://') || src.startsWith('https://')) {
+  // 2. HTTPS image URL with SSRF protection
+  if (src.startsWith('https://') && isSafeExternalImageUrl(src)) {
     try {
       const res = await fetch(src, {
         headers: { Accept: 'image/*, */*' },
