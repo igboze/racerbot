@@ -26,7 +26,6 @@ import {
   RACERBOT_PARENT_ACCOUNT,
   TREASURY_ACCOUNT_ID,
 } from '../config.js';
-import { executeShieldedVaultIntent } from '../racerVault.js';
 import { registerConfidentialRoutes } from './confidential.js';
 import { registerWebWalletRoutes } from './webWallet.js';
 import { createSwarmRouter } from './swarmRoutes.js';
@@ -897,24 +896,54 @@ router.get('/alpha/user/token-balance', async (req, res) => {
 router.post('/alpha/trade/intent-quote', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
-    const { tokenAddress, side = 'BUY', amountNear = 1, amountTokens, tokenDecimals } = req.body;
+    const { tokenAddress, side = 'BUY', amountNear = 1, amountTokens, tokenDecimals, venue, slippagePct } = req.body;
     if (!tokenAddress) {
       res.status(400).json({ error: 'tokenAddress is required' });
       return;
     }
-    const { getIntentSwapQuote } = await import('../intentTrade.js');
-    const recipient = user?.subaccount_id || user?.id || 'racerbot.near';
-    const quote = await getIntentSwapQuote({
-      tokenAddress,
-      side: side.toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
-      amountNear: Number(amountNear) || 1,
-      amountTokens,
-      tokenDecimals,
-      recipientAccountId: recipient,
-      dryRun: true,
+    const isBuy = side.toUpperCase() !== 'SELL';
+    const numNear = Number(amountNear) || 1;
+    const { quoteMinimumOut } = await import('../racerVault.js');
+    const { parseTokenUnits, formatTokenUnits } = await import('@racerbot/shared');
+
+    let rawAmountIn: string;
+    if (isBuy) {
+      rawAmountIn = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
+    } else {
+      const decimals = Number(tokenDecimals) || 18;
+      rawAmountIn = parseTokenUnits(String(amountTokens || '1'), decimals).toString();
+    }
+
+    let minOut = '0';
+    let minOutFormatted = '0';
+    try {
+      minOut = await quoteMinimumOut({
+        tokenAddress,
+        venue: venue || 'rhea',
+        isBuy,
+        amountIn: rawAmountIn,
+        slippagePct: Number(slippagePct) || 2,
+        poolId: req.body.poolId,
+        dclPoolId: req.body.dclPoolId,
+      });
+      const decimals = isBuy ? (Number(tokenDecimals) || 18) : 24;
+      minOutFormatted = formatTokenUnits(minOut, decimals);
+    } catch {
+      // Best-effort quote
+    }
+
+    res.json({
+      supported: true,
+      routing: 'RACER_EXECUTOR',
+      amountIn: rawAmountIn,
+      amountInFormatted: isBuy ? String(numNear) : String(amountTokens || '0'),
+      amountOut: minOut,
+      amountOutFormatted: minOutFormatted !== '0' ? minOutFormatted : undefined,
+      minAmountOut: minOut,
+      minAmountOutFormatted: minOutFormatted,
+      timeEstimateSeconds: 1,
+      privateSellsAllowed: true,
     });
-    const { privateSellsAllowed } = await import('../racerVault.js');
-    res.json({ ...quote, privateSellsAllowed: privateSellsAllowed() });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch intent quote' });
   }
@@ -996,113 +1025,82 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       }
     }
 
-    // 1. Phase 1a: Per-position ephemeral executors funded from the user's NEAR Intents private balance.
-    // Every private buy and any sell of an open executor position routes through disposable executors first.
-    const canUseExecutors = Boolean(user.scoped_key_encrypted) || Boolean(await verifiedUser(req).catch(() => null));
-    if (!onChainTxHash && isPrivateTrade && EXECUTORS_ENABLED && user.subaccount_id && canUseExecutors && routingPreference !== 'amm') {
+    // 1. Private Trades: Strictly routed through Model 3 (Keyless Position Executors)
+    if (isPrivateTrade) {
+      if (!EXECUTORS_ENABLED) {
+        res.status(400).json({ error: 'Confidential trading is temporarily disabled.' });
+        return;
+      }
+      if (!user.subaccount_id) {
+        res.status(401).json({ error: 'Please connect your NEAR wallet to trade privately.' });
+        return;
+      }
+
       const position = isBuy ? null : await positionBalance(user.id, tokenAddress).catch(() => null);
-      if (isBuy || (position && position.total > 0n)) {
-        const common = {
-          user,
-          tokenAddress,
-          venue: String(venue),
-          slippagePct: Number(slippagePct) || 2,
-          poolId: clientPoolId ? Number(clientPoolId) : undefined,
-          dclPoolId: clientDclPoolId ? String(clientDclPoolId) : undefined,
-        };
-        const explicitSellPct = req.body.sellPercent !== undefined ? Number(req.body.sellPercent) : NaN;
-        const sellPct = !isBuy && position && position.total > 0n
-          ? (!isNaN(explicitSellPct) && explicitSellPct > 0
-              ? Math.min(100, Math.max(1, Math.round(explicitSellPct)))
-              : (!amountTokensRaw && (amountTokens === undefined || amountTokens === null || String(amountTokens).trim() === ''))
-                ? 100
-                : Math.min(100, Math.max(1, Number((BigInt(calculatedAmountIn) * 10_000n) / position.total) / 100)))
-          : 100;
-        const result = isBuy
-          ? await confidentialBuy({ ...common, amountYocto: BigInt(calculatedAmountIn) })
-          : await confidentialSell({
-              ...common,
-              // Sell the requested share of the whole position, spread over its executors
-              percent: sellPct,
+      if (!isBuy && (!position || position.total === 0n)) {
+        res.status(400).json({ error: 'No confidential position found to sell for this token.' });
+        return;
+      }
+
+      const common = {
+        user,
+        tokenAddress,
+        venue: String(venue),
+        slippagePct: Number(slippagePct) || 2,
+        poolId: clientPoolId ? Number(clientPoolId) : undefined,
+        dclPoolId: clientDclPoolId ? String(clientDclPoolId) : undefined,
+      };
+      const explicitSellPct = req.body.sellPercent !== undefined ? Number(req.body.sellPercent) : NaN;
+      const sellPct = !isBuy && position && position.total > 0n
+        ? (!isNaN(explicitSellPct) && explicitSellPct > 0
+            ? Math.min(100, Math.max(1, Math.round(explicitSellPct)))
+            : (!amountTokensRaw && (amountTokens === undefined || amountTokens === null || String(amountTokens).trim() === ''))
+              ? 100
+              : Math.min(100, Math.max(1, Number((BigInt(calculatedAmountIn) * 10_000n) / position.total) / 100)))
+        : 100;
+
+      const result = isBuy
+        ? await confidentialBuy({ ...common, amountYocto: BigInt(calculatedAmountIn) })
+        : await confidentialSell({
+            ...common,
+            percent: sellPct,
+          });
+
+      if (!result.success || result.txHashes.length === 0) {
+        if (isBuy && /No ready executor covers this amount/i.test(String(result.reason || ''))) {
+          const { confidentialOverview } = await import('../executorPool.js');
+          const overview = await confidentialOverview(user).catch(() => null);
+          const poolList = overview?.pool || [];
+          const readyYocto = poolList
+            .filter((e: any) => e.status === 'ready')
+            .reduce((sum: bigint, e: any) => sum + BigInt(e.size || '0'), 0n);
+          const privYocto = BigInt(overview?.privateBalance || '0');
+          if (readyYocto + privYocto < BigInt(calculatedAmountIn)) {
+            res.json({
+              success: false,
+              needsConfidentialDeposit: true,
+              amountNear: numNear,
+              error: `Deposit at least ${numNear} NEAR into your Confidential Pool to spawn anonymous executor wallets for this trade.`,
             });
-        if (!result.success || result.txHashes.length === 0) {
-          if (isBuy && /No ready executor covers this amount/i.test(String(result.reason || ''))) {
-            const { confidentialOverview } = await import('../executorPool.js');
-            const overview = await confidentialOverview(user).catch(() => null);
-            const poolList = overview?.pool || [];
-            const readyYocto = poolList
-              .filter((e: any) => e.status === 'ready')
-              .reduce((sum: bigint, e: any) => sum + BigInt(e.size || '0'), 0n);
-            const privYocto = BigInt(overview?.privateBalance || '0');
-            const hasActiveConfPool = poolList.length > 0 || privYocto > 0n;
-            const hasManagedKey = Boolean(user.scoped_key_encrypted && user.scoped_key_encrypted !== 'EXTERNAL_CONNECTED_WALLET');
-            if (hasActiveConfPool || !hasManagedKey) {
-              if (readyYocto + privYocto < BigInt(calculatedAmountIn)) {
-                res.json({
-                  success: false,
-                  needsConfidentialDeposit: true,
-                  amountNear: numNear,
-                  error: `Deposit at least ${numNear} NEAR into your Confidential Pool to spawn anonymous executor wallets for this trade.`,
-                });
-                return;
-              }
-              res.status(400).json({ error: result.reason || 'Confidential trade failed. Nothing was spent from your wallet.' });
-              return;
-            }
-            // User has a managed RacerBot wallet and an empty executor pool: fall through to Shielded Router / Intents
-          } else {
-            res.status(400).json({ error: result.reason || 'Confidential trade failed. Nothing was spent from your wallet.' });
             return;
           }
-        } else {
-          onChainTxHash = result.txHashes[0];
-          executionRouting = 'RACER_EXECUTOR';
-          executorAccounts = result.executors;
-          executorTxHashes = result.txHashes;
-          recipientAccountId = result.executors.join(', ');
-          intentMessage = isBuy
-            ? `Bought privately through ${result.executors.length} executor${result.executors.length === 1 ? '' : 's'}`
-            : 'Sold privately; the NEAR returns to your private balance once the position closes';
         }
+        res.status(400).json({ error: result.reason || 'Confidential trade failed. Nothing was spent from your wallet.' });
+        return;
       }
+
+      onChainTxHash = result.txHashes[0];
+      executionRouting = 'RACER_EXECUTOR';
+      executorAccounts = result.executors;
+      executorTxHashes = result.txHashes;
+      recipientAccountId = result.executors.join(', ');
+      intentMessage = isBuy
+        ? `Bought privately through ${result.executors.length} keyless executor${result.executors.length === 1 ? '' : 's'}`
+        : 'Sold privately; the NEAR returns to your private balance once the position closes';
     }
 
-    // 2. Phase 1b: Decentralized Private Intent Solver Execution (Defuse Solver - non-launchpad fallback)
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm' && routingPreference !== 'vault' && !isLaunchpadToken && isBuy) {
-      try {
-        const { executeIntentTrade } = await import('../intentTrade.js');
-        const intentResult = await executeIntentTrade({
-          user,
-          tokenAddress,
-          tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
-          side: isBuy ? 'BUY' : 'SELL',
-          amountNear: numNear,
-          recipientAccountId: user.subaccount_id || user.id,
-        });
-
-        if (intentResult.success && intentResult.txHash) {
-          onChainTxHash = intentResult.txHash;
-          executionRouting = 'INTENT_SOLVER';
-          intentMessage = intentResult.message;
-        } else if (intentResult.requiresClientSignature && intentResult.depositAddress) {
-          res.json({
-            success: false,
-            requiresClientSignature: true,
-            routing: 'INTENT_SOLVER',
-            depositAddress: intentResult.depositAddress,
-            amountNear: numNear,
-            correlationId: intentResult.correlationId,
-            message: 'Please confirm the intent transfer in your connected NEAR wallet.'
-          });
-          return;
-        }
-      } catch (intentErr: any) {
-        logger.warn(`Intent solver execution error (${intentErr.message}), trying Shielded Router Vault`);
-      }
-    }
-
-    // Auto-provision RacerBot Trading Wallet for external connected wallet users if not yet created
-    if (!onChainTxHash) {
+    // 2. Public / Standard Trades: Auto-provision trading wallet if needed
+    if (!onChainTxHash && !isPrivateTrade) {
       const { hasManagedWallet, createWebManagedWallet } = await import('../webWallet.js');
       if (!hasManagedWallet(user)) {
         const verified = await verifiedUser(req).catch(() => null);
@@ -1114,7 +1112,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
               needsTradingWalletFunding: true,
               tradingWalletAddress: created.address,
               amountNear: numNear,
-              error: 'Your RacerBot Trading Wallet is ready! Approve the transfer in your connected wallet to fund it and execute your private trade.',
+              error: 'Your RacerBot Trading Wallet is ready! Approve the transfer in your connected wallet to fund it and execute your trade.',
             });
             return;
           } catch (wErr: any) {
@@ -1124,79 +1122,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       }
     }
 
-    // 2. Phase 1b: Deployed Shielded Intent Router Contract (racerbotrouter.near)
-    // Supports ALL launchpads on NEAR (Ref, Rhea, NearlyTrade, Shardsmarket, Intear, MemeCooking, etc.) and native tokens
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
-      try {
-        const vaultRes = await executeShieldedVaultIntent({
-          user,
-          tokenAddress,
-          venue: venue as any,
-          side: isBuy ? 'BUY' : 'SELL',
-          amountNear: numNear,
-          amountTokens: calculatedAmountIn,
-          slippagePct: Number(slippagePct) || 2,
-          poolId: clientPoolId ? Number(clientPoolId) : undefined,
-          dclPoolId: clientDclPoolId ? String(clientDclPoolId) : undefined,
-          tokenDecimals: Number(clientDecimals) > 0 ? Number(clientDecimals) : undefined,
-        });
-
-        if (vaultRes.success && vaultRes.txHash) {
-          onChainTxHash = vaultRes.txHash;
-          executionRouting = 'RACER_SHIELDED_VAULT';
-          intentMessage = vaultRes.message || `Shielded atomic trade executed via Racer Router (${vaultRes.txHash})`;
-          recipientAccountId = vaultRes.recipientAccountId;
-        } else {
-          logger.warn(`Shielded vault execution returned: ${vaultRes.reason || 'unsuccessful'}`);
-          if (isPrivateTrade && vaultRes.privateSellsPaused) {
-            res.status(409).json({ error: vaultRes.reason, canRetryPublic: true });
-            return;
-          }
-          const rawReason = String(vaultRes.reason || '');
-          if (isBuy && /does not exist|not enough balance|insufficient|LackBalanceForState|No server-managed signing key/i.test(rawReason)) {
-            res.json({
-              success: false,
-              needsTradingWalletFunding: true,
-              tradingWalletAddress: user.subaccount_id,
-              amountNear: numNear,
-              error: `Your RacerBot Trading Wallet (${user.subaccount_id.slice(0, 10)}...) needs ${numNear} NEAR to execute this trade. Approve the transfer from your connected wallet.`,
-            });
-            return;
-          }
-          if (isPrivateTrade) {
-            let reasonText = vaultRes.reason || 'Transaction could not be shielded';
-            if (reasonText.includes('zero_tokens_received')) {
-              reasonText = '0 tokens received from venue (liquidity temporarily unavailable or slippage limit exceeded; funds safely refunded)';
-            }
-            res.status(400).json({
-              error: `Shielded router execution failed: ${reasonText}. Unshielded trade was blocked to protect your wallet privacy.`,
-            });
-            return;
-          }
-        }
-      } catch (vaultErr: any) {
-        logger.warn(`Shielded vault router execution error (${vaultErr.message})`);
-        const errMsg = String(vaultErr?.message || '');
-        if (isBuy && /does not exist|not enough balance|insufficient|LackBalanceForState|No server-managed signing key/i.test(errMsg)) {
-          res.json({
-            success: false,
-            needsTradingWalletFunding: true,
-            tradingWalletAddress: user.subaccount_id,
-            amountNear: numNear,
-            error: `Your RacerBot Trading Wallet (${user.subaccount_id.slice(0, 10)}...) needs ${numNear} NEAR to execute this trade. Approve the transfer from your connected wallet.`,
-          });
-          return;
-        }
-        if (isPrivateTrade) {
-          res.status(400).json({
-            error: `Shielded router execution failed: ${vaultErr.message}. Unshielded trade was blocked to protect your wallet privacy.`,
-          });
-          return;
-        }
-      }
-    }
-
-    // 3. Phase 1c: Direct AMM Swap via Managed Subaccount (Fallback for public trades only)
+    // 3. Public Trades: Direct AMM Execution via Managed Subaccount / Relayer
     if (!onChainTxHash && user.subaccount_id && !isPrivateTrade) {
       try {
         // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
@@ -1565,64 +1491,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
       } catch {}
     }
 
-    // ── Phase 1a: Decentralized Private Intent Solver Execution (Option B) ──
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
-      try {
-        const { executeIntentTrade } = await import('../intentTrade.js');
-        const intentResult = await executeIntentTrade({
-          user,
-          tokenAddress,
-          tokenSymbol: tokenSymbol || tokenAddress.split('.')[0].toUpperCase(),
-          side: isBuy ? 'BUY' : 'SELL',
-          amountNear: numNear,
-          recipientAccountId: user.subaccount_id || user.id,
-        });
-
-        if (intentResult.success && intentResult.txHash) {
-          onChainTxHash = intentResult.txHash;
-          executionRouting = 'INTENT_SOLVER';
-          intentMessage = intentResult.message;
-        } else if (intentResult.requiresClientSignature && intentResult.depositAddress) {
-          // External wallet selector user — return single-use stealth deposit address for client-side signing
-          res.json({
-            success: false,
-            requiresClientSignature: true,
-            routing: 'INTENT_SOLVER',
-            depositAddress: intentResult.depositAddress,
-            amountNear: numNear,
-            correlationId: intentResult.correlationId,
-            message: 'Please confirm the intent transfer in your connected NEAR wallet.'
-          });
-          return;
-        } else {
-          logger.info(`Defuse Intent route skipped (${intentResult.reason || 'unlisted'}), falling back to Direct AMM Relayer`);
-        }
-      } catch (intentErr: any) {
-        logger.warn(`Intent solver execution error (${intentErr.message}), falling back to direct AMM`);
-      }
-    }
-
-    // ── Phase 1a-2: Deployed Shielded Router Vault (racerbotrouter.near) ──
-    if (!onChainTxHash && user.subaccount_id && routingPreference !== 'amm') {
-      try {
-        const vRes = await executeShieldedVaultIntent({
-          user,
-          tokenAddress,
-          venue: venue as any,
-          side: isBuy ? 'BUY' : 'SELL',
-          amountNear: numNear,
-          amountTokens: req.body.amountTokens || rawNearYocto,
-          slippagePct: Number(slippagePct) || 2,
-        });
-        if (vRes.success && vRes.txHash) {
-          onChainTxHash = vRes.txHash;
-          executionRouting = 'RACER_SHIELDED_VAULT';
-          intentMessage = vRes.message || `Shielded atomic trade executed via Racer Router (${vRes.txHash})`;
-        }
-      } catch {}
-    }
-
-    // ── Phase 1b: Direct AMM Swap via Managed Subaccount (Fallback or Direct AMM) ──
+    // ── Phase 1b: Direct AMM Swap via Managed Subaccount (Standard DEX Swap) ──
     if (!onChainTxHash && user.subaccount_id) {
       try {
         // Pre-swap guarantee: ensure token storage deposit is registered on-chain for ALL venues
