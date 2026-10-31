@@ -99,4 +99,35 @@ describe('NEAR AI Swarm Planner Engine', () => {
     expect(plan.exitTrigger?.type).toBe('take_profit_pct');
     expect(plan.exitTrigger?.targetValue).toBe(100);
   }, 60000);
+
+  it('correctly resolves and plans for any token across the ecosystem (not just HOOT)', async () => {
+    // Test 1: LONK
+    const lonkPlan = await planSwarmSession({
+      prompt: 'Accumulate 10 NEAR of LONK with 4 stealth drones',
+      stealthModeOverride: true,
+    });
+    expect(lonkPlan.tokenAddress).toBe('token.lonk.near');
+    expect(lonkPlan.tokenSymbol).toBe('LONK');
+
+    // Test 2: SWEAT
+    const sweatPlan = await planSwarmSession({
+      prompt: 'Snipe 20 NEAR of $SWEAT with 3 drones',
+      stealthModeOverride: true,
+    });
+    expect(sweatPlan.tokenAddress).toBe('token.sweat');
+
+    // Test 3: BLACKDRAGON
+    const dragonPlan = await planSwarmSession({
+      prompt: 'Buy 15 NEAR of BLACKDRAGON across 5 drones',
+      stealthModeOverride: true,
+    });
+    expect(dragonPlan.tokenAddress).toBe('blackdragon.tkn.near');
+
+    // Test 4: Direct contract address
+    const directPlan = await planSwarmSession({
+      prompt: 'Buy 10 NEAR of token.v2.ref-finance.near with 3 drones',
+      stealthModeOverride: true,
+    });
+    expect(directPlan.tokenAddress).toBe('token.v2.ref-finance.near');
+  }, 60000);
 });

@@ -52,7 +52,7 @@ export const SOLANA_BPS_DENOMINATOR = 10000n;
 
 /** Dev fee wallet that receives the platform fee in SOL. Override with SOLANA_DEV_FEE_WALLET. */
 export const DEFAULT_SOLANA_DEV_FEE_WALLET =
-  (process.env.SOLANA_DEV_FEE_WALLET || '5ba1CAazPrdYYcaTYyzTqMExgCadu2aFauW24r28dh5g').trim();
+  (process.env.SOLANA_TREASURY_ADDRESS || process.env.SOLANA_DEV_FEE_WALLET || '5ba1CAazPrdYYcaTYyzTqMExgCadu2aFauW24r28dh5g').trim();
 
 /** SOL kept in the wallet for network fees and token account rent (~0.0021 SOL per new token account). */
 export const SOLANA_MIN_RESERVE_LAMPORTS = 5_000_000n; // 0.005 SOL

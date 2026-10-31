@@ -58,7 +58,7 @@ export interface SwarmPlanResult {
   reasoning?: string;
 }
 
-// ── Known Token Aliases on NEAR ─────────────────────────────────────────────
+// ── Known Token Aliases on NEAR & Connected Ecosystems ─────────────────────
 const TOKEN_ALIASES: Record<string, string> = {
   hoot: 'hoot-8ecf65.launchpad.justhoot.near',
   batman: 'batman-4.nearlytrade.near',
@@ -71,15 +71,81 @@ const TOKEN_ALIASES: Record<string, string> = {
   trade: 'trade-2.nearlytrade.near',
   rhea: 'token.rhealab.near',
   blackdragon: 'blackdragon.tkn.near',
+  dragon: 'blackdragon.tkn.near',
   lonk: 'token.lonk.near',
   shitzu: 'token.0xshitzu.near',
   bean: 'bean.tkn.near',
   uwu: 'uwu.tkn.near',
   neat: 'neat.nrc-20.near',
+  sweat: 'token.sweat',
+  ref: 'token.v2.ref-finance.near',
+  aurora: 'aaaaaa20d9e0e2461697782ee93c43fce3896730.factory.bridge.near',
+  hot: 'game.hot.tg',
+  usdc: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+  usdt: 'usdt.tkn.near',
+  marma: 'marmaj.tkn.near',
+  intel: 'intel.tkn.near',
+  shards: 'shards.tkn.near',
+  cheddar: 'token.cheddar.near',
+  jump: 'jumptoken.near',
+  nearx: 'nearx.stader-labs.near',
+  stnear: 'meta-pool.near',
+  linear: 'linear-protocol.near',
+  bonk: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+  wif: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+  sol: 'So11111111111111111111111111111111111111112',
 };
 
 /**
- * Resolves a token symbol or query string to a valid NEAR token contract address.
+ * Extracts a candidate token ticker, symbol, or contract address from natural language prompt.
+ */
+export function extractTokenCandidateFromPrompt(prompt: string): string | null {
+  if (!prompt) return null;
+
+  // 1. Explicit NEAR or testnet contract address in prompt (.near, .tg, .testnet)
+  const nearContract = prompt.match(/\b([a-zA-Z0-9_\-.]+\.(?:near|tg|testnet))\b/i);
+  if (nearContract) return nearContract[1].toLowerCase();
+
+  // Sui Type (0x...::...::...)
+  const suiType = prompt.match(/\b(0x[0-9a-fA-F]{40,66}::[a-zA-Z0-9_]+::[a-zA-Z0-9_]+)\b/);
+  if (suiType) return suiType[1];
+
+  // 0x Hex contract (Sui or Starknet)
+  const hexAddr = prompt.match(/\b(0x[0-9a-fA-F]{40,66})\b/);
+  if (hexAddr) return hexAddr[1].toLowerCase();
+
+  // 2. Explicit symbol preceded by '$' or '#' (e.g. $LONK, $SWEAT, $BONK, $REF)
+  const dollarSymbol = prompt.match(/[\$#]([A-Za-z0-9_-]{2,20})\b/);
+  if (dollarSymbol) return dollarSymbol[1].toLowerCase();
+
+  // 3. Look for "of <token>" (e.g. "accumulate 10 NEAR of LONK", "buy 5 NEAR of SWEAT", "10 SOL of BONK")
+  const ofToken = prompt.match(/\b(?:of|in|for)\s+([A-Za-z0-9_\-\.]{2,40})\b/i);
+  if (ofToken) {
+    const cand = ofToken[1].toLowerCase();
+    if (!['near', 'sol', 'sui', 'strk', 'eth', 'usdc', 'usdt', 'usd'].includes(cand)) {
+      return cand;
+    }
+  }
+
+  // 4. Look for "buy/snipe/accumulate/trade <token>"
+  const actionToken = prompt.match(/\b(?:buy|snipe|accumulate|sweep|trade|unwind|sell)\s+(?:all\s+)?(?:some\s+)?(?:on\s+|at\s+|in\s+)?([A-Za-z0-9_\-\.]{2,40})\b/i);
+  if (actionToken) {
+    const cand = actionToken[1].toLowerCase();
+    const ignored = ['near', 'sol', 'sui', 'strk', 'eth', 'usdc', 'usdt', 'usd', 'all', 'the', 'some', 'on', 'at', 'with', 'using', 'in'];
+    if (!ignored.includes(cand) && isNaN(Number(cand))) {
+      return cand;
+    }
+  }
+
+  // 5. Solana mint address (32 to 44 base58 characters without dots)
+  const solMint = prompt.match(/\b([1-9A-HJ-NP-Za-km-z]{32,44})\b/);
+  if (solMint && !solMint[1].includes('.')) return solMint[1];
+
+  return null;
+}
+
+/**
+ * Resolves a token symbol or query string to a valid token contract address.
  */
 export function resolveNearTokenQuery(query: string): string | null {
   if (!query) return null;
@@ -90,15 +156,16 @@ export function resolveNearTokenQuery(query: string): string | null {
     return TOKEN_ALIASES[clean];
   }
 
-  // Already a full NEAR account ID
-  if (clean.endsWith('.near')) {
+  // Already a full NEAR account ID / Telegram handle / Testnet
+  if (clean.endsWith('.near') || clean.endsWith('.tg') || clean.endsWith('.testnet')) {
     return clean;
   }
 
-  // Substring search in known aliases
-  for (const [key, addr] of Object.entries(TOKEN_ALIASES)) {
-    if (clean.includes(key) || key.includes(clean)) {
-      return addr;
+  // Word-level match against known aliases (whole word only to avoid substring bugs)
+  const words = clean.split(/[^a-z0-9_.-]+/);
+  for (const w of words) {
+    if (TOKEN_ALIASES[w]) {
+      return TOKEN_ALIASES[w];
     }
   }
 
@@ -106,10 +173,53 @@ export function resolveNearTokenQuery(query: string): string | null {
 }
 
 /**
+ * Derives a human-friendly uppercase token symbol from contract address, alias, or candidate.
+ */
+export function deriveTokenSymbol(tokenAddress: string, candidateOrAlias?: string | null): string {
+  if (candidateOrAlias) {
+    const cleanCand = candidateOrAlias.trim().replace(/^[\$#]/, '').toLowerCase();
+    if (TOKEN_ALIASES[cleanCand]) {
+      return cleanCand.toUpperCase();
+    }
+  }
+  for (const [key, addr] of Object.entries(TOKEN_ALIASES)) {
+    if (addr.toLowerCase() === tokenAddress.toLowerCase()) {
+      return key.toUpperCase();
+    }
+  }
+  const parts = tokenAddress.split('.');
+  if (parts.length > 1) {
+    const namePart = parts.find(p => p !== 'token' && p !== 'tkn' && p !== 'v2' && p !== 'near' && p !== 'factory');
+    if (namePart) return namePart.toUpperCase();
+  }
+  return parts[0]?.toUpperCase() || 'TOKEN';
+}
+
+/**
+ * Derives a human-friendly token name.
+ */
+export function deriveTokenName(tokenAddress: string, symbol: string): string {
+  if (symbol && symbol !== '???' && symbol !== 'TOKEN') {
+    return symbol.charAt(0).toUpperCase() + symbol.slice(1).toLowerCase();
+  }
+  return tokenAddress.split('.')[0] || 'Token';
+}
+
+/**
  * Enhanced async token resolution that matches aliases, full addresses,
- * and searches DB token_cache by symbol or name.
+ * candidate extraction, and searches DB token_cache by symbol or name.
  */
 export async function resolveTokenAddressAsync(query: string): Promise<string | null> {
+  // 1. Direct candidate extraction from prompt text
+  const candidate = extractTokenCandidateFromPrompt(query);
+  if (candidate) {
+    const directMatch = resolveNearTokenQuery(candidate);
+    if (directMatch) return directMatch;
+    if (candidate.endsWith('.near') || candidate.endsWith('.tg') || candidate.startsWith('0x') || candidate.length >= 32) {
+      return candidate;
+    }
+  }
+
   const syncMatch = resolveNearTokenQuery(query);
   if (syncMatch) return syncMatch;
 
@@ -129,7 +239,7 @@ export async function resolveTokenAddressAsync(query: string): Promise<string | 
     if (TOKEN_ALIASES[word]) {
       return TOKEN_ALIASES[word];
     }
-    if (word.endsWith('.near')) {
+    if (word.endsWith('.near') || word.endsWith('.tg')) {
       return word;
     }
 
@@ -146,7 +256,19 @@ export async function resolveTokenAddressAsync(query: string): Promise<string | 
     }
   }
 
-  return null;
+  if (candidate && db) {
+    try {
+      const res = await db.query(
+        `SELECT token_address FROM token_cache WHERE LOWER(symbol) = $1 OR LOWER(name) = $1 LIMIT 1`,
+        [candidate]
+      );
+      if (res.rows?.[0]?.token_address) {
+        return res.rows[0].token_address;
+      }
+    } catch { }
+  }
+
+  return candidate || null;
 }
 
 /**
@@ -266,6 +388,9 @@ function extractDroneCount(prompt: string, defaultDrones = 3): number {
  * Calls NEAR AI Cloud (or OpenAI fallback) to plan the swarm decomposition.
  */
 async function callNearAiModel(prompt: string, tokenInfo: TokenInfoResult, availableNear: number): Promise<any | null> {
+  if (process.env.NODE_ENV === 'test' && !process.env.NEAR_AI_TEST_LIVE) {
+    return null;
+  }
   const nearAiKey = process.env.NEAR_AI_API_KEY;
   const openAiKey = process.env.OPENAI_API_KEY;
 
@@ -356,10 +481,10 @@ export async function planSwarmSession(params: {
   if (!resolvedAddress) {
     resolvedAddress = params.defaultTokenAddress || null;
   }
-  // If still not resolved, check if prompt or context mentions HOOT or if it's empty
+  // If still not resolved, check if prompt explicitly mentions HOOT or if it's completely empty
   if (!resolvedAddress) {
-    const isGeneric = !prompt || /hoot/i.test(prompt) || /accumulate|snipe|swarm/i.test(prompt);
-    if (isGeneric) {
+    const isExplicitHootOrEmpty = !prompt || /hoot/i.test(prompt);
+    if (isExplicitHootOrEmpty) {
       resolvedAddress = 'hoot-8ecf65.launchpad.justhoot.near';
     } else {
       throw new Error(`Target token not recognized in prompt: "${prompt}". Please provide a token contract or valid symbol.`);
@@ -367,14 +492,18 @@ export async function planSwarmSession(params: {
   }
 
   const tokenAddress = resolvedAddress;
-  const tokenInfo = await getTokenInfo(tokenAddress).catch(() => null) || {
-    address: tokenAddress,
-    symbol: tokenAddress.split('.')[0]?.toUpperCase() || 'TOKEN',
-    name: tokenAddress.split('.')[0] || 'Token',
-    price: '0.00032',
-    venue: 'rhea',
-    liquidity_usd: '12500',
-  } as TokenInfoResult;
+  let tokenInfo = await getTokenInfo(tokenAddress).catch(() => null);
+  if (!tokenInfo || tokenInfo.symbol === '???') {
+    const sym = deriveTokenSymbol(tokenAddress);
+    tokenInfo = {
+      address: tokenAddress,
+      symbol: sym,
+      name: deriveTokenName(tokenAddress, sym),
+      price: tokenInfo?.price || '0.00032',
+      venue: tokenInfo?.venue || 'rhea',
+      liquidity_usd: tokenInfo?.liquidity_usd || '12500',
+    } as TokenInfoResult;
+  }
 
   // 2. Query NEAR AI TEE Cloud (with intelligent fallback)
   const aiResult = await callNearAiModel(prompt, tokenInfo, availableNear);
@@ -509,8 +638,8 @@ export async function planSwarmSession(params: {
     strategy,
     strategyTitle: titles[strategy],
     tokenAddress: tokenInfo.address,
-    tokenSymbol: tokenInfo.symbol || 'TOKEN',
-    tokenName: tokenInfo.name || 'Token',
+    tokenSymbol: (tokenInfo.symbol && tokenInfo.symbol !== '???') ? tokenInfo.symbol : deriveTokenSymbol(tokenInfo.address),
+    tokenName: (tokenInfo.name && tokenInfo.name !== 'Unknown') ? tokenInfo.name : deriveTokenName(tokenInfo.address, tokenInfo.symbol),
     totalNear: parseFloat(totalNear.toFixed(3)),
     droneCount,
     estimatedDurationSec,

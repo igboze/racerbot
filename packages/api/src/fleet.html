@@ -807,7 +807,7 @@
                   <span>SWARM INTENT / NATURAL LANGUAGE PROMPT</span>
                   <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Decomposed by NEAR AI</span>
                 </div>
-                <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy, e.g.: Accumulate 10 NEAR of HOOT with 5 stealth drones staggered over 15 minutes"></textarea>
+                <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy for any token, e.g.: Accumulate 10 NEAR of LONK (or SWEAT, REF, HOOT) with 5 stealth drones staggered over 15 minutes"></textarea>
                 
                 <div class="chips-row" style="margin-top:8px;">
                   <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">PRESETS:</span>
@@ -821,13 +821,17 @@
               <!-- Configuration Grid -->
               <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
                 <div>
-                  <div class="form-label"><span>TARGET TOKEN CONTRACT</span></div>
-                  <input type="text" id="swarm-token-input" class="terminal-input" placeholder="e.g. hoot.near" value="hoot.near" />
-                  <div class="chips-row" style="margin-top:6px;">
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='hoot.near'">HOOT</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='batman.near'">BATMAN</button>
+                  <div class="form-label"><span>TARGET TOKEN CONTRACT / SYMBOL</span></div>
+                  <input type="text" id="swarm-token-input" class="terminal-input" placeholder="Any token address, symbol, or launchpad contract" value="" />
+                  <div class="chips-row" style="margin-top:6px; flex-wrap:wrap; gap:4px;">
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='hoot-8ecf65.launchpad.justhoot.near'">HOOT</button>
                     <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='blackdragon.tkn.near'">BLACKDRAGON</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='shore.near'">SHORE</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.lonk.near'">LONK</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.sweat'">SWEAT</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.v2.ref-finance.near'">REF</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='batman-4.nearlytrade.near'">BATMAN</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='shore-4lzt.launch.shoremarkets.near'">SHORE</button>
+                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='neat.nrc-20.near'">NEAT</button>
                   </div>
                 </div>
 
@@ -1769,16 +1773,16 @@
       const amtInput = document.getElementById('swarm-total-near');
 
       if (presetType === 'stealth_accumulate') {
-        promptInput.value = 'Accumulate 10 NEAR of HOOT with 5 stealth drones staggered over 15 minutes to avoid front-running';
-        tokenInput.value = 'hoot.near';
+        promptInput.value = 'Accumulate 10 NEAR of LONK with 5 stealth drones staggered over 15 minutes to avoid front-running';
+        tokenInput.value = 'token.lonk.near';
         amtInput.value = '10.0';
       } else if (presetType === 'momentum_snipe') {
         promptInput.value = 'Execute rapid momentum breakout on BATMAN across 3 drones within 30 seconds';
-        tokenInput.value = 'batman.near';
+        tokenInput.value = 'batman-4.nearlytrade.near';
         amtInput.value = '15.0';
       } else if (presetType === 'anti_mev_dispersion') {
         promptInput.value = 'Disperse 20 NEAR across 6 randomized subaccounts to accumulate SHORE without sandwich MEV';
-        tokenInput.value = 'shore.near';
+        tokenInput.value = 'shore-4lzt.launch.shoremarkets.near';
         amtInput.value = '20.0';
       } else if (presetType === 'liquidity_probe') {
         promptInput.value = 'Probe BLACKDRAGON liquidity depth with 3 sub-1 NEAR probes before executing target tranche';
@@ -1788,8 +1792,8 @@
     }
 
     async function generateSwarmPlan() {
-      const prompt = document.getElementById('swarm-prompt-input').value.trim() || 'Accumulate 10 NEAR of HOOT with 5 stealth drones';
-      const tokenAddress = document.getElementById('swarm-token-input').value.trim();
+      const prompt = document.getElementById('swarm-prompt-input').value.trim() || 'Accumulate 10 NEAR with 5 stealth drones';
+      const tokenAddress = document.getElementById('swarm-token-input').value.trim() || undefined;
       const totalNear = parseFloat(document.getElementById('swarm-total-near').value) || 10.0;
       const stealthMode = document.getElementById('swarm-stealth-mode').checked;
       const btn = document.getElementById('btn-swarm-plan');
