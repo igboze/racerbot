@@ -927,7 +927,7 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
         dclPoolId: req.body.dclPoolId,
       });
       const decimals = isBuy ? (Number(tokenDecimals) || 18) : 24;
-      minOutFormatted = formatTokenUnits(minOut, decimals);
+      minOutFormatted = formatTokenUnits(BigInt(minOut), decimals);
     } catch {
       // Best-effort quote
     }
@@ -989,7 +989,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
+    let executionRouting: 'RACER_EXECUTOR' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
     let recipientAccountId: string | undefined;
     let executorAccounts: string[] | undefined;
@@ -1250,7 +1250,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
             side: isBuy ? 'BUY' : 'SELL',
             priceNear: signalPriceNear,
             amountNear: numNear,
-            venue: executionRouting === 'INTENT_SOLVER' ? 'NEAR Intents (Defuse)' : venue,
+            venue,
             txHash: onChainTxHash,
           });
           signalBroadcastResult = sigRes;
@@ -1271,11 +1271,9 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       ...signalBroadcastResult,
       message:
         intentMessage ||
-        (executionRouting === 'INTENT_SOLVER'
-          ? 'Private trade filled by a NEAR Intents (1Click) solver'
-          : executionRouting === 'RACER_SHIELDED_VAULT'
-          ? 'Atomic Shielded Trade executed via Racer Router (racerbotrouter.near)'
-          : 'Private trade executed on-chain'),
+        (executionRouting === 'RACER_EXECUTOR'
+          ? 'Private trade executed via confidential executor'
+          : 'Trade executed on-chain'),
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to execute private trade' });
@@ -1470,7 +1468,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
+    let executionRouting: 'RACER_EXECUTOR' | 'AMM' = 'AMM';
     let intentMessage: string | undefined;
     const rawNearYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
 
@@ -1601,7 +1599,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
     }
 
     // ── Phase 2: Record Encrypted Alpha Signal & Trigger Auto-Copy ──
-    const effectiveVenue = executionRouting === 'INTENT_SOLVER' ? 'NEAR Intents (Defuse)' : venue;
+    const effectiveVenue = venue;
     const result = await recordAlphaSignal({
       traderId: effectiveTraderId,
       tokenAddress,
@@ -1618,7 +1616,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
       success: true,
       txHash: onChainTxHash,
       routing: executionRouting,
-      message: intentMessage || (executionRouting === 'INTENT_SOLVER' ? 'Confidential Intent executed via Defuse Solver batch auction' : undefined),
+      message: intentMessage || (executionRouting === 'RACER_EXECUTOR' ? 'Executed privately via confidential executor' : undefined),
       ...result
     });
   } catch (err: any) {
