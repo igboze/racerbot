@@ -173,7 +173,7 @@ Available Spendable Balance: ${availableNear.toFixed(2)} NEAR`;
         temperature: 0.2,
         response_format: { type: 'json_object' },
       }),
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (!res.ok) {
@@ -219,8 +219,20 @@ export async function planSwarmSession(params: {
   const aiResult = await callNearAiModel(prompt, tokenInfo, availableNear);
 
   // 3. Extract or fallback to smart parameters
+  const validStrategies = ['stealth_accumulation', 'twap_dca', 'liquidity_sweep', 'anti_mev_snipe'];
+  const rawStrategy = String(aiResult?.strategy || '').toLowerCase();
+  const matchedStrategy = validStrategies.includes(rawStrategy)
+    ? (rawStrategy as SwarmPlanResult['strategy'])
+    : (rawStrategy.includes('snipe') || rawStrategy.includes('breakout') || rawStrategy.includes('momentum') || rawStrategy.includes('spike')
+      ? 'anti_mev_snipe'
+      : rawStrategy.includes('twap') || rawStrategy.includes('dca')
+        ? 'twap_dca'
+        : rawStrategy.includes('sweep') || rawStrategy.includes('probe') || rawStrategy.includes('depth')
+          ? 'liquidity_sweep'
+          : null);
+
   const strategy: SwarmPlanResult['strategy'] =
-    aiResult?.strategy ||
+    matchedStrategy ||
     (prompt.toLowerCase().includes('snipe') || prompt.toLowerCase().includes('breakout') || prompt.toLowerCase().includes('spike') || prompt.toLowerCase().includes('momentum')
       ? 'anti_mev_snipe'
       : prompt.toLowerCase().includes('twap') || prompt.toLowerCase().includes('dca')
@@ -291,6 +303,7 @@ export async function planSwarmSession(params: {
 
   const analysis =
     aiResult?.reasoning ||
+    (typeof aiResult?.strategy === 'string' && aiResult.strategy.length > 25 ? aiResult.strategy : null) ||
     `NEAR AI Cloud decomposed ${totalNear} NEAR across ${droneCount} autonomous sub-account drones over ${Math.round(estimatedDurationSec / 60)}m. Trades are staggered with randomized volume jitter to break on-chain clustering and evade MEV front-runners.`;
 
   // Cryptographic attestation token simulation for TEE
