@@ -1156,6 +1156,16 @@
   <script src="/assets/racerConnect.js"></script>
 
   <script>
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     // ── Toast Notifications ───────────────────────────────────────────────────
     function showToast(msg, type = 'info') {
       const toast = document.createElement('div');
@@ -1558,10 +1568,10 @@
           `;
           setTimeout(() => fetchFleetStatus(true), 1500);
         } else {
-          stream.innerHTML += `<div class="stream-line"><span class="stream-err">Execution error: ${data.error || data.errors?.[0] || 'Unknown error'}</span></div>`;
+          stream.innerHTML += `<div class="stream-line"><span class="stream-err">Execution error: ${escapeHtml(data.error || data.errors?.[0] || 'Unknown error')}</span></div>`;
         }
       } catch (err) {
-        stream.innerHTML += `<div class="stream-line"><span class="stream-err">Network error: ${err.message}</span></div>`;
+        stream.innerHTML += `<div class="stream-line"><span class="stream-err">Network error: ${escapeHtml(err.message)}</span></div>`;
       } finally {
         btn.disabled = false;
         btn.innerHTML = `<span>EXECUTE COORDINATED BUNDLE BUY</span>`;
@@ -1608,10 +1618,10 @@
           `;
           setTimeout(() => fetchFleetStatus(true), 1500);
         } else {
-          stream.innerHTML += `<div class="stream-line"><span class="stream-err">Exit error: ${data.error || data.errors?.[0] || 'Unknown error'}</span></div>`;
+          stream.innerHTML += `<div class="stream-line"><span class="stream-err">Exit error: ${escapeHtml(data.error || data.errors?.[0] || 'Unknown error')}</span></div>`;
         }
       } catch (err) {
-        stream.innerHTML += `<div class="stream-line"><span class="stream-err"> Network error: ${err.message}</span></div>`;
+        stream.innerHTML += `<div class="stream-line"><span class="stream-err">Network error: ${escapeHtml(err.message)}</span></div>`;
       } finally {
         btn.disabled = false;
       }
@@ -1733,7 +1743,7 @@
       if (currentWallets && currentWallets.length > 0) {
         box.innerHTML = currentWallets.map(w => `
           <div style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px dashed #21262d;">
-            <div style="color:var(--color-primary); font-weight:700;">${w.accountId}</div>
+            <div style="color:var(--color-primary); font-weight:700;">${escapeHtml(w.accountId)}</div>
             <div style="color:var(--color-text-subtle); word-break:break-all; font-size:11px; margin-top:2px;">
               ed25519:•••••••••••••••••••••••••••••••••••••••••••••••••••• (Encrypted in secure key vault)
             </div>
@@ -1903,7 +1913,9 @@
 
     async function pollSwarmStatus(sessionId) {
       try {
-        const res = await fetch('/api/swarm/status/' + encodeURIComponent(sessionId));
+        const token = localStorage.getItem('racer_auth_token') || '';
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const res = await fetch('/api/swarm/status/' + encodeURIComponent(sessionId), { headers });
         if (!res.ok) return;
         const data = await res.json();
         if (!data.success) return;
@@ -1922,7 +1934,7 @@
         if (streamLog && session.executionLog) {
           streamLog.innerHTML = session.executionLog.map(log => `
             <div style="font-family:var(--font-mono); font-size:11px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05); color:${log.status === 'success' ? '#34D399' : '#94A3B8'};">
-              [${log.time || 'NOW'}] ${log.message}
+              [${escapeHtml(log.time || 'NOW')}] ${escapeHtml(log.message)}
             </div>
           `).join('');
         }
@@ -1939,9 +1951,12 @@
     async function pauseSwarmSession() {
       if (!activeSwarmSessionId) return;
       try {
+        const token = localStorage.getItem('racer_auth_token') || '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
         await fetch('/api/swarm/pause', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ sessionId: activeSwarmSessionId }),
         });
         showToast('Swarm execution paused', 'info');
@@ -1955,9 +1970,12 @@
       const ok = await showConfirm('Are you sure you want to abort the active swarm session? Pending drone tranches will be cancelled.');
       if (!ok) return;
       try {
+        const token = localStorage.getItem('racer_auth_token') || '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
         await fetch('/api/swarm/abort', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ sessionId: activeSwarmSessionId }),
         });
         showToast('Swarm mission aborted', 'info');
