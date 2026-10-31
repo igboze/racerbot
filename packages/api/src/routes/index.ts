@@ -927,7 +927,7 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
         dclPoolId: req.body.dclPoolId,
       });
       const decimals = isBuy ? (Number(tokenDecimals) || 18) : 24;
-      minOutFormatted = formatTokenUnits(minOut, decimals);
+      minOutFormatted = formatTokenUnits(BigInt(minOut), decimals);
     } catch {
       // Best-effort quote
     }
@@ -989,7 +989,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
 
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
+    let executionRouting = 'AMM' as 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM';
     let intentMessage: string | undefined;
     let recipientAccountId: string | undefined;
     let executorAccounts: string[] | undefined;
@@ -1470,7 +1470,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
 
     const routingPreference = (req.body.routingPreference || 'auto').toLowerCase();
     let onChainTxHash: string | undefined = clientTxHash || undefined;
-    let executionRouting: 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM' = 'AMM';
+    let executionRouting = 'AMM' as 'INTENT_SOLVER' | 'RACER_EXECUTOR' | 'RACER_SHIELDED_VAULT' | 'AMM';
     let intentMessage: string | undefined;
     const rawNearYocto = (BigInt(Math.floor(numNear * 1e6)) * 1000000000000000000n).toString();
 
