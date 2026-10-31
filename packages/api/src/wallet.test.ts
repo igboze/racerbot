@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import { getDb } from '@racerbot/db';
+import { generateScopedAccessKey } from '@racerbot/shared';
+
+const mockTestKey = generateScopedAccessKey().toString();
 
 process.env.KEY_ENCRYPTION_MASTER_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-process.env.MAIN_WALLET_PRIVATE_KEY =
-  'ed25519:REDACTED_MOCK_KEY_4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wq';
+process.env.MAIN_WALLET_PRIVATE_KEY = mockTestKey;
 process.env.RACERBOT_PARENT_ACCOUNT = 'racerbot.near';
 
 // Track calls and order across mock accounts
@@ -139,8 +141,8 @@ describe('wallet: onboarding and key rotation', () => {
   });
 
   describe('NEAR key parsing & validation', () => {
-    const validKeyWithPrefix = 'ed25519:REDACTED_MOCK_KEY_4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wq';
-    const validRawBase58 = 'REDACTED_MOCK_KEY_4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wq';
+    const validKeyWithPrefix = mockTestKey;
+    const validRawBase58 = mockTestKey.replace(/^ed25519:/, '');
 
     it('parses valid ed25519 key with prefix', () => {
       const keyPair = validateAndParseNearKey(validKeyWithPrefix);

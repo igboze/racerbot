@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { KeyPair } from 'near-api-js';
 import { encrypt, getNear, type SwapEvent, type RedisClient, type MultiRpcNear } from '@racerbot/shared';
 
+const mockTestKey = KeyPair.fromRandom('ed25519').toString();
+
 process.env.KEY_ENCRYPTION_MASTER_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-process.env.MAIN_WALLET_PRIVATE_KEY =
-  'ed25519:REDACTED_MOCK_KEY_4GxWXcLUqaDoT7mz4qAiCgXiBPaMcr6UmEcVkQ8wq';
+process.env.MAIN_WALLET_PRIVATE_KEY = mockTestKey;
 process.env.RACERBOT_PARENT_ACCOUNT = 'racerbot.near';
 process.env.ROUTER_CONTRACT_ID = 'router.near';
 process.env.TREASURY_ACCOUNT_ID = 'treasury.near';

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { redactSecrets } from './errors.js';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -31,6 +32,51 @@ export interface LogEntry {
   metadata?: Record<string, any>;
 }
 
+const LEVEL_PRIORITY: Record<LogLevel, number> = {
+  [LogLevel.DEBUG]: 0,
+  [LogLevel.INFO]: 1,
+  [LogLevel.WARN]: 2,
+  [LogLevel.ERROR]: 3,
+};
+
+function getMinLogLevel(): number {
+  const envLevel = (process.env.LOG_LEVEL || '').toLowerCase();
+  if (envLevel === 'debug') return LEVEL_PRIORITY[LogLevel.DEBUG];
+  if (envLevel === 'warn') return LEVEL_PRIORITY[LogLevel.WARN];
+  if (envLevel === 'error') return LEVEL_PRIORITY[LogLevel.ERROR];
+  if (envLevel === 'info') return LEVEL_PRIORITY[LogLevel.INFO];
+  return process.env.NODE_ENV === 'production' ? LEVEL_PRIORITY[LogLevel.INFO] : LEVEL_PRIORITY[LogLevel.DEBUG];
+}
+
+/**
+ * Recursively deep-scrubs objects and strings to redact sensitive tokens,
+ * passwords, private keys, and session secrets from logs.
+ */
+function deepScrub(val: any): any {
+  if (val === null || val === undefined) return val;
+  if (typeof val === 'string') return redactSecrets(val);
+  if (typeof val !== 'object') return val;
+  if (Array.isArray(val)) return val.map(deepScrub);
+
+  const scrubbed: Record<string, any> = {};
+  for (const [k, v] of Object.entries(val)) {
+    const lowerKey = k.toLowerCase();
+    if (
+      lowerKey.includes('secret') ||
+      lowerKey.includes('privatekey') ||
+      lowerKey.includes('password') ||
+      lowerKey.includes('seedphrase') ||
+      lowerKey.includes('mnemonic') ||
+      lowerKey.includes('masterkey')
+    ) {
+      scrubbed[k] = '[REDACTED]';
+    } else {
+      scrubbed[k] = deepScrub(v);
+    }
+  }
+  return scrubbed;
+}
+
 export class Logger {
   private service: string;
   private context: LogContext = {};
@@ -50,14 +96,14 @@ export class Logger {
   }
 
   private formatLog(level: LogLevel, message: string, error?: Error, duration?: number, metadata?: Record<string, any>): LogEntry {
-    const logContext = { ...this.context };
-    
+    const logContext = deepScrub({ ...this.context });
+
     let errorData;
     if (error) {
       errorData = {
         name: error.name,
-        message: error.message,
-        stack: error.stack,
+        message: redactSecrets(error.message || ''),
+        stack: error.stack ? redactSecrets(error.stack) : undefined,
         code: (error as any).code,
       };
     }
@@ -65,17 +111,21 @@ export class Logger {
     return {
       level,
       timestamp: new Date().toISOString(),
-      message,
+      message: redactSecrets(message),
       context: logContext,
       error: errorData,
       duration,
-      metadata,
+      metadata: metadata ? deepScrub(metadata) : undefined,
     };
   }
 
   private output(logEntry: LogEntry): void {
+    if (LEVEL_PRIORITY[logEntry.level] < getMinLogLevel()) {
+      return;
+    }
+
     const logString = JSON.stringify(logEntry);
-    
+
     switch (logEntry.level) {
       case LogLevel.DEBUG:
         console.debug(logString);

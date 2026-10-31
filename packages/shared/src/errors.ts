@@ -46,15 +46,22 @@ export class TradeError extends Error {
 }
 
 /**
- * Redact secrets from a string before logging.
+ * Redact secrets and sensitive tokens from a string before logging or error display.
  * Removes:
  *   - ed25519: keypairs (base58 after the colon)
- *   - apiKey= query-string values
- *   - Bearer <token> authorization headers
+ *   - apiKey= / api_key= / token= query-string and header values
+ *   - Bearer <token> and tma <initData> authorization headers
+ *   - Database connection passwords (postgresql://user:pass@host:port/db)
+ *   - Telegram bot tokens (123456789:ABCDefgh...)
+ *   - JWT tokens (eyJ...)
  */
 export function redactSecrets(s: string): string {
-  return String(s ?? '')
+  if (!s) return '';
+  return String(s)
     .replace(/ed25519:[a-zA-Z0-9]+/gi, 'ed25519:[REDACTED]')
-    .replace(/(apiKey=)[^\s&"']+/gi, '$1[REDACTED]')
-    .replace(/(Bearer\s+)[a-zA-Z0-9._-]+/gi, '$1[REDACTED]');
+    .replace(/(postgres(ql)?:\/\/[^:]+:)[^@\s]+(@)/gi, '$1[REDACTED]$3')
+    .replace(/([0-9]{8,10}:)[a-zA-Z0-9_-]{35}/g, '$1[BOT_TOKEN_REDACTED]')
+    .replace(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[JWT_REDACTED]')
+    .replace(/((?:apiKey|api_key|secret|password|authToken|token|access_key)=)[^\s&"']+/gi, '$1[REDACTED]')
+    .replace(/((?:Bearer|tma)\s+)[^\s"']+/gi, '$1[REDACTED]');
 }

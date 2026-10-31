@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createLogger, generateCorrelationId } from './logger.js';
 
 describe('Structured Logging', () => {
@@ -47,5 +47,26 @@ describe('Structured Logging', () => {
         throw new Error('Test error');
       })
     ).rejects.toThrow('Test error');
+  });
+
+  it('should automatically scrub secrets, private keys, database passwords, and auth tokens', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logger = createLogger('security-test');
+
+    const mockDbUrl = 'postgres://' + 'admin:superSecretPassword123@neon.tech:5432/main';
+    logger.info('User authenticated with key ed25519:5M7kQzWq4p and Bearer secret_tok_1234567890', {
+      privateKey: 'ed25519:sensitive_subaccount_private_key_abc123',
+      dbUrl: mockDbUrl,
+      authToken: 'racer_tok_wallet_abcdef123456',
+      normalField: 'safe_value',
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const loggedOutput = spy.mock.calls[0][0];
+    expect(loggedOutput).toContain('ed25519:[REDACTED]');
+    expect(loggedOutput).toContain('Bearer [REDACTED]');
+    expect(loggedOutput).not.toContain('superSecretPassword123');
+    expect(loggedOutput).not.toContain('sensitive_subaccount_private_key_abc123');
+    spy.mockRestore();
   });
 });

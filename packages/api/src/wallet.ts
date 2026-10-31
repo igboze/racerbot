@@ -66,7 +66,11 @@ import {
   computeStarknetAccountAddress,
   type GeneratedStarknetWallet,
   type VenueName,
-  isTradableVenue,  getStrkUsdPrice,  getEthUsdPrice,} from '@racerbot/shared';
+  isTradableVenue,
+  getStrkUsdPrice,
+  getEthUsdPrice,
+  redactSecrets,
+} from '@racerbot/shared';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
 import { CallData, uint256, ec, cairo } from 'starknet';
@@ -2441,7 +2445,7 @@ export async function connectWithNearRpcFailover<T>(
       ) {
         throw err;
       }
-      console.warn(`[NEAR_TX] RPC ${url} failed (${msg.slice(0, 120)}), falling back to next endpoint...`);
+      console.warn(`[NEAR_TX] RPC ${redactSecrets(url)} failed (${redactSecrets(msg).slice(0, 120)}), falling back to next endpoint...`);
       continue;
     }
   }
