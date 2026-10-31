@@ -1596,41 +1596,23 @@ export async function recordAlphaSignal(params: {
           } catch {}
         }
 
-        // 2b. Try Shielded Router Vault / Managed RacerBot Trading Wallet
+        // 2b. Direct AMM Swap via Managed RacerBot Trading Wallet
         if (!swapRes && buyerUser) {
           const { hasManagedWallet } = await import('./webWallet.js');
           if (hasManagedWallet(buyerUser)) {
-            try {
-              const { executeShieldedVaultIntent } = await import('./racerVault.js');
-              const vRes = await executeShieldedVaultIntent({
-                user: buyerUser,
-                tokenAddress: params.tokenAddress,
-                venue: venue as any,
-                side: 'BUY',
-                amountNear: copyAmount,
-                amountTokens: amountYocto,
-                slippagePct: slippage,
-              });
-              if (vRes.success && vRes.txHash) {
-                swapRes = { success: true, txHash: vRes.txHash, routeLabel: 'Shielded Router Vault' };
-              }
-            } catch {}
-
-            if (!swapRes) {
-              const ammRes: any = await publishSwap({
-                user_id: kh.buyerUserId,
-                token_in: 'near',
-                token_out: params.tokenAddress,
-                amount_in: amountYocto,
-                min_amount_out: '0',
-                venue: venue as any,
-                slippage_pct: slippage,
-              }, undefined, { suppressAlphaSignal: true });
-              if (ammRes && ammRes.success !== false) {
-                swapRes = { success: true, txHash: ammRes.txHash, routeLabel: venue.toUpperCase() };
-              } else {
-                swapRes = { success: false, reason: ammRes?.reason };
-              }
+            const ammRes: any = await publishSwap({
+              user_id: kh.buyerUserId,
+              token_in: 'near',
+              token_out: params.tokenAddress,
+              amount_in: amountYocto,
+              min_amount_out: '0',
+              venue: venue as any,
+              slippage_pct: slippage,
+            }, undefined, { suppressAlphaSignal: true });
+            if (ammRes && ammRes.success !== false) {
+              swapRes = { success: true, txHash: ammRes.txHash, routeLabel: venue.toUpperCase() };
+            } else {
+              swapRes = { success: false, reason: ammRes?.reason };
             }
           } else {
             swapRes = { success: false, reason: 'Fund your RacerBot Trading Wallet or Confidential Pool to execute automated copy trades.' };
@@ -1734,7 +1716,7 @@ export async function recordAlphaSignal(params: {
           }
         }
 
-        // 2c. Check on-chain token balance in RacerBot Managed Wallet / Shielded Vault
+        // 2c. Direct AMM Swap via Managed RacerBot Trading Wallet
         if (!soldOk && buyerUser && buyerUser.subaccount_id) {
           const { hasManagedWallet } = await import('./webWallet.js');
           if (hasManagedWallet(buyerUser)) {
@@ -1743,36 +1725,19 @@ export async function recordAlphaSignal(params: {
             if (BigInt(rawBal || '0') > 0n) {
               const sellTokensRaw = ((BigInt(rawBal) * BigInt(Math.round(sellPct * 100))) / 10000n).toString();
               if (BigInt(sellTokensRaw) > 0n) {
-                try {
-                  const { executeShieldedVaultIntent } = await import('./racerVault.js');
-                  const vSell = await executeShieldedVaultIntent({
-                    user: buyerUser,
-                    tokenAddress: params.tokenAddress,
-                    venue: venue as any,
-                    side: 'SELL',
-                    amountNear: 0,
-                    amountTokens: sellTokensRaw,
-                    slippagePct: slippage,
-                  });
-                  if (vSell.success && vSell.txHash) {
-                    soldOk = true;
-                  }
-                } catch {}
-                if (!soldOk) {
-                  const ammSell: any = await publishSwap({
-                    user_id: kh.buyerUserId,
-                    token_in: params.tokenAddress,
-                    token_out: 'wrap.near',
-                    amount_in: sellTokensRaw,
-                    min_amount_out: '0',
-                    venue: venue as any,
-                    slippage_pct: slippage,
-                  }, undefined, { suppressAlphaSignal: true });
-                  if (ammSell && ammSell.success !== false) {
-                    soldOk = true;
-                  } else {
-                    sellReason = ammSell?.reason || '';
-                  }
+                const ammSell: any = await publishSwap({
+                  user_id: kh.buyerUserId,
+                  token_in: params.tokenAddress,
+                  token_out: 'wrap.near',
+                  amount_in: sellTokensRaw,
+                  min_amount_out: '0',
+                  venue: venue as any,
+                  slippage_pct: slippage,
+                }, undefined, { suppressAlphaSignal: true });
+                if (ammSell && ammSell.success !== false) {
+                  soldOk = true;
+                } else {
+                  sellReason = ammSell?.reason || '';
                 }
               }
             }

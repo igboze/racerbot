@@ -7176,43 +7176,18 @@
             const badge = document.getElementById('intent-routing-badge');
             const desc = document.getElementById('intent-routing-desc');
             const tag = document.getElementById('intent-routing-tag');
-            // Mirrors the trade request: non-Defuse venues use the router, and only buys go to Intents
-            const venueUsesRouter = Boolean(selectedAlphaToken.venue && selectedAlphaToken.venue.toLowerCase() !== 'defuse');
-            const willUseIntents = selectedRacerAlphaSide === 'BUY' && !venueUsesRouter && q.supported && q.routing === 'INTENT_SOLVER';
-            if (selectedRacerAlphaSide === 'SELL' && !q.privateSellsAllowed) {
-              if (badge) badge.textContent = 'Private sells switched off';
-              if (tag) {
-                tag.textContent = 'REGULAR SELL';
-                tag.style.color = 'var(--color-racer-gold)';
-                tag.style.background = 'rgba(240, 173, 78,0.12)';
-              }
-              if (desc) desc.textContent = 'Private sells are temporarily switched off. You will be offered a regular (non-private) sell.';
-            } else if (willUseIntents) {
-              if (badge) badge.textContent = 'NEAR Intents route';
-              if (tag) {
-                tag.textContent = 'NEAR INTENTS';
-                tag.style.color = 'var(--color-primary)';
-                tag.style.background = 'rgba(52, 211, 153,0.12)';
-              }
-              const outText = `${q.amountOutFormatted} ${selectedAlphaToken.symbol}`;
-              if (desc) desc.textContent = `Filled by a NEAR Intents (1Click) solver. Est Output: ${outText}.`;
-              if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
-                estEl.textContent = `≈ ${outText}`;
-              }
-            } else {
-              if (badge) badge.textContent = 'Racer router';
-              if (tag) {
-                tag.textContent = 'RACER ROUTER';
-                tag.style.color = 'var(--color-primary)';
-                tag.style.background = 'rgba(52, 211, 153,0.12)';
-              }
-              const outText = selectedRacerAlphaSide === 'BUY'
-                ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`)
-                : (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} NEAR` : `${estNear.toFixed(4)} NEAR`);
-              if (desc) desc.textContent = `Executed on-chain through racerbotrouter.near on ${selectedAlphaToken.venue || 'the DEX'}, with a minimum output set by your slippage. Est Output: ≈ ${outText}.`;
-              if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
-                estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedRacerAlphaSide === 'BUY' ? selectedAlphaToken.symbol : 'NEAR'}`;
-              }
+            if (badge) badge.textContent = 'Keyless executor pool';
+            if (tag) {
+              tag.textContent = 'CONFIDENTIAL FLEET';
+              tag.style.color = 'var(--color-racer-cyan)';
+              tag.style.background = 'rgba(106, 204, 220,0.12)';
+            }
+            const outText = selectedRacerAlphaSide === 'BUY'
+              ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`)
+              : (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} NEAR` : `${estNear.toFixed(4)} NEAR`);
+            if (desc) desc.textContent = `Executed privately via disposable keyless smart contracts on ${selectedAlphaToken.venue || 'DEX'}. Zero on-chain link to your wallet. Est Output: ≈ ${outText}.`;
+            if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
+              estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedRacerAlphaSide === 'BUY' ? selectedAlphaToken.symbol : 'NEAR'}`;
             }
           }
         } catch {}
@@ -7317,7 +7292,7 @@
         priceNear: selectedAlphaToken.priceNear,
         venue: selectedAlphaToken.venue,
         slippagePct: selectedRacerAlphaSlippage,
-        routingPreference: (selectedAlphaToken.venue && selectedAlphaToken.venue.toLowerCase() !== 'defuse') ? 'vault' : 'auto',
+        routingPreference: 'auto',
         isPrivateTrade: true,
       });
 
