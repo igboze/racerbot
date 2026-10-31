@@ -1906,11 +1906,12 @@
         const res = await fetch('/api/swarm/status/' + encodeURIComponent(sessionId));
         if (!res.ok) return;
         const data = await res.json();
-        if (!data.success || !data.session) return;
+        if (!data.success) return;
 
-        const session = data.session;
-        const total = session.droneCount || 1;
-        const executed = session.completedDrones || 0;
+        const session = data.session || data.status;
+        if (!session) return;
+        const total = session.droneCount || session.totalTranches || 1;
+        const executed = session.completedDrones || session.completedTranches || 0;
         const pct = Math.min(100, Math.round((executed / total) * 100));
 
         document.getElementById('swarm-progress-text').textContent = executed + ' / ' + total + ' Executed (' + pct + '%)';

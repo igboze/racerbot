@@ -173,7 +173,7 @@ Available Spendable Balance: ${availableNear.toFixed(2)} NEAR`;
         temperature: 0.2,
         response_format: { type: 'json_object' },
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(45000),
     });
 
     if (!res.ok) {

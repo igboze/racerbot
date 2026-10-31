@@ -68,7 +68,7 @@ export function createSwarmRouter(): Router {
 
     // Fallback in demo/dev mode: get first active user or latest user
     if (db) {
-      const res = await db.query('SELECT * FROM users ORDER BY updated_at DESC LIMIT 1');
+      const res = await db.query('SELECT * FROM users ORDER BY created_at DESC LIMIT 1');
       if (res.rows[0]) return res.rows[0];
     }
     return null;
@@ -135,10 +135,25 @@ export function createSwarmRouter(): Router {
 
       await launchSwarmSession(sessionId);
       const status = await getSwarmSessionStatus(sessionId);
+      if (!status) {
+        res.status(404).json({ success: false, error: 'Swarm session not found' });
+        return;
+      }
 
       res.json({
         success: true,
         status,
+        session: {
+          id: status.sessionId,
+          status: status.status,
+          completedDrones: status.completedTranches,
+          droneCount: status.totalTranches,
+          progressPct: status.progressPct,
+          filledNear: status.filledNear,
+          tokensAcquired: status.tokensAcquired,
+          tranches: status.tranches,
+          executionLog: status.executionLog,
+        },
       });
     } catch (err: any) {
       logger.error('Failed to launch swarm:', err);
@@ -162,6 +177,17 @@ export function createSwarmRouter(): Router {
       res.json({
         success: true,
         status,
+        session: {
+          id: status.sessionId,
+          status: status.status,
+          completedDrones: status.completedTranches,
+          droneCount: status.totalTranches,
+          progressPct: status.progressPct,
+          filledNear: status.filledNear,
+          tokensAcquired: status.tokensAcquired,
+          tranches: status.tranches,
+          executionLog: status.executionLog,
+        },
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'Failed to fetch status' });
