@@ -1,3 +1,4 @@
+import { isValidEvmAddress } from './evm.js';
 import {
   RpcProvider,
   Account,
@@ -62,6 +63,8 @@ export function isSameStarknetAddress(a?: string | null, b?: string | null): boo
 export function isValidStarknetAddress(addr?: string | null): boolean {
   if (!addr) return false;
   const s = addr.trim().toLowerCase();
+  // 20-byte EVM addresses (42 chars: 0x + 40 hex digits) belong to HyperEVM / Elysium, not Starknet
+  if (isValidEvmAddress(s)) return false;
   if (!/^0x[0-9a-f]{1,66}$/.test(s)) return false;
   try {
     const val = BigInt(s);

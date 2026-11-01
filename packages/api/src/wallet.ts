@@ -477,6 +477,8 @@ export function isStarknetToken(rawTokenAddress: string): boolean {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress.trim());
   const clean = tokenAddress.trim().toLowerCase();
   if (clean === 'strk' || clean === 'starknet') return true;
+  // If it's a 20-byte EVM address (e.g. HyperEVM / Elysium), it is NOT Starknet
+  if (isValidEvmAddress(clean)) return false;
   return clean.startsWith('0x') && !clean.includes('::');
 }
 
@@ -603,6 +605,9 @@ export interface DexScreenerData {
   priceChange24h: number;
   dexId?: string;
   pairAddress?: string;
+  chainId?: string;
+  name?: string;
+  symbol?: string;
   buys24h?: number;
   sells24h?: number;
   txns?: {
@@ -615,18 +620,52 @@ export interface DexScreenerData {
   liquidityNative?: number;
 }
 
-export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<DexScreenerData | null> {
+let cachedHypeUsdPrice = 25.0;
+let lastHypeUsdPriceTime = 0;
+export async function getHypeUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (now - lastHypeUsdPriceTime < 60_000 && cachedHypeUsdPrice > 0) {
+    return cachedHypeUsdPrice;
+  }
+  try {
+    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm');
+      const val = parseFloat(p?.priceUsd || '0');
+      if (val > 0) {
+        cachedHypeUsdPrice = val;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+  } catch { /* use last known */ }
+  return cachedHypeUsdPrice;
+}
+
+export async function fetchDexScreenerTokenData(tokenAddress: string, chainHint?: string): Promise<DexScreenerData | null> {
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`, {
-      signal: AbortSignal.timeout(1000),
+      signal: AbortSignal.timeout(3500),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as any;
     if (!data.pairs || data.pairs.length === 0) return null;
-    const nearPairs = data.pairs.filter(
-      (p: any) => p.chainId === 'near' || p.chainId === 'sui' || p.dexId?.includes('rhea') || p.dexId?.includes('ref')
-    );
-    const pool = (nearPairs.length > 0 ? nearPairs : data.pairs).sort(
+
+    let candidatePairs = data.pairs;
+    if (chainHint) {
+      const match = data.pairs.filter((p: any) => p.chainId === chainHint || p.chainId?.toLowerCase() === chainHint.toLowerCase());
+      if (match.length > 0) candidatePairs = match;
+    } else {
+      const nearPairs = data.pairs.filter(
+        (p: any) => p.chainId === 'near' || p.chainId === 'sui' || p.dexId?.includes('rhea') || p.dexId?.includes('ref')
+      );
+      if (nearPairs.length > 0) candidatePairs = nearPairs;
+    }
+
+    const pool = candidatePairs.sort(
       (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
     )[0];
     if (!pool) return null;
@@ -643,6 +682,9 @@ export async function fetchDexScreenerTokenData(tokenAddress: string): Promise<D
       priceChange24h: pool.priceChange?.h24 || 0,
       dexId: pool.dexId,
       pairAddress: pool.pairAddress,
+      chainId: pool.chainId,
+      name: pool.baseToken?.name,
+      symbol: pool.baseToken?.symbol,
       buys24h,
       sells24h,
       txns: pool.txns,
@@ -1205,21 +1247,25 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near') && !isStarknetToken(tokenAddress)) {
       const isElysium = tokenAddress.toLowerCase().endsWith('.elysium') || rawTokenAddress.toLowerCase().includes('elysium');
       const chain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
-      const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+      const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
 
       const [tokenMeta, dexscreenerData] = await Promise.all([
         getErc20TokenInfo(tokenAddress, chain, isTestnet).catch(() => null),
-        fetchDexScreenerTokenData(tokenAddress).catch(() => null),
+        fetchDexScreenerTokenData(tokenAddress, chain).catch(() => null),
       ]);
 
-      const sym = tokenMeta?.symbol || 'TKN';
-      const name = tokenMeta?.name || 'EVM Token';
+      if (!tokenMeta && !dexscreenerData) {
+        throw new Error(`Token contract not found on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}: ${tokenAddress}`);
+      }
+
+      const sym = tokenMeta?.symbol || dexscreenerData?.symbol || 'TKN';
+      const name = tokenMeta?.name || dexscreenerData?.name || 'EVM Token';
       const decimals = tokenMeta?.decimals ?? 18;
       const totalSupply = tokenMeta?.totalSupply || '1000000000000000000000000';
 
-      const hypeUsd = 25.0;
+      const hypeUsd = await getHypeUsdPrice().catch(() => 25.0);
       const priceUsd = Number(dexscreenerData?.priceUsd || 0);
-      const priceHype = priceUsd > 0 ? priceUsd / hypeUsd : 0.001;
+      const priceHype = priceUsd > 0 && hypeUsd > 0 ? priceUsd / hypeUsd : 0.001;
       const liquidityUsd = Number(dexscreenerData?.liquidityUsd || 0);
       const marketCapUsd = Number(dexscreenerData?.marketCapUsd || 0);
 
@@ -1241,6 +1287,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         tradeable: true,
         buy_tax_pct: 0,
         sell_tax_pct: 0,
+        price_24h_change: dexscreenerData?.priceChange24h,
+        volume_24h_usd: dexscreenerData?.volume24hUsd,
+        buys_count: dexscreenerData?.buys24h,
+        sells_count: dexscreenerData?.sells24h,
       };
 
       tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

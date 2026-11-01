@@ -57,7 +57,7 @@ export async function executeEvmSwap(
   onProgress?: (stage: string) => void
 ): Promise<EvmSwapExecutionResult> {
   const chain: EvmChain = event.chain || (event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
-  const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+  const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;
 
   onProgress?.(`routing_${chain}`);

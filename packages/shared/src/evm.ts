@@ -128,9 +128,12 @@ const providerCache = new Map<number, ethers.JsonRpcProvider>();
 
 export function getEvmRpcUrl(chain: EvmChain, isTestnet = false): string {
   if (chain === 'hyperevm') {
-    return isTestnet ? HYPEREVM_TESTNET_RPC : HYPEREVM_MAINNET_RPC;
+    if (isTestnet) {
+      return process.env.HYPEREVM_TESTNET_RPC_URL || HYPEREVM_TESTNET_RPC;
+    }
+    return process.env.HYPEREVM_RPC_URL || HYPEREVM_MAINNET_RPC;
   }
-  return ELYSIUM_TESTNET_RPC;
+  return process.env.ELYSIUM_RPC_URL || ELYSIUM_TESTNET_RPC;
 }
 
 export function getEvmChainId(chain: EvmChain, isTestnet = false): number {
@@ -227,21 +230,31 @@ export async function getErc20TokenInfo(
 
   try {
     const provider = getEvmProvider(chain, isTestnet);
+    const code = await provider.getCode(tokenAddress).catch(() => '0x');
+    if (!code || code === '0x' || code === '0x0') {
+      return null;
+    }
+
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
-    const [name, symbol, decimals, totalSupply] = await Promise.all([
-      contract.name().catch(() => 'Unknown Token'),
-      contract.symbol().catch(() => 'TKN'),
-      contract.decimals().catch(() => 18),
-      contract.totalSupply().catch(() => 0n),
+    const [nameRes, symRes, decRes, supplyRes] = await Promise.allSettled([
+      contract.name(),
+      contract.symbol(),
+      contract.decimals(),
+      contract.totalSupply(),
     ]);
+
+    const name = nameRes.status === 'fulfilled' ? String(nameRes.value) : 'Unknown Token';
+    const symbol = symRes.status === 'fulfilled' ? String(symRes.value).toUpperCase() : 'TKN';
+    const decimals = decRes.status === 'fulfilled' ? Number(decRes.value) : 18;
+    const totalSupply = supplyRes.status === 'fulfilled' ? String(supplyRes.value) : '0';
 
     return {
       address: ethers.getAddress(tokenAddress),
-      name: String(name),
-      symbol: String(symbol).toUpperCase(),
-      decimals: Number(decimals),
-      totalSupply: totalSupply.toString(),
+      name,
+      symbol,
+      decimals,
+      totalSupply,
       chain,
     };
   } catch (err: any) {

@@ -1248,6 +1248,46 @@ export async function buildWalletsManagementMenu(telegramId: number) {
 }
 
 // ── Helper: Build Token Details Card with In-Chat Buttons ───────────────────
+
+export async function extractEvmCandidate(text: string): Promise<string | null> {
+  if (!text) return null;
+  const trimmed = text.trim();
+
+  // 1. DexScreener link (hyperevm or elysium)
+  const dexscreenerMatch = /(?:dexscreener\.com\/(?:hyperevm|elysium)\/)(0x[0-9a-fA-F]{40})/i.exec(trimmed);
+  if (dexscreenerMatch) {
+    const matchedAddr = dexscreenerMatch[1];
+    try {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/pairs/hyperevm/${matchedAddr}`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        const pair = data?.pair || (Array.isArray(data?.pairs) ? data.pairs[0] : null);
+        const baseAddr = pair?.baseToken?.address;
+        if (baseAddr && isValidEvmAddress(baseAddr)) {
+          return baseAddr;
+        }
+      }
+    } catch { /* fallback to matchedAddr */ }
+    return matchedAddr;
+  }
+
+  // 2. Hypurrscan / Purr.fun / Elysium / Hyperliquid explorer links
+  const explorerMatch = /(?:hypurrscan\.io|purr\.fun|elysium\.kinetiq\.xyz|hyperliquid\.xyz)\/(?:token|address|pool)\/(0x[0-9a-fA-F]{40})/i.exec(trimmed);
+  if (explorerMatch) {
+    return explorerMatch[1];
+  }
+
+  // 3. Direct EVM address (40 hex characters prefixed with 0x)
+  const directEvmMatch = /(?:^|[\s/])(0x[0-9a-fA-F]{40})(?:[\s/?#]|$)/i.exec(trimmed);
+  if (directEvmMatch && isValidEvmAddress(directEvmMatch[1])) {
+    return directEvmMatch[1];
+  }
+
+  return null;
+}
+
 export async function buildTokenCard(tokenAddress: string, telegramId?: number, forceRefresh = false): Promise<{ text: string; keyboard: any; pnlCardImage?: Buffer }> {
   // Fetch token info, balance, user settings, and honeypot safety audit in parallel
   const [info, balances, user, safetyRes] = await Promise.allSettled([
@@ -2817,7 +2857,7 @@ export async function executeBuyHelper(
       throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
     }
 
-    const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+    const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
     const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
     const amountHype = amountNear;
     const amountInWei = ethers.parseEther(String(amountHype));
@@ -10228,9 +10268,10 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     }
 
     const tokenAddress = args[0].trim();
-    const isStk = isStarknetToken(tokenAddress);
-    const isSui = !isStk && isSuiToken(tokenAddress);
-    const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+    const isEvm = isValidEvmAddress(tokenAddress);
+    const isStk = !isEvm && isStarknetToken(tokenAddress);
+    const isSui = !isEvm && !isStk && isSuiToken(tokenAddress);
+    const unit = isSolanaToken(tokenAddress) ? 'SOL' : isEvm ? 'HYPE' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
     const rawAmtStr = args.slice(1).join(' ').trim();
     const isUsdcArg = unit === 'NEAR' && (/^\$/.test(rawAmtStr) || /usdc|usd/i.test(rawAmtStr));
     const parsedNum = parseFloat(rawAmtStr.replace(/[^0-9.]/g, '') || '0');
@@ -13757,12 +13798,39 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       }
     }
 
+    // 2b. EVM / HyperEVM / Elysium Token & Link Detection
+    {
+      const evmCandidate = await extractEvmCandidate(rawText);
+      if (evmCandidate && isValidEvmAddress(evmCandidate)) {
+        const loadingMsg = await ctx.reply('🔍 Looking up HyperEVM token...').catch(() => null);
+        try {
+          const card = await withTimeout(buildTokenCard(evmCandidate, telegramId), 15000, 'The token lookup timed out — please try again');
+          if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+          prewarmTradePath(telegramId, evmCandidate).catch(() => {});
+          await sendTokenCard(ctx, card);
+          return;
+        } catch (err: any) {
+          if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
+          await ctx.reply(
+            `❌ HyperEVM token not found: ${sanitizeMd(evmCandidate)}\n\n` +
+            `This could mean:\n` +
+            `• The contract address is an account wallet, not an ERC-20 token\n` +
+            `• The token is not deployed on HyperEVM (Mainnet) or Elysium (Testnet)\n` +
+            `• The RPC request timed out — please try again\n\n` +
+            `Error: ${sanitizeMd(err?.message?.slice(0, 100) || 'Unknown error')}`
+          );
+          return;
+        }
+      }
+    }
+
     // 2. Direct Token Contract Address / SuiPump Link Detection
     const suiPumpMatch = /suipump\.org\/token\/(0x[0-9a-fA-F]{64})/i.exec(rawText);
-    const suiTypeMatch = /(?:^|\s)(0x[0-9a-fA-F]{64}(?:::[\w]+::[\w]+)?)(?:\s|$)/.exec(rawText);
+    const suiTypeMatch = /(?:^|\s)(0x[0-9a-fA-F]{64}(?:::[w]+::[w]+)?)(?:\s|$)/.exec(rawText);
+    const evmCaRegex = /(?:^|\s)(0x[0-9a-fA-F]{40})(?:\s|$)/i;
     const nearCaRegex = /(?:^|\s)([a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*\.(?:near|tg|testnet))(?:\s|$)/i;
     const hex64Regex = /(?:^|\s)([0-9a-fA-F]{64})(?:\s|$)/;
-    const caMatch = suiPumpMatch || suiTypeMatch || nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
+    const caMatch = suiPumpMatch || suiTypeMatch || evmCaRegex.exec(rawText) || nearCaRegex.exec(rawText) || hex64Regex.exec(rawText);
     const potentialCA = caMatch ? (caMatch[1] || caMatch[0]).trim() : null;
 
     if (potentialCA) {

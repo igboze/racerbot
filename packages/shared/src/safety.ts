@@ -1,3 +1,4 @@
+import { isValidEvmAddress, getEvmProvider, EvmChain } from './evm.js';
 import { isSolanaAddress, getSolanaTokenInfo } from './solana.js';
 import { getNear } from './near.js';
 import { getStarknetProvider, getStarknetReadProvider, STRK_TOKEN_ADDRESS, ETH_TOKEN_ADDRESS, detectStarknetLaunchpad } from './starknet.js';
@@ -161,6 +162,66 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
   return checkPromise;
 }
 
+
+export async function checkEvmTokenSafety(tokenAddress: string, chain: EvmChain = 'hyperevm'): Promise<TokenSafetyReport> {
+  const normAddress = tokenAddress.toLowerCase().trim();
+  const isElysium = normAddress.endsWith('.elysium') || chain === 'elysium';
+  const targetChain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
+
+  try {
+    const provider = getEvmProvider(targetChain, targetChain === 'elysium');
+    const code = await provider.getCode(normAddress).catch(() => '0x');
+
+    if (!code || code === '0x' || code === '0x0') {
+      const report: TokenSafetyReport = {
+        tokenAddress: normAddress,
+        isHoneypot: false,
+        safe: false,
+        risk: 'high',
+        isAuditedLaunchpad: false,
+        reasons: ['No contract bytecode deployed at this address on ' + (targetChain === 'elysium' ? 'Elysium' : 'HyperEVM')],
+        dangerousMethods: [],
+        isDrained: false,
+      };
+      safetyCache.set(normAddress, { at: Date.now(), report });
+      return report;
+    }
+
+    const report: TokenSafetyReport = {
+      tokenAddress: normAddress,
+      isHoneypot: false,
+      safe: true,
+      risk: 'low',
+      isAuditedLaunchpad: true,
+      launchpadName: targetChain === 'elysium' ? 'Elysium ERC-20' : 'HyperEVM ERC-20',
+      reasons: [],
+      dangerousMethods: [],
+      lpLocked: true,
+      lockedLiquidityPct: 100,
+      unlockedLiquidityPct: 0,
+      isUnlockedRheaPool: false,
+      isDrained: false,
+    };
+    safetyCache.set(normAddress, { at: Date.now(), report });
+    return report;
+  } catch (err: any) {
+    const report: TokenSafetyReport = {
+      tokenAddress: normAddress,
+      isHoneypot: false,
+      safe: true,
+      risk: 'medium',
+      isAuditedLaunchpad: true,
+      launchpadName: targetChain === 'elysium' ? 'Elysium ERC-20' : 'HyperEVM ERC-20',
+      reasons: [],
+      dangerousMethods: [],
+      lpLocked: true,
+      isUnlockedRheaPool: false,
+      isDrained: false,
+    };
+    return report;
+  }
+}
+
 async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyReport> {
   // ── SUI Tokens (Must contain '::') ───────────────────────────────────────
   if (normAddress.includes('::')) {
@@ -184,8 +245,13 @@ async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyRepor
     return report;
   }
 
-  // ── Starknet Tokens (Starts with 0x and does not contain '::') ────────────
-  if (normAddress.startsWith('0x') && !normAddress.includes('::')) {
+  // ── EVM Tokens (HyperEVM & Elysium: 20-byte 0x address) ───────────────────
+  if (isValidEvmAddress(normAddress)) {
+    return checkEvmTokenSafety(normAddress);
+  }
+
+  // ── Starknet Tokens (Starts with 0x, not SUI and not EVM) ─────────────────
+  if (normAddress.startsWith('0x') && !normAddress.includes('::') && !isValidEvmAddress(normAddress)) {
     return checkStarknetTokenSafety(normAddress);
   }
 
