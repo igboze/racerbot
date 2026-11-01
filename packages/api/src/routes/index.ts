@@ -628,12 +628,17 @@ router.post('/alpha/creator/pay-entry-fee', async (req, res) => {
 
 router.get('/alpha/tokens', async (req, res) => {
   try {
-    const { category, sort, search } = req.query;
+    const { category, sort, search, preset, mcapFilter, volumeFilter, timeFilter, limit } = req.query;
     const { listAlphaTokens } = await import('../racerAlpha.js');
     const result = await listAlphaTokens({
       category: category as string,
       sort: sort as string,
       search: search as string,
+      preset: preset as string,
+      mcapFilter: mcapFilter as string,
+      volumeFilter: volumeFilter as string,
+      timeFilter: timeFilter as string,
+      limit: limit as string,
     });
     res.json(result);
   } catch (err: any) {

@@ -2454,6 +2454,7 @@ export interface AlphaTokenItem {
   decimals?: number;
   poolId?: number | null;
   dclPoolId?: string | null;
+  createdAt?: number;
 }
 
 // ── In-Memory Fast Cache for Live On-Chain Tokens ────────────────────────────
@@ -3035,7 +3036,7 @@ function resolveLaunchpadFromAddress(address: string, venueName?: string): { lau
 function mapTokenInfoToAlphaItem(
   address: string,
   info: any,
-  fallbackMeta: { fallbackLaunchpad?: AlphaTokenItem['launchpad']; fallbackVenue?: string; symbol?: string; name?: string; icon?: string },
+  fallbackMeta: { fallbackLaunchpad?: AlphaTokenItem['launchpad']; fallbackVenue?: string; symbol?: string; name?: string; icon?: string; createdAt?: number },
   nearUsd: number
 ): AlphaTokenItem {
   const { launchpad, venue } = resolveLaunchpadFromAddress(address, info?.venue || fallbackMeta.fallbackVenue);
@@ -3108,6 +3109,7 @@ function mapTokenInfoToAlphaItem(
     decimals: info?.decimals ?? (fallbackMeta as any)?.decimals ?? 18,
     poolId: info?.pool_id ?? info?.poolId ?? null,
     dclPoolId: info?.dcl_pool_id ?? info?.dclPoolId ?? null,
+    createdAt: info?.created_at ? new Date(info.created_at).getTime() : (fallbackMeta?.createdAt || info?.createdAt || undefined),
   };
 }
 
@@ -3191,7 +3193,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
   if (db) {
     try {
       const dbRes = await db.query(
-        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon, total_supply, decimals
+        `SELECT token_address, symbol, name, venue, last_price, last_liquidity, bonding_progress_pct, bonding_phase, icon, total_supply, decimals, updated_at
          FROM token_cache 
          WHERE (chain = 'near' OR chain IS NULL) AND token_address IS NOT NULL
          ORDER BY updated_at DESC LIMIT 1000`
@@ -3341,6 +3343,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       sparkline,
       holders: 50 + Math.min(2500, Math.round(marketCap / 250)),
       decimals,
+      createdAt: dbRow?.updated_at ? new Date(dbRow.updated_at).getTime() : (isLaunchpad ? Date.now() - 3600_000 * ((addr.length % 36) + 1) : Date.now() - 3600_000 * 24 * 14),
     });
   }
 
@@ -3365,6 +3368,9 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         if (row.bonding_progress_pct !== null && row.bonding_progress_pct !== undefined) {
           existing.bondingProgress = Number(row.bonding_progress_pct);
           existing.bondingPhase = existing.bondingProgress < 100 ? 'bonding' : (existing.launchpad !== 'ref' ? 'graduated' : 'dex_pool');
+        }
+        if (!existing.createdAt && row.updated_at) {
+          existing.createdAt = new Date(row.updated_at).getTime();
         }
         continue;
       }
@@ -3403,6 +3409,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         sparkline: [pUsd * 0.95, pUsd * 0.98, pUsd],
         holders: 100,
         decimals: dec,
+        createdAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now() - 3600_000 * 12,
       });
     }
   }
@@ -3418,6 +3425,10 @@ export async function listAlphaTokens(options?: {
   sort?: string;
   search?: string;
   limit?: number | string;
+  preset?: string;
+  mcapFilter?: string;
+  volumeFilter?: string;
+  timeFilter?: string;
 }): Promise<{ success: boolean; tokens: AlphaTokenItem[]; total: number }> {
   const now = Date.now();
 
@@ -3507,16 +3518,85 @@ export async function listAlphaTokens(options?: {
     );
   }
 
-  // Sort
-  const sort = (options?.sort || 'volume').toLowerCase();
+  // 1. Preset Discovery Filter
+  const preset = (options?.preset || 'all').toLowerCase().trim();
+  if (preset === 'new_launches' || preset === 'new') {
+    const cutoff48h = now - 48 * 3600_000;
+    tokens = tokens.filter(t => (t.createdAt && t.createdAt >= cutoff48h) || t.bondingPhase === 'bonding');
+  } else if (preset === 'top_volume' || preset === 'trending') {
+    tokens = tokens.filter(t => t.volume24h > 1000);
+  } else if (preset === 'top_gainers' || preset === 'gainers') {
+    tokens = tokens.filter(t => t.change24h > 0);
+  } else if (preset === 'micro_cap' || preset === 'gems') {
+    tokens = tokens.filter(t => t.marketCap > 0 && t.marketCap < 50000);
+  } else if (preset === 'graduating') {
+    tokens = tokens.filter(t => t.bondingProgress >= 60 && t.bondingProgress < 100);
+  }
+
+  // 2. Market Cap Filter
+  const mcapFilter = (options?.mcapFilter || 'all').toLowerCase().trim();
+  if (mcapFilter === 'micro') {
+    tokens = tokens.filter(t => t.marketCap < 25000);
+  } else if (mcapFilter === 'emerging') {
+    tokens = tokens.filter(t => t.marketCap >= 25000 && t.marketCap <= 100000);
+  } else if (mcapFilter === 'graduated') {
+    tokens = tokens.filter(t => t.marketCap > 100000 && t.marketCap <= 1000000);
+  } else if (mcapFilter === 'mega') {
+    tokens = tokens.filter(t => t.marketCap > 1000000);
+  }
+
+  // 3. Volume Filter
+  const volumeFilter = (options?.volumeFilter || 'all').toLowerCase().trim();
+  if (volumeFilter === 'high') {
+    tokens = tokens.filter(t => t.volume24h >= 50000);
+  } else if (volumeFilter === 'mid') {
+    tokens = tokens.filter(t => t.volume24h >= 10000);
+  } else if (volumeFilter === 'low') {
+    tokens = tokens.filter(t => t.volume24h >= 1000);
+  }
+
+  // 4. Time / Launch Age Filter
+  const timeFilter = (options?.timeFilter || 'all').toLowerCase().trim();
+  if (timeFilter === '1h') {
+    const cutoff = now - 3600_000;
+    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
+  } else if (timeFilter === '6h') {
+    const cutoff = now - 6 * 3600_000;
+    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
+  } else if (timeFilter === '24h') {
+    const cutoff = now - 24 * 3600_000;
+    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff || t.bondingPhase === 'bonding');
+  } else if (timeFilter === '7d') {
+    const cutoff = now - 7 * 86400_000;
+    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
+  }
+
+  // 5. Multi-Criteria Sort
+  const sort = (options?.sort || (preset === 'new_launches' ? 'newest' : 'volume')).toLowerCase();
   if (sort === 'volume' || sort === 'volume_desc') {
     tokens.sort((a, b) => b.volume24h - a.volume24h);
+  } else if (sort === 'volume_asc') {
+    tokens.sort((a, b) => a.volume24h - b.volume24h);
   } else if (sort === 'mcap' || sort === 'mcap_desc') {
     tokens.sort((a, b) => b.marketCap - a.marketCap);
-  } else if (sort === 'change' || sort === 'gainers') {
+  } else if (sort === 'mcap_asc') {
+    tokens.sort((a, b) => (a.marketCap || 999999999) - (b.marketCap || 999999999));
+  } else if (sort === 'change' || sort === 'change_desc' || sort === 'gainers') {
     tokens.sort((a, b) => b.change24h - a.change24h);
-  } else if (sort === 'bonding' || sort === 'curve') {
+  } else if (sort === 'change_asc' || sort === 'losers') {
+    tokens.sort((a, b) => a.change24h - b.change24h);
+  } else if (sort === 'price' || sort === 'price_desc') {
+    tokens.sort((a, b) => b.priceUsd - a.priceUsd);
+  } else if (sort === 'price_asc') {
+    tokens.sort((a, b) => a.priceUsd - b.priceUsd);
+  } else if (sort === 'bonding' || sort === 'bonding_desc' || sort === 'curve') {
     tokens.sort((a, b) => b.bondingProgress - a.bondingProgress);
+  } else if (sort === 'bonding_asc') {
+    tokens.sort((a, b) => a.bondingProgress - b.bondingProgress);
+  } else if (sort === 'newest' || sort === 'time' || sort === 'age') {
+    tokens.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  } else if (sort === 'oldest') {
+    tokens.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
 
   const totalMatching = tokens.length;

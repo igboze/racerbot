@@ -1504,6 +1504,188 @@
       gap: 6px;
     }
 
+    /* Screener Discovery Presets & Quick Filter Toggles */
+    .alpha-preset-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .alpha-filter-label {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--color-text-subtle);
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .alpha-preset-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .alpha-preset-pill {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--color-border);
+      color: var(--color-text-muted);
+      border-radius: 6px;
+      padding: 5px 11px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .alpha-preset-pill:hover {
+      background: rgba(255, 255, 255, 0.07);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+    .alpha-preset-pill.active {
+      background: rgba(106, 204, 220, 0.14);
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      box-shadow: 0 0 10px rgba(106, 204, 220, 0.15);
+    }
+    .alpha-preset-pill.glow-green.active {
+      background: rgba(52, 211, 153, 0.16);
+      border-color: #34D399;
+      color: #34D399;
+      box-shadow: 0 0 12px rgba(52, 211, 153, 0.22);
+    }
+    .live-dot-pulse {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #34D399;
+      box-shadow: 0 0 6px #34D399;
+      animation: pulse-dot-glow 1.6s infinite ease-in-out;
+    }
+    @keyframes pulse-dot-glow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(1.25); }
+    }
+
+    /* Filter Toggles Bar */
+    .alpha-filter-toggles-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      background: rgba(0, 0, 0, 0.22);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .alpha-filter-select-wrap {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 5px;
+      padding: 0 8px;
+      height: 32px;
+      transition: border-color 0.15s ease;
+    }
+    .alpha-filter-select-wrap:focus-within {
+      border-color: var(--color-primary);
+    }
+    .alpha-filter-select-wrap select {
+      background: transparent;
+      border: none;
+      color: var(--color-text);
+      font-size: 11.5px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      padding-right: 4px;
+    }
+    .alpha-filter-select-wrap select option {
+      background: #141721;
+      color: #ffffff;
+    }
+    .alpha-filter-btn-clear {
+      background: transparent;
+      border: 1px solid var(--color-border);
+      color: var(--color-text-subtle);
+      border-radius: 5px;
+      height: 32px;
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .alpha-filter-btn-clear:hover {
+      background: rgba(239, 68, 68, 0.12);
+      color: #EF4444;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    /* Active Filter Summary Strip */
+    .alpha-filter-status-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--color-text-subtle);
+      font-family: var(--font-mono);
+      padding: 0 2px;
+    }
+    .alpha-status-tags {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .alpha-status-tag {
+      background: rgba(106, 204, 220, 0.08);
+      color: var(--color-primary);
+      border: 1px solid rgba(106, 204, 220, 0.2);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 10.5px;
+    }
+
+    /* NEW Launch Tag in Table Rows */
+    .new-launch-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(52, 211, 153, 0.16);
+      color: #34D399;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      letter-spacing: 0.04em;
+      margin-left: 5px;
+    }
+    .th-sortable {
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.12s ease;
+    }
+    .th-sortable:hover {
+      color: #ffffff;
+    }
+    .th-sort-icon {
+      font-size: 9px;
+      color: var(--color-primary);
+      margin-left: 2px;
+    }
+
     .alpha-table-container {
       width: 100%;
       overflow-x: auto;
@@ -3987,21 +4169,95 @@
                 </button>
               </div>
 
-              <div class="alpha-search-sort-row">
-                <div class="alpha-search-wrap">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                  <input type="text" id="alpha-search-input" placeholder="Search tokens by symbol, name, or contract address..." oninput="handleRacerAlphaSearch(this.value)">
+              <!-- Discovery Presets -->
+              <div class="alpha-preset-row">
+                <span class="alpha-filter-label">PRESET:</span>
+                <div class="alpha-preset-pills">
+                  <button type="button" class="alpha-preset-pill active" onclick="setAlphaPreset('all', this)">All Markets</button>
+                  <button type="button" class="alpha-preset-pill glow-green" onclick="setAlphaPreset('new_launches', this)">
+                    <span class="live-dot-pulse"></span>
+                    <span>⚡ New Launches</span>
+                  </button>
+                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_volume', this)">🔥 Top Volume</button>
+                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_gainers', this)">🚀 Top Gainers</button>
+                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('micro_cap', this)">💎 Micro Gems (&lt;$50K)</button>
+                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('graduating', this)">⏳ Near Graduation (&gt;60%)</button>
+                </div>
+              </div>
+
+              <!-- Filter Toggles & Metric Selectors -->
+              <div class="alpha-filter-toggles-bar">
+                <!-- Market Cap Filter -->
+                <div class="alpha-filter-select-wrap">
+                  <span class="alpha-filter-label">MCAP:</span>
+                  <select id="alpha-mcap-select" onchange="handleRacerAlphaMcap(this.value)">
+                    <option value="all">All MCaps</option>
+                    <option value="micro">&lt; $25K (Micro)</option>
+                    <option value="emerging">$25K - $100K</option>
+                    <option value="graduated">$100K - $1M</option>
+                    <option value="mega">&gt; $1M (Graduated)</option>
+                  </select>
                 </div>
 
-                <div class="alpha-sort-wrap">
-                  <span style="font-size:11px; color:var(--color-text-subtle); text-transform:uppercase; font-family:var(--font-mono);">Sort:</span>
-                  <select class="select-filter" id="alpha-sort-select" onchange="handleRacerAlphaSort(this.value)" style="height:34px; padding:0 8px; font-size:12px;">
+                <!-- Volume Filter -->
+                <div class="alpha-filter-select-wrap">
+                  <span class="alpha-filter-label">VOL:</span>
+                  <select id="alpha-volume-select" onchange="handleRacerAlphaVolume(this.value)">
+                    <option value="all">All Volumes</option>
+                    <option value="high">&gt; $50K (High)</option>
+                    <option value="mid">&gt; $10K (Active)</option>
+                    <option value="low">&gt; $1K (Light)</option>
+                  </select>
+                </div>
+
+                <!-- Launch Time / Age Filter -->
+                <div class="alpha-filter-select-wrap">
+                  <span class="alpha-filter-label">AGE / LAUNCH:</span>
+                  <select id="alpha-time-select" onchange="handleRacerAlphaTime(this.value)">
+                    <option value="all">Any Time</option>
+                    <option value="1h">⚡ Last 1h (Fresh)</option>
+                    <option value="6h">🌱 Last 6h</option>
+                    <option value="24h">📅 Last 24h</option>
+                    <option value="7d">📆 Last 7d</option>
+                  </select>
+                </div>
+
+                <!-- Sort Toggle -->
+                <div class="alpha-filter-select-wrap">
+                  <span class="alpha-filter-label">SORT:</span>
+                  <select id="alpha-sort-select" onchange="handleRacerAlphaSort(this.value)">
                     <option value="volume">Volume 24h ↓</option>
+                    <option value="volume_asc">Volume 24h ↑</option>
                     <option value="mcap">Market Cap ↓</option>
+                    <option value="mcap_asc">Market Cap ↑ (Lowest)</option>
+                    <option value="newest">Newest First (Launch) ↓</option>
+                    <option value="oldest">Oldest First ↑</option>
                     <option value="change">24h Gainers ↓</option>
+                    <option value="change_asc">24h Losers ↑</option>
                     <option value="bonding">Bonding % ↓</option>
                   </select>
                 </div>
+
+                <button type="button" class="alpha-filter-btn-clear" onclick="resetAllAlphaFilters()" title="Reset all filters">
+                  <span>✕ Clear</span>
+                </button>
+              </div>
+
+              <!-- Search Bar & Active Summary Strip -->
+              <div class="alpha-search-sort-row" style="margin-top:-2px;">
+                <div class="alpha-search-wrap" style="flex:1;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  <input type="text" id="alpha-search-input" placeholder="Search tokens by symbol, name, or contract address..." oninput="handleRacerAlphaSearch(this.value)">
+                </div>
+              </div>
+
+              <!-- Filter Status Summary Strip -->
+              <div class="alpha-filter-status-strip">
+                <div class="alpha-status-tags" id="alpha-active-filter-tags">
+                  <span style="color:var(--color-text-subtle);">Active Filter:</span>
+                  <span class="alpha-status-tag" id="alpha-status-preset-tag">All Markets</span>
+                </div>
+                <div id="alpha-token-count-display">Showing 0 tokens</div>
               </div>
             </div>
 
@@ -4011,13 +4267,14 @@
                 <thead>
                   <tr>
                     <th style="width:32px;">#</th>
-                    <th>TOKEN / PAIR</th>
+                    <th class="th-sortable" onclick="toggleSortColumn('name')">TOKEN / PAIR <span class="th-sort-icon">⇅</span></th>
                     <th>LAUNCHPAD</th>
-                    <th style="text-align:right;">PRICE</th>
-                    <th style="text-align:right;">24H %</th>
-                    <th style="text-align:right;">MARKET CAP</th>
-                    <th style="text-align:right;">VOLUME 24H</th>
-                    <th>CURVE / STATUS</th>
+                    <th class="th-sortable" style="text-align:right;" onclick="toggleSortColumn('price')">PRICE <span class="th-sort-icon">⇅</span></th>
+                    <th class="th-sortable" style="text-align:right;" onclick="toggleSortColumn('change')">24H % <span class="th-sort-icon">⇅</span></th>
+                    <th class="th-sortable" style="text-align:right;" onclick="toggleSortColumn('mcap')">MARKET CAP <span class="th-sort-icon">⇅</span></th>
+                    <th class="th-sortable" style="text-align:right;" onclick="toggleSortColumn('volume')">VOLUME 24H <span class="th-sort-icon">⇅</span></th>
+                    <th class="th-sortable" onclick="toggleSortColumn('newest')">AGE / LAUNCH <span class="th-sort-icon">⇅</span></th>
+                    <th class="th-sortable" onclick="toggleSortColumn('bonding')">CURVE / STATUS <span class="th-sort-icon">⇅</span></th>
                     <th style="text-align:center;">ACTION</th>
                   </tr>
                 </thead>
@@ -6443,6 +6700,10 @@
     // ── Racer Alpha Trading Console State & Controller ──────────────────────────────
     let alphaTokens = [];
     let currentAlphaCategory = 'all';
+    let currentAlphaPreset = 'all';
+    let currentAlphaMcap = 'all';
+    let currentAlphaVolume = 'all';
+    let currentAlphaTime = 'all';
     let currentAlphaSort = 'volume';
     let currentAlphaSearch = '';
     let selectedAlphaToken = null;
@@ -6465,10 +6726,29 @@
     refreshNearUsdPrice();
     setInterval(refreshNearUsdPrice, 60000);
 
+    function formatRelativeAge(timestamp) {
+      if (!timestamp) return '<span style="color:var(--color-text-subtle);">--</span>';
+      const diffMs = Date.now() - Number(timestamp);
+      if (diffMs < 0) return '<span style="color:#34D399; font-weight:600;">Just now</span>';
+      const mins = Math.floor(diffMs / 60000);
+      if (mins < 1) return '<span style="color:#34D399; font-weight:600;">Just now</span>';
+      if (mins < 60) return `<span style="color:#34D399; font-weight:600;">${mins}m ago</span>`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `<span style="color:var(--color-text); font-weight:500;">${hours}h ago</span>`;
+      const days = Math.floor(hours / 24);
+      if (days < 30) return `<span style="color:var(--color-text-muted);">${days}d ago</span>`;
+      const months = Math.floor(days / 30);
+      return `<span style="color:var(--color-text-subtle);">${months}mo ago</span>`;
+    }
+
     async function fetchRacerAlphaTokens() {
       try {
         const queryParams = new URLSearchParams({
           category: currentAlphaCategory,
+          preset: currentAlphaPreset,
+          mcapFilter: currentAlphaMcap,
+          volumeFilter: currentAlphaVolume,
+          timeFilter: currentAlphaTime,
           sort: currentAlphaSort,
           search: currentAlphaSearch
         });
@@ -6480,6 +6760,7 @@
           const volEl = document.getElementById('alpha-24h-vol');
           if (volEl) volEl.textContent = totalVol24h > 0 ? '$' + Math.round(totalVol24h).toLocaleString() : '--';
           renderRacerAlphaTable();
+          updateAlphaFilterSummaryStrip();
           if (!selectedAlphaToken && alphaTokens.length > 0) {
             selectAlphaToken(alphaTokens[0].address);
           }
@@ -6496,8 +6777,8 @@
       if (!alphaTokens || alphaTokens.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="9" style="text-align:center; padding:32px; color:var(--color-text-subtle);">
-              No tokens found matching category "${escapeHtml(currentAlphaCategory)}".
+            <td colspan="10" style="text-align:center; padding:32px; color:var(--color-text-subtle);">
+              No tokens found matching the active filters. Try resetting filters or switching launchpads.
             </td>
           </tr>
         `;
@@ -6529,6 +6810,8 @@
           `;
         }
 
+        const isNew = tok.createdAt && (Date.now() - Number(tok.createdAt) < 24 * 3600 * 1000);
+        const newTagHtml = isNew ? `<span class="new-launch-tag">⚡ NEW</span>` : '';
         const logoHtml = getTokenLogoHtml(tok, 28);
         const launchpadBadge = getLaunchpadBadgeHtml(tok);
 
@@ -6541,6 +6824,7 @@
                 <div class="alpha-tok-text">
                   <div class="alpha-tok-sym">
                     <span>${escapeHtml(tok.symbol)}</span>
+                    ${newTagHtml}
                   </div>
                   <div class="alpha-tok-name">${escapeHtml(tok.name)}</div>
                 </div>
@@ -6560,6 +6844,9 @@
             </td>
             <td style="text-align:right; color:var(--color-text-muted);">
               $${formatCompactNumber(tok.volume24h)}
+            </td>
+            <td style="font-size:11px; font-family:var(--font-mono); white-space:nowrap;">
+              ${formatRelativeAge(tok.createdAt)}
             </td>
             <td>
               ${curveHtml}
@@ -6923,7 +7210,135 @@
 
     function handleRacerAlphaSort(val) {
       currentAlphaSort = val;
+      const select = document.getElementById('alpha-sort-select');
+      if (select) select.value = val;
       fetchRacerAlphaTokens();
+    }
+
+    function setAlphaPreset(preset, btnEl) {
+      currentAlphaPreset = preset;
+      document.querySelectorAll('.alpha-preset-pill').forEach(b => b.classList.remove('active'));
+      if (btnEl) btnEl.classList.add('active');
+      fetchRacerAlphaTokens();
+    }
+
+    function handleRacerAlphaMcap(val) {
+      currentAlphaMcap = val;
+      fetchRacerAlphaTokens();
+    }
+
+    function handleRacerAlphaVolume(val) {
+      currentAlphaVolume = val;
+      fetchRacerAlphaTokens();
+    }
+
+    function handleRacerAlphaTime(val) {
+      currentAlphaTime = val;
+      fetchRacerAlphaTokens();
+    }
+
+    function toggleSortColumn(col) {
+      const select = document.getElementById('alpha-sort-select');
+      if (col === 'volume') {
+        currentAlphaSort = currentAlphaSort === 'volume' ? 'volume_asc' : 'volume';
+      } else if (col === 'mcap') {
+        currentAlphaSort = currentAlphaSort === 'mcap' ? 'mcap_asc' : 'mcap';
+      } else if (col === 'price') {
+        currentAlphaSort = currentAlphaSort === 'price' ? 'price_asc' : 'price';
+      } else if (col === 'change') {
+        currentAlphaSort = currentAlphaSort === 'change' ? 'change_asc' : 'change';
+      } else if (col === 'bonding') {
+        currentAlphaSort = currentAlphaSort === 'bonding' ? 'bonding_asc' : 'bonding';
+      } else if (col === 'newest') {
+        currentAlphaSort = currentAlphaSort === 'newest' ? 'oldest' : 'newest';
+      } else {
+        currentAlphaSort = col;
+      }
+      if (select) select.value = currentAlphaSort;
+      fetchRacerAlphaTokens();
+    }
+
+    function resetAllAlphaFilters() {
+      currentAlphaPreset = 'all';
+      currentAlphaMcap = 'all';
+      currentAlphaVolume = 'all';
+      currentAlphaTime = 'all';
+      currentAlphaCategory = 'all';
+      currentAlphaSort = 'volume';
+      currentAlphaSearch = '';
+
+      const searchInput = document.getElementById('alpha-search-input');
+      if (searchInput) searchInput.value = '';
+
+      const mcapSelect = document.getElementById('alpha-mcap-select');
+      if (mcapSelect) mcapSelect.value = 'all';
+
+      const volSelect = document.getElementById('alpha-volume-select');
+      if (volSelect) volSelect.value = 'all';
+
+      const timeSelect = document.getElementById('alpha-time-select');
+      if (timeSelect) timeSelect.value = 'all';
+
+      const sortSelect = document.getElementById('alpha-sort-select');
+      if (sortSelect) sortSelect.value = 'volume';
+
+      document.querySelectorAll('.alpha-cat-pill').forEach((b, idx) => {
+        b.classList.toggle('active', idx === 0);
+      });
+      document.querySelectorAll('.alpha-preset-pill').forEach((b, idx) => {
+        b.classList.toggle('active', idx === 0);
+      });
+
+      fetchRacerAlphaTokens();
+    }
+
+    function updateAlphaFilterSummaryStrip() {
+      const countEl = document.getElementById('alpha-token-count-display');
+      if (countEl) {
+        countEl.textContent = `Showing ${alphaTokens.length} token${alphaTokens.length === 1 ? '' : 's'}`;
+      }
+
+      const tagsContainer = document.getElementById('alpha-active-filter-tags');
+      if (!tagsContainer) return;
+
+      const activeTags = [];
+      if (currentAlphaCategory !== 'all') {
+        activeTags.push(`Launchpad: ${currentAlphaCategory.toUpperCase()}`);
+      }
+      if (currentAlphaPreset !== 'all') {
+        const presetNames = {
+          new_launches: '⚡ New Launches',
+          top_volume: '🔥 Top Volume',
+          top_gainers: '🚀 Top Gainers',
+          micro_cap: '💎 Micro Gems (<$50K)',
+          graduating: '⏳ Near Graduation (>60%)'
+        };
+        activeTags.push(presetNames[currentAlphaPreset] || currentAlphaPreset);
+      }
+      if (currentAlphaMcap !== 'all') {
+        activeTags.push(`MCap: ${currentAlphaMcap}`);
+      }
+      if (currentAlphaVolume !== 'all') {
+        activeTags.push(`Vol: ${currentAlphaVolume}`);
+      }
+      if (currentAlphaTime !== 'all') {
+        activeTags.push(`Age: <${currentAlphaTime}`);
+      }
+      if (currentAlphaSearch) {
+        activeTags.push(`Search: "${currentAlphaSearch}"`);
+      }
+
+      if (activeTags.length === 0) {
+        tagsContainer.innerHTML = `
+          <span style="color:var(--color-text-subtle);">Active Filter:</span>
+          <span class="alpha-status-tag">All Markets</span>
+        `;
+      } else {
+        tagsContainer.innerHTML = `
+          <span style="color:var(--color-text-subtle);">Active Filters:</span>
+          ${activeTags.map(tag => `<span class="alpha-status-tag">${escapeHtml(tag)}</span>`).join(' ')}
+        `;
+      }
     }
 
     async function fetchUserTokenBalance(tokenAddress) {
