@@ -482,8 +482,8 @@ const mainMenuCache = new Map<number, { data: { text: string; keyboard: any }; e
 export const ALL_SUPPORTED_CHAINS = [
   { id: 'near', name: 'NEAR Protocol', symbol: 'NEAR', icon: '⬛' },
   { id: 'solana', name: 'Solana', symbol: 'SOL', icon: '🟣' },
-  { id: 'hyperevm', name: 'HyperEVM', symbol: 'HYPE', icon: '⚡' },
-  { id: 'elysium', name: 'Elysium L2', symbol: 'HYPE', icon: '🏛️' },
+  { id: 'hyperevm', name: 'HyperEVM (Mainnet)', symbol: 'HYPE', icon: '⚡' },
+  { id: 'elysium', name: 'Elysium L2 (Testnet)', symbol: 'HYPE', icon: '🏛️' },
   { id: 'sui', name: 'Sui Network', symbol: 'SUI', icon: '🔷' },
   { id: 'starknet', name: 'Starknet', symbol: 'STRK', icon: '✨' },
 ] as const;
@@ -698,7 +698,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     text += `⚡ HyperEVM: <b>${hyperevmBalFormatted}</b> HYPE (${hyperevmUsdFormatted})\n`;
   }
   if (elysiumVisible) {
-    text += `🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})\n`;
+    text += `🏛️ Elysium (Testnet): <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})\n`;
   }
   if (suiVisible) {
     text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
@@ -715,7 +715,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     text += `◎ SOL: <code>${solAddress}</code>\n\n`;
   }
   if ((hyperevmVisible || elysiumVisible) && evmAddress) {
-    text += `⚡ EVM (HyperEVM & Elysium):\n<code>${evmAddress}</code>\n\n`;
+    text += `⚡ EVM (HyperEVM & Elysium Testnet):\n<code>${evmAddress}</code>\n\n`;
   }
   if (suiVisible && suiAddress) {
     text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
@@ -958,7 +958,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
   }
   if (b.evmAddress) {
-    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
+    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium (Testnet): <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
   }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
@@ -966,7 +966,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n\n`;
   if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n\n`;
   if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n\n`;
-  if (b.evmAddress) text += `⚡ EVM (HyperEVM & Elysium): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
+  if (b.evmAddress) text += `⚡ EVM (HyperEVM & Elysium Testnet): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
   text = text.trimEnd();
 
   const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -1422,9 +1422,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     const vDisplayName = suiVenueMap[vKey] || (vKey && vKey !== 'sui_dex' && vKey !== 'unknown' ? vKey.charAt(0).toUpperCase() + vKey.slice(1) : null);
     venueText = vDisplayName ? `💧 *Venue*: ${vDisplayName} (Sui DEX)` : `💧 *Venue*: Sui DEX Router (Aftermath)`;
   } else if (isHyperEvm) {
-    venueText = `💧 *Venue*: HyperEVM DEX (HyperSwap)`;
+    venueText = `⚡ *Venue*: HyperEVM DEX (Mainnet)`;
   } else if (isElysium) {
-    venueText = `💧 *Venue*: Elysium L2 (Market Lab AMM / CorePad)`;
+    venueText = `🏛️ *Venue*: Elysium L2 (Testnet - Mainnet soon)`;
   } else if (tokenInfo.tradeable) {
     venueText = `💧 *Venue*: NEAR Protocol DEX`;
   }
@@ -1581,6 +1581,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isLowLiquidity = (liqUsdRaw > 0 && liqUsdRaw < 1000) || (liqNum > 0 && liqNum * (tokenInfo.near_usd || 1) < 1000);
   if (isLowLiquidity && !safety?.isHoneypot && !safety?.isDrained) {
     safetyBanner += `⚠️ *Low Liquidity* (${liqUsdStr || `${liqUsdRaw.toFixed(0)}`}) — High slippage risk!\n\n`;
+  }
+
+  if (isElysium) {
+    safetyBanner += `🟡 *Elysium Testnet*: Deployed on Elysium Testnet (Chain ID 99801). Elysium Mainnet will be live soon!\n\n`;
   }
 
   // Mobile-optimized ultra-compact stats block (dense 4-line monospace under 28 chars wide)
@@ -4138,10 +4142,10 @@ export function setupRoutes(bot: Telegraf): void {
           `All your native trading wallets have been automatically created:\n\n` +
           `⬛ <b>NEAR:</b> <code>${result.subaccountId}</code>\n` +
           `🟣 <b>Solana:</b> <code>${result.solanaAddress || 'Ready'}</code>\n` +
-          `⚡ <b>EVM (HyperEVM & Elysium):</b> <code>${result.evmAddress || 'Ready'}</code>\n` +
+          `⚡ <b>EVM:</b> <code>${result.evmAddress || 'Ready'}</code> (HyperEVM Mainnet & Elysium Testnet)\n` +
           `🔷 <b>Sui:</b> <code>${result.suiAddress || 'Ready'}</code>\n` +
           `✨ <b>Starknet:</b> <code>${result.starknetAddress || 'Ready'}</code>\n\n` +
-          `<i>Deposit funds to any address above to trade, or paste any token CA to start sniping!</i>`,
+          `<i>Deposit funds to any address above to trade, or paste any token CA to start sniping!\n(Note: Elysium is on Testnet — Mainnet live soon!)</i>`,
           { parse_mode: 'HTML' }
         ).catch(() => {});
       } else if (result.justUpgraded && result.evmAddress) {
@@ -4149,7 +4153,9 @@ export function setupRoutes(bot: Telegraf): void {
           `⚡ <b>New Chains Unlocked: HyperEVM & Elysium!</b>\n\n` +
           `Your unified EVM wallet has been generated and linked to your account:\n` +
           `<code>${result.evmAddress}</code>\n\n` +
-          `You can now deposit native <b>HYPE</b> and snipe HyperEVM tokens immediately.`,
+          `• <b>HyperEVM:</b> 🟢 Mainnet Live — trade real tokens now!\n` +
+          `• <b>Elysium:</b> 🟡 Testnet Active — test launchpads now (Mainnet live soon!)\n\n` +
+          `Deposit native <b>HYPE</b> to start trading!`,
           { parse_mode: 'HTML' }
         ).catch(() => {});
       }
@@ -4420,11 +4426,12 @@ export function setupRoutes(bot: Telegraf): void {
       const evmUser = await ensureUserEvmWallet(user);
       await ctx.reply(
         `⚡ <b>Deposit HYPE (HyperEVM & Elysium)</b>\n\n` +
-        `Send native <b>HYPE</b> on <b>HyperEVM</b> (Chain ID 999) or <b>Elysium</b> (Chain ID 99801) to your unified EVM address:\n\n` +
+        `Send native <b>HYPE</b> to your unified EVM address:\n\n` +
         `<code>${escapeHtml(evmUser.evm_address || '')}</code>\n\n` +
+        `• 🟢 <b>HyperEVM (Chain ID 999):</b> Mainnet live — trade real tokens now.\n` +
+        `• 🟡 <b>Elysium (Chain ID 99801):</b> Testnet active — test launchpads now (Mainnet live soon!).\n` +
         `• Tap the address above to copy it.\n` +
-        `• HyperEVM uses HYPE for gas fees and trading.\n` +
-        `• Keep at least 0.01 HYPE in your wallet for transaction gas fees.`,
+        `• Keep at least 0.01 HYPE in your wallet for gas fees.`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
@@ -8608,7 +8615,7 @@ export function setupRoutes(bot: Telegraf): void {
     const text =
 `🚀 <b>Elysium & HyperEVM Launchpads Hub</b> 🏛️
 
-Explore active token launchpads running on Elysium's 100ms L2 and HyperEVM:
+Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Testnet — Mainnet live soon!):
 
 1️⃣ <b>CorePad</b> (<code>corepad.app</code>)
 • 800M tokens on constant-product curve

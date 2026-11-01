@@ -15,7 +15,7 @@ const bot = new Telegraf(botToken);
 
 export const BROADCAST_TEXT =
   `🚀 <b>HYPEREVM & ELYSIUM ARE NOW LIVE ON RACERBOT!</b>\n\n` +
-  `The fastest multi-chain execution terminal just unlocked <b>Hyperliquid EVM</b> (Chain 999) and <b>Elysium L2</b> (Chain 99801)!\n\n` +
+  `The fastest multi-chain execution terminal just unlocked <b>Hyperliquid EVM</b> (🟢 Mainnet - Chain 999) and <b>Elysium L2</b> (🟡 Testnet - Chain 99801, Mainnet coming soon!)!\n\n` +
   `Your personal EVM trading wallet is already provisioned and ready to trade with zero setup.\n\n` +
   `⚡ <b>Why Trade HyperEVM on RacerBot?</b>\n` +
   `• <b>1-Tap Sniping:</b> Paste any <code>0x...</code> token contract address or HypurrScan link to buy instantly.\n` +
@@ -25,7 +25,7 @@ export const BROADCAST_TEXT =
   `• <b>Instant Exits:</b> 1-click 25%, 50%, and 100% sell buttons back to native HYPE.\n\n` +
   `💰 <b>Start Trading in 30 Seconds:</b>\n` +
   `1️⃣ Tap <b>⚡ Deposit HYPE</b> below to copy your <code>0x</code> address.\n` +
-  `2️⃣ Send native <b>HYPE</b> on HyperEVM or Elysium.\n` +
+  `2️⃣ Send native <b>HYPE</b> on HyperEVM (Mainnet) or Elysium (Testnet).\n` +
   `3️⃣ Paste any token address in this chat to snipe early alpha!\n\n` +
   `👇 <b>Tap below to open your EVM wallet or view your holdings:</b>`;
 
@@ -178,3 +178,4 @@ main().catch((err) => {
   console.error('Fatal broadcast error:', err);
   process.exit(1);
 });
+
