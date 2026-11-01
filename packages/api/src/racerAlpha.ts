@@ -1,4 +1,5 @@
 import { createLogger, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
+import { loadTokenFacts, peekTokenFacts, warmTokenFacts } from './tokenFacts.js';
 import { getDb, getOpenPositions, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
@@ -2579,25 +2580,6 @@ const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
     holders: 312,
     decimals: 18,
   },
-  {
-    address: 'hoot-f5dd7a.launchpad.justhoot.near',
-    symbol: 'HOOT',
-    name: 'Hoot Token',
-    icon: undefined,
-    venue: '🦉 HOOT',
-    launchpad: 'justhoot',
-    priceUsd: 0.00185,
-    priceNear: 0.000374,
-    change24h: 42.1,
-    marketCap: 1850000,
-    volume24h: 142000,
-    bondingProgress: 100,
-    bondingPhase: 'graduated',
-    liquidityUsd: 195000,
-    sparkline: [0.0013, 0.0014, 0.0016, 0.0015, 0.0017, 0.00185],
-    holders: 890,
-    decimals: 18,
-  },
 
   // ── NEARLY Launchpad (NearlyTrade) ──
   {
@@ -2638,25 +2620,6 @@ const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
     holders: 320,
     decimals: 18,
   },
-  {
-    address: 'sol.nearlytrade.near',
-    symbol: 'SOL',
-    name: 'Sol Nearly',
-    icon: undefined,
-    venue: '⚡ NEARLY',
-    launchpad: 'nearlytrade',
-    priceUsd: 0.00034,
-    priceNear: 0.0000687,
-    change24h: 12.8,
-    marketCap: 340000,
-    volume24h: 41200,
-    bondingProgress: 100,
-    bondingPhase: 'graduated',
-    liquidityUsd: 58000,
-    sparkline: [0.00029, 0.00030, 0.00032, 0.00031, 0.00033, 0.00034],
-    holders: 280,
-    decimals: 18,
-  },
 
   // ── Meme.Cooking Launchpad ──
   {
@@ -2695,25 +2658,6 @@ const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
     liquidityUsd: 46000,
     sparkline: [0.00018, 0.00019, 0.000195, 0.00020, 0.000205, 0.00021],
     holders: 350,
-    decimals: 18,
-  },
-  {
-    address: 'chill.meme-cooking.near',
-    symbol: 'CHILL',
-    name: 'Chill Guy',
-    icon: undefined,
-    venue: '🍳 Meme.Cooking',
-    launchpad: 'memecooking',
-    priceUsd: 0.000155,
-    priceNear: 0.0000313,
-    change24h: 24.6,
-    marketCap: 155000,
-    volume24h: 52100,
-    bondingProgress: 92,
-    bondingPhase: 'bonding',
-    liquidityUsd: 34000,
-    sparkline: [0.00012, 0.00013, 0.00014, 0.000145, 0.00015, 0.000155],
-    holders: 420,
     decimals: 18,
   },
 
@@ -2832,27 +2776,6 @@ const SEED_ALPHA_TOKENS: AlphaTokenItem[] = [
     holders: 1420,
     decimals: 18,
   },
-
-  // ── InTear Launchpad ──
-  {
-    address: 'intear.intear.near',
-    symbol: 'INTEAR',
-    name: 'InTear Ecosystem',
-    icon: undefined,
-    venue: '💧 InTear',
-    launchpad: 'intear',
-    priceUsd: 0.024,
-    priceNear: 0.00485,
-    change24h: 7.8,
-    marketCap: 480000,
-    volume24h: 62000,
-    bondingProgress: 100,
-    bondingPhase: 'dex_pool',
-    liquidityUsd: 78000,
-    sparkline: [0.022, 0.0225, 0.023, 0.0235, 0.0238, 0.024],
-    holders: 390,
-    decimals: 18,
-  },
 ];
 
 // Seeds supply token metadata only (address, symbol, venue, pool ids). Their market numbers
@@ -2886,13 +2809,6 @@ export const CURATED_ALPHA_TOKENS = [
     symbol: 'KOOKDOG',
     name: 'Kook Dog',
   },
-  {
-    address: 'hoot-f5dd7a.launchpad.justhoot.near',
-    fallbackLaunchpad: 'justhoot' as const,
-    fallbackVenue: '🦉 HOOT',
-    symbol: 'HOOT',
-    name: 'Hoot Token',
-  },
 
   // ── NEARLY Launchpad (NearlyTrade) ──
   {
@@ -2909,43 +2825,8 @@ export const CURATED_ALPHA_TOKENS = [
     symbol: 'DRAGONS',
     name: 'Near Dragons',
   },
-  {
-    address: 'sol.nearlytrade.near',
-    fallbackLaunchpad: 'nearlytrade' as const,
-    fallbackVenue: '⚡ NEARLY',
-    symbol: 'SOL',
-    name: 'Sol Nearly',
-  },
 
   // ── Meme.Cooking Launchpad ──
-  {
-    address: 'chill.meme-cooking.near',
-    fallbackLaunchpad: 'memecooking' as const,
-    fallbackVenue: '🍳 Meme.Cooking',
-    symbol: 'CHILL',
-    name: 'Chill Guy',
-  },
-  {
-    address: 'pearpe-420.meme-cooking.near',
-    fallbackLaunchpad: 'memecooking' as const,
-    fallbackVenue: '🍳 Meme.Cooking',
-    symbol: 'PEARPE',
-    name: 'PearPe Meme',
-  },
-  {
-    address: 'jambo-704.meme-cooking.near',
-    fallbackLaunchpad: 'memecooking' as const,
-    fallbackVenue: '🍳 Meme.Cooking',
-    symbol: 'JAMBO',
-    name: 'Jambo',
-  },
-  {
-    address: 'woof.meme-cooking.near',
-    fallbackLaunchpad: 'memecooking' as const,
-    fallbackVenue: '🍳 Meme.Cooking',
-    symbol: 'WOOF',
-    name: 'Woof Near',
-  },
 
   // ── Ref Finance DEX ──
   {
@@ -2983,16 +2864,24 @@ export const CURATED_ALPHA_TOKENS = [
     symbol: 'NEAT',
     name: 'Neat',
   },
-
-  // ── InTear Launchpad ──
-  {
-    address: 'intear.intear.near',
-    fallbackLaunchpad: 'intear' as const,
-    fallbackVenue: '💧 InTear',
-    symbol: 'INTEAR',
-    name: 'InTear Ecosystem',
-  },
 ];
+
+/** A token with what the chain says: real launch time and supply-based market cap */
+function withTokenFacts(t: AlphaTokenItem): AlphaTokenItem {
+  const f = peekTokenFacts(t.address);
+  if (!f.launchedAt && !f.totalSupply) return t;
+  const out = { ...t };
+  if (f.launchedAt) out.createdAt = f.launchedAt;
+  if (f.totalSupply && out.priceUsd > 0) {
+    const supply = parseFloat(f.totalSupply) / Math.pow(10, out.decimals ?? 18);
+    if (supply > 0) out.marketCap = Math.round(out.priceUsd * supply);
+  }
+  return out;
+}
+
+function isLaunchpadAddress(addr: string): boolean {
+  return /justhoot|nearlytrade|meme-cooking|cookinglabs|nearpad|shoremarkets|intear|pumppoly|prismpad|rhea\.meme|onetokenhub|gaypad|nearpumpfun/.test(addr);
+}
 
 function resolveLaunchpadFromAddress(address: string, venueName?: string): { launchpad: AlphaTokenItem['launchpad']; venue: string } {
   const addr = address.toLowerCase();
@@ -3109,7 +2998,7 @@ function mapTokenInfoToAlphaItem(
     decimals: info?.decimals ?? (fallbackMeta as any)?.decimals ?? 18,
     poolId: info?.pool_id ?? info?.poolId ?? null,
     dclPoolId: info?.dcl_pool_id ?? info?.dclPoolId ?? null,
-    createdAt: info?.created_at ? new Date(info.created_at).getTime() : (fallbackMeta?.createdAt || info?.createdAt || undefined),
+    createdAt: peekTokenFacts(address).launchedAt ?? fallbackMeta?.createdAt,
   };
 }
 
@@ -3268,27 +3157,16 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
 
     const dbRow = dbRowsMap.get(addr.toLowerCase());
     const rpcData = onChainRpcCache.get(addr.toLowerCase());
+    const facts = peekTokenFacts(addr);
     const authenticIcon = getAuthenticTokenIcon(addr);
     const symbol = (meta?.symbol || pInfo?.symbol || rpcData?.symbol || dbRow?.symbol || addr.split('.')[0]).toUpperCase();
     const name = meta?.name || rpcData?.name || dbRow?.name || meta?.symbol || symbol;
     const decimals = rpcData?.decimals ?? dbRow?.decimals ?? meta?.decimals ?? pInfo?.decimal ?? 18;
-    const totalSupply = rpcData?.totalSupply || dbRow?.total_supply;
+    const totalSupply = rpcData?.totalSupply || facts.totalSupply || dbRow?.total_supply;
     const humanSupply = totalSupply && totalSupply !== '0' ? parseFloat(totalSupply) / Math.pow(10, decimals) : 0;
 
-    let marketCap = 0;
-    if (humanSupply > 0 && pUsd > 0) {
-      marketCap = Math.round(pUsd * humanSupply);
-    } else if (pUsd > 0) {
-      if (pUsd > 10.0) {
-        // e.g. HOOT: 5,000 supply
-        marketCap = Math.round(pUsd * 5_000);
-      } else if (pUsd > 0.05) {
-        marketCap = Math.round(pUsd * 100_000);
-      } else {
-        const knownSupply = addr.includes('lonk') ? 420_690_000_000 : (addr.includes('dragon') ? 100_000_000 : (addr.includes('sweat') ? 19_658_000_000 : 1_000_000_000));
-        marketCap = Math.round(pUsd * knownSupply);
-      }
-    }
+    // Unknown until the supply is read on-chain (tokenFacts fills it in the background)
+    const marketCap = humanSupply > 0 && pUsd > 0 ? Math.round(pUsd * humanSupply) : 0;
 
     let icon = authenticIcon || (dbRow?.icon && !dbRow.icon.includes('racer-logo') ? dbRow.icon : undefined);
     if (!icon && meta?.icon && !meta.icon.includes('assets.ref.finance') && !meta.icon.includes('raw.githubusercontent.com') && !meta.icon.includes('racer-logo')) {
@@ -3334,7 +3212,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       launchpad,
       priceUsd: Number(pUsd.toFixed(8)),
       priceNear: Number(priceNear.toFixed(8)),
-      change24h: Number(((Math.random() * 12) - 3.5).toFixed(1)),
+      change24h: 0,
       marketCap,
       volume24h: volUsd,
       bondingProgress,
@@ -3343,7 +3221,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       sparkline,
       holders: 50 + Math.min(2500, Math.round(marketCap / 250)),
       decimals,
-      createdAt: dbRow?.updated_at ? new Date(dbRow.updated_at).getTime() : (isLaunchpad ? Date.now() - 3600_000 * ((addr.length % 36) + 1) : Date.now() - 3600_000 * 24 * 14),
+      createdAt: facts.launchedAt,
     });
   }
 
@@ -3357,6 +3235,14 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       const existing = results.find(r => r.address.toLowerCase() === addr.toLowerCase());
       if (existing) {
         if (!existing.icon && row.icon && !row.icon.includes('racer-logo')) existing.icon = row.icon;
+        // Launchpad tokens on a bonding curve have no Ref price: the detector's price is the real one
+        const rowPriceNear = parseFloat(row.last_price || '0');
+        if (existing.priceUsd <= 0 && rowPriceNear > 0) {
+          existing.priceNear = Number(rowPriceNear.toFixed(8));
+          existing.priceUsd = Number((rowPriceNear * nearUsd).toFixed(8));
+          const rowLiqUsd = parseFloat(row.last_liquidity || '0') * nearUsd;
+          if (rowLiqUsd > 0) existing.liquidityUsd = Math.round(rowLiqUsd);
+        }
         if (row.total_supply && row.total_supply !== '0' && existing.priceUsd > 0) {
           const dec = row.decimals ?? existing.decimals ?? 18;
           const sup = parseFloat(row.total_supply) / Math.pow(10, dec);
@@ -3368,9 +3254,6 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         if (row.bonding_progress_pct !== null && row.bonding_progress_pct !== undefined) {
           existing.bondingProgress = Number(row.bonding_progress_pct);
           existing.bondingPhase = existing.bondingProgress < 100 ? 'bonding' : (existing.launchpad !== 'ref' ? 'graduated' : 'dex_pool');
-        }
-        if (!existing.createdAt && row.updated_at) {
-          existing.createdAt = new Date(row.updated_at).getTime();
         }
         continue;
       }
@@ -3389,7 +3272,7 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
 
       const dec = row.decimals ?? 18;
       const supplyNum = (row.total_supply && row.total_supply !== '0') ? parseFloat(row.total_supply) / Math.pow(10, dec) : 0;
-      const marketCap = supplyNum > 0 && pUsd > 0 ? Math.round(pUsd * supplyNum) : Math.round(liqUsd * 2);
+      const marketCap = supplyNum > 0 && pUsd > 0 ? Math.round(pUsd * supplyNum) : 0;
 
       results.push({
         address: addr,
@@ -3409,13 +3292,15 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         sparkline: [pUsd * 0.95, pUsd * 0.98, pUsd],
         holders: 100,
         decimals: dec,
-        createdAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now() - 3600_000 * 12,
+        createdAt: peekTokenFacts(addr).launchedAt,
       });
     }
   }
 
   // Exclude base collateral wrap.near and native near from meme / alpha screener
   const filteredResults = results.filter(t => t && t.address && t.address.toLowerCase() !== 'wrap.near' && t.address.toLowerCase() !== 'near');
+  const listed = filteredResults.map(t => t.address);
+  warmTokenFacts([...listed.filter(isLaunchpadAddress), ...listed.filter(a => !isLaunchpadAddress(a))]);
 
   return filteredResults.length > 0 ? filteredResults : [...INITIAL_ALPHA_TOKENS];
 }
@@ -3469,7 +3354,10 @@ export async function listAlphaTokens(options?: {
     }
   }
 
-  let tokens = [...cachedAlphaTokensList.tokens].filter(t => t && t.address && t.address.toLowerCase() !== 'wrap.near' && t.address.toLowerCase() !== 'near');
+  let tokens = cachedAlphaTokensList.tokens
+    .filter(t => t && t.address && t.address.toLowerCase() !== 'wrap.near' && t.address.toLowerCase() !== 'near')
+    .filter(t => !peekTokenFacts(t.address).missing)
+    .map(withTokenFacts);
 
   // Live On-Chain Address Query: If user searches for a specific .near contract address
   const rawSearch = (options?.search || '').trim();
@@ -3522,7 +3410,7 @@ export async function listAlphaTokens(options?: {
   const preset = (options?.preset || 'all').toLowerCase().trim();
   if (preset === 'new_launches' || preset === 'new') {
     const cutoff48h = now - 48 * 3600_000;
-    tokens = tokens.filter(t => (t.createdAt && t.createdAt >= cutoff48h) || t.bondingPhase === 'bonding');
+    tokens = tokens.filter(t => Boolean(t.createdAt && t.createdAt >= cutoff48h));
   } else if (preset === 'top_volume' || preset === 'trending') {
     tokens = tokens.filter(t => t.volume24h > 1000);
   } else if (preset === 'top_gainers' || preset === 'gainers') {
@@ -3536,7 +3424,7 @@ export async function listAlphaTokens(options?: {
   // 2. Market Cap Filter
   const mcapFilter = (options?.mcapFilter || 'all').toLowerCase().trim();
   if (mcapFilter === 'micro') {
-    tokens = tokens.filter(t => t.marketCap < 25000);
+    tokens = tokens.filter(t => t.marketCap > 0 && t.marketCap < 25000);
   } else if (mcapFilter === 'emerging') {
     tokens = tokens.filter(t => t.marketCap >= 25000 && t.marketCap <= 100000);
   } else if (mcapFilter === 'graduated') {
@@ -3565,7 +3453,7 @@ export async function listAlphaTokens(options?: {
     tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
   } else if (timeFilter === '24h') {
     const cutoff = now - 24 * 3600_000;
-    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff || t.bondingPhase === 'bonding');
+    tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
   } else if (timeFilter === '7d') {
     const cutoff = now - 7 * 86400_000;
     tokens = tokens.filter(t => (t.createdAt || 0) >= cutoff);
@@ -3633,10 +3521,12 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
   const authenticIcon = getAuthenticTokenIcon(tokenAddress);
 
   try {
-    const [liveInfo, rpcData] = await Promise.all([
+    const [liveInfo, rpcData, facts] = await Promise.all([
       withTimeout(getTokenInfo(tokenAddress, false).catch(() => null), 7000, null),
       fetchOnChainTokenRpcData(tokenAddress),
+      withTimeout(loadTokenFacts(tokenAddress), 4000, peekTokenFacts(tokenAddress)),
     ]);
+    if (facts.missing) return null;
 
     if (liveInfo && (liveInfo.price || liveInfo.symbol || liveInfo.name)) {
       const mergedInfo = {
@@ -3663,9 +3553,11 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
         item.icon = authenticIcon;
       }
 
+      if (facts.launchedAt) item.createdAt = facts.launchedAt;
+
       // Authoritative on-chain market cap computation:
       const effectiveDecimals = item.decimals ?? 18;
-      const rawSupply = rpcData?.totalSupply || liveInfo.total_supply;
+      const rawSupply = facts.totalSupply || rpcData?.totalSupply || liveInfo.total_supply;
       if (rawSupply && rawSupply !== '0' && item.priceUsd > 0) {
         const humanSupply = parseFloat(rawSupply) / Math.pow(10, effectiveDecimals);
         if (humanSupply > 0) {
@@ -3713,6 +3605,7 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
         liquidityUsd: Math.round(mcap * 0.2),
         sparkline: [fallbackPriceUsd * 0.95, fallbackPriceUsd * 0.98, fallbackPriceUsd],
         holders: fallback?.holders || 100,
+        createdAt: facts.launchedAt,
       };
       return item;
     }
