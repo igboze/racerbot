@@ -120,6 +120,7 @@ import {
   prewarmStorageDeposit,
   invalidateBalanceCache,
   formatCryptoPrice,
+  EvmTokenLookupError,
   type TokenInfoResult,
 } from './wallet.js';
 import { sellAtTarget } from './sellHelper.js';
@@ -3430,6 +3431,27 @@ async function sendPostBuySlTpPrompt(ctx: Context, positionId?: string, tokenAdd
 }
 
 
+
+/** What to tell the user when a 0x address did not load as a HyperEVM or Elysium token */
+export function evmLookupFailureMessage(address: string, err: any): string {
+  const kind = err instanceof EvmTokenLookupError ? err.kind : 'rpc';
+  if (kind === 'empty') {
+    return `❌ No token at this address\n\n${address}\n\n` +
+      `Nothing has been deployed at this address on HyperEVM or Elysium testnet: no contract and no transactions. ` +
+      `Check that you copied the token's contract address, not a wallet or pool address.\n\n` +
+      `If it is a pre-launch token, its contract may not exist until the launchpad deploys it.`;
+  }
+  if (kind === 'wallet') {
+    return `❌ This is a wallet, not a token\n\n${address}\n\n` +
+      `This address has sent transactions but has no contract. Paste the token's contract address instead.`;
+  }
+  if (kind === 'elysium') {
+    return `ℹ️ This token is on Elysium, not HyperEVM\n\n${address}\n\n` +
+      `RacerBot cannot trade Elysium tokens yet.`;
+  }
+  return `⚠️ Could not look up this token right now\n\n${address}\n\n` +
+    `HyperEVM did not answer in time. Please try again in a moment.`;
+}
 
 // ── Multichain Deposit UI Builders (NEAR Intents 1Click) ────────────────────
 export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 'other' | 'all' = 'popular') {
@@ -13811,14 +13833,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           return;
         } catch (err: any) {
           if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});
-          await ctx.reply(
-            `❌ HyperEVM token not found: ${sanitizeMd(evmCandidate)}\n\n` +
-            `This could mean:\n` +
-            `• The contract address is an account wallet, not an ERC-20 token\n` +
-            `• The token is not deployed on HyperEVM (Mainnet) or Elysium (Testnet)\n` +
-            `• The RPC request timed out — please try again\n\n` +
-            `Error: ${sanitizeMd(err?.message?.slice(0, 100) || 'Unknown error')}`
-          );
+          await ctx.reply(evmLookupFailureMessage(evmCandidate, err));
           return;
         }
       }
