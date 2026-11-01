@@ -18,6 +18,7 @@ import {
   refillPool,
   submitWalletDeposit,
   withdrawPrivate,
+  WalletNeedsNearError,
 } from '../executorPool.js';
 import { verifiedUser } from './verifiedUser.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
@@ -120,20 +121,12 @@ export function registerConfidentialRoutes(router: Router): void {
         res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
         return;
       }
-      try {
-        const result = await depositFromWallet(user, amount);
-        res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
-      } catch (depErr: any) {
-        const msg = String(depErr?.message || '');
-        if (/does not exist|not enough balance|insufficient|LackBalanceForState/i.test(msg)) {
-          const quote = await quoteWalletDeposit(user, amount);
-          res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
-          return;
-        }
-        throw depErr;
-      }
+      // RacerBot wallet. If it cannot cover the deposit, say so with a code: the page offers the
+      // connected NEAR wallet when one is there (Telegram users often have none to fall back to).
+      const result = await depositFromWallet(user, amount);
+      res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
     } catch (err: any) {
-      res.status(400).json({ error: err?.message || 'Deposit failed' });
+      res.status(400).json({ error: err?.message || 'Deposit failed', ...(err instanceof WalletNeedsNearError ? { code: err.code } : {}) });
     }
   });
 

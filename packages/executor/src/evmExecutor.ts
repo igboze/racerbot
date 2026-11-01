@@ -15,6 +15,8 @@ import {
   HYPEREVM_EXPLORER_URL,
   ELYSIUM_TESTNET_EXPLORER_URL,
   HYPE_SYMBOL,
+  HYPERSWAP_V2_ROUTER,
+  resolveV2Router,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -29,8 +31,9 @@ const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
 export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
 const EVM_TREASURY_ADDRESS = process.env.EVM_TREASURY_ADDRESS || process.env.TREASURY_EVM_ADDRESS || DEFAULT_EVM_TREASURY_ADDRESS;
 
-// Default Verified Routers
-export const HYPEREVM_DEFAULT_ROUTER = process.env.HYPEREVM_ROUTER_ADDRESS || '0x7AdF4701AbCDBc5Dcf5Cb58B526f897e048F0D11';
+// Default Verified Routers. HyperEVM swaps use the V2 router interface, so the default is HyperSwap V2;
+// a configured router that is not V2 (e.g. a V3 SwapRouter) falls back to it at runtime.
+export const HYPEREVM_DEFAULT_ROUTER = process.env.HYPEREVM_ROUTER_ADDRESS || HYPERSWAP_V2_ROUTER;
 export const ELYSIUM_MARKET_LAB_ROUTER = process.env.ELYSIUM_ROUTER_ADDRESS || '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
 export const ELYSIUM_COREPAD_ROUTER = process.env.ELYSIUM_COREPAD_ROUTER || '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 
@@ -86,7 +89,18 @@ export async function executeEvmSwap(
   const tokenName = tokenInfo?.name || 'EVM Token';
   const tokenDecimals = tokenInfo?.decimals || 18;
 
-  const routerAddress = chain === 'elysium' ? ELYSIUM_MARKET_LAB_ROUTER : HYPEREVM_DEFAULT_ROUTER;
+  let routerAddress: string;
+  let wethAddress: string;
+  try {
+    ({ address: routerAddress, weth: wethAddress } = await resolveV2Router(
+      chain, isTestnet, chain === 'elysium' ? ELYSIUM_MARKET_LAB_ROUTER : HYPEREVM_DEFAULT_ROUTER));
+  } catch (err: any) {
+    return { txHash: '', success: false, chain, reason: `No DEX router available on ${chain}: ${err?.message}`, tokenSymbol, tokenName };
+  }
+  const noPool = (): EvmSwapExecutionResult => ({
+    txHash: '', success: false, chain, tokenSymbol, tokenName,
+    reason: `No HyperSwap V2 pool with HYPE liquidity for ${tokenSymbol} yet. Nothing was spent.`,
+  });
 
   // Pre-flight Honeypot Simulation Check
   onProgress?.('simulating');
@@ -129,7 +143,37 @@ export async function executeEvmSwap(
 
     const { feeAmount, netTradeAmount } = calculateEvmTradeFee(actualHypeIn);
 
-    // Transfer Platform Fee to Treasury if configured
+    onProgress?.('executing_swap');
+    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
+    const path = [wethAddress, targetTokenAddress];
+
+    // Quote before anything is sent: no pool means no trade (and no fee)
+    let expectedTokensOut = 0n;
+    try {
+      const amountsOut = await router.getAmountsOut(netTradeAmount, path);
+      expectedTokensOut = amountsOut[1] || 0n;
+    } catch {
+      return noPool();
+    }
+    if (expectedTokensOut <= 0n) return noPool();
+
+    const minTokensOut = calculateSlippageMin(expectedTokensOut, slippage_pct);
+    const deadline = Math.floor(Date.now() / 1000) + 300; // 5 min deadline
+    const before = await getErc20Balance(targetTokenAddress, userAddress, chain, isTestnet);
+
+    // Fee-on-transfer variant: also works for meme tokens that tax transfers
+    const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(
+      minTokensOut,
+      path,
+      userAddress,
+      deadline,
+      { value: netTradeAmount }
+    );
+
+    const receipt = await tx.wait(1);
+    const txHash = receipt?.hash || tx.hash;
+
+    // Platform fee to the treasury, only once the swap went through
     if (EVM_TREASURY_ADDRESS && ethers.isAddress(EVM_TREASURY_ADDRESS) && feeAmount > 0n) {
       try {
         const feeTx = await signer.sendTransaction({
@@ -142,39 +186,11 @@ export async function executeEvmSwap(
       }
     }
 
-    onProgress?.('executing_swap');
-    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
-    const wethAddress = await router.WETH().catch(() => ethers.ZeroAddress);
-    const path = [wethAddress, targetTokenAddress];
-
-    // Estimate output amount
-    let expectedTokensOut = 0n;
-    try {
-      const amountsOut = await router.getAmountsOut(netTradeAmount, path);
-      expectedTokensOut = amountsOut[1] || 0n;
-    } catch {
-      // Fallback estimate if pool quote reverted
-      expectedTokensOut = 1000n * BigInt(10 ** tokenDecimals);
-    }
-
-    const minTokensOut = calculateSlippageMin(expectedTokensOut, slippage_pct);
-    const deadline = Math.floor(Date.now() / 1000) + 300; // 5 min deadline
-
-    const tx = await router.swapExactETHForTokens(
-      minTokensOut,
-      path,
-      userAddress,
-      deadline,
-      { value: netTradeAmount }
-    );
-
-    const receipt = await tx.wait(1);
-    const txHash = receipt?.hash || tx.hash;
-
-    // Read new token balance
-    const balanceResult = await getErc20Balance(targetTokenAddress, userAddress, chain, isTestnet);
-    const tokensBought = balanceResult.formatted;
-    const priceHype = Number(amount_in) / (balanceResult.human || 1);
+    // What this buy added (the wallet may already have held some)
+    const after = await getErc20Balance(targetTokenAddress, userAddress, chain, isTestnet);
+    const boughtRaw = after.raw > before.raw ? after.raw - before.raw : after.raw;
+    const tokensBought = ethers.formatUnits(boughtRaw, tokenDecimals);
+    const priceHype = Number(ethers.formatEther(netTradeAmount)) / (Number(tokensBought) || 1);
 
     // Record position in DB
     const openPositions = await getOpenPositions(user.id);
@@ -244,6 +260,19 @@ export async function executeEvmSwap(
       };
     }
 
+    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
+    const path = [targetTokenAddress, wethAddress];
+
+    // Quote before approving or sending anything
+    let expectedHypeOut = 0n;
+    try {
+      const amountsOut = await router.getAmountsOut(sellQtyRaw, path);
+      expectedHypeOut = amountsOut[1] || 0n;
+    } catch {
+      return noPool();
+    }
+    if (expectedHypeOut <= 0n) return noPool();
+
     // Check & Approve Allowance
     const currentAllowance = await tokenContract.allowance(userAddress, routerAddress);
     if (currentAllowance < sellQtyRaw) {
@@ -253,22 +282,11 @@ export async function executeEvmSwap(
     }
 
     onProgress?.('executing_swap');
-    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
-    const wethAddress = await router.WETH().catch(() => ethers.ZeroAddress);
-    const path = [targetTokenAddress, wethAddress];
-
-    let expectedHypeOut = 0n;
-    try {
-      const amountsOut = await router.getAmountsOut(sellQtyRaw, path);
-      expectedHypeOut = amountsOut[1] || 0n;
-    } catch {
-      expectedHypeOut = ethers.parseEther('0.1');
-    }
-
     const minHypeOut = calculateSlippageMin(expectedHypeOut, slippage_pct);
     const deadline = Math.floor(Date.now() / 1000) + 300;
 
-    const tx = await router.swapExactTokensForETH(
+    // Fee-on-transfer variant: also works for meme tokens that tax transfers
+    const tx = await router.swapExactTokensForETHSupportingFeeOnTransferTokens(
       sellQtyRaw,
       minHypeOut,
       path,

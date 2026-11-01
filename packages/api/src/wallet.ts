@@ -665,26 +665,33 @@ export async function fetchDexScreenerTokenData(tokenAddress: string, chainHint?
       if (nearPairs.length > 0) candidatePairs = nearPairs;
     }
 
-    const pool = candidatePairs.sort(
-      (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
-    )[0];
+    // DexScreener's price, market cap and change describe a pair's BASE token. Prefer pools where
+    // this token is the base; otherwise (e.g. WHYPE in USDC/WHYPE) derive its price from the pair.
+    const self = tokenAddress.toLowerCase();
+    const byLiquidity = (a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0);
+    const asBase = candidatePairs.filter((p: any) => p.baseToken?.address?.toLowerCase() === self);
+    const pool = (asBase.length > 0 ? asBase : candidatePairs).sort(byLiquidity)[0];
     if (!pool) return null;
+    const isQuote = asBase.length === 0 && pool.quoteToken?.address?.toLowerCase() === self;
 
     const buys24h = pool.txns?.h24?.buys ?? (pool.txns?.h6?.buys || pool.txns?.h1?.buys || pool.txns?.m5?.buys || 0);
     const sells24h = pool.txns?.h24?.sells ?? (pool.txns?.h6?.sells || pool.txns?.h1?.sells || pool.txns?.m5?.sells || 0);
+    const baseUsd = pool.priceUsd ? parseFloat(pool.priceUsd) : 0;
+    const baseInQuote = pool.priceNative ? parseFloat(pool.priceNative) : 0;
+    const token = isQuote ? pool.quoteToken : pool.baseToken;
 
     return {
-      priceUsd: pool.priceUsd ? parseFloat(pool.priceUsd) : 0,
-      priceNative: pool.priceNative ? parseFloat(pool.priceNative) : 0,
-      marketCapUsd: pool.marketCap || pool.fdv || 0,
-      fdvUsd: pool.fdv || pool.marketCap || 0,
+      priceUsd: isQuote ? (baseInQuote > 0 ? baseUsd / baseInQuote : 0) : baseUsd,
+      priceNative: isQuote ? 0 : baseInQuote,
+      marketCapUsd: isQuote ? 0 : (pool.marketCap || pool.fdv || 0),
+      fdvUsd: isQuote ? 0 : (pool.fdv || pool.marketCap || 0),
       volume24hUsd: pool.volume?.h24 || 0,
-      priceChange24h: pool.priceChange?.h24 || 0,
+      priceChange24h: isQuote ? 0 : (pool.priceChange?.h24 || 0),
       dexId: pool.dexId,
       pairAddress: pool.pairAddress,
       chainId: pool.chainId,
-      name: pool.baseToken?.name,
-      symbol: pool.baseToken?.symbol,
+      name: token?.name,
+      symbol: token?.symbol,
       buys24h,
       sells24h,
       txns: pool.txns,

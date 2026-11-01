@@ -85,9 +85,49 @@ export const UNISWAP_V2_ROUTER_ABI = [
   'function swapExactETHForTokens(uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) payable returns (uint256[] memory amounts)',
   'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) returns (uint256[] memory amounts)',
   'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) returns (uint256[] memory amounts)',
+  'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) payable',
+  'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline)',
   'function WETH() view returns (address)',
   'function factory() view returns (address)',
 ];
+
+/** HyperSwap V2 Router02 on HyperEVM mainnet (factory 0x724412c0...1c48, where HyperEVM meme pools live) */
+export const HYPERSWAP_V2_ROUTER = '0xb4a9C4e6Ea8E2191d2FA5B380452a634Fb21240A';
+/** Wrapped HYPE on HyperEVM mainnet */
+export const WHYPE_ADDRESS = '0x5555555555555555555555555555555555555555';
+
+const v2RouterCache = new Map<string, { address: string; weth: string }>();
+
+/**
+ * A Uniswap-V2-style router the executor can use, with its wrapped native token. The preferred
+ * router is checked first: a V3 router (no WETH()) cannot run V2 swaps, so on HyperEVM mainnet
+ * it falls back to HyperSwap V2 instead of failing every trade.
+ */
+export async function resolveV2Router(
+  chain: EvmChain,
+  isTestnet: boolean,
+  preferred: string
+): Promise<{ address: string; weth: string }> {
+  const key = `${chain}:${isTestnet}:${preferred.toLowerCase()}`;
+  const cached = v2RouterCache.get(key);
+  if (cached) return cached;
+  const provider = getEvmProvider(chain, isTestnet);
+  const weth = async (address: string) =>
+    String(await new ethers.Contract(address, UNISWAP_V2_ROUTER_ABI, provider).WETH());
+
+  let resolved: { address: string; weth: string };
+  try {
+    resolved = { address: preferred, weth: await weth(preferred) };
+  } catch (err: any) {
+    if (chain !== 'hyperevm' || isTestnet || preferred.toLowerCase() === HYPERSWAP_V2_ROUTER.toLowerCase()) {
+      throw new Error(`Router ${preferred} is not a V2 router (WETH() failed): ${err?.shortMessage || err?.message}`);
+    }
+    logger.warn(`Router ${preferred} has no WETH(); using HyperSwap V2 ${HYPERSWAP_V2_ROUTER}`);
+    resolved = { address: HYPERSWAP_V2_ROUTER, weth: await weth(HYPERSWAP_V2_ROUTER).catch(() => WHYPE_ADDRESS) };
+  }
+  v2RouterCache.set(key, resolved);
+  return resolved;
+}
 
 export const UNISWAP_V2_FACTORY_ABI = [
   'function getPair(address tokenA, address tokenB) view returns (address pair)',
