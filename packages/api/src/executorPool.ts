@@ -668,12 +668,29 @@ async function finishClose(e: ConfidentialExecutorRecord): Promise<void> {
 
 // ── Private balance in and out ────────────────────────────────────────────────
 
+/** Deposit address registration, storage the wallet must keep, and gas, on top of the deposit itself */
+const DEPOSIT_OVERHEAD = 20_000_000_000_000_000_000_000n; // 0.02 NEAR
+
+/** The RacerBot wallet cannot cover a deposit; `code` lets the page offer the connected wallet instead */
+export class WalletNeedsNearError extends Error {
+  readonly code = 'wallet_needs_near';
+}
+
 /** Deposit NEAR from the user's RacerBot wallet into their private balance (~19 s to settle) */
 export async function depositFromWallet(user: UserRecord, amount: bigint): Promise<{ depositAddress: string; txHash: string }> {
   if (isExternalWallet(user)) throw new Error('Approve the deposit in your wallet');
+  const near = getNear();
+  // Check before quoting or signing, so a short balance gets a plain answer instead of an RPC error
+  const have = BigInt((await near.getNearBalance(user.subaccount_id, 0).catch(() => '0')) || '0');
+  const need = amount + DEPOSIT_OVERHEAD;
+  if (have < need) {
+    const fmt = (y: bigint) => (Number(y / 10n ** 18n) / 1e6).toFixed(4);
+    throw new WalletNeedsNearError(have === 0n
+      ? `Your RacerBot wallet (${user.subaccount_id}) has no NEAR yet. Send NEAR to it first, then deposit.`
+      : `Your RacerBot wallet has ${fmt(have)} NEAR; this deposit needs ${fmt(need)} NEAR (the amount plus about 0.02 NEAR for fees). Add NEAR or deposit less.`);
+  }
   const acct = await ensureConfidentialAccount(user);
   const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
-  const near = getNear();
   await near.addKey(user.subaccount_id, KeyPair.fromString(decrypt(user.scoped_key_encrypted, MASTER_KEY) as any));
   // Wrap, register the one-time deposit address, send: one transaction to wrap.near
   const outcome = await near.signAndSendTransactionAll(user.subaccount_id, 'wrap.near', [

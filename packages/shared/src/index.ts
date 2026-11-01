@@ -381,6 +381,9 @@ export {
   calculateEvmTradeFee,
   calculateSlippageMin,
   simulateEvmTrade,
+  resolveV2Router,
+  HYPERSWAP_V2_ROUTER,
+  WHYPE_ADDRESS,
 } from './evm.js';
 export type {
   EvmChain,

@@ -4619,8 +4619,8 @@
                     <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='25'">25Ⓝ</button>
                     <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='50'">50Ⓝ</button>
                   </div>
-                  <button type="button" class="btn-secondary" onclick="openDepositModal()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
-                    <span>Cross-Chain Intents Deposit (SOL / ETH / BTC / USDC)</span>
+                  <button type="button" class="btn-secondary" onclick="openPrivateCrossChainDeposit()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
+                    <span>Deposit privately from another chain (SOL, BTC, USDC...)</span>
                   </button>
                 </div>
 
@@ -5829,7 +5829,9 @@
           const tone = p.status === 'ready' ? 'ok' : 'live';
           const label = p.status === 'ready' ? 'Ready' : p.status === 'claimed' ? 'Buying' : 'Funding';
           return `<span class="status-chip" data-tone="${tone}">${escapeHtml(nearFmt(p.size))} NEAR · ${label}</span>`;
-        }).join('') : '<span class="conf-hint">No ready executors yet. Deposit NEAR into your Private Balance to auto-spawn executors.</span>';
+        }).join('') : (data.enabled === false
+          ? '<span class="conf-hint">Private trading opens soon. You can already deposit to and withdraw from your private balance.</span>'
+          : '<span class="conf-hint">No ready executors yet. Deposit NEAR into your Private Balance to auto-spawn executors.</span>');
 
         if (document.getElementById('conf-pool')) document.getElementById('conf-pool').innerHTML = chipHtml;
         if (consoleChipsEl) consoleChipsEl.innerHTML = chipHtml;
@@ -5952,7 +5954,11 @@
         }
         const res = await fetch(path, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(payload) });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
+        if (!res.ok || !data.success) {
+          const err = new Error(data.error || 'Request failed');
+          err.code = data.code;
+          throw err;
+        }
         return data;
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = label; }
@@ -5961,7 +5967,18 @@
 
     async function executeConfidentialNearDeposit(amountNear, btn) {
       if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return false; }
-      const data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
+      let data;
+      try {
+        data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
+      } catch (err) {
+        // The RacerBot wallet is short: a connected NEAR wallet can sign the deposit instead
+        const connected = window.RacerConnect?.activeNearWallet;
+        if (err.code !== 'wallet_needs_near' || !connected || typeof window.RacerConnect.sendFunctionCalls !== 'function') throw err;
+        if (!confirm(`${err.message}
+
+Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) return false;
+        data = await confPost('/alpha/confidential/deposit', { amountNear, fromConnectedWallet: true }, btn, 'Preparing...');
+      }
       if (data.requiresWalletSignature) {
         if (!window.RacerConnect || typeof window.RacerConnect.sendFunctionCalls !== 'function') {
           throw new Error('Connect your NEAR wallet to approve the deposit.');
@@ -6120,6 +6137,16 @@
       } catch (err) {
         sel.innerHTML = '<option value="">Tokens unavailable</option>';
       }
+    }
+
+    /** The console's executor pool links here: the private cross-chain deposit card on Receipts */
+    function openPrivateCrossChainDeposit() {
+      switchNav('receipts');
+      setTimeout(() => {
+        const card = document.getElementById('conf-xchain-label')?.closest('.conf-card');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.getElementById('conf-xchain-chain')?.focus({ preventScroll: true });
+      }, 300);
     }
 
     async function confXchainQuote(btn) {
