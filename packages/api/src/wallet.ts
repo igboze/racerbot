@@ -777,7 +777,7 @@ export async function fetchTokenTotalTxns(
 
 export interface TokenInfoResult {
   address: string;
-  chain?: 'near' | 'sui' | 'starknet' | 'solana';
+  chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
   name: string;
   symbol: string;
   decimals: number;
@@ -1198,6 +1198,53 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         last_liquidity: sol.liquidityUsd > 0 ? sol.liquidityUsd / solUsd : 0,
         icon: sol.icon,
       } as any).catch(() => { });
+      return result;
+    }
+
+    // ── EVM Token Resolution (HyperEVM & Elysium L2) ───────────────────────────
+    if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near') && !isStarknetToken(tokenAddress)) {
+      const isElysium = tokenAddress.toLowerCase().endsWith('.elysium') || rawTokenAddress.toLowerCase().includes('elysium');
+      const chain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
+      const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+
+      const [tokenMeta, dexscreenerData] = await Promise.all([
+        getErc20TokenInfo(tokenAddress, chain, isTestnet).catch(() => null),
+        fetchDexScreenerTokenData(tokenAddress).catch(() => null),
+      ]);
+
+      const sym = tokenMeta?.symbol || 'TKN';
+      const name = tokenMeta?.name || 'EVM Token';
+      const decimals = tokenMeta?.decimals ?? 18;
+      const totalSupply = tokenMeta?.totalSupply || '1000000000000000000000000';
+
+      const hypeUsd = 25.0;
+      const priceUsd = Number(dexscreenerData?.priceUsd || 0);
+      const priceHype = priceUsd > 0 ? priceUsd / hypeUsd : 0.001;
+      const liquidityUsd = Number(dexscreenerData?.liquidityUsd || 0);
+      const marketCapUsd = Number(dexscreenerData?.marketCapUsd || 0);
+
+      const result: TokenInfoResult = {
+        address: ethers.getAddress(tokenAddress),
+        chain,
+        name,
+        symbol: sym,
+        decimals,
+        total_supply: totalSupply,
+        price: priceHype.toString(),
+        price_usd: priceUsd.toString(),
+        liquidity: (liquidityUsd / hypeUsd).toFixed(2),
+        liquidity_usd: liquidityUsd.toFixed(2),
+        market_cap: marketCapUsd / hypeUsd,
+        market_cap_usd: marketCapUsd,
+        near_usd: hypeUsd,
+        venue: `${chain}_dex` as any,
+        tradeable: true,
+        buy_tax_pct: 0,
+        sell_tax_pct: 0,
+      };
+
+      tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
       return result;
     }
 
@@ -2213,6 +2260,8 @@ export interface OnboardResult {
   starknetPrivateKey?: string;
   solanaAddress?: string;
   solanaPrivateKey?: string;
+  evmAddress?: string;
+  evmPrivateKey?: string;
   isExisting: boolean;
 }
 
@@ -2387,7 +2436,7 @@ export async function resetUserStarknetWallet(userId: string): Promise<Generated
  */
 export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord> {
   // FAST PATH: If user already has all wallet addresses populated, return immediately
-  if (user.subaccount_id && user.sui_address && user.starknet_address && user.solana_address) {
+  if (user.subaccount_id && user.sui_address && user.starknet_address && user.solana_address && user.evm_address) {
     return user;
   }
 
@@ -2404,6 +2453,13 @@ export async function ensureUserAllWallets(user: UserRecord): Promise<UserRecord
     } catch (err: any) {
       // Never block /start for older users if the Solana backfill hits a transient DB error.
       console.warn(`[SOLANA] ensureUserSolanaWallet failed for user ${updated.id}:`, err?.message);
+    }
+  }
+  if (!updated.evm_address || !updated.evm_private_key_enc) {
+    try {
+      updated = await ensureUserEvmWallet(updated);
+    } catch (err: any) {
+      console.warn(`[EVM] ensureUserEvmWallet failed for user ${updated.id}:`, err?.message);
     }
   }
   return updated;
@@ -2427,6 +2483,7 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
       suiAddress: updated.sui_address ?? undefined,
       starknetAddress: updated.starknet_address ?? undefined,
       solanaAddress: updated.solana_address ?? undefined,
+      evmAddress: updated.evm_address ?? undefined,
       isExisting: true,
     };
   }
@@ -2455,6 +2512,9 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
 
   // Step 2c: Generate Solana ed25519 wallet
   const solanaWallet = generateSolanaWallet(MASTER_KEY);
+
+  // Step 2d: Generate unified EVM wallet (HyperEVM & Elysium)
+  const evmWallet = generateEvmWallet(MASTER_KEY);
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -2485,6 +2545,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     starknet_private_key_enc: starknetWallet.encryptedPrivateKey,
     solana_address: solanaWallet.address,
     solana_private_key_enc: solanaWallet.encryptedPrivateKey,
+    evm_address: evmWallet.address,
+    evm_private_key_enc: evmWallet.encryptedPrivateKey,
   });
 
   // Generate referral code based on username
@@ -2507,6 +2569,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     starknetPrivateKey: starknetWallet.privateKeySecret,
     solanaAddress: user.solana_address || solanaWallet.address,
     solanaPrivateKey: user.solana_address && user.solana_address !== solanaWallet.address ? undefined : solanaWallet.privateKeySecret,
+    evmAddress: user.evm_address || evmWallet.address,
+    evmPrivateKey: evmWallet.privateKey,
     isExisting: false,
   };
 }
@@ -2731,7 +2795,7 @@ let directExecutor: any = null;
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
-  chain?: 'near' | 'sui' | 'starknet' | 'solana';
+  chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -2891,6 +2955,10 @@ export interface UserBalances {
   solBalanceFormatted?: string;
   solBalanceUsd?: string;
   solUsd?: number;
+  evmAddress?: string;
+  hyperevmBalanceFormatted?: string;
+  elysiumBalanceFormatted?: string;
+  hypeUsd?: number;
 }
 
 /**
@@ -2949,11 +3017,14 @@ export async function getUserBalances(
         withTimeout(getStrkUsdPrice(), 2500, 0.40),
         withTimeout(getEthUsdPrice(), 2500, 2600.0),
       ]);
-      const [solRes, solUsdRes] = await Promise.allSettled([
+      const [solRes, solUsdRes, evmBalRes] = await Promise.allSettled([
         solanaAddress
           ? withTimeout(getSolanaBalance(solanaAddress, forceRefresh), 3000, null as any)
           : Promise.resolve(null),
         getSolUsdPrice(),
+        user.evm_address
+          ? withTimeout(getUserEvmBalances(user), 2500, null as any)
+          : Promise.resolve(null),
       ]);
       const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
@@ -3027,6 +3098,10 @@ export async function getUserBalances(
         solBalanceFormatted: solLamports !== null ? lamportsToSol(solLamports).toFixed(4) : '…',
         solBalanceUsd: solLamports !== null ? formatUSD(lamportsToSol(solLamports), solPrice) : '…',
         solUsd: solPrice,
+        evmAddress: user.evm_address ?? undefined,
+        hyperevmBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.hyperevm.formatted : '0.0000',
+        elysiumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.elysium.formatted : '0.0000',
+        hypeUsd: 25.0,
       };
 
       balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });

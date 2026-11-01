@@ -63,13 +63,14 @@ import {
   syncUserActiveWallet,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
-import { isTradableVenue, TradeError } from '@racerbot/shared';
+import { isTradableVenue, TradeError, isValidEvmAddress } from '@racerbot/shared';
 import { PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
 import { executeStarknetSwap } from './starknetExecutor.js';
 import { executeSolanaSwap } from './solanaExecutor.js';
+import { executeEvmSwap } from './evmExecutor.js';
 
 // ── Gas limits for swaps ──────────────────────────────────────────────────────
 // ft_transfer_call splits prepaid gas across multiple contracts: the token contract
@@ -610,8 +611,52 @@ export class SwapExecutor {
       };
     }
 
+    // Route HyperEVM and Elysium chain trades directly to EvmExecutor
+    const isEvmTokenIn = (token_in.length === 42 && isValidEvmAddress(token_in));
+    const isEvmTokenOut = (token_out.length === 42 && isValidEvmAddress(token_out));
+    const isEvmEvent =
+      event.chain === 'hyperevm' ||
+      event.chain === 'elysium' ||
+      venue === 'hyperevm_dex' ||
+      venue === 'elysium_dex' ||
+      venue === 'market_lab' ||
+      venue === 'corepad' ||
+      token_in.toUpperCase() === 'HYPE' ||
+      token_out.toUpperCase() === 'HYPE' ||
+      ((isEvmTokenIn || isEvmTokenOut) && event.chain !== 'starknet');
+
+    if (isEvmEvent) {
+      const presignStart = Date.now();
+      const evmChain = (event.chain === 'elysium' || event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
+      const res = await executeEvmSwap({ ...event, chain: evmChain }, onProgress);
+      timings.presign_ms = Date.now() - presignStart;
+      timings.sign_ms = 0;
+      timings.post_ms = 0;
+
+      const hypeIsInput = token_in.toUpperCase() === 'HYPE' || token_in === 'native' || token_in === '0x0000000000000000000000000000000000000000';
+      if (!res.success) {
+        throw new Error(res.reason || (hypeIsInput ? 'EVM buy failed' : 'EVM sell failed'));
+      }
+
+      return {
+        txHash: res.txHash,
+        success: res.success,
+        positionId: res.positionId,
+        reason: res.reason,
+        tokenName: res.tokenName,
+        tokenSymbol: res.tokenSymbol,
+        tokenQty: res.tokenQty,
+        priceNear: res.priceHype,
+        nearSpent: hypeIsInput ? res.hypeSpentOrReceived : undefined,
+        nearReceived: hypeIsInput ? undefined : res.hypeSpentOrReceived,
+      };
+    }
+
     // Route Starknet chain trades directly to StarknetExecutor
     if (
+      !isEvmEvent &&
+      event.chain !== 'hyperevm' &&
+      event.chain !== 'elysium' &&
       event.chain === 'starknet' ||
       venue === 'avnu' ||
       venue === 'ekubo' ||

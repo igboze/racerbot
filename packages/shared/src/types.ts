@@ -53,7 +53,11 @@ export type VenueName =
   | 'stark_dex'
   | 'pumpfun'
   | 'pumpswap'
-  | 'jupiter';
+  | 'jupiter'
+  | 'hyperevm_dex'
+  | 'elysium_dex'
+  | 'market_lab'
+  | 'corepad';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
   'rhea',
@@ -88,6 +92,10 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'pumpfun',
   'pumpswap',
   'jupiter',
+  'hyperevm_dex',
+  'elysium_dex',
+  'market_lab',
+  'corepad',
 ];
 
 export function isTradableVenue(v: unknown): v is VenueName {

@@ -82,6 +82,37 @@ export async function sellAtTarget(
     return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
+  // HyperEVM & Elysium Chain Execution Route
+  if (position.chain === 'hyperevm' || position.chain === 'elysium' || info.chain === 'hyperevm' || info.chain === 'elysium') {
+    const chain = (position.chain || info.chain || 'hyperevm') as 'hyperevm' | 'elysium';
+    const swapEvent = {
+      type: 'execute_swap' as const,
+      chain,
+      user_id: userId,
+      token_in: position.token_address,
+      token_out: 'HYPE',
+      amount_in: sellQty,
+      min_amount_out: '1',
+      venue: `${chain}_dex` as any,
+      timestamp: Date.now(),
+      slippage_pct: slippagePct,
+    };
+
+    const swapResult = await publishSwap(swapEvent, onProgress, options);
+    if (swapResult.success === false) {
+      return { success: false, reason: swapResult.reason || `${chain} sell failed on-chain.` };
+    }
+    if (percentage >= 99) {
+      await updatePosition({
+        position_id: positionId,
+        status: 'closed',
+        closed_at: new Date(),
+        quantity_held: '0',
+      }).catch(() => {});
+    }
+    return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
+  }
+
   // Starknet Chain Execution Route
   if (position.chain === 'starknet' || info.chain === 'starknet' || info.venue === 'avnu' || info.venue === 'ekubo' || info.venue === 'launchy' || info.venue === 'unruggable') {
     const swapEvent = {

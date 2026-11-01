@@ -1,3 +1,4 @@
+import { ethers } from 'ethers';
 import { Telegraf, Markup, Context } from 'telegraf';
 import {
   getUserByTelegramId,
@@ -96,6 +97,7 @@ import {
   isSuiToken,
   isStarknetToken,
   ensureUserAllWallets,
+  ensureUserEvmWallet,
   ensureUserStarknetWallet,
   ensureUserSolanaWallet,
   resetUserStarknetWallet,
@@ -166,6 +168,11 @@ import {
   SOL_MINT,
   NEAR_USDC_CONTRACT,
   NEAR_USDC_DECIMALS,
+  isValidEvmAddress,
+  getHypeBalance,
+  ELYSIUM_TESTNET_EXPLORER_URL,
+  HYPEREVM_EXPLORER_URL,
+  type EvmChain,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
@@ -274,8 +281,13 @@ function depositChainPicker(telegramId: number | undefined, cat: Parameters<type
 function withSolanaDirectDepositRow<T extends { text: string; keyboard: any }>(menu: T): T {
   try {
     const rows = menu.keyboard?.reply_markup?.inline_keyboard;
-    if (Array.isArray(rows) && !rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_sol_direct'))) {
-      rows.unshift([cb('◎ Deposit SOL directly (Solana wallet)', 'dep_sol_direct', 'success')]);
+    if (Array.isArray(rows)) {
+      if (!rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_evm_direct'))) {
+        rows.unshift([cb('⚡ Deposit HYPE directly (HyperEVM & Elysium)', 'dep_evm_direct', 'success')]);
+      }
+      if (!rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_sol_direct'))) {
+        rows.unshift([cb('◎ Deposit SOL directly (Solana wallet)', 'dep_sol_direct', 'success')]);
+      }
     }
   } catch { /* keep the original menu */ }
   return menu;
@@ -285,6 +297,14 @@ function withSolanaDirectDepositRow<T extends { text: string; keyboard: any }>(m
  * Quick-buy buttons for Solana. NEAR presets (1/5/10) would be far larger in
  * SOL terms, so Solana uses its own list. Override with SOLANA_BUY_PRESETS="0.1,0.25,0.5,1".
  */
+export const EVM_BUY_PRESETS: number[] = (() => {
+  const parsed = (process.env.EVM_BUY_PRESETS || '0.1,0.5,1,5')
+    .split(/[,;\s]+/)
+    .map((x) => parseFloat(x))
+    .filter((x) => Number.isFinite(x) && x > 0);
+  return parsed.length > 0 ? parsed.slice(0, 4) : [0.1, 0.5, 1, 5];
+})();
+
 export const SOLANA_BUY_PRESETS: number[] = (() => {
   const parsed = (process.env.SOLANA_BUY_PRESETS || '0.1,0.25,0.5,1')
     .split(/[,;\s]+/)
@@ -888,12 +908,16 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (solanaVisible && b.solanaAddress) {
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
   }
+  if (b.evmAddress) {
+    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
+  }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
   if (nearVisible) text += `📍 NEAR: <code>${escapeHtml(b.subaccountId)}</code>\n\n`;
   if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n\n`;
   if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n\n`;
   if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n\n`;
+  if (b.evmAddress) text += `⚡ EVM (HyperEVM & Elysium): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
   text = text.trimEnd();
 
   const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -1223,15 +1247,18 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isSolana = tokenInfo.chain === 'solana';
   const isStarknet = !isSolana && (tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress));
   const isSui = !isSolana && !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
+  const isEvm = !isSolana && !isStarknet && !isSui && (tokenInfo.chain === 'hyperevm' || tokenInfo.chain === 'elysium' || isValidEvmAddress(tokenAddress));
+  const isHyperEvm = isEvm && (tokenInfo.chain === 'hyperevm' || !tokenAddress.toLowerCase().endsWith('.elysium'));
+  const isElysium = isEvm && !isHyperEvm;
   const isNearUsdcMode = !isSolana && !isStarknet && !isSui && userRecord?.near_trade_currency === 'usdc';
-  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isNearUsdcMode ? 'USDC' : 'NEAR'));
-  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isNearUsdcMode ? 'USDC' : 'N'));
+  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'NEAR')));
+  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'N')));
   const nearModeBuyPresets = isNearUsdcMode && !userRecord?.custom_buy_amounts ? [5, 15, 50] : parseBuyAmounts(userRecord?.custom_buy_amounts);
 
   // Check if user has an active RaceFleet and whether it holds this target token
   let fleet: any = null;
   let fleetPosition: FleetTokenPosition | null = null;
-  if (userRecord && !isSui && !isStarknet) {
+  if (userRecord && !isSui && !isStarknet && !isEvm) {
     try {
       fleet = await getRaceFleetByUserId(userRecord.id).catch(() => null);
       if (fleet && fleet.status === 'active') {
@@ -1249,7 +1276,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
       : (isSui
         ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
-        : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : ''));
+        : (isEvm
+          ? (b ? `💳 *${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
+          : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : '')));
 
   // -- Venue label --
   let venueText = `💧 *Venue*: Unknown`;
@@ -1343,6 +1372,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     const vKey = (tokenInfo.venue || '').toLowerCase();
     const vDisplayName = suiVenueMap[vKey] || (vKey && vKey !== 'sui_dex' && vKey !== 'unknown' ? vKey.charAt(0).toUpperCase() + vKey.slice(1) : null);
     venueText = vDisplayName ? `💧 *Venue*: ${vDisplayName} (Sui DEX)` : `💧 *Venue*: Sui DEX Router (Aftermath)`;
+  } else if (isHyperEvm) {
+    venueText = `💧 *Venue*: HyperEVM DEX (HyperSwap)`;
+  } else if (isElysium) {
+    venueText = `💧 *Venue*: Elysium L2 (Market Lab AMM / CorePad)`;
   } else if (tokenInfo.tradeable) {
     venueText = `💧 *Venue*: NEAR Protocol DEX`;
   }
@@ -1352,6 +1385,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   // ── Deep links ───────────────────────────────────────────────────────────
   const linkRows = (() => {
+    if (isEvm) {
+      const rows: any[] = [];
+      if (isHyperEvm) {
+        rows.push([
+          Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${tokenInfo.address}`),
+        ]);
+      } else {
+        rows.push([
+          Markup.button.url('🔍 Elysium Explorer', `https://elysium.kinetiq.xyz/testnet-explorer/token/${tokenInfo.address}`),
+        ]);
+      }
+      rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
+      return rows;
+    }
     if (isSolana) {
       const rows: any[] = [];
       if (tokenInfo.launchpad === 'pump.fun') {
@@ -1678,7 +1726,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
         ...nearCurrencyToggleRow,
-        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : (isEvm ? EVM_BUY_PRESETS : nearModeBuyPresets)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         // Custom amount
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
@@ -1721,7 +1769,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...fleetActionRows,
         // Quick-buy fixed amounts for personal account
         ...nearCurrencyToggleRow,
-        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : (isEvm ? EVM_BUY_PRESETS : nearModeBuyPresets)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         [
           cb(`${defaultBuyPct === 10 ? '✓ ' : ''}10%`, `buy_pct:${shortKey}:10`, 'success'),
@@ -1749,7 +1797,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         ...nearCurrencyToggleRow,
-        (isSolana ? SOLANA_BUY_PRESETS : nearModeBuyPresets).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
+        (isSolana ? SOLANA_BUY_PRESETS : (isEvm ? EVM_BUY_PRESETS : nearModeBuyPresets)).map(amt => cb(`${amt} ${unitBtn}`, `buy_fixed:${shortKey}:${amt}`, 'success')),
         [cb(`🟢 Buy X ${nativeUnit}`, `buy_custom_prompt:${shortKey}`, 'success')],
         ...fleetActionRows,
         [
@@ -2707,6 +2755,78 @@ export async function executeBuyHelper(
   }
 
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  // ── HyperEVM & Elysium Trading Path ──────────────────────────────────────
+  if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
+    const chain: EvmChain = (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
+    const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
+    if (!evmUser.evm_address) {
+      throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
+    }
+
+    const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
+    const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
+    const amountHype = amountNear;
+    const amountInWei = ethers.parseEther(String(amountHype));
+    const HYPE_GAS_RESERVE = ethers.parseEther('0.002');
+
+    if (userBal.raw < amountInWei + HYPE_GAS_RESERVE) {
+      if (userBal.raw <= HYPE_GAS_RESERVE) {
+        throw new Error(
+          `Your EVM wallet (\`${evmUser.evm_address}\`) has insufficient HYPE for gas.\n\nPlease deposit HYPE to trade on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}.`
+        );
+      }
+      throw new Error(
+        `Insufficient HYPE balance for ${amountHype} HYPE purchase + network gas.\n` +
+        `Available: ${userBal.formatted} HYPE`
+      );
+    }
+
+    const swapResult = await publishSwap({
+      user_id: user.id,
+      chain,
+      token_in: 'HYPE',
+      token_out: tokenAddress,
+      amount_in: String(amountHype),
+      min_amount_out: '1',
+      venue: `${chain}_dex` as any,
+      slippage_pct: slippagePct,
+    }, onProgress);
+
+    if (swapResult.success === false) {
+      throw new Error(swapResult.reason || `${chain} swap failed on-chain.`);
+    }
+
+    const tokenSym = swapResult.tokenSymbol || info.symbol || 'TOKEN';
+    const tokenName = swapResult.tokenName || info.name || tokenSym;
+    const tokenQtyHuman = Number(swapResult.tokenQty ?? 0);
+    const tokenQtyDisplay = tokenQtyHuman >= 1_000_000
+      ? `${(tokenQtyHuman / 1_000_000).toFixed(3)}M`
+      : tokenQtyHuman >= 1_000
+        ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
+        : tokenQtyHuman.toFixed(4);
+
+    const baseExplorer = chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
+
+    return {
+      success: true,
+      amountNear: amountHype,
+      tokenAddress,
+      tokenName,
+      tokenSymbol: tokenSym,
+      tokenQty: swapResult.tokenQty,
+      priceNear: swapResult.priceNear,
+      nearSpent: amountHype,
+      positionId: swapResult.positionId,
+      txHash: swapResult.txHash,
+      message:
+        `🚀 *Buy Confirmed!* (${chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
+        `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
+        `Spent: *${amountHype} HYPE*\n` +
+        `Tx Hash: \`${swapResult.txHash}\`\n` +
+        `🔗 [View on Explorer](${baseExplorer}/tx/${swapResult.txHash})`,
+    };
+  }
 
   // ── Solana Trading Path (pump.fun curve + bonded AMMs via Jupiter) ─────────
   if (info.chain === 'solana' || isSolanaHint) {
@@ -4212,6 +4332,38 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
     }
   };
+
+  // Direct HYPE deposit: shows user's unified EVM wallet address for HyperEVM & Elysium
+  bot.action('dep_evm_direct', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from!.id;
+    try {
+      let user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await onboardUser(telegramId);
+        user = await getUserByTelegramId(telegramId);
+      }
+      if (!user) throw new Error('Please send /start first.');
+      const evmUser = await ensureUserEvmWallet(user);
+      await ctx.reply(
+        `⚡ <b>Deposit HYPE (HyperEVM & Elysium)</b>\n\n` +
+        `Send native <b>HYPE</b> on <b>HyperEVM</b> (Chain ID 999) or <b>Elysium</b> (Chain ID 99801) to your unified EVM address:\n\n` +
+        `<code>${escapeHtml(evmUser.evm_address || '')}</code>\n\n` +
+        `• Tap the address above to copy it.\n` +
+        `• HyperEVM uses HYPE for gas fees and trading.\n` +
+        `• Keep at least 0.01 HYPE in your wallet for transaction gas fees.`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([
+            [Markup.button.url('🔍 View on HypurrScan', `https://hypurrscan.io/address/${evmUser.evm_address}`)],
+            [cb('💳 Wallet', 'menu_wallet', 'primary'), cb('🔙 Back', 'menu_multichain_deposit', 'primary')],
+          ]),
+        }
+      ).catch(() => {});
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => {});
+    }
+  });
 
   // Direct SOL deposit: shows the user's own Solana wallet address (no bridge, no conversion).
   bot.action('dep_sol_direct', async (ctx) => {
@@ -9833,7 +9985,8 @@ Explore active token launchpads running on Elysium's 100ms L2 and HyperEVM:
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
-      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+      const isEvmToken = !isStk && !isSui && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
+      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : (isEvmToken ? 'HYPE' : 'NEAR'));
       let displayAmt = rawClickedAmt;
       let displayUnit = unit;
       if (unit === 'NEAR') {
@@ -9904,7 +10057,8 @@ Explore active token launchpads running on Elysium's 100ms L2 and HyperEVM:
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
       const isSui = !isStk && isSuiToken(tokenAddress);
-      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : 'NEAR');
+      const isEvmToken = !isStk && !isSui && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
+      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : (isEvmToken ? 'HYPE' : 'NEAR'));
       console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
 
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
@@ -10430,6 +10584,13 @@ Explore active token launchpads running on Elysium's 100ms L2 and HyperEVM:
       if (user.solana_private_key_enc) {
         try {
           rawSolanaKey = exportSolanaPrivateKey(user.solana_private_key_enc, MASTER_KEY);
+        } catch { }
+      }
+
+      let rawEvmKey = '';
+      if (user.evm_private_key_enc) {
+        try {
+          rawEvmKey = decrypt(user.evm_private_key_enc, MASTER_KEY);
         } catch { }
       }
 

@@ -18,6 +18,7 @@ import {
 } from '@racerbot/shared';
 import {
   getUserById,
+  getActiveWallet,
   createFill,
   getOpenPositions,
   createPosition,
@@ -29,7 +30,7 @@ export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC1
 const EVM_TREASURY_ADDRESS = process.env.EVM_TREASURY_ADDRESS || process.env.TREASURY_EVM_ADDRESS || DEFAULT_EVM_TREASURY_ADDRESS;
 
 // Default Verified Routers
-export const HYPEREVM_DEFAULT_ROUTER = process.env.HYPEREVM_ROUTER_ADDRESS || '0x1111111254fb6c44bac0bed2854e76f90643097d';
+export const HYPEREVM_DEFAULT_ROUTER = process.env.HYPEREVM_ROUTER_ADDRESS || '0x7AdF4701AbCDBc5Dcf5Cb58B526f897e048F0D11';
 export const ELYSIUM_MARKET_LAB_ROUTER = process.env.ELYSIUM_ROUTER_ADDRESS || '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
 export const ELYSIUM_COREPAD_ROUTER = process.env.ELYSIUM_COREPAD_ROUTER || '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 
@@ -66,12 +67,16 @@ export async function executeEvmSwap(
     throw new Error(`User not found: ${user_id}`);
   }
 
-  if (!user.evm_address || !user.evm_private_key_enc) {
+  const activeWallet = await getActiveWallet(user.id, chain).catch(() => null);
+  const userAddress = activeWallet?.address || user.evm_address;
+  const userKeyEnc = activeWallet?.encrypted_private_key || user.evm_private_key_enc;
+
+  if (!userAddress || !userKeyEnc) {
     throw new Error(`User ${user_id} does not have an initialized EVM wallet.`);
   }
 
   const provider = getEvmProvider(chain, isTestnet);
-  const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
+  const signer = getEvmWalletFromEncrypted(userKeyEnc, MASTER_KEY, provider);
 
   const isBuy = token_in.toUpperCase() === HYPE_SYMBOL || token_in === 'native' || token_in === ethers.ZeroAddress;
   const targetTokenAddress = isBuy ? token_out : token_in;
@@ -85,7 +90,7 @@ export async function executeEvmSwap(
 
   // Pre-flight Honeypot Simulation Check
   onProgress?.('simulating');
-  const sim = await simulateEvmTrade(targetTokenAddress, routerAddress, user.evm_address, chain, isTestnet);
+  const sim = await simulateEvmTrade(targetTokenAddress, routerAddress, userAddress, chain, isTestnet);
   if (!sim.isSafe) {
     return {
       txHash: '',
@@ -101,12 +106,11 @@ export async function executeEvmSwap(
     // ── BUY: Native HYPE -> Token ──────────────────────────────────────────
     onProgress?.('preparing_buy');
 
-    const totalHypeIn = ethers.parseEther(String(amount_in));
-    const { feeAmount, netTradeAmount } = calculateEvmTradeFee(totalHypeIn);
+    const requestedHypeIn = ethers.parseEther(String(amount_in));
+    const gasReserve = ethers.parseEther('0.002'); // Auto-reserve 0.002 HYPE for gas
+    const userBalance = await provider.getBalance(userAddress);
 
-    // Check user's native HYPE balance
-    const userBalance = await provider.getBalance(user.evm_address);
-    if (userBalance < totalHypeIn) {
+    if (userBalance < requestedHypeIn) {
       return {
         txHash: '',
         success: false,
@@ -116,6 +120,14 @@ export async function executeEvmSwap(
         tokenName,
       };
     }
+
+    // If user's balance is barely enough for the requested swap + gas, adjust net trade amount slightly
+    let actualHypeIn = requestedHypeIn;
+    if (userBalance < requestedHypeIn + gasReserve && userBalance > gasReserve) {
+      actualHypeIn = userBalance - gasReserve;
+    }
+
+    const { feeAmount, netTradeAmount } = calculateEvmTradeFee(actualHypeIn);
 
     // Transfer Platform Fee to Treasury if configured
     if (EVM_TREASURY_ADDRESS && ethers.isAddress(EVM_TREASURY_ADDRESS) && feeAmount > 0n) {
@@ -151,7 +163,7 @@ export async function executeEvmSwap(
     const tx = await router.swapExactETHForTokens(
       minTokensOut,
       path,
-      user.evm_address,
+      userAddress,
       deadline,
       { value: netTradeAmount }
     );
@@ -160,7 +172,7 @@ export async function executeEvmSwap(
     const txHash = receipt?.hash || tx.hash;
 
     // Read new token balance
-    const balanceResult = await getErc20Balance(targetTokenAddress, user.evm_address, chain, isTestnet);
+    const balanceResult = await getErc20Balance(targetTokenAddress, userAddress, chain, isTestnet);
     const tokensBought = balanceResult.formatted;
     const priceHype = Number(amount_in) / (balanceResult.human || 1);
 
@@ -187,7 +199,7 @@ export async function executeEvmSwap(
         amount: tokensBought,
         price: priceHype.toString(),
         fee_paid: ethers.formatEther(feeAmount),
-        input_amount: totalHypeIn.toString(),
+        input_amount: actualHypeIn.toString(),
         venue: `${chain}_dex` as any,
         tx_hash: txHash,
       }).catch(() => null);
@@ -220,7 +232,7 @@ export async function executeEvmSwap(
     const sellQtyRaw = ethers.parseUnits(String(amount_in), tokenDec);
 
     // Verify token balance
-    const currentBalance = await tokenContract.balanceOf(user.evm_address);
+    const currentBalance = await tokenContract.balanceOf(userAddress);
     if (currentBalance < sellQtyRaw) {
       return {
         txHash: '',
@@ -233,7 +245,7 @@ export async function executeEvmSwap(
     }
 
     // Check & Approve Allowance
-    const currentAllowance = await tokenContract.allowance(user.evm_address, routerAddress);
+    const currentAllowance = await tokenContract.allowance(userAddress, routerAddress);
     if (currentAllowance < sellQtyRaw) {
       onProgress?.('approving');
       const approveTx = await tokenContract.approve(routerAddress, ethers.MaxUint256);
@@ -260,7 +272,7 @@ export async function executeEvmSwap(
       sellQtyRaw,
       minHypeOut,
       path,
-      user.evm_address,
+      userAddress,
       deadline
     );
 
