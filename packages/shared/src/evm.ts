@@ -39,6 +39,9 @@ export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
 export const HYPEREVM_EXPLORER_URL = 'https://hypurrscan.io';
 export const ELYSIUM_TESTNET_EXPLORER_URL = 'https://elysium.kinetiq.xyz/testnet-explorer';
 
+// Default EVM Treasury Wallet for platform fees
+export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
+
 // Platform Fee: 1.5% (150 BPS)
 export const EVM_PLATFORM_FEE_BPS = 150n;
 export const EVM_BPS_DIVISOR = 10000n;
