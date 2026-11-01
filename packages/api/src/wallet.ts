@@ -645,6 +645,39 @@ export async function getHypeUsdPrice(): Promise<number> {
   return cachedHypeUsdPrice;
 }
 
+/**
+ * Why an EVM address did not resolve to a token, after checking HyperEVM and Elysium:
+ * nothing is deployed there on either (`empty`), it is an account that has sent transactions
+ * (`wallet`), it is a contract on Elysium only (`elysium`), or a chain could not be read (`rpc`,
+ * the only case where trying again helps).
+ */
+export class EvmTokenLookupError extends Error {
+  constructor(readonly kind: 'empty' | 'wallet' | 'elysium' | 'rpc', readonly address: string) {
+    super(kind === 'rpc'
+      ? `Could not read HyperEVM or Elysium to look up ${address}`
+      : kind === 'elysium'
+        ? `${address} is a contract on Elysium, not HyperEVM`
+        : `No token contract at ${address} on HyperEVM or Elysium (${kind === 'wallet' ? 'it is a wallet' : 'nothing is deployed there'})`);
+  }
+}
+
+export async function explainMissingEvmToken(address: string): Promise<EvmTokenLookupError> {
+  const hyperevmTestnet = process.env.HYPEREVM_TESTNET === 'true';
+  const probe = async (chain: EvmChain, testnet: boolean) => {
+    const provider = getEvmProvider(chain, testnet);
+    const [code, nonce] = await Promise.all([provider.getCode(address), provider.getTransactionCount(address)]);
+    return { hasCode: Boolean(code && code !== '0x'), nonce };
+  };
+  const [hyper, elysium] = await Promise.allSettled([probe('hyperevm', hyperevmTestnet), probe('elysium', true)]);
+  const onHyper = hyper.status === 'fulfilled' ? hyper.value : null;
+  const onElysium = elysium.status === 'fulfilled' ? elysium.value : null;
+  if (onElysium?.hasCode && onHyper && !onHyper.hasCode) return new EvmTokenLookupError('elysium', address);
+  // A HyperEVM contract that did not answer as a token, or a chain we could not read: retrying may help
+  if (onHyper?.hasCode || !onHyper || !onElysium) return new EvmTokenLookupError('rpc', address);
+  const read = [onHyper, onElysium];
+  return new EvmTokenLookupError(read.some(r => r.nonce > 0) ? 'wallet' : 'empty', address);
+}
+
 export async function fetchDexScreenerTokenData(tokenAddress: string, chainHint?: string): Promise<DexScreenerData | null> {
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`, {
@@ -1262,7 +1295,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ]);
 
       if (!tokenMeta && !dexscreenerData) {
-        throw new Error(`Token contract not found on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}: ${tokenAddress}`);
+        throw await explainMissingEvmToken(tokenAddress);
       }
 
       const sym = tokenMeta?.symbol || dexscreenerData?.symbol || 'TKN';
