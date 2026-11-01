@@ -1421,12 +1421,37 @@
 
     .alpha-main-layout {
       display: grid;
-      grid-template-columns: 1fr 380px;
+      grid-template-columns: minmax(0, 1fr) 380px;
       gap: 20px;
       align-items: start;
     }
     @media (max-width: 1180px) {
-      .alpha-main-layout { grid-template-columns: 1fr; }
+      .alpha-main-layout { grid-template-columns: minmax(0, 1fr) 340px; }
+    }
+    @media (max-width: 1023px) {
+      .alpha-main-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+    /* Desktop: the trade column stays in view below the 60px header while the token list scrolls,
+       and scrolls on its own instead of stretching the page */
+    @media (min-width: 1024px) {
+      .alpha-trade-col {
+        position: sticky;
+        top: 76px;
+        max-height: calc(100vh - 92px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: var(--color-border) transparent;
+        padding-right: 2px;
+      }
+      .alpha-trade-col #btn-alpha-execute {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        box-shadow: 0 -10px 14px -2px var(--color-surface);
+      }
+      .alpha-trade-col::-webkit-scrollbar { width: 6px; }
+      .alpha-trade-col::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 9999px; }
     }
 
     .alpha-screener-col {
@@ -1691,6 +1716,11 @@
       overflow-x: auto;
       max-height: 520px;
       position: relative;
+    }
+    /* Desktop: the list uses the screen height, so more tokens show and the sticky trade column
+       has room to stay in place */
+    @media (min-width: 1024px) {
+      .alpha-table-container { max-height: max(520px, calc(100vh - 220px)); }
     }
     .alpha-table {
       width: 100%;
@@ -2023,7 +2053,7 @@
 
     .alpha-preset-chips {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
       gap: 6px;
       margin-top: 4px;
     }
@@ -2139,6 +2169,29 @@
       flex-direction: column;
       gap: 10px;
     }
+    /* display:flex above would otherwise override the hidden attribute and show closed drawers */
+    .console-conf-drawer[hidden] { display: none; }
+    .console-conf-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 44px;
+      cursor: pointer;
+      list-style: none;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--color-text);
+      border-radius: 8px;
+    }
+    .console-conf-summary::-webkit-details-marker { display: none; }
+    .console-conf-summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+    .console-conf-summary-title { display: inline-flex; align-items: center; gap: 8px; }
+    .console-conf-chevron { transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); color: var(--color-text-muted); }
+    .console-conf-strip[open] .console-conf-chevron { transform: rotate(90deg); }
+    .console-conf-summary-meta { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+    .console-conf-body { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+    .alpha-chart-card .spotlight-chart-wrap { margin-top: 0 !important; border-top: 0 !important; padding-top: 0 !important; }
     .console-conf-mode-group {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -3455,6 +3508,7 @@
       .mobile-terminal-tabs {
         display: none;
       }
+      @media (max-width: 767px) {
       .mobile-terminal-tabs {
         display: grid !important;
         grid-template-columns: 1fr 1fr 1fr;
@@ -3464,6 +3518,7 @@
         padding: 4px;
         border-radius: 12px !important;
         border: 1px solid var(--color-border) !important;
+      }
       }
       .mobile-term-tab {
         display: flex;
@@ -3490,7 +3545,8 @@
         flex-shrink: 0;
       }
 
-      /* Control visibility of terminal sections based on data-mobile-tab */
+      /* Control visibility of terminal sections based on data-mobile-tab (phones, where the tab bar shows) */
+      @media (max-width: 767px) {
       .terminal-view-container[data-mobile-tab="trade"] .alpha-trade-col {
         display: flex !important;
         width: 100% !important;
@@ -3522,6 +3578,7 @@
       }
       .terminal-view-container[data-mobile-tab="positions"] .alpha-trade-col {
         display: none !important;
+      }
       }
 
       /* Top strip metrics wrapping on mobile in FeedLoop style */
@@ -4327,47 +4384,6 @@
                 </div>
               </div>
 
-              <!-- Selected Token Chart & Live Transactions Container -->
-              <div class="spotlight-chart-wrap" style="margin-top:14px; border-top:1px solid var(--color-border); padding-top:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                  <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--color-primary); text-transform:uppercase; letter-spacing:0.5px;">LIVE CHART &amp; TRADES</span>
-                    <span class="live-pulse-badge" style="font-size:10px; padding:2px 6px;"><span class="pulse-dot"></span> REALTIME</span>
-                  </div>
-                  <div style="display:flex; gap:6px;">
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-dex" onclick="openTokenExternalChart()" style="font-size:11px; padding:2px 8px; height:24px;">DexScreener ↗</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-bubble" onclick="openTokenBubbleMap()" style="font-size:11px; padding:2px 8px; height:24px;">Bubble Map ↗</button>
-                  </div>
-                </div>
-
-                <!-- Interactive SVG Price Candle/Line Chart -->
-                <div id="alpha-token-chart-box" style="width:100%; height:180px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                  <svg id="alpha-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
-                        <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
-                      </linearGradient>
-                    </defs>
-                    <path id="alpha-chart-area" d="" fill="url(#chartGrad)"/>
-                    <path id="alpha-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2"/>
-                  </svg>
-                  <div id="alpha-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle); pointer-events:none;">
-                    Loading price action...
-                  </div>
-                </div>
-
-                <!-- Live Transactions Sub-panel -->
-                <div style="margin-top:14px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); text-transform:uppercase;">Recent Token Activity</span>
-                    <span id="token-txns-count" style="font-family:var(--font-mono); font-size:10px; color:var(--color-text-subtle);">Live Sync</span>
-                  </div>
-                  <div id="alpha-token-txns-container" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
-                    <div style="text-align:center; padding:16px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Fetching live swap transactions...</div>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <!-- Trade Execution Card -->
@@ -4380,101 +4396,6 @@
                 <button type="button" class="deposit-tab-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')" style="flex:1; min-height:44px; font-size:12.5px; padding:0 10px; justify-content:center;">
                   <span>Copy Trading</span>
                 </button>
-              </div>
-
-              <!-- Confidential Intents Pool & Multi-Executor Strip (No nested cards, 1px structural dividers) -->
-              <div class="console-conf-strip" id="console-conf-strip">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                  <span style="font-size:12px; font-weight:700; color:var(--color-text); display:flex; align-items:center; gap:6px;">
-                    <span class="live-dot" style="width:6px; height:6px;"></span>
-                    <span>Confidential Executor Pool</span>
-                  </span>
-                  <span id="console-conf-mode-pill" style="font-family:var(--font-mono); font-size:11px; color:var(--color-primary);">SPLIT MODE</span>
-                </div>
-
-                <div class="console-conf-metrics">
-                  <div>
-                    <div class="console-conf-metric-label">Private Balance (Intents)</div>
-                    <div class="console-conf-metric-val"><span id="console-conf-balance">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
-                  </div>
-                  <div>
-                    <div class="console-conf-metric-label">Ready Executors</div>
-                    <div class="console-conf-metric-val"><span id="console-conf-pool-summary">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
-                  </div>
-                </div>
-
-                <div class="console-conf-pool-chips" id="console-conf-pool-chips" aria-live="polite">
-                  <span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet to fund disposable executor wallets.</span>
-                </div>
-
-                <div class="console-conf-actions">
-                  <button type="button" class="btn-secondary" id="btn-toggle-console-deposit" onclick="toggleConsoleConfDrawer('deposit')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
-                    <span>Mass Deposit</span>
-                  </button>
-                  <button type="button" class="btn-secondary" id="btn-toggle-console-settings" onclick="toggleConsoleConfDrawer('settings')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
-                    <span>Executor Config</span>
-                  </button>
-                </div>
-
-                <!-- Collapsible Mass Deposit Drawer -->
-                <div class="console-conf-drawer" id="console-conf-deposit-box" hidden>
-                  <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
-                    Deposit NEAR into your Confidential Intents balance. The pool automatically spawns and funds disposable executor subaccounts so your wallet never appears on-chain in trades.
-                  </div>
-                  <div style="display:flex; gap:8px;">
-                    <input type="number" id="console-conf-deposit-amount" min="0.1" step="0.5" value="5.0" placeholder="NEAR amount" aria-label="Deposit amount in NEAR"
-                      style="flex:1; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 12px; font-family:var(--font-mono); font-size:14px; font-weight:600;">
-                    <button type="button" class="btn-primary" onclick="confDepositFromConsole(this)" style="min-height:44px; padding:0 16px; font-size:12.5px; font-weight:700; white-space:nowrap;">
-                      <span>Deposit NEAR</span>
-                    </button>
-                  </div>
-                  <div class="alpha-preset-chips">
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='2'">2Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='5'">5Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='10'">10Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='25'">25Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='50'">50Ⓝ</button>
-                  </div>
-                  <button type="button" class="btn-secondary" onclick="openDepositModal()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
-                    <span>Cross-Chain Intents Deposit (SOL / ETH / BTC / USDC)</span>
-                  </button>
-                </div>
-
-                <!-- Collapsible Multi-Executor Config Drawer -->
-                <div class="console-conf-drawer" id="console-conf-settings-box" hidden>
-                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                    <div>
-                      <label for="console-conf-pool-cap" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Pool Cap (NEAR)</label>
-                      <input type="number" id="console-conf-pool-cap" min="0.1" max="100" step="0.5" value="5"
-                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
-                    </div>
-                    <div>
-                      <label for="console-conf-stagger" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Fleet Stagger (0-10s)</label>
-                      <input type="number" id="console-conf-stagger" min="0" max="10" step="1" value="0"
-                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
-                    </div>
-                  </div>
-                  <div>
-                    <label for="console-conf-pool-sizes" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Custom Executor Sizes (Optional, up to 20)</label>
-                    <input type="text" id="console-conf-pool-sizes" placeholder="e.g. 1, 1, 2, 5 (leave blank for 1 NEAR each)"
-                      style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px; box-sizing:border-box;">
-                  </div>
-                  <div>
-                    <span style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Execution Mode</span>
-                    <div class="console-conf-mode-group" role="group" aria-label="Executor buy mode">
-                      <button type="button" class="console-conf-mode-btn" data-mode="single" onclick="selectConsoleConfBuyMode('single')">Single</button>
-                      <button type="button" class="console-conf-mode-btn active" data-mode="split" onclick="selectConsoleConfBuyMode('split')">Split</button>
-                      <button type="button" class="console-conf-mode-btn" data-mode="fleet" onclick="selectConsoleConfBuyMode('fleet')">Fleet</button>
-                    </div>
-                  </div>
-                  <label style="display:flex; align-items:center; gap:8px; min-height:44px; font-size:12px; color:var(--color-text); cursor:pointer;">
-                    <input type="checkbox" id="console-conf-round-returns" style="width:18px; height:18px; accent-color:var(--color-primary);">
-                    <span>Round returns (0.1 NEAR steps + random 5-60s exit delay on close)</span>
-                  </label>
-                  <button type="button" class="btn-primary" onclick="confSaveSettingsFromConsole(this)" style="min-height:44px; width:100%; justify-content:center; font-size:12.5px; font-weight:700;">
-                    <span>Save Multi-Executor Settings</span>
-                  </button>
-                </div>
               </div>
 
               <!-- Hidden legacy container kept for compatibility -->
@@ -4646,6 +4567,144 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                   <span id="btn-save-copy-label">Save Copy Settings (Confidential)</span>
                 </button>
+              </div>
+
+              <!-- Confidential Intents Pool & Multi-Executor Strip (No nested cards, 1px structural dividers) -->
+              <details class="console-conf-strip" id="console-conf-strip">
+                <summary class="console-conf-summary">
+                  <span class="console-conf-summary-title">
+                    <svg class="console-conf-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <span>Executor pool</span>
+                  </span>
+                  <span class="console-conf-summary-meta">Ready <span id="console-conf-pool-summary">--</span> NEAR · <span id="console-conf-mode-pill" style="color:var(--color-primary);">SPLIT MODE</span></span>
+                </summary>
+                <div class="console-conf-body">
+
+                <div class="console-conf-metrics" style="grid-template-columns:1fr;">
+                  <div>
+                    <div class="console-conf-metric-label">Private Balance (Intents)</div>
+                    <div class="console-conf-metric-val"><span id="console-conf-balance">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
+                  </div>
+                </div>
+
+                <div class="console-conf-pool-chips" id="console-conf-pool-chips" aria-live="polite">
+                  <span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet to fund disposable executor wallets.</span>
+                </div>
+
+                <div class="console-conf-actions">
+                  <button type="button" class="btn-secondary" id="btn-toggle-console-deposit" onclick="toggleConsoleConfDrawer('deposit')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
+                    <span>Mass Deposit</span>
+                  </button>
+                  <button type="button" class="btn-secondary" id="btn-toggle-console-settings" onclick="toggleConsoleConfDrawer('settings')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
+                    <span>Executor Config</span>
+                  </button>
+                </div>
+
+                <!-- Collapsible Mass Deposit Drawer -->
+                <div class="console-conf-drawer" id="console-conf-deposit-box" hidden>
+                  <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
+                    Deposit NEAR into your Confidential Intents balance. The pool automatically spawns and funds disposable executor subaccounts so your wallet never appears on-chain in trades.
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <input type="number" id="console-conf-deposit-amount" min="0.1" step="0.5" value="5.0" placeholder="NEAR amount" aria-label="Deposit amount in NEAR"
+                      style="flex:1; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 12px; font-family:var(--font-mono); font-size:14px; font-weight:600;">
+                    <button type="button" class="btn-primary" onclick="confDepositFromConsole(this)" style="min-height:44px; padding:0 16px; font-size:12.5px; font-weight:700; white-space:nowrap;">
+                      <span>Deposit NEAR</span>
+                    </button>
+                  </div>
+                  <div class="alpha-preset-chips">
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='2'">2Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='5'">5Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='10'">10Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='25'">25Ⓝ</button>
+                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='50'">50Ⓝ</button>
+                  </div>
+                  <button type="button" class="btn-secondary" onclick="openDepositModal()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
+                    <span>Cross-Chain Intents Deposit (SOL / ETH / BTC / USDC)</span>
+                  </button>
+                </div>
+
+                <!-- Collapsible Multi-Executor Config Drawer -->
+                <div class="console-conf-drawer" id="console-conf-settings-box" hidden>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div>
+                      <label for="console-conf-pool-cap" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Pool Cap (NEAR)</label>
+                      <input type="number" id="console-conf-pool-cap" min="0.1" max="100" step="0.5" value="5"
+                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <div>
+                      <label for="console-conf-stagger" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Fleet Stagger (0-10s)</label>
+                      <input type="number" id="console-conf-stagger" min="0" max="10" step="1" value="0"
+                        style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:13px; box-sizing:border-box;">
+                    </div>
+                  </div>
+                  <div>
+                    <label for="console-conf-pool-sizes" style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Custom Executor Sizes (Optional, up to 20)</label>
+                    <input type="text" id="console-conf-pool-sizes" placeholder="e.g. 1, 1, 2, 5 (leave blank for 1 NEAR each)"
+                      style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px; box-sizing:border-box;">
+                  </div>
+                  <div>
+                    <span style="display:block; font-size:11px; color:var(--color-text-muted); margin-bottom:4px; text-transform:uppercase;">Execution Mode</span>
+                    <div class="console-conf-mode-group" role="group" aria-label="Executor buy mode">
+                      <button type="button" class="console-conf-mode-btn" data-mode="single" onclick="selectConsoleConfBuyMode('single')">Single</button>
+                      <button type="button" class="console-conf-mode-btn active" data-mode="split" onclick="selectConsoleConfBuyMode('split')">Split</button>
+                      <button type="button" class="console-conf-mode-btn" data-mode="fleet" onclick="selectConsoleConfBuyMode('fleet')">Fleet</button>
+                    </div>
+                  </div>
+                  <label style="display:flex; align-items:center; gap:8px; min-height:44px; font-size:12px; color:var(--color-text); cursor:pointer;">
+                    <input type="checkbox" id="console-conf-round-returns" style="width:18px; height:18px; accent-color:var(--color-primary);">
+                    <span>Round returns (0.1 NEAR steps + random 5-60s exit delay on close)</span>
+                  </label>
+                  <button type="button" class="btn-primary" onclick="confSaveSettingsFromConsole(this)" style="min-height:44px; width:100%; justify-content:center; font-size:12.5px; font-weight:700;">
+                    <span>Save Multi-Executor Settings</span>
+                  </button>
+                </div>
+                </div>
+              </details>
+            </div>
+
+            <!-- Selected token chart and live trades -->
+            <div class="alpha-token-spotlight alpha-chart-card">
+              <!-- Selected Token Chart & Live Transactions Container -->
+              <div class="spotlight-chart-wrap" style="margin-top:14px; border-top:1px solid var(--color-border); padding-top:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--color-primary); text-transform:uppercase; letter-spacing:0.5px;">LIVE CHART &amp; TRADES</span>
+                    <span class="live-pulse-badge" style="font-size:10px; padding:2px 6px;"><span class="pulse-dot"></span> REALTIME</span>
+                  </div>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-dex" onclick="openTokenExternalChart()" style="font-size:11px; padding:2px 8px; height:24px;">DexScreener ↗</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-bubble" onclick="openTokenBubbleMap()" style="font-size:11px; padding:2px 8px; height:24px;">Bubble Map ↗</button>
+                  </div>
+                </div>
+
+                <!-- Interactive SVG Price Candle/Line Chart -->
+                <div id="alpha-token-chart-box" style="width:100%; height:180px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <svg id="alpha-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
+                        <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
+                      </linearGradient>
+                    </defs>
+                    <path id="alpha-chart-area" d="" fill="url(#chartGrad)"/>
+                    <path id="alpha-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2"/>
+                  </svg>
+                  <div id="alpha-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle); pointer-events:none;">
+                    Loading price action...
+                  </div>
+                </div>
+
+                <!-- Live Transactions Sub-panel -->
+                <div style="margin-top:14px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); text-transform:uppercase;">Recent Token Activity</span>
+                    <span id="token-txns-count" style="font-family:var(--font-mono); font-size:10px; color:var(--color-text-subtle);">Live Sync</span>
+                  </div>
+                  <div id="alpha-token-txns-container" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
+                    <div style="text-align:center; padding:16px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Fetching live swap transactions...</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -5677,6 +5736,12 @@
     let currentConfBuyMode = 'split';
     let lastConfidentialOverview = null;
 
+    function revealConsoleConfDrawer(box) {
+      const strip = document.getElementById('console-conf-strip');
+      if (strip) strip.open = true;
+      if (box) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     function toggleConsoleConfDrawer(which) {
       const depBox = document.getElementById('console-conf-deposit-box');
       const setBox = document.getElementById('console-conf-settings-box');
@@ -5685,12 +5750,14 @@
       if (which === 'deposit' && depBox) {
         const willOpen = depBox.hidden;
         depBox.hidden = !willOpen;
+        if (willOpen) revealConsoleConfDrawer(depBox);
         if (setBox && willOpen) setBox.hidden = true;
         if (depBtn) depBtn.style.borderColor = willOpen ? 'var(--color-primary)' : 'var(--color-border)';
         if (setBtn && willOpen) setBtn.style.borderColor = 'var(--color-border)';
       } else if (which === 'settings' && setBox) {
         const willOpen = setBox.hidden;
         setBox.hidden = !willOpen;
+        if (willOpen) revealConsoleConfDrawer(setBox);
         if (depBox && willOpen) depBox.hidden = true;
         if (setBtn) setBtn.style.borderColor = willOpen ? 'var(--color-primary)' : 'var(--color-border)';
         if (depBtn && willOpen) depBtn.style.borderColor = 'var(--color-border)';
@@ -6969,8 +7036,10 @@
       if (!tok) return;
       selectedAlphaToken = tok;
 
-      if (window.innerWidth <= 768 && typeof switchMobileTerminalTab === 'function') {
+      if (window.innerWidth <= 767 && typeof switchMobileTerminalTab === 'function') {
         switchMobileTerminalTab('trade');
+      } else if (window.innerWidth < 1024) {
+        document.querySelector('.alpha-trade-col')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
 
       const symEl = document.getElementById('spotlight-symbol');
@@ -7614,10 +7683,7 @@
               tag.style.color = 'var(--color-racer-cyan)';
               tag.style.background = 'rgba(106, 204, 220,0.12)';
             }
-            const outText = selectedRacerAlphaSide === 'BUY'
-              ? (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} ${selectedAlphaToken.symbol}` : `${Math.round(estTokens).toLocaleString()} ${selectedAlphaToken.symbol}`)
-              : (q.amountOutFormatted && q.amountOutFormatted !== '0' ? `${q.amountOutFormatted} NEAR` : `${estNear.toFixed(4)} NEAR`);
-            if (desc) desc.textContent = `Executed privately via disposable keyless smart contracts on ${selectedAlphaToken.venue || 'DEX'}. Zero on-chain link to your wallet. Est Output: ≈ ${outText}.`;
+            if (desc) desc.textContent = `Runs from a pool executor on ${selectedAlphaToken.venue || 'the DEX'}, so your wallet does not appear in the trade.`;
             if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
               estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedRacerAlphaSide === 'BUY' ? selectedAlphaToken.symbol : 'NEAR'}`;
             }
@@ -7783,7 +7849,7 @@
           const depAmt = Math.max(2, Number(((data.amountNear || amtNear || 1.0) * 1.05).toFixed(2)));
           const depBox = document.getElementById('console-conf-deposit-box');
           const depInput = document.getElementById('console-conf-deposit-amount');
-          if (depBox) depBox.hidden = false;
+          if (depBox) { depBox.hidden = false; revealConsoleConfDrawer(depBox); }
           if (depInput) depInput.value = String(depAmt);
           if (feedback) {
             feedback.style.display = 'block';
