@@ -6669,7 +6669,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       selectModalTier(tier || selectedTierKey || 'copy');
 
       document.getElementById('modal-buy-feedback').style.display = 'none';
-      document.getElementById('modal-buy-key').style.display = 'flex';
+      const buyKeyModal = document.getElementById('modal-buy-key');
+      buyKeyModal.style.display = 'flex';
+      buyKeyModal.classList.add('open'); // the shared stylesheet keeps .modal-backdrop invisible without it
       document.body.style.overflow = 'hidden';
     }
 
@@ -6693,7 +6695,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
     }
 
     function closeBuyKeyModal() {
-      document.getElementById('modal-buy-key').style.display = 'none';
+      const buyKeyModal = document.getElementById('modal-buy-key');
+      buyKeyModal.style.display = 'none';
+      buyKeyModal.classList.remove('open');
       document.body.style.overflow = '';
     }
 
@@ -9158,10 +9162,13 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
 
     async function openDepositModal() {
       const modal = document.getElementById('modal-deposit');
-      if (modal) modal.style.display = 'flex';
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('open'); // the shared stylesheet keeps .modal-backdrop invisible without it
+      }
       document.body.style.overflow = 'hidden';
       
-      const addr = getActiveUserAddress() || 'user.near';
+      const addr = getActiveUserAddress() || 'Connect a wallet first';
       const depAccId = document.getElementById('deposit-account-id');
       const depDestAddr = document.getElementById('deposit-dest-address');
       if (depAccId) depAccId.textContent = addr;
@@ -9175,7 +9182,10 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
 
     function closeDepositModal() {
       const modal = document.getElementById('modal-deposit');
-      if (modal) modal.style.display = 'none';
+      if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('open');
+      }
       document.body.style.overflow = '';
       if (depositStatusPoller) {
         clearInterval(depositStatusPoller);
@@ -9377,11 +9387,18 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         return;
       }
 
+      // The deposit is delivered to this account: never guess it
+      const subaccountId = getActiveUserAddress();
+      if (!subaccountId) {
+        showToast('Connect your NEAR wallet or sign in with Telegram first, so the deposit has an account to arrive in.', 'error');
+        openConnectModal();
+        return;
+      }
+
       btn.disabled = true;
       btn.innerHTML = '<span class="live-dot"></span> Requesting NEAR Intent Solver...';
 
       try {
-        const subaccountId = getActiveUserAddress() || 'user.racerbot.near';
         const res = await fetch('/deposit/quote', {
           method: 'POST',
           headers: getAuthHeaders(),
