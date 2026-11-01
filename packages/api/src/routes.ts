@@ -482,6 +482,8 @@ const mainMenuCache = new Map<number, { data: { text: string; keyboard: any }; e
 export const ALL_SUPPORTED_CHAINS = [
   { id: 'near', name: 'NEAR Protocol', symbol: 'NEAR', icon: '⬛' },
   { id: 'solana', name: 'Solana', symbol: 'SOL', icon: '🟣' },
+  { id: 'hyperevm', name: 'HyperEVM', symbol: 'HYPE', icon: '⚡' },
+  { id: 'elysium', name: 'Elysium L2', symbol: 'HYPE', icon: '🏛️' },
   { id: 'sui', name: 'Sui Network', symbol: 'SUI', icon: '🔷' },
   { id: 'starknet', name: 'Starknet', symbol: 'STRK', icon: '✨' },
 ] as const;
@@ -540,6 +542,18 @@ export function buildActiveChainsMenu(user: UserRecord) {
     ],
     [
       cb(
+        `${!hidden.has('hyperevm') ? '🟢' : '🔴'} ⚡ HyperEVM`,
+        'toggle_chain_vis:hyperevm',
+        !hidden.has('hyperevm') ? 'success' : 'primary'
+      ),
+      cb(
+        `${!hidden.has('elysium') ? '🟢' : '🔴'} 🏛️ Elysium`,
+        'toggle_chain_vis:elysium',
+        !hidden.has('elysium') ? 'success' : 'primary'
+      ),
+    ],
+    [
+      cb(
         `${!hidden.has('sui') ? '🟢' : '🔴'} 🔷 Sui`,
         'toggle_chain_vis:sui',
         !hidden.has('sui') ? 'success' : 'primary'
@@ -555,7 +569,7 @@ export function buildActiveChainsMenu(user: UserRecord) {
       cb('🟣 Solana Only', 'preset_chain_vis:solana', 'primary'),
     ],
     [
-      cb('🔷 Sui Only', 'preset_chain_vis:sui', 'primary'),
+      cb('⚡ HyperEVM Only', 'preset_chain_vis:hyperevm', 'primary'),
       cb('🌐 Show All Chains', 'preset_chain_vis:all', 'primary'),
     ],
     [
@@ -591,6 +605,11 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let solAddress = '';
   let solBalFormatted = '0';
   let solUsdFormatted = '$0';
+  let evmAddress = '';
+  let hyperevmBalFormatted = '0.0000';
+  let elysiumBalFormatted = '0.0000';
+  let hyperevmUsdFormatted = '$0';
+  let elysiumUsdFormatted = '$0';
   let totalUsdNum = 0;
 
   if (user) {
@@ -599,6 +618,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     subaccount = user.subaccount_id;
     suiAddress = user.sui_address || '';
     starknetAddress = user.starknet_address || '';
+    solAddress = user.solana_address || '';
+    evmAddress = user.evm_address || '';
     try {
       const b = await getUserBalances(telegramId, forceRefresh, user);
       nearBalFormatted = b.totalNearFormatted;
@@ -610,34 +631,45 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       starknetAddress = b.starknetAddress || user.starknet_address || '';
       strkBalFormatted = b.strkBalanceFormatted || '0';
       ethBalFormatted = b.ethBalanceFormatted || '0';
+      solAddress = b.solanaAddress || user.solana_address || '';
+      solBalFormatted = b.solBalanceFormatted || '0';
+      evmAddress = b.evmAddress || user.evm_address || '';
+      hyperevmBalFormatted = b.hyperevmBalanceFormatted || '0.0000';
+      elysiumBalFormatted = b.elysiumBalanceFormatted || '0.0000';
 
       const nearVisible = isChainVisible(user, 'near');
       const suiVisible = isChainVisible(user, 'sui');
       const starknetVisible = isChainVisible(user, 'starknet');
       const solanaVisible = isChainVisible(user, 'solana');
+      const hyperevmVisible = isChainVisible(user, 'hyperevm');
+      const elysiumVisible = isChainVisible(user, 'elysium');
 
       const rawNearUsd = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
       const rawSuiUsd = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
       const rawStrkUsd = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.40);
       const rawEthUsd = parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0);
-
-      solAddress = b.solanaAddress || user.solana_address || '';
-      solBalFormatted = b.solBalanceFormatted || '0';
       const rawSolUsd = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
+      const rawHypePrice = b.hypeUsd || 25.0;
+      const rawHyperevmUsd = (parseFloat(hyperevmBalFormatted || '0') || 0) * rawHypePrice;
+      const rawElysiumUsd = (parseFloat(elysiumBalFormatted || '0') || 0) * rawHypePrice;
 
       const nearTotalUsdNum = nearVisible ? rawNearUsd : 0;
       const suiTotalUsdNum = suiVisible ? rawSuiUsd : 0;
       const strkTotalUsdNum = starknetVisible ? rawStrkUsd : 0;
       const ethTotalUsdNum = starknetVisible ? rawEthUsd : 0;
       const solTotalUsdNum = solanaVisible ? rawSolUsd : 0;
+      const hyperevmTotalUsdNum = hyperevmVisible ? rawHyperevmUsd : 0;
+      const elysiumTotalUsdNum = elysiumVisible ? rawElysiumUsd : 0;
       const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
 
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + usdcNearNum;
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmTotalUsdNum + elysiumTotalUsdNum + usdcNearNum;
       usdcBalFormatted = b.usdcNearFormatted || '0.00';
 
       nearUsdFormatted = rawNearUsd >= 1000 ? `${(rawNearUsd / 1000).toFixed(2)}K` : `${rawNearUsd.toFixed(2)}`;
       suiUsdFormatted = rawSuiUsd >= 1000 ? `${(rawSuiUsd / 1000).toFixed(2)}K` : `${rawSuiUsd.toFixed(2)}`;
       solUsdFormatted = rawSolUsd >= 1000 ? `${(rawSolUsd / 1000).toFixed(2)}K` : `${rawSolUsd.toFixed(2)}`;
+      hyperevmUsdFormatted = rawHyperevmUsd >= 1000 ? `${(rawHyperevmUsd / 1000).toFixed(2)}K` : `${rawHyperevmUsd.toFixed(2)}`;
+      elysiumUsdFormatted = rawElysiumUsd >= 1000 ? `${(rawElysiumUsd / 1000).toFixed(2)}K` : `${rawElysiumUsd.toFixed(2)}`;
     } catch {
       nearBalFormatted = '0';
     }
@@ -649,6 +681,8 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const suiVisible = isChainVisible(user, 'sui');
   const starknetVisible = isChainVisible(user, 'starknet');
   const solanaVisible = isChainVisible(user, 'solana');
+  const hyperevmVisible = isChainVisible(user, 'hyperevm');
+  const elysiumVisible = isChainVisible(user, 'elysium');
 
   let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
   if (nearVisible) {
@@ -657,28 +691,37 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       text += `   ↳ Native: ${nativeNearFormatted} Ⓝ | Wrapped: ${wrapNearFormatted} wNEAR\n`;
     }
   }
+  if (solanaVisible && solAddress) {
+    text += `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n`;
+  }
+  if (hyperevmVisible) {
+    text += `⚡ HyperEVM: <b>${hyperevmBalFormatted}</b> HYPE (${hyperevmUsdFormatted})\n`;
+  }
+  if (elysiumVisible) {
+    text += `🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})\n`;
+  }
   if (suiVisible) {
     text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
   }
   if (starknetVisible && starknetAddress) {
     text += `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n`;
   }
-  if (solanaVisible && solAddress) {
-    text += `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n`;
-  }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
   if (nearVisible && subaccount) {
     text += `📍 NEAR: <code>${subaccount}</code>\n\n`;
+  }
+  if (solanaVisible && solAddress) {
+    text += `◎ SOL: <code>${solAddress}</code>\n\n`;
+  }
+  if ((hyperevmVisible || elysiumVisible) && evmAddress) {
+    text += `⚡ EVM (HyperEVM & Elysium):\n<code>${evmAddress}</code>\n\n`;
   }
   if (suiVisible && suiAddress) {
     text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
   }
   if (starknetVisible && starknetAddress) {
     text += `✨ STRK: <code>${starknetAddress}</code>\n\n`;
-  }
-  if (solanaVisible && solAddress) {
-    text += `◎ SOL: <code>${solAddress}</code>\n\n`;
   }
   text = text.trimEnd();
 
@@ -834,6 +877,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const suiVisible = isChainVisible(user, 'sui');
   const starknetVisible = isChainVisible(user, 'starknet');
   const solanaVisible = isChainVisible(user, 'solana');
+  const hyperevmVisible = isChainVisible(user, 'hyperevm');
+  const elysiumVisible = isChainVisible(user, 'elysium');
+
+  const rawHypePrice = b.hypeUsd || 25.0;
+  const hyperevmUsdNum = hyperevmVisible ? (parseFloat(b.hyperevmBalanceFormatted || '0') || 0) * rawHypePrice : 0;
+  const elysiumUsdNum = elysiumVisible ? (parseFloat(b.elysiumBalanceFormatted || '0') || 0) * rawHypePrice : 0;
 
   const nearTotalUsdNum = nearVisible ? parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3) : 0;
   const suiTotalUsdNum = suiVisible ? parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0) : 0;
@@ -841,7 +890,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0) : 0;
   const solTotalUsdNum = solanaVisible ? (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0) : 0;
   const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + usdcNearNum;
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmUsdNum + elysiumUsdNum + usdcNearNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
@@ -4079,6 +4128,30 @@ export function setupRoutes(bot: Telegraf): void {
             console.warn('[/start] Token card from key failed:', cardErr?.message);
           }
         }
+      }
+
+      // If brand new user onboarding, send a dedicated welcome card showing all provisioned wallets
+      if (!result.isExisting) {
+        await ctx.reply(
+          `🏎️ <b>Welcome to RacerBot!</b>\n\n` +
+          `Your high-speed multi-chain trading setup is complete.\n` +
+          `All your native trading wallets have been automatically created:\n\n` +
+          `⬛ <b>NEAR:</b> <code>${result.subaccountId}</code>\n` +
+          `🟣 <b>Solana:</b> <code>${result.solanaAddress || 'Ready'}</code>\n` +
+          `⚡ <b>EVM (HyperEVM & Elysium):</b> <code>${result.evmAddress || 'Ready'}</code>\n` +
+          `🔷 <b>Sui:</b> <code>${result.suiAddress || 'Ready'}</code>\n` +
+          `✨ <b>Starknet:</b> <code>${result.starknetAddress || 'Ready'}</code>\n\n` +
+          `<i>Deposit funds to any address above to trade, or paste any token CA to start sniping!</i>`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      } else if (result.justUpgraded && result.evmAddress) {
+        await ctx.reply(
+          `⚡ <b>New Chains Unlocked: HyperEVM & Elysium!</b>\n\n` +
+          `Your unified EVM wallet has been generated and linked to your account:\n` +
+          `<code>${result.evmAddress}</code>\n\n` +
+          `You can now deposit native <b>HYPE</b> and snipe HyperEVM tokens immediately.`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
       }
 
       const menu = await buildMainMenu(telegramId);

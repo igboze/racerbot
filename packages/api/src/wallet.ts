@@ -2263,6 +2263,7 @@ export interface OnboardResult {
   evmAddress?: string;
   evmPrivateKey?: string;
   isExisting: boolean;
+  justUpgraded?: boolean;
 }
 
 /**
@@ -2476,7 +2477,9 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   // Step 5: Check for existing user row (idempotency)
   const existing = await getUserByTelegramId(telegramId).catch(() => null);
   if (existing) {
+    const hadEvm = !!existing.evm_address;
     const updated = await ensureUserAllWallets(existing);
+    const justUpgraded = !hadEvm && !!updated.evm_address;
     return {
       userId: updated.id,
       subaccountId: updated.subaccount_id,
@@ -2485,6 +2488,7 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
       solanaAddress: updated.solana_address ?? undefined,
       evmAddress: updated.evm_address ?? undefined,
       isExisting: true,
+      justUpgraded,
     };
   }
 
