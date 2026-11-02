@@ -618,8 +618,8 @@
               <span>Capital Management</span>
             </button>
             <button class="tab-btn" id="tab-btn-swarm" onclick="switchTab('swarm')">
-              <span>AI ShadowSwarm</span>
-              <span style="font-size:10px; background:rgba(106,204,220,0.15); color:var(--color-primary); padding:2px 6px; border-radius:4px; font-weight:700;">NEAR AI TEE</span>
+              <span>AI Swarm</span>
+              <span style="font-size:10px; background:rgba(106,204,220,0.15); color:var(--color-primary); padding:2px 6px; border-radius:4px; font-weight:700;">NEAR AI</span>
             </button>
           </div>
 
@@ -781,23 +781,15 @@
             </div>
           </div>
         
-            <!-- TAB 4: AI SHADOWSWARM (NEAR AI TEE) -->
+            <!-- TAB 4: AI SWARM (planned with NEAR AI) -->
             <div id="tab-content-swarm" style="display:none;">
-              <!-- Hardware Enclave Trust Banner -->
-              <div style="background:rgba(106, 204, 220, 0.06); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:18px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                  <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#34D399; box-shadow:0 0 8px #34D399;"></span>
-                  <div>
-                    <div style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-primary); letter-spacing:0.5px;">
-                      NEAR AI CLOUD TEE ENCLAVE ACTIVE
-                    </div>
-                    <div style="font-size:11px; color:var(--color-text-muted);">
-                      Verifiable Intel TDX / NVIDIA Confidential Computing
-                    </div>
-                  </div>
+              <!-- How the swarm works -->
+              <div style="background:rgba(106, 204, 220, 0.06); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:18px;">
+                <div style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-primary); letter-spacing:0.5px;">
+                  AI SWARM · PLANNED WITH NEAR AI CLOUD
                 </div>
-                <div style="font-family:var(--font-mono); font-size:11px; color:#34D399; background:rgba(52, 211, 153, 0.1); padding:4px 10px; border-radius:4px; border:1px solid rgba(52, 211, 153, 0.3); display:flex; align-items:center; gap:5px;">
-                  <span>🔒</span> HARDWARE ATTESTED
+                <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">
+                  Splits your trade into staggered tranches with randomized sizes and timing. You review the plan before anything trades. Trades run from your RacerBot wallet.
                 </div>
               </div>
 
@@ -807,12 +799,12 @@
                   <span>SWARM INTENT / NATURAL LANGUAGE PROMPT</span>
                   <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Decomposed by NEAR AI</span>
                 </div>
-                <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy for any token, e.g.: Accumulate 10 NEAR of LONK (or SWEAT, REF, HOOT) with 5 stealth drones staggered over 15 minutes"></textarea>
+                <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy for any token, e.g.: Accumulate 10 NEAR of LONK (or SWEAT, REF, HOOT) in 5 tranches staggered over 15 minutes"></textarea>
                 
                 <div class="chips-row" style="margin-top:8px;">
                   <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">PRESETS:</span>
-                  <button type="button" class="token-chip" onclick="setSwarmPreset('stealth_accumulate')">Stealth TWAP (5 Drones)</button>
-                  <button type="button" class="token-chip" onclick="setSwarmPreset('momentum_snipe')">Spike Snipe (3 Drones)</button>
+                  <button type="button" class="token-chip" onclick="setSwarmPreset('stealth_accumulate')">Staggered TWAP (5 tranches)</button>
+                  <button type="button" class="token-chip" onclick="setSwarmPreset('momentum_snipe')">Spike Snipe (3 tranches)</button>
                   <button type="button" class="token-chip" onclick="setSwarmPreset('anti_mev_dispersion')">Anti-MEV Dispersion</button>
                   <button type="button" class="token-chip" onclick="setSwarmPreset('liquidity_probe')">Liquidity Probe</button>
                 </div>
@@ -847,12 +839,12 @@
                 </div>
               </div>
 
-              <!-- Stealth Mode & Drone Count -->
+              <!-- Confidential routing -->
               <div class="form-group" style="display:grid; grid-template-columns:1.2fr 0.8fr; gap:16px; align-items:center; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px 14px;">
                 <div>
-                  <div style="font-size:13px; font-weight:600; color:var(--color-text);">Confidential Stealth Routing</div>
+                  <div style="font-size:13px; font-weight:600; color:var(--color-text);">Confidential routing (when available)</div>
                   <div style="font-size:11.5px; color:var(--color-text-muted); margin-top:2px;">
-                    Routes tranches through ephemeral private executors to mask on-chain linkability.
+                    Uses private executors so your wallet does not appear in the trade. Until confidential trading is switched on, tranches trade from your RacerBot wallet.
                   </div>
                 </div>
                 <div style="display:flex; justify-content:flex-end;">
@@ -865,7 +857,7 @@
 
               <!-- Generate Plan Button -->
               <button class="btn btn-primary" id="btn-swarm-plan" style="width:100%; height:48px; font-size:14px; margin-top:12px;" onclick="generateSwarmPlan()">
-                <span>Compute Swarm Strategy (NEAR AI TEE)</span>
+                <span>Plan Swarm with NEAR AI</span>
               </button>
 
               <!-- Step 2: AI Plan Review Modal / Card -->
@@ -881,17 +873,18 @@
                 <div id="swarm-plan-reasoning" style="font-size:12px; color:var(--color-text-muted); line-height:1.5; margin-bottom:14px;"></div>
 
                 <!-- Tranche Table -->
-                <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); margin-bottom:6px;">DECOMPOSED DRONE TRANCHES:</div>
+                <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); margin-bottom:6px;">TRANCHES:</div>
                 <div id="swarm-tranches-list" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px; max-height:160px; overflow-y:auto;"></div>
 
-                <!-- TEE Hardware Signature -->
+                <!-- Who planned it -->
                 <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:6px; padding:10px 12px; margin-bottom:16px;">
-                  <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">
-                    <span>TEE HARDWARE ENCLAVE</span>
-                    <span id="swarm-tee-env" style="color:var(--color-primary);">Intel TDX Enclave</span>
+                  <div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">
+                    <span>PLANNED BY</span>
+                    <span id="swarm-planner" style="color:var(--color-primary); text-align:right;">-</span>
                   </div>
-                  <div style="font-family:var(--font-mono); font-size:10px; color:var(--color-text-muted); word-break:break-all; margin-top:4px;">
-                    Attestation Hash: <span id="swarm-tee-hash">0x8f4b...tee_valid</span>
+                  <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); margin-top:4px; display:flex; justify-content:space-between; gap:12px;">
+                    <span>TRADES FROM</span>
+                    <span id="swarm-route" style="color:var(--color-text); text-align:right;">Your RacerBot wallet</span>
                   </div>
                 </div>
 
@@ -917,7 +910,7 @@
                 <!-- Progress Bar -->
                 <div style="margin-bottom:14px;">
                   <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); margin-bottom:4px;">
-                    <span>DRONE COMPLETION</span>
+                    <span>TRANCHES DONE</span>
                     <span id="swarm-progress-text">0 / 0 Executed</span>
                   </div>
                   <div style="width:100%; height:6px; background:var(--color-surface-card); border-radius:3px; overflow:hidden;">
@@ -1243,6 +1236,7 @@
       document.getElementById('tab-content-ops').style.display = tab === 'ops' ? 'block' : 'none';
       const swarmContent = document.getElementById('tab-content-swarm');
       if (swarmContent) swarmContent.style.display = tab === 'swarm' ? 'block' : 'none';
+      if (tab === 'swarm') restoreActiveSwarm();
     }
 
     function setBuyToken(token) {
@@ -1762,7 +1756,7 @@
     }
 
     // ── RacerConnect Header Auth State ─────────────────────────────────────────
-        // ── AI ShadowSwarm Logic (NEAR AI TEE) ──────────────────────────────────
+        // ── AI Swarm (planned with NEAR AI) ──────────────────────────────────
     let activeSwarmSessionId = null;
     let currentSwarmPlan = null;
     let swarmPollTimer = null;
@@ -1773,33 +1767,33 @@
       const amtInput = document.getElementById('swarm-total-near');
 
       if (presetType === 'stealth_accumulate') {
-        promptInput.value = 'Accumulate 10 NEAR of LONK with 5 stealth drones staggered over 15 minutes to avoid front-running';
+        promptInput.value = 'Accumulate 10 NEAR of LONK in 5 tranches staggered over 15 minutes to avoid front-running';
         tokenInput.value = 'token.lonk.near';
         amtInput.value = '10.0';
       } else if (presetType === 'momentum_snipe') {
-        promptInput.value = 'Execute rapid momentum breakout on BATMAN across 3 drones within 30 seconds';
+        promptInput.value = 'Rapid breakout snipe of 5 NEAR on BATMAN in 3 tranches';
         tokenInput.value = 'batman-4.nearlytrade.near';
         amtInput.value = '15.0';
       } else if (presetType === 'anti_mev_dispersion') {
-        promptInput.value = 'Disperse 20 NEAR across 6 randomized subaccounts to accumulate SHORE without sandwich MEV';
+        promptInput.value = 'Accumulate 20 NEAR of SHORE in 6 randomized tranches to avoid sandwich MEV';
         tokenInput.value = 'shore-4lzt.launch.shoremarkets.near';
         amtInput.value = '20.0';
       } else if (presetType === 'liquidity_probe') {
-        promptInput.value = 'Probe BLACKDRAGON liquidity depth with 3 sub-1 NEAR probes before executing target tranche';
+        promptInput.value = 'Buy 3 NEAR of BLACKDRAGON in 4 small tranches to probe liquidity depth';
         tokenInput.value = 'blackdragon.tkn.near';
         amtInput.value = '5.0';
       }
     }
 
     async function generateSwarmPlan() {
-      const prompt = document.getElementById('swarm-prompt-input').value.trim() || 'Accumulate 10 NEAR with 5 stealth drones';
+      const prompt = document.getElementById('swarm-prompt-input').value.trim();
       const tokenAddress = document.getElementById('swarm-token-input').value.trim() || undefined;
       const totalNear = parseFloat(document.getElementById('swarm-total-near').value) || 10.0;
       const stealthMode = document.getElementById('swarm-stealth-mode').checked;
       const btn = document.getElementById('btn-swarm-plan');
 
       btn.disabled = true;
-      btn.innerHTML = '<span>Querying NEAR AI TEE Enclave...</span>';
+      btn.innerHTML = '<span>Planning with NEAR AI…</span>';
 
       try {
         const token = localStorage.getItem('racer_auth_token') || '';
@@ -1827,12 +1821,12 @@
         activeSwarmSessionId = data.sessionId;
         currentSwarmPlan = data.plan;
         renderSwarmPlan(data.plan);
-        showToast('Swarm strategy generated via NEAR AI TEE', 'success');
+        showToast('Swarm plan ready. Review it before launching', 'success');
       } catch (err) {
         showToast(err.message || 'Error generating swarm plan', 'error');
       } finally {
         btn.disabled = false;
-        btn.innerHTML = '<span>Compute Swarm Strategy (NEAR AI TEE)</span>';
+        btn.innerHTML = '<span>Plan Swarm with NEAR AI</span>';
       }
     }
 
@@ -1841,17 +1835,16 @@
       const strategyName = plan.strategyTitle || (plan.strategy || 'TWAP Accumulation').replace(/_/g, ' ').toUpperCase();
       document.getElementById('swarm-plan-strategy-title').textContent = strategyName;
       
-      let badgeHtml = (plan.stealthScore || 95) + '% Stealth';
+      let badgeHtml = plan.action === 'sell'
+        ? `Sell ${plan.sellPct || 100}% · ${plan.droneCount} tranches`
+        : `${Number(plan.totalNear || 0).toFixed(2)} NEAR · ${plan.droneCount} tranches`;
       if (plan.exitTrigger) {
         badgeHtml += ` · 🎯 ${plan.exitTrigger.targetDisplay}`;
       }
       document.getElementById('swarm-plan-stealth-badge').textContent = badgeHtml;
-      document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || 'Autonomous multi-drone execution staggered to eliminate front-running risk.';
-
-      if (plan.teeEnclave) {
-        document.getElementById('swarm-tee-env').textContent = plan.teeEnclave.provider || plan.teeEnclave.hardware || 'Intel TDX Enclave';
-        document.getElementById('swarm-tee-hash').textContent = plan.teeEnclave.attestationHash || plan.teeEnclave.hash || '0x' + Math.random().toString(16).slice(2);
-      }
+      document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || '';
+      document.getElementById('swarm-planner').textContent = (plan.planner && plan.planner.label) || 'Unknown planner';
+      document.getElementById('swarm-route').textContent = plan.stealthMode ? 'Confidential executors' : 'Your RacerBot wallet';
 
       const tranchesList = document.getElementById('swarm-tranches-list');
       if (tranchesList && plan.tranches) {
@@ -1861,11 +1854,11 @@
           <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:4px; font-size:12px; font-family:var(--font-mono);">
             <div style="display:flex; align-items:center; gap:8px;">
               <span style="color:var(--color-primary); font-weight:700;">#${idx + 1}</span>
-              <span style="color:var(--color-text);">${t.droneName || t.droneId || ('Drone-' + (idx+1))}</span>
+              <span style="color:var(--color-text);">Tranche ${idx + 1}</span>
             </div>
             <div style="display:flex; align-items:center; gap:12px;">
-              <span style="color:var(--color-text);">${t.amountNear.toFixed(2)} NEAR</span>
-              <span style="color:var(--color-text-subtle); font-size:11px;">+${delaySec}s jitter</span>
+              <span style="color:var(--color-text);">${plan.action === 'sell' ? Number(t.sellPct || 0).toFixed(1) + '% of position' : Number(t.amountNear || 0).toFixed(2) + ' NEAR'}</span>
+              <span style="color:var(--color-text-subtle); font-size:11px;">+${delaySec}s</span>
             </div>
           </div>
         `;
@@ -1886,7 +1879,7 @@
 
       const btn = document.getElementById('btn-swarm-launch');
       btn.disabled = true;
-      btn.innerHTML = '<span>Launching Drones...</span>';
+      btn.innerHTML = '<span>Launching…</span>';
 
       try {
         const token = localStorage.getItem('racer_auth_token') || '';
@@ -1906,8 +1899,9 @@
 
         document.getElementById('swarm-plan-preview').style.display = 'none';
         document.getElementById('swarm-radar-card').style.display = 'block';
-        showToast('AI Swarm launched! Drones in flight', 'success');
+        showToast('Swarm launched. Tranches run on their schedule', 'success');
 
+        setSwarmPausedUi(false);
         // Begin telemetry polling
         startSwarmTelemetryPolling(activeSwarmSessionId);
       } catch (err) {
@@ -1952,48 +1946,101 @@
           `).join('');
         }
 
-        if (session.status === 'completed' || session.status === 'aborted') {
+        setSwarmPausedUi(session.status === 'paused');
+        if (['completed', 'aborted', 'failed', 'paused'].includes(session.status)) {
           if (swarmPollTimer) clearInterval(swarmPollTimer);
-          showToast('Swarm session ' + session.status, session.status === 'completed' ? 'success' : 'info');
+          swarmPollTimer = null;
+          if (session.status !== 'paused') {
+            showToast('Swarm session ' + session.status, session.status === 'completed' ? 'success' : 'info');
+          }
         }
       } catch (err) {
         console.warn('Swarm polling error:', err);
       }
     }
 
+    function swarmAuthHeaders() {
+      const token = localStorage.getItem('racer_auth_token') || '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
+    /** POST to a swarm endpoint; throws with the server's message when it refuses. */
+    async function swarmPost(path, body) {
+      const res = await fetch(path, { method: 'POST', headers: swarmAuthHeaders(), body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    /** The pause button doubles as Resume while the swarm is paused. */
+    function setSwarmPausedUi(paused) {
+      const btn = document.getElementById('btn-swarm-pause');
+      if (!btn) return;
+      btn.textContent = paused ? 'Resume Swarm' : 'Pause Swarm';
+      btn.onclick = paused ? resumeSwarmSession : pauseSwarmSession;
+      const badge = document.getElementById('swarm-session-status-badge');
+      if (badge && paused) badge.textContent = 'PAUSED';
+    }
+
     async function pauseSwarmSession() {
       if (!activeSwarmSessionId) return;
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        await fetch('/api/swarm/pause', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ sessionId: activeSwarmSessionId }),
-        });
-        showToast('Swarm execution paused', 'info');
+        await swarmPost('/api/swarm/pause', { sessionId: activeSwarmSessionId });
+        if (swarmPollTimer) clearInterval(swarmPollTimer);
+        swarmPollTimer = null;
+        setSwarmPausedUi(true);
+        showToast('Swarm paused. Tranches that have not run are on hold', 'info');
       } catch (err) {
-        showToast('Failed to pause swarm', 'error');
+        showToast('Could not pause: ' + (err.message || 'error'), 'error');
+      }
+    }
+
+    /** Resume runs only the tranches that have not run yet. */
+    async function resumeSwarmSession() {
+      if (!activeSwarmSessionId) return;
+      try {
+        await swarmPost('/api/swarm/launch', { sessionId: activeSwarmSessionId });
+        setSwarmPausedUi(false);
+        showToast('Swarm resumed', 'success');
+        startSwarmTelemetryPolling(activeSwarmSessionId);
+      } catch (err) {
+        showToast('Could not resume: ' + (err.message || 'error'), 'error');
       }
     }
 
     async function abortSwarmSession() {
       if (!activeSwarmSessionId) return;
-      const ok = await showConfirm('Are you sure you want to abort the active swarm session? Pending drone tranches will be cancelled.');
+      const ok = await showConfirm('Abort this swarm? Tranches that have not run will be cancelled.');
       if (!ok) return;
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        await fetch('/api/swarm/abort', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ sessionId: activeSwarmSessionId }),
-        });
-        showToast('Swarm mission aborted', 'info');
+        await swarmPost('/api/swarm/abort', { sessionId: activeSwarmSessionId });
+        if (swarmPollTimer) clearInterval(swarmPollTimer);
+        swarmPollTimer = null;
+        pollSwarmStatus(activeSwarmSessionId);
+        showToast('Swarm aborted', 'info');
       } catch (err) {
-        showToast('Failed to abort swarm', 'error');
+        showToast('Could not abort: ' + (err.message || 'error'), 'error');
+      }
+    }
+
+    /** After a reload: show the latest swarm that is running or paused, and follow it. */
+    async function restoreActiveSwarm() {
+      if (activeSwarmSessionId || !localStorage.getItem('racer_auth_token')) return;
+      try {
+        const res = await fetch('/api/swarm/sessions', { headers: swarmAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        const live = (data.sessions || []).find(s => s.status === 'executing' || s.status === 'paused');
+        if (!live) return;
+        activeSwarmSessionId = live.id;
+        document.getElementById('swarm-radar-card').style.display = 'block';
+        setSwarmPausedUi(live.status === 'paused');
+        if (live.status === 'executing') startSwarmTelemetryPolling(live.id);
+        else pollSwarmStatus(live.id);
+      } catch (err) {
+        console.warn('Could not restore the active swarm:', err);
       }
     }
 

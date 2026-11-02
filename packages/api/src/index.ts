@@ -559,6 +559,11 @@ async function main(): Promise<void> {
   const receiptReconciler = startReceiptReconciler(30_000);
   const confidentialWorker = startConfidentialWorker(15_000);
 
+  // Swarm tranche timers live in memory: pause swarms a restart interrupted so users can resume them
+  void import('./swarmExecutor.js')
+    .then(m => m.recoverInterruptedSwarms())
+    .catch(err => logger.warn('Swarm recovery after restart failed', { error: err?.message }));
+
   // ── Start background worker processes (detector, executor, triggers) ──────
   startBackgroundWorkers();
 
