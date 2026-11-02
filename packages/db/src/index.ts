@@ -244,6 +244,9 @@ export {
   insertConfidentialMove,
   updateConfidentialMove,
   listOpenConfidentialMoves,
+  markConfidentialMovesChecked,
+  expireStaleConfidentialQuotes,
+  touchExecutors,
   listUserConfidentialMoves,
   getUserConfidentialMove,
 } from './db.js';
