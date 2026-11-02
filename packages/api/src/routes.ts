@@ -172,6 +172,7 @@ import {
   isValidEvmAddress,
   getHypeBalance,
   ELYSIUM_TESTNET_EXPLORER_URL,
+  KLEOS_TOKEN_URL,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
 } from '@racerbot/shared';
@@ -1338,8 +1339,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isStarknet = !isSolana && (tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress));
   const isSui = !isSolana && !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
   const isEvm = !isSolana && !isStarknet && !isSui && (tokenInfo.chain === 'hyperevm' || tokenInfo.chain === 'elysium' || isValidEvmAddress(tokenAddress));
-  const isHyperEvm = isEvm && (tokenInfo.chain === 'hyperevm' || !tokenAddress.toLowerCase().endsWith('.elysium'));
+  const isHyperEvm = isEvm && tokenInfo.chain !== 'elysium' && !tokenAddress.toLowerCase().endsWith('.elysium');
   const isElysium = isEvm && !isHyperEvm;
+  // Kleos coins live on Elysium mainnet (99901); every other Elysium token here is on the Kinetiq testnet
+  const isKleos = isElysium && tokenInfo.venue === 'kleos';
   const isNearUsdcMode = !isSolana && !isStarknet && !isSui && userRecord?.near_trade_currency === 'usdc';
   const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'NEAR')));
   const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'N')));
@@ -1464,6 +1467,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     venueText = vDisplayName ? `💧 *Venue*: ${vDisplayName} (Sui DEX)` : `💧 *Venue*: Sui DEX Router (Aftermath)`;
   } else if (isHyperEvm) {
     venueText = `⚡ *Venue*: HyperEVM DEX (Mainnet)`;
+  } else if (isKleos) {
+    venueText = `🏛️ *Venue*: Kleos (Elysium mainnet)`;
   } else if (isElysium) {
     venueText = `🏛️ *Venue*: Elysium L2 (Testnet - Mainnet soon)`;
   } else if (tokenInfo.tradeable) {
@@ -1482,6 +1487,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/token/${tokenInfo.address}`),
           Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${tokenInfo.address}`),
         ]);
+      } else if (isKleos) {
+        rows.push([Markup.button.url('🏛️ View on Kleos', `${KLEOS_TOKEN_URL}/${tokenInfo.address}`)]);
       } else {
         rows.push([
           Markup.button.url('🔍 Elysium Explorer', `https://elysium.kinetiq.xyz/testnet-explorer/token/${tokenInfo.address}`),
@@ -1624,7 +1631,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     safetyBanner += `⚠️ *Low Liquidity* (${liqUsdStr || `${liqUsdRaw.toFixed(0)}`}) — High slippage risk!\n\n`;
   }
 
-  if (isElysium) {
+  if (isKleos) {
+    safetyBanner += `🟡 *Elysium mainnet*: Launched on Kleos (Chain ID 99901). RacerBot cannot trade Kleos coins yet; buy them on Kleos.
+
+`;
+  } else if (isElysium) {
     safetyBanner += `🟡 *Elysium Testnet*: Deployed on Elysium Testnet (Chain ID 99801). Elysium Mainnet will be live soon!\n\n`;
   }
 
@@ -1942,7 +1953,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ],
       ]);
     } else {
-      text += '⚠️ Trading venue is not directly supported.';
+      text += isKleos
+        ? '⚠️ Trading on Kleos is not supported in RacerBot yet.'
+        : '⚠️ Trading venue is not directly supported.';
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
         ...shareButtonRow,
@@ -2851,6 +2864,9 @@ export async function executeBuyHelper(
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // ── HyperEVM & Elysium Trading Path ──────────────────────────────────────
+  if (info.venue === 'kleos') {
+    throw new Error('This coin is on Kleos (Elysium mainnet), which RacerBot cannot trade yet. You can buy it on thekleos.xyz.');
+  }
   if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
     const chain: EvmChain = (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);

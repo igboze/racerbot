@@ -628,12 +628,25 @@ export async function getHypeUsdPrice(): Promise<number> {
     return cachedHypeUsdPrice;
   }
   try {
+    // Hyperliquid's own mid price; DexScreener's first WHYPE pair often quotes HYPE, so its priceUsd is the other token's
+    const mids = await fetch('https://api.hyperliquid.xyz/info', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'allMids' }),
+      signal: AbortSignal.timeout(3000),
+    }).then(r => (r.ok ? r.json() : null)).catch(() => null) as any;
+    const mid = parseFloat(mids?.HYPE || '0');
+    if (mid > 0) {
+      cachedHypeUsdPrice = mid;
+      lastHypeUsdPriceTime = now;
+      return cachedHypeUsdPrice;
+    }
     const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
       signal: AbortSignal.timeout(3000),
     });
     if (res.ok) {
       const data: any = await res.json();
-      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm');
+      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555');
       const val = parseFloat(p?.priceUsd || '0');
       if (val > 0) {
         cachedHypeUsdPrice = val;
@@ -668,14 +681,70 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
     const [code, nonce] = await Promise.all([provider.getCode(address), provider.getTransactionCount(address)]);
     return { hasCode: Boolean(code && code !== '0x'), nonce };
   };
-  const [hyper, elysium] = await Promise.allSettled([probe('hyperevm', hyperevmTestnet), probe('elysium', true)]);
+  const [hyper, elysium, elysiumMainnet] = await Promise.allSettled([
+    probe('hyperevm', hyperevmTestnet), probe('elysium', true), probe('elysium', false),
+  ]);
   const onHyper = hyper.status === 'fulfilled' ? hyper.value : null;
   const onElysium = elysium.status === 'fulfilled' ? elysium.value : null;
-  if (onElysium?.hasCode && onHyper && !onHyper.hasCode) return new EvmTokenLookupError('elysium', address);
+  const onElysiumMainnet = elysiumMainnet.status === 'fulfilled' ? elysiumMainnet.value : null;
+  if ((onElysium?.hasCode || onElysiumMainnet?.hasCode) && onHyper && !onHyper.hasCode) return new EvmTokenLookupError('elysium', address);
   // A HyperEVM contract that did not answer as a token, or a chain we could not read: retrying may help
-  if (onHyper?.hasCode || !onHyper || !onElysium) return new EvmTokenLookupError('rpc', address);
-  const read = [onHyper, onElysium];
+  if (onHyper?.hasCode || !onHyper || !onElysium || !onElysiumMainnet) return new EvmTokenLookupError('rpc', address);
+  const read = [onHyper, onElysium, onElysiumMainnet];
   return new EvmTokenLookupError(read.some(r => r.nonce > 0) ? 'wallet' : 'empty', address);
+}
+
+const KLEOS_BOARD_URL = 'https://www.thekleos.xyz/api/board';
+const KLEOS_BOARD_TTL_MS = 60_000;
+let kleosBoardCache: { at: number; byAddress: Map<string, any> } | null = null;
+
+/** Kleos lists every coin it launched with a HYPE price and pool depth; DexScreener does not index Elysium mainnet */
+async function getKleosBoardEntry(address: string): Promise<any | null> {
+  if (!kleosBoardCache || Date.now() - kleosBoardCache.at > KLEOS_BOARD_TTL_MS) {
+    const res = await fetch(KLEOS_BOARD_URL, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) throw new Error(`Kleos board returned ${res.status}`);
+    const coins = (await res.json()) as any[];
+    kleosBoardCache = { at: Date.now(), byAddress: new Map(coins.map(c => [String(c.address).toLowerCase(), c])) };
+  }
+  return kleosBoardCache.byAddress.get(address.toLowerCase()) ?? null;
+}
+
+/**
+ * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins.
+ * RacerBot cannot trade there yet, so the result is shown as a read-only card.
+ */
+export async function lookupKleosToken(address: string): Promise<TokenInfoResult | null> {
+  const meta = await getErc20TokenInfo(address, 'elysium', false);
+  if (!meta) return null;
+  const [coin, hypeUsd] = await Promise.all([
+    getKleosBoardEntry(address).catch(() => null),
+    getHypeUsdPrice().catch(() => 25.0),
+  ]);
+  const priceHype = Number(coin?.launch?.price) || 0;
+  const liquidityHype = Number(coin?.launch?.liquidityHype) || 0;
+  const supply = Number(ethers.formatUnits(meta.totalSupply || '0', meta.decimals));
+  const marketCapHype = priceHype * supply;
+  return {
+    address: meta.address,
+    chain: 'elysium',
+    name: coin?.name || meta.name,
+    symbol: coin?.symbol || meta.symbol,
+    decimals: meta.decimals,
+    total_supply: meta.totalSupply,
+    price: priceHype.toString(),
+    price_usd: (priceHype * hypeUsd).toString(),
+    liquidity: liquidityHype.toFixed(2),
+    liquidity_usd: (liquidityHype * hypeUsd).toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapHype * hypeUsd,
+    near_usd: hypeUsd,
+    venue: 'kleos',
+    launchpad: 'Kleos',
+    icon: typeof coin?.image === 'string' ? coin.image : undefined,
+    tradeable: false,
+    buy_tax_pct: 0,
+    sell_tax_pct: 0,
+  } as TokenInfoResult;
 }
 
 export async function fetchDexScreenerTokenData(tokenAddress: string, chainHint?: string): Promise<DexScreenerData | null> {
@@ -1295,6 +1364,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ]);
 
       if (!tokenMeta && !dexscreenerData) {
+        const kleos = isElysium ? null : await lookupKleosToken(tokenAddress).catch(() => null);
+        if (kleos) {
+          tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          return kleos;
+        }
         throw await explainMissingEvmToken(tokenAddress);
       }
 
