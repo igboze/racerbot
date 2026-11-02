@@ -276,3 +276,4 @@ export {
   type ConfidentialRacerExecutorRow,
   type RacerLinkRecord,
 } from './db.js';
+export { listRacerRanks, getRacerNames, type RacerNameRow } from './db.js';
