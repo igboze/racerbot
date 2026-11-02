@@ -67,6 +67,7 @@ import {
   type GeneratedStarknetWallet,
   type VenueName,
   isTradableVenue,
+  isKleosTradingEnabled,
   getStrkUsdPrice,
   getEthUsdPrice,
   redactSecrets,
@@ -711,7 +712,7 @@ async function getKleosBoardEntry(address: string): Promise<any | null> {
 
 /**
  * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins.
- * RacerBot cannot trade there yet, so the result is shown as a read-only card.
+ * Tradeable unless KLEOS_TRADING=off, which makes the card read-only.
  */
 export async function lookupKleosToken(address: string): Promise<TokenInfoResult | null> {
   const meta = await getErc20TokenInfo(address, 'elysium', false);
@@ -741,9 +742,10 @@ export async function lookupKleosToken(address: string): Promise<TokenInfoResult
     venue: 'kleos',
     launchpad: 'Kleos',
     icon: typeof coin?.image === 'string' ? coin.image : undefined,
-    tradeable: false,
-    buy_tax_pct: 0,
-    sell_tax_pct: 0,
+    tradeable: isKleosTradingEnabled(),
+    // v4/v5/pair coins carry a launch tax; classic coins pay the 1% pool fee instead
+    buy_tax_pct: Number(coin?.launch?.v4?.buyBps ?? 0) / 100,
+    sell_tax_pct: Number(coin?.launch?.v4?.sellBps ?? 0) / 100,
   } as TokenInfoResult;
 }
 

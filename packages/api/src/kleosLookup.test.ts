@@ -29,7 +29,8 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     getErc20TokenInfo.mockReset();
   });
 
-  it('reads the token from Elysium mainnet and prices it from the Kleos board, as read-only', async () => {
+  it('reads the token from Elysium mainnet and prices it from the Kleos board, read-only with KLEOS_TRADING=off', async () => {
+    vi.stubEnv('KLEOS_TRADING', 'off');
     getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kSocks', symbol: 'KSOCKS', decimals: 18, totalSupply: (10n ** 27n).toString() });
     const info = await lookupKleosToken(KSOCKS.toLowerCase());
 
@@ -38,6 +39,21 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     expect(info!.market_cap).toBeCloseTo(200); // 1B supply at 2e-7 HYPE
     expect(info!.market_cap_usd).toBeCloseTo(16000);
     expect(Number(info!.liquidity_usd)).toBeCloseTo(4000);
+    vi.unstubAllEnvs();
+  });
+
+  it('is tradeable by default, with the launch taxes from the board', async () => {
+    getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kSocks', symbol: 'KSOCKS', decimals: 18, totalSupply: '0' });
+    vi.stubGlobal('fetch', vi.fn((url: string) => (url.includes('thekleos.xyz/api/board')
+      ? respond([{ address: KSOCKS, symbol: 'KSOCKS', launch: { price: 1e-7, v4: { buyBps: 300, sellBps: 100 } } }])
+      : respond({ HYPE: '80' }))));
+    // Past the board cache filled by the first test
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    try {
+      expect(await lookupKleosToken(KSOCKS)).toMatchObject({ tradeable: true, buy_tax_pct: 3, sell_tax_pct: 1 });
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('returns nothing when the address has no contract on Elysium mainnet', async () => {
