@@ -2480,6 +2480,40 @@
     }
 
     /* ── View: Receipts (private trades and vault balance) ─────────────────── */
+    .rc-view { display: none; flex-direction: column; gap: 24px; }
+    .rc-status { margin: 0; font-size: 14px; color: var(--color-text-muted); }
+    .rc-body { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 32px; align-items: start; }
+    .rc-body[hidden] { display: none; }
+    .rc-card-frame { aspect-ratio: 4 / 5; border-radius: 16px; overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-border); }
+    .rc-card-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .rc-details { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+    .rc-rank { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--color-text); }
+    .rc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .rc-chip { font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: var(--color-surface-card); color: var(--color-text); border: 1px solid var(--color-border); }
+    .rc-chip.rc-bronze { color: #F3C398; }
+    .rc-chip.rc-silver { color: #DCE3EC; }
+    .rc-chip.rc-gold { color: var(--color-racer-gold); }
+    .rc-chip.rc-holo { color: var(--color-racer-purple-light); }
+    .rc-h3 { font-size: 15px; font-weight: 700; color: var(--color-text); margin: 0 0 10px; }
+    .rc-progress-label { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--color-text-muted); margin-bottom: 8px; }
+    .rc-bar { height: 10px; border-radius: 999px; background: var(--color-surface-card); overflow: hidden; }
+    .rc-bar-fill { height: 100%; width: 0; border-radius: inherit; background: var(--color-primary); transition: width 0.4s ease; }
+    .rc-badges { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+    .rc-badges li { font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--color-border); color: var(--color-text); }
+    .rc-badges li.rc-empty { border: none; padding: 0; color: var(--color-text-muted); }
+    .rc-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .rc-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-surface-card); color: var(--color-text); font: inherit; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; }
+    .rc-btn:hover { background: var(--color-surface-hover); }
+    .rc-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+    .rc-btn:disabled { opacity: 0.6; cursor: default; }
+    .rc-btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: #0F1320; }
+    .rc-btn-primary:hover { background: var(--color-primary-pressed); }
+    .rc-ref { margin-top: 10px; }
+    @media (max-width: 768px) {
+      .rc-body { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+      .rc-card-frame { max-width: 420px; width: 100%; margin: 0 auto; }
+      .rc-actions .rc-btn { flex: 1 1 140px; }
+    }
     .receipts-view-container {
       display: none;
       flex-direction: column;
@@ -3853,6 +3887,7 @@
       <button class="alpha-tab-btn" id="tab-btn-terminal" onclick="switchNav('terminal')">Console</button>
       <button class="alpha-tab-btn" id="tab-btn-mykeys" onclick="switchNav('mykeys')">My keys</button>
       <button class="alpha-tab-btn" id="tab-btn-receipts" onclick="switchNav('receipts')">Receipts</button>
+      <button class="alpha-tab-btn" id="tab-btn-card" onclick="switchNav('card')">My Racer Card</button>
       <button class="alpha-tab-btn" id="tab-btn-creator" onclick="switchNav('creator')">Creator Studio</button>
     </div>
   </div>
@@ -5117,6 +5152,47 @@
       </section>
 
       <!-- VIEW 5: My Viewing Keys (Image 5) -->
+      <section id="view-card" class="rc-view" aria-labelledby="rc-title">
+        <div class="receipts-head">
+          <h2 id="rc-title">My Racer Card</h2>
+          <p>Your lifetime NEAR rank on RacerBot, from bot and confidential trades. The card never shows amounts, tokens or wallet addresses.</p>
+        </div>
+        <p class="rc-status" id="rc-status" role="status">Loading your card…</p>
+        <div class="rc-body" id="rc-body" hidden>
+          <div class="rc-card-frame">
+            <img id="rc-card-img" alt="" width="1080" height="1350">
+          </div>
+          <div class="rc-details">
+            <div>
+              <div class="rc-rank" id="rc-rank">-</div>
+              <div class="rc-chips" id="rc-chips"></div>
+            </div>
+            <div class="rc-progress" id="rc-progress-wrap">
+              <div class="rc-progress-label"><span id="rc-next">-</span><span id="rc-pct">0%</span></div>
+              <div class="rc-bar" role="progressbar" aria-labelledby="rc-next" aria-valuemin="0" aria-valuemax="100" id="rc-bar"><div class="rc-bar-fill" id="rc-bar-fill"></div></div>
+            </div>
+            <div>
+              <h3 class="rc-h3">Badges</h3>
+              <ul class="rc-badges" id="rc-badges"></ul>
+            </div>
+            <div>
+              <h3 class="rc-h3">Share</h3>
+              <div class="rc-actions">
+                <a class="rc-btn rc-btn-primary" id="rc-share-x" target="_blank" rel="noopener">Share on X</a>
+                <a class="rc-btn" id="rc-share-tg" target="_blank" rel="noopener">Share on Telegram</a>
+                <button type="button" class="rc-btn" id="rc-copy" onclick="copyRacerCardLink()">Copy link</button>
+              </div>
+              <p class="receipts-note rc-ref" id="rc-ref"></p>
+            </div>
+            <div class="rc-link" id="rc-link" hidden>
+              <h3 class="rc-h3">Trade on Telegram too?</h3>
+              <p class="receipts-note">Link your Telegram RacerBot account so both count toward one rank. You approve it in the bot.</p>
+              <button type="button" class="rc-btn" id="rc-link-btn" onclick="startRacerCardLink()">Link Telegram</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="view-receipts" class="receipts-view-container" aria-labelledby="receipts-title">
         <div class="receipts-head">
           <h2 id="receipts-title">Receipts</h2>
@@ -5557,6 +5633,7 @@
       document.getElementById('view-creator').style.display = 'none';
       document.getElementById('view-mykeys').style.display = 'none';
       document.getElementById('view-receipts').style.display = 'none';
+      document.getElementById('view-card').style.display = 'none';
 
       const target = document.getElementById(`view-${navKey}`);
       if (target) target.style.display = 'flex';
@@ -5587,6 +5664,106 @@
         titleEl.textContent = 'Receipts';
         subEl.innerHTML = '<span>Private trades</span><span>•</span><span>Vault balance</span>';
         loadReceipts();
+      } else if (navKey === 'card') {
+        titleEl.textContent = 'My Racer Card';
+        loadRacerCard();
+      }
+    }
+
+    // ── My Racer Card ─────────────────────────────────────────────────────
+    const RC_FINISH = { bronze: 'Bronze finish', silver: 'Silver finish', gold: 'Gold finish', holo: 'Holo finish' };
+    let rcShareUrl = '';
+    let rcImageUrl = '';
+
+    function rcStatus(text) {
+      const el = document.getElementById('rc-status');
+      el.textContent = text;
+      el.hidden = !text;
+    }
+
+    async function loadRacerCard() {
+      const body = document.getElementById('rc-body');
+      if (!getAuthHeaders().Authorization && window.RacerConnect?.activeNearWallet && typeof window.RacerConnect.ensureWalletSession === 'function') {
+        try { await window.RacerConnect.ensureWalletSession(); } catch (e) {}
+      }
+      if (!getAuthHeaders().Authorization) {
+        body.hidden = true;
+        rcStatus('Connect your wallet or Telegram to see your Racer Card.');
+        return;
+      }
+      rcStatus('Loading your card…');
+      try {
+        const res = await fetch('/api/racer-card', { headers: getAuthHeaders() });
+        const card = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(card.error || 'Could not load your Racer Card');
+
+        document.getElementById('rc-rank').textContent = card.rank.name;
+        const chips = [];
+        if (card.hasTrades) chips.push(`<span class="rc-chip rc-${card.finish}">${RC_FINISH[card.finish] || ''}</span>`);
+        if (card.topPercent !== null) chips.push(`<span class="rc-chip">Top ${Number(card.topPercent)}%</span>`);
+        document.getElementById('rc-chips').innerHTML = chips.join('');
+
+        const pct = Math.max(0, Math.min(100, Number(card.rank.progressPct) || 0));
+        document.getElementById('rc-progress-wrap').hidden = !card.rank.nextLevelName;
+        document.getElementById('rc-next').textContent = card.hasTrades ? `Next: ${card.rank.nextLevelName || ''}` : 'Make a first NEAR trade to climb the ranks';
+        document.getElementById('rc-pct').textContent = `${pct}%`;
+        document.getElementById('rc-bar').setAttribute('aria-valuenow', String(pct));
+        document.getElementById('rc-bar-fill').style.width = `${pct}%`;
+
+        document.getElementById('rc-badges').innerHTML = card.badges.length
+          ? card.badges.map(b => `<li>${escapeHtml(b)}</li>`).join('')
+          : '<li class="rc-empty">Badges unlock as you race</li>';
+
+        rcShareUrl = card.shareUrl;
+        document.getElementById('rc-share-x').href = card.share.x;
+        document.getElementById('rc-share-tg').href = card.share.telegram;
+        document.getElementById('rc-ref').textContent = `Friends who join with your link (code ${card.referralCode}) earn you referral rewards.`;
+        document.getElementById('rc-link').hidden = !card.canLink;
+
+        const img = document.getElementById('rc-card-img');
+        img.alt = `NEAR Racer Card: ${card.rank.name}`;
+        body.hidden = false;
+        rcStatus('');
+        const imgRes = await fetch('/api/racer-card/image.png', { headers: getAuthHeaders() });
+        if (imgRes.ok) {
+          if (rcImageUrl) URL.revokeObjectURL(rcImageUrl);
+          rcImageUrl = URL.createObjectURL(await imgRes.blob());
+          img.src = rcImageUrl;
+        }
+      } catch (err) {
+        body.hidden = true;
+        rcStatus(err.message || 'Could not load your Racer Card');
+      }
+    }
+
+    async function copyRacerCardLink() {
+      if (!rcShareUrl) return;
+      try {
+        await navigator.clipboard.writeText(rcShareUrl);
+        showToast('Card link copied', 'success');
+      } catch (e) {
+        showToast(rcShareUrl, 'info');
+      }
+    }
+
+    async function startRacerCardLink() {
+      const btn = document.getElementById('rc-link-btn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/racer-card/link', { method: 'POST', headers: getAuthHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not start linking');
+        if (data.status === 'linked') {
+          showToast('Already linked to Telegram', 'success');
+          loadRacerCard();
+          return;
+        }
+        window.open(data.deepLink, '_blank', 'noopener');
+        showToast('Approve the link in RacerBot, then reopen this tab', 'info');
+      } catch (err) {
+        showToast(err.message || 'Could not start linking', 'error');
+      } finally {
+        btn.disabled = false;
       }
     }
 
@@ -10084,6 +10261,8 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         switchNav('mykeys');
       } else if (tabParam === 'receipts') {
         switchNav('receipts');
+      } else if (tabParam === 'card') {
+        switchNav('card');
       }
 
       // Listen to wallet / auth events

@@ -257,10 +257,22 @@ export {
 } from './db.js';
 export {
   getNearRacerFills,
+  getUserByExactReferralCode,
   getRacerRank,
   seedRacerRank,
   raiseRacerBestKey,
   claimRacerRankUp,
   type NearRacerFillRow,
   type RacerRankRecord,
+} from './db.js';
+export {
+  getConfidentialRacerExecutors,
+  getRacerLinkFor,
+  listRacerLinks,
+  createRacerLinkCode,
+  peekRacerLinkCode,
+  consumeRacerLinkCode,
+  linkRacerAccounts,
+  type ConfidentialRacerExecutorRow,
+  type RacerLinkRecord,
 } from './db.js';

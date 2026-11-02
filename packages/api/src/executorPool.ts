@@ -429,6 +429,7 @@ export async function confidentialBuy(p: {
 
   void refillPool(acct).catch(e => logger.warn(`Refill after buy failed: ${e?.message}`));
   const ok = results.filter(r => r.ok);
+  if (ok.length) racerRankCheck(p.user.id);
   return {
     success: ok.length > 0,
     executors: ok.map(r => r.executor),
@@ -647,6 +648,13 @@ export async function closeExecutor(executor: string): Promise<void> {
     status: exited ? 'exited' : 'exiting', returned_amount: send.toString(), event: exited ?? partial ?? { event: 'exit_failed' },
     tx_hash: txHash, last_error: exited || partial ? null : failureOf(sent) || 'exit failed',
   });
+  // The sell's NEAR is known once the executor exits
+  if (exited) racerRankCheck(userId);
+}
+
+/** NEAR Racer Card: confidential trades count toward the lifetime rank too. */
+function racerRankCheck(userId: string): void {
+  void import('./racerCard.js').then(m => m.scheduleRankUpCheck(userId)).catch(() => undefined);
 }
 
 const ROUND_STEP = ONE_NEAR / 10n;

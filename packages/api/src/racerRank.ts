@@ -76,6 +76,56 @@ export function washFillIndexes(fills: RacerFill[]): Set<number> {
   return wash;
 }
 
+// ── Confidential trades ──────────────────────────────────────────────────────
+
+const YOCTO_PER_NEAR = 1e24;
+
+/** The confidential_executors fields the rank reads (amounts in yoctoNEAR). */
+export interface ConfidentialExecutor {
+  account_id: string;
+  status: string;
+  token: string | null;
+  venue: string | null;
+  size_yocto: string;
+  amount_spent: string | null;
+  fee_paid: string | null;
+  returned_amount: string | null;
+  opened_at: Date | string | null;
+  exited_at: Date | string | null;
+}
+
+function yoctoToNear(v: unknown): number {
+  try {
+    return Number(BigInt(String(v ?? '0').split('.')[0])) / YOCTO_PER_NEAR;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * A confidential position as fills, so it counts like any other NEAR trade.
+ * Confidential trades never reach `fills`: each executor holds one position.
+ * Buy = NEAR spent + fee, when it opened. Sell = NEAR returned on exit minus
+ * the funding the buy never used (size − spent − fee), when it exited. The
+ * sold event carries no NEAR value, so a sell only counts once it has exited;
+ * with rounded returns the stored amount can be the first part only.
+ */
+export function executorFills(e: ConfidentialExecutor): RacerFill[] {
+  if (!e.opened_at || e.amount_spent == null || !e.token) return [];
+  const spent = yoctoToNear(e.amount_spent);
+  const fee = yoctoToNear(e.fee_paid);
+  if (!(spent > 0)) return [];
+  const exited = !!e.exited_at && e.returned_amount != null && ['exited', 'closed'].includes(e.status);
+  const base = { token: e.token, venue: e.venue || 'confidential', positionId: `exec:${e.account_id}`, positionClosed: exited };
+  const fills: RacerFill[] = [{ ...base, side: 'buy', at: new Date(e.opened_at), nearValue: spent + fee }];
+  if (exited) {
+    const unspent = Math.max(0, yoctoToNear(e.size_yocto) - spent - fee);
+    const proceeds = yoctoToNear(e.returned_amount) - unspent;
+    if (proceeds > 0) fills.push({ ...base, side: 'sell', at: new Date(e.exited_at!), nearValue: proceeds });
+  }
+  return fills;
+}
+
 export interface RacerVolume {
   gross: number;
   /** Volume that counts for rank: gross minus wash round trips */

@@ -29,6 +29,7 @@ import {
 import { registerConfidentialRoutes } from './confidential.js';
 import { registerWebWalletRoutes } from './webWallet.js';
 import { createSwarmRouter } from './swarmRoutes.js';
+import { createRacerCardRouter } from './racerCardRoutes.js';
 import { verifiedUser } from './verifiedUser.js';
 import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
@@ -3640,5 +3641,6 @@ router.get('/deposit/status', async (req, res) => {
 registerConfidentialRoutes(router);
 registerWebWalletRoutes(router);
 router.use('/swarm', createSwarmRouter());
+router.use('/racer-card', createRacerCardRouter());
 
 export default router;

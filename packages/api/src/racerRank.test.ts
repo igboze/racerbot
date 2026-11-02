@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   fillNearValue, washFillIndexes, racerVolume, rankFor, topPercent, realizedRoiPct, finishFor,
   badgesFor, longestDayStreak, buildRacerProfile, rankKeyBeforeLatestFill, rankKeyFor, isAnnounceableRankUp,
-  TIERS, MAX_RANK_KEY, type RacerFill,
+  TIERS, MAX_RANK_KEY, executorFills, type RacerFill, type ConfidentialExecutor,
 } from './racerRank.js';
 
 const T0 = Date.UTC(2026, 9, 1, 12, 0, 0);
@@ -233,5 +233,42 @@ describe('isAnnounceableRankUp', () => {
     expect(isAnnounceableRankUp(6, 7, 'tier')).toBe(true);    // Street III → Circuit I
     expect(isAnnounceableRankUp(5, 9, 'tier')).toBe(true);    // jump into a later tier
     expect(isAnnounceableRankUp(0, 2, 'tier')).toBe(true);
+  });
+});
+
+describe('confidential trades (executorFills)', () => {
+  const N = (near: number) => (BigInt(Math.round(near * 1000)) * 10n ** 21n).toString();
+  const exec = (o: Partial<ConfidentialExecutor> = {}): ConfidentialExecutor => ({
+    account_id: 'x1.exec.near', status: 'open', token: 'tok.near', venue: 'rhea', size_yocto: N(10),
+    amount_spent: N(9.8), fee_paid: N(0.2), returned_amount: null, opened_at: min(0), exited_at: null, ...o,
+  });
+
+  it('counts an open position as a buy of NEAR spent plus fee', () => {
+    const fills = executorFills(exec());
+    expect(fills).toHaveLength(1);
+    expect(fills[0]).toMatchObject({ side: 'buy', token: 'tok.near', venue: 'rhea', positionId: 'exec:x1.exec.near', positionClosed: false });
+    expect(fills[0].nearValue).toBeCloseTo(10);
+  });
+
+  it('counts an exited position as a sell of the NEAR returned minus unused funding', () => {
+    // Funded 12, spent 9.8 + 0.2 fee, 2 never used; 17 came back, so the sell brought 15
+    const fills = executorFills(exec({ size_yocto: N(12), status: 'exited', returned_amount: N(17), exited_at: day(9) }));
+    expect(fills.map(f => f.side)).toEqual(['buy', 'sell']);
+    expect(fills[1].nearValue).toBeCloseTo(15);
+    expect(fills.every(f => f.positionClosed)).toBe(true);
+    expect(realizedRoiPct(fills)).toBeCloseTo(50);
+  });
+
+  it('adds no sell when nothing came back, and nothing for an executor that never bought', () => {
+    expect(executorFills(exec({ status: 'closed', returned_amount: N(0), exited_at: min(30) }))).toHaveLength(1);
+    expect(executorFills(exec({ amount_spent: null }))).toEqual([]);
+    expect(executorFills(exec({ opened_at: null }))).toEqual([]);
+    expect(executorFills(exec({ amount_spent: 'garbage' }))).toEqual([]);
+  });
+
+  it('applies the wash rule to a flat confidential round trip', () => {
+    const fills = executorFills(exec({ status: 'exited', returned_amount: N(9.9), exited_at: min(2) }));
+    // 10 in, 9.9 back within 2 minutes: both legs excluded
+    expect(racerVolume(fills)).toMatchObject({ net: 0, washLegs: 2 });
   });
 });

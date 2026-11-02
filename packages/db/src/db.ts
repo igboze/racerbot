@@ -4902,3 +4902,121 @@ export async function claimRacerRankUp(userId: string, key: number): Promise<boo
   );
   return (result.rowCount ?? 0) > 0;
 }
+
+/**
+ * Exact referral-code match only. Public pages use this: unlike
+ * getUserByReferralCode it never matches usernames or prefixes, so a rank
+ * cannot be looked up by guessing someone's Telegram name.
+ */
+export async function getUserByExactReferralCode(referralCode: string): Promise<UserRecord | null> {
+  const trimmed = referralCode.trim();
+  if (!trimmed) return null;
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE referral_code = $1', [trimmed]);
+  return result.rows[0] ? rowToUser(result.rows[0]) : null;
+}
+
+// ── NEAR Racer Cards: confidential trades and account links ────────────────
+
+export interface ConfidentialRacerExecutorRow {
+  user_id: string;
+  account_id: string;
+  status: string;
+  token: string | null;
+  venue: string | null;
+  size_yocto: string;
+  amount_spent: string | null;
+  fee_paid: string | null;
+  returned_amount: string | null;
+  opened_at: Date | null;
+  exited_at: Date | null;
+}
+
+/** Confidential executors that bought something, for some users or every user. */
+export async function getConfidentialRacerExecutors(userIds?: string[]): Promise<ConfidentialRacerExecutorRow[]> {
+  const db = await getDb();
+  const result = await db.query(
+    `SELECT user_id, account_id, status, token, venue, size_yocto, amount_spent, fee_paid,
+            returned_amount, opened_at, exited_at
+       FROM confidential_executors
+      WHERE amount_spent IS NOT NULL AND opened_at IS NOT NULL
+        AND ($1::uuid[] IS NULL OR user_id = ANY($1::uuid[]))
+      ORDER BY opened_at ASC`,
+    [userIds ?? null]
+  );
+  return result.rows;
+}
+
+export interface RacerLinkRecord {
+  wallet_user_id: string;
+  telegram_user_id: string;
+  linked_at: Date;
+}
+
+/** The link this user is on (as either side), if any. */
+export async function getRacerLinkFor(userId: string): Promise<RacerLinkRecord | null> {
+  const db = await getDb();
+  const result = await db.query(
+    'SELECT * FROM racer_links WHERE wallet_user_id = $1 OR telegram_user_id = $1 LIMIT 1',
+    [userId]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listRacerLinks(): Promise<RacerLinkRecord[]> {
+  const db = await getDb();
+  return (await db.query('SELECT * FROM racer_links')).rows;
+}
+
+export async function createRacerLinkCode(walletUserId: string, code: string, ttlMs: number): Promise<void> {
+  const db = await getDb();
+  // One live code per wallet account: a new request retires the old ones
+  await db.query('DELETE FROM racer_link_codes WHERE wallet_user_id = $1 AND used_at IS NULL', [walletUserId]);
+  await db.query(
+    `INSERT INTO racer_link_codes (code, wallet_user_id, expires_at)
+     VALUES ($1, $2, NOW() + ($3::int * INTERVAL '1 millisecond'))`,
+    [code, walletUserId, Math.round(ttlMs)]
+  );
+}
+
+/** Wallet account behind a live (unused, unexpired) code, without using it up. */
+export async function peekRacerLinkCode(code: string): Promise<string | null> {
+  const db = await getDb();
+  const result = await db.query(
+    'SELECT wallet_user_id FROM racer_link_codes WHERE code = $1 AND used_at IS NULL AND expires_at > NOW()',
+    [code]
+  );
+  return result.rows[0]?.wallet_user_id ?? null;
+}
+
+/** Use up a live code. Atomic: only one caller gets the wallet account back. */
+export async function consumeRacerLinkCode(code: string): Promise<string | null> {
+  const db = await getDb();
+  const result = await db.query(
+    `UPDATE racer_link_codes SET used_at = NOW()
+      WHERE code = $1 AND used_at IS NULL AND expires_at > NOW()
+      RETURNING wallet_user_id`,
+    [code]
+  );
+  return result.rows[0]?.wallet_user_id ?? null;
+}
+
+/**
+ * Link a wallet-only account to a Telegram account. 'linked' for a new link,
+ * 'already' when this exact pair is linked, 'conflict' when either side is
+ * already linked to someone else (never overwritten).
+ */
+export async function linkRacerAccounts(walletUserId: string, telegramUserId: string): Promise<'linked' | 'already' | 'conflict'> {
+  const db = await getDb();
+  const inserted = await db.query(
+    `INSERT INTO racer_links (wallet_user_id, telegram_user_id) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING wallet_user_id`,
+    [walletUserId, telegramUserId]
+  );
+  if ((inserted.rowCount ?? 0) > 0) return 'linked';
+  const existing = await db.query(
+    'SELECT 1 FROM racer_links WHERE wallet_user_id = $1 AND telegram_user_id = $2',
+    [walletUserId, telegramUserId]
+  );
+  return existing.rows.length ? 'already' : 'conflict';
+}
