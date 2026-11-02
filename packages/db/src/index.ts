@@ -277,3 +277,4 @@ export {
   type RacerLinkRecord,
 } from './db.js';
 export { listAiSwarmSessionsByStatus } from './db.js';
+export { listRacerRanks, getRacerNames, type RacerNameRow } from './db.js';

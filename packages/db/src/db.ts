@@ -5028,3 +5028,23 @@ export async function listAiSwarmSessionsByStatus(status: AiSwarmSessionRecord['
   const res = await db.query('SELECT * FROM ai_swarm_sessions WHERE status = $1', [status]);
   return res.rows.map(mapSwarmSession);
 }
+
+/** Every stored lifetime rank (leaderboard floor). */
+export async function listRacerRanks(): Promise<RacerRankRecord[]> {
+  const db = await getDb();
+  return (await db.query('SELECT user_id, best_key, announced_key FROM racer_ranks')).rows;
+}
+
+export interface RacerNameRow {
+  id: string;
+  username: string | null;
+  referral_code: string | null;
+}
+
+/** Only what a public leaderboard needs to label a racer. */
+export async function getRacerNames(userIds: string[]): Promise<RacerNameRow[]> {
+  if (!userIds.length) return [];
+  const db = await getDb();
+  const result = await db.query('SELECT id, username, referral_code FROM users WHERE id = ANY($1::uuid[])', [userIds]);
+  return result.rows;
+}

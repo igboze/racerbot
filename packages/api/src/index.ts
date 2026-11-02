@@ -12,6 +12,7 @@ import { getDb, runMigrations } from '@racerbot/db';
 import apiRouter, { serveRacerHtml, serveRacerAlphaHtml, serveBubbleMapHtml, serveCompetitionHtml, serveFleetHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
 import { registerRacerCardPages } from './racerCard.js';
+import { registerRacerLeaderboard } from './racerLeaderboard.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { startBuyAlertListener } from './buyAlerts.js';
@@ -290,6 +291,7 @@ async function main(): Promise<void> {
       // Racer Card pages must reach their own route on every host, or link
       // previews on X / Telegram get the web app page instead of the card
       req.path.startsWith('/c/') ||
+      req.path === '/racers' ||
       req.path === '/health' ||
       req.path === '/favicon.ico' ||
       req.path === webhookPath
@@ -396,6 +398,7 @@ async function main(): Promise<void> {
 
   // Public NEAR Racer Card pages: X / Telegram unfurl these into the card image
   registerRacerCardPages(app);
+  registerRacerLeaderboard(app);
 
   // Add monitoring routes
   monitoringRoutes(app);
