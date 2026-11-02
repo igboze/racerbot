@@ -329,6 +329,7 @@ describe('sharing with the card image', () => {
     await commands.get('card')!(ctx);
     const extra = (ctx.replyWithPhoto.mock.calls[0] as any)[1];
     expect(JSON.stringify(extra)).not.toContain('railway');
+    expect(buttons(extra).some((b: any) => b.text.includes('Leaderboard'))).toBe(false);
     expect(new URL(buttons(extra)[0].url).searchParams.get('url')).toBe('https://t.me/racertradingbot?start=SPEEDY');
 
     // A Railway address put in RACER_CARD_URL by mistake is refused too
@@ -351,6 +352,8 @@ describe('sharing with the card image', () => {
     await commands.get('card')!(ctx);
     const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
     expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8');
+    const all = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
+    expect(all.find((b: any) => b.text.includes('Leaderboard'))?.url).toBe('https://racer.example/racers');
 
     const page = await call(fakeApp(), '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
     expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8"');

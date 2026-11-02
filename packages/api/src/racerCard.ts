@@ -63,7 +63,7 @@ const BOT_LINK = 'https://t.me/racertradingbot';
  * it, shares use the plain bot link. A Railway host is refused even when set,
  * so the production server's address can never end up in a post.
  */
-function publicBaseUrl(): string {
+export function publicBaseUrl(): string {
   const raw = (process.env.RACER_CARD_URL || '').trim().replace(/\/+$/, '');
   if (!raw) return '';
   try {
@@ -185,8 +185,10 @@ export function racerCardCaption(p: RacerProfile, rankedUp = false): string {
 
 export function racerCardKeyboard(p: RacerProfile, link: string, pageUrl: string | null = null) {
   const share = racerShareLinks(p, link, pageUrl);
+  const base = publicBaseUrl();
   return Markup.inlineKeyboard([
     [Markup.button.url('𝕏 Share on X', share.x), Markup.button.url('✈️ Share on Telegram', share.telegram)],
+    ...(base ? [[Markup.button.url('🏆 Racer Leaderboard', `${base}/racers`)]] : []),
     [Markup.button.callback('🔄 Refresh', 'racer_card'), Markup.button.callback('🏠 Menu', 'menu_home')],
   ]);
 }
