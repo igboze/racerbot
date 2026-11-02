@@ -11,6 +11,7 @@ import {
   DEFAULT_SOLANA_DEV_FEE_WALLET,
   lamportsToSol,
   solToLamports,
+  SOLANA_TRANSFER_FEE_LAMPORTS,
 } from './solana.js';
 
 const MK = 'unit-test-master-key-0123456789abcdef0123456789ab';
@@ -58,6 +59,10 @@ describe('solana: fees match NEAR', () => {
   it('converts units', () => {
     expect(lamportsToSol(1_500_000_000n)).toBe(1.5);
     expect(solToLamports(0.25)).toBe(250_000_000n);
+  });
+  it('calculates fixed transfer fee with adequate priority fee', () => {
+    expect(SOLANA_TRANSFER_FEE_LAMPORTS).toBe(80_000n);
+    expect(lamportsToSol(SOLANA_TRANSFER_FEE_LAMPORTS)).toBe(0.00008);
   });
 });
 
