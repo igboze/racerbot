@@ -1,7 +1,6 @@
 import type { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, isSolanaAddress, type NotifyUserEvent } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
-import { PUBLIC_URL } from './config.js';
 import { executeFleetBundleBuy, executeFleetBundleSell } from './raceFleet.js';
 
 let _bot: Telegraf | null = null;
@@ -187,23 +186,6 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const quantity = pnl.quantity ?? pnl.positionSize ?? 0;
 
       const extra: any = { parse_mode: 'Markdown' };
-
-      const cardUrl = pnl.positionId && PUBLIC_URL
-        ? `${PUBLIC_URL}/pnl-card?positionId=${encodeURIComponent(pnl.positionId)}`
-        : PUBLIC_URL
-        ? `${PUBLIC_URL}/pnl-card?tokenSymbol=${encodeURIComponent(tokenSym)}&entryPrice=${pnl.entryPrice}&currentPrice=${exitPrice}&profitAmount=${realizedNear}&duration=${encodeURIComponent(holdDuration)}`
-        : '';
-
-      if (cardUrl) {
-        extra.reply_markup = {
-          inline_keyboard: [
-            [
-              { text: '🖼️ View PnL Card', web_app: { url: cardUrl } },
-              { text: '📤 Share Card', url: `https://t.me/share/url?url=${encodeURIComponent(cardUrl)}&text=${encodeURIComponent(`🏎️ Made ${pnlSign}${Number(pnlPercent).toFixed(1)}% on $${tokenSym} with @racertradingbot!`)}` }
-            ]
-          ]
-        };
-      }
 
       const unit = tokenSym.includes('::') || (pnl.tokenAddress || '').includes('::') ? 'SUI' : 'NEAR';
       await _bot.telegram.sendMessage(telegramId,
