@@ -947,6 +947,7 @@ export interface TokenInfoResult {
   near_usd: number;        // NEAR/USD or SUI/USD exchange rate
   sui_usd?: number;
   strk_usd?: number;
+  hype_usd?: number;
   venue: VenueName | 'unknown' | (string & {});
   rhea_pool_id?: number | null;
   bonding_phase?: 'prebonded' | 'bonded' | null;

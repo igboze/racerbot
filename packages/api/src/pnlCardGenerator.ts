@@ -1,6 +1,6 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
-import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice } from './wallet.js';
-import { getSolUsdPrice } from '@racerbot/shared';
+import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice, getHypeUsdPrice } from './wallet.js';
+import { getSolUsdPrice, isValidEvmAddress, isSolanaToken } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -96,15 +96,18 @@ export async function generatePNLCardData(
       tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
-    const isSolanaPos  = position.chain === 'solana' || tokenInfo?.chain === 'solana';
+    const isSolanaPos  = position.chain === 'solana' || tokenInfo?.chain === 'solana' || isSolanaToken(position.token_address);
     const isStarknetPos = !isSolanaPos && (position.chain === 'starknet' || isStarknetToken(position.token_address));
-    const isSuiPos     = !isSolanaPos && (position.chain === 'sui' || isSuiToken(position.token_address));
+    const isSuiPos     = !isSolanaPos && !isStarknetPos && (position.chain === 'sui' || isSuiToken(position.token_address));
+    const isEvmPos     = !isSolanaPos && !isStarknetPos && !isSuiPos && (position.chain === 'hyperevm' || position.chain === 'elysium' || tokenInfo?.chain === 'hyperevm' || tokenInfo?.chain === 'elysium' || isValidEvmAddress(position.token_address));
     const liveNativeUsd = isSolanaPos
       ? (tokenInfo?.sol_usd || await getSolUsdPrice().catch(() => 150))
       : isStarknetPos
       ? (tokenInfo?.strk_usd || 0.12)
       : isSuiPos
       ? await getSuiUsdPrice().catch(() => 2.0)
+      : isEvmPos
+      ? (tokenInfo?.hype_usd || await getHypeUsdPrice().catch(() => 25.0))
       : await getNearUsdPrice().catch(() => 5.16);
     const nearUsd      = isSolanaPos
       ? (tokenInfo?.sol_usd || liveNativeUsd)
@@ -112,6 +115,8 @@ export async function generatePNLCardData(
       ? (tokenInfo?.strk_usd || liveNativeUsd)
       : isSuiPos
       ? (tokenInfo?.sui_usd || liveNativeUsd)
+      : isEvmPos
+      ? (tokenInfo?.hype_usd || liveNativeUsd)
       : (tokenInfo?.near_usd || liveNativeUsd);
 
     const isExternalDeposit       = position.is_external_deposit || false;
@@ -356,7 +361,7 @@ export async function generatePNLCardData(
       sellFeesPaid,
       tokenPriceChangePct,
       nearUsd,
-      nativeUnit:     isSolanaPos ? 'SOL' : isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : 'NEAR',
+      nativeUnit:     isSolanaPos ? 'SOL' : isStarknetPos ? 'STRK' : isSuiPos ? 'SUI' : isEvmPos ? 'HYPE' : 'NEAR',
       showNetWorth,
       referralCode,
       referralLink,
@@ -390,7 +395,8 @@ export function generatePNLCardMessage(data: PNLCardData): string {
   const pnlSign     = data.isProfit ? '+' : '';
   const isClosed    = data.positionStatus === 'closed';
   const statusEmoji = isClosed ? '🔒' : '🟢';
-  const nativeUnit  = data.nativeUnit || (isStarknetToken(data.tokenAddress) ? 'STRK' : data.tokenAddress.includes('::') ? 'SUI' : 'NEAR');
+  const isEvmToken  = isValidEvmAddress(data.tokenAddress) && !data.tokenAddress.endsWith('.near');
+  const nativeUnit  = data.nativeUnit || (isSolanaToken(data.tokenAddress) ? 'SOL' : isStarknetToken(data.tokenAddress) ? 'STRK' : data.tokenAddress.includes('::') ? 'SUI' : isEvmToken ? 'HYPE' : 'NEAR');
 
   const safe = (s: string) => (s || '').replace(/[_*`[\](~|>#+=|{}!@&%$^\\/]/g, ' ');
   const safeSymbol  = safe(data.tokenSymbol);
