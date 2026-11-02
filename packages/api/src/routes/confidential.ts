@@ -4,7 +4,7 @@
  */
 import type { Router } from 'express';
 import { createLogger } from '@racerbot/shared';
-import { getConfidentialAccount, updateConfidentialSettings, type UserRecord } from '@racerbot/db';
+import { getConfidentialAccount, listUserExecutors, updateConfidentialSettings, type UserRecord } from '@racerbot/db';
 import {
   EXECUTORS_ENABLED,
   POOL_LIMITS,
@@ -21,6 +21,7 @@ import {
   WalletNeedsNearError,
 } from '../executorPool.js';
 import { verifiedUser } from './verifiedUser.js';
+import { buildRecoveryKit } from '../recoveryKit.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
 
 const logger = createLogger('confidential-routes');
@@ -205,6 +206,29 @@ export function registerConfidentialRoutes(router: Router): void {
       res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Withdrawal sent. It arrives in about 15 seconds.' });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'Withdrawal failed' });
+    }
+  });
+
+  /**
+   * The user's recovery kit: their salt and ready-made calls to get money out of
+   * their executors without RacerBot. Only the signed-in owner gets it.
+   */
+  router.get('/alpha/confidential/recovery-kit', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      const acct = await getConfidentialAccount(user.id);
+      if (!acct) {
+        res.status(404).json({ error: 'No private balance yet, so there is nothing to recover.' });
+        return;
+      }
+      const executors = await listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed', 'open', 'exiting', 'exited', 'failed']);
+      const kit = buildRecoveryKit({ payoutAddress: acct.payout_address, salt: acct.owner_salt, executors });
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Content-Disposition', 'attachment; filename="racerbot-recovery-kit.json"');
+      res.json(kit);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Could not build the recovery kit' });
     }
   });
 

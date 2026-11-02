@@ -305,10 +305,8 @@ async function buildPlan(p: {
   switch (planned.venue) {
     case 'Dcl': case 'Nearlytrade': venue = 'Dcl'; break;
     case 'RefAmm': case 'Rhea': venue = 'RefAmm'; break;
-    case 'Shardsmarket':
-      if (!p.isBuy) throw new Error('Shardsmarket sells are not available in confidential mode yet');
-      venue = 'Shardsmarket';
-      break;
+    // Sells go through the token's own contract (position-executor build_sell)
+    case 'Shardsmarket': venue = 'Shardsmarket'; break;
     case 'BondingCurve': venue = 'BondingCurve'; break;
     case 'Intear': {
       venue = 'Intear';
