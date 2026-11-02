@@ -124,6 +124,15 @@ export async function warmAllKeys(): Promise<void> {
   } else {
     console.log(`[EXECUTOR] Pre-warmed ${loaded} user keys`);
   }
+  if (PARENT_ACCOUNT && MAIN_WALLET_PRIVATE_KEY) {
+    try {
+      const parentKp = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+      await near.addKey(PARENT_ACCOUNT, parentKp);
+      console.log(`[EXECUTOR] Pre-warmed parent account key for ${PARENT_ACCOUNT}`);
+    } catch (err: any) {
+      console.warn(`[EXECUTOR] Could not warm parent account key: ${err?.message}`);
+    }
+  }
 }
 
 /** Pre-warm storage deposit on NEAR for all tokens with active snipe orders. */
@@ -371,6 +380,11 @@ export class SwapExecutor {
     if (!PARENT_ACCOUNT || !MAIN_WALLET_PRIVATE_KEY) return false;
 
     try {
+      const hasParent = await (this.nearClient as any).hasKey?.(PARENT_ACCOUNT).catch(() => false);
+      if (!hasParent && (this.nearClient as any).addKey) {
+        const parentKp = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+        await (this.nearClient as any).addKey(PARENT_ACCOUNT, parentKp);
+      }
       const refuelYocto = BigInt(utils.format.parseNearAmount('0.04')!);
       const signFn = (this.nearClient as any).signAndSendTransactionAll || near.signAndSendTransactionAll;
       if (typeof signFn === 'function') {
@@ -827,14 +841,17 @@ export class SwapExecutor {
     // If activeWallet address is different from user.subaccount_id and activeWallet is not an imported wallet,
     // verify which account has the funds before executing to avoid "Insufficient balance" when user has funds in subaccount_id.
     if (activeWallet && !activeWallet.is_imported && user.subaccount_id && activeWallet.address !== user.subaccount_id) {
-      const [activeBalStr, subaccountBalStr, activeUsdcBalStr] = await Promise.all([
+      const [activeBalStr, subaccountBalStr, activeUsdcBalStr, subaccountUsdcBalStr] = await Promise.all([
         this.nearClient.getNearBalance?.(activeWallet.address).catch(() => '0') ?? '0',
         this.nearClient.getNearBalance?.(user.subaccount_id).catch(() => '0') ?? '0',
         this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, activeWallet.address).catch(() => '0') ?? '0',
+        this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, user.subaccount_id).catch(() => '0') ?? '0',
       ]);
       const activeBal = BigInt(activeBalStr || '0');
       const subaccountBal = BigInt(subaccountBalStr || '0');
-      if (subaccountBal > activeBal && BigInt(activeUsdcBalStr || '0') === 0n) {
+      const activeUsdc = BigInt(activeUsdcBalStr || '0');
+      const subaccountUsdc = BigInt(subaccountUsdcBalStr || '0');
+      if ((subaccountBal > activeBal && activeUsdc === 0n) || (subaccountUsdc > activeUsdc)) {
         console.warn(`[EXECUTOR] Wallet desync for user ${user_id}: activeWallet=${activeWallet.address} (${activeBalStr} yocto) vs subaccount_id=${user.subaccount_id} (${subaccountBalStr} yocto). Auto-switching to funded subaccount.`);
         subaccountToUse = user.subaccount_id;
         keyEncToUse = user.scoped_key_encrypted;

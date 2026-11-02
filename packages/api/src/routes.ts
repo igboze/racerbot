@@ -3373,8 +3373,9 @@ export async function executeBuyHelper(
       const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
       const usdcMaxNearYocto = BigInt(Math.floor(usdcMaxNear * 1e24));
       let effectiveNativeBal = nativeBal;
-      if (effectiveNativeBal < minGasYocto && usdcRaw > 0n && user.subaccount_id) {
-        const refueled = await refuelNearGasIfNeeded(user.subaccount_id, effectiveNativeBal).catch(() => false);
+      const refuelTarget = nearAccountToUse || user.subaccount_id;
+      if (effectiveNativeBal < minGasYocto && usdcRaw > 0n && refuelTarget) {
+        const refueled = await refuelNearGasIfNeeded(refuelTarget, effectiveNativeBal).catch(() => false);
         if (refueled) {
           effectiveNativeBal += BigInt(Math.ceil(0.04 * 1e24));
         }
@@ -3393,8 +3394,9 @@ export async function executeBuyHelper(
       const usdcRaw = BigInt(usdcBalStr || '0');
       const minGasYocto = BigInt(Math.ceil(0.025 * 1e24));
       let effectiveNativeBal = nativeBal;
-      if (effectiveNativeBal < minGasYocto && usdcRaw > 0n && user.subaccount_id) {
-        const refueled = await refuelNearGasIfNeeded(user.subaccount_id, effectiveNativeBal).catch(() => false);
+      const refuelTarget = nearAccountToUse || user.subaccount_id;
+      if (effectiveNativeBal < minGasYocto && usdcRaw > 0n && refuelTarget) {
+        const refueled = await refuelNearGasIfNeeded(refuelTarget, effectiveNativeBal).catch(() => false);
         if (refueled) {
           effectiveNativeBal += BigInt(Math.ceil(0.04 * 1e24));
         }
