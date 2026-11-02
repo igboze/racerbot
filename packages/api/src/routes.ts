@@ -185,6 +185,7 @@ import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js'
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
 import { toTokenInfoCardData } from './tokenInfoCardData.js';
+import { askWebLoginApproval, registerWebLoginApproval } from './webLoginApproval.js';
 import { registerRacerCard } from './racerCard.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
 import {
@@ -4015,43 +4016,12 @@ export function setupRoutes(bot: Telegraf): void {
         return;
       }
 
-      // Handle WebApp Telegram Handshake deep link (/start auth_<session_id>)
+      // Handle WebApp Telegram Handshake deep link (/start auth_<session_id>).
+      // Never log in on the tap alone: anyone can create a session and post its
+      // link, so the account owner must approve in this chat first.
       if (rawPayload.startsWith('auth_')) {
-        const sessionId = rawPayload.slice(5);
-        const { linkAuthSession } = await import('./authSession.js');
-        const linkRes = await linkAuthSession(sessionId, {
-          id: telegramId,
-          username: ctx.from?.username,
-          first_name: ctx.from?.first_name,
-        });
-
-        if (linkRes.success) {
-          await ctx.reply(
-            `🏎️ <b>RacerBot WebApp Connected!</b>\n\n` +
-            `✅ <b>Paired Account</b>: <code>@${ctx.from?.username || telegramId}</code>\n` +
-            `💳 <b>Trading Subaccount</b>: <code>${linkRes.user?.subaccount_id || 'Ready'}</code>\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `⚡ <b>Unified Trading is Live</b>:\n` +
-            `• Any NEAR wallet connected on the WebApp automatically syncs here.\n` +
-            `• You can execute instant snipes, limit orders, and copy-trades in this chat.\n` +
-            `• Visual analytics, bubble maps, and viewing keys remain open on the web.\n\n` +
-            `<i>You can now return to your browser window.</i>`,
-            {
-              parse_mode: 'HTML',
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback('💳 Manage Wallets', 'wallets_menu'), Markup.button.callback('🏎️ Main Menu', 'menu_home')],
-              ]),
-            }
-          ).catch(() => { });
-          return;
-        } else {
-          await ctx.reply(
-            `⚠️ <b>Session Expired or Invalid</b>\n\n` +
-            `Please return to the WebApp and tap "Connect Telegram" to generate a fresh link.`,
-            { parse_mode: 'HTML' }
-          ).catch(() => { });
-          return;
-        }
+        await askWebLoginApproval(ctx, rawPayload.slice(5));
+        return;
       }
 
       if (rawPayload.includes('_ref_')) {
@@ -4549,6 +4519,8 @@ export function setupRoutes(bot: Telegraf): void {
   });
 
   // ── WebApp Connection Approval & Denial Handlers ───────────────────────────
+  registerWebLoginApproval(bot);
+
   bot.action(/^tgauth_approve:(.+)$/, async (ctx) => {
     const requestId = ctx.match[1];
     const telegramId = ctx.from!.id;
