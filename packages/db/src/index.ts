@@ -276,3 +276,4 @@ export {
   type ConfidentialRacerExecutorRow,
   type RacerLinkRecord,
 } from './db.js';
+export { listAiSwarmSessionsByStatus } from './db.js';

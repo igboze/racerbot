@@ -4749,7 +4749,8 @@ export async function createAiSwarmSession(params: {
       params.droneCount,
       params.stealthMode !== false,
       JSON.stringify(params.planJson || {}),
-      JSON.stringify(params.teeAttestation || { provider: 'NEAR AI Cloud', enclave: 'Intel TDX / NVIDIA H100', verified: true }),
+      // Who planned it; never a claim of verified hardware attestation
+      JSON.stringify(params.teeAttestation || {}),
     ]
   );
   return mapSwarmSession(res.rows[0]);
@@ -4764,7 +4765,7 @@ export async function getAiSwarmSessionById(id: string): Promise<AiSwarmSessionR
 export async function getUserActiveAiSwarmSession(userId: string): Promise<AiSwarmSessionRecord | null> {
   const db = await getDb();
   const res = await db.query(
-    "SELECT * FROM ai_swarm_sessions WHERE user_id = $1 AND status IN ('review', 'executing') ORDER BY created_at DESC LIMIT 1",
+    "SELECT * FROM ai_swarm_sessions WHERE user_id = $1 AND status IN ('review', 'executing', 'paused') ORDER BY created_at DESC LIMIT 1",
     [userId]
   );
   return res.rows[0] ? mapSwarmSession(res.rows[0]) : null;
@@ -5019,4 +5020,11 @@ export async function linkRacerAccounts(walletUserId: string, telegramUserId: st
     [walletUserId, telegramUserId]
   );
   return existing.rows.length ? 'already' : 'conflict';
+}
+
+/** Swarm sessions in one status, e.g. 'executing' ones to recover after a restart. */
+export async function listAiSwarmSessionsByStatus(status: AiSwarmSessionRecord['status']): Promise<AiSwarmSessionRecord[]> {
+  const db = await getDb();
+  const res = await db.query('SELECT * FROM ai_swarm_sessions WHERE status = $1', [status]);
+  return res.rows.map(mapSwarmSession);
 }

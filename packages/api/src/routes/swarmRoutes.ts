@@ -33,39 +33,43 @@ export function createSwarmRouter(): Router {
 
   /**
    * POST /api/swarm/plan
-   * Decomposes user prompt into a multi-drone execution plan via NEAR AI TEE Cloud.
+   * Plans a staggered swarm for the signed-in user to review. Signed-in only:
+   * every plan can call the paid NEAR AI model.
    */
   router.post('/plan', async (req: Request, res: Response): Promise<void> => {
     try {
       const user = await resolveUser(req);
-      const prompt = req.body?.prompt || 'Accumulate 10 NEAR of HOOT with 3 stealth drones';
+      if (!user) {
+        res.status(401).json({ success: false, error: 'Sign in to plan a swarm' });
+        return;
+      }
+      const prompt = String(req.body?.prompt || '').slice(0, 500);
       const defaultToken = req.body?.tokenAddress;
       const stealthMode = req.body?.stealthMode !== false;
+      const totalNear = Number(req.body?.totalNear);
 
-      const balances = user ? await getUserBalances(user.telegram_id).catch(() => null) : null;
+      const balances = await getUserBalances(user.telegram_id).catch(() => null);
       const plan = await planSwarmSession({
         prompt,
         userBalances: balances,
         defaultTokenAddress: defaultToken,
         stealthModeOverride: stealthMode,
+        totalNear: Number.isFinite(totalNear) && totalNear > 0 ? totalNear : null,
       });
 
-      let sessionId: string | null = null;
-      if (user) {
-        const session = await createAiSwarmSession({
-          userId: user.id,
-          prompt,
-          strategyType: plan.strategy,
-          tokenAddress: plan.tokenAddress,
-          tokenSymbol: plan.tokenSymbol,
-          totalAmountNear: plan.totalNear,
-          droneCount: plan.droneCount,
-          stealthMode: plan.stealthMode,
-          planJson: plan,
-          teeAttestation: plan.teeEnclave,
-        });
-        sessionId = session.id;
-      }
+      const session = await createAiSwarmSession({
+        userId: user.id,
+        prompt,
+        strategyType: plan.strategy,
+        tokenAddress: plan.tokenAddress,
+        tokenSymbol: plan.tokenSymbol,
+        totalAmountNear: plan.totalNear,
+        droneCount: plan.droneCount,
+        stealthMode: plan.stealthMode,
+        planJson: plan,
+        teeAttestation: { planner: plan.planner },
+      });
+      const sessionId = session.id;
 
       res.json({
         success: true,
