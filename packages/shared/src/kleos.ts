@@ -358,7 +358,7 @@ export function findRedeemTxHash(logs: readonly { address: string; topics: reado
   return null;
 }
 
-/** Kleos trading is opt-in until a live buy and sell have been checked on Elysium mainnet */
+/** Kleos trading is on unless KLEOS_TRADING=off, the switch for turning it off without a deploy */
 export function isKleosTradingEnabled(): boolean {
-  return process.env.KLEOS_TRADING === 'on';
+  return process.env.KLEOS_TRADING !== 'off';
 }

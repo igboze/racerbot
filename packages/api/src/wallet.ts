@@ -712,7 +712,7 @@ async function getKleosBoardEntry(address: string): Promise<any | null> {
 
 /**
  * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins.
- * It is tradeable only while KLEOS_TRADING is on; otherwise the card is read-only.
+ * Tradeable unless KLEOS_TRADING=off, which makes the card read-only.
  */
 export async function lookupKleosToken(address: string): Promise<TokenInfoResult | null> {
   const meta = await getErc20TokenInfo(address, 'elysium', false);
