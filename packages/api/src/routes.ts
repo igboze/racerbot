@@ -1684,7 +1684,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const nearUsdRate = (tokenInfo as any).near_usd as number | undefined;
   const strkUsdRate = (tokenInfo as any).strk_usd as number | undefined;
   const solUsdRate = (tokenInfo as any).sol_usd as number | undefined;
-  const hypeUsdRate = (tokenInfo as any).hype_usd as number | undefined;
+  // EVM token info carries the HYPE price in near_usd; hype_usd is not filled in anywhere yet
+  const hypeUsdRate = ((tokenInfo as any).hype_usd ?? (isEvm ? nearUsdRate : undefined)) as number | undefined;
   const rateFooter = isSolana
     ? (solUsdRate && solUsdRate > 0 ? `_1 SOL ≈ $${solUsdRate.toFixed(2)}_\n` : '')
     : isStarknet
@@ -1918,7 +1919,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       : [];
 
     if (holdsToken && userPosition) {
-      text += `⚡ *Manage Position* (Personal & Fleet):\n`;
+      text += isEvm ? `⚡ *Manage Position*:\n` : `⚡ *Manage Position* (Personal & Fleet):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         // Quick-buy fixed amounts (green)
@@ -1990,7 +1991,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ],
       ]);
     } else {
-      text += `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
+      text += isKleos
+        ? `⚡ *Buy with HYPE*: a fixed amount, or a % of your HYPE:\n`
+        : isEvm
+          ? `⚡ *Buy with HYPE*: a fixed amount, or a % of your ${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE:\n`
+          : `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,
         ...nearCurrencyToggleRow,
@@ -3484,6 +3489,16 @@ export async function executeBuyHelper(
 }
 
 // ── Core Helper: Execute Percentage Buy for User ─────────────────────────────
+/**
+ * HYPE a % buy of a Kleos coin can spend, mirroring how the executor pays: from HyperEVM, keeping back gas, the
+ * inbox ticket and an Elysium gas top-up; or from Elysium, which needs a little HyperEVM HYPE to post the order.
+ */
+export function kleosSpendableHype(hyperevm: number, elysium: number): number {
+  const fromHyperevm = hyperevm - 0.003;
+  const fromElysium = hyperevm >= 0.0002 ? elysium - 0.0004 : 0;
+  return Math.max(0, fromHyperevm, fromElysium);
+}
+
 async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   const user = await getUserByTelegramId(telegramId);
@@ -3526,9 +3541,18 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     const chain: EvmChain = (info?.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
     const isKleos = info?.venue === 'kleos';
     const isTestnet = chain === 'elysium' ? !isKleos : (process.env.HYPEREVM_TESTNET === 'true');
-    const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
-    const hypeBal = parseFloat(userBal.formatted || '0');
-    const spendable = Math.max(0, hypeBal - 0.002);
+    let spendable: number;
+    if (isKleos) {
+      // Kleos buys are paid from HyperEVM HYPE, or from Elysium HYPE when the wallet already holds enough there
+      const [hyperevmBal, elysiumBal] = await Promise.all([
+        getHypeBalance(evmUser.evm_address, 'hyperevm', process.env.HYPEREVM_TESTNET === 'true'),
+        getHypeBalance(evmUser.evm_address, 'elysium', false),
+      ]);
+      spendable = kleosSpendableHype(parseFloat(hyperevmBal.formatted || '0'), parseFloat(elysiumBal.formatted || '0'));
+    } else {
+      const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
+      spendable = Math.max(0, parseFloat(userBal.formatted || '0') - 0.002);
+    }
     const amountHype = (spendable * pct) / 100;
     if (amountHype < 0.001) {
       throw new Error(`Available balance (${spendable.toFixed(4)} HYPE after fee reserve) is too low to buy.`);
