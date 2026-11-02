@@ -59,8 +59,12 @@ const BOT_LINK = 'https://t.me/racertradingbot';
 
 /** Same rule as config.ts, read at call time so tests can set it. */
 function publicBaseUrl(): string {
-  const raw = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
-  return raw.replace(/\/+$/, '');
+  // RACER_CARD_URL is the address people see in shared posts (your website domain,
+  // pointed at this server); PUBLIC_URL is the server's own address for webhooks
+  const raw = process.env.RACER_CARD_URL
+    || process.env.PUBLIC_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
+  return raw.trim().replace(/\/+$/, '');
 }
 
 /**

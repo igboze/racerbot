@@ -318,6 +318,26 @@ describe('sharing with the card image', () => {
     expect(new URL(tg.url).searchParams.get('url')).toBe(page);
   });
 
+  it('uses RACER_CARD_URL (the website) over the server address', async () => {
+    process.env.PUBLIC_URL = 'https://racerbot-production.up.railway.app';
+    process.env.RACER_CARD_URL = 'https://racer.example/';
+    try {
+      rows = circuitRows();
+      const { commands } = fakeBot();
+      const ctx = fakeCtx(111);
+      await commands.get('card')!(ctx);
+      const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
+      expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8');
+
+      const routes = fakeApp();
+      const page = await call(routes, '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
+      expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8"');
+      expect(page.body).not.toContain('railway.app');
+    } finally {
+      delete process.env.RACER_CARD_URL;
+    }
+  });
+
   it('falls back to the bot link without a public URL', async () => {
     rows = circuitRows();
     const { commands } = fakeBot();
