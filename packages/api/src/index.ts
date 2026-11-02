@@ -284,6 +284,9 @@ async function main(): Promise<void> {
       req.path.startsWith('/deposit') ||
       req.path.startsWith('/fleet/') ||
       req.path.startsWith('/auth') ||
+      // Racer Card pages must reach their own route on every host, or link
+      // previews on X / Telegram get the web app page instead of the card
+      req.path.startsWith('/c/') ||
       req.path === '/health' ||
       req.path === '/favicon.ico' ||
       req.path === webhookPath
