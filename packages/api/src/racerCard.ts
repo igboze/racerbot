@@ -1,13 +1,21 @@
+import crypto from 'crypto';
 import type { Express, Response } from 'express';
 import { Markup, type Context, type Telegraf } from 'telegraf';
 import {
   claimRacerRankUp,
+  consumeRacerLinkCode,
+  createRacerLinkCode,
   generateReferralCode,
+  getConfidentialRacerExecutors,
   getNearRacerFills,
+  getRacerLinkFor,
+  listRacerLinks,
   getUserByExactReferralCode,
   getRacerRank,
   getUserById,
   getUserByTelegramId,
+  linkRacerAccounts,
+  peekRacerLinkCode,
   raiseRacerBestKey,
   seedRacerRank,
   type NearRacerFillRow,
@@ -17,6 +25,7 @@ import {
   BADGE_LABELS,
   TIERS,
   buildRacerProfile,
+  executorFills,
   fillNearValue,
   isAnnounceableRankUp,
   racerVolume,
@@ -88,23 +97,45 @@ export function clearRacerVolumeCache(): void {
 
 async function allNetVolumes(): Promise<number[]> {
   if (volumeCache && Date.now() - volumeCache.at < VOLUME_CACHE_MS) return volumeCache.volumes;
-  const byUser = new Map<string, RacerFill[]>();
-  for (const row of await getNearRacerFills()) {
-    const list = byUser.get(row.user_id) ?? [];
-    list.push(toRacerFill(row));
-    byUser.set(row.user_id, list);
-  }
-  const volumes = [...byUser.values()].map(fills => racerVolume(fills).net);
+  const [rows, executors, links] = await Promise.all([
+    getNearRacerFills(),
+    getConfidentialRacerExecutors(),
+    listRacerLinks(),
+  ]);
+  // A linked wallet account races as its Telegram account
+  const canonical = new Map(links.map(l => [l.wallet_user_id, l.telegram_user_id]));
+  const byRacer = new Map<string, RacerFill[]>();
+  const add = (userId: string, fills: RacerFill[]) => {
+    const id = canonical.get(userId) ?? userId;
+    byRacer.set(id, [...(byRacer.get(id) ?? []), ...fills]);
+  };
+  for (const row of rows) add(row.user_id, [toRacerFill(row)]);
+  for (const e of executors) add(e.user_id, executorFills(e));
+  const volumes = [...byRacer.values()].map(fills => racerVolume(fills).net);
   volumeCache = { at: Date.now(), volumes };
   return volumes;
 }
 
-type CardUser = { id: string; username?: string | null; telegram_id?: number | null; referral_code?: string | null };
+type CardUser = {
+  id: string;
+  username?: string | null;
+  telegram_id?: number | null;
+  referral_code?: string | null;
+  subaccount_id?: string | null;
+};
+
+/** Name for a new referral code. Wallet-only accounts get a w_ prefix so it never looks like a Telegram name. */
+function referralName(user: CardUser): string {
+  if (user.username) return user.username;
+  if (user.telegram_id) return `racer${user.telegram_id}`;
+  const wallet = String(user.subaccount_id || '').replace(/\.near$/i, '').replace(/[^A-Za-z0-9_]/g, '_').slice(0, 20);
+  return `w_${wallet || user.id.slice(0, 8)}`;
+}
 
 async function referralFor(user: CardUser) {
   let code = user.referral_code || null;
   if (!code) {
-    code = await generateReferralCode(user.id, user.username || `racer${user.telegram_id}`).catch(() => null);
+    code = await generateReferralCode(user.id, referralName(user)).catch(() => null);
   }
   return { code: code || 'racerbot', link: code ? `${BOT_LINK}?start=${encodeURIComponent(code)}` : BOT_LINK };
 }
@@ -149,18 +180,29 @@ export function racerCardKeyboard(p: RacerProfile, link: string, pageUrl: string
 }
 
 interface RacerState {
+  /** Where the rank is stored: the Telegram account when a wallet account is linked to one */
+  racerId: string;
   fills: RacerFill[];
   volumes: number[];
   stored: RacerRankRecord | null;
 }
 
+/**
+ * Everything one racer traded on NEAR: bot fills plus confidential positions,
+ * across a linked wallet account and its Telegram account.
+ */
 async function loadRacerState(userId: string): Promise<RacerState> {
-  const [rows, volumes, stored] = await Promise.all([
-    getNearRacerFills(userId),
+  const link = await getRacerLinkFor(userId);
+  const racerId = link ? link.telegram_user_id : userId;
+  const members = link ? [link.telegram_user_id, link.wallet_user_id] : [userId];
+  const [rowLists, executors, volumes, stored] = await Promise.all([
+    Promise.all(members.map(id => getNearRacerFills(id))),
+    getConfidentialRacerExecutors(members),
     allNetVolumes(),
-    getRacerRank(userId),
+    getRacerRank(racerId),
   ]);
-  return { fills: rows.map(toRacerFill), volumes, stored };
+  const fills = [...rowLists.flat().map(toRacerFill), ...executors.flatMap(executorFills)];
+  return { racerId, fills, volumes, stored };
 }
 
 function cardImageData(profile: RacerProfile, ref: { code: string; link: string }): RacerCardImageData {
@@ -348,15 +390,15 @@ export function registerRacerCardPages(app: Express): void {
  * counts as announced (the caption says so).
  */
 export async function buildRacerCard(user: CardUser) {
-  const { fills, volumes, stored } = await loadRacerState(user.id);
+  const { racerId, fills, volumes, stored } = await loadRacerState(user.id);
   const profile = buildRacerProfile(fills, volumes, foundingCutoff(), stored?.best_key ?? 0);
   let rankedUp = false;
   try {
     if (!stored) {
-      await seedRacerRank(user.id, profile.rank.key, profile.rank.key);
+      await seedRacerRank(racerId, profile.rank.key, profile.rank.key);
     } else if (profile.rank.key > stored.announced_key) {
       // Also raises best_key; announced never exceeds best, so this covers a new best too
-      rankedUp = await claimRacerRankUp(user.id, profile.rank.key);
+      rankedUp = await claimRacerRankUp(racerId, profile.rank.key);
     }
   } catch (err: any) {
     console.warn('[RACER_CARD] Could not store rank:', err?.message);
@@ -404,7 +446,7 @@ let _bot: Telegraf | null = null;
 export async function maybeAnnounceRankUp(userId: string, telegram = _bot?.telegram): Promise<boolean> {
   if (!telegram || !userId) return false;
   try {
-    const { fills, stored: existing } = await loadRacerState(userId);
+    const { racerId, fills, stored: existing } = await loadRacerState(userId);
     if (!fills.length) return false;
     const computed = rankKeyFor(racerVolume(fills).net);
 
@@ -413,17 +455,18 @@ export async function maybeAnnounceRankUp(userId: string, telegram = _bot?.teleg
       const latest = fills.reduce((t, f) => Math.max(t, f.at.getTime()), 0);
       const fresh = Date.now() - latest <= RANK_UP_MAX_FILL_AGE_MS;
       const announced = fresh ? Math.max(1, rankKeyBeforeLatestFill(fills)) : computed;
-      stored = await seedRacerRank(userId, computed, announced);
+      stored = await seedRacerRank(racerId, computed, announced);
     } else if (computed > stored.best_key) {
-      await raiseRacerBestKey(userId, computed);
+      await raiseRacerBestKey(racerId, computed);
     }
 
     const target = Math.max(stored.best_key, computed);
     if (!isAnnounceableRankUp(stored.announced_key, target, rankUpPromptMode())) return false;
-    if (!(await claimRacerRankUp(userId, target))) return false;
+    // A wallet-only account has no chat to announce in: keep the rank-up for its web view
+    const user = await getUserById(racerId).catch(() => null);
+    if (!user?.telegram_id) return false;
+    if (!(await claimRacerRankUp(racerId, target))) return false;
 
-    const user = await getUserById(userId).catch(() => null);
-    if (!user?.telegram_id) return true;
     clearRacerVolumeCache();
     const profile = buildRacerProfile(fills, await allNetVolumes(), foundingCutoff(), target);
     const card = await renderRacerCard(user, profile, true);
@@ -456,11 +499,165 @@ export function scheduleRankUpCheck(userId: string, delaysMs: number[] = [0]): v
   }
 }
 
+// ── Web: the signed-in user's card ───────────────────────────────────────────
+
+/**
+ * The card a signed-in web user sees: their own NEAR activity plus a linked
+ * account's. Read-only. Shares use the Telegram account's referral code when
+ * a wallet account is linked to one.
+ */
+export async function webRacerCard(user: CardUser) {
+  const { racerId, fills, volumes, stored } = await loadRacerState(user.id);
+  const profile = buildRacerProfile(fills, volumes, foundingCutoff(), stored?.best_key ?? 0);
+  const racer: CardUser = racerId === user.id ? user : ((await getUserById(racerId).catch(() => null)) ?? user);
+  const ref = await referralFor(racer);
+  const data = cardImageData(profile, ref);
+  const pageUrl = ref.link !== BOT_LINK ? racerCardPageUrl(ref.code, profile.rank.key) : null;
+  const linked = racerId !== user.id || !!(await getRacerLinkFor(user.id));
+  return {
+    data,
+    json: {
+      hasTrades: profile.hasTrades,
+      rank: {
+        name: profile.rank.name,
+        title: profile.rank.title,
+        levelLabel: profile.rank.levelLabel,
+        tierIndex: profile.rank.tierIndex,
+        key: profile.rank.key,
+        nextLevelName: profile.rank.nextLevelName,
+        progressPct: profile.rank.progressPct,
+      },
+      finish: profile.finish,
+      topPercent: profile.topPercent,
+      badges: profile.badges.map(b => BADGE_LABELS[b]),
+      referralCode: ref.code,
+      shareUrl: pageUrl ?? ref.link,
+      share: racerShareLinks(profile, ref.link, pageUrl),
+      linked,
+      canLink: !user.telegram_id && !linked,
+    },
+  };
+}
+
+/** The web user's card PNG (cached with the public page's images). */
+export async function webRacerCardImage(user: CardUser): Promise<Buffer | null> {
+  const { data } = await webRacerCard(user);
+  return shareImages(data.referralCode, data).card;
+}
+
+// ── Linking a wallet-only web account to Telegram ────────────────────────────
+
+export const RACER_LINK_TTL_MS = 10 * 60 * 1000;
+const LINK_PREFIX = 'rclink_';
+const LINK_CODE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+export type StartLinkResult =
+  | { status: 'link'; deepLink: string; expiresInSec: number }
+  | { status: 'linked' }
+  | { status: 'telegram_account' };
+
+/**
+ * Step 1, on the web (signed wallet session): a one-time code behind a bot
+ * deep link. Nothing is linked until the Telegram account approves in the bot.
+ */
+export async function startRacerLink(user: CardUser): Promise<StartLinkResult> {
+  if (user.telegram_id) return { status: 'telegram_account' };
+  if (await getRacerLinkFor(user.id)) return { status: 'linked' };
+  const code = crypto.randomBytes(16).toString('base64url');
+  await createRacerLinkCode(user.id, code, RACER_LINK_TTL_MS);
+  const botUsername = process.env.BOT_USERNAME || 'racertradingbot';
+  return { status: 'link', deepLink: `https://t.me/${botUsername}?start=${LINK_PREFIX}${code}`, expiresInSec: RACER_LINK_TTL_MS / 1000 };
+}
+
+const isPrivate = (ctx: Context) => ctx.chat?.type === 'private';
+
+/** Step 2, in the bot: show which wallet would be linked and ask. */
+async function askToLink(ctx: Context, code: string): Promise<void> {
+  const walletUserId = LINK_CODE_RE.test(code) ? await peekRacerLinkCode(code) : null;
+  const wallet = walletUserId ? await getUserById(walletUserId).catch(() => null) : null;
+  if (!wallet || wallet.telegram_id) {
+    await ctx.reply('⚠️ This Racer Card link has expired or was already used. Start again from the RacerBot web app.').catch(() => {});
+    return;
+  }
+  const text = [
+    '🔗 <b>Link a web wallet to your Racer Card?</b>',
+    '',
+    `Wallet: <code>${escHtml(wallet.subaccount_id || 'web wallet')}</code>`,
+    '',
+    'Its NEAR trades will count toward your rank, and the web app will show your card.',
+    '<b>Only approve if you started this yourself on the RacerBot web app.</b>',
+  ].join('\n');
+  await ctx.reply(text, {
+    parse_mode: 'HTML',
+    reply_markup: Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Approve', `rclink_ok:${code}`), Markup.button.callback('✖️ Deny', `rclink_no:${code}`)],
+    ]).reply_markup,
+  }).catch(() => {});
+}
+
+export type ApproveLinkResult = 'linked' | 'already' | 'conflict' | 'expired' | 'no_account' | 'not_wallet';
+
+/**
+ * Step 3: the Telegram account approves. The code is used up whatever happens
+ * next, and an existing link on either side is never replaced.
+ */
+export async function approveRacerLink(telegramId: number, code: string): Promise<ApproveLinkResult> {
+  const tg = await getUserByTelegramId(telegramId);
+  if (!tg || !tg.telegram_id) return 'no_account';
+  const walletUserId = LINK_CODE_RE.test(code) ? await peekRacerLinkCode(code) : null;
+  if (!walletUserId) return 'expired';
+  const wallet = await getUserById(walletUserId).catch(() => null);
+  if (!wallet || wallet.telegram_id || wallet.id === tg.id) {
+    await consumeRacerLinkCode(code);
+    return 'not_wallet';
+  }
+  if ((await consumeRacerLinkCode(code)) !== walletUserId) return 'expired';
+  const result = await linkRacerAccounts(walletUserId, tg.id);
+  if (result === 'linked') {
+    clearRacerVolumeCache();
+    scheduleRankUpCheck(tg.id);
+  }
+  return result;
+}
+
+const APPROVE_REPLIES: Record<ApproveLinkResult, string> = {
+  linked: '✅ Linked. Your web wallet now counts toward your Racer Card. Tap /card to see it.',
+  already: '✅ That wallet is already linked to your Racer Card.',
+  conflict: '⚠️ Not linked: this wallet or your Telegram account is already linked to a different account.',
+  expired: '⚠️ This link has expired or was already used. Start again from the RacerBot web app.',
+  no_account: '🏁 Tap /start to set up RacerBot first, then try the link again.',
+  not_wallet: '⚠️ Not linked: only a wallet-only web account can be linked to Telegram.',
+};
+
 export function registerRacerCard(bot: Telegraf): void {
   _bot = bot;
   bot.command(['card', 'racercard'], ctx => sendRacerCard(ctx));
   bot.action('racer_card', async ctx => {
     await ctx.answerCbQuery().catch(() => {});
     await sendRacerCard(ctx);
+  });
+
+  // /start rclink_<code>; every other /start goes on to the main handler
+  bot.command('start', async (ctx, next) => {
+    const payload = ctx.message.text.split(' ')[1] || '';
+    if (!payload.startsWith(LINK_PREFIX) || !isPrivate(ctx)) return next();
+    await askToLink(ctx, payload.slice(LINK_PREFIX.length));
+  });
+  bot.action(/^rclink_ok:(.+)$/, async ctx => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!isPrivate(ctx) || !ctx.from) return;
+    try {
+      const reply = APPROVE_REPLIES[await approveRacerLink(ctx.from.id, ctx.match[1])];
+      await ctx.editMessageText(reply).catch(() => ctx.reply(reply));
+    } catch (err: any) {
+      console.error('[RACER_CARD] Link approval failed:', err?.message);
+      await ctx.reply('❌ Could not link right now. Please try again in a moment.').catch(() => {});
+    }
+  });
+  bot.action(/^rclink_no:(.+)$/, async ctx => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!isPrivate(ctx)) return;
+    if (LINK_CODE_RE.test(ctx.match[1])) await consumeRacerLinkCode(ctx.match[1]).catch(() => null);
+    await ctx.editMessageText('✖️ Not linked. The link has been cancelled.').catch(() => {});
   });
 }

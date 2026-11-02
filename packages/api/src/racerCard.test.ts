@@ -24,6 +24,9 @@ vi.mock('@racerbot/db', () => ({
   getUserByTelegramId: vi.fn(async (tg: number) => Object.values(users).find(u => u.telegram_id === tg) ?? null),
   getUserById: vi.fn(async (id: string) => users[id] ?? null),
   getUserByExactReferralCode: vi.fn(async (code: string) => Object.values(users).find(u => u.referral_code === code) ?? null),
+  getConfidentialRacerExecutors: vi.fn(async () => []),
+  getRacerLinkFor: vi.fn(async () => null),
+  listRacerLinks: vi.fn(async () => []),
   generateReferralCode: vi.fn(async (_id: string, name: string) => `${name.toUpperCase()}1`),
   getRacerRank: vi.fn(async (id: string) => (ranks.has(id) ? { ...ranks.get(id)! } : null)),
   seedRacerRank: vi.fn(async (id: string, best: number, announced: number) => {
@@ -99,7 +102,7 @@ afterEach(() => {
 describe('/card', () => {
   it('registers /card, /racercard and the home-screen button', () => {
     const { commands, actions } = fakeBot();
-    expect([...commands.keys()]).toEqual(['card', 'racercard']);
+    expect([...commands.keys()]).toEqual(['card', 'racercard', 'start']);
     expect(actions.has('racer_card')).toBe(true);
   });
 

@@ -265,3 +265,14 @@ export {
   type NearRacerFillRow,
   type RacerRankRecord,
 } from './db.js';
+export {
+  getConfidentialRacerExecutors,
+  getRacerLinkFor,
+  listRacerLinks,
+  createRacerLinkCode,
+  peekRacerLinkCode,
+  consumeRacerLinkCode,
+  linkRacerAccounts,
+  type ConfidentialRacerExecutorRow,
+  type RacerLinkRecord,
+} from './db.js';
