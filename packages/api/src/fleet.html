@@ -1236,6 +1236,7 @@
       document.getElementById('tab-content-ops').style.display = tab === 'ops' ? 'block' : 'none';
       const swarmContent = document.getElementById('tab-content-swarm');
       if (swarmContent) swarmContent.style.display = tab === 'swarm' ? 'block' : 'none';
+      if (tab === 'swarm') restoreActiveSwarm();
     }
 
     function setBuyToken(token) {
@@ -1900,6 +1901,7 @@
         document.getElementById('swarm-radar-card').style.display = 'block';
         showToast('Swarm launched. Tranches run on their schedule', 'success');
 
+        setSwarmPausedUi(false);
         // Begin telemetry polling
         startSwarmTelemetryPolling(activeSwarmSessionId);
       } catch (err) {
@@ -1944,48 +1946,101 @@
           `).join('');
         }
 
-        if (session.status === 'completed' || session.status === 'aborted') {
+        setSwarmPausedUi(session.status === 'paused');
+        if (['completed', 'aborted', 'failed', 'paused'].includes(session.status)) {
           if (swarmPollTimer) clearInterval(swarmPollTimer);
-          showToast('Swarm session ' + session.status, session.status === 'completed' ? 'success' : 'info');
+          swarmPollTimer = null;
+          if (session.status !== 'paused') {
+            showToast('Swarm session ' + session.status, session.status === 'completed' ? 'success' : 'info');
+          }
         }
       } catch (err) {
         console.warn('Swarm polling error:', err);
       }
     }
 
+    function swarmAuthHeaders() {
+      const token = localStorage.getItem('racer_auth_token') || '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
+    /** POST to a swarm endpoint; throws with the server's message when it refuses. */
+    async function swarmPost(path, body) {
+      const res = await fetch(path, { method: 'POST', headers: swarmAuthHeaders(), body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    /** The pause button doubles as Resume while the swarm is paused. */
+    function setSwarmPausedUi(paused) {
+      const btn = document.getElementById('btn-swarm-pause');
+      if (!btn) return;
+      btn.textContent = paused ? 'Resume Swarm' : 'Pause Swarm';
+      btn.onclick = paused ? resumeSwarmSession : pauseSwarmSession;
+      const badge = document.getElementById('swarm-session-status-badge');
+      if (badge && paused) badge.textContent = 'PAUSED';
+    }
+
     async function pauseSwarmSession() {
       if (!activeSwarmSessionId) return;
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        await fetch('/api/swarm/pause', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ sessionId: activeSwarmSessionId }),
-        });
-        showToast('Swarm execution paused', 'info');
+        await swarmPost('/api/swarm/pause', { sessionId: activeSwarmSessionId });
+        if (swarmPollTimer) clearInterval(swarmPollTimer);
+        swarmPollTimer = null;
+        setSwarmPausedUi(true);
+        showToast('Swarm paused. Tranches that have not run are on hold', 'info');
       } catch (err) {
-        showToast('Failed to pause swarm', 'error');
+        showToast('Could not pause: ' + (err.message || 'error'), 'error');
+      }
+    }
+
+    /** Resume runs only the tranches that have not run yet. */
+    async function resumeSwarmSession() {
+      if (!activeSwarmSessionId) return;
+      try {
+        await swarmPost('/api/swarm/launch', { sessionId: activeSwarmSessionId });
+        setSwarmPausedUi(false);
+        showToast('Swarm resumed', 'success');
+        startSwarmTelemetryPolling(activeSwarmSessionId);
+      } catch (err) {
+        showToast('Could not resume: ' + (err.message || 'error'), 'error');
       }
     }
 
     async function abortSwarmSession() {
       if (!activeSwarmSessionId) return;
-      const ok = await showConfirm('Are you sure you want to abort the active swarm session? Pending drone tranches will be cancelled.');
+      const ok = await showConfirm('Abort this swarm? Tranches that have not run will be cancelled.');
       if (!ok) return;
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        await fetch('/api/swarm/abort', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ sessionId: activeSwarmSessionId }),
-        });
-        showToast('Swarm mission aborted', 'info');
+        await swarmPost('/api/swarm/abort', { sessionId: activeSwarmSessionId });
+        if (swarmPollTimer) clearInterval(swarmPollTimer);
+        swarmPollTimer = null;
+        pollSwarmStatus(activeSwarmSessionId);
+        showToast('Swarm aborted', 'info');
       } catch (err) {
-        showToast('Failed to abort swarm', 'error');
+        showToast('Could not abort: ' + (err.message || 'error'), 'error');
+      }
+    }
+
+    /** After a reload: show the latest swarm that is running or paused, and follow it. */
+    async function restoreActiveSwarm() {
+      if (activeSwarmSessionId || !localStorage.getItem('racer_auth_token')) return;
+      try {
+        const res = await fetch('/api/swarm/sessions', { headers: swarmAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        const live = (data.sessions || []).find(s => s.status === 'executing' || s.status === 'paused');
+        if (!live) return;
+        activeSwarmSessionId = live.id;
+        document.getElementById('swarm-radar-card').style.display = 'block';
+        setSwarmPausedUi(live.status === 'paused');
+        if (live.status === 'executing') startSwarmTelemetryPolling(live.id);
+        else pollSwarmStatus(live.id);
+      } catch (err) {
+        console.warn('Could not restore the active swarm:', err);
       }
     }
 
