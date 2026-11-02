@@ -26,6 +26,7 @@ import {
   createPosition,
   recordFee,
 } from '@racerbot/db';
+import { executeKleosSwap } from './kleosExecutor.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
 export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
@@ -59,6 +60,8 @@ export async function executeEvmSwap(
   event: SwapEvent & { chain?: EvmChain },
   onProgress?: (stage: string) => void
 ): Promise<EvmSwapExecutionResult> {
+  // Kleos coins live on Elysium mainnet and trade through Kleos's routers, not a V2 router
+  if (event.venue === 'kleos') return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
   const chain: EvmChain = event.chain || (event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
   const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;

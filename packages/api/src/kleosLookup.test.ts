@@ -40,6 +40,22 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     expect(Number(info!.liquidity_usd)).toBeCloseTo(4000);
   });
 
+  it('is tradeable only while KLEOS_TRADING is on, with the launch taxes from the board', async () => {
+    getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kSocks', symbol: 'KSOCKS', decimals: 18, totalSupply: '0' });
+    vi.stubGlobal('fetch', vi.fn((url: string) => (url.includes('thekleos.xyz/api/board')
+      ? respond([{ address: KSOCKS, symbol: 'KSOCKS', launch: { price: 1e-7, v4: { buyBps: 300, sellBps: 100 } } }])
+      : respond({ HYPE: '80' }))));
+    vi.stubEnv('KLEOS_TRADING', 'on');
+    // Past the board cache filled by the first test
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    try {
+      expect(await lookupKleosToken(KSOCKS)).toMatchObject({ tradeable: true, buy_tax_pct: 3, sell_tax_pct: 1 });
+    } finally {
+      now.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('returns nothing when the address has no contract on Elysium mainnet', async () => {
     getErc20TokenInfo.mockResolvedValue(null);
     expect(await lookupKleosToken(KSOCKS)).toBeNull();

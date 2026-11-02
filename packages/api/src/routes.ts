@@ -172,7 +172,9 @@ import {
   isValidEvmAddress,
   getHypeBalance,
   ELYSIUM_TESTNET_EXPLORER_URL,
+  ELYSIUM_MAINNET_EXPLORER_URL,
   KLEOS_TOKEN_URL,
+  isKleosTradingEnabled,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
 } from '@racerbot/shared';
@@ -1370,7 +1372,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       : (isSui
         ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
         : (isEvm
-          ? (b ? `💳 *${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
+          ? (b ? `💳 *${isHyperEvm || isKleos ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm || isKleos ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
           : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : '')));
 
   // -- Venue label --
@@ -1631,7 +1633,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     safetyBanner += `⚠️ *Low Liquidity* (${liqUsdStr || `${liqUsdRaw.toFixed(0)}`}) — High slippage risk!\n\n`;
   }
 
-  if (isKleos) {
+  if (isKleos && tokenInfo.tradeable) {
+    safetyBanner += `🟡 *Elysium mainnet*: Launched on Kleos (Chain ID 99901). Buys are paid from your HyperEVM HYPE (or Elysium HYPE from earlier sells) and run on Elysium within a few minutes. Sale proceeds stay on Elysium; bridging HYPE back to HyperEVM takes about 6 days.\n\n`;
+  } else if (isKleos) {
     safetyBanner += `🟡 *Elysium mainnet*: Launched on Kleos (Chain ID 99901). RacerBot cannot trade Kleos coins yet; buy them on Kleos.
 
 `;
@@ -2864,7 +2868,9 @@ export async function executeBuyHelper(
   const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
 
   // ── HyperEVM & Elysium Trading Path ──────────────────────────────────────
-  if (info.venue === 'kleos') {
+  // Kleos coins live on Elysium mainnet (99901); other Elysium tokens here are on the Kinetiq testnet
+  const isKleos = info.venue === 'kleos';
+  if (isKleos && !isKleosTradingEnabled()) {
     throw new Error('This coin is on Kleos (Elysium mainnet), which RacerBot cannot trade yet. You can buy it on thekleos.xyz.');
   }
   if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
@@ -2874,13 +2880,14 @@ export async function executeBuyHelper(
       throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
     }
 
-    const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
-    const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
+    const isTestnet = chain === 'elysium' ? !isKleos : (process.env.HYPEREVM_TESTNET === 'true');
     const amountHype = amountNear;
     const amountInWei = ethers.parseEther(String(amountHype));
     const HYPE_GAS_RESERVE = ethers.parseEther('0.002');
+    // A Kleos buy can be paid from HyperEVM or Elysium HYPE; the executor checks both
+    const userBal = isKleos ? null : await getHypeBalance(evmUser.evm_address, chain, isTestnet);
 
-    if (userBal.raw < amountInWei + HYPE_GAS_RESERVE) {
+    if (userBal && userBal.raw < amountInWei + HYPE_GAS_RESERVE) {
       if (userBal.raw <= HYPE_GAS_RESERVE) {
         throw new Error(
           `Your EVM wallet (\`${evmUser.evm_address}\`) has insufficient HYPE for gas.\n\nPlease deposit HYPE to trade on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}.`
@@ -2899,7 +2906,7 @@ export async function executeBuyHelper(
       token_out: tokenAddress,
       amount_in: String(amountHype),
       min_amount_out: '1',
-      venue: `${chain}_dex` as any,
+      venue: isKleos ? 'kleos' : `${chain}_dex` as any,
       slippage_pct: slippagePct,
     }, onProgress);
 
@@ -2916,7 +2923,7 @@ export async function executeBuyHelper(
         ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
         : tokenQtyHuman.toFixed(4);
 
-    const baseExplorer = chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
+    const baseExplorer = isKleos ? ELYSIUM_MAINNET_EXPLORER_URL : chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
 
     return {
       success: true,
@@ -2930,7 +2937,7 @@ export async function executeBuyHelper(
       positionId: swapResult.positionId,
       txHash: swapResult.txHash,
       message:
-        `🚀 *Buy Confirmed!* (${chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
+        `🚀 *Buy Confirmed!* (${isKleos ? 'Kleos' : chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
         `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
         `Spent: *${amountHype} HYPE*\n` +
         `Tx Hash: \`${swapResult.txHash}\`\n` +

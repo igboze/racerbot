@@ -57,7 +57,8 @@ export type VenueName =
   | 'hyperevm_dex'
   | 'elysium_dex'
   | 'market_lab'
-  | 'corepad';
+  | 'corepad'
+  | 'kleos';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
   'rhea',
