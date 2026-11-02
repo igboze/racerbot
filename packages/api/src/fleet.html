@@ -1067,12 +1067,26 @@
   <div class="modal-overlay" id="deposit-modal" style="display:none;">
     <div class="modal-card" style="max-width:460px;">
       <button class="modal-close" onclick="closeDepositModal()">×</button>
-      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Deposit</div>
+      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Deposit NEAR</div>
       <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px; line-height:1.5;">
-        Send NEAR directly to your connected account, or use the Alpha Console for cross-chain bridging.
+        Your fleet is funded from your RacerBot account. Send NEAR to it from any wallet or exchange, then split it across your fleet wallets.
       </p>
-      <div id="deposit-account-box" style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; font-family:var(--font-mono); font-size:13px; color:var(--color-text-muted); margin-bottom:14px;">
-        Connect your wallet to see your deposit address.
+      <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:6px;">YOUR RACERBOT ACCOUNT</div>
+      <div style="display:flex; gap:8px; margin-bottom:16px;">
+        <div id="deposit-account-box" style="flex:1; min-width:0; word-break:break-all; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; font-family:var(--font-mono); font-size:13px; color:var(--color-text);">
+          Sign in to see your RacerBot account.
+        </div>
+        <button type="button" class="btn btn-secondary" id="deposit-copy-btn" style="min-width:72px;" onclick="copyDepositAccount()">Copy</button>
+      </div>
+      <div id="deposit-send-row" hidden style="border-top:1px solid var(--color-border); padding-top:14px; margin-bottom:14px;">
+        <div style="font-size:13px; color:var(--color-text); margin-bottom:8px;">Send from your connected wallet <span id="deposit-from-wallet" style="font-family:var(--font-mono); color:var(--color-text-muted);"></span></div>
+        <div style="display:flex; gap:8px;">
+          <input type="number" id="deposit-send-amount" class="terminal-input" placeholder="NEAR amount" min="0.1" step="0.5" aria-label="NEAR to send" style="flex:1; min-width:0;" />
+          <button type="button" class="btn btn-primary" style="white-space:nowrap;" onclick="sendDepositFromWallet(this)"><span>Send</span></button>
+        </div>
+        <label id="deposit-split-row" hidden style="display:flex; gap:8px; align-items:center; margin-top:10px; font-size:12.5px; color:var(--color-text-muted);">
+          <input type="checkbox" id="deposit-split-check" checked /> Split it evenly across my fleet wallets when it arrives
+        </label>
       </div>
       <div style="display:flex; gap:8px;">
         <a href="/alpha?tab=console" class="btn btn-secondary" style="flex:1; text-align:center;">Cross-chain bridge</a>
@@ -1193,17 +1207,100 @@
       if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
     }
 
-    // ── Deposit Modal ─────────────────────────────────────────────────────────
+    /** Proof of who is signed in: a session token, or Telegram Mini App data. Fleet routes accept nothing else. */
+    function fleetAuthHeader() {
+      if (window.RacerConnect && typeof window.RacerConnect.getAuthHeader === 'function') {
+        const h = window.RacerConnect.getAuthHeader();
+        if (h && h.Authorization) return h;
+      }
+      const token = localStorage.getItem('racer_auth_token') || '';
+      return token ? { Authorization: 'Bearer ' + token } : {};
+    }
+
+    /** No session yet but a wallet is connected: ask it to sign in (one free signature). */
+    async function ensureFleetSession() {
+      if (fleetAuthHeader().Authorization) return true;
+      if (window.RacerConnect && typeof window.RacerConnect.ensureWalletSession === 'function') {
+        try { return await window.RacerConnect.ensureWalletSession(); } catch (e) { return false; }
+      }
+      return false;
+    }
+
+    // ── Deposit: fund the RacerBot account that pays for the fleet ─────────────
+    /** The user's RacerBot account (from fleet status): where NEAR for the fleet goes first */
+    let fleetMainAccount = null;
+
     function openDepositModal() {
       const box = document.getElementById('deposit-account-box');
-      if (box && window.RacerConnect) {
-        const addr = window.RacerConnect.activeNearWallet || null;
-        box.textContent = addr ? addr : 'Connect your wallet to see your deposit address.';
+      const sendRow = document.getElementById('deposit-send-row');
+      if (box) {
+        box.textContent = fleetMainAccount || 'Sign in to see your RacerBot account.';
       }
+      document.getElementById('deposit-copy-btn').disabled = !fleetMainAccount;
+      const canSend = Boolean(fleetMainAccount && window.RacerConnect && window.RacerConnect.activeNearWallet
+        && window.RacerConnect.activeNearWallet !== fleetMainAccount);
+      if (sendRow) sendRow.hidden = !canSend;
+      const from = document.getElementById('deposit-from-wallet');
+      if (from && canSend) from.textContent = window.RacerConnect.activeNearWallet;
+      document.getElementById('deposit-split-row').hidden = !currentFleet;
       document.getElementById('deposit-modal').style.display = 'flex';
     }
     function closeDepositModal() {
       document.getElementById('deposit-modal').style.display = 'none';
+    }
+
+    async function copyDepositAccount() {
+      if (!fleetMainAccount) return;
+      try {
+        await navigator.clipboard.writeText(fleetMainAccount);
+        showToast('RacerBot account copied', 'success');
+      } catch (e) {
+        showToast(fleetMainAccount, 'info');
+      }
+    }
+
+    /** Connected wallet sends NEAR to the RacerBot account; optionally split it across the fleet right after. */
+    async function sendDepositFromWallet(btn) {
+      const amount = parseFloat(document.getElementById('deposit-send-amount').value);
+      if (!(amount > 0)) { showToast('Enter how much NEAR to send', 'error'); return; }
+      if (!fleetMainAccount) { showToast('Sign in first', 'error'); return; }
+      const split = currentFleet && document.getElementById('deposit-split-check').checked;
+      btn.disabled = true;
+      const label = btn.innerHTML;
+      btn.innerHTML = '<span>Approve in your wallet…</span>';
+      try {
+        await window.RacerConnect.sendNearTransaction({ receiverId: fleetMainAccount, amountNear: amount });
+        showToast(`Sent ${amount} NEAR to your RacerBot account`, 'success');
+        if (split) {
+          btn.innerHTML = '<span>Splitting across your fleet…</span>';
+          // Leave a little in the main account for fees; the transfer can take a few seconds to land
+          const toSplit = Math.max(0, Math.floor((amount - 0.05) * 1000) / 1000);
+          let done = false;
+          for (let i = 0; i < 5 && !done && toSplit > 0; i++) {
+            await new Promise(r => setTimeout(r, 2500));
+            const res = await fetch('/api/fleet/distribute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...fleetAuthHeader() },
+              body: JSON.stringify({ totalNear: toSplit }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (data.success) {
+              done = true;
+              showToast(`Split ${toSplit} NEAR across your ${data.walletCount || ''} fleet wallets`, 'success');
+            } else if (!/Insufficient balance/i.test(data.error || '')) {
+              throw new Error(data.error || 'Could not split across the fleet');
+            }
+          }
+          if (!done && toSplit > 0) showToast('Deposit arrived slowly. Use Disburse Evenly to split it.', 'info');
+        }
+        closeDepositModal();
+        fetchFleetStatus(true);
+      } catch (err) {
+        showToast(err.message || 'Deposit failed', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
     }
 
     // ── State Variables ───────────────────────────────────────────────────────
@@ -1384,17 +1481,20 @@
     // ── Fetch Real Fleet Telemetry from API ────────────────────────────────────
     async function fetchFleetStatus(silent = false) {
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const nearWallet = localStorage.getItem('racer_connected_near_wallet') || '';
-        const headers = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        let url = '/api/fleet/status';
-        if (nearWallet) url += `?username=${encodeURIComponent(nearWallet)}`;
-
-        const res = await fetch(url, { headers });
+        await ensureFleetSession();
+        const res = await fetch('/api/fleet/status', { headers: fleetAuthHeader() });
+        if (res.status === 401) {
+          fleetMainAccount = null;
+          document.getElementById('hud-fleet-tag').textContent = 'Sign in to see your fleet';
+          document.getElementById('fleet-wallets-tbody').innerHTML = `
+            <tr><td colspan="6" style="text-align:center; padding:32px; font-size:14px; color:var(--color-text);">
+              Sign in with Telegram, or connect your NEAR wallet and approve the free sign-in message, to see your RacerFleet.
+            </td></tr>`;
+          return;
+        }
         if (!res.ok) throw new Error('Status failed');
         const data = await res.json();
+        fleetMainAccount = (data.user && data.user.subaccountId) || null;
 
         if (data.hasFleet && data.fleet) {
           currentFleet = data.fleet;
@@ -1542,12 +1642,11 @@
       btn.innerHTML = `<span>⏳ EXECUTING BUNDLE BUY...</span>`;
 
       try {
-        const authToken = localStorage.getItem('racer_auth_token') || '';
         const res = await fetch('/api/fleet/bundle-buy', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            ...fleetAuthHeader(),
           },
           body: JSON.stringify({
             tokenAddress: token,
@@ -1594,12 +1693,11 @@
       btn.disabled = true;
 
       try {
-        const authToken = localStorage.getItem('racer_auth_token') || '';
         const res = await fetch('/api/fleet/bundle-sell', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            ...fleetAuthHeader(),
           },
           body: JSON.stringify({
             tokenAddress: token,
@@ -1629,12 +1727,11 @@
       if (!await showConfirm('Sweep all liquid NEAR from every fleet subaccount back into your primary wallet?')) return;
 
       try {
-        const authToken = localStorage.getItem('racer_auth_token') || '';
         const res = await fetch('/api/fleet/sweep', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            ...fleetAuthHeader(),
           },
           body: JSON.stringify({}),
         });
@@ -1659,12 +1756,11 @@
       }
 
       try {
-        const authToken = localStorage.getItem('racer_auth_token') || '';
         const res = await fetch('/api/fleet/distribute', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            ...fleetAuthHeader(),
           },
           body: JSON.stringify({ totalNear: amt }),
         });
@@ -1705,12 +1801,11 @@
       btn.innerHTML = `<span>⏳ Initializing Subaccounts on NEAR Mainnet...</span>`;
 
       try {
-        const authToken = localStorage.getItem('racer_auth_token') || '';
         const res = await fetch('/api/fleet/deploy', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            ...fleetAuthHeader(),
           },
           body: JSON.stringify({
             walletCount: selectedTierCount,
@@ -1796,10 +1891,9 @@
       btn.innerHTML = '<span>Planning with NEAR AI…</span>';
 
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
         const nearWallet = localStorage.getItem('racer_connected_near_wallet') || '';
         const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
+        Object.assign(headers, fleetAuthHeader());
 
         const res = await fetch('/api/swarm/plan', {
           method: 'POST',
@@ -1882,9 +1976,8 @@
       btn.innerHTML = '<span>Launching…</span>';
 
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
         const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
+        Object.assign(headers, fleetAuthHeader());
 
         const res = await fetch('/api/swarm/launch', {
           method: 'POST',
@@ -1920,8 +2013,7 @@
 
     async function pollSwarmStatus(sessionId) {
       try {
-        const token = localStorage.getItem('racer_auth_token') || '';
-        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const headers = fleetAuthHeader();
         const res = await fetch('/api/swarm/status/' + encodeURIComponent(sessionId), { headers });
         if (!res.ok) return;
         const data = await res.json();
@@ -1960,9 +2052,8 @@
     }
 
     function swarmAuthHeaders() {
-      const token = localStorage.getItem('racer_auth_token') || '';
       const headers = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = 'Bearer ' + token;
+      Object.assign(headers, fleetAuthHeader());
       return headers;
     }
 
@@ -2027,7 +2118,7 @@
 
     /** After a reload: show the latest swarm that is running or paused, and follow it. */
     async function restoreActiveSwarm() {
-      if (activeSwarmSessionId || !localStorage.getItem('racer_auth_token')) return;
+      if (activeSwarmSessionId || !fleetAuthHeader().Authorization) return;
       try {
         const res = await fetch('/api/swarm/sessions', { headers: swarmAuthHeaders() });
         if (!res.ok) return;
