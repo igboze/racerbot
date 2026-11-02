@@ -1345,6 +1345,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isElysium = isEvm && !isHyperEvm;
   // Kleos coins live on Elysium mainnet (99901); every other Elysium token here is on the Kinetiq testnet
   const isKleos = isElysium && tokenInfo.venue === 'kleos';
+  // Kleos buys are paid from HyperEVM HYPE and sale proceeds land on Elysium mainnet, so the card shows both
+  const kleosWallet = isKleos ? (b?.evmAddress || userRecord?.evm_address) : null;
+  const kleosElysiumBal = kleosWallet ? await getHypeBalance(kleosWallet, 'elysium', false).catch(() => null) : null;
   const isNearUsdcMode = !isSolana && !isStarknet && !isSui && userRecord?.near_trade_currency === 'usdc';
   const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'NEAR')));
   const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'N')));
@@ -1371,8 +1374,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ? (b ? `💳 *Starknet Wallet Balance*: \`${b.strkBalanceFormatted || '0.0000'} STRK\` | \`${b.ethBalanceFormatted || '0.0000'} ETH\`\n\n` : '')
       : (isSui
         ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
-        : (isEvm
-          ? (b ? `💳 *${isHyperEvm || isKleos ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm || isKleos ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
+        : (isKleos
+          ? (b ? `💳 *HYPE*: HyperEVM \`${b.hyperevmBalanceFormatted || '0.0000'}\` • Elysium \`${kleosElysiumBal ? Number(kleosElysiumBal.formatted).toFixed(4) : '0.0000'}\`\n\n` : '')
+          : isEvm
+          ? (b ? `💳 *${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
           : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : '')));
 
   // -- Venue label --
@@ -1605,7 +1610,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ? (strkUsdRate && strkUsdRate > 0 ? `_1 STRK ≈ $${strkUsdRate.toFixed(2)}_\n` : '')
       : (isSui
         ? (tokenInfo.sui_usd ? `_1 SUI ≈ $${tokenInfo.sui_usd.toFixed(2)}_\n` : '')
-        : (nearUsdRate && nearUsdRate > 0 ? `_1 NEAR ≈ $${nearUsdRate.toFixed(2)}_\n` : ''));
+        : (nearUsdRate && nearUsdRate > 0 ? `_1 ${isEvm ? 'HYPE' : 'NEAR'} ≈ $${nearUsdRate.toFixed(2)}_\n` : ''));
 
   let safetyBanner = '';
   if (safety?.isDrained) {
@@ -1620,10 +1625,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (safety?.unlockedLiquidityPct !== undefined && safety.unlockedLiquidityPct > 0) {
     const unlocked = safety.unlockedLiquidityPct;
     safetyBanner = `⚠️ *AUDIT*: 🔴 ${unlocked.toFixed(0)}% Unlocked Liquidity\n\n`;
-  } else if (safety) {
+  } else if (safety && !isKleos) {
+    // The safety audit is NEAR-specific; it says nothing about a Kleos coin, so the card shows no verdict for one
     const contractType = safety.isAuditedLaunchpad
       ? `🛡️ Audited (${safety.launchpadName || 'Verified'})`
-      : (isSolana ? 'SPL token' : 'NEP-141');
+      : (isSolana ? 'SPL token' : isEvm ? 'ERC-20' : 'NEP-141');
     safetyBanner = `🛡️ *Security*: 🟢 Passed • ${contractType}\n`;
   }
 
@@ -1634,11 +1640,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
 
   if (isKleos && tokenInfo.tradeable) {
-    safetyBanner += `🟡 *Elysium mainnet*: Launched on Kleos (Chain ID 99901). Buys are paid from your HyperEVM HYPE (or Elysium HYPE from earlier sells) and run on Elysium within a few minutes. Sale proceeds stay on Elysium; bridging HYPE back to HyperEVM takes about 6 days.\n\n`;
+    safetyBanner += `🏛️ Trades settle on Elysium in about 1–5 min. Sale proceeds stay on Elysium; moving HYPE back to HyperEVM takes ~6 days.\n\n`;
   } else if (isKleos) {
-    safetyBanner += `🟡 *Elysium mainnet*: Launched on Kleos (Chain ID 99901). RacerBot cannot trade Kleos coins yet; buy them on Kleos.
-
-`;
+    // The bottom line says it can't be traded here; one mention is enough
   } else if (isElysium) {
     safetyBanner += `🟡 *Elysium Testnet*: Deployed on Elysium Testnet (Chain ID 99801). Elysium Mainnet will be live soon!\n\n`;
   }
@@ -1670,7 +1674,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
 
   let text =
     safetyBanner +
-    `🪙 *${safeName}* (\`${safeSymbol}\`) • ${venueText.replace('💧 *Venue*: ', '').replace('💧 Venue: ', '')}\n` +
+    `🪙 *${safeName}* (\`${safeSymbol}\`) • ${venueText.replace('💧 *Venue*: ', '').replace('💧 Venue: ', '').replace('*Venue*: ', '')}\n` +
     `📝 \`${tokenInfo.address}\`\n` +
     statsBlock +
     slippageLine +
@@ -1958,7 +1962,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ]);
     } else {
       text += isKleos
-        ? '⚠️ Trading on Kleos is not supported in RacerBot yet.'
+        ? '🏛️ RacerBot can’t trade Kleos coins yet. Tap *View on Kleos* to trade there.'
         : '⚠️ Trading venue is not directly supported.';
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
