@@ -30,6 +30,9 @@ export const HYPE_DECIMALS = 18;
 export const HYPEREVM_MAINNET_RPC = 'https://rpc.hyperliquid.xyz/evm';
 export const HYPEREVM_TESTNET_RPC = 'https://rpc.hyperliquid-testnet.xyz/evm';
 export const ELYSIUM_TESTNET_RPC = 'https://testnet-rpc.elysium.kinetiq.xyz';
+// Elysium mainnet (99901) is the chain the Kleos launchpad runs on; its RPC is the only public one so far
+export const ELYSIUM_MAINNET_RPC = 'https://rpc.thekleos.xyz/rpc';
+export const KLEOS_TOKEN_URL = 'https://www.thekleos.xyz/token';
 
 // Precompiles & System Contracts
 export const HYPERCORE_EVM_BRIDGE_ADDRESS = '0x2222222222222222222222222222222222222222';
@@ -173,7 +176,10 @@ export function getEvmRpcUrl(chain: EvmChain, isTestnet = false): string {
     }
     return process.env.HYPEREVM_RPC_URL || HYPEREVM_MAINNET_RPC;
   }
-  return process.env.ELYSIUM_RPC_URL || ELYSIUM_TESTNET_RPC;
+  if (isTestnet) {
+    return process.env.ELYSIUM_RPC_URL || ELYSIUM_TESTNET_RPC;
+  }
+  return process.env.ELYSIUM_MAINNET_RPC_URL || ELYSIUM_MAINNET_RPC;
 }
 
 export function getEvmChainId(chain: EvmChain, isTestnet = false): number {
