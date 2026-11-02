@@ -15,6 +15,7 @@ import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice } from '@racer
 import {
   claimReadyExecutors,
   createConfidentialAccount,
+  expireStaleConfidentialQuotes,
   getConfidentialAccount,
   getExecutor,
   getUserConfidentialMove,
@@ -24,6 +25,8 @@ import {
   listOpenConfidentialMoves,
   listUserConfidentialMoves,
   listUserExecutors,
+  markConfidentialMovesChecked,
+  touchExecutors,
   updateConfidentialMove,
   updateExecutor,
   type ConfidentialAccountRecord,
@@ -66,6 +69,10 @@ const LARGE_SELL_FEE_BPS = 200;
 const LARGE_SELL_USD = 200;
 const CLOSE_DELAY_MS = 30_000; // executor waits 20 blocks after exiting
 const STALE_READY_MS = 24 * 3600_000;
+/** An unpaid deposit quote is past its deadline by then (1Click refunds late payments) */
+const QUOTE_EXPIRY_HOURS = 48;
+/** An open executor untouched this long with no tokens was fully sold and its close was lost */
+const EMPTY_OPEN_AFTER_SEC = 600;
 const TGAS = 1_000_000_000_000n;
 
 export interface ConfidentialTradeResult {
@@ -298,10 +305,8 @@ async function buildPlan(p: {
   switch (planned.venue) {
     case 'Dcl': case 'Nearlytrade': venue = 'Dcl'; break;
     case 'RefAmm': case 'Rhea': venue = 'RefAmm'; break;
-    case 'Shardsmarket':
-      if (!p.isBuy) throw new Error('Shardsmarket sells are not available in confidential mode yet');
-      venue = 'Shardsmarket';
-      break;
+    // Sells go through the token's own contract (position-executor build_sell)
+    case 'Shardsmarket': venue = 'Shardsmarket'; break;
     case 'BondingCurve': venue = 'BondingCurve'; break;
     case 'Intear': {
       venue = 'Intear';
@@ -784,9 +789,37 @@ export async function withdrawPrivate(user: UserRecord, amount: bigint, destinat
 
 // ── Background worker ─────────────────────────────────────────────────────────
 
+/**
+ * After a full sell the close is scheduled in memory; a restart in between
+ * leaves an open executor holding no tokens and the sale's NEAR. Close those so
+ * the NEAR goes back to the private balance. A balance lookup that fails is
+ * skipped, never read as empty.
+ */
+async function closeEmptyOpenExecutors(limit = 10): Promise<number> {
+  const near = getNear();
+  const open = await listExecutorsByStatus(['open'], EMPTY_OPEN_AFTER_SEC, limit);
+  let closed = 0;
+  for (const e of open) {
+    if (!e.token) continue;
+    const raw = await near.getTokenBalance(e.token, e.account_id).catch(() => null);
+    if (raw === null || raw === undefined || BigInt(String(raw).split('.')[0] || '0') !== 0n) continue;
+    logger.warn(`Executor ${e.account_id} is open with no ${e.token} left; closing it`);
+    await closeExecutor(e.account_id).catch(err => logger.warn(`close empty ${e.account_id}: ${err?.message}`));
+    closed++;
+  }
+  // The rest still hold tokens: check others first next time
+  await touchExecutors(open.map(e => e.account_id)).catch(() => undefined);
+  return closed;
+}
+
 async function workerTick(): Promise<void> {
+  // 0. Quotes nobody paid would otherwise wait forever in front of real moves
+  const expired = await expireStaleConfidentialQuotes(QUOTE_EXPIRY_HOURS).catch(() => 0);
+  if (expired) logger.info(`Expired ${expired} unpaid private-balance deposit quote(s)`);
+
   // 1. Settle private-balance moves; a funded executor becomes ready
-  for (const m of await listOpenConfidentialMoves(50)) {
+  const moves = await listOpenConfidentialMoves(50);
+  for (const m of moves) {
     const s = await getMoveStatus(m.deposit_address).catch(() => null);
     if (!s || s.status === m.status) continue;
     await updateConfidentialMove(m.id, { status: s.status, details: s.details });
@@ -806,6 +839,8 @@ async function workerTick(): Promise<void> {
       if (acct) void refillPool(acct).catch(err => logger.warn(`Refill after ${m.kind}: ${err?.message}`));
     }
   }
+  // Moves that did not change go to the back of the queue
+  await markConfidentialMovesChecked(moves.map(m => m.id)).catch(() => undefined);
   if (!EXECUTORS_ENABLED) return;
   // 2. Delete executors whose close delay has passed
   for (const e of await listExecutorsByStatus(['exited'], CLOSE_DELAY_MS / 1000, 20)) {
@@ -822,6 +857,8 @@ async function workerTick(): Promise<void> {
   for (const e of await listExecutorsByStatus(['failed'], 600, 10)) {
     await closeExecutor(e.account_id).catch(err => logger.warn(`cleanup ${e.account_id}: ${err?.message}`));
   }
+  // 5. Fully sold positions whose close was lost to a restart
+  await closeEmptyOpenExecutors();
 }
 
 export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | null {
@@ -842,4 +879,4 @@ export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | n
   }, intervalMs);
 }
 
-export { chooseSizes as _chooseSizesForTest, intearHopsFromMessage as _intearHopsForTest };
+export { chooseSizes as _chooseSizesForTest, intearHopsFromMessage as _intearHopsForTest, workerTick as _workerTickForTest };

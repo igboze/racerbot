@@ -8,12 +8,18 @@ const getUserById = vi.fn(async (id: string) => users[id] ?? null);
 const verifyAuthToken = vi.fn(async (token: string) => (token === 'tok-managed' ? { userId: managed.id, telegramId: 7 }
   : token === 'tok-external' ? { userId: external.id, telegramId: 0 } : null));
 const depositFromWallet = vi.fn(async () => ({ depositAddress: 'a'.repeat(64), txHash: 'h' }));
+const getConfidentialAccount = vi.fn(async (id: string): Promise<any> => (id === managed.id
+  ? { user_id: managed.id, payout_address: managed.subaccount_id, owner_salt: 'salt123' } : null));
 const quoteWalletDeposit = vi.fn(async () => ({ depositAddress: 'b'.repeat(64), amount: '1', transaction: { receiverId: 'wrap.near', actions: [] } }));
 
 vi.mock('@racerbot/db', () => ({
   getUserById: (id: string) => getUserById(id),
   getUserByTelegramId: vi.fn(async () => null),
-  getConfidentialAccount: vi.fn(async () => null),
+  getConfidentialAccount: (id: string) => getConfidentialAccount(id),
+  listUserExecutors: vi.fn(async () => [
+    { account_id: 'e1.router.near', status: 'open', token: 'hoot.near' },
+    { account_id: 'e2.router.near', status: 'closed', token: null },
+  ]),
   updateConfidentialSettings: vi.fn(async () => null),
 }));
 vi.mock('../authSession.js', () => ({ verifyAuthToken: (t: string) => verifyAuthToken(t) }));
@@ -52,6 +58,8 @@ async function call(route: string, headers: Record<string, string>, body: any = 
   const res: any = { statusCode: 200, body: null };
   res.status = (c: number) => { res.statusCode = c; return res; };
   res.json = (b: any) => { res.body = b; return res; };
+  res.headers = {};
+  res.set = (k: string, v: string) => { res.headers[k] = v; return res; };
   await handlers[route]({ headers, body, query: {} }, res);
   return res;
 }
@@ -113,5 +121,21 @@ describe('unitsToRaw', async () => {
     [3, 0, '3'],
   ])('%s with %s decimals is %s', (amount, decimals, raw) => {
     expect(unitsToRaw(amount, decimals)).toBe(raw);
+  });
+});
+
+describe('recovery kit route', () => {
+  it('gives the signed-in owner their kit as a download', async () => {
+    const res = await call('GET /alpha/confidential/recovery-kit', { authorization: 'Bearer tok-managed' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Disposition']).toContain('racerbot-recovery-kit.json');
+    expect(res.headers['Cache-Control']).toBe('private, no-store');
+    expect(res.body).toMatchObject({ kind: 'racerbot-confidential-recovery-kit', payoutAddress: managed.subaccount_id, ownerSalt: 'salt123' });
+    expect(res.body.executors.map((e: any) => e.account)).toEqual(['e1.router.near']);
+  });
+
+  it('refuses without a session, and says so when there is nothing to recover', async () => {
+    expect((await call('GET /alpha/confidential/recovery-kit', {})).statusCode).toBe(401);
+    expect((await call('GET /alpha/confidential/recovery-kit', { authorization: 'Bearer tok-external' })).statusCode).toBe(404);
   });
 });

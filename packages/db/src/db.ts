@@ -4580,6 +4580,13 @@ export async function listUserExecutors(userId: string, statuses: ExecutorStatus
   return res.rows.map(mapExecutor);
 }
 
+/** Note that the worker looked at these executors (open positions are checked in turn). */
+export async function touchExecutors(accountIds: string[]): Promise<void> {
+  if (!accountIds.length) return;
+  const db = await getDb();
+  await db.query('UPDATE confidential_executors SET updated_at = NOW() WHERE account_id = ANY($1)', [accountIds]);
+}
+
 export async function listExecutorsByStatus(statuses: ExecutorStatus[], olderThanSec = 0, limit = 50): Promise<ConfidentialExecutorRecord[]> {
   const db = await getDb();
   const res = await db.query(
@@ -4656,14 +4663,43 @@ export async function getUserConfidentialMove(userId: string, depositAddress: st
   return res.rows[0] ? mapMove(res.rows[0]) : null;
 }
 
+/**
+ * Moves still waiting on 1Click, for the worker to check. Money RacerBot moved
+ * itself (refills, returns, withdrawals) comes first; within that, the move
+ * checked longest ago, so nothing waits forever behind older ones.
+ */
 export async function listOpenConfidentialMoves(limit = 50): Promise<ConfidentialMoveRecord[]> {
   const db = await getDb();
   const res = await db.query(
-    `SELECT * FROM confidential_moves WHERE status NOT IN ('SUCCESS', 'REFUNDED', 'FAILED', 'INCOMPLETE_DEPOSIT')
-     ORDER BY created_at LIMIT $1`,
+    `SELECT * FROM confidential_moves
+      WHERE status NOT IN ('SUCCESS', 'REFUNDED', 'FAILED', 'INCOMPLETE_DEPOSIT', 'EXPIRED')
+      ORDER BY CASE WHEN kind IN ('refill', 'return', 'withdraw') THEN 0 ELSE 1 END, updated_at ASC
+      LIMIT $1`,
     [limit]
   );
   return res.rows.map(mapMove);
+}
+
+/** Note that the worker looked at these moves, so the next pass starts with others. */
+export async function markConfidentialMovesChecked(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const db = await getDb();
+  await db.query('UPDATE confidential_moves SET updated_at = NOW() WHERE id = ANY($1)', [ids]);
+}
+
+/**
+ * Deposit quotes nobody paid: 1Click never saw a deposit, and by now the quote
+ * is past its deadline (1Click refunds a late payment). Returns how many.
+ */
+export async function expireStaleConfidentialQuotes(olderThanHours = 48): Promise<number> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE confidential_moves SET status = 'EXPIRED', settled_at = NOW(), updated_at = NOW()
+      WHERE kind = 'deposit' AND status = 'PENDING_DEPOSIT'
+        AND created_at < NOW() - make_interval(hours => $1)`,
+    [olderThanHours]
+  );
+  return res.rowCount ?? 0;
 }
 
 export async function listUserConfidentialMoves(userId: string, limit = 50): Promise<ConfidentialMoveRecord[]> {

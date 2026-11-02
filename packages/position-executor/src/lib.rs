@@ -693,7 +693,9 @@ impl PositionExecutor {
                     cat!(r#"{"tokens_in":""#, plan.amount_in, r#"","min_near_out":""#, plan.min_amount_out, r#"","deadline_sec":"#, plan.deadline_sec, "}").into_bytes(),
                     ONE_YOCTO, GAS_SWAP)
             }
-            Venue::Shardsmarket => env::panic_str("Shardsmarket sells go through its pool venue"),
+            // A Shardsmarket token buys itself back: send it to its own contract, which pays native
+            // NEAR to the executor (measured at exit). Same call RacerBot's public trades use.
+            Venue::Shardsmarket => ft_call(plan.token.as_str(), cat!(r#"{"min_amount_out":""#, plan.min_amount_out, r#""}"#)),
         }
     }
 }

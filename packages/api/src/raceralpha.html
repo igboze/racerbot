@@ -5262,6 +5262,11 @@
             <ul class="vault-list" id="conf-positions" aria-live="polite"><li class="receipts-empty">No open positions.</li></ul>
             <h4 class="conf-subhead">Moves in and out of your private balance</h4>
             <ul class="vault-list" id="conf-moves" aria-live="polite"><li class="receipts-empty">No moves yet.</li></ul>
+            <h4 class="conf-subhead">Recovery kit</h4>
+            <div class="conf-row">
+              <p class="conf-hint" style="flex:1 1 280px; margin:0;">Your executors pay out only to your own wallet. This file lets you move your money out of them yourself if RacerBot is ever unavailable for 7 days. Keep it private, and download a new one after you add funds.</p>
+              <button type="button" class="receipts-btn" onclick="confDownloadRecoveryKit(this)">Download recovery kit</button>
+            </div>
           </div>
         </div>
 
@@ -6363,6 +6368,28 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         setTimeout(loadConfidential, 1500);
       } catch (err) {
         showToast(`Withdrawal failed: ${err.message}. Nothing left your private balance.`, 'error');
+      }
+    }
+
+    async function confDownloadRecoveryKit(btn) {
+      btn.disabled = true;
+      try {
+        const res = await fetch('/alpha/confidential/recovery-kit', { headers: getAuthHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'racerbot-recovery-kit.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Recovery kit downloaded. Keep it somewhere private.', 'success');
+      } catch (err) {
+        showToast(`Could not download the recovery kit: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
       }
     }
 
