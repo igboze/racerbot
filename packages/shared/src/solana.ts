@@ -1425,6 +1425,18 @@ async function broadcastPaid(serialized: string): Promise<boolean> {
   }
 }
 
+async function broadcastAll(serialized: string): Promise<boolean> {
+  const tasks: Promise<any>[] = [broadcastFree(serialized)];
+  if (PAID_RPC_URL && PAID_RPC_FALLBACK_ENABLED) {
+    tasks.push(broadcastPaid(serialized));
+  }
+  if (JUPITER_API_KEY) {
+    tasks.push(broadcastJupiter(serialized));
+  }
+  const results = await Promise.allSettled(tasks);
+  return results.some((r) => r.status === 'fulfilled' && r.value);
+}
+
 export interface SolanaSendResult {
   signature: string;
   confirmed: boolean;
@@ -1432,11 +1444,10 @@ export interface SolanaSendResult {
 }
 
 /**
- * Signs nothing: expects a signed transaction. Broadcasts it to the free
- * endpoints (plus Jupiter's lander when a key is configured), re-broadcasts
- * every few seconds, and polls the signature status until it lands, fails,
- * or the blockhash expires. The paid RPC is used once, only if no free
- * endpoint accepted the transaction.
+ * Signs nothing: expects a signed transaction. Broadcasts it across available
+ * endpoints (free RPCs, paid TPU-connected RPC if configured, and Jupiter's lander),
+ * re-broadcasts periodically, and polls the signature status until it lands, fails,
+ * or the blockhash expires.
  */
 export async function sendAndConfirmSolanaTransaction(
   tx: VersionedTransaction,
@@ -1447,10 +1458,9 @@ export async function sendAndConfirmSolanaTransaction(
   const signature = bs58.encode(Buffer.from(tx.signatures[0]));
 
   onProgress?.('signing_and_broadcasting');
-  const [freeSig, jupOk] = await Promise.all([broadcastFree(serialized), broadcastJupiter(serialized)]);
-  if (!freeSig && !jupOk) {
-    const paidOk = await broadcastPaid(serialized);
-    if (!paidOk) return { signature, confirmed: false, error: 'Could not broadcast the transaction. Please try again.' };
+  const broadcastOk = await broadcastAll(serialized);
+  if (!broadcastOk) {
+    return { signature, confirmed: false, error: 'Could not broadcast the transaction. Please try again.' };
   }
 
   onProgress?.('confirming');
@@ -1462,7 +1472,7 @@ export async function sendAndConfirmSolanaTransaction(
   while (Date.now() - started < HARD_TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, confirmPollDelay(started)));
     try {
-      const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: false }], { timeoutMs: 5000, allowPaid: false });
+      const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: false }], { timeoutMs: 5000, allowPaid: true });
       const s = st?.value?.[0];
       if (s) {
         if (s.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
@@ -1474,17 +1484,16 @@ export async function sendAndConfirmSolanaTransaction(
 
     if (Date.now() - lastRebroadcast > 3000) {
       lastRebroadcast = Date.now();
-      void broadcastFree(serialized);
-      void broadcastJupiter(serialized);
+      void broadcastAll(serialized);
     }
 
     if (lastValidBlockHeight > 0 && Date.now() - lastHeightCheck > 10_000) {
       lastHeightCheck = Date.now();
       try {
-        const height = await solanaRpc<number>('getBlockHeight', [{ commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: false });
+        const height = await solanaRpc<number>('getBlockHeight', [{ commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: true });
         if (height > lastValidBlockHeight) {
           // One last look in history before declaring it dropped.
-          const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 5000 });
+          const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 5000, allowPaid: true });
           const s = st?.value?.[0];
           if (s && !s.err) return { signature, confirmed: true, error: null };
           if (s?.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
@@ -1496,7 +1505,7 @@ export async function sendAndConfirmSolanaTransaction(
 
   // Final check with history (may use paid RPC once).
   try {
-    const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 6000 });
+    const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 6000, allowPaid: true });
     const s = st?.value?.[0];
     if (s && !s.err) return { signature, confirmed: true, error: null };
     if (s?.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
@@ -1566,8 +1575,8 @@ async function latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHei
   return { blockhash: r.value.blockhash, lastValidBlockHeight: Number(r.value.lastValidBlockHeight) };
 }
 
-const SOL_TRANSFER_CU_LIMIT = 1_300;
-const SOL_TRANSFER_CU_PRICE = 50_000; // micro-lamports per CU
+const SOL_TRANSFER_CU_LIMIT = 1_500;
+const SOL_TRANSFER_CU_PRICE = 50_000_000; // 50 lamports per CU (50,000,000 micro-lamports -> 75,000 lamports priority fee)
 /**
  * Exact network fee of a plain SOL transfer sent by transferSol (base fee plus
  * a capped priority fee). Lets "withdraw all" leave the wallet at exactly 0:
@@ -1670,7 +1679,8 @@ export async function transferSolanaToken(
     payerKey: keypair.publicKey,
     recentBlockhash: blockhash,
     instructions: [
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000_000 }),
       createIdempotent,
       transferChecked,
       // Classic SPL only: Token-2022 accounts can hold withheld fees that block closing.

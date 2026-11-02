@@ -9301,7 +9301,13 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     } else if (remaining.length >= 2) {
       const first = remaining[0];
       const second = remaining[1];
-      if (second.includes('.tkn.near') || (!second.includes('.') && !isValidSuiAddress(second))) {
+      if (isSolanaAddress(first) && (second.toLowerCase() === 'sol' || isSolanaToken(second))) {
+        destination = first;
+        token = second;
+      } else if (isSolanaAddress(second) && (first.toLowerCase() === 'sol' || isSolanaToken(first))) {
+        token = first;
+        destination = second;
+      } else if (second.includes('.tkn.near') || (!second.includes('.') && !isValidSuiAddress(second))) {
         destination = first;
         token = second;
       } else if (first.includes('.tkn.near') || (!first.includes('.') && !isValidSuiAddress(first))) {
@@ -9332,19 +9338,26 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       if (Number(b.wrapNearFormatted || '0') > 0.0001) {
         balSummary += '  _(+ ' + b.wrapNearFormatted + ' wNEAR will auto-unwrap on withdrawal)_\n';
       }
+      if (b.solBalanceFormatted && Number(b.solBalanceFormatted) > 0) {
+        balSummary += '• 🟣 SOL: `' + b.solBalanceFormatted + ' SOL`\n';
+      }
       if (b.suiBalanceFormatted && Number(b.suiBalanceFormatted) > 0) {
         balSummary += '• 🔷 SUI: `' + b.suiBalanceFormatted + ' SUI`\n';
       }
       if (b.strkBalanceFormatted && Number(b.strkBalanceFormatted) > 0) {
         balSummary += '• ✨ STRK: `' + b.strkBalanceFormatted + ' STRK`\n';
       }
+      if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
+        balSummary += '• ⚡ HYPE: `' + b.hyperevmBalanceFormatted + ' HYPE`\n';
+      }
       balSummary += '\n';
     }
 
     await ctx.reply(
-      '💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n' +
+      '💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet & Tokens)*\n\n' +
       balSummary +
       'Reply with the recipient address, amount, and optional token, for example:\n' +
+      '• *SOL*: `<solana_address> 0.5` or `<solana_address> all`\n' +
       '• *NEAR*: `mywallet.near 1.5` or `mywallet.near all`\n' +
       '• *Token*: `mywallet.near 100 LONK` or `mywallet.near all blackdragon.tkn.near`\n' +
       '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
@@ -9483,13 +9496,15 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         expiresAt: Date.now() + 180000,
       });
       await ctx.reply(
-        `💸 *Withdraw & Send Funds (NEAR, SUI, Starknet & Tokens)*\n\n` +
+        `💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet & Tokens)*\n\n` +
         `*Usage:*\n` +
+        `• Native SOL: \`/send <solana_address> <amount>\`\n` +
         `• Native NEAR: \`/send <destination> <amount>\`\n` +
         `• Token: \`/send <destination> <amount> <token>\`\n` +
         `• Native SUI: \`/send <sui_address> <amount> SUI\`\n` +
         `• Native STRK: \`/send <starknet_address> <amount> STRK\`\n\n` +
         `*Examples:*\n` +
+        `• \`/send <solana_address> 0.5\` or \`/send <solana_address> all\`\n` +
         `• \`/send mywallet.near 1.5\`\n` +
         `• \`/send mywallet.near 500 LONK\`\n` +
         `• \`/send 0x1234...abcd 1.0 SUI\`\n` +
@@ -9525,12 +9540,12 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${destination}\`...`, { parse_mode: 'Markdown' });
 
     try {
-      const isNearDest = destination.endsWith('.near') || (!destination.startsWith('0x') && isValidNearAccountId(destination));
+      const isSolDest = isSolanaAddress(destination);
+      const isNearDest = destination.endsWith('.near') || (!isSolDest && !destination.startsWith('0x') && isValidNearAccountId(destination));
       const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
       const isStarknetDest = isValidStarknetAddress(destination) && !destination.endsWith('.near');
       const normToken = (tokenArg || '').toLowerCase();
       const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-      const isSolDest = isSolanaAddress(destination);
       const isSolNative = normToken === 'sol' || (!tokenArg && isSolDest);
       const isExplicitToken = tokenArg && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
 
@@ -12748,12 +12763,13 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           return;
         }
 
-        const isNearDest = dest.endsWith('.near') || (!dest.startsWith('0x') && isValidNearAccountId(dest));
+        const isSolDest = isSolanaAddress(dest);
+        const isNearDest = dest.endsWith('.near') || (!isSolDest && !dest.startsWith('0x') && isValidNearAccountId(dest));
         const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
         const isStarknetDest = isValidStarknetAddress(dest) && !dest.endsWith('.near');
         const normToken = (tokenToUse || '').toLowerCase();
         const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-        const isSolNative = normToken === 'sol' || (!tokenToUse && isSolanaAddress(dest));
+        const isSolNative = normToken === 'sol' || (!tokenToUse && isSolDest);
         const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
         const targetDesc = isSolNative ? 'SOL' : isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
         await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${dest}\`...`, { parse_mode: 'Markdown' });
@@ -13723,10 +13739,10 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     if (withdrawParts.length === 2) {
       const possibleDest = withdrawParts[0];
       const possibleAmtStr = withdrawParts[1].toLowerCase();
-      const isNearDest = isValidNearAccountId(possibleDest);
+      const isSolDest = isSolanaAddress(possibleDest);
+      const isNearDest = possibleDest.endsWith('.near') || (!isSolDest && isValidNearAccountId(possibleDest));
       const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDest.endsWith('.near');
       const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDest.endsWith('.near');
-      const isSolDest = !isNearDest && isSolanaAddress(possibleDest);
       const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
 
       if ((isNearDest || isSuiDest || isStarknetDest || isSolDest) && isAmtValid) {

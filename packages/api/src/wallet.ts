@@ -3659,9 +3659,9 @@ export async function transferNearFromUser(
  * Keeps ~0.025 SUI to ensure gas coverage for future transactions.
  */
 /** The user's Solana keypair, refusing to sign if the stored key does not match the stored address. */
-function solanaKeypairFor(user: UserRecord): ReturnType<typeof restoreSolanaKeypair> {
-  const keypair = restoreSolanaKeypair(user.solana_private_key_enc!, MASTER_KEY);
-  if (keypair.publicKey.toBase58() !== user.solana_address) {
+function solanaKeypairFor(address: string, encryptedKey: string): ReturnType<typeof restoreSolanaKeypair> {
+  const keypair = restoreSolanaKeypair(encryptedKey, MASTER_KEY);
+  if (keypair.publicKey.toBase58() !== address) {
     throw new Error('Solana wallet key does not match the stored address. Please contact support.');
   }
   return keypair;
@@ -3678,16 +3678,20 @@ export async function withdrawSolanaFunds(
   const rawUser = await getUserByTelegramId(telegramId);
   if (!rawUser) throw new Error('User not found. Run /start first.');
   const user = await ensureUserSolanaWallet(rawUser);
-  if (!user.solana_address || !user.solana_private_key_enc) {
+  const activeSolWallet = await getActiveWallet(user.id, 'solana').catch(() => null);
+  const solAddress = activeSolWallet?.address || user.solana_address;
+  const solPrivateKeyEnc = activeSolWallet?.encrypted_private_key || user.solana_private_key_enc;
+
+  if (!solAddress || !solPrivateKeyEnc) {
     throw new Error('Solana wallet not configured. Please send /start.');
   }
   destination = destination.trim();
   if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
-  if (destination === user.solana_address) throw new Error('Cannot withdraw to your own wallet address.');
+  if (destination === solAddress) throw new Error('Cannot withdraw to your own wallet address.');
 
-  const keypair = solanaKeypairFor(user);
+  const keypair = solanaKeypairFor(solAddress, solPrivateKeyEnc);
   const [bal, dest] = await Promise.all([
-    getSolanaBalance(user.solana_address, true),
+    getSolanaBalance(solAddress, true),
     checkSolanaWithdrawDestination(destination),
   ]);
   // The network fee is exact, so "all" leaves the wallet at 0. Solana refuses
@@ -3716,7 +3720,9 @@ export async function withdrawSolanaFunds(
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
   recordUserTrade(user.id, 'solana', 0);
-  return { txHash: sig, amountWithdrawn: lamportsToSol(lamports).toFixed(4), destination };
+  const formattedWithdrawn = lamportsToSol(lamports);
+  const displayAmount = formattedWithdrawn < 0.0001 ? formattedWithdrawn.toFixed(6) : formattedWithdrawn.toFixed(4);
+  return { txHash: sig, amountWithdrawn: displayAmount, destination };
 }
 
 /**
@@ -3731,18 +3737,22 @@ export async function withdrawSolanaTokenFunds(
   const rawUser = await getUserByTelegramId(telegramId);
   if (!rawUser) throw new Error('User not found. Run /start first.');
   const user = await ensureUserSolanaWallet(rawUser);
-  if (!user.solana_address || !user.solana_private_key_enc) {
+  const activeSolWallet = await getActiveWallet(user.id, 'solana').catch(() => null);
+  const solAddress = activeSolWallet?.address || user.solana_address;
+  const solPrivateKeyEnc = activeSolWallet?.encrypted_private_key || user.solana_private_key_enc;
+
+  if (!solAddress || !solPrivateKeyEnc) {
     throw new Error('Solana wallet not configured. Please send /start.');
   }
   destination = destination.trim();
   if (!isSolanaAddress(destination)) throw new Error('Invalid Solana destination address.');
-  if (destination === user.solana_address) throw new Error('Cannot withdraw to your own wallet address.');
+  if (destination === solAddress) throw new Error('Cannot withdraw to your own wallet address.');
   await checkSolanaWithdrawDestination(destination);
 
   // Straight from the chain: the holdings index can lag right after a buy.
   const [held, solBal] = await Promise.all([
-    getSolanaTokenBalance(user.solana_address, mint, true),
-    getSolanaBalance(user.solana_address, true),
+    getSolanaTokenBalance(solAddress, mint, true),
+    getSolanaBalance(solAddress, true),
   ]);
   if (!held || held.raw <= 0n) throw new Error('You do not hold this token in your Solana wallet.');
   if (solBal.lamports < 3_000_000n) {
@@ -3759,7 +3769,7 @@ export async function withdrawSolanaTokenFunds(
     raw = BigInt(Math.floor(human * Math.pow(10, decimals)));
     if (raw > held.raw) raw = held.raw;
   }
-  const keypair = solanaKeypairFor(user);
+  const keypair = solanaKeypairFor(solAddress, solPrivateKeyEnc);
   const sig = await transferSolanaToken(keypair, mint, destination, raw, decimals, held.programId || info?.tokenProgram || '', raw === held.raw);
 
   // Keep the bot's position in step with the wallet.
