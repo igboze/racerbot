@@ -2,7 +2,8 @@ node_modules/
 dist/
 *.wasm
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .cache/
 .turbo/
@@ -15,5 +16,15 @@ scratch*
 *.scratch.*
 *.vsix
 
-# Keys written by deploy scripts
+# Keys and credentials
 .secrets/
+*.pem
+*.key
+*.cert
+*.crt
+id_rsa*
+id_ed25519*
+.DS_Store
+Thumbs.db
+*.bak
+*.backup
