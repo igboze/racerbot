@@ -92,6 +92,7 @@ beforeEach(() => {
   clearRacerShareCache();
   delete process.env.PUBLIC_URL;
   delete process.env.RAILWAY_PUBLIC_DOMAIN;
+  delete process.env.RACER_CARD_URL;
   vi.mocked(generateRacerCardImage).mockClear();
 });
 
@@ -307,7 +308,7 @@ describe('sharing with the card image', () => {
   ];
 
   it('points the X and Telegram buttons at the card page, keyed by rank', async () => {
-    process.env.PUBLIC_URL = 'https://racer.example/';
+    process.env.RACER_CARD_URL = 'https://racer.example/';
     rows = circuitRows();
     const { commands } = fakeBot();
     const ctx = fakeCtx(111);
@@ -318,24 +319,42 @@ describe('sharing with the card image', () => {
     expect(new URL(tg.url).searchParams.get('url')).toBe(page);
   });
 
-  it('uses RACER_CARD_URL (the website) over the server address', async () => {
+  it('never puts the Railway server address in a share, page or preview', async () => {
+    // The server's own address is set, the website is not: share the bot link
+    process.env.PUBLIC_URL = 'https://racerbot-production.up.railway.app';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'racerbot-production.up.railway.app';
+    rows = circuitRows();
+    const { commands } = fakeBot();
+    const ctx = fakeCtx(111);
+    await commands.get('card')!(ctx);
+    const extra = (ctx.replyWithPhoto.mock.calls[0] as any)[1];
+    expect(JSON.stringify(extra)).not.toContain('railway');
+    expect(new URL(buttons(extra)[0].url).searchParams.get('url')).toBe('https://t.me/racertradingbot?start=SPEEDY');
+
+    // A Railway address put in RACER_CARD_URL by mistake is refused too
+    process.env.RACER_CARD_URL = 'https://racerbot-production.up.railway.app';
+    const again = fakeCtx(111);
+    await commands.get('card')!(again);
+    expect(JSON.stringify((again.replyWithPhoto.mock.calls[0] as any)[1])).not.toContain('railway');
+
+    // Someone opening the page on the Railway address still gets no Railway links in it
+    const page = await call(fakeApp(), '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
+    expect(page.body).not.toContain('railway');
+  });
+
+  it('uses the website in RACER_CARD_URL for shares, page and preview', async () => {
     process.env.PUBLIC_URL = 'https://racerbot-production.up.railway.app';
     process.env.RACER_CARD_URL = 'https://racer.example/';
-    try {
-      rows = circuitRows();
-      const { commands } = fakeBot();
-      const ctx = fakeCtx(111);
-      await commands.get('card')!(ctx);
-      const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
-      expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8');
+    rows = circuitRows();
+    const { commands } = fakeBot();
+    const ctx = fakeCtx(111);
+    await commands.get('card')!(ctx);
+    const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
+    expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8');
 
-      const routes = fakeApp();
-      const page = await call(routes, '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
-      expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8"');
-      expect(page.body).not.toContain('railway.app');
-    } finally {
-      delete process.env.RACER_CARD_URL;
-    }
+    const page = await call(fakeApp(), '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
+    expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8"');
+    expect(page.body).not.toContain('railway');
   });
 
   it('falls back to the bot link without a public URL', async () => {
@@ -348,7 +367,7 @@ describe('sharing with the card image', () => {
   });
 
   it('serves a page with the large-image card tags and no private data', async () => {
-    process.env.PUBLIC_URL = 'https://racer.example';
+    process.env.RACER_CARD_URL = 'https://racer.example';
     ranks.set('u1', { user_id: 'u1', best_key: 8, announced_key: 8 });
     rows = circuitRows();
     const routes = fakeApp();
@@ -365,7 +384,7 @@ describe('sharing with the card image', () => {
   });
 
   it('serves the preview and card PNGs', async () => {
-    process.env.PUBLIC_URL = 'https://racer.example';
+    process.env.RACER_CARD_URL = 'https://racer.example';
     rows = circuitRows();
     const routes = fakeApp();
     const route = '/c/:code/preview.png';
@@ -380,7 +399,7 @@ describe('sharing with the card image', () => {
   });
 
   it('is read-only and only matches an exact referral code', async () => {
-    process.env.PUBLIC_URL = 'https://racer.example';
+    process.env.RACER_CARD_URL = 'https://racer.example';
     rows = circuitRows();
     vi.mocked(db.seedRacerRank).mockClear();
     vi.mocked(db.claimRacerRankUp).mockClear();

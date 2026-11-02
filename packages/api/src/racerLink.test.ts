@@ -147,6 +147,7 @@ beforeEach(() => {
   card.clearRacerVolumeCache();
   card.clearRacerShareCache();
   delete process.env.PUBLIC_URL;
+  delete process.env.RACER_CARD_URL;
   vi.mocked(db.linkRacerAccounts).mockClear();
 });
 
@@ -327,7 +328,7 @@ describe('/api/racer-card', () => {
   });
 
   it('returns the card without amounts, tokens or addresses', async () => {
-    process.env.PUBLIC_URL = 'https://racer.example';
+    process.env.RACER_CARD_URL = 'https://racer.example';
     session.user = users.tg;
     rows = [row({ input_amount: '150' }), row({ side: 'sell', input_amount: '140', created_at: new Date('2026-10-03T12:00:00Z') })];
     const r = res();

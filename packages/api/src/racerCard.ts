@@ -57,14 +57,22 @@ export function rankUpPromptMode(): 'level' | 'tier' {
 
 const BOT_LINK = 'https://t.me/racertradingbot';
 
-/** Same rule as config.ts, read at call time so tests can set it. */
+/**
+ * Address of the public card pages, as people see it in shared posts: the
+ * website domain in RACER_CARD_URL, never the server's own address. Without
+ * it, shares use the plain bot link. A Railway host is refused even when set,
+ * so the production server's address can never end up in a post.
+ */
 function publicBaseUrl(): string {
-  // RACER_CARD_URL is the address people see in shared posts (your website domain,
-  // pointed at this server); PUBLIC_URL is the server's own address for webhooks
-  const raw = process.env.RACER_CARD_URL
-    || process.env.PUBLIC_URL
-    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
-  return raw.trim().replace(/\/+$/, '');
+  const raw = (process.env.RACER_CARD_URL || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || /(^|\.)railway\.app$/i.test(url.hostname)) return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
 }
 
 /**

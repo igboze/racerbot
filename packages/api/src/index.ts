@@ -189,11 +189,14 @@ async function main(): Promise<void> {
       try {
         const info = await bot.telegram.getWebhookInfo().catch((e: any) => ({ error: e?.message }));
         const me = await bot.telegram.getMe().catch((e: any) => ({ error: e?.message }));
+        // Public endpoint: health only. Never the server address or the webhook URL.
+        const hook = info as any;
         res.json({
           success: true,
-          bot: me,
-          webhook: info,
-          publicUrl: PUBLIC_URL,
+          bot: (me as any)?.username ?? null,
+          webhookSet: Boolean(hook?.url),
+          pendingUpdates: hook?.pending_update_count ?? null,
+          lastErrorDate: hook?.last_error_date ?? null,
           hasWebhookSecret: Boolean(TELEGRAM_WEBHOOK_SECRET),
         });
       } catch (err: any) {
