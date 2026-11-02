@@ -180,6 +180,34 @@ export async function getAuthSession(sessionId: string): Promise<AuthSessionData
   return inMemorySessions.get(sessionId) || null;
 }
 
+const AUTH_SESSION_ID_RE = /^sess_[0-9a-f]{32}$/;
+
+/**
+ * A login request still waiting for approval in the bot, or null. The bot
+ * shows this before linking, so tapping a link alone never logs anyone in.
+ */
+export async function getPendingAuthSession(sessionId: string): Promise<AuthSessionData | null> {
+  if (!AUTH_SESSION_ID_RE.test(sessionId)) return null;
+  const session = await getAuthSession(sessionId);
+  if (!session || session.status !== 'pending') return null;
+  if (Date.now() - session.createdAt > SESSION_TTL_SECONDS * 1000) return null;
+  return session;
+}
+
+/** Decline a pending login: the web page sees status 'expired' and stops waiting. */
+export async function rejectAuthSession(sessionId: string): Promise<boolean> {
+  const session = await getPendingAuthSession(sessionId);
+  if (!session) return false;
+  session.status = 'expired';
+  const redis = getAuthRedis();
+  if (redis) {
+    await redis.set(`auth:session:${sessionId}`, JSON.stringify(session), SESSION_TTL_SECONDS);
+  } else {
+    inMemorySessions.set(sessionId, session);
+  }
+  return true;
+}
+
 /**
  * 4. Verify an auth token sent in the Authorization: Bearer header
  */

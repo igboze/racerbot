@@ -276,6 +276,9 @@
                 onStatusChange('linked', profile);
               }
               resolve({ profile, deepLink });
+            } else if (checkData.success && checkData.session?.status === 'expired') {
+              this.stopPairing();
+              reject(new Error('Login was denied in Telegram.'));
             }
           } catch (pollErr) {
             console.warn('[RacerConnect] Poll error:', pollErr);
