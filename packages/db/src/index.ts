@@ -257,6 +257,7 @@ export {
 } from './db.js';
 export {
   getNearRacerFills,
+  getUserByExactReferralCode,
   getRacerRank,
   seedRacerRank,
   raiseRacerBestKey,

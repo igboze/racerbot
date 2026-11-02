@@ -368,3 +368,74 @@ export async function generateRacerCardImage(d: RacerCardImageData): Promise<Buf
     return null;
   }
 }
+
+/** Replace an <img> src placeholder in a satori-html tree. */
+function setImageSrc(node: any, placeholder: string, src: string): void {
+  if (!node || typeof node !== 'object') return;
+  if (node.props?.src === placeholder) node.props.src = src;
+  const kids = node.props?.children;
+  for (const k of Array.isArray(kids) ? kids : [kids]) setImageSrc(k, placeholder, src);
+}
+
+const OG_W = 1200;
+const OG_H = 630;
+
+/**
+ * 1200x630 link-preview image for X / Telegram (summary_large_image). A tall
+ * card would be cropped in the timeline, so the card sits on the left and the
+ * rank is spelled out on the right. Takes the already-rendered card PNG.
+ */
+export async function generateRacerCardOgImage(d: RacerCardImageData, cardPng: Buffer): Promise<Buffer | null> {
+  initAssets();
+  if (!fontBold || !fontMedium) return null;
+
+  try {
+    const tier = Math.max(0, Math.min(TIER_THEMES.length - 1, d.tierIndex));
+    const t = tierTheme(tier);
+    const holo = tier >= 6;
+    const metalCss = `linear-gradient(135deg, ${(holo ? HOLO : t.metal).join(', ')})`;
+    const f = FINISHES[d.finish];
+    const title = d.rankTitle.toUpperCase();
+    const cardH = OG_H - 60;
+    const cardW = Math.round((cardH * W) / H);
+    const chip = (text: string, bg: string, ink: string) =>
+      `<div style="display: flex; padding: 10px 22px; margin-right: 14px; border-radius: 30px; background: ${bg}; color: ${ink}; font-size: 22px; font-weight: 900; letter-spacing: 2px;">${text}</div>`;
+    const chips = [
+      d.hasTrades ? chip(f.label, f.plate, f.ink) : '',
+      d.topPercent !== null ? chip(`TOP ${d.topPercent}%`, metalCss, '#0a0d14') : '',
+    ].join('');
+    const tagline = d.hasTrades ? 'Think you can catch me?' : 'Just joined the race';
+
+    const ogHtml = html(`
+      <div style="display: flex; align-items: center; width: ${OG_W}px; height: ${OG_H}px; font-family: Orbitron; color: #ffffff; background: linear-gradient(135deg, ${t.bgTop} 0%, ${t.bgBottom} 100%);">
+        <img src="__RACER_CARD__" style="width: ${cardW}px; height: ${cardH}px; margin-left: 40px; border-radius: 22px;" />
+        <div style="display: flex; flex-direction: column; margin-left: 52px; width: ${OG_W - cardW - 140}px;">
+          <div style="display: flex; font-size: 24px; font-weight: 700; letter-spacing: 5px; color: ${t.light};">NEAR RACER CARD</div>
+          <div style="display: flex; margin-top: 18px; font-size: ${title.length > 12 ? 60 : 72}px; font-weight: 900; line-height: 1;">${esc(title)}</div>
+          <div style="display: flex; margin-top: 14px; font-size: 30px; font-weight: 700; letter-spacing: 8px; color: ${t.accent};">LEVEL ${esc(d.levelLabel)}</div>
+          <div style="display: flex; margin-top: 30px;">${chips}</div>
+          <div style="display: flex; margin-top: 40px; font-size: 30px; font-weight: 900;">${tagline}</div>
+          <div style="display: flex; margin-top: 10px; font-size: 24px; font-weight: 500; color: #b9c6d8;">Race me: t.me/racertradingbot</div>
+        </div>
+      </div>
+    `);
+
+    // The card goes into the parsed tree, not the HTML string: satori-html is very
+    // slow on a half-megabyte attribute
+    setImageSrc(ogHtml, '__RACER_CARD__', `data:image/png;base64,${cardPng.toString('base64')}`);
+
+    const svg = await satori(ogHtml as any, {
+      width: OG_W,
+      height: OG_H,
+      fonts: [
+        { name: 'Orbitron', data: fontMedium, weight: 500, style: 'normal' },
+        { name: 'Orbitron', data: fontBold, weight: 700, style: 'normal' },
+        { name: 'Orbitron', data: fontBlack || fontBold, weight: 900, style: 'normal' },
+      ],
+    });
+    return Buffer.from(new Resvg(svg, { fitTo: { mode: 'width', value: OG_W } }).render().asPng());
+  } catch (err: any) {
+    console.error('[RACER_CARD_IMAGE] Error generating Racer Card preview image:', err);
+    return null;
+  }
+}

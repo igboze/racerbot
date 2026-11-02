@@ -4902,3 +4902,16 @@ export async function claimRacerRankUp(userId: string, key: number): Promise<boo
   );
   return (result.rowCount ?? 0) > 0;
 }
+
+/**
+ * Exact referral-code match only. Public pages use this: unlike
+ * getUserByReferralCode it never matches usernames or prefixes, so a rank
+ * cannot be looked up by guessing someone's Telegram name.
+ */
+export async function getUserByExactReferralCode(referralCode: string): Promise<UserRecord | null> {
+  const trimmed = referralCode.trim();
+  if (!trimmed) return null;
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE referral_code = $1', [trimmed]);
+  return result.rows[0] ? rowToUser(result.rows[0]) : null;
+}

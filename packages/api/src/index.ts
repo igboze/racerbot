@@ -11,6 +11,7 @@ import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, typ
 import { getDb, runMigrations } from '@racerbot/db';
 import apiRouter, { serveRacerHtml, serveRacerAlphaHtml, serveBubbleMapHtml, serveCompetitionHtml, serveFleetHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
+import { registerRacerCardPages } from './racerCard.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { startBuyAlertListener } from './buyAlerts.js';
@@ -386,6 +387,9 @@ async function main(): Promise<void> {
     serveCompetitionHtml(res, compId);
   });
 
+
+  // Public NEAR Racer Card pages: X / Telegram unfurl these into the card image
+  registerRacerCardPages(app);
 
   // Add monitoring routes
   monitoringRoutes(app);

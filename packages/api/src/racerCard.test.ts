@@ -23,6 +23,7 @@ vi.mock('@racerbot/db', () => ({
   getNearRacerFills: vi.fn(async (userId?: string) => rows.filter(r => !userId || r.user_id === userId)),
   getUserByTelegramId: vi.fn(async (tg: number) => Object.values(users).find(u => u.telegram_id === tg) ?? null),
   getUserById: vi.fn(async (id: string) => users[id] ?? null),
+  getUserByExactReferralCode: vi.fn(async (code: string) => Object.values(users).find(u => u.referral_code === code) ?? null),
   generateReferralCode: vi.fn(async (_id: string, name: string) => `${name.toUpperCase()}1`),
   getRacerRank: vi.fn(async (id: string) => (ranks.has(id) ? { ...ranks.get(id)! } : null)),
   seedRacerRank: vi.fn(async (id: string, best: number, announced: number) => {
@@ -43,9 +44,11 @@ vi.mock('@racerbot/db', () => ({
 }));
 vi.mock('./racerCardImageGenerator.js', () => ({
   generateRacerCardImage: vi.fn(async () => Buffer.from('png')),
+  generateRacerCardOgImage: vi.fn(async () => Buffer.from('preview-png')),
 }));
 
-const { registerRacerCard, maybeAnnounceRankUp, clearRacerVolumeCache } = await import('./racerCard.js');
+const { registerRacerCard, registerRacerCardPages, maybeAnnounceRankUp, clearRacerVolumeCache, clearRacerShareCache } = await import('./racerCard.js');
+const db = await import('@racerbot/db');
 const { generateRacerCardImage } = await import('./racerCardImageGenerator.js');
 
 const row = (o: Partial<Row>): Row => ({
@@ -83,6 +86,9 @@ beforeEach(() => {
   rows = [];
   ranks = new Map();
   clearRacerVolumeCache();
+  clearRacerShareCache();
+  delete process.env.PUBLIC_URL;
+  delete process.env.RAILWAY_PUBLIC_DOMAIN;
   vi.mocked(generateRacerCardImage).mockClear();
 });
 
@@ -272,9 +278,104 @@ describe('rank-up announcements', () => {
   });
 });
 
+describe('sharing with the card image', () => {
+  function fakeApp() {
+    const routes = new Map<string, Function>();
+    const app: any = { get: (paths: string | string[], fn: Function) => [paths].flat().forEach(p => routes.set(p, fn)) };
+    registerRacerCardPages(app);
+    return routes;
+  }
+  function fakeRes() {
+    const res: any = { statusCode: 200, headers: {} as Record<string, string>, body: undefined as any };
+    res.status = (c: number) => { res.statusCode = c; return res; };
+    res.set = (k: string, v: string) => { res.headers[k] = v; return res; };
+    res.send = (b: any) => { res.body = b; return res; };
+    res.redirect = (c: number, url: string) => { res.statusCode = c; res.headers.Location = url; return res; };
+    return res;
+  }
+  const call = async (routes: Map<string, Function>, route: string, params: any, path: string, query: any = {}) => {
+    const res = fakeRes();
+    await routes.get(route)!({ params, path, query }, res);
+    return res;
+  };
+  const circuitRows = () => [
+    row({ input_amount: '150', created_at: new Date('2026-10-01T12:00:00Z') }),
+    row({ side: 'sell', input_amount: '140', created_at: new Date('2026-10-03T12:00:00Z') }),
+  ];
+
+  it('points the X and Telegram buttons at the card page, keyed by rank', async () => {
+    process.env.PUBLIC_URL = 'https://racer.example/';
+    rows = circuitRows();
+    const { commands } = fakeBot();
+    const ctx = fakeCtx(111);
+    await commands.get('card')!(ctx);
+    const [x, tg] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
+    const page = 'https://racer.example/c/SPEEDY?r=8';
+    expect(new URL(x.url).searchParams.get('url')).toBe(page);
+    expect(new URL(tg.url).searchParams.get('url')).toBe(page);
+  });
+
+  it('falls back to the bot link without a public URL', async () => {
+    rows = circuitRows();
+    const { commands } = fakeBot();
+    const ctx = fakeCtx(111);
+    await commands.get('card')!(ctx);
+    const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
+    expect(new URL(x.url).searchParams.get('url')).toBe('https://t.me/racertradingbot?start=SPEEDY');
+  });
+
+  it('serves a page with the large-image card tags and no private data', async () => {
+    process.env.PUBLIC_URL = 'https://racer.example';
+    ranks.set('u1', { user_id: 'u1', best_key: 8, announced_key: 8 });
+    rows = circuitRows();
+    const routes = fakeApp();
+    const res = await call(routes, '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toContain('text/html');
+    const html: string = res.body;
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(html).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
+    expect(html).toContain('<meta name="twitter:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
+    expect(html).toContain('Circuit Racer II on RacerBot');
+    expect(html).toContain('https://t.me/racertradingbot?start=SPEEDY');
+    expect(html).not.toMatch(/secret-token|\b290\b|\b150\b|\b140\b/);
+  });
+
+  it('serves the preview and card PNGs', async () => {
+    process.env.PUBLIC_URL = 'https://racer.example';
+    rows = circuitRows();
+    const routes = fakeApp();
+    const route = '/c/:code/preview.png';
+    const preview = await call(routes, route, { code: 'SPEEDY' }, '/c/SPEEDY/preview.png');
+    expect(preview.headers['Content-Type']).toBe('image/png');
+    expect(preview.body.toString()).toBe('preview-png');
+    const card = await call(routes, '/c/:code/card.png', { code: 'SPEEDY' }, '/c/SPEEDY/card.png');
+    expect(card.body.toString()).toBe('png');
+    // Second request is served from the cache
+    await call(routes, route, { code: 'SPEEDY' }, '/c/SPEEDY/preview.png');
+    expect(generateRacerCardImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('is read-only and only matches an exact referral code', async () => {
+    process.env.PUBLIC_URL = 'https://racer.example';
+    rows = circuitRows();
+    vi.mocked(db.seedRacerRank).mockClear();
+    vi.mocked(db.claimRacerRankUp).mockClear();
+    const routes = fakeApp();
+    await call(routes, '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY');
+    expect(db.seedRacerRank).not.toHaveBeenCalled();
+    expect(db.claimRacerRankUp).not.toHaveBeenCalled();
+    expect(ranks.size).toBe(0);
+
+    expect((await call(routes, '/c/:code', { code: 'speedy' }, '/c/speedy')).statusCode).toBe(404);
+    expect((await call(routes, '/c/:code', { code: 'bad code!' }, '/c/bad')).statusCode).toBe(404);
+    expect((await call(routes, '/c/:code/card.png', { code: 'nobody' }, '/c/nobody/card.png')).statusCode).toBe(404);
+  });
+});
+
 describe('card image', () => {
   it('renders a 1080x1350 PNG (Legend, the busiest tier)', async () => {
-    const { generateRacerCardImage: real } = await vi.importActual<typeof import('./racerCardImageGenerator.js')>('./racerCardImageGenerator.js');
+    const { generateRacerCardImage: real, generateRacerCardOgImage: realPreview } = await vi.importActual<typeof import('./racerCardImageGenerator.js')>('./racerCardImageGenerator.js');
     for (const tierIndex of [6]) {
       const png = await real({
         rankTitle: tierIndex ? 'Legend' : 'Rookie', levelLabel: 'II', tierIndex, tierCount: 7, finish: 'holo', topPercent: 8,
@@ -285,6 +386,14 @@ describe('card image', () => {
       expect(png!.subarray(1, 4).toString()).toBe('PNG');
       expect(png!.readUInt32BE(16)).toBe(1080);
       expect(png!.readUInt32BE(20)).toBe(1350);
+      // Landscape link preview for X / Telegram
+      const preview = await realPreview({
+        rankTitle: 'Legend', levelLabel: 'II', tierIndex, tierCount: 7, finish: 'holo', topPercent: 8,
+        progressPct: 40, nextLevelName: 'Legend III', hasTrades: true, badges: [],
+        referralCode: 'SPEEDY', referralLink: 'https://t.me/racertradingbot?start=SPEEDY',
+      }, png!);
+      expect(preview!.readUInt32BE(16)).toBe(1200);
+      expect(preview!.readUInt32BE(20)).toBe(630);
     }
-  }, 60_000);
+  }, 90_000);
 });
