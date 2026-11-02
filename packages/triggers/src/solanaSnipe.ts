@@ -55,6 +55,7 @@ async function fireSnipe(order: SnipeOrderRecord, mint: string, venue: 'pumpfun'
   const signal: AutoBuySignal = {
     type: 'auto_buy_signal',
     chain: 'solana',
+    trade_currency: 'sol',
     user_id: order.user_id,
     token_address: mint,
     amount_near: order.amount_near.toString(), // SOL amount for Solana orders

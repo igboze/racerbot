@@ -1244,6 +1244,7 @@ async function checkSnipeSignalsOnly(
         snipe_order_id: order.id,
         snipe_trigger_id: triggerId,
         snipe_type: order.snipe_type,
+        trade_currency: order.trade_currency || 'near',
       };
       await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
       console.log(`[DETECTOR] Snipe ${order.snipe_type} order ${order.id} fired for ${tokenAddress} (user ${order.user_id})`);
@@ -1337,6 +1338,7 @@ async function checkAutoBuySignals(
         amount_near: user.auto_buy_amount_near.toString(),
         venue,
         timestamp: now,
+        trade_currency: (user.near_trade_currency as any) || 'near',
       };
       await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
     }

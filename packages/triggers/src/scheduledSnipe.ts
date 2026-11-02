@@ -41,6 +41,7 @@ async function checkSnipeSignals(
         snipe_order_id: order.id,
         snipe_trigger_id: triggerId,
         snipe_type: order.snipe_type,
+        trade_currency: order.trade_currency || 'near',
       };
       await redis.publish(CHANNELS.AUTO_BUY_SIGNAL, JSON.stringify(signal));
       logger.info(`[TRIGGERS:SNIPE] Snipe order ${order.id} fired for ${tokenAddress} (user ${order.user_id})`);

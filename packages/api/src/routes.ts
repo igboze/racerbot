@@ -2377,8 +2377,10 @@ function formatUtcDateTime(d: Date): string {
 
 // ── Helper: Build Snipe Rules Dashboard ─────────────────────────────────────
 export async function buildSnipeDashboard(user: UserRecord) {
+  const isUsdcMode = user.near_trade_currency === 'usdc';
+  const currencyLabel = isUsdcMode ? 'USDC' : 'NEAR';
   const autoBuy = user.auto_buy_enabled;
-  const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : 1;
+  const autoAmt = user.auto_buy_amount_near ? Number(user.auto_buy_amount_near) : (isUsdcMode ? 10 : 1);
   const minLiq = user.auto_buy_min_liquidity_near ? Number(user.auto_buy_min_liquidity_near) : 0;
   const maxMcap = user.auto_buy_max_market_cap_usd != null ? Number(user.auto_buy_max_market_cap_usd) : 100000;
   const maxMcapStr = maxMcap > 0 ? (maxMcap >= 1000 ? `$${Math.round(maxMcap / 1000)}K` : `$${maxMcap}`) : 'No Limit';
@@ -2396,15 +2398,17 @@ export async function buildSnipeDashboard(user: UserRecord) {
           const timing = o.execute_after && new Date(o.execute_after) > new Date()
             ? ` (⏰ ${formatUtcTime(new Date(o.execute_after))})`
             : '';
-          return `• 🟢 ${target} — *${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}*${timing}`;
+          const unit = o.trade_currency ? o.trade_currency.toUpperCase() : snipeUnit(o.token_address || o.deployer_address || '', user);
+          return `• 🟢 ${target} — *${o.amount_near} ${unit}*${timing}`;
         })
         .join('\n');
   }
 
   const text =
     `🎯 *Snipe Rules*\n\n` +
+    `• *Trading Currency*: ${isUsdcMode ? '💵 USDC Only (Ref Finance routing)' : '⬛ NEAR'}\n` +
     `• *Auto-Buy Launches*: ${autoBuy ? '🟢 Enabled' : '🔴 Disabled'}\n` +
-    `• *Auto-Buy Amount*: \`${autoAmt} NEAR\`\n` +
+    `• *Auto-Buy Amount*: \`${autoAmt} ${currencyLabel}\`\n` +
     `• *Min Liquidity*: \`${minLiq} NEAR\`\n` +
     `• *Max Market Cap*: \`${maxMcapStr}\`${activeText}\n\n` +
     `*Targeted Snipes*:\n` +
@@ -2418,6 +2422,20 @@ export async function buildSnipeDashboard(user: UserRecord) {
       'danger'
     ),
   ]);
+
+  const presetButtons = isUsdcMode
+    ? [
+        cb(`Auto: ${autoAmt === 5 ? '✓ ' : ''}$5`, 'set:auto_amt:5', 'primary'),
+        cb(`${autoAmt === 10 ? '✓ ' : ''}$10`, 'set:auto_amt:10', 'primary'),
+        cb(`${autoAmt === 25 ? '✓ ' : ''}$25`, 'set:auto_amt:25', 'primary'),
+        cb(`${autoAmt === 50 ? '✓ ' : ''}$50`, 'set:auto_amt:50', 'primary'),
+      ]
+    : [
+        cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
+        cb(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1', 'primary'),
+        cb(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2', 'primary'),
+        cb(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5', 'primary'),
+      ];
 
   const keyboard = Markup.inlineKeyboard([
     ...cancelButtons,
@@ -2433,12 +2451,7 @@ export async function buildSnipeDashboard(user: UserRecord) {
       cb('🎯 Snipe Token CA', 'snipe_token_start', 'success'),
       cb('👤 Snipe Dev', 'snipe_dev_start', 'success'),
     ],
-    [
-      cb(`Auto: ${autoAmt === 0.5 ? '✓ ' : ''}0.5N`, 'set:auto_amt:0.5', 'primary'),
-      cb(`${autoAmt === 1 ? '✓ ' : ''}1N`, 'set:auto_amt:1', 'primary'),
-      cb(`${autoAmt === 2 ? '✓ ' : ''}2N`, 'set:auto_amt:2', 'primary'),
-      cb(`${autoAmt === 5 ? '✓ ' : ''}5N`, 'set:auto_amt:5', 'primary'),
-    ],
+    presetButtons,
     [
       cb(`Min Liq: ${minLiq === 0 ? '✓ ' : ''}0N`, 'set:min_liq:0', 'primary'),
       cb(`${minLiq === 10 ? '✓ ' : ''}10N`, 'set:min_liq:10', 'primary'),
@@ -2452,7 +2465,7 @@ export async function buildSnipeDashboard(user: UserRecord) {
       cb(`${maxMcap === 0 ? '✓ ' : ''}No Limit`, 'set:max_mcap:0', 'primary'),
     ],
     [
-      cb('✏️ Custom Auto-Buy', 'prompt:custom_auto_buy', 'primary'),
+      cb(`✏️ Custom Auto-Buy (${currencyLabel})`, 'prompt:custom_auto_buy', 'primary'),
       cb('✏️ Custom Min Liq', 'prompt:custom_min_liq', 'primary'),
       cb('✏️ Custom Max Mcap', 'prompt:custom_max_mcap', 'primary'),
     ],
@@ -2542,9 +2555,11 @@ export async function buildCopyTradingDashboard(user: UserRecord) {
 }
 
 // ── Helper: Build DCA Dashboard ──────────────────────────────────────────────
-/** Native unit for a snipe / copy target: SOL for Solana addresses, NEAR otherwise. */
-function snipeUnit(addr: string): string {
-  return isSolanaAddress(addr) ? 'SOL' : 'NEAR';
+/** Native unit for a snipe / copy target: SOL for Solana addresses, USDC if user trades in USDC, NEAR otherwise. */
+function snipeUnit(addr: string, user?: UserRecord | null): string {
+  if (isSolanaAddress(addr)) return 'SOL';
+  if (user?.near_trade_currency === 'usdc') return 'USDC';
+  return 'NEAR';
 }
 
 export async function buildDcaDashboard(user: UserRecord) {
@@ -3237,12 +3252,12 @@ export async function executeBuyHelper(
 
     if (isUsdcOnlyBuy) {
       const usdcRaw = BigInt(usdcBalStr || '0');
-      const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
+      const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
       const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
       const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
       const usdcMaxNearYocto = BigInt(Math.floor(usdcMaxNear * 1e24));
       if (nativeBal < minGasYocto) {
-        throw new Error(`Insufficient NEAR for gas. USDC-Only mode still requires at least 0.08 NEAR in your wallet for network gas & storage. You currently have ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`);
+        throw new Error(`Insufficient NEAR for gas. USDC-Only mode still requires at least 0.04 NEAR in your wallet for network gas & storage. You currently have ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`);
       }
       if (usdcRaw <= 0n || (usdcMaxNearYocto * 102n) / 100n < amountInBigInt) {
         const neededUsdc = ((Number(amountInBigInt) / 1e24) * effectiveNearUsd).toFixed(2);
@@ -3255,7 +3270,7 @@ export async function executeBuyHelper(
 
 
       const usdcRaw = BigInt(usdcBalStr || '0');
-      const minGasYocto = BigInt(Math.ceil(0.08 * 1e24));
+      const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
       const spendableNativeYocto = nativeBal > BigInt(Math.ceil(0.05 * 1e24)) ? nativeBal - BigInt(Math.ceil(0.05 * 1e24)) : 0n;
       const usdcHuman = Number(usdcRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
       const usdcMaxNear = effectiveNearUsd > 0 ? usdcHuman / effectiveNearUsd : 0;
@@ -6817,15 +6832,20 @@ export function setupRoutes(bot: Telegraf): void {
       return;
     }
 
+    const isSol = isSolanaAddress(tokenAddress);
+    const tradeCurrency = isSol ? 'sol' : (user.near_trade_currency === 'usdc' ? 'usdc' : 'near');
+    const unit = snipeUnit(tokenAddress, user);
+
     const order = await createSnipeOrder({
       user_id: user.id,
       snipe_type: 'token',
       token_address: tokenAddress,
       amount_near: amt,
+      trade_currency: tradeCurrency,
       execute_after: executeAfter,
     });
 
-    if (user && !isSolanaAddress(tokenAddress)) {
+    if (user && !isSol) {
       prewarmStorageDeposit(user, tokenAddress).catch(() => { });
     }
 
@@ -6840,7 +6860,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🎯 *Scheduled Snipe Armed!*\n\n` +
         `🪙 Token: \`${tokenAddress}\`\n` +
-        `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n` +
+        `💰 Amount: \`${amt} ${unit}\`\n` +
         `⏰ Trigger Time: \`${timeStr}\` (${diffText})\n\n` +
         `• The bot will *NOT* buy before this time, bypassing high launch dynamic fees.\n` +
         `• At the scheduled time, the bot will automatically execute your buy on the pool.\n` +
@@ -6863,12 +6883,18 @@ export function setupRoutes(bot: Telegraf): void {
     if (info?.tradeable) {
       const triggerId = await recordSnipeTrigger(order.id, tokenAddress, info.venue ?? '').catch(() => null);
       const procMsg = await ctx.reply(
-        `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} ${snipeUnit(tokenAddress)}\` now...`,
+        `⏳ *Snipe Executing...*\n\n\`${tokenAddress}\` is live — buying with \`${amt} ${unit}\` now...`,
         { parse_mode: 'Markdown' }
       ).catch(() => null);
       const onStage = makeStageEditor(ctx, procMsg, 'Snipe Executing');
       try {
-        const res = await executeBuyHelper(telegramId, tokenAddress, amt, onStage);
+        let buyAmt = amt;
+        if (!isSol && user.near_trade_currency === 'usdc') {
+          const nearUsdVal = await getNearUsdPrice().catch(() => 0);
+          const effUsd = nearUsdVal > 0 ? nearUsdVal : 5.0;
+          buyAmt = amt / effUsd;
+        }
+        const res = await executeBuyHelper(telegramId, tokenAddress, buyAmt, onStage);
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
         if (triggerId) await markSnipeTriggerFilled(triggerId, null).catch(() => { });
         await markSnipeOrderResult(order.id, true).catch(() => { });
@@ -6888,7 +6914,7 @@ export function setupRoutes(bot: Telegraf): void {
           await ctx.reply(
             `🎯 *Snipe Armed!*\n\n` +
             `🪙 Token: \`${tokenAddress}\`\n` +
-            `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n\n` +
+            `💰 Amount: \`${amt} ${unit}\`\n\n` +
             `Pool is registered but awaiting liquidity — your snipe order is armed and will fire automatically the instant liquidity appears!`,
             { parse_mode: 'Markdown' }
           ).catch(() => { });
@@ -6901,7 +6927,7 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.reply(
         `🎯 *Snipe Armed!*\n\n` +
         `🪙 Token: \`${tokenAddress}\`\n` +
-        `💰 Amount: \`${amt} ${snipeUnit(tokenAddress)}\`\n\n` +
+        `💰 Amount: \`${amt} ${unit}\`\n\n` +
         `The token is not tradable yet — your snipe fires automatically the moment a pool goes live. No need to watch the chart.`,
         {
           parse_mode: 'Markdown',
@@ -7045,10 +7071,13 @@ export function setupRoutes(bot: Telegraf): void {
       ? await getSolanaTokenInfo(tokenAddress).catch(() => null)
       : await near.getTokenMetadata(tokenAddress).catch(() => null);
     const sym = meta?.symbol || tokenAddress;
+    const isUsdc = !quickIsSol && user.near_trade_currency === 'usdc';
+    const unit = quickIsSol ? 'SOL' : (isUsdc ? 'USDC' : 'NEAR');
+    const exampleAmt = quickIsSol ? '0.25' : (isUsdc ? '10' : '2.5');
     await ctx.reply(
       `🎯 *Snipe ${sanitizeMd(sym)}*\n\n` +
       `Contract: \`${tokenAddress}\`\n\n` +
-      `Reply with the amount in ${quickIsSol ? 'SOL' : 'NEAR'} to snipe (e.g. \`${quickIsSol ? '0.25' : '2.5'}\`):\n` +
+      `Reply with the amount in ${unit} to snipe (e.g. \`${exampleAmt}\`):\n` +
       `Type /cancel to abort.`,
       { parse_mode: 'Markdown' }
     );
@@ -7113,7 +7142,8 @@ export function setupRoutes(bot: Telegraf): void {
         ? ` · ⏰ ${formatUtcTime(new Date(o.execute_after))}`
         : '';
       const err = o.status === 'failed' && o.last_error ? `\n   └ _${o.last_error.slice(0, 60)}_` : '';
-      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}*${timing}${extra}${err}`;
+      const unit = o.trade_currency ? o.trade_currency.toUpperCase() : snipeUnit(o.token_address || o.deployer_address || '', user);
+      return `${statusEmoji[o.status] ?? '•'} ${target} — *${o.amount_near} ${unit}*${timing}${extra}${err}`;
     });
 
     const buttons: any[] = [];
@@ -7180,11 +7210,12 @@ export function setupRoutes(bot: Telegraf): void {
       errText = `\n• *Last Failure Reason*: \`${o.last_error}\``;
     }
 
+    const orderUnit = o.trade_currency ? o.trade_currency.toUpperCase() : snipeUnit(o.token_address || o.deployer_address || '', user);
     const text =
       `🎯 *Snipe Order Details*\n\n` +
       `• *Status*: ${statusText[o.status] ?? o.status}\n` +
       `• *${targetLabel}*: \`${targetVal}\`\n` +
-      `• *Amount*: \`${o.amount_near} ${snipeUnit(o.token_address || o.deployer_address || '')}\`\n` +
+      `• *Amount*: \`${o.amount_near} ${orderUnit}\`\n` +
       `• *Trigger Timing*: \`${timingStr}\`\n` +
       `• *Type*: \`${o.snipe_type}\`\n` +
       `• *Created*: ${dateStr}${errText}\n\n` +
@@ -9907,7 +9938,8 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       const user = await getUserByTelegramId(telegramId);
       if (!user) return;
       const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
-      await ctx.answerCbQuery(`Auto-buy amount set to ${amt} NEAR`).catch(() => { });
+      const unit = user.near_trade_currency === 'usdc' ? 'USDC' : 'NEAR';
+      await ctx.answerCbQuery(`Auto-buy amount set to ${amt} ${unit}`).catch(() => { });
       const dash = await buildSnipeDashboard(updated);
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
     } catch (err: any) {
@@ -10017,12 +10049,16 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
   bot.action('prompt:custom_auto_buy', async (ctx) => {
     try {
       const telegramId = ctx.from!.id;
+      const user = await getUserByTelegramId(telegramId).catch(() => null);
+      const isUsdc = user?.near_trade_currency === 'usdc';
+      const unit = isUsdc ? 'USDC' : 'NEAR';
+      const exampleAmt = isUsdc ? '10' : '0.25';
       userPendingActions.set(telegramId, {
         action: 'custom_auto_buy',
         expiresAt: Date.now() + 120000,
       });
       await ctx.answerCbQuery().catch(() => { });
-      await ctx.reply('✏️ *Enter Auto-Buy Amount*\n\nReply with the NEAR amount per auto-buy (e.g. `0.25`):', { parse_mode: 'Markdown' }).catch(() => { });
+      await ctx.reply(`✏️ *Enter Auto-Buy Amount*\n\nReply with the ${unit} amount per auto-buy (e.g. \`${exampleAmt}\`):`, { parse_mode: 'Markdown' }).catch(() => { });
     } catch (err: any) {
       await ctx.answerCbQuery(getUserFriendlyError(err)).catch(() => { });
     }
@@ -10534,11 +10570,15 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         await ctx.reply('Usage for Solana: /snipe <mint> <amount_sol>\nExample: /snipe <mint> 0.25');
         return;
       }
-      const amountNear = parseFloat(args[1] ?? user.auto_buy_amount_near?.toString() ?? '1');
-      const unit = querySol ? 'SOL' : 'NEAR';
+      const isSol = querySol;
+      const isUsdc = !isSol && user.near_trade_currency === 'usdc';
+      const unit = isSol ? 'SOL' : (isUsdc ? 'USDC' : 'NEAR');
+      const defaultAmt = isUsdc ? (user.auto_buy_amount_near ? user.auto_buy_amount_near.toString() : '10') : (user.auto_buy_amount_near?.toString() ?? '1');
+      const amountNear = parseFloat(args[1] ?? defaultAmt);
+      const tradeCurrency = isSol ? 'sol' : (isUsdc ? 'usdc' : 'near');
 
       if (amountNear <= 0) {
-        await ctx.reply('Specify amount: /snipe <token> <amount_near>');
+        await ctx.reply(`Specify amount: /snipe <token> <amount_${unit.toLowerCase()}>`);
         return;
       }
 
@@ -10549,7 +10589,13 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         if (info?.tradeable) {
           await ctx.reply(`⚡ Sniping \`${query}\` with ${amountNear} ${unit}...`, { parse_mode: 'Markdown' });
           try {
-            const res = await executeBuyHelper(telegramId, query, amountNear);
+            let buyAmt = amountNear;
+            if (isUsdc) {
+              const nearUsdVal = await getNearUsdPrice().catch(() => 0);
+              const effUsd = nearUsdVal > 0 ? nearUsdVal : 5.0;
+              buyAmt = amountNear / effUsd;
+            }
+            const res = await executeBuyHelper(telegramId, query, buyAmt);
             await ctx.reply(res.message, {
               parse_mode: 'Markdown',
               reply_markup: await buildBuySuccessKeyboard(telegramId, query, res.tokenSymbol, res.positionId),
@@ -10566,6 +10612,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
                 snipe_type: 'token',
                 token_address: query,
                 amount_near: amountNear,
+                trade_currency: tradeCurrency,
               }).catch(() => null);
               if (order) {
                 if (!querySol) prewarmStorageDeposit(user, query).catch(() => { });
@@ -10594,6 +10641,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
             snipe_type: 'token',
             token_address: query,
             amount_near: amountNear,
+            trade_currency: tradeCurrency,
           });
           if (!querySol) prewarmStorageDeposit(user, query).catch(() => { });
           await ctx.reply(
@@ -10630,7 +10678,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         ]);
 
         await ctx.reply(
-          `Found: *${match}* (${sanitizeMd(tokenData.symbol)})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} NEAR?`,
+          `Found: *${match}* (${sanitizeMd(tokenData.symbol)})\nCA: \`${tokenData.address}\`\n\nSnipe ${amountNear} ${unit}?`,
           { parse_mode: 'Markdown', ...keyboard }
         );
       }
@@ -10645,11 +10693,21 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     const telegramId = ctx.from!.id;
 
     await ctx.answerCbQuery('Processing snipe order...').catch(() => { });
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    const isSol = isSolanaAddress(tokenAddress);
+    const isUsdc = !isSol && user?.near_trade_currency === 'usdc';
+    const unit = isSol ? 'SOL' : (isUsdc ? 'USDC' : 'NEAR');
     const snipeMsgId = (ctx.callbackQuery as any)?.message?.message_id ?? null;
-    await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} NEAR\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => { });
+    await ctx.editMessageText(`⏳ *Processing Snipe Order...*\n\nExchanging \`${amountNear} ${unit}\` for \`${tokenAddress}\`...\n_Executing swap on DEX..._`, { parse_mode: 'Markdown' }).catch(() => { });
     const onStage = makeStageEditor(ctx, snipeMsgId ? { message_id: snipeMsgId } : null, 'Processing Snipe Order');
     try {
-      const res = await executeBuyHelper(telegramId, tokenAddress, amountNear, onStage);
+      let buyAmt = amountNear;
+      if (isUsdc) {
+        const nearUsdVal = await getNearUsdPrice().catch(() => 0);
+        const effUsd = nearUsdVal > 0 ? nearUsdVal : 5.0;
+        buyAmt = amountNear / effUsd;
+      }
+      const res = await executeBuyHelper(telegramId, tokenAddress, buyAmt, onStage);
       await ctx.deleteMessage().catch(() => { });
 
       await ctx.reply(res.message, {
@@ -12492,14 +12550,16 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
 
       if (pending.action === 'custom_auto_buy') {
         const amt = parseFloat(rawText);
+        const user = await getUserByTelegramId(telegramId);
+        const isUsdc = user?.near_trade_currency === 'usdc';
+        const unit = isUsdc ? 'USDC' : 'NEAR';
         if (isNaN(amt) || amt <= 0) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number in NEAR.');
+          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${unit}.`);
           return;
         }
-        const user = await getUserByTelegramId(telegramId);
         if (user) {
           const updated = await updateUserSettings(user.id, { auto_buy_amount_near: amt });
-          await ctx.reply(`✅ Auto-buy amount updated to ${amt} NEAR!`);
+          await ctx.reply(`✅ Auto-buy amount updated to ${amt} ${unit}!`);
           const dash = await buildSnipeDashboard(updated);
           await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
         }
@@ -12574,9 +12634,13 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           userPendingActions.set(telegramId, { action: 'snipe_token_ca', expiresAt: Date.now() + 120_000 });
           return;
         }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        const isUsdc = user?.near_trade_currency === 'usdc';
+        const unit = isUsdc ? 'USDC' : 'NEAR';
+        const exampleAmt = isUsdc ? '10' : '2.5';
         userPendingActions.set(telegramId, { action: 'snipe_token_amount', tokenAddress: ca, expiresAt: Date.now() + 120_000 });
         await ctx.reply(
-          `🪙 Token found: *${meta.name}* (${meta.symbol})\n\nReply with the amount in NEAR to snipe (e.g. \`2.5\`):\nType /cancel to abort.`,
+          `🪙 Token found: *${meta.name}* (${meta.symbol})\n\nReply with the amount in ${unit} to snipe (e.g. \`${exampleAmt}\`):\nType /cancel to abort.`,
           { parse_mode: 'Markdown' }
         );
         return;
@@ -12584,12 +12648,12 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
 
       if (pending.action === 'snipe_token_amount' && pending.tokenAddress) {
         const amt = parseFloat(rawText);
-        const tokUnit = snipeUnit(pending.tokenAddress);
+        const user = await getUserByTelegramId(telegramId);
+        const tokUnit = snipeUnit(pending.tokenAddress, user);
         if (isNaN(amt) || amt <= 0 || (tokUnit === 'SOL' && amt < 0.001)) {
           await ctx.reply(`❌ Invalid amount. Must be a positive number in ${tokUnit}${tokUnit === 'SOL' ? ' (min 0.001)' : ''}. Snipe setup cancelled.`);
           return;
         }
-        const user = await getUserByTelegramId(telegramId);
         if (!user) {
           await ctx.reply('Use /start to set up your wallet first.');
           return;
@@ -12700,24 +12764,29 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           userPendingActions.set(telegramId, { action: 'snipe_dev_addr', expiresAt: Date.now() + 120_000 });
           return;
         }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        const isUsdc = user?.near_trade_currency === 'usdc';
+        const unit = isUsdc ? 'USDC' : 'NEAR';
+        const exampleAmt = isUsdc ? '10' : '1.5';
         userPendingActions.set(telegramId, { action: 'snipe_dev_amount', deployerAddress: dev, expiresAt: Date.now() + 120_000 });
         await ctx.reply(
-          `👤 Deployer: \`${dev}\`\n\nReply with the amount in NEAR to snipe *every* new token this wallet launches (e.g. \`1.5\`):\nType /cancel to abort.`,
+          `👤 Deployer: \`${dev}\`\n\nReply with the amount in ${unit} to snipe *every* new token this wallet launches (e.g. \`${exampleAmt}\`):\nType /cancel to abort.`,
           { parse_mode: 'Markdown' }
         );
         return;
       }
 
       if (pending.action === 'snipe_dev_amount' && pending.deployerAddress) {
-        const amt = parseFloat(rawText);
-        const devUnit = snipeUnit(pending.deployerAddress);
-        if (isNaN(amt) || amt <= 0 || (devUnit === 'SOL' && amt < 0.001)) {
-          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${devUnit}. Snipe setup cancelled.`);
-          return;
-        }
         const user = await getUserByTelegramId(telegramId);
         if (!user) {
           await ctx.reply('Use /start to set up your wallet first.');
+          return;
+        }
+        const amt = parseFloat(rawText);
+        const isSolDev = isSolanaAddress(pending.deployerAddress);
+        const devUnit = isSolDev ? 'SOL' : (user.near_trade_currency === 'usdc' ? 'USDC' : 'NEAR');
+        if (isNaN(amt) || amt <= 0 || (devUnit === 'SOL' && amt < 0.001)) {
+          await ctx.reply(`❌ Invalid amount. Must be a positive number in ${devUnit}. Snipe setup cancelled.`);
           return;
         }
         if (devUnit === 'SOL' && !user.solana_address) {
@@ -12729,11 +12798,13 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           await ctx.reply(`❌ You already have ${MAX_ACTIVE_SNIPE_ORDERS_PER_USER} active snipe orders. Cancel one in 🎯 Snipe Rules → 📋 My Snipe Orders.`);
           return;
         }
+        const tradeCurrency = isSolDev ? 'sol' : (user.near_trade_currency === 'usdc' ? 'usdc' : 'near');
         const order = await createSnipeOrder({
           user_id: user.id,
           snipe_type: 'deployer',
           deployer_address: pending.deployerAddress,
           amount_near: amt,
+          trade_currency: tradeCurrency,
         });
         await ctx.reply(
           `👤 *Deployer Snipe Armed!*\n\n` +

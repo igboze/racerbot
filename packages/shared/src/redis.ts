@@ -115,6 +115,8 @@ export interface AutoBuySignal {
   snipe_order_id?: string;
   snipe_trigger_id?: string;
   snipe_type?: 'token' | 'deployer';
+  /** Currency of the order: 'near' | 'usdc' | 'sol'. Default is 'near'. */
+  trade_currency?: 'near' | 'usdc' | 'sol';
   /** Chain of the signal. Absent means NEAR (legacy). */
   chain?: SupportedChain;
 }

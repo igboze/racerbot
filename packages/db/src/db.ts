@@ -441,6 +441,7 @@ export async function connectDb(): Promise<void> {
   await getDb();
   console.log('[DB] Connected');
   await pool?.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS near_trade_currency TEXT NOT NULL DEFAULT 'near'").catch(() => {});
+  await pool?.query("ALTER TABLE snipe_orders ADD COLUMN IF NOT EXISTS trade_currency TEXT NOT NULL DEFAULT 'near'").catch(() => {});
 }
 
 export async function disconnectDb(): Promise<void> {
@@ -2228,6 +2229,7 @@ export interface SnipeOrderRecord {
   token_address: string | null;
   deployer_address: string | null;
   amount_near: string;
+  trade_currency?: 'near' | 'usdc' | 'sol';
   status: 'active' | 'filled' | 'cancelled' | 'failed';
   last_error: string | null;
   trigger_count: number;
@@ -2244,6 +2246,7 @@ function rowToSnipeOrder(row: any): SnipeOrderRecord {
     token_address: row.token_address ?? null,
     deployer_address: row.deployer_address ?? null,
     amount_near: String(row.amount_near),
+    trade_currency: (row.trade_currency as any) || 'near',
     status: row.status,
     last_error: row.last_error ?? null,
     trigger_count: row.trigger_count != null ? Number(row.trigger_count) : 0,
@@ -2271,12 +2274,14 @@ export async function createSnipeOrder(params: {
   token_address?: string;
   deployer_address?: string;
   amount_near: number;
+  trade_currency?: 'near' | 'usdc' | 'sol';
   execute_after?: Date | null;
 }): Promise<SnipeOrderRecord> {
   const db = await getDb();
+  const tradeCurrency = params.trade_currency || 'near';
   const result = await db.query(
-    `INSERT INTO snipe_orders (user_id, snipe_type, token_address, deployer_address, amount_near, execute_after)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO snipe_orders (user_id, snipe_type, token_address, deployer_address, amount_near, execute_after, trade_currency)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
     [
       params.user_id,
@@ -2285,6 +2290,7 @@ export async function createSnipeOrder(params: {
       params.deployer_address ? normalizeChainAddress(params.deployer_address) : null,
       params.amount_near,
       params.execute_after ?? null,
+      tradeCurrency,
     ]
   );
   return rowToSnipeOrder(result.rows[0]);

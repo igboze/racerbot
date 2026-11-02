@@ -878,15 +878,15 @@ export class SwapExecutor {
 
         if (isUsdcOnlyMode) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          // USDC swap uses 100 Tgas = 0.10 NEAR; require 0.12 NEAR so account never runs dry mid-swap
-          const minGasYocto = BigInt(Math.ceil(0.12 * 1e24));
+          // USDC swap uses 100 Tgas = 0.01 NEAR; require 0.04 NEAR so account never runs dry mid-swap
+          const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
           const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
           const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
             ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
             : 0n;
           if (nativeBal < minGasYocto) {
             throw new Error(
-              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.12 NEAR (~${(0.12 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
+              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.04 NEAR (~$${(0.04 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
             );
           }
           if (usdcBal > 0n && (usdcMaxNearYocto * 102n) / 100n >= amountInBigInt) {
@@ -907,8 +907,8 @@ export class SwapExecutor {
           }
         } else if (nativeBal < totalNearRequired) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          // USDC top-up path also uses 100 Tgas for USDC→wNEAR; need 0.12 NEAR minimum
-          const minGasYocto = BigInt(Math.ceil(0.12 * 1e24));
+          // USDC top-up path also uses 100 Tgas for USDC→wNEAR; need 0.04 NEAR minimum
+          const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
           const wrapReserveYocto = BigInt(Math.ceil(0.05 * 1e24));
           const spendableNativeYocto = nativeBal > wrapReserveYocto ? nativeBal - wrapReserveYocto : 0n;
           const availableNearYocto = spendableNativeYocto + wNearBal;
@@ -3921,22 +3921,25 @@ export class SwapExecutor {
 
     const nativeBal = BigInt(nativeBalStr || '0');
     const wNearBal = BigInt(wNearBalStr || '0');
-    const MIN_RESERVE_YOCTO = 50000000000000000000000n; // 0.05 NEAR reserve (covers 0.0315-0.045 NEAR gas reserve + storage)
+    const MIN_RESERVE_YOCTO = 40000000000000000000000n; // 0.04 NEAR reserve (covers gas reserve + storage)
     const availableNative = nativeBal > MIN_RESERVE_YOCTO ? nativeBal - MIN_RESERVE_YOCTO : 0n;
     const usdcBalAuto = BigInt(usdcBalStr || '0');
     const effNearUsdAuto = autoBuyNearUsd > 0 ? autoBuyNearUsd : 5.0;
     const usdcNearYoctoAuto = usdcBalAuto > 0n
       ? BigInt(Math.floor(((Number(usdcBalAuto) / Math.pow(10, NEAR_USDC_DECIMALS)) / effNearUsdAuto) * 0.985 * 1e24))
       : 0n;
-    const totalSpendableYocto = (user as any)?.near_trade_currency === 'usdc'
+    const isUsdcMode = (signal.trade_currency ?? (user as any)?.near_trade_currency) === 'usdc';
+    const totalSpendableYocto = isUsdcMode
       ? usdcNearYoctoAuto
       : availableNative + wNearBal + usdcNearYoctoAuto;
     const MIN_SPEND_YOCTO = 10000000000000000000000n; // 0.01 NEAR minimum trade size
 
-    // Must have at least 0.035 native NEAR to pay for gas even if paying with wNEAR
+    // Must have at least 0.035 native NEAR to pay for gas even if paying with wNEAR / USDC
     if (nativeBal < 35000000000000000000000n || totalSpendableYocto < MIN_SPEND_YOCTO) {
       const availNear = (Number(nativeBal) / 1e24).toFixed(4);
-      const reason = `Insufficient balance. Wallet has ${availNear} NEAR (must keep at least 0.05 NEAR for gas and storage reserve).`;
+      const reason = isUsdcMode
+        ? `Insufficient USDC balance or NEAR for gas. Wallet has ${(Number(usdcBalAuto) / Math.pow(10, NEAR_USDC_DECIMALS)).toFixed(2)} USDC and ${availNear} NEAR (must keep at least 0.04 NEAR for gas reserve).`
+        : `Insufficient balance. Wallet has ${availNear} NEAR (must keep at least 0.04 NEAR for gas and storage reserve).`;
       if (snipeOrderId) {
         await finalizeSnipe(false, { error: reason, permanent: true });
         await this.notifyUser(user_id, 'auto_buy_skipped', { token: token_address, reason });
@@ -3946,8 +3949,19 @@ export class SwapExecutor {
       return { success: false, reason };
     }
 
-    const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
-    let finalInYocto = BigInt(inYocto);
+    let finalInYocto: bigint;
+    if (isUsdcMode) {
+      const usdcAmt = parseFloat(amount_near);
+      if (isNaN(usdcAmt) || usdcAmt <= 0) {
+        await finalizeSnipe(false, { error: 'invalid_amount', permanent: true });
+        return { success: false, reason: 'invalid_amount' };
+      }
+      const targetNearAmount = usdcAmt / effNearUsdAuto;
+      finalInYocto = BigInt(Math.floor(targetNearAmount * 1e24));
+    } else {
+      const inYocto = utils.format.parseNearAmount(amount_near) ?? '0';
+      finalInYocto = BigInt(inYocto);
+    }
     if (finalInYocto <= 0n) {
       await finalizeSnipe(false, { error: 'invalid_amount', permanent: true });
       return { success: false, reason: 'invalid_amount' };
@@ -3955,7 +3969,7 @@ export class SwapExecutor {
 
     // Clamp buy amount to available balance so trade succeeds instead of failing on insufficient funds
     if (finalInYocto > totalSpendableYocto) {
-      console.log(`[EXECUTOR] Auto-buy user ${user_id} requested ${amount_near} NEAR, but spendable balance is ${(Number(totalSpendableYocto) / 1e24).toFixed(4)} NEAR. Clamping buy amount.`);
+      console.log(`[EXECUTOR] Auto-buy user ${user_id} requested ${amount_near} ${isUsdcMode ? 'USDC' : 'NEAR'}, but spendable balance is ${(Number(totalSpendableYocto) / 1e24).toFixed(4)} NEAR. Clamping buy amount.`);
       finalInYocto = totalSpendableYocto;
     }
 
@@ -3986,6 +4000,7 @@ export class SwapExecutor {
         venue,
         slippage_pct: slippagePct,
         is_snipe: true,
+        trade_currency: isUsdcMode ? 'usdc' : 'near',
         timestamp: Date.now(),
       };
       if (rheaPoolId !== null) {
