@@ -64,7 +64,7 @@ import {
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
 import { isTradableVenue, TradeError, isValidEvmAddress } from '@racerbot/shared';
-import { PARENT_ACCOUNT, TREASURY_ACCOUNT_ID } from './config.js';
+import { PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, MAIN_WALLET_PRIVATE_KEY } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
 import { executeSuiSwap } from './suiExecutor.js';
@@ -364,6 +364,32 @@ export async function ensureRefTokenRegistered(tokenAddress: string, accountId?:
 
 export class SwapExecutor {
   private activeTradeWNearState = new Map<string, { wNearBal: bigint; maxNativeDeposit?: bigint }>();
+
+  private async refuelNearGasIfNeeded(subaccountId: string, currentNativeBalYocto: bigint): Promise<boolean> {
+    const minRequiredYocto = BigInt(Math.ceil(0.025 * 1e24)); // 0.025 NEAR
+    if (currentNativeBalYocto >= minRequiredYocto) return false;
+    if (!PARENT_ACCOUNT || !MAIN_WALLET_PRIVATE_KEY) return false;
+
+    try {
+      const refuelYocto = BigInt(utils.format.parseNearAmount('0.04')!);
+      const signFn = (this.nearClient as any).signAndSendTransactionAll || near.signAndSendTransactionAll;
+      if (typeof signFn === 'function') {
+        await signFn.call(
+          this.nearClient,
+          PARENT_ACCOUNT,
+          subaccountId,
+          [transactions.transfer(refuelYocto)],
+          30_000
+        );
+        console.log(`[REFUEL] Successfully sent 0.04 NEAR gas refuel from ${PARENT_ACCOUNT} to ${subaccountId}`);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      console.warn(`[REFUEL] Failed to auto-refuel gas to ${subaccountId}:`, err?.message);
+      return false;
+    }
+  }
   constructor(
     private redisClient: RedisClient = redis,
     private nearClient: MultiRpcNear = near
@@ -878,15 +904,21 @@ export class SwapExecutor {
 
         if (isUsdcOnlyMode) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          // USDC swap uses 100 Tgas = 0.01 NEAR; require 0.04 NEAR so account never runs dry mid-swap
-          const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
+          const minGasYocto = BigInt(Math.ceil(0.025 * 1e24));
           const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
           const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
             ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
             : 0n;
-          if (nativeBal < minGasYocto) {
+          let effectiveNativeBal = nativeBal;
+          if (effectiveNativeBal < minGasYocto && usdcBal > 0n) {
+            const refueled = await this.refuelNearGasIfNeeded(subaccountId, effectiveNativeBal).catch(() => false);
+            if (refueled) {
+              effectiveNativeBal += BigInt(Math.ceil(0.04 * 1e24));
+            }
+          }
+          if (effectiveNativeBal < minGasYocto) {
             throw new Error(
-              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.04 NEAR (~$${(0.04 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(nativeBal) / 1e24).toFixed(4)} NEAR.`
+              `Insufficient NEAR for network gas. Even in USDC-Only mode, your wallet must hold at least 0.025 NEAR (~${(0.025 * effectiveNearUsd).toFixed(2)}) for gas. Current balance: ${(Number(effectiveNativeBal) / 1e24).toFixed(4)} NEAR.`
             );
           }
           if (usdcBal > 0n && (usdcMaxNearYocto * 102n) / 100n >= amountInBigInt) {
@@ -902,22 +934,28 @@ export class SwapExecutor {
           } else {
             const reqUsd = ((Number(amountInBigInt) / 1e24) * effectiveNearUsd).toFixed(2);
             throw new Error(
-              `Insufficient USDC balance (USDC-Only Mode is active). You have ${usdcHuman.toFixed(2)} USDC (~${(Number(usdcMaxNearYocto) / 1e24).toFixed(4)} NEAR), which is less than the requested ~$${reqUsd} USDC (${(Number(amountInBigInt) / 1e24).toFixed(4)} NEAR). Deposit more USDC or switch to NEAR mode in ⚙️ Settings.`
+              `Insufficient USDC balance (USDC-Only Mode is active). You have ${usdcHuman.toFixed(2)} USDC (~${(Number(usdcMaxNearYocto) / 1e24).toFixed(4)} NEAR), which is less than the requested ~${reqUsd} USDC (${(Number(amountInBigInt) / 1e24).toFixed(4)} NEAR). Deposit more USDC or switch to NEAR mode in ⚙️ Settings.`
             );
           }
         } else if (nativeBal < totalNearRequired) {
           const usdcBal = BigInt(usdcBalStr || '0');
-          // USDC top-up path also uses 100 Tgas for USDC→wNEAR; need 0.04 NEAR minimum
-          const minGasYocto = BigInt(Math.ceil(0.04 * 1e24));
+          const minGasYocto = BigInt(Math.ceil(0.025 * 1e24));
           const wrapReserveYocto = BigInt(Math.ceil(0.05 * 1e24));
-          const spendableNativeYocto = nativeBal > wrapReserveYocto ? nativeBal - wrapReserveYocto : 0n;
+          let effectiveNativeBal = nativeBal;
+          if (effectiveNativeBal < minGasYocto && usdcBal > 0n) {
+            const refueled = await this.refuelNearGasIfNeeded(subaccountId, effectiveNativeBal).catch(() => false);
+            if (refueled) {
+              effectiveNativeBal += BigInt(Math.ceil(0.04 * 1e24));
+            }
+          }
+          const spendableNativeYocto = effectiveNativeBal > wrapReserveYocto ? effectiveNativeBal - wrapReserveYocto : 0n;
           const availableNearYocto = spendableNativeYocto + wNearBal;
           const shortfallYocto = amountInBigInt > availableNearYocto ? amountInBigInt - availableNearYocto : 0n;
           const usdcHuman = Number(usdcBal) / Math.pow(10, NEAR_USDC_DECIMALS);
           const usdcMaxNearYocto = usdcBal > 0n && effectiveNearUsd > 0
             ? BigInt(Math.floor((usdcHuman / effectiveNearUsd) * 1e24))
             : 0n;
-          if (nativeBal >= minGasYocto && usdcBal > 0n && shortfallYocto > 0n && availableNearYocto + usdcMaxNearYocto >= amountInBigInt) {
+          if (effectiveNativeBal >= minGasYocto && usdcBal > 0n && shortfallYocto > 0n && availableNearYocto + usdcMaxNearYocto >= amountInBigInt) {
             const shortfallNearHuman = Number(shortfallYocto) / 1e24;
             const neededUsdcRaw = BigInt(
               Math.max(1, Math.ceil(shortfallNearHuman * effectiveNearUsd * 1.015 * Math.pow(10, NEAR_USDC_DECIMALS)))
@@ -927,15 +965,15 @@ export class SwapExecutor {
             maxNativeDepositYocto = spendableNativeYocto;
             usdcSpentHuman = Number(usdcToSwapRaw) / Math.pow(10, NEAR_USDC_DECIMALS);
           } else {
-            const availableNear = (Number(nativeBal) / 1e24).toFixed(4);
-            const availableUsd = (Number(nativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
-            const remainingNearYocto = nativeBal > nearNeededForSwap ? nativeBal - nearNeededForSwap : 0n;
+            const availableNear = (Number(effectiveNativeBal) / 1e24).toFixed(4);
+            const availableUsd = (Number(effectiveNativeBal) / 1e24 * effectiveNearUsd).toFixed(2);
+            const remainingNearYocto = effectiveNativeBal > nearNeededForSwap ? effectiveNativeBal - nearNeededForSwap : 0n;
             const remainingNear = (Number(remainingNearYocto) / 1e24).toFixed(4);
             const remainingUsd = (Number(remainingNearYocto) / 1e24 * effectiveNearUsd).toFixed(2);
-            const requiredReserveNearStr = minReserveNear.toFixed(4);
+            const requiredReserveNearStr = (0.03).toFixed(4);
 
             throw new Error(
-              `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(minReserveNear * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
+              `Insufficient balance after swap. Your wallet must keep a minimal reserve of ${requiredReserveNearStr} NEAR (~$${(0.03 * effectiveNearUsd).toFixed(2)}) to cover gas and account storage. You have $${availableUsd} (${availableNear} NEAR), and would only have $${remainingUsd} (${remainingNear} NEAR) left after this swap. Please reduce your buy amount or deposit more NEAR.`
             );
           }
         }
@@ -1347,9 +1385,9 @@ export class SwapExecutor {
         // In that case, skip polling completely (0ms latency).
 
         const nativeBalBeforeSwap = capturedNativeBalStr !== null ? BigInt(capturedNativeBalStr) : 0n;
-        const alreadyHasSufficientGas = nativeBalBeforeSwap >= BigInt(Math.ceil(0.22 * 1e24));
+        const alreadyHasSufficientGas = nativeBalBeforeSwap >= BigInt(Math.ceil(0.05 * 1e24));
         if (!alreadyHasSufficientGas && this.nearClient.getNearBalance) {
-          const minGasFloorYocto = BigInt(Math.ceil(0.06 * 1e24)); // 0.06 NEAR
+          const minGasFloorYocto = BigInt(Math.ceil(0.015 * 1e24)); // 0.015 NEAR is sufficient for the second hop
           for (let refundAttempt = 0; refundAttempt < 6; refundAttempt++) {
             const curBalStr = await (
               (this.nearClient as any).getNearBalanceOnTradeRpc
@@ -1359,7 +1397,7 @@ export class SwapExecutor {
             if (curBalStr !== null && BigInt(curBalStr) >= minGasFloorYocto) {
               break;
             }
-            await new Promise((r) => setTimeout(r, 250));
+            await new Promise((r) => setTimeout(r, 200));
           }
         }
 

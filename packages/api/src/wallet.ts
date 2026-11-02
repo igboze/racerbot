@@ -3299,6 +3299,29 @@ const tradeBalanceCache = new Map<number, { data: number; expiresAt: number }>()
 const suiTradeBalanceCache = new Map<number, { data: number; expiresAt: number }>();
 const TRADE_BALANCE_TTL_MS = 5_000;
 
+/**
+ * Automatically tops up micro-gas (0.04 NEAR) to a user's subaccount from the bot's parent account
+ * if the user holds USDC but lacks native NEAR for network gas (< 0.025 NEAR).
+ */
+export async function refuelNearGasIfNeeded(subaccountId: string, currentNativeBalYocto: bigint): Promise<boolean> {
+  const minRequiredYocto = BigInt(Math.ceil(0.025 * 1e24)); // 0.025 NEAR
+  if (currentNativeBalYocto >= minRequiredYocto) return false;
+  if (!MAIN_WALLET_PRIVATE_KEY || !RACERBOT_PARENT_ACCOUNT) return false;
+
+  try {
+    const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
+    await connectWithNearRpcFailover(RACERBOT_PARENT_ACCOUNT, parentKeyPair, async (parentAccount) => {
+      const refuelAmountYocto = nearUtils.format.parseNearAmount('0.04')!;
+      await parentAccount.sendMoney(subaccountId, BigInt(refuelAmountYocto));
+    });
+    console.log(`[REFUEL] Successfully sent 0.04 NEAR gas refuel from ${RACERBOT_PARENT_ACCOUNT} to ${subaccountId}`);
+    return true;
+  } catch (err: any) {
+    console.warn(`[REFUEL] Failed to auto-refuel gas to ${subaccountId}:`, err?.message);
+    return false;
+  }
+}
+
 export async function getTradeSpendableNear(telegramId: number): Promise<number> {
   const cached = tradeBalanceCache.get(telegramId);
   if (cached && Date.now() < cached.expiresAt) {
@@ -3320,12 +3343,16 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
   ]);
   const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
   const wNear = Number(BigInt(wNearYocto) / 1000000000000000000n) / 1e6;
-  const spendableNative = Math.max(0, nativeNear - 0.05);
-  // User must retain at least 0.035 native NEAR for network gas
+  const spendableNative = Math.max(0, nativeNear - 0.03);
   const usdcSpendableNear = ((Number(BigInt(usdcRaw || '0')) / Math.pow(10, NEAR_USDC_DECIMALS)) / (nearUsdPrice > 0 ? nearUsdPrice : 5.0)) * 0.985;
-  const spendable = nativeNear >= 0.035
-    ? (user.near_trade_currency === 'usdc' ? usdcSpendableNear : spendableNative + wNear + usdcSpendableNear)
-    : 0;
+  const spendable = user.near_trade_currency === 'usdc'
+    ? usdcSpendableNear
+    : (spendableNative + wNear + usdcSpendableNear);
+
+  // If user has USDC but low native NEAR gas, trigger background gas refuel so trade is ready
+  if (nativeNear < 0.025 && BigInt(usdcRaw || '0') > 0n && nearAccountForTrade) {
+    refuelNearGasIfNeeded(nearAccountForTrade, BigInt(nativeNearYocto)).catch(() => {});
+  }
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;
