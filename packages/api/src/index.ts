@@ -420,6 +420,7 @@ async function main(): Promise<void> {
     { command: 'copy', description: '👥 Copy Trading' },
     { command: 'dca', description: '🔁 DCA Orders' },
     { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
+    { command: 'card', description: '🏁 My NEAR Racer Card' },
     { command: 'settings', description: '⚙️ Settings' },
   ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
 
@@ -437,6 +438,7 @@ async function main(): Promise<void> {
     { command: 'copy', description: '👥 Copy Trading' },
     { command: 'dca', description: '🔁 DCA Orders' },
     { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
+    { command: 'card', description: '🏁 My NEAR Racer Card' },
     { command: 'settings', description: '⚙️ Settings' },
   ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
 

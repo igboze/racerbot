@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 
 // ── Path & Asset Resolvers ──────────────────────────────────────────────────
 
-function resolveAsset(name: string): string | null {
+export function resolveAsset(name: string): string | null {
   const candidates = [
     path.join(__dirname, '..', 'assets', name),
     path.join(process.cwd(), 'packages', 'api', 'assets', name),
@@ -25,7 +25,7 @@ function resolveAsset(name: string): string | null {
   return null;
 }
 
-function resolveFont(name: string): string | null {
+export function resolveFont(name: string): string | null {
   const candidates = [
     path.join(__dirname, '..', 'fonts', name),
     path.join(process.cwd(), 'packages', 'api', 'fonts', name),

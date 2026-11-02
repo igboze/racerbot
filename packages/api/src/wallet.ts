@@ -3016,6 +3016,13 @@ export async function publishSwap(swapEvent: {
         invalidateSolanaBalanceCache(u.solana_address);
       }
     }).catch(() => { });
+
+    // NEAR Racer Card: announce a new lifetime rank (once) with the upgraded card
+    if ((swapEvent.chain || 'near') === 'near') {
+      void import('./racerCard.js')
+        .then(m => m.maybeAnnounceRankUp(swapEvent.user_id))
+        .catch(() => { });
+    }
   }
 
   if (
