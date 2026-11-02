@@ -184,6 +184,7 @@ import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js'
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
 import { toTokenInfoCardData } from './tokenInfoCardData.js';
+import { registerRacerCard } from './racerCard.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
 import {
   setupRaceDropRoutes,
@@ -843,6 +844,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     ],
     [
       cb('⚙️ Settings', 'menu_settings', 'primary'),
+      cb('🏁 My Racer Card', 'racer_card', 'success'),
     ],
     [
       Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
@@ -3864,6 +3866,9 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
 export function setupRoutes(bot: Telegraf): void {
   // ── Register RaceDrop commands, actions, and wizards ───────────────────────
   setupRaceDropRoutes(bot, userPendingActions);
+
+  // ── NEAR Racer Card: /card and the home-screen button ─────────────────────
+  registerRacerCard(bot);
 
   // ── Critical Group Security & Privacy Guard ──────────────────────────────
   // User wallet details, balances, settings, and trading MUST NEVER appear in public groups.

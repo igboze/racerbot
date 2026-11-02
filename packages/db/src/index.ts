@@ -255,3 +255,12 @@ export {
   updateAiSwarmSession,
   type AiSwarmSessionRecord,
 } from './db.js';
+export {
+  getNearRacerFills,
+  getRacerRank,
+  seedRacerRank,
+  raiseRacerBestKey,
+  claimRacerRankUp,
+  type NearRacerFillRow,
+  type RacerRankRecord,
+} from './db.js';

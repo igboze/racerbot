@@ -47,7 +47,26 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
     await sendNotification(telegramId, event).catch(err => {
       console.error('[NOTIFY] Failed to send notification:', err.message);
     });
+
+    queueRacerRankCheck(event);
   });
+}
+
+/**
+ * NEAR Racer Card: after a confirmed NEAR trade, announce a new lifetime rank
+ * (once). A trigger fires before its sell lands, so check again a little later.
+ */
+function queueRacerRankCheck(event: NotifyUserEvent): void {
+  const data = event.data ?? {};
+  const userId = (data.user_id ?? (event as any).user_id) as string | undefined;
+  if (!userId || (data.chain && data.chain !== 'near')) return;
+  const delays = event.event === 'trade_confirmed' ? [0]
+    : event.event === 'trigger_fired' ? [45_000, 150_000]
+    : null;
+  if (!delays) return;
+  void import('./racerCard.js')
+    .then(m => m.scheduleRankUpCheck(userId, delays))
+    .catch(() => { });
 }
 
 async function sendNotification(telegramId: number, event: NotifyUserEvent): Promise<void> {

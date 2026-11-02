@@ -4813,3 +4813,92 @@ export async function updateAiSwarmSession(
   await db.query(`UPDATE ai_swarm_sessions SET ${sets.join(', ')} WHERE id = $1`, values);
 }
 
+
+// ── NEAR Racer Cards ───────────────────────────────────────────────────────
+
+export interface NearRacerFillRow {
+  user_id: string;
+  side: string;
+  token_address: string;
+  venue: string;
+  created_at: Date;
+  input_amount: string | null;
+  fee_paid: string | null;
+  position_id: string | null;
+  position_status: string | null;
+}
+
+/**
+ * NEAR buy/sell fills that count toward Racer Card volume (deposits excluded),
+ * for one user or, without a userId, for every user.
+ */
+export async function getNearRacerFills(userId?: string): Promise<NearRacerFillRow[]> {
+  const db = await getDb();
+  const result = await db.query(
+    `SELECT f.user_id, f.side, f.token_address, f.venue, f.created_at, f.input_amount, f.fee_paid,
+            f.position_id, p.status AS position_status
+       FROM fills f
+       LEFT JOIN positions p ON p.id = f.position_id
+      WHERE COALESCE(f.chain, 'near') = 'near'
+        AND f.side IN ('buy', 'sell')
+        AND f.user_id IS NOT NULL
+        AND (f.tx_hash IS NULL OR f.tx_hash NOT LIKE 'deposit\_%')
+        AND ($1::uuid IS NULL OR f.user_id = $1::uuid)
+      ORDER BY f.created_at ASC`,
+    [userId ?? null]
+  );
+  return result.rows;
+}
+
+export interface RacerRankRecord {
+  user_id: string;
+  best_key: number;
+  announced_key: number;
+}
+
+export async function getRacerRank(userId: string): Promise<RacerRankRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT user_id, best_key, announced_key FROM racer_ranks WHERE user_id = $1', [userId]);
+  return result.rows[0] ?? null;
+}
+
+/**
+ * First sight of a user: store their rank without announcing it. A no-op when
+ * a row already exists; returns the row as stored either way.
+ */
+export async function seedRacerRank(userId: string, bestKey: number, announcedKey: number): Promise<RacerRankRecord> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO racer_ranks (user_id, best_key, announced_key, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id) DO NOTHING`,
+    [userId, bestKey, Math.min(announcedKey, bestKey)]
+  );
+  return (await getRacerRank(userId)) ?? { user_id: userId, best_key: bestKey, announced_key: Math.min(announcedKey, bestKey) };
+}
+
+/** Raise the lifetime best rank; never lowers it. */
+export async function raiseRacerBestKey(userId: string, bestKey: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `UPDATE racer_ranks SET best_key = $2, updated_at = NOW()
+      WHERE user_id = $1 AND best_key < $2`,
+    [userId, bestKey]
+  );
+}
+
+/**
+ * Claim the right to announce a rank-up to `key`. Atomic: of any number of
+ * concurrent callers, only one gets true for a given rank.
+ */
+export async function claimRacerRankUp(userId: string, key: number): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.query(
+    `UPDATE racer_ranks
+        SET announced_key = $2, best_key = GREATEST(best_key, $2), updated_at = NOW()
+      WHERE user_id = $1 AND announced_key < $2
+      RETURNING user_id`,
+    [userId, key]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
