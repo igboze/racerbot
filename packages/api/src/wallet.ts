@@ -74,6 +74,10 @@ import {
   generateEvmWallet,
   getEvmWalletFromEncrypted,
   isValidEvmAddress,
+  ELYSIUM_BRIDGE,
+  ELYSIUM_INBOX_ABI,
+  elysiumInboxMaxFeePerGas,
+  encodeSignedTxMessage,
   getHypeBalance,
   getErc20TokenInfo,
   getErc20Balance,
@@ -2468,50 +2472,93 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
     };
   }
 
-  const isTestnet = process.env.NODE_ENV !== 'production';
   const [hyperevm, elysium] = await Promise.all([
-    getHypeBalance(address, 'hyperevm', isTestnet),
-    getHypeBalance(address, 'elysium', true),
+    getHypeBalance(address, 'hyperevm', process.env.HYPEREVM_TESTNET === 'true'),
+    getHypeBalance(address, 'elysium', false),
   ]);
 
   return { address, hyperevm, elysium };
 }
 
+/** Gas for the HyperEVM transaction that posts an Elysium transfer into the inbox */
+const HYPEREVM_INBOX_GAS_RESERVE = ethers.parseEther('0.0002');
+/** Gas an inbox-delivered Elysium HYPE transfer is given; unused gas is refunded */
+const ELYSIUM_TRANSFER_GAS = 100_000n;
+
+/**
+ * Sends HYPE from the user's EVM wallet. HyperEVM is a direct transfer. Elysium has no
+ * public sequencer yet, so the transfer is signed for Elysium and posted through the
+ * HyperEVM inbox, as Kleos trades are; it lands on Elysium within a few minutes.
+ */
 export async function withdrawEvmHype(
   user: UserRecord,
   chain: EvmChain,
   toAddress: string,
-  amountHype: number
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  amount: number | 'all'
+): Promise<{ success: boolean; txHash?: string; elysiumTxHash?: string; amountHype?: string; error?: string }> {
   if (!user.evm_address || !user.evm_private_key_enc) {
     return { success: false, error: 'EVM wallet not configured.' };
   }
   if (!isValidEvmAddress(toAddress)) {
     return { success: false, error: 'Invalid recipient EVM address.' };
   }
-
-  const isTestnet = process.env.NODE_ENV !== 'production' || chain === 'elysium';
-  const provider = getEvmProvider(chain, isTestnet);
-  const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
-
-  const value = ethers.parseEther(amountHype.toString());
-  const balance = await provider.getBalance(user.evm_address);
-
-  const feeEstimate = ethers.parseEther('0.001');
-  if (balance < value + feeEstimate) {
-    return {
-      success: false,
-      error: `Insufficient balance for transfer + gas fee. Balance: ${ethers.formatEther(balance)} HYPE`,
-    };
+  if (toAddress.toLowerCase() === user.evm_address.toLowerCase()) {
+    return { success: false, error: 'That is your own RacerBot wallet.' };
   }
 
+  const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
+  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
+
   try {
-    const tx = await signer.sendTransaction({
-      to: toAddress,
-      value,
+    if (chain === 'hyperevm') {
+      const [balance, feeData] = await Promise.all([hyperevm.getBalance(user.evm_address), hyperevm.getFeeData()]);
+      const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? ethers.parseUnits('1', 'gwei');
+      const gasCost = gasPrice * 21_000n * 2n; // headroom for a base-fee rise
+      const value = amount === 'all' ? balance - gasCost : ethers.parseEther(String(amount));
+      if (value <= 0n || balance < value + gasCost) {
+        return { success: false, error: `Insufficient HyperEVM HYPE for the transfer plus gas. Balance: ${ethers.formatEther(balance)} HYPE` };
+      }
+      const tx = await l1Signer.sendTransaction({ to: toAddress, value, gasLimit: 21_000n });
+      const receipt = await tx.wait(1);
+      if (receipt?.status !== 1) return { success: false, error: 'The HyperEVM transfer reverted.' };
+      return { success: true, txHash: receipt.hash, amountHype: ethers.formatEther(value) };
+    }
+
+    const elysium = getEvmProvider('elysium', false);
+    const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
+    const [l2Balance, l1Balance, l2Block, nonce] = await Promise.all([
+      elysium.getBalance(user.evm_address),
+      hyperevm.getBalance(user.evm_address),
+      elysium.getBlock('latest'),
+      elysium.getTransactionCount(user.evm_address, 'pending'),
+    ]);
+    const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
+    const gasCost = ELYSIUM_TRANSFER_GAS * maxFeePerGas;
+    const value = amount === 'all' ? l2Balance - gasCost : ethers.parseEther(String(amount));
+    if (value <= 0n || l2Balance < value + gasCost) {
+      return { success: false, error: `Insufficient Elysium HYPE for the transfer plus gas. Balance: ${ethers.formatEther(l2Balance)} HYPE` };
+    }
+    if (l1Balance < HYPEREVM_INBOX_GAS_RESERVE) {
+      return {
+        success: false,
+        error: `Sending from Elysium needs about ${ethers.formatEther(HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM for the inbox transaction. You have ${ethers.formatEther(l1Balance)}.`,
+      };
+    }
+
+    const raw = await l2Signer.signTransaction({
+      type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
+      to: toAddress, value, gasLimit: ELYSIUM_TRANSFER_GAS, maxFeePerGas, maxPriorityFeePerGas: 0n,
+    });
+    const inbox = new ethers.Interface(ELYSIUM_INBOX_ABI);
+    const tx = await l1Signer.sendTransaction({
+      to: ELYSIUM_BRIDGE.inbox,
+      data: inbox.encodeFunctionData('sendL2Message', [encodeSignedTxMessage([raw])]),
     });
     const receipt = await tx.wait(1);
-    return { success: true, txHash: receipt?.hash || tx.hash };
+    if (receipt?.status !== 1) {
+      return { success: false, error: 'The HyperEVM inbox transaction reverted. Nothing was sent on Elysium.' };
+    }
+    return { success: true, txHash: receipt.hash, elysiumTxHash: ethers.keccak256(raw), amountHype: ethers.formatEther(value) };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Transaction failed' };
   }

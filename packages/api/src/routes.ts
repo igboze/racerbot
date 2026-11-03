@@ -88,6 +88,7 @@ import {
   recoverIntentRefund,
   withdrawFunds,
   withdrawSuiFunds,
+  withdrawEvmHype,
   withdrawStarknetFunds,
   withdrawTokenFunds,
   withdrawSolanaFunds,
@@ -1047,7 +1048,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
   }
   if (b.evmAddress) {
-    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium (Testnet): <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
+    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
   }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
@@ -8417,9 +8418,7 @@ export function setupRoutes(bot: Telegraf): void {
               Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${position.token_address}`),
             ]);
           } else {
-            rows.push([
-              Markup.button.url('🔍 Elysium Explorer', `https://elysium.kinetiq.xyz/testnet-explorer/token/${position.token_address}`),
-            ]);
+            rows.push([Markup.button.url('🏛️ View on Kleos', `${KLEOS_TOKEN_URL}/${position.token_address}`)]);
           }
           return rows;
         }
@@ -9576,18 +9575,22 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
         balSummary += '• ⚡ HYPE: `' + b.hyperevmBalanceFormatted + ' HYPE`\n';
       }
+      if (b.elysiumBalanceFormatted && Number(b.elysiumBalanceFormatted) > 0) {
+        balSummary += '• 🏛️ Elysium HYPE (Kleos): `' + b.elysiumBalanceFormatted + ' HYPE`\n';
+      }
       balSummary += '\n';
     }
 
     await ctx.reply(
-      '💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet & Tokens)*\n\n' +
+      '💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet, HYPE & Tokens)*\n\n' +
       balSummary +
       'Reply with the recipient address, amount, and optional token, for example:\n' +
       '• *SOL*: `<solana_address> 0.5` or `<solana_address> all`\n' +
       '• *NEAR*: `mywallet.near 1.5` or `mywallet.near all`\n' +
       '• *Token*: `mywallet.near 100 LONK` or `mywallet.near all blackdragon.tkn.near`\n' +
       '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
-      '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n\n' +
+      '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n' +
+      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM` (Elysium HYPE from Kleos sales)\n\n' +
       '_Type /cancel or tap Cancel below to abort._',
       {
         parse_mode: 'Markdown',
@@ -13012,6 +13015,44 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
           await ctx.reply('❌ Invalid amount. Must be a positive number or "all".\n\nExample: `mywallet.near 1.5` or `mywallet.near all`', { parse_mode: 'Markdown' });
           userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+          return;
+        }
+
+        // 20-byte 0x addresses are HyperEVM/Elysium wallets: only HYPE goes there. Other chains'
+        // checks would accept them too (Sui pads short addresses), sending funds nobody controls.
+        if (isValidEvmAddress(dest)) {
+          const evmTok = (tokenToUse || 'hype').toLowerCase();
+          const evmChain = evmTok === 'elysium' || evmTok === 'kleos' ? 'elysium' as const
+            : evmTok === 'hype' || evmTok === 'hyperevm' ? 'hyperevm' as const : null;
+          if (!evmChain) {
+            await ctx.reply(
+              '❌ That is a HyperEVM/Elysium address, so only HYPE can be sent to it.\n\n' +
+              'Example: `' + dest + ' 1 HYPE` or `' + dest + ' all ELYSIUM`',
+              { parse_mode: 'Markdown' }
+            );
+            userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+            return;
+          }
+          const evmUser = await getUserByTelegramId(telegramId);
+          if (!evmUser) {
+            await ctx.reply('❌ User not found. Please run /start first.');
+            return;
+          }
+          const chainName = evmChain === 'elysium' ? 'Elysium' : 'HyperEVM';
+          await ctx.reply(`⏳ Sending ${amt === 'all' ? 'all your' : amt} ${chainName} HYPE to \`${dest}\`...`, { parse_mode: 'Markdown' });
+          const res = await withdrawEvmHype(evmUser, evmChain, dest, amt);
+          if (!res.success) {
+            await ctx.reply(`❌ ${res.error || 'Transfer failed.'}`);
+            return;
+          }
+          await ctx.reply(
+            evmChain === 'elysium'
+              ? `✅ *Elysium Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${dest}\`\n\n` +
+                `It entered the Elysium inbox and usually lands within a few minutes.\n` +
+                `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
+              : `✅ *HYPE Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${dest}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
+            { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } } as any
+          );
           return;
         }
 
