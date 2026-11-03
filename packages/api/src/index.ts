@@ -22,6 +22,7 @@ import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } fro
 import { startMultichainDepositPoller } from './multichainDeposit.js';
 import { startReceiptReconciler } from './receipts.js';
 import { startConfidentialWorker } from './executorPool.js';
+import { startCopyFeeRetryWorker } from './alphaCopyFee.js';
 import { metricsMiddleware, monitoringRoutes } from './monitoring.js';
 import { setupMonitor } from './monitor.js';
 import { startBackgroundWorkers, stopBackgroundWorkers } from './workers.js';
@@ -558,6 +559,8 @@ async function main(): Promise<void> {
   // Resolve private trades left PENDING (timeouts, restarts) from their on-chain outcome
   const receiptReconciler = startReceiptReconciler(30_000);
   const confidentialWorker = startConfidentialWorker(15_000);
+  // Racer Alpha profit shares that could not be collected at the sell (empty wallet, NEAR still in an executor)
+  const copyFeeRetryWorker = startCopyFeeRetryWorker();
 
   // Swarm tranche timers live in memory: pause swarms a restart interrupted so users can resume them
   void import('./swarmExecutor.js')
@@ -576,6 +579,7 @@ async function main(): Promise<void> {
     clearInterval(multichainPoller);
     clearInterval(receiptReconciler);
     if (confidentialWorker) clearInterval(confidentialWorker);
+    clearInterval(copyFeeRetryWorker);
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;

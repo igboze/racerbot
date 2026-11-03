@@ -4395,7 +4395,7 @@ function mapVaultIntentRow(row: any): RacerVaultIntentRecord {
 // ── Confidential trading: private balance accounts and per-position executors ──
 
 export type ExecutorStatus = 'creating' | 'funding' | 'ready' | 'claimed' | 'open' | 'exiting' | 'exited' | 'closed' | 'failed';
-export type ConfidentialMoveKind = 'deposit' | 'refill' | 'return' | 'withdraw';
+export type ConfidentialMoveKind = 'deposit' | 'refill' | 'return' | 'withdraw' | 'copy_fee';
 
 export interface ConfidentialAccountRecord {
   user_id: string;

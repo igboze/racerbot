@@ -1,11 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 
+const transferNearFromUser = vi.fn();
+const payFromPrivateBalance = vi.fn();
+const query = vi.fn();
+
 vi.mock('./wallet.js', () => ({
-  transferNearFromUser: vi.fn(),
+  transferNearFromUser,
   unwrapUserWrapNear: vi.fn(),
 }));
+vi.mock('./executorPool.js', () => ({ payFromPrivateBalance }));
+vi.mock('@racerbot/db', () => ({
+  getDb: async () => ({ query }),
+  getUserById: vi.fn(),
+}));
 
-const { computeCopyProfitShare } = await import('./alphaCopyFee.js');
+const { computeCopyProfitShare, retryFailedCopyFees } = await import('./alphaCopyFee.js');
 
 describe('computeCopyProfitShare', () => {
   const base = { costNear: 10, copiedQtyRaw: 1000n, balanceBeforeRaw: 1000n, soldRaw: 1000n, proceedsNear: 15, feePct: 10 };
@@ -49,5 +58,52 @@ describe('computeCopyProfitShare', () => {
     expect(computeCopyProfitShare({ ...base, proceedsNear: 0 }).feeNear).toBe(0);
     expect(computeCopyProfitShare({ ...base, balanceBeforeRaw: 0n }).copiedSoldRaw).toBe(0n);
     expect(computeCopyProfitShare({ ...base, copiedQtyRaw: 0n }).feeNear).toBe(0);
+  });
+});
+
+describe('retryFailedCopyFees', () => {
+  const failedRow = (route: string) => ({
+    id: 'cfee_1', user_id: 'u1', trader_id: 't1', route, fee_near: '0.5', payout_account: 'creator.near', telegram_id: null,
+  });
+
+  /** Answers the SELECT with `rows` and the claim with `claimed` rows; every other query succeeds */
+  function fakeDb(rows: any[], claimed: number) {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM racer_alpha_copy_fees')) return { rows };
+      if (sql.includes("SET status = 'collecting'")) return { rows: Array.from({ length: claimed }, () => ({ id: 'cfee_1' })) };
+      return { rows: [] };
+    });
+  }
+
+  it('sends a failed wallet share again and marks it paid', async () => {
+    fakeDb([failedRow('wallet')], 1);
+    transferNearFromUser.mockReset().mockResolvedValue({ txHash: 'tx-fee' });
+    expect(await retryFailedCopyFees()).toEqual({ paid: 1, failed: 0 });
+    expect(transferNearFromUser).toHaveBeenCalledWith('u1', 'creator.near', (5n * 10n ** 23n).toString());
+    expect(query.mock.calls.some(([sql]) => sql.includes("status = 'paid'"))).toBe(true);
+  });
+
+  it('pays confidential shares from the private balance', async () => {
+    fakeDb([failedRow('confidential')], 1);
+    payFromPrivateBalance.mockReset().mockResolvedValue({ intentHash: 'intent-1' });
+    transferNearFromUser.mockReset();
+    expect(await retryFailedCopyFees()).toEqual({ paid: 1, failed: 0 });
+    expect(payFromPrivateBalance).toHaveBeenCalledWith('u1', 5n * 10n ** 23n, 'creator.near');
+    expect(transferNearFromUser).not.toHaveBeenCalled();
+  });
+
+  it('skips a row another attempt already claimed, so it is never sent twice', async () => {
+    fakeDb([failedRow('wallet')], 0);
+    transferNearFromUser.mockReset();
+    expect(await retryFailedCopyFees()).toEqual({ paid: 0, failed: 0 });
+    expect(transferNearFromUser).not.toHaveBeenCalled();
+  });
+
+  it('keeps a share that still cannot be paid for the next retry', async () => {
+    fakeDb([failedRow('confidential')], 1);
+    payFromPrivateBalance.mockReset().mockRejectedValue(new Error('The private balance does not cover it yet'));
+    expect(await retryFailedCopyFees()).toEqual({ paid: 0, failed: 1 });
+    expect(query.mock.calls.some(([sql]) => sql.includes("ELSE 'failed'"))).toBe(true);
   });
 });
