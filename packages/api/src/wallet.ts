@@ -45,6 +45,7 @@ import {
   checkSolanaWithdrawDestination,
   getSolanaTokenBalance,
   transferSolanaToken,
+  solanaUiToRaw,
   getStarknetProvider,
   getStarknetAccount,
   getStarknetBalance,
@@ -3843,14 +3844,13 @@ export async function withdrawSolanaTokenFunds(
     throw new Error('Keep at least 0.003 SOL in your wallet to pay the network fee and the recipient token account rent.');
   }
   const info = await getSolanaTokenInfo(mint).catch(() => null);
-  const decimals = held.decimals || info?.decimals || 6;
+  const decimals = held.decimals ?? info?.decimals ?? 6;
   let raw: bigint;
   if (amount === undefined || amount === 'all' || amount === '') {
     raw = held.raw;
   } else {
-    const human = typeof amount === 'number' ? amount : parseFloat(String(amount));
-    if (!Number.isFinite(human) || human <= 0) throw new Error('Invalid amount.');
-    raw = BigInt(Math.floor(human * Math.pow(10, decimals)));
+    raw = solanaUiToRaw(amount, decimals);
+    if (raw <= 0n) throw new Error('Invalid amount.');
     if (raw > held.raw) raw = held.raw;
   }
   const keypair = solanaKeypairFor(solAddress, solPrivateKeyEnc);
@@ -3867,9 +3867,11 @@ export async function withdrawSolanaTokenFunds(
   }
   balanceCache.delete(telegramId);
   tradeBalanceCache.delete(telegramId);
+  const humanAmount = Number(raw) / Math.pow(10, decimals);
+  const amountWithdrawn = humanAmount < 0.0001 ? humanAmount.toFixed(6) : humanAmount.toFixed(4);
   return {
     txHash: sig,
-    amountWithdrawn: (Number(raw) / Math.pow(10, decimals)).toFixed(4),
+    amountWithdrawn,
     symbol: info?.symbol || 'TOKEN',
     tokenAddress: mint,
     destination,
