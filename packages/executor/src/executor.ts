@@ -1576,7 +1576,7 @@ export class SwapExecutor {
 
             if (route.hop1.type === 'dcl') {
               // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
-              const poolIds = [route.hop1.poolId, route.launchPoolId];
+              const poolIds = [...(route.hop1Path ?? [route.hop1.poolId]), route.launchPoolId];
               console.log(
                 `[EXECUTOR] NearlyTrade route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
               );
@@ -1771,7 +1771,7 @@ export class SwapExecutor {
 
             if (route.hop1.type === 'dcl') {
               // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
-              const poolIds = [route.launchPoolId, route.hop1.poolId];
+              const poolIds = [route.launchPoolId, ...(route.hop1Path ? [...route.hop1Path].reverse() : [route.hop1.poolId])];
               console.log(
                 `[EXECUTOR] NearlyTrade route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
               );
@@ -2655,7 +2655,7 @@ export class SwapExecutor {
             result = await signAndSend('wrap.near', actions);
           } else if (route.hop1.type === 'dcl') {
             // Native atomic 2-pool DCL swap: wrap.near -> quote -> token_out in 1 single transaction
-            const poolIds = [route.hop1.poolId, route.launchPoolId];
+            const poolIds = [...(route.hop1Path ?? [route.hop1.poolId]), route.launchPoolId];
             console.log(
               `[EXECUTOR] ShoreMarkets route=atomic-dcl-buy pools=${poolIds.join(' -> ')} minOut=${minOutAdj}`
             );
@@ -2806,7 +2806,7 @@ export class SwapExecutor {
             result = await signAndSend(token_in, actions);
           } else if (route.hop1.type === 'dcl') {
             // Native atomic 2-pool DCL swap: token_in -> quote -> wrap.near in 1 single transaction
-            const poolIds = [route.launchPoolId, route.hop1.poolId];
+            const poolIds = [route.launchPoolId, ...(route.hop1Path ? [...route.hop1Path].reverse() : [route.hop1.poolId])];
             console.log(
               `[EXECUTOR] ShoreMarkets route=atomic-dcl-sell pools=${poolIds.join(' -> ')} minOut=${min_amount_out}`
             );

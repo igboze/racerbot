@@ -187,7 +187,7 @@ export async function sellAtTarget(
   if (info.dcl_path?.length && user) {
     onProgress?.('submitting');
     const { sellViaDclPath } = await import('./intentsRoute.js');
-    const res = await sellViaDclPath(user, position.token_address, info.dcl_path, BigInt(sellQty), slippagePct, positionId);
+    const res = await sellViaDclPath(user, position.token_address, info.dcl_path, BigInt(sellQty), slippagePct, positionId, info.decimals);
     if (!res.success) return { success: false, reason: res.reason || 'Sell failed.' };
     if (fullExit) {
       await updatePosition({ position_id: positionId, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
