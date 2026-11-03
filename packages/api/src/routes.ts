@@ -127,6 +127,17 @@ import {
   refuelNearGasIfNeeded,
   type TokenInfoResult,
 } from './wallet.js';
+import {
+  MAX_EVM_WALLETS_PER_USER,
+  evmRecipientProblem,
+  importEvmWallet,
+  listUserEvmWallets,
+  parseEvmSecret,
+  planEvmTokenSend,
+  sendEvmToken,
+  switchActiveEvmWallet,
+  type EvmTokenSendPlan,
+} from './evmWallet.js';
 import { sellAtTarget } from './sellHelper.js';
 import {
   handlePrivatePrompt,
@@ -367,6 +378,9 @@ interface PendingAction {
   | 'import_near_key' | 'import_near_name' | 'import_near_confirm' | 'rename_near_wallet'
   | 'import_sui_key' | 'import_sui_name' | 'import_sui_confirm' | 'rename_sui_wallet'
   | 'rename_starknet_wallet'
+  | 'import_evm_key' | 'import_evm_name' | 'import_evm_confirm'
+  // Strict EVM send: shown on a confirm card first
+  | 'evm_send_confirm'
   // Buy Alert group setup
   | 'set_group_token'
   // Limit Order wizard
@@ -392,6 +406,11 @@ interface PendingAction {
   importSuiWalletName?: string;
   renameSuiWalletId?: string;
   renameStarknetWalletId?: string;
+  importEvmSecret?: string;
+  importEvmWalletName?: string;
+  evmSend?:
+    | { kind: 'hype'; chain: 'hyperevm' | 'elysium'; to: string; amount: number | 'all' }
+    | { kind: 'token'; plan: EvmTokenSendPlan };
   // Copy trading wizard state
   copyWallet?: string;
   copyBuyAmount?: number;
@@ -1341,6 +1360,38 @@ export async function buildWalletsManagementMenu(telegramId: number) {
     }
   }
 
+  // 4. EVM Wallets: one key trades HyperEVM, Elysium and Kleos
+  const evmWallets: UserWalletRecord[] = await listUserEvmWallets(user.id).catch(() => []);
+  if (user.evm_address && !evmWallets.some(w => w.address.toLowerCase() === user.evm_address!.toLowerCase())) {
+    evmWallets.push({
+      id: 'default_evm',
+      user_id: user.id,
+      chain: 'hyperevm',
+      address: user.evm_address,
+      name: 'EVM Wallet 1',
+      encrypted_private_key: '',
+      is_imported: false,
+      is_active: !evmWallets.some(w => w.is_active),
+      created_at: new Date(),
+    });
+  }
+  if (evmWallets.length > 0) {
+    text += `⚡ <b>EVM Wallets</b> (HyperEVM · Elysium · Kleos)\n`;
+    for (let i = 0; i < evmWallets.length; i++) {
+      const w = evmWallets[i];
+      const statusIcon = w.is_active ? '🟢' : '⚪';
+      const activeLabel = w.is_active ? ' <b>[Active Trading Wallet]</b>' : '';
+      const importedLabel = w.is_imported ? ' 📥' : '';
+      text += `${i + 1}. ${statusIcon} <b>${w.is_active ? '⭐ ' : ''}${escapeHtml(w.name)}</b>${importedLabel}${activeLabel}\n`;
+      text += `   <code>${escapeHtml(w.address)}</code>\n\n`;
+      if (w.id && !w.id.startsWith('default_')) {
+        buttons.push([w.is_active
+          ? cb(`✓ Active (EVM)`, `w_sw_evm:${w.id}`, 'success')
+          : cb(`⚡ Set Active: ${w.name.slice(0, 18)}`, `w_sw_evm:${w.id}`, 'primary')]);
+      }
+    }
+  }
+
   // Import / action buttons row
   const actionRow: any[] = [];
   if (nearWallets.length < MAX_NEAR_WALLETS_PER_USER) {
@@ -1351,6 +1402,9 @@ export async function buildWalletsManagementMenu(telegramId: number) {
   }
   if (actionRow.length > 0) {
     buttons.push(actionRow);
+  }
+  if (evmWallets.filter(w => !w.id.startsWith('default_')).length < MAX_EVM_WALLETS_PER_USER) {
+    buttons.push([cb('📥 Import EVM (HyperEVM · Elysium · Kleos)', 'wallet_import_evm_prompt', 'primary')]);
   }
 
   buttons.push([
@@ -9269,6 +9323,127 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     );
   });
 
+  bot.action('wallet_import_evm_prompt', async (ctx) => {
+    if (isGroupChat(ctx)) {
+      await replyGroupDmRedirect(ctx, 'Import EVM wallet');
+      return;
+    }
+    const telegramId = ctx.from!.id;
+    userPendingActions.set(telegramId, { action: 'import_evm_key', expiresAt: Date.now() + 180000 });
+    await ctx.answerCbQuery().catch(() => { });
+    await ctx.reply(
+      `📥 <b>Import EVM Wallet</b> (HyperEVM · Elysium · Kleos)\n\n` +
+      `Reply with your EVM private key or seed phrase. One EVM wallet trades on HyperEVM, Elysium and Kleos.\n\n` +
+      `Supported formats:\n` +
+      `• Private key: 64 hex characters, with or without <code>0x</code> (MetaMask/Rabby → Account details → Show private key)\n` +
+      `• Seed phrase: 12 or 24 words (the first account is used)\n\n` +
+      `🔒 <i>Your message containing the key will be deleted automatically for security.</i>\n\n` +
+      `<i>Send /cancel to abort.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  const finishEvmImport = async (ctx: Context, setActive: boolean) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'import_evm_confirm' || !pending.importEvmSecret) {
+      await ctx.answerCbQuery('❌ Session expired. Please start over.').catch(() => { });
+      return;
+    }
+    userPendingActions.delete(telegramId);
+    try {
+      await ctx.answerCbQuery().catch(() => { });
+      const res = await importEvmWallet(telegramId, pending.importEvmSecret, pending.importEvmWalletName || '', setActive);
+      await ctx.reply(
+        `🎉 <b>EVM Wallet Imported!</b>\n\n` +
+        `• <b>Name:</b> ${escapeHtml(res.wallet.name)}\n` +
+        `• <b>Address:</b> <code>${res.address}</code>\n` +
+        `• <b>Status:</b> ${setActive
+          ? '🟢 Active: your HyperEVM, Elysium and Kleos trades now use this wallet'
+          : '⚪ Added (switch to it any time in /wallets)'}`,
+        { parse_mode: 'HTML' }
+      );
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  };
+  bot.action('wallet_import_active_evm', ctx => finishEvmImport(ctx, true));
+  bot.action('wallet_import_inactive_evm', ctx => finishEvmImport(ctx, false));
+
+  bot.action(/^w_sw_evm:(.+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    try {
+      const switched = await switchActiveEvmWallet(telegramId, ctx.match![1]);
+      await ctx.answerCbQuery(`⚡ EVM wallet switched to ${switched.name}`).catch(() => { });
+      const menu = await buildWalletsManagementMenu(telegramId);
+      await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
+      });
+    } catch (err: any) {
+      await ctx.answerCbQuery(`❌ ${err.message}`).catch(() => { });
+    }
+  });
+
+  // ── Strict EVM send: runs only from the confirm card ──
+  bot.action('evm_send_confirm', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || pending.action !== 'evm_send_confirm' || !pending.evmSend) {
+      await ctx.answerCbQuery('❌ This send expired. Start it again from Withdraw.').catch(() => { });
+      return;
+    }
+    // One tap, one send
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery('Sending…').catch(() => { });
+    await ctx.editMessageReplyMarkup(undefined).catch(() => { });
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply('❌ User not found. Please run /start first.');
+      return;
+    }
+    const send = pending.evmSend;
+    const opts = { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } } as any;
+    try {
+      if (send.kind === 'token') {
+        const res = await sendEvmToken(user, send.plan);
+        const sym = sanitizeMd(send.plan.symbol);
+        await ctx.reply(
+          send.plan.chain === 'elysium'
+            ? `✅ *Token Transfer Sent on Elysium!*\n\n💸 Amount: \`${send.plan.amountDisplay} ${sym}\`\n📬 To: \`${send.plan.to}\`\n\n` +
+              `It entered the Elysium inbox and usually lands within a few minutes.\n` +
+              `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
+            : `✅ *Token Sent!*\n\n💸 Amount: \`${send.plan.amountDisplay} ${sym}\`\n📬 To: \`${send.plan.to}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
+          opts
+        );
+        return;
+      }
+      const res = await withdrawEvmHype(user, send.chain, send.to, send.amount);
+      if (!res.success) {
+        await ctx.reply(`❌ ${res.error || 'Transfer failed.'}`);
+        return;
+      }
+      await ctx.reply(
+        send.chain === 'elysium'
+          ? `✅ *Elysium Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${send.to}\`\n\n` +
+            `It entered the Elysium inbox and usually lands within a few minutes.\n` +
+            `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
+          : `✅ *HYPE Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${send.to}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
+        opts
+      );
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
+  });
+
+  bot.action('evm_send_cancel', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    if (userPendingActions.get(telegramId)?.action === 'evm_send_confirm') userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery('Send cancelled.').catch(() => { });
+    await ctx.editMessageText('❌ Send cancelled. Nothing was sent.').catch(() => { });
+  });
+
   bot.action('wallet_import_active_sui', async (ctx) => {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
@@ -9617,7 +9792,9 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       '• *Token*: `mywallet.near 100 LONK` or `mywallet.near all blackdragon.tkn.near`\n' +
       '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
       '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n' +
-      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM` (Elysium HYPE from Kleos sales)\n\n' +
+      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM` (Elysium HYPE from Kleos sales)\n' +
+      '• *EVM token / Kleos coin*: `0x1234...abcd 100 0xTOKEN_CONTRACT`\n' +
+      '_EVM sends only go to 0x addresses with exactly 40 hex characters (MetaMask, Rabby). Starknet and Sui addresses are refused._\n\n' +
       '_Type /cancel or tap Cancel below to abort._',
       {
         parse_mode: 'Markdown',
@@ -10962,7 +11139,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
 
       await ctx.reply(
         `⚠️ *Export Private Keys*\n\n` +
-        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}${user.starknet_address ? ` and *Starknet* (\`${user.starknet_address}\`)` : ''}${user.solana_address ? ` and *Solana* (\`${user.solana_address}\`)` : ''}.\n\n` +
+        `This will reveal private keys for *NEAR* (\`${user.subaccount_id}\`)${user.sui_address ? ` and *SUI* (\`${user.sui_address}\`)` : ''}${user.starknet_address ? ` and *Starknet* (\`${user.starknet_address}\`)` : ''}${user.solana_address ? ` and *Solana* (\`${user.solana_address}\`)` : ''}${user.evm_address ? ` and *EVM: HyperEVM · Elysium · Kleos* (\`${user.evm_address}\`)` : ''}.\n\n` +
         `Anyone with these keys will have full control over your funds.\n\n` +
         `Are you sure you want to display your private keys?`,
         {
@@ -11073,6 +11250,14 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           `<tg-spoiler><code>${rawSolanaKey}</code></tg-spoiler>\n\n`;
       }
 
+      if (user.evm_address && rawEvmKey) {
+        const evmWallets = await listUserEvmWallets(user.id).catch(() => []);
+        const activeEvm = evmWallets.find(w => w.is_active && w.address.toLowerCase() === user.evm_address!.toLowerCase());
+        keyHtml +=
+          `⚡ <b>EVM Private Key</b>: HyperEVM · Elysium · Kleos${activeEvm ? ` [${escapeHtml(activeEvm.name)}]` : ''} (<code>${user.evm_address}</code>):\n` +
+          `<tg-spoiler><code>${rawEvmKey}</code></tg-spoiler>\n\n`;
+      }
+
       keyHtml +=
         `👆 <i>Tap the covered boxes above to uncover and copy your keys.</i>\n\n` +
         `⚠️ <i>This message will automatically delete in 2 minutes for security.</i>`;
@@ -11082,7 +11267,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       await ctx.reply(
         `🛡️ *Security Reminder*:\n` +
         `• Keep your private keys confidential.\n` +
-        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), Argent X / Braavos (Starknet), or Phantom / Solflare (Solana) to manage outside RacerBot.`,
+        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), Argent X / Braavos (Starknet), Phantom / Solflare (Solana), or MetaMask / Rabby (HyperEVM, Elysium, Kleos) to manage outside RacerBot.`,
         { parse_mode: 'Markdown' }
       );
 
@@ -12412,6 +12597,62 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         return;
       }
 
+      if (pending.action === 'import_evm_key') {
+        // Delete the message holding the key before anything else
+        await ctx.deleteMessage().catch(() => { });
+        try {
+          const restored = parseEvmSecret(rawText);
+          userPendingActions.set(telegramId, {
+            action: 'import_evm_name',
+            importEvmSecret: rawText.trim(),
+            expiresAt: Date.now() + 180000,
+          });
+          await ctx.reply(
+            `✅ <b>Valid EVM Key!</b>\n\n` +
+            `• Address: <code>${restored.address}</code>\n` +
+            `• Works on: HyperEVM · Elysium · Kleos\n\n` +
+            `Reply with a nickname for this wallet (e.g. <i>Main</i>, <i>Kleos</i>):\n\n` +
+            `<i>Send /cancel to abort.</i>`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err: any) {
+          userPendingActions.set(telegramId, { action: 'import_evm_key', expiresAt: Date.now() + 180000 });
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nTry again, or send /cancel.`);
+        }
+        return;
+      }
+
+      if (pending.action === 'import_evm_name') {
+        if (!pending.importEvmSecret) {
+          await ctx.reply('❌ Import session expired. Please start over via /wallets.');
+          return;
+        }
+        const walletName = rawText.trim().slice(0, 30);
+        userPendingActions.set(telegramId, {
+          action: 'import_evm_confirm',
+          importEvmSecret: pending.importEvmSecret,
+          importEvmWalletName: walletName,
+          expiresAt: Date.now() + 180000,
+        });
+        await ctx.reply(
+          `📝 <b>Wallet Name:</b> ${escapeHtml(walletName)}\n\n` +
+          `Make this your <b>active EVM wallet</b>?\n\n` +
+          `• <b>Set as Active:</b> HyperEVM, Elysium and Kleos trades use this wallet\n` +
+          `• <b>Add Only:</b> keep your current EVM wallet active`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [cb('✅ Set as Active', 'wallet_import_active_evm', 'primary')],
+                [cb('➕ Add Only (Keep Current Active)', 'wallet_import_inactive_evm', 'primary')],
+                [cb('❌ Cancel', 'menu_home', 'primary')],
+              ],
+            },
+          }
+        );
+        return;
+      }
+
       if (pending.action === 'import_sui_key') {
         // Delete message containing private key immediately for security!
         await ctx.deleteMessage().catch(() => { });
@@ -13070,41 +13311,75 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           return;
         }
 
-        // 20-byte 0x addresses are HyperEVM/Elysium wallets: only HYPE goes there. Other chains'
-        // checks would accept them too (Sui pads short addresses), sending funds nobody controls.
-        if (isValidEvmAddress(dest)) {
-          const evmTok = (tokenToUse || 'hype').toLowerCase();
-          const evmChain = evmTok === 'elysium' || evmTok === 'kleos' ? 'elysium' as const
-            : evmTok === 'hype' || evmTok === 'hyperevm' ? 'hyperevm' as const : null;
-          if (!evmChain) {
-            await ctx.reply(
-              '❌ That is a HyperEVM/Elysium address, so only HYPE can be sent to it.\n\n' +
-              'Example: `' + dest + ' 1 HYPE` or `' + dest + ' all ELYSIUM`',
-              { parse_mode: 'Markdown' }
-            );
-            userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
-            return;
-          }
+        // EVM sends are strict. A HyperEVM/Elysium/Kleos asset only goes to a plain 20-byte 0x
+        // address, and only those assets go there: Starknet and Sui addresses are 0x too (but
+        // longer), and Sui would pad a short address into one nobody controls.
+        const evmTokRaw = (tokenToUse || '').trim();
+        const evmTokLower = evmTokRaw.toLowerCase();
+        const isEvmAssetName = ['hype', 'hyperevm', 'elysium', 'kleos'].includes(evmTokLower);
+        const isEvmTokenContract = /^0x[0-9a-fA-F]{40}$/.test(evmTokRaw);
+        if (/^0x[0-9a-fA-F]{40}$/.test(dest) || isEvmAssetName || isEvmTokenContract) {
+          const rearm = () => userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
           const evmUser = await getUserByTelegramId(telegramId);
           if (!evmUser) {
             await ctx.reply('❌ User not found. Please run /start first.');
             return;
           }
-          const chainName = evmChain === 'elysium' ? 'Elysium' : 'HyperEVM';
-          await ctx.reply(`⏳ Sending ${amt === 'all' ? 'all your' : amt} ${chainName} HYPE to \`${dest}\`...`, { parse_mode: 'Markdown' });
-          const res = await withdrawEvmHype(evmUser, evmChain, dest, amt);
-          if (!res.success) {
-            await ctx.reply(`❌ ${res.error || 'Transfer failed.'}`);
+          const problem = evmRecipientProblem(dest, evmUser.evm_address);
+          if (problem) {
+            await ctx.reply(`❌ ${problem}\n\nNothing was sent. Reply with a correct address, or tap Cancel.`);
+            rearm();
             return;
           }
-          await ctx.reply(
-            evmChain === 'elysium'
-              ? `✅ *Elysium Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${dest}\`\n\n` +
-                `It entered the Elysium inbox and usually lands within a few minutes.\n` +
-                `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
-              : `✅ *HYPE Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${dest}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
-            { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } } as any
-          );
+          if (evmTokRaw && !isEvmAssetName && !isEvmTokenContract) {
+            await ctx.reply(
+              '❌ Only HYPE and HyperEVM/Elysium tokens can be sent to an EVM address.\n\n' +
+              'Examples:\n`' + dest + ' 1 HYPE`\n`' + dest + ' all ELYSIUM`\n`' + dest + ' 100 0xTOKEN_CONTRACT`',
+              { parse_mode: 'Markdown' }
+            );
+            rearm();
+            return;
+          }
+
+          const to = ethers.getAddress(dest);
+          let evmSend: NonNullable<PendingAction['evmSend']>;
+          let card: string;
+          if (isEvmTokenContract) {
+            let plan: EvmTokenSendPlan;
+            try {
+              plan = await planEvmTokenSend(evmUser, evmTokRaw, to, amt);
+            } catch (err: any) {
+              await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nNothing was sent.`);
+              rearm();
+              return;
+            }
+            evmSend = { kind: 'token', plan };
+            card =
+              `🔎 *Check this send carefully*\n\n` +
+              `⛓️ Chain: *${plan.chain === 'elysium' ? 'Elysium (Kleos)' : 'HyperEVM'}*\n` +
+              `🪙 Token: *${sanitizeMd(plan.symbol)}* \`${plan.token}\`\n` +
+              `💸 Amount: \`${plan.amountDisplay} ${sanitizeMd(plan.symbol)}\`\n` +
+              `📬 To: \`${plan.to}\`\n\n` +
+              `Sends on EVM chains cannot be reversed.`;
+          } else {
+            const chain = evmTokLower === 'elysium' || evmTokLower === 'kleos' ? 'elysium' as const : 'hyperevm' as const;
+            evmSend = { kind: 'hype', chain, to, amount: amt };
+            card =
+              `🔎 *Check this send carefully*\n\n` +
+              `⛓️ Chain: *${chain === 'elysium' ? 'Elysium (Kleos)' : 'HyperEVM'}*\n` +
+              `🪙 Asset: *HYPE*\n` +
+              `💸 Amount: \`${amt === 'all' ? 'All (minus gas)' : `${amt} HYPE`}\`\n` +
+              `📬 To: \`${to}\`\n\n` +
+              `Sends on EVM chains cannot be reversed.`;
+          }
+          userPendingActions.set(telegramId, { action: 'evm_send_confirm', evmSend, expiresAt: Date.now() + 120000 });
+          await ctx.reply(card, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('✅ Confirm & Send', 'evm_send_confirm', 'danger')],
+              [cb('❌ Cancel', 'evm_send_cancel', 'primary')],
+            ]),
+          });
           return;
         }
 

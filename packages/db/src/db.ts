@@ -1007,6 +1007,22 @@ export async function addEvmWallet(params: {
     );
     if (taken.rows.length > 0) throw new Error('This EVM wallet is already connected to another RacerBot account.');
 
+    // Keep the wallet in use as a listed wallet first: making the new one active rewrites
+    // users.evm_*, and the old key must stay recoverable (it may still hold funds)
+    const current = await client.query('SELECT evm_address, evm_private_key_enc FROM users WHERE id = $1', [params.userId]);
+    const cur = current.rows[0];
+    if (cur?.evm_address && cur?.evm_private_key_enc) {
+      for (const chain of ['hyperevm', 'elysium'] as const) {
+        await client.query(
+          `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+           VALUES ($1, $2, $3, 'EVM Wallet 1', $4, FALSE, NOT EXISTS (
+             SELECT 1 FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE))
+           ON CONFLICT (user_id, chain, address) DO NOTHING`,
+          [params.userId, chain, cur.evm_address, cur.evm_private_key_enc]
+        );
+      }
+    }
+
     if (params.isActive) {
       await client.query(
         `UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain IN ('hyperevm', 'elysium')`,

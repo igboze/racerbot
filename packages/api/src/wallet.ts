@@ -87,6 +87,7 @@ import {
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
 import { executeEvmSwap, type EvmSwapExecutionResult } from '@racerbot/executor';
+import { evmRecipientProblem } from './evmWallet.js';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
 import { CallData, uint256, ec, cairo } from 'starknet';
@@ -2499,11 +2500,10 @@ export async function withdrawEvmHype(
   if (!user.evm_address || !user.evm_private_key_enc) {
     return { success: false, error: 'EVM wallet not configured.' };
   }
-  if (!isValidEvmAddress(toAddress)) {
-    return { success: false, error: 'Invalid recipient EVM address.' };
-  }
-  if (toAddress.toLowerCase() === user.evm_address.toLowerCase()) {
-    return { success: false, error: 'That is your own RacerBot wallet.' };
+  // Strict: only a plain 20-byte 0x address (never a Starknet/Sui/NEAR/Solana one, a typo or our own wallet)
+  const recipientProblem = evmRecipientProblem(toAddress, user.evm_address);
+  if (recipientProblem) {
+    return { success: false, error: recipientProblem };
   }
 
   const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
