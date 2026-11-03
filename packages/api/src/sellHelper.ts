@@ -27,7 +27,9 @@ export async function sellAtTarget(
   if (rawQty <= 0n) return { success: false, reason: 'zero_quantity' };
 
   const sellPctBps = BigInt(Math.floor(percentage * 100));
-  const sellQty = percentage === 100
+  // A typed full amount can round to 99.99..%; anything short of that is a partial sell and keeps the position open
+  const fullExit = percentage >= 99.99;
+  const sellQty = fullExit
     ? rawQty.toString()
     : ((rawQty * sellPctBps) / 10000n).toString();
 
@@ -47,7 +49,7 @@ export async function sellAtTarget(
   if (position.chain === 'solana' || info.chain === 'solana') {
     let amountIn = sellQty;
     // For full exits sell the exact on-chain balance, so no dust is left behind.
-    if (percentage >= 100 && user?.solana_address) {
+    if (fullExit && user?.solana_address) {
       const onChain = await getSolanaTokenBalance(user.solana_address, position.token_address, true).catch(() => null);
       if (onChain && onChain.raw > 0n) amountIn = onChain.raw.toString();
       if (onChain && onChain.raw === 0n) {
@@ -71,7 +73,7 @@ export async function sellAtTarget(
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Solana sell failed.' };
     }
-    if (percentage >= 99) {
+    if (fullExit) {
       await updatePosition({
         position_id: positionId,
         status: 'closed',
@@ -102,7 +104,7 @@ export async function sellAtTarget(
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || `${chain} sell failed on-chain.` };
     }
-    if (percentage >= 99) {
+    if (fullExit) {
       await updatePosition({
         position_id: positionId,
         status: 'closed',
@@ -132,7 +134,7 @@ export async function sellAtTarget(
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Starknet sell failed on-chain.' };
     }
-    if (percentage >= 99) {
+    if (fullExit) {
       await updatePosition({
         position_id: positionId,
         status: 'closed',
@@ -162,7 +164,7 @@ export async function sellAtTarget(
     if (swapResult.success === false) {
       return { success: false, reason: swapResult.reason || 'Sui sell failed on-chain.' };
     }
-    if (percentage >= 99) {
+    if (fullExit) {
       await updatePosition({
         position_id: positionId,
         status: 'closed',
@@ -272,7 +274,7 @@ export async function sellAtTarget(
     return { success: false, reason: swapResult.reason || 'Swap failed on-chain. Please verify liquidity and retry.' };
   }
 
-  if (percentage >= 99) {
+  if (fullExit) {
     await updatePosition({
       position_id: positionId,
       status: 'closed',

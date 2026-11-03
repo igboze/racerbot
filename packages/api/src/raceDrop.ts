@@ -36,6 +36,8 @@ import {
   getSuiTokenBalance,
   formatTokenUnits,
   createRedis,
+  getShortTokenKey,
+  resolveTokenAddressFromKey,
 } from '@racerbot/shared';
 import { REDIS_URL } from './config.js';
 
@@ -420,7 +422,7 @@ export function buildRaceDropClaimSuccessCard(
       Markup.button.switchToChat('Share Airdrop with Friends', `drop_${drop.id}`),
     ],
     [
-      Markup.button.callback(`Buy More ${drop.token_symbol}`, `token_${drop.token_address}`),
+      Markup.button.callback(`Buy More ${drop.token_symbol}`, `token_refresh:${getShortTokenKey(drop.token_address)}`),
       Markup.button.callback('View Wallet', 'wallet_refresh'),
     ],
     [Markup.button.callback('Main Menu', 'menu_home')],
@@ -1158,7 +1160,7 @@ export async function startRaceDropWizard(ctx: Context): Promise<void> {
       buttons.push([
         Markup.button.callback(
           `🎒 ${symbol} (${formatDropAmount(humanQty)} available)`,
-          `racedrop_pick:${pos.token_address}`
+          `racedrop_pick:${getShortTokenKey(pos.token_address)}`
         ),
       ]);
     }
@@ -1430,7 +1432,8 @@ export function setupRaceDropRoutes(
   // ── Action: racedrop_pick:<token_address> (Step 1 -> Step 2) ───────────────
   bot.action(/^racedrop_pick:(.+)$/, async (ctx) => {
     const telegramId = ctx.from!.id;
-    const tokenAddress = ctx.match[1];
+    // Long addresses (Sui coin types) arrive as a short key: callback data is capped at 64 bytes
+    const tokenAddress = resolveTokenAddressFromKey(ctx.match[1]);
 
     try {
       const isSui = tokenAddress === 'sui' || tokenAddress.startsWith('0x');

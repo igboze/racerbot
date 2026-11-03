@@ -13,7 +13,6 @@ import {
   ERC20_ABI,
   UNISWAP_V2_ROUTER_ABI,
   HYPEREVM_EXPLORER_URL,
-  ELYSIUM_TESTNET_EXPLORER_URL,
   HYPE_SYMBOL,
   HYPERSWAP_V2_ROUTER,
   resolveV2Router,
@@ -63,7 +62,11 @@ export async function executeEvmSwap(
   // Kleos coins live on Elysium mainnet and trade through Kleos's routers, not a V2 router
   if (event.venue === 'kleos') return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
   const chain: EvmChain = event.chain || (event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
-  const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
+  // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
+  if (chain === 'elysium') {
+    throw new Error('Only Kleos coins can be traded on Elysium. This token is not on Elysium mainnet.');
+  }
+  const isTestnet = process.env.HYPEREVM_TESTNET === 'true';
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;
 
   onProgress?.(`routing_${chain}`);
@@ -96,7 +99,7 @@ export async function executeEvmSwap(
   let wethAddress: string;
   try {
     ({ address: routerAddress, weth: wethAddress } = await resolveV2Router(
-      chain, isTestnet, chain === 'elysium' ? ELYSIUM_MARKET_LAB_ROUTER : HYPEREVM_DEFAULT_ROUTER));
+      chain, isTestnet, HYPEREVM_DEFAULT_ROUTER));
   } catch (err: any) {
     return { txHash: '', success: false, chain, reason: `No DEX router available on ${chain}: ${err?.message}`, tokenSymbol, tokenName };
   }
@@ -228,7 +231,7 @@ export async function executeEvmSwap(
       }
     }
 
-    const baseExplorer = chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
+    const baseExplorer = HYPEREVM_EXPLORER_URL;
 
     return {
       txHash,
@@ -326,7 +329,7 @@ export async function executeEvmSwap(
       }
     }
 
-    const baseExplorer = chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
+    const baseExplorer = HYPEREVM_EXPLORER_URL;
 
     return {
       txHash,
