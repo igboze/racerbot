@@ -838,10 +838,14 @@ export async function fetchDexScreenerTokenData(tokenAddress: string, chainHint?
     const baseUsd = pool.priceUsd ? parseFloat(pool.priceUsd) : 0;
     const baseInQuote = pool.priceNative ? parseFloat(pool.priceNative) : 0;
     const token = isQuote ? pool.quoteToken : pool.baseToken;
+    // priceNative is priced in the pair's quote token: on NEAR it is a NEAR price only for wNEAR pairs
+    // (a PRL- or USDC-quoted pool would otherwise be read as NEAR and inflate the market cap)
+    const quoteAddr = String(pool.quoteToken?.address || '').toLowerCase();
+    const nativeIsNear = pool.chainId !== 'near' || quoteAddr === 'wrap.near' || quoteAddr === 'near';
 
     return {
       priceUsd: isQuote ? (baseInQuote > 0 ? baseUsd / baseInQuote : 0) : baseUsd,
-      priceNative: isQuote ? 0 : baseInQuote,
+      priceNative: isQuote || !nativeIsNear ? 0 : baseInQuote,
       marketCapUsd: isQuote ? 0 : (pool.marketCap || pool.fdv || 0),
       fdvUsd: isQuote ? 0 : (pool.fdv || pool.marketCap || 0),
       volume24hUsd: pool.volume?.h24 || 0,
@@ -985,6 +989,8 @@ export async function fetchTokenTotalTxns(
 
 export interface TokenInfoResult {
   address: string;
+  /** NEAR tokens Rhea cannot route: bought and sold through NEAR Intents (1Click), plus a DCL pool when set */
+  intents_route?: { quote: string; dclPoolId?: string };
   /** Why a listed token cannot be traded here (shown on its card) */
   trade_block_reason?: string;
   chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
@@ -1972,6 +1978,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         ? Number(dbCache.bonding_progress_pct)
         : null;
     let dclPoolId: string | null = null;
+    // Launchpads that report their own fees (transfer fee + pool tier), and why a coin cannot be bought
+    let launchpadTaxPct: number | null = null;
+    let tradeBlockReason: string | undefined;
+    let intentsRoute: { quote: string; dclPoolId?: string } | undefined;
     let intearPoolFee: number | undefined;
     let pairedSymbol: string | undefined;
     let priceInPaired: string | undefined;
@@ -2109,6 +2119,16 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               liquidityInPaired = ntState.reserveQuoteHuman > 0 ? ntState.reserveQuoteHuman.toFixed(2) : undefined;
             }
           }
+          // Quoted in a token Rhea cannot reach from NEAR (PRL, ...): trade through NEAR Intents + the DCL pool
+          if (ntState && !ntState.quoteIsNear && ntState.dclPoolId) {
+            const hop = await near.findRheaPoolId('wrap.near', ntState.quote).catch(() => null);
+            if (hop === null) {
+              const { isIntentsToken } = await import('./intentsPrivate.js');
+              if (await isIntentsToken(ntState.quote).catch(() => false)) {
+                intentsRoute = { quote: ntState.quote, dclPoolId: ntState.dclPoolId };
+              }
+            }
+          }
         } catch { /* no-op */ }
       } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
         try {
@@ -2165,6 +2185,38 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
             bondingProgressPct = gpState.bondingProgressPct;
             if (gpState.totalSupply && gpState.totalSupply !== '0') {
               totalSupply = gpState.totalSupply;
+            }
+          }
+        } catch { /* no-op */ }
+      } else if (tokenAddress.endsWith('.v2-launchpad.justhoot.near')) {
+        // justhoot v2 launches into a Rhea DCL pool against the creator's chosen quote token (wNEAR,
+        // PRL, ZEC, USDC, RHEA, HOOT...): the launchpad names the pool, and its transfer fee is the tax
+        try {
+          const fee = await near.view<any>('v2-launchpad.justhoot.near', 'get_token_fee_state', { token_id: tokenAddress });
+          if (fee?.pool_id && fee?.quote_token_id) {
+            const quote = String(fee.quote_token_id);
+            const st = await near.getDclPoolState(fee.pool_id, quote);
+            if (st.price > 0) {
+              venue = 'rhea';
+              price = st.price;
+              liquidity = st.liquidityNear;
+            }
+            dclPoolId = fee.pool_id;
+            launchpadTaxPct = (Number(fee.transfer_fee_pips || 0) + Number(fee.fee_pips || 0)) / 10_000;
+            if (quote !== 'wrap.near') {
+              const qMeta = await near.getTokenMetadata(quote).catch(() => null);
+              pairedSymbol = qMeta?.symbol || undefined;
+              // The executor's two-hop route needs a Ref pool between wNEAR and the quote token
+              const hop = await near.findRheaPoolId('wrap.near', quote).catch(() => null);
+              if (hop === null) {
+                // Rhea's own app swaps such quote tokens (PRL, ...) through NEAR Intents: so does the bot
+                const { isIntentsToken } = await import('./intentsPrivate.js');
+                if (await isIntentsToken(quote).catch(() => false)) {
+                  intentsRoute = { quote, dclPoolId: fee.pool_id };
+                } else {
+                  tradeBlockReason = `This coin trades only against ${pairedSymbol ? '$' + pairedSymbol : quote}, which neither Rhea nor NEAR Intents can swap from NEAR yet.`;
+                }
+              }
             }
           }
         } catch { /* no-op */ }
@@ -2369,15 +2421,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     const supplyNum = parseFloat(totalSupply) / Math.pow(10, meta.decimals);
     const effectiveNearUsd = nearUsd > 0 ? nearUsd : 5.16;
 
-    // Fallback to DexScreener price ONLY if on-chain price was not discovered (price <= 0)
-    if (price <= 0 && dexData) {
-      if (dexData.priceNative > 0) {
-        price = dexData.priceNative;
-      } else if (dexData.priceUsd > 0 && effectiveNearUsd > 0) {
-        price = dexData.priceUsd / effectiveNearUsd;
-      }
-      if (venue === 'unknown') {
-        venue = 'rhea';
+    // No pool price on chain: a token NEAR Intents lists still has a live price there, and trades through
+    // 1Click. Prices never come from DexScreener (its NEAR quotes can be in another token).
+    if (price <= 0 && venue === 'unknown' && !isSuiToken(tokenAddress)) {
+      const { isIntentsToken } = await import('./intentsPrivate.js');
+      if (await isIntentsToken(tokenAddress).catch(() => false)) {
+        const rate = await near.getPairedTokenNearRate(tokenAddress).catch(() => null);
+        if (rate && rate.rateInNear > 0) price = rate.rateInNear;
+        venue = 'intents';
+        intentsRoute = { quote: tokenAddress };
       }
     }
 
@@ -2393,9 +2445,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
     }
 
-    const tradeable = isTradableVenue(venue);
+    const tradeable = (isTradableVenue(venue) || Boolean(intentsRoute)) && !tradeBlockReason;
 
-    const tax = (intearPoolFee != null || rheaCandidate?.poolFee != null)
+    const tax = launchpadTaxPct != null
+      ? { buyTaxPct: launchpadTaxPct, sellTaxPct: launchpadTaxPct }
+      : (intearPoolFee != null || rheaCandidate?.poolFee != null)
       ? await getDexTax({
         venue,
         bonding_phase: bondingPhase,
@@ -2447,6 +2501,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       price_in_paired: priceInPaired,
       liquidity_in_paired: liquidityInPaired,
       icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
+      trade_block_reason: tradeBlockReason,
+      intents_route: intentsRoute,
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

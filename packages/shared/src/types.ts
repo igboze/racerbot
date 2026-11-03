@@ -59,7 +59,8 @@ export type VenueName =
   | 'market_lab'
   | 'corepad'
   | 'kleos'
-  | 'ronspad';
+  | 'ronspad'
+  | 'intents';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
   'rhea',

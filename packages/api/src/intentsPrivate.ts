@@ -198,6 +198,71 @@ export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipie
   return { ...quote, intentHash: submitted.intentHash };
 }
 
+/**
+ * Quote for a public swap on NEAR through 1Click: the sender transfers exactly `amount` of `originAsset`
+ * to `depositAddress`; `destinationAsset` arrives at `recipient` on NEAR and refunds return to `refundTo`.
+ * `dry` quotes price only (no deposit address is reserved).
+ */
+export async function quotePublicSwap(p: {
+  originAsset: string;
+  destinationAsset: string;
+  amount: string;
+  recipient: string;
+  refundTo: string;
+  slippageBps: number;
+  appFees?: { recipient: string; fee: number }[];
+  dry?: boolean;
+}): Promise<MoveQuote> {
+  const q = await api<any>('POST', '/v0/quote', {
+    dry: p.dry ?? false,
+    swapType: 'EXACT_INPUT',
+    slippageTolerance: p.slippageBps,
+    originAsset: p.originAsset,
+    depositType: 'ORIGIN_CHAIN',
+    destinationAsset: p.destinationAsset,
+    amount: p.amount,
+    recipient: p.recipient,
+    recipientType: 'DESTINATION_CHAIN',
+    refundTo: p.refundTo,
+    refundType: 'ORIGIN_CHAIN',
+    deadline: new Date(Date.now() + QUOTE_DEADLINE_MS).toISOString(),
+    ...(p.appFees?.length ? { appFees: p.appFees } : {}),
+  });
+  if (p.dry) {
+    const quote = q?.quote || {};
+    return { depositAddress: '', amountIn: quote.amountIn, amountOut: quote.amountOut, minAmountOut: quote.minAmountOut, timeEstimate: quote.timeEstimate };
+  }
+  return moveQuote(q);
+}
+
+const INTENTS_TOKENS_TTL_MS = 5 * 60_000;
+let intentsNearAssets: { at: number; byContract: Map<string, string> } | null = null;
+
+/**
+ * The 1Click asset id that delivers a NEAR token on NEAR, or null when 1Click cannot swap it. Bridged
+ * tokens are listed twice: `nep141:<contract>` is delivered on their home chain (PRL on Pearl), and
+ * `1cs_v1:near:nep141:<contract>` is the same token delivered on NEAR, the one a NEAR wallet can receive.
+ */
+export async function getIntentsNearAsset(contract: string): Promise<string | null> {
+  if (!intentsNearAssets || Date.now() - intentsNearAssets.at > INTENTS_TOKENS_TTL_MS) {
+    const list = await api<any[]>('GET', '/v0/tokens');
+    const byContract = new Map<string, string>();
+    for (const t of Array.isArray(list) ? list : []) {
+      if (t?.blockchain !== 'near') continue;
+      const id = String(t.assetId || '');
+      const c = String(t.contractAddress || (id.startsWith('nep141:') ? id.slice('nep141:'.length) : '')).toLowerCase();
+      if (c) byContract.set(c, id);
+    }
+    intentsNearAssets = { at: Date.now(), byContract };
+  }
+  return intentsNearAssets.byContract.get(contract.toLowerCase()) ?? null;
+}
+
+/** Whether 1Click can deliver a NEAR token to a NEAR wallet */
+export async function isIntentsToken(contract: string): Promise<boolean> {
+  return (await getIntentsNearAsset(contract)) !== null;
+}
+
 /** Optional hint that a deposit was sent (1Click also detects it on its own, ~14 s in testing). */
 export async function notifyDeposit(depositAddress: string, txHash: string): Promise<void> {
   await api('POST', '/v0/deposit/submit', { depositAddress, txHash }).catch(e =>

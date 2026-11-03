@@ -2157,7 +2157,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     } else {
       text += isKleos
         ? `🏛️ ${tokenInfo.trade_block_reason ? tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ') : `RacerBot can’t trade ${padName} coins right now.`} Tap *View on ${padName}* to trade there.`
-        : '⚠️ Trading venue is not directly supported.';
+        : (tokenInfo.trade_block_reason ? `⚠️ ${tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ')}` : '⚠️ Trading venue is not directly supported.');
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
         ...shareButtonRow,
@@ -3409,6 +3409,34 @@ export async function executeBuyHelper(
         `📊 *Position*\n` +
         `💰 Value: \`${valueSui.toFixed(4)} SUI\`\n` +
         `📈 PnL: \`+0.0%\``,
+    };
+  }
+
+  // No Rhea route: NEAR Intents (1Click), plus the coin's DCL pool when it trades against a bridged token
+  if (info.intents_route && info.tradeable) {
+    onProgress?.('submitting');
+    const { buyViaIntents } = await import('./intentsRoute.js');
+    const res = await buyViaIntents(user, tokenAddress, info.intents_route, amountNear, slippagePct);
+    if (!res.success) throw new Error(res.reason || 'NEAR Intents buy failed.');
+    const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
+    const sym = info.symbol || 'TOKEN';
+    return {
+      success: true,
+      amountNear,
+      tokenAddress,
+      positionId: res.positionId,
+      tokenName: info.name,
+      tokenSymbol: sym,
+      tokenQty: qty.toString(),
+      priceNear: res.priceNear,
+      nearSpent: res.nearSpent,
+      txHash: res.txHash,
+      message:
+        `✅ *Buy Confirmed!* (NEAR Intents${info.intents_route.dclPoolId ? ' + Rhea' : ''})\n\n` +
+        `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
+        `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
+        `💸 Spent: \`${amountNear} NEAR\`\n` +
+        `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
     };
   }
 
