@@ -192,6 +192,7 @@ import {
   KLEOS_TOKEN_URL,
   RONSPAD_TOKEN_URL,
   isKleosTradingEnabled,
+  isLaunchpadToken,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
 } from '@racerbot/shared';
@@ -476,6 +477,13 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
     if (!user) return;
     const info = await getTokenInfo(tokenAddress, false).catch(() => null);
     if (!info || !info.tradeable) return;
+
+    // Launchpad coins on a Rhea DCL path: warm the route's checks so the buy goes straight to the swap
+    if (info.dcl_path?.length) {
+      const { prewarmDclRoute } = await import('./intentsRoute.js');
+      await prewarmDclRoute(user, tokenAddress);
+      return;
+    }
 
     const venue = info.venue;
 
@@ -3042,6 +3050,45 @@ function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, o
 }
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
+/**
+ * Buys a launchpad coin along its Rhea DCL path (NEAR -> USDC -> PRL -> coin) in one transaction and
+ * builds the confirmation. Shared by the buy helper's fast lane and its regular path.
+ */
+async function buyLaunchpadDclPath(
+  user: UserRecord,
+  tokenAddress: string,
+  info: TokenInfoResult,
+  amountNear: number,
+  slippagePct: number,
+  onProgress?: (stage: string) => void,
+  knownNativeYocto?: string | null,
+) {
+  onProgress?.('submitting');
+  const { buyViaDclPath } = await import('./intentsRoute.js');
+  const res = await buyViaDclPath(user, tokenAddress, info.dcl_path!, amountNear, slippagePct, info.decimals, knownNativeYocto);
+  if (!res.success) throw new Error(res.reason || 'Buy failed.');
+  const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
+  const sym = info.symbol || 'TOKEN';
+  return {
+    success: true,
+    amountNear,
+    tokenAddress,
+    positionId: res.positionId,
+    tokenName: info.name,
+    tokenSymbol: sym,
+    tokenQty: qty.toString(),
+    priceNear: res.priceNear,
+    nearSpent: res.nearSpent,
+    txHash: res.txHash,
+    message:
+      `✅ *Buy Confirmed!* (Rhea, via ${sanitizeMd(info.paired_symbol || 'quote token')})\n\n` +
+      `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
+      `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
+      `💸 Spent: \`${amountNear} NEAR\`\n` +
+      `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
+  };
+}
+
 export async function executeBuyHelper(
   userIdOrTelegramId: number | string,
   rawTokenAddress: string,
@@ -3059,6 +3106,20 @@ export async function executeBuyHelper(
   if (amountNear < 0.001) {
     const buyUnit = getChainNativeUnit(tokenAddress, user);
     throw new Error(`Minimum buy amount is 0.001 ${buyUnit}.`);
+  }
+
+  // Fast lane: a launchpad coin reached through Rhea DCL pools has its route cached from its card, so only
+  // the honeypot check runs before the trade (no balance or price reads for other chains)
+  if (tokenAddress.endsWith('.near') && isLaunchpadToken(tokenAddress)) {
+    const fastInfo = await getFastTokenRoute(tokenAddress).catch(() => null);
+    if (fastInfo?.dcl_path?.length && fastInfo.tradeable) {
+      const safety = await checkTokenSafety(tokenAddress).catch(() => null);
+      if (safety?.isHoneypot) {
+        throw new Error(`🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\nThis token (\`${tokenAddress}\`) was identified as a MALICIOUS HONEYPOT.\n• ${safety.reasons[0] || 'Backdoor methods detected'}\n\n🛡️ RacerBot has blocked this transaction to prevent loss of funds.`);
+      }
+      const fastSlippage = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+      return buyLaunchpadDclPath(user, tokenAddress, fastInfo, amountNear, fastSlippage, onProgress);
+    }
   }
 
   const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
@@ -3416,30 +3477,7 @@ export async function executeBuyHelper(
   // Launchpad coins quoted in another token (PRL...): their launchpad pool first, reached through Rhea's DCL
   // pools in one transaction (NEAR -> USDC -> PRL -> coin), the way the launchpads' own sites buy
   if (info.dcl_path?.length && info.tradeable) {
-    onProgress?.('submitting');
-    const { buyViaDclPath } = await import('./intentsRoute.js');
-    const res = await buyViaDclPath(user, tokenAddress, info.dcl_path, amountNear, slippagePct, info.decimals);
-    if (!res.success) throw new Error(res.reason || 'Buy failed.');
-    const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
-    const sym = info.symbol || 'TOKEN';
-    return {
-      success: true,
-      amountNear,
-      tokenAddress,
-      positionId: res.positionId,
-      tokenName: info.name,
-      tokenSymbol: sym,
-      tokenQty: qty.toString(),
-      priceNear: res.priceNear,
-      nearSpent: res.nearSpent,
-      txHash: res.txHash,
-      message:
-        `✅ *Buy Confirmed!* (Rhea, via ${sanitizeMd(info.paired_symbol || 'quote token')})\n\n` +
-        `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
-        `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
-        `💸 Spent: \`${amountNear} NEAR\`\n` +
-        `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
-    };
+    return buyLaunchpadDclPath(user, tokenAddress, info, amountNear, slippagePct, onProgress);
   }
 
   if (info.intents_route && info.tradeable) {
