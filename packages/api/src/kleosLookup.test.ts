@@ -44,21 +44,26 @@ describe('Kleos (Elysium mainnet) tokens', () => {
 
   it('is tradeable by default, with the launch taxes from the board', async () => {
     getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kSocks', symbol: 'KSOCKS', decimals: 18, totalSupply: '0' });
-    vi.stubGlobal('fetch', vi.fn((url: string) => (url.includes('thekleos.xyz/api/board')
-      ? respond([{ address: KSOCKS, symbol: 'KSOCKS', launch: { price: 1e-7, v4: { buyBps: 300, sellBps: 100 } } }])
-      : respond({ HYPE: '80' }))));
-    // Past the board cache filled by the first test
-    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
-    try {
-      expect(await lookupKleosToken(KSOCKS)).toMatchObject({ tradeable: true, buy_tax_pct: 3, sell_tax_pct: 1 });
-    } finally {
-      now.mockRestore();
-    }
+    const coin = { address: KSOCKS, symbol: 'KSOCKS', launch: { price: 1e-7, v4: { buyBps: 300, sellBps: 100 } } };
+    expect(await lookupKleosToken(KSOCKS, coin)).toMatchObject({ tradeable: true, buy_tax_pct: 3, sell_tax_pct: 1 });
   });
 
-  it('returns nothing when the address has no contract on Elysium mainnet', async () => {
+  it('still finds a listed coin when Elysium mainnet does not answer', async () => {
     getErc20TokenInfo.mockResolvedValue(null);
-    expect(await lookupKleosToken(KSOCKS)).toBeNull();
+    expect(await lookupKleosToken(KSOCKS)).toMatchObject({ venue: 'kleos', symbol: 'KSOCKS', name: 'kSocks' });
+  });
+
+  it('returns nothing for an address that is neither on Elysium mainnet nor on the board', async () => {
+    getErc20TokenInfo.mockResolvedValue(null);
+    expect(await lookupKleosToken('0x000000000000000000000000000000000000dEaD', null)).toBeNull();
+  });
+
+  it('shows a coin with no HYPE route as read-only, with the reason', async () => {
+    getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kPair', symbol: 'KPAIR', decimals: 18, totalSupply: '0' });
+    const coin = { address: KSOCKS, symbol: 'KPAIR', launch: { price: 1e-7, v4: { pair: { symbol: 'BLOB' }, v5: { routeFee: 0 } } } };
+    const info = await lookupKleosToken(KSOCKS, coin);
+    expect(info).toMatchObject({ tradeable: false });
+    expect(info!.trade_block_reason).toContain('$BLOB');
   });
 
   it('takes the HYPE price from Hyperliquid, not a DexScreener pair that quotes HYPE', async () => {

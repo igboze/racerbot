@@ -80,6 +80,8 @@ import {
   encodeSignedTxMessage,
   getHypeBalance,
   getErc20TokenInfo,
+  getKleosBoardCoin,
+  kleosRouteFromLaunch,
   getErc20Balance,
   getEvmProvider,
   type EvmChain,
@@ -699,43 +701,42 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
   return new EvmTokenLookupError(read.some(r => r.nonce > 0) ? 'wallet' : 'empty', address);
 }
 
-const KLEOS_BOARD_URL = 'https://www.thekleos.xyz/api/board';
-const KLEOS_BOARD_TTL_MS = 60_000;
-let kleosBoardCache: { at: number; byAddress: Map<string, any> } | null = null;
-
-/** Kleos lists every coin it launched with a HYPE price and pool depth; DexScreener does not index Elysium mainnet */
-async function getKleosBoardEntry(address: string): Promise<any | null> {
-  if (!kleosBoardCache || Date.now() - kleosBoardCache.at > KLEOS_BOARD_TTL_MS) {
-    const res = await fetch(KLEOS_BOARD_URL, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) throw new Error(`Kleos board returned ${res.status}`);
-    const coins = (await res.json()) as any[];
-    kleosBoardCache = { at: Date.now(), byAddress: new Map(coins.map(c => [String(c.address).toLowerCase(), c])) };
-  }
-  return kleosBoardCache.byAddress.get(address.toLowerCase()) ?? null;
-}
-
 /**
- * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins.
- * Tradeable unless KLEOS_TRADING=off, which makes the card read-only.
+ * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins. The Kleos
+ * board is the source of truth for listed coins (it also covers an Elysium RPC hiccup);
+ * the chain covers coins launched since the board last refreshed.
+ * Tradeable unless KLEOS_TRADING=off, or the coin has no HYPE route (it trades only
+ * against another Kleos coin), which makes the card read-only with the reason.
  */
-export async function lookupKleosToken(address: string): Promise<TokenInfoResult | null> {
-  const meta = await getErc20TokenInfo(address, 'elysium', false);
-  if (!meta) return null;
-  const [coin, hypeUsd] = await Promise.all([
-    getKleosBoardEntry(address).catch(() => null),
+export async function lookupKleosToken(address: string, boardCoin?: any): Promise<TokenInfoResult | null> {
+  const [coin, meta, hypeUsd] = await Promise.all([
+    boardCoin !== undefined ? Promise.resolve(boardCoin) : getKleosBoardCoin(address).catch(() => null),
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
     getHypeUsdPrice().catch(() => 25.0),
   ]);
+  if (!meta && !coin) return null;
+  const decimals = meta?.decimals ?? 18;
   const priceHype = Number(coin?.launch?.price) || 0;
   const liquidityHype = Number(coin?.launch?.liquidityHype) || 0;
-  const supply = Number(ethers.formatUnits(meta.totalSupply || '0', meta.decimals));
+  const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
   const marketCapHype = priceHype * supply;
+
+  let noRouteReason: string | undefined;
+  if (coin?.launch) {
+    try {
+      kleosRouteFromLaunch(coin.launch);
+    } catch {
+      const quote = coin.launch?.v4?.pair?.symbol;
+      noRouteReason = `This coin trades only against ${quote ? `$${quote}` : 'another Kleos coin'}; Kleos has no HYPE route for it yet.`;
+    }
+  }
   return {
-    address: meta.address,
+    address: meta?.address ?? ethers.getAddress(address),
     chain: 'elysium',
-    name: coin?.name || meta.name,
-    symbol: coin?.symbol || meta.symbol,
-    decimals: meta.decimals,
-    total_supply: meta.totalSupply,
+    name: coin?.name || meta?.name || 'Kleos coin',
+    symbol: coin?.symbol || meta?.symbol || 'TKN',
+    decimals,
+    total_supply: meta?.totalSupply ?? '0',
     price: priceHype.toString(),
     price_usd: (priceHype * hypeUsd).toString(),
     liquidity: liquidityHype.toFixed(2),
@@ -746,7 +747,8 @@ export async function lookupKleosToken(address: string): Promise<TokenInfoResult
     venue: 'kleos',
     launchpad: 'Kleos',
     icon: typeof coin?.image === 'string' ? coin.image : undefined,
-    tradeable: isKleosTradingEnabled(),
+    tradeable: isKleosTradingEnabled() && !noRouteReason,
+    trade_block_reason: noRouteReason,
     // v4/v5/pair coins carry a launch tax; classic coins pay the 1% pool fee instead
     buy_tax_pct: Number(coin?.launch?.v4?.buyBps ?? 0) / 100,
     sell_tax_pct: Number(coin?.launch?.v4?.sellBps ?? 0) / 100,
@@ -934,6 +936,8 @@ export async function fetchTokenTotalTxns(
 
 export interface TokenInfoResult {
   address: string;
+  /** Why a listed token cannot be traded here (shown on its card) */
+  trade_block_reason?: string;
   chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
   name: string;
   symbol: string;
@@ -1361,6 +1365,17 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
     // ── EVM Token Resolution (HyperEVM & Elysium L2) ───────────────────────────
     if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near') && !isStarknetToken(tokenAddress)) {
+      // Kleos first: its board lists every Kleos coin, so a listed coin is never mistaken for a
+      // HyperEVM token or lost to a slow DexScreener / HyperEVM lookup
+      const boardCoin = await getKleosBoardCoin(tokenAddress).catch(() => null);
+      if (boardCoin) {
+        const kleos = await lookupKleosToken(tokenAddress, boardCoin).catch(() => null);
+        if (kleos) {
+          tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          return kleos;
+        }
+      }
       const isElysium = tokenAddress.toLowerCase().endsWith('.elysium') || rawTokenAddress.toLowerCase().includes('elysium');
       const chain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
       const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
@@ -1371,7 +1386,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ]);
 
       if (!tokenMeta && !dexscreenerData) {
-        const kleos = isElysium ? null : await lookupKleosToken(tokenAddress).catch(() => null);
+        const kleos = await lookupKleosToken(tokenAddress, null).catch(() => null);
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

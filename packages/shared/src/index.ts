@@ -413,6 +413,7 @@ export {
   kleosRouteFromLaunch,
   quoteKleos,
   resolveKleosRoute,
+  getKleosBoardCoin,
   encodeKleosBuy,
   encodeKleosSell,
   encodeKleosBuyWithTransfers,
