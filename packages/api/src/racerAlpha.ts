@@ -7,6 +7,7 @@ import { publishSwap, transferNearFromUser, getTokenInfo } from './wallet.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 import { splitAlphaKeyPayment } from './alphaPayment.js';
 import { sellAtTarget } from './sellHelper.js';
+import { recordCopyBuy, settleCopySell } from './alphaCopyFee.js';
 import { getAuthenticTokenIcon } from './authenticIcons.js';
 
 const logger = createLogger('racer-alpha');
@@ -1530,6 +1531,33 @@ export async function recordAlphaSignal(params: {
     keyholders = khRes.rows;
   }
 
+  // The creator's copy profit share, charged on copied sells that close at a profit
+  let copyFeePct = 0;
+  let copyFeePayout: string | null = null;
+  if (db && params.side === 'SELL' && keyholders.length > 0) {
+    const feeRes = await db.query(
+      'SELECT copy_fee_pct, payout_wallet_address, user_id FROM racer_alpha_traders WHERE id = $1',
+      [params.traderId]
+    ).catch(() => ({ rows: [] as any[] }));
+    const feeRow = feeRes.rows[0];
+    copyFeePct = Number(feeRow?.copy_fee_pct) || 0;
+    if (copyFeePct > 0 && feeRow && feeRow.user_id !== 'system_alpha') {
+      copyFeePayout = feeRow.payout_wallet_address?.trim()
+        || (await getUserById(feeRow.user_id).catch(() => null))?.subaccount_id?.trim()
+        || null;
+    }
+  }
+  const tokenBalanceOf = async (account?: string | null): Promise<bigint | null> => {
+    if (!account) return null;
+    // Never lets a failed read stop the copy trade itself
+    try {
+      const raw = await getNear().getTokenBalance(params.tokenAddress, account);
+      return raw === null || raw === undefined ? null : BigInt(String(raw).split('.')[0] || '0');
+    } catch {
+      return null;
+    }
+  };
+
   let autoCopyFillsCount = 0;
   const bot = getBotInstance();
 
@@ -1611,6 +1639,7 @@ export async function recordAlphaSignal(params: {
         if (!swapRes && buyerUser) {
           const { hasManagedWallet } = await import('./webWallet.js');
           if (hasManagedWallet(buyerUser)) {
+            const balBefore = await tokenBalanceOf(buyerUser.subaccount_id);
             const ammRes: any = await publishSwap({
               user_id: kh.buyerUserId,
               token_in: 'near',
@@ -1622,6 +1651,17 @@ export async function recordAlphaSignal(params: {
             }, undefined, { suppressAlphaSignal: true });
             if (ammRes && ammRes.success !== false) {
               swapRes = { success: true, txHash: ammRes.txHash, routeLabel: venue.toUpperCase() };
+              // Cost basis for the creator's profit share; skipped when the balance change can't be read
+              const balAfter = balBefore === null ? null : await tokenBalanceOf(buyerUser.subaccount_id);
+              if (balBefore !== null && balAfter !== null && balAfter > balBefore) {
+                await recordCopyBuy(db, {
+                  userId: kh.buyerUserId,
+                  traderId: params.traderId,
+                  tokenAddress: params.tokenAddress,
+                  costNear: copyAmount,
+                  qtyRaw: balAfter - balBefore,
+                }).catch((err: any) => logger.warn('Failed to record copy cost basis:', err?.message));
+              }
             } else {
               swapRes = { success: false, reason: ammRes?.reason };
             }
@@ -1705,6 +1745,10 @@ export async function recordAlphaSignal(params: {
           } catch {}
         }
 
+        // Wallet balance before a wallet-route sell: the creator's profit share counts copied tokens only
+        const sellBalBefore = soldOk ? null : await tokenBalanceOf(buyerUser?.subaccount_id);
+        let walletProceedsNear = 0;
+
         // 2b. Check tracked DB positions (sellAtTarget)
         if (!soldOk) {
           const positions = await getOpenPositions(kh.buyerUserId);
@@ -1721,6 +1765,7 @@ export async function recordAlphaSignal(params: {
             );
             if (sellResult.success) {
               soldOk = true;
+              walletProceedsNear = Number(sellResult.nearReceived) || 0;
             } else {
               sellReason = sellResult.reason || '';
             }
@@ -1747,6 +1792,7 @@ export async function recordAlphaSignal(params: {
                 }, undefined, { suppressAlphaSignal: true });
                 if (ammSell && ammSell.success !== false) {
                   soldOk = true;
+                  walletProceedsNear = Number(ammSell.nearReceived) || 0;
                 } else {
                   sellReason = ammSell?.reason || '';
                 }
@@ -1757,12 +1803,38 @@ export async function recordAlphaSignal(params: {
 
         if (soldOk) {
           autoCopyFillsCount++;
+          let feeLine = '';
+          if (sellBalBefore !== null && sellBalBefore > 0n && walletProceedsNear > 0 && buyerUser) {
+            const sellBalAfter = await tokenBalanceOf(buyerUser.subaccount_id);
+            if (sellBalAfter !== null && sellBalAfter < sellBalBefore) {
+              const fee = await settleCopySell(db, {
+                signalId,
+                userId: kh.buyerUserId,
+                telegramId: kh.buyerTelegramId,
+                traderId: params.traderId,
+                tokenAddress: params.tokenAddress,
+                feePct: copyFeePct,
+                payoutAccount: copyFeePayout,
+                balanceBeforeRaw: sellBalBefore,
+                soldRaw: sellBalBefore - sellBalAfter,
+                proceedsNear: walletProceedsNear,
+              }).catch((err: any) => {
+                logger.warn('Failed to settle copy profit share:', err?.message);
+                return null;
+              });
+              if (fee) {
+                feeLine = fee.paid
+                  ? `\n💸 <b>Creator profit share</b>: <code>${fee.feeNear.toFixed(4)} NEAR</code> (${copyFeePct}% of <code>${fee.profitNear.toFixed(4)} NEAR</code> profit)`
+                  : `\n⚠️ The creator's ${copyFeePct}% profit share (${fee.feeNear.toFixed(4)} NEAR) could not be collected.`;
+              }
+            }
+          }
           if (bot && kh.buyerTelegramId) {
             bot.telegram.sendMessage(
               kh.buyerTelegramId,
               `✅ <b>Auto-Copy Sell Executed</b>\n\n` +
               `🪙 <b>Token</b>: <code>${params.tokenAddress}</code>\n` +
-              `📉 <b>Position sold</b>: <code>${sellPct.toFixed(2)}%</code>`,
+              `📉 <b>Position sold</b>: <code>${sellPct.toFixed(2)}%</code>` + feeLine,
               { parse_mode: 'HTML' }
             ).catch(() => {});
           }
