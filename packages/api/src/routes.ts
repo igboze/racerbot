@@ -505,6 +505,10 @@ export function isChainVisible(user: { hidden_chains?: string[] } | null | undef
   if (!user || !user.hidden_chains || !Array.isArray(user.hidden_chains) || user.hidden_chains.length === 0) {
     return true;
   }
+  const visibleCount = ALL_SUPPORTED_CHAINS.filter(c => !user.hidden_chains!.includes(c.id)).length;
+  if (visibleCount === 0) {
+    return true;
+  }
   return !user.hidden_chains.includes(chain);
 }
 
@@ -660,6 +664,10 @@ export function buildActiveChainsMenu(user: UserRecord) {
     ],
     [
       cb('⚡ HyperEVM Only', 'preset_chain_vis:hyperevm', 'primary'),
+      cb('🔷 Sui Only', 'preset_chain_vis:sui', 'primary'),
+    ],
+    [
+      cb('✨ Starknet Only', 'preset_chain_vis:starknet', 'primary'),
       cb('🌐 Show All Chains', 'preset_chain_vis:all', 'primary'),
     ],
     [
@@ -808,7 +816,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     text += `◎ SOL: <code>${solAddress}</code>\n\n`;
   }
   if ((hyperevmVisible || elysiumVisible) && evmAddress) {
-    text += `⚡ EVM (HyperEVM & Elysium Testnet):\n<code>${evmAddress}</code>\n\n`;
+    const evmNames: string[] = [];
+    if (hyperevmVisible) evmNames.push('HyperEVM');
+    if (elysiumVisible) evmNames.push('Elysium Testnet');
+    text += `⚡ EVM (${evmNames.join(' & ')}):\n<code>${evmAddress}</code>\n\n`;
   }
   if (suiVisible && suiAddress) {
     text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
@@ -1054,8 +1065,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (solanaVisible && b.solanaAddress) {
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
   }
-  if (b.evmAddress) {
+  if (hyperevmVisible && elysiumVisible && b.evmAddress) {
     text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
+  } else if (hyperevmVisible && b.evmAddress) {
+    text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE\n`;
+  } else if (elysiumVisible && b.evmAddress) {
+    text += `🏛️ Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
   }
   text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
@@ -1063,7 +1078,12 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n\n`;
   if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n\n`;
   if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n\n`;
-  if (b.evmAddress) text += `⚡ EVM (HyperEVM & Elysium Testnet): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
+  if ((hyperevmVisible || elysiumVisible) && b.evmAddress) {
+    const evmNames: string[] = [];
+    if (hyperevmVisible) evmNames.push('HyperEVM');
+    if (elysiumVisible) evmNames.push('Elysium Testnet');
+    text += `⚡ EVM (${evmNames.join(' & ')}): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
+  }
   text = text.trimEnd();
 
   const res = { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -9979,19 +9999,19 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
   bot.action(/^preset_chain_vis:(.+)$/, async (ctx) => {
     try {
       const telegramId = ctx.from!.id;
-      const user = await getUserByTelegramId(telegramId);
+      let user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await onboardUser(telegramId);
+        user = await getUserByTelegramId(telegramId);
+      }
       if (!user) return;
       const preset = ctx.match[1];
       let newHidden: string[] = [];
 
-      if (preset === 'near') {
-        newHidden = ['solana', 'sui', 'starknet'];
-      } else if (preset === 'solana') {
-        newHidden = ['near', 'sui', 'starknet'];
-      } else if (preset === 'sui') {
-        newHidden = ['near', 'solana', 'starknet'];
-      } else if (preset === 'all') {
+      if (preset === 'all') {
         newHidden = [];
+      } else if (ALL_SUPPORTED_CHAINS.some(c => c.id === preset)) {
+        newHidden = ALL_SUPPORTED_CHAINS.map(c => c.id).filter(id => id !== preset);
       } else {
         return;
       }
@@ -10001,13 +10021,11 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       walletMenuCache.delete(telegramId);
       invalidateBalanceCache(telegramId);
 
-      const presetLabels = {
-        near: '⬛ NEAR Only mode enabled',
-        solana: '🟣 Solana Only mode enabled',
-        sui: '🔷 Sui Only mode enabled',
-        all: '🌐 All chains enabled',
-      };
-      await ctx.answerCbQuery(`✅ ${presetLabels[preset] || 'Preset applied'}`).catch(() => { });
+      const chainObj = ALL_SUPPORTED_CHAINS.find(c => c.id === preset);
+      const label = preset === 'all'
+        ? '🌐 All chains enabled'
+        : `${chainObj ? chainObj.icon + ' ' + chainObj.name : preset} Only mode enabled`;
+      await ctx.answerCbQuery(`✅ ${label}`).catch(() => { });
 
       const menu = buildActiveChainsMenu(updated);
       await ctx.editMessageText(menu.text, { parse_mode: 'Markdown', ...menu.keyboard }).catch(() => { });

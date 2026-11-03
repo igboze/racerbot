@@ -1187,6 +1187,10 @@ export async function updateUserSettings(userId: string, params: UpdateUserSetti
     setParts.push(`near_trade_currency = $${idx++}`);
     values.push(params.near_trade_currency);
   }
+  if (params.hidden_chains !== undefined) {
+    setParts.push(`hidden_chains = $${idx++}::text[]`);
+    values.push(Array.isArray(params.hidden_chains) ? params.hidden_chains : []);
+  }
 
   if (setParts.length === 0) {
     const u = await getUserById(userId);
