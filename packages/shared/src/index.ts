@@ -89,6 +89,7 @@ export {
   getFastnearPublicKeyAccounts,
   getRefIndexerPools,
   intearRegisteredCache,
+  runAsTrade,
 } from './near.js';
 export type { NearConfig, TokenMetadata, PoolReserves } from './near.js';
 

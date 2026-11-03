@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits } from '@racerbot/shared';
+import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits, runAsTrade } from '@racerbot/shared';
 import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
@@ -7,7 +7,7 @@ import { getTokenInfo, publishSwap } from './wallet.js';
  * Sell a percentage of a position by publishing EXECUTE_SWAP to Redis.
  * Called from both the Telegram bot sell buttons and REST API.
  */
-export async function sellAtTarget(
+async function sellAtTargetAsTrade(
   userId: string,
   positionId: string,
   percentage: number,
@@ -324,4 +324,9 @@ export async function sellAtTarget(
   }
 
   return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
+}
+
+/** Sells run as trades: their NEAR reads (quotes, balances, storage) use the premium RPC first */
+export function sellAtTarget(...args: Parameters<typeof sellAtTargetAsTrade>): ReturnType<typeof sellAtTargetAsTrade> {
+  return runAsTrade(() => sellAtTargetAsTrade(...args));
 }

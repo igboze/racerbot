@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { markProviderError, markProviderSuccess, createProvider, isProviderAvailable, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
@@ -344,6 +345,22 @@ async function getIntentsTokenNearRate(contract: string): Promise<{ rateInNear: 
   const near = intentsTokens.byContract.get('wrap.near');
   if (!token || !near || near.price <= 0) return null;
   return { rateInNear: token.price / near.price, decimals: token.decimals };
+}
+
+/**
+ * Reads made while a trade runs (quotes, balances, registration checks) go to the premium FastNEAR RPC
+ * first, with the free community nodes as the backup. Everything else keeps the free-first order, which
+ * saves premium credits on the high-volume background reads (cards, price polling, holdings scans).
+ */
+const tradeReads = new AsyncLocalStorage<boolean>();
+const isTradeRead = () => tradeReads.getStore() === true;
+
+/** Whether the current call runs inside runAsTrade (its reads go premium-first) */
+export const inTrade = isTradeRead;
+
+/** Runs `fn` as a trade: every NEAR read it makes, however deep, uses the premium RPC first */
+export function runAsTrade<T>(fn: () => Promise<T>): Promise<T> {
+  return tradeReads.run(true, fn);
 }
 
 export class MultiRpcNear {
@@ -868,7 +885,8 @@ export class MultiRpcNear {
       };
 
       const hasPaid = paidFnTargets.length > 0;
-      const hasFree = freeTargets.length > 0;
+      // During a trade the premium RPC leads and the free nodes become the hedge
+      const hasFree = freeTargets.length > 0 && !(isTradeRead() && hasPaid);
 
       const launchPrimary = () => {
         if (hasFree) {
@@ -1268,6 +1286,15 @@ export class MultiRpcNear {
       p.url.includes('free.rpc.fastnear.com') ||
       p.url.includes('near.org') ||
       p.url.includes('drpc.org');
+
+    // During a trade the premium RPC goes first
+    if (isTradeRead()) {
+      for (const p of this.tradeProviders) {
+        try {
+          return await fetchBalanceFromProvider(p, 'optimistic');
+        } catch { /* next provider */ }
+      }
+    }
 
     const freeProviders = this.readProviders.filter(
       p => isCommunityFree(p) && p.healthy && !p.circuitBreakerOpen

@@ -35,6 +35,7 @@ import {
   type MultiRpcNear,
   intearRegisteredCache,
   distributeTradeFeeRewards,
+  runAsTrade,
 } from '@racerbot/shared';
 
 export { calculateMinOutAdj };
@@ -512,7 +513,12 @@ export class SwapExecutor {
    * Execute a swap event with observability: records a trade_attempts row with
    * per-stage timings, updated on success/failure. Throws propagate unchanged.
    */
-  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
+  /** Every swap runs as a trade: its NEAR reads (quotes, balances, storage) use the premium RPC first */
+  async execute(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): ReturnType<SwapExecutor['executeAsTrade']> {
+    return runAsTrade(() => this.executeAsTrade(event, onProgress));
+  }
+
+  private async executeAsTrade(event: SwapEvent, onProgress?: (stage: string) => Promise<void> | void): Promise<{ txHash: string; success: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
     const isBuy = event.token_in === 'wrap.near' || event.token_in === 'near';
 
     // Record the attempt WITHOUT blocking the trade — the DB insert overlaps
