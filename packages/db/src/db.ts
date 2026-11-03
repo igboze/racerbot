@@ -999,9 +999,9 @@ export async function addEvmWallet(params: {
     await client.query('BEGIN');
     // users.evm_address is unique: an address another account uses cannot be added
     const taken = await client.query(
-      `SELECT 1 FROM users WHERE LOWER(evm_address) = LOWER($1) AND id <> $2
+      `SELECT 1 FROM users WHERE LOWER(evm_address) = LOWER($1::text) AND id <> $2::uuid
        UNION ALL
-       SELECT 1 FROM user_wallets WHERE LOWER(address) = LOWER($1) AND user_id <> $2 AND chain IN ('hyperevm', 'elysium')
+       SELECT 1 FROM user_wallets WHERE LOWER(address) = LOWER($1::text) AND user_id <> $2::uuid AND chain IN ('hyperevm', 'elysium')
        LIMIT 1`,
       [params.address, params.userId]
     );
@@ -1014,9 +1014,11 @@ export async function addEvmWallet(params: {
     if (cur?.evm_address && cur?.evm_private_key_enc) {
       for (const chain of ['hyperevm', 'elysium'] as const) {
         await client.query(
+          // Every parameter is typed explicitly: $1 and $2 are each used twice, and Postgres
+          // refuses ("inconsistent types deduced") when the uses imply different types
           `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
-           VALUES ($1, $2, $3, 'EVM Wallet 1', $4, FALSE, NOT EXISTS (
-             SELECT 1 FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE))
+           VALUES ($1::uuid, $2::varchar, $3::text, 'EVM Wallet 1', $4::text, FALSE, NOT EXISTS (
+             SELECT 1 FROM user_wallets WHERE user_id = $1::uuid AND chain = $2::varchar AND is_active = TRUE))
            ON CONFLICT (user_id, chain, address) DO NOTHING`,
           [params.userId, chain, cur.evm_address, cur.evm_private_key_enc]
         );
