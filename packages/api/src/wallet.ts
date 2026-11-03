@@ -85,6 +85,7 @@ import {
   kleosRouteFromLaunch,
   getRonsPadLaunch,
   ronsPadPriceHype,
+  RONSPAD,
   getErc20Balance,
   getEvmProvider,
   type EvmChain,
@@ -706,42 +707,31 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
 }
 
 /**
- * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins. The Kleos
- * board is the source of truth for listed coins (it also covers an Elysium RPC hiccup);
- * the chain covers coins launched since the board last refreshed.
- * Tradeable unless KLEOS_TRADING=off, or the coin has no HYPE route (it trades only
- * against another Kleos coin), which makes the card read-only with the reason.
- */
-/**
- * Look up a coin launched on RonsPad (ronspad.fun), the other launchpad on Elysium mainnet. PadFactory
- * names its own launches; the price comes from the coin's pool, the logo and depth from RonsPad's API.
+ * Look up a coin launched on RonsPad (ronspad.fun), the other launchpad on Elysium mainnet. Everything is
+ * read from the chain: PadFactory names its own launches, and the coin's pool gives its price and depth.
  */
 export async function lookupRonsPadToken(address: string): Promise<TokenInfoResult | null> {
   const provider = getEvmProvider('elysium', false);
   const launch = await getRonsPadLaunch(provider, address);
   if (!launch) return null;
-  const [meta, priceHype, api, hypeUsd] = await Promise.all([
+  const whype = new ethers.Contract(RONSPAD.whype, ['function balanceOf(address) view returns (uint256)'], provider);
+  const [meta, priceHype, poolHype, hypeUsd] = await Promise.all([
     getErc20TokenInfo(address, 'elysium', false).catch(() => null),
     ronsPadPriceHype(provider, launch).catch(() => 0),
-    fetch(`https://ronspad.fun/api/v1/token/${address.toLowerCase()}`, {
-      headers: { 'user-agent': 'Mozilla/5.0 (RacerBot)' },
-      signal: AbortSignal.timeout(5000),
-    }).then(r => (r.ok ? r.json() : null)).catch(() => null) as Promise<any>,
+    (whype.balanceOf(launch.pool) as Promise<bigint>).catch(() => 0n),
     getHypeUsdPrice().catch(() => 25.0),
   ]);
   const decimals = meta?.decimals ?? 18;
   const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
-  const info = api?.info ?? api ?? {};
-  const pool = Array.isArray(info.pools) ? info.pools.find((p: any) => String(p.address).toLowerCase() === launch.pool.toLowerCase()) : null;
-  // The pool's HYPE side, as RonsPad's API reports it; it is half of a full-range pool's depth
-  const liquidityHype = Number(pool?.hype) > 0 ? Number(pool.hype) * 2 : 0;
+  // The pool's HYPE side doubled: the depth of a full-range pool, in HYPE
+  const liquidityHype = Number(ethers.formatEther(poolHype)) * 2;
   const marketCapHype = priceHype * supply;
   const feePct = launch.fee / 10_000;
   return {
     address: meta?.address ?? ethers.getAddress(address),
     chain: 'elysium',
-    name: meta?.name || info.name || 'RonsPad coin',
-    symbol: meta?.symbol || info.symbol || 'TKN',
+    name: meta?.name || 'RonsPad coin',
+    symbol: meta?.symbol || 'TKN',
     decimals,
     total_supply: meta?.totalSupply ?? '0',
     price: priceHype.toString(),
@@ -753,7 +743,6 @@ export async function lookupRonsPadToken(address: string): Promise<TokenInfoResu
     near_usd: hypeUsd,
     venue: 'ronspad',
     launchpad: 'RonsPad',
-    icon: typeof info.image === 'string' ? info.image : (typeof info.logo === 'string' ? info.logo : undefined),
     tradeable: isKleosTradingEnabled(),
     // The pool's tier is the coin's fee, taken on both sides
     buy_tax_pct: feePct,
@@ -761,6 +750,13 @@ export async function lookupRonsPadToken(address: string): Promise<TokenInfoResu
   } as TokenInfoResult;
 }
 
+/**
+ * Look up a token on Elysium mainnet (chain 99901), where Kleos launches coins. The Kleos
+ * board is the source of truth for listed coins (it also covers an Elysium RPC hiccup);
+ * the chain covers coins launched since the board last refreshed.
+ * Tradeable unless KLEOS_TRADING=off, or the coin has no HYPE route (it trades only
+ * against another Kleos coin), which makes the card read-only with the reason.
+ */
 export async function lookupKleosToken(address: string, boardCoin?: any): Promise<TokenInfoResult | null> {
   const [coin, meta, hypeUsd] = await Promise.all([
     boardCoin !== undefined ? Promise.resolve(boardCoin) : getKleosBoardCoin(address).catch(() => null),

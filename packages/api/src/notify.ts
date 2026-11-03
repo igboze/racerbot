@@ -670,7 +670,7 @@ export async function notifyTokenDeposit(
     tokenName?: string;
     amountFormatted: string;
     address: string;
-    chain?: 'near' | 'sui' | 'solana';
+    chain?: 'near' | 'sui' | 'solana' | 'hyperevm' | 'elysium';
     /** Position created for the deposit, so the alert can open its details directly. */
     positionId?: string;
   }
@@ -685,7 +685,7 @@ export async function notifyTokenDeposit(
   recentDepositNotifyCache.set(dedupKey, Date.now());
 
   const chain = params.chain || 'near';
-  const chainLabel = chain === 'solana' ? 'Solana' : chain === 'sui' ? 'SUI' : 'NEAR';
+  const chainLabel = chain === 'solana' ? 'Solana' : chain === 'sui' ? 'SUI' : chain === 'elysium' ? 'Elysium' : chain === 'hyperevm' ? 'HyperEVM' : 'NEAR';
 
   const msg =
     `💰 <b>Token Deposit Received!</b>\n\n` +

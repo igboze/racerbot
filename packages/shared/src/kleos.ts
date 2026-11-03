@@ -327,6 +327,13 @@ export async function getKleosBoardCoin(address: string): Promise<any | null> {
   return kleosBoard?.byAddress.get(address.toLowerCase()) ?? null;
 }
 
+/** Every coin on the Kleos board (address, name, symbol, launch data), for wallet holding scans */
+export async function listKleosBoardCoins(): Promise<any[]> {
+  await getKleosBoardCoin(ZERO_ADDRESS);
+  return kleosBoard ? [...kleosBoard.byAddress.values()] : [];
+}
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
 /** HYPE-to-quote-token hop fees a v5 coin can use when no board entry says which */
 const V5_HOP_FEES = [0, 10000, 3000, 500];
 

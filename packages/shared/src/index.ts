@@ -414,6 +414,7 @@ export {
   quoteKleos,
   resolveKleosRoute,
   getKleosBoardCoin,
+  listKleosBoardCoins,
   getRonsPadLaunch,
   ronsPadPriceHype,
   RONSPAD,

@@ -148,6 +148,7 @@ import {
   type PrivatePromptAction,
 } from './botPrivate.js';
 import { EXECUTORS_ENABLED as PRIVATE_TRADING_ENABLED, confidentialBuy } from './executorPool.js';
+import { syncUserEvmHoldings, trackEvmHoldingOnView } from './evmHoldings.js';
 import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
 import {
   computePnL,
@@ -1502,7 +1503,21 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
 
   // Check if user holds this token
-  const userPosition = userPositions.find(p => p.token_address === tokenAddress);
+  let userPosition = userPositions.find(p => p.token_address === tokenAddress);
+  // An EVM token the wallet already holds (imported wallet, coins sent in) starts being tracked here:
+  // no scan can list HyperEVM or RonsPad holdings, so the card checks the one token it shows
+  if (!userPosition && userRecord?.evm_address && (tokenInfo.chain === 'hyperevm' || tokenInfo.chain === 'elysium')) {
+    const lower = tokenAddress.toLowerCase();
+    const trackedElsewhere = userPositions.some(p => p.token_address.toLowerCase() === lower);
+    const started = !trackedElsewhere && await withTimeout(
+      trackEvmHoldingOnView(userRecord, tokenInfo.chain, tokenAddress, parseFloat(tokenInfo.price) || 0, tokenInfo.symbol, tokenInfo.name),
+      3000, 'holding check timeout'
+    ).catch(() => false);
+    if (started) {
+      userPositions = await getOpenPositions(userRecord.id).catch(() => userPositions);
+    }
+    userPosition = userPositions.find(p => p.token_address.toLowerCase() === lower);
+  }
   const holdsToken = !!userPosition;
 
   const isSolana = tokenInfo.chain === 'solana';
@@ -7990,6 +8005,9 @@ export function setupRoutes(bot: Telegraf): void {
       syncUserTokenDeposits(user.id, user.subaccount_id, isRefresh).catch((err) => {
         console.warn(`[HOLDINGS] Background deposit sync error for ${user.subaccount_id}:`, err?.message || err);
       });
+      syncUserEvmHoldings(user.id, isRefresh).catch((err) => {
+        console.warn(`[HOLDINGS] Background EVM holdings sync error for ${user.id}:`, err?.message || err);
+      });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
@@ -9376,6 +9394,15 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       );
       const menu = await buildWalletsManagementMenu(telegramId);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
+      // Coins this wallet already holds become positions (each found one sends a deposit alert)
+      if (setActive) {
+        const imported = await getUserByTelegramId(telegramId).catch(() => null);
+        if (imported) {
+          void syncUserEvmHoldings(imported.id, true)
+            .then(async n => { if (n > 0) await ctx.reply(`📥 Found ${n} coin${n === 1 ? '' : 's'} in this wallet. They are in /positions now.`).catch(() => { }); })
+            .catch(() => { });
+        }
+      }
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
     }
@@ -9387,6 +9414,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     const telegramId = ctx.from!.id;
     try {
       const switched = await switchActiveEvmWallet(telegramId, ctx.match![1]);
+      void getUserByTelegramId(telegramId).then(u => u && syncUserEvmHoldings(u.id, true)).catch(() => { });
       await ctx.answerCbQuery(`⚡ EVM wallet switched to ${switched.name}`).catch(() => { });
       const menu = await buildWalletsManagementMenu(telegramId);
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
@@ -13750,13 +13778,17 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
             });
             return;
           }
-          await createPosition({
-            user_id: user.id,
-            chain: evmChain,
-            token_address: tokenCA,
-            quantity_held: '0',
-            avg_entry_price: currentPrice.toString(),
-          });
+          // Track what the wallet really holds (it used to record 0, so the holding never showed)
+          const tracked = await trackEvmHoldingOnView(evmUser, evmChain, tokenCA, currentPrice, sym, name).catch(() => false);
+          if (!tracked) {
+            await createPosition({
+              user_id: user.id,
+              chain: evmChain,
+              token_address: tokenCA,
+              quantity_held: '0',
+              avg_entry_price: currentPrice.toString(),
+            });
+          }
           if (validatingMsg) await ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
           await ctx.reply(`✅ *${evmChain === 'elysium' ? 'Elysium' : 'HyperEVM'} Token Imported!*\n\nToken: *${name} (${sym})*\nChain: *${evmChain === 'elysium' ? 'Elysium' : 'HyperEVM'}*\n\n_Token is now tracked in your holdings._`, {
             parse_mode: 'Markdown',
