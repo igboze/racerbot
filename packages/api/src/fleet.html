@@ -489,7 +489,13 @@
       margin-top: 20px;
     }
     .confirm-actions .btn { flex: 1; }
-  </style>
+    .fdep-label { font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:6px; }
+  .fdep-box { background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; font-family:var(--font-mono); font-size:13px; color:var(--color-text); }
+  .fdep-hint { font-size:12px; color:var(--color-text-muted); line-height:1.45; margin:6px 0 0; }
+  .fdep-section { border-top:1px solid var(--color-border); padding-top:14px; margin-top:14px; }
+  .fdep-title { font-size:13px; font-weight:700; color:var(--color-text); margin-bottom:8px; }
+  .fdep-result { margin-top:10px; padding:12px; border:1px solid var(--color-border); border-radius:var(--radius-md); background:var(--color-surface); font-size:12.5px; color:var(--color-text); line-height:1.5; word-break:break-all; }
+</style>
   <link rel="stylesheet" href="/assets/racer-terminal.css">
 <script>
     function toggleSecurityMenu() {
@@ -1065,33 +1071,54 @@
 
   <!-- Deposit Modal -->
   <div class="modal-overlay" id="deposit-modal" style="display:none;">
-    <div class="modal-card" style="max-width:460px;">
-      <button class="modal-close" onclick="closeDepositModal()">×</button>
+    <div class="modal-card" style="max-width:480px; max-height:90vh; overflow-y:auto;">
+      <button class="modal-close" onclick="closeDepositModal()" aria-label="Close">×</button>
       <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Deposit NEAR</div>
       <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px; line-height:1.5;">
-        Your fleet is funded from your RacerBot account. Send NEAR to it from any wallet or exchange, then split it across your fleet wallets.
+        Your fleet is funded from your RacerBot account. Fund it below, then split it across your fleet wallets.
       </p>
-      <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-bottom:6px;">YOUR RACERBOT ACCOUNT</div>
-      <div style="display:flex; gap:8px; margin-bottom:16px;">
-        <div id="deposit-account-box" style="flex:1; min-width:0; word-break:break-all; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:12px; font-family:var(--font-mono); font-size:13px; color:var(--color-text);">
-          Sign in to see your RacerBot account.
-        </div>
+
+      <div class="fdep-label">YOUR RACERBOT ACCOUNT</div>
+      <div style="display:flex; gap:8px; margin-bottom:6px;">
+        <div id="deposit-account-box" class="fdep-box" style="flex:1; min-width:0; word-break:break-all;">Sign in to see your RacerBot account.</div>
         <button type="button" class="btn btn-secondary" id="deposit-copy-btn" style="min-width:72px;" onclick="copyDepositAccount()">Copy</button>
       </div>
-      <div id="deposit-send-row" hidden style="border-top:1px solid var(--color-border); padding-top:14px; margin-bottom:14px;">
-        <div style="font-size:13px; color:var(--color-text); margin-bottom:8px;">Send from your connected wallet <span id="deposit-from-wallet" style="font-family:var(--font-mono); color:var(--color-text-muted);"></span></div>
+      <p class="fdep-hint">Send NEAR here from any NEAR wallet or exchange. Main balance: <b id="deposit-main-balance">-</b></p>
+
+      <div id="deposit-send-row" hidden class="fdep-section">
+        <div class="fdep-title">Send from your connected wallet <span id="deposit-from-wallet" style="font-family:var(--font-mono); color:var(--color-text-muted); font-weight:500;"></span></div>
         <div style="display:flex; gap:8px;">
           <input type="number" id="deposit-send-amount" class="terminal-input" placeholder="NEAR amount" min="0.1" step="0.5" aria-label="NEAR to send" style="flex:1; min-width:0;" />
           <button type="button" class="btn btn-primary" style="white-space:nowrap;" onclick="sendDepositFromWallet(this)"><span>Send</span></button>
         </div>
-        <label id="deposit-split-row" hidden style="display:flex; gap:8px; align-items:center; margin-top:10px; font-size:12.5px; color:var(--color-text-muted);">
-          <input type="checkbox" id="deposit-split-check" checked /> Split it evenly across my fleet wallets when it arrives
+      </div>
+
+      <div class="fdep-section">
+        <div class="fdep-title">From another chain</div>
+        <p class="fdep-hint" style="margin-top:0;">Send SOL, ETH, BTC, USDC and more. It arrives in your RacerBot account as NEAR (NEAR Intents).</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <select id="xdep-chain" class="terminal-input" aria-label="Chain to send from" style="flex:1 1 140px; min-width:0;" onchange="loadFleetDepositTokens()"></select>
+          <select id="xdep-token" class="terminal-input" aria-label="Token to send" style="flex:1 1 110px; min-width:0;"></select>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <input type="number" id="xdep-amount" class="terminal-input" placeholder="Amount" min="0" step="any" aria-label="Amount to send" style="flex:1; min-width:0;" />
+          <button type="button" class="btn btn-primary" style="white-space:nowrap;" onclick="getFleetDepositAddress(this)"><span>Get address</span></button>
+        </div>
+        <div id="xdep-result" hidden class="fdep-result" aria-live="polite"></div>
+      </div>
+
+      <div id="deposit-split-row" hidden class="fdep-section">
+        <div class="fdep-title">Split across my fleet</div>
+        <label style="display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--color-text-muted); margin-bottom:8px;">
+          <input type="checkbox" id="deposit-split-check" checked /> Split deposits evenly across my fleet wallets when they arrive
         </label>
+        <div style="display:flex; gap:8px;">
+          <input type="number" id="deposit-split-amount" class="terminal-input" placeholder="NEAR from main balance" min="0.1" step="0.5" aria-label="NEAR to split" style="flex:1; min-width:0;" />
+          <button type="button" class="btn btn-secondary" style="white-space:nowrap;" onclick="splitFromModal(this)"><span>Split now</span></button>
+        </div>
       </div>
-      <div style="display:flex; gap:8px;">
-        <a href="/alpha?tab=console" class="btn btn-secondary" style="flex:1; text-align:center;">Cross-chain bridge</a>
-        <button class="btn btn-primary" style="flex:1;" onclick="closeDepositModal()">Done</button>
-      </div>
+
+      <button class="btn btn-primary" style="width:100%; margin-top:16px;" onclick="closeDepositModal()">Done</button>
     </div>
   </div>
 
@@ -1227,80 +1254,220 @@
     }
 
     // ── Deposit: fund the RacerBot account that pays for the fleet ─────────────
+    // Everything happens in this window: NEAR from any wallet, a connected-wallet
+    // transfer, or another chain through NEAR Intents. Nothing sends the user to Alpha.
     /** The user's RacerBot account (from fleet status): where NEAR for the fleet goes first */
     let fleetMainAccount = null;
+    let fleetTelegramId = null;
+    let fleetDepositPoller = null;
+    let fleetDepositChainsLoaded = false;
 
     function openDepositModal() {
       const box = document.getElementById('deposit-account-box');
-      const sendRow = document.getElementById('deposit-send-row');
-      if (box) {
-        box.textContent = fleetMainAccount || 'Sign in to see your RacerBot account.';
-      }
+      if (box) box.textContent = fleetMainAccount || 'Sign in to see your RacerBot account.';
       document.getElementById('deposit-copy-btn').disabled = !fleetMainAccount;
-      const canSend = Boolean(fleetMainAccount && window.RacerConnect && window.RacerConnect.activeNearWallet
-        && window.RacerConnect.activeNearWallet !== fleetMainAccount);
-      if (sendRow) sendRow.hidden = !canSend;
-      const from = document.getElementById('deposit-from-wallet');
-      if (from && canSend) from.textContent = window.RacerConnect.activeNearWallet;
+      const connected = window.RacerConnect && window.RacerConnect.activeNearWallet;
+      const canSend = Boolean(fleetMainAccount && connected && connected !== fleetMainAccount);
+      document.getElementById('deposit-send-row').hidden = !canSend;
+      if (canSend) document.getElementById('deposit-from-wallet').textContent = connected;
       document.getElementById('deposit-split-row').hidden = !currentFleet;
       document.getElementById('deposit-modal').style.display = 'flex';
+      refreshFleetMainBalance();
+      if (!fleetDepositChainsLoaded) loadFleetDepositChains();
     }
     function closeDepositModal() {
       document.getElementById('deposit-modal').style.display = 'none';
+      if (fleetDepositPoller) { clearInterval(fleetDepositPoller); fleetDepositPoller = null; }
     }
 
-    async function copyDepositAccount() {
-      if (!fleetMainAccount) return;
+    async function copyText(text, label) {
       try {
-        await navigator.clipboard.writeText(fleetMainAccount);
-        showToast('RacerBot account copied', 'success');
+        await navigator.clipboard.writeText(text);
+        showToast(label + ' copied', 'success');
       } catch (e) {
-        showToast(fleetMainAccount, 'info');
+        showToast(text, 'info');
+      }
+    }
+    function copyDepositAccount() {
+      if (fleetMainAccount) copyText(fleetMainAccount, 'RacerBot account');
+    }
+
+    /** Main account NEAR, read straight from the chain (view only) */
+    async function refreshFleetMainBalance() {
+      const el = document.getElementById('deposit-main-balance');
+      if (!el || !fleetMainAccount) { if (el) el.textContent = '-'; return null; }
+      try {
+        const res = await fetch('https://rpc.mainnet.fastnear.com', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: fleetMainAccount } }),
+        });
+        const data = await res.json();
+        const near = Number(BigInt(data.result.amount) / 10n ** 20n) / 10000;
+        el.textContent = near.toFixed(4) + ' NEAR';
+        return near;
+      } catch (e) {
+        el.textContent = '-';
+        return null;
       }
     }
 
-    /** Connected wallet sends NEAR to the RacerBot account; optionally split it across the fleet right after. */
+    /** Split NEAR from the main account across the fleet. Retries while a deposit is still landing. */
+    async function splitAcrossFleet(amountNear, attempts = 1) {
+      for (let i = 0; i < attempts; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 2500));
+        const res = await fetch('/api/fleet/distribute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...fleetAuthHeader() },
+          body: JSON.stringify({ totalNear: amountNear }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          showToast(`Split ${amountNear} NEAR across your ${data.walletCount || ''} fleet wallets`, 'success');
+          fetchFleetStatus(true);
+          return true;
+        }
+        if (!/Insufficient balance/i.test(data.error || '') || i === attempts - 1) {
+          throw new Error(data.error || 'Could not split across the fleet');
+        }
+      }
+      return false;
+    }
+
+    async function splitFromModal(btn) {
+      const amount = parseFloat(document.getElementById('deposit-split-amount').value);
+      if (!(amount > 0)) { showToast('Enter how much NEAR to split', 'error'); return; }
+      btn.disabled = true;
+      try {
+        await splitAcrossFleet(amount);
+        refreshFleetMainBalance();
+      } catch (err) {
+        showToast(err.message || 'Split failed', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    /** After a deposit lands: split it if the box is ticked, keeping a little for fees */
+    async function maybeSplitDeposit(nearArrived) {
+      if (!currentFleet || !document.getElementById('deposit-split-check').checked) return;
+      const toSplit = Math.max(0, Math.floor((nearArrived - 0.05) * 1000) / 1000);
+      if (!(toSplit > 0)) return;
+      try {
+        await splitAcrossFleet(toSplit, 5);
+      } catch (err) {
+        showToast(`Deposit arrived. ${err.message}. Use Split now to try again.`, 'info');
+      }
+    }
+
+    /** Connected wallet sends NEAR to the RacerBot account */
     async function sendDepositFromWallet(btn) {
       const amount = parseFloat(document.getElementById('deposit-send-amount').value);
       if (!(amount > 0)) { showToast('Enter how much NEAR to send', 'error'); return; }
       if (!fleetMainAccount) { showToast('Sign in first', 'error'); return; }
-      const split = currentFleet && document.getElementById('deposit-split-check').checked;
       btn.disabled = true;
       const label = btn.innerHTML;
       btn.innerHTML = '<span>Approve in your wallet…</span>';
       try {
         await window.RacerConnect.sendNearTransaction({ receiverId: fleetMainAccount, amountNear: amount });
         showToast(`Sent ${amount} NEAR to your RacerBot account`, 'success');
-        if (split) {
-          btn.innerHTML = '<span>Splitting across your fleet…</span>';
-          // Leave a little in the main account for fees; the transfer can take a few seconds to land
-          const toSplit = Math.max(0, Math.floor((amount - 0.05) * 1000) / 1000);
-          let done = false;
-          for (let i = 0; i < 5 && !done && toSplit > 0; i++) {
-            await new Promise(r => setTimeout(r, 2500));
-            const res = await fetch('/api/fleet/distribute', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...fleetAuthHeader() },
-              body: JSON.stringify({ totalNear: toSplit }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data.success) {
-              done = true;
-              showToast(`Split ${toSplit} NEAR across your ${data.walletCount || ''} fleet wallets`, 'success');
-            } else if (!/Insufficient balance/i.test(data.error || '')) {
-              throw new Error(data.error || 'Could not split across the fleet');
-            }
-          }
-          if (!done && toSplit > 0) showToast('Deposit arrived slowly. Use Disburse Evenly to split it.', 'info');
-        }
-        closeDepositModal();
-        fetchFleetStatus(true);
+        btn.innerHTML = '<span>Splitting…</span>';
+        await maybeSplitDeposit(amount);
+        refreshFleetMainBalance();
       } catch (err) {
         showToast(err.message || 'Deposit failed', 'error');
       } finally {
         btn.disabled = false;
         btn.innerHTML = label;
       }
+    }
+
+    // ── From another chain (NEAR Intents, same service as the Alpha console) ──
+    async function loadFleetDepositChains() {
+      const sel = document.getElementById('xdep-chain');
+      try {
+        const data = await (await fetch('/deposit/chains')).json();
+        const chains = (data.chains || []).filter(c => c.id !== 'near');
+        sel.innerHTML = chains.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        fleetDepositChainsLoaded = true;
+        await loadFleetDepositTokens();
+      } catch (e) {
+        sel.innerHTML = '<option value="">Could not load chains</option>';
+      }
+    }
+
+    async function loadFleetDepositTokens() {
+      const chain = document.getElementById('xdep-chain').value;
+      const sel = document.getElementById('xdep-token');
+      if (!chain) return;
+      try {
+        const data = await (await fetch('/deposit/tokens?chain=' + encodeURIComponent(chain))).json();
+        sel.innerHTML = (data.tokens || []).map(t =>
+          `<option value="${escapeHtml(t.symbol)}" data-min="${Number(t.minDeposit) || 0}">${escapeHtml(t.symbol)}</option>`).join('');
+      } catch (e) {
+        sel.innerHTML = '<option value="">Could not load tokens</option>';
+      }
+    }
+
+    async function getFleetDepositAddress(btn) {
+      if (!fleetMainAccount) { showToast('Sign in first', 'error'); return; }
+      const chain = document.getElementById('xdep-chain').value;
+      const tokenSel = document.getElementById('xdep-token');
+      const symbol = tokenSel.value;
+      const amount = parseFloat(document.getElementById('xdep-amount').value);
+      const min = Number(tokenSel.selectedOptions[0]?.dataset.min || 0);
+      if (!chain || !symbol) { showToast('Pick a chain and token', 'error'); return; }
+      if (!(amount > 0)) { showToast('Enter an amount', 'error'); return; }
+      if (min && amount < min) { showToast(`Minimum is ${min} ${symbol}`, 'error'); return; }
+      btn.disabled = true;
+      const out = document.getElementById('xdep-result');
+      try {
+        const res = await fetch('/deposit/quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chain, symbol, amount, subaccountId: fleetMainAccount, telegramId: fleetTelegramId || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not create the deposit address');
+        const minNear = Number(data.minNearOut) > 0 ? Number(data.minNearOut).toFixed(4) : null;
+        out.hidden = false;
+        out.innerHTML = `
+          <div style="font-weight:700; margin-bottom:6px;">Send exactly ${escapeHtml(String(amount))} ${escapeHtml(symbol)} on ${escapeHtml(data.sourceChain || chain)} to:</div>
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <code id="xdep-address" style="flex:1; min-width:0; font-family:var(--font-mono); font-size:12px;">${escapeHtml(data.depositAddress)}</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="copyText(document.getElementById('xdep-address').textContent, 'Deposit address')">Copy</button>
+          </div>
+          <div class="fdep-hint">Arrives as NEAR in ${escapeHtml(fleetMainAccount)}${minNear ? ` (at least ${minNear} NEAR)` : ''}. The address is valid for about ${Number(data.deadlineMinutes) || 30} minutes.</div>
+          <div id="xdep-status" class="fdep-hint" style="font-weight:600;">Waiting for your deposit…</div>`;
+        watchFleetDeposit(data.depositAddress, minNear ? Number(minNear) : 0);
+      } catch (err) {
+        showToast(err.message || 'Could not create the deposit address', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function watchFleetDeposit(address, expectedNear) {
+      if (fleetDepositPoller) clearInterval(fleetDepositPoller);
+      const labels = { PENDING: 'Waiting for your deposit…', PROCESSING: 'Deposit seen, converting to NEAR…', SUCCESS: 'Arrived in your RacerBot account.', REFUNDED: 'Refunded to your sending address.', FAILED: 'Failed. Nothing was taken.', EXPIRED: 'The address expired before a deposit arrived. Get a new one.' };
+      fleetDepositPoller = setInterval(async () => {
+        try {
+          const data = await (await fetch('/deposit/status?address=' + encodeURIComponent(address))).json();
+          const status = data.status;
+          const el = document.getElementById('xdep-status');
+          if (el && status) el.textContent = labels[status] || status;
+          if (['SUCCESS', 'REFUNDED', 'FAILED', 'EXPIRED'].includes(status)) {
+            clearInterval(fleetDepositPoller);
+            fleetDepositPoller = null;
+            if (status === 'SUCCESS') {
+              showToast('Deposit arrived in your RacerBot account', 'success');
+              refreshFleetMainBalance();
+              const arrived = Number(data.nearAmount) > 0 ? Number(data.nearAmount) : expectedNear;
+              if (arrived > 0) maybeSplitDeposit(arrived);
+            }
+          }
+        } catch (e) { /* keep polling */ }
+      }, 10000);
     }
 
     // ── State Variables ───────────────────────────────────────────────────────
@@ -1495,6 +1662,7 @@
         if (!res.ok) throw new Error('Status failed');
         const data = await res.json();
         fleetMainAccount = (data.user && data.user.subaccountId) || null;
+        fleetTelegramId = (data.user && data.user.telegramId) || null;
 
         if (data.hasFleet && data.fleet) {
           currentFleet = data.fleet;
