@@ -1403,7 +1403,7 @@
       try {
         const data = await (await fetch('/deposit/tokens?chain=' + encodeURIComponent(chain))).json();
         sel.innerHTML = (data.tokens || []).map(t =>
-          `<option value="${escapeHtml(t.symbol)}" data-min="${Number(t.minDeposit) || 0}">${escapeHtml(t.symbol)}</option>`).join('');
+          `<option value="${escapeHtml(t.symbol)}" data-min="${Number(t.minDeposit && typeof t.minDeposit === 'object' ? t.minDeposit.amount : t.minDeposit) || 0}">${escapeHtml(t.symbol)}</option>`).join('');
       } catch (e) {
         sel.innerHTML = '<option value="">Could not load tokens</option>';
       }
