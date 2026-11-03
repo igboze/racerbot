@@ -4789,8 +4789,8 @@ export class MultiRpcNear {
       ]);
       const chainNonce = BigInt(rawAccessKey?.nonce || 0);
 
-            // Pre-flight balance check: verify account balance covers total attached deposits
-      // plus the network gas reserve (NEAR protocol base gas price floor is 10^9 yocto/gas = 0.001 NEAR per Tgas).
+      // Pre-flight balance check: verify account balance covers total attached deposits
+      // plus the network gas reserve (NEAR base gas price is 10^8 yocto/gas; using 1.5x buffer = 1.5 * 10^8 yocto).
       if (accountState?.amount && !forceIncrement) {
         let totalGas = 0n;
         let totalDeposit = 0n;
@@ -4802,21 +4802,10 @@ export class MultiRpcNear {
             totalDeposit += BigInt(action.transfer.deposit || 0);
           }
         }
-        const gasPriceYocto = 1_000_000_000n; // 10^9 yocto per gas unit (NEAR mainnet min_gas_price)
+        const gasPriceYocto = 150_000_000n; // 1.5x base gas price (1.5 * 10^8 yocto)
         const gasReserve = totalGas * gasPriceYocto;
         const totalRequired = totalDeposit + gasReserve;
-        let currentBal = BigInt(accountState.amount);
-        if (currentBal < totalRequired) {
-          // If a prior transaction just landed (e.g. USDC -> wNEAR conversion), unspent gas refunds
-          // from cross-contract receipts take 2-4 seconds to return. Poll briefly for refunds.
-          for (let waitIdx = 0; waitIdx < 6 && currentBal < totalRequired; waitIdx++) {
-            await new Promise((r) => setTimeout(r, 600));
-            const freshState = await account.state().catch(() => null);
-            if (freshState?.amount) {
-              currentBal = BigInt(freshState.amount);
-            }
-          }
-        }
+        const currentBal = BigInt(accountState.amount);
         if (currentBal < totalRequired) {
           const balNear = (Number(currentBal) / 1e24).toFixed(4);
           const reqNear = (Number(totalRequired) / 1e24).toFixed(4);
