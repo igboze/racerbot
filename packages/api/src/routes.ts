@@ -3413,6 +3413,35 @@ export async function executeBuyHelper(
   }
 
   // No Rhea route: NEAR Intents (1Click), plus the coin's DCL pool when it trades against a bridged token
+  // Launchpad coins quoted in another token (PRL...): their launchpad pool first, reached through Rhea's DCL
+  // pools in one transaction (NEAR -> USDC -> PRL -> coin), the way the launchpads' own sites buy
+  if (info.dcl_path?.length && info.tradeable) {
+    onProgress?.('submitting');
+    const { buyViaDclPath } = await import('./intentsRoute.js');
+    const res = await buyViaDclPath(user, tokenAddress, info.dcl_path, amountNear, slippagePct);
+    if (!res.success) throw new Error(res.reason || 'Buy failed.');
+    const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
+    const sym = info.symbol || 'TOKEN';
+    return {
+      success: true,
+      amountNear,
+      tokenAddress,
+      positionId: res.positionId,
+      tokenName: info.name,
+      tokenSymbol: sym,
+      tokenQty: qty.toString(),
+      priceNear: res.priceNear,
+      nearSpent: res.nearSpent,
+      txHash: res.txHash,
+      message:
+        `✅ *Buy Confirmed!* (Rhea, via ${sanitizeMd(info.paired_symbol || 'quote token')})\n\n` +
+        `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
+        `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
+        `💸 Spent: \`${amountNear} NEAR\`\n` +
+        `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
+    };
+  }
+
   if (info.intents_route && info.tradeable) {
     onProgress?.('submitting');
     const { buyViaIntents } = await import('./intentsRoute.js');
@@ -3432,7 +3461,7 @@ export async function executeBuyHelper(
       nearSpent: res.nearSpent,
       txHash: res.txHash,
       message:
-        `✅ *Buy Confirmed!* (NEAR Intents${info.intents_route.dclPoolId ? ' + Rhea' : ''})\n\n` +
+        `✅ *Buy Confirmed!* (${res.paidIn ? `paid in ${sanitizeMd(res.paidIn)} via Rhea` : `NEAR Intents${info.intents_route.dclPoolId ? ' + Rhea' : ''}`})\n\n` +
         `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
         `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
         `💸 Spent: \`${amountNear} NEAR\`\n` +

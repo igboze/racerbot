@@ -991,6 +991,8 @@ export interface TokenInfoResult {
   address: string;
   /** NEAR tokens Rhea cannot route: bought and sold through NEAR Intents (1Click), plus a DCL pool when set */
   intents_route?: { quote: string; dclPoolId?: string };
+  /** Launchpad coins quoted in another token: the Rhea DCL pools from wNEAR to the coin, one atomic swap */
+  dcl_path?: string[];
   /** Why a listed token cannot be traded here (shown on its card) */
   trade_block_reason?: string;
   chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
@@ -1982,6 +1984,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     let launchpadTaxPct: number | null = null;
     let tradeBlockReason: string | undefined;
     let intentsRoute: { quote: string; dclPoolId?: string } | undefined;
+    let dclPath: string[] | undefined;
     let intearPoolFee: number | undefined;
     let pairedSymbol: string | undefined;
     let priceInPaired: string | undefined;
@@ -2121,8 +2124,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
           // Quoted in a token Rhea cannot reach from NEAR (PRL, ...): trade through NEAR Intents + the DCL pool
           if (ntState && !ntState.quoteIsNear && ntState.dclPoolId) {
-            const hop = await near.findRheaPoolId('wrap.near', ntState.quote).catch(() => null);
-            if (hop === null) {
+            // The launchpad's pool first, reached from NEAR through Rhea's DCL pools (as nearly.trade does)
+            const toQuote = await near.findDclPathFromNear(ntState.quote).catch(() => null);
+            const hop = toQuote ? null : await near.findRheaPoolId('wrap.near', ntState.quote).catch(() => null);
+            if (toQuote) {
+              dclPath = [...toQuote, ntState.dclPoolId];
+            } else if (hop === null) {
               const { isIntentsToken } = await import('./intentsPrivate.js');
               if (await isIntentsToken(ntState.quote).catch(() => false)) {
                 intentsRoute = { quote: ntState.quote, dclPoolId: ntState.dclPoolId };
@@ -2207,9 +2214,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               const qMeta = await near.getTokenMetadata(quote).catch(() => null);
               pairedSymbol = qMeta?.symbol || undefined;
               // The executor's two-hop route needs a Ref pool between wNEAR and the quote token
-              const hop = await near.findRheaPoolId('wrap.near', quote).catch(() => null);
-              if (hop === null) {
-                // Rhea's own app swaps such quote tokens (PRL, ...) through NEAR Intents: so does the bot
+              // The launchpad's pool first, reached from NEAR through Rhea's DCL pools (as nearly.trade does)
+              const toQuote = await near.findDclPathFromNear(quote).catch(() => null);
+              const hop = toQuote ? null : await near.findRheaPoolId('wrap.near', quote).catch(() => null);
+              if (toQuote) {
+                dclPath = [...toQuote, fee.pool_id];
+              } else if (hop === null) {
+                // No on-chain path: Rhea's own app swaps such quote tokens (PRL, ...) through NEAR Intents
                 const { isIntentsToken } = await import('./intentsPrivate.js');
                 if (await isIntentsToken(quote).catch(() => false)) {
                   intentsRoute = { quote, dclPoolId: fee.pool_id };
@@ -2445,7 +2456,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
     }
 
-    const tradeable = (isTradableVenue(venue) || Boolean(intentsRoute)) && !tradeBlockReason;
+    const tradeable = (isTradableVenue(venue) || Boolean(intentsRoute) || Boolean(dclPath)) && !tradeBlockReason;
 
     const tax = launchpadTaxPct != null
       ? { buyTaxPct: launchpadTaxPct, sellTaxPct: launchpadTaxPct }
@@ -2503,6 +2514,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
       trade_block_reason: tradeBlockReason,
       intents_route: intentsRoute,
+      dcl_path: dclPath,
     };
 
     tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

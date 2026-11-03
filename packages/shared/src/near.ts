@@ -320,6 +320,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
  * per-account Redis lock + highestUsedNonce tracking keep nonce discipline,
  * so hedging never produces duplicate or conflicting transactions.
  */
+const dclPathCache = new Map<string, { at: number; path: string[] | null }>();
 const INTENTS_TOKENS_URL = 'https://1click.chaindefuser.com/v0/tokens';
 const INTENTS_TOKENS_TTL_MS = 5 * 60_000;
 let intentsTokens: { at: number; byContract: Map<string, { price: number; decimals: number }> } | null = null;
@@ -2020,6 +2021,34 @@ export class MultiRpcNear {
    * Find DCL (Discretized Concentrated Liquidity) pool on dclv2.ref-labs.near.
    * Probes standard fee tiers [10000, 3000, 2000, 400, 100] in parallel.
    */
+  /**
+   * The Rhea DCL pools that take wNEAR to `token`, cheapest first by output: a direct pool, or through
+   * USDC (the way nearly.trade routes NEAR into PRL and its other quote tokens). Probed with the DCL
+   * contract's own multi-hop quote; cached for 10 minutes. Null when no path quotes anything.
+   */
+  async findDclPathFromNear(token: string): Promise<string[] | null> {
+    const cached = dclPathCache.get(token);
+    if (cached && Date.now() - cached.at < 600_000) return cached.path;
+    const USDC = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+    const poolId = (a: string, b: string, fee: number) => `${[a, b].sort().join('|')}|${fee}`;
+    const candidates: string[][] = [];
+    for (const fee of [100, 400, 2000, 10000]) candidates.push([poolId('wrap.near', token, fee)]);
+    if (token !== USDC) {
+      for (const nearFee of [100, 2000]) {
+        for (const fee of [100, 400, 1000, 2000, 10000]) candidates.push([poolId(USDC, 'wrap.near', nearFee), poolId(USDC, token, fee)]);
+      }
+    }
+    const probe = '1000000000000000000000000'; // 1 NEAR
+    const results = await Promise.all(candidates.map(async (path) => {
+      const q = await this.view<any>('dclv2.ref-labs.near', 'quote', { pool_ids: path, input_token: 'wrap.near', output_token: token, input_amount: probe, tag: null }).catch(() => null);
+      return { path, out: BigInt(q?.amount || '0') };
+    }));
+    const best = results.filter(r => r.out > 0n).sort((a, b) => (b.out > a.out ? 1 : b.out < a.out ? -1 : 0))[0];
+    const path = best ? best.path : null;
+    dclPathCache.set(token, { at: Date.now(), path });
+    return path;
+  }
+
   async findDclPoolId(tokenA: string, tokenB: string): Promise<string | null> {
     const key = `${tokenA}:${tokenB}`;
     const cached = dclPoolIdCache.get(key);
