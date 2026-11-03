@@ -183,11 +183,32 @@ export async function sellAtTarget(
   }
 
   // No Rhea route: back to NEAR through the coin's DCL pool (when it has one) and NEAR Intents (1Click)
+  // Launchpad coins quoted in another token: back to NEAR along the same Rhea DCL path, one transaction
+  if (info.dcl_path?.length && user) {
+    onProgress?.('submitting');
+    const { sellViaDclPath } = await import('./intentsRoute.js');
+    const res = await sellViaDclPath(user, position.token_address, info.dcl_path, BigInt(sellQty), slippagePct, positionId);
+    if (!res.success) return { success: false, reason: res.reason || 'Sell failed.' };
+    if (fullExit) {
+      await updatePosition({ position_id: positionId, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+    }
+    return { success: true, nearReceived: res.nearReceived };
+  }
+
   if (info.intents_route && user) {
     onProgress?.('submitting');
     const { sellViaIntents } = await import('./intentsRoute.js');
     const res = await sellViaIntents(user, position.token_address, info.intents_route, BigInt(sellQty), slippagePct, positionId);
     if (!res.success) return { success: false, reason: res.reason || 'NEAR Intents sell failed.' };
+    // NEAR Intents had no liquidity to reach NEAR: the coin was sold into its quote token; say so wherever the sell started
+    if (res.receivedIn && user.telegram_id) {
+      const { getBotInstance } = await import('./notify.js');
+      getBotInstance()?.telegram.sendMessage(
+        Number(user.telegram_id),
+        `ℹ️ Sold into ${res.receivedAmount?.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${res.receivedIn}: ` +
+        `NEAR Intents has no ${res.receivedIn} liquidity right now, so it could not be swapped to NEAR. The ${res.receivedIn} is in your wallet.`
+      ).catch(() => {});
+    }
     if (fullExit) {
       await updatePosition({ position_id: positionId, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
     }
