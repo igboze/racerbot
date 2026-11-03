@@ -775,6 +775,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const elysiumVisible = isChainVisible(user, 'elysium');
 
   let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
+  if (user?.fee_tier === 'super_ambassador') {
+    text += `👑 <b>Super Ambassador</b> • 60% Referral Share • 30% Fee Cashback\n`;
+  }
   if (nearVisible) {
     text += `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>${usdcBalFormatted}</b>\n`;
     if (Number(wrapNearFormatted) > 0.0001) {
@@ -1029,6 +1032,9 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   ]);
 
   let text = `💼 <b>${escapeHtml(walletDisplayName)}</b> ⭐\n`;
+  if (user?.fee_tier === 'super_ambassador') {
+    text += `👑 <b>Super Ambassador</b> (60% Referral Share • 30% Fee Cashback)\n`;
+  }
   if (nearVisible) {
     text += `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n`;
     text += `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n`;
@@ -11171,7 +11177,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     const isAmbassador = Boolean((user as any).is_ambassador || user.fee_tier === 'ambassador' || isSuperAmbassador);
     const referralPct = (user as any).referral_fee_pct != null
       ? parseFloat(String((user as any).referral_fee_pct))
-      : (isSuperAmbassador ? 50 : (isAmbassador ? 45 : 15));
+      : (isSuperAmbassador ? 60 : (isAmbassador ? 45 : 15));
     const hasSpecialFeeShare = isSuperAmbassador || (isAmbassador && user.fee_tier === 'ambassador');
     const ambassadorBadge = isSuperAmbassador
       ? `👑 *Super Ambassador Status: Active* (${referralPct}% Referral Fee Share across all chains)\n\n`
@@ -11179,7 +11185,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         ? `🎖 *Ambassador Status: Active* (${referralPct}% Referral Fee Share)\n\n`
         : '');
 
-    const cashbackPct = (user as any).cashback_pct != null ? parseFloat(String((user as any).cashback_pct)) : 0;
+    const cashbackPct = (user as any).cashback_pct != null ? parseFloat(String((user as any).cashback_pct)) : (isSuperAmbassador ? 30 : 0);
     const cashbackEarnings = (user as any).total_cashback_earned != null ? parseFloat(String((user as any).total_cashback_earned)) : 0;
     const totalEarnings = globalEarnings + tokenShareEarnings + cashbackEarnings;
     const totalClaimed = await getTotalReferralClaimed(user.id).catch(() => 0);

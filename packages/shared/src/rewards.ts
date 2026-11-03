@@ -98,14 +98,14 @@ export async function distributeTradeFeeRewards(params: DistributeFeeParams): Pr
   if (!Number.isFinite(feeInNear) || feeInNear <= 0) {
     return result;
   }
-  result.feeInNear = feeInNear;
+  result.feeInNear = Number(feeInNear.toFixed(8));
 
   // 2. Token share link referral (5% fee to token link sharer)
   if (tokenAddress) {
     try {
       const tokenRef = await getTokenReferral(userId, tokenAddress);
       if (tokenRef && tokenRef.referrer_id !== userId) {
-        const tokenRewardAmount = feeInNear * 0.05;
+        const tokenRewardAmount = Number((feeInNear * 0.05).toFixed(8));
         if (tokenRewardAmount > 0) {
           await addTokenReferralReward(tokenRef.id, tokenRewardAmount);
           result.tokenShareRewardNear = tokenRewardAmount;
@@ -128,8 +128,8 @@ export async function distributeTradeFeeRewards(params: DistributeFeeParams): Pr
       result.referrerId = referral.referrer_id;
       const refFeePct = (referral as any).referrer_fee_pct != null
         ? parseFloat(String((referral as any).referrer_fee_pct))
-        : ((referral as any).referrer_fee_tier === 'super_ambassador' ? 50 : ((referral as any).referrer_is_ambassador ? 45 : 15));
-      const rewardAmount = feeInNear * (refFeePct / 100);
+        : ((referral as any).referrer_fee_tier === 'super_ambassador' ? 60 : ((referral as any).referrer_is_ambassador ? 45 : 15));
+      const rewardAmount = Number((feeInNear * (refFeePct / 100)).toFixed(8));
       if (rewardAmount > 0) {
         await addReferralReward(referral.id, rewardAmount);
         result.referralRewardNear = rewardAmount;
@@ -144,7 +144,7 @@ export async function distributeTradeFeeRewards(params: DistributeFeeParams): Pr
     const user = await getUserById(userId);
     const cashbackPct = user?.cashback_pct != null ? parseFloat(String(user.cashback_pct)) : 0;
     if (cashbackPct > 0) {
-      const cashbackAmount = feeInNear * (cashbackPct / 100);
+      const cashbackAmount = Number((feeInNear * (cashbackPct / 100)).toFixed(8));
       if (cashbackAmount > 0) {
         await addCashbackReward(userId, cashbackAmount);
         result.cashbackNear = cashbackAmount;

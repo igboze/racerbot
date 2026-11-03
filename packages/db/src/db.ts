@@ -1714,7 +1714,7 @@ export async function getReferralByReferredUser(referredUserId: string): Promise
   const ref = rowToReferral(row);
   const feePct = row.ref_fee_pct != null
     ? parseFloat(row.ref_fee_pct)
-    : (row.ref_fee_tier === 'super_ambassador' ? 50 : (row.ref_fee_tier === 'ambassador' || row.ref_is_ambassador ? 45 : 15));
+    : (row.ref_fee_tier === 'super_ambassador' ? 60 : (row.ref_fee_tier === 'ambassador' || row.ref_is_ambassador ? 45 : 15));
   ref.referrer_fee_pct = feePct;
   ref.referrer_is_ambassador = Boolean(row.ref_is_ambassador || row.ref_fee_tier === 'ambassador' || row.ref_fee_tier === 'super_ambassador');
   return ref;
@@ -1949,9 +1949,9 @@ function rowToUser(row: any): UserRecord {
     fee_tier: row.fee_tier,
     referral_fee_pct: row.referral_fee_pct != null
       ? parseFloat(row.referral_fee_pct)
-      : (row.fee_tier === 'super_ambassador' ? 50 : (row.fee_tier === 'ambassador' || Boolean(row.is_ambassador) ? 45 : 15)),
+      : (row.fee_tier === 'super_ambassador' ? 60 : (row.fee_tier === 'ambassador' || Boolean(row.is_ambassador) ? 45 : 15)),
     is_ambassador: Boolean(row.is_ambassador || row.fee_tier === 'ambassador' || row.fee_tier === 'super_ambassador'),
-    cashback_pct: row.cashback_pct != null ? parseFloat(row.cashback_pct) : 0,
+    cashback_pct: row.cashback_pct != null ? parseFloat(row.cashback_pct) : (row.fee_tier === 'super_ambassador' ? 30 : 0),
     total_cashback_earned: row.total_cashback_earned != null ? parseFloat(row.total_cashback_earned) : 0,
     total_cashback_claimed: row.total_cashback_claimed != null ? parseFloat(row.total_cashback_claimed) : 0,
     auto_buy_enabled: Boolean(row.auto_buy_enabled),

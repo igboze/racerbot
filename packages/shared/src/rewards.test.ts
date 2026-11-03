@@ -72,13 +72,13 @@ describe('distributeTradeFeeRewards', () => {
     expect(addCashbackReward).not.toHaveBeenCalled();
   });
 
-  it('allocates 50% referral fee to super ambassador on NEAR', async () => {
+  it('allocates 60% referral fee to super ambassador on NEAR', async () => {
     vi.mocked(getReferralByReferredUser).mockResolvedValue({
       id: 'ref-2',
       referrer_id: 'cryptogeneral01-id',
       referred_user_id: 'trader-user',
       status: 'active',
-      referrer_fee_pct: 50,
+      referrer_fee_pct: 60,
       referrer_is_ambassador: true,
       referrer_fee_tier: 'super_ambassador',
     } as any);
@@ -95,17 +95,17 @@ describe('distributeTradeFeeRewards', () => {
     });
 
     expect(res.feeInNear).toBe(10);
-    expect(res.referralRewardNear).toBe(5.0); // 50% of 10 NEAR
-    expect(addReferralReward).toHaveBeenCalledWith('ref-2', 5.0);
+    expect(res.referralRewardNear).toBe(6.0); // 60% of 10 NEAR
+    expect(addReferralReward).toHaveBeenCalledWith('ref-2', 6.0);
   });
 
-  it('allocates 50% referral fee to super ambassador on Solana (converted to NEAR)', async () => {
+  it('allocates 60% referral fee to super ambassador on Solana (converted to NEAR)', async () => {
     vi.mocked(getReferralByReferredUser).mockResolvedValue({
       id: 'ref-3',
       referrer_id: 'cryptogeneral01-id',
       referred_user_id: 'sol-trader',
       status: 'active',
-      referrer_fee_pct: 50,
+      referrer_fee_pct: 60,
       referrer_is_ambassador: true,
     } as any);
 
@@ -123,17 +123,17 @@ describe('distributeTradeFeeRewards', () => {
     });
 
     expect(res.feeInNear).toBe(3.0);
-    expect(res.referralRewardNear).toBe(1.5); // 50% of 3 NEAR
-    expect(addReferralReward).toHaveBeenCalledWith('ref-3', 1.5);
+    expect(res.referralRewardNear).toBe(1.8); // 60% of 3 NEAR
+    expect(addReferralReward).toHaveBeenCalledWith('ref-3', 1.8);
   });
 
-  it('allocates 50% referral fee to super ambassador on HyperEVM (converted to NEAR)', async () => {
+  it('allocates 60% referral fee to super ambassador on HyperEVM (converted to NEAR)', async () => {
     vi.mocked(getReferralByReferredUser).mockResolvedValue({
       id: 'ref-4',
       referrer_id: 'cryptogeneral01-id',
       referred_user_id: 'evm-trader',
       status: 'active',
-      referrer_fee_pct: 50,
+      referrer_fee_pct: 60,
       referrer_is_ambassador: true,
     } as any);
 
@@ -151,16 +151,16 @@ describe('distributeTradeFeeRewards', () => {
     });
 
     expect(res.feeInNear).toBe(10.0);
-    expect(res.referralRewardNear).toBe(5.0); // 50% of 10 NEAR
-    expect(addReferralReward).toHaveBeenCalledWith('ref-4', 5.0);
+    expect(res.referralRewardNear).toBe(6.0); // 60% of 10 NEAR
+    expect(addReferralReward).toHaveBeenCalledWith('ref-4', 6.0);
   });
 
-  it('credits 5% fee cashback to super ambassador on their own trades', async () => {
+  it('credits 30% fee cashback to super ambassador on their own trades', async () => {
     vi.mocked(getReferralByReferredUser).mockResolvedValue(null);
 
     vi.mocked(getUserById).mockResolvedValue({
       id: 'cryptogeneral01-id',
-      cashback_pct: 5,
+      cashback_pct: 30,
       fee_tier: 'super_ambassador',
     } as any);
 
@@ -172,8 +172,8 @@ describe('distributeTradeFeeRewards', () => {
     });
 
     expect(res.feeInNear).toBe(20.0);
-    expect(res.cashbackNear).toBe(1.0); // 5% of 20 NEAR = 1 NEAR
-    expect(addCashbackReward).toHaveBeenCalledWith('cryptogeneral01-id', 1.0);
+    expect(res.cashbackNear).toBe(6.0); // 30% of 20 NEAR = 6 NEAR
+    expect(addCashbackReward).toHaveBeenCalledWith('cryptogeneral01-id', 6.0);
   });
 
   it('activates pending referral on first trade', async () => {
@@ -182,7 +182,7 @@ describe('distributeTradeFeeRewards', () => {
       referrer_id: 'cryptogeneral01-id',
       referred_user_id: 'new-user',
       status: 'pending',
-      referrer_fee_pct: 50,
+      referrer_fee_pct: 60,
     } as any);
 
     vi.mocked(getUserById).mockResolvedValue({
@@ -197,7 +197,7 @@ describe('distributeTradeFeeRewards', () => {
     });
 
     expect(activateReferral).toHaveBeenCalledWith('ref-pending');
-    expect(res.referralRewardNear).toBe(5.0);
-    expect(addReferralReward).toHaveBeenCalledWith('ref-pending', 5.0);
+    expect(res.referralRewardNear).toBe(6.0);
+    expect(addReferralReward).toHaveBeenCalledWith('ref-pending', 6.0);
   });
 });
