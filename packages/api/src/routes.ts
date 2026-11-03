@@ -193,6 +193,7 @@ import {
   RONSPAD_TOKEN_URL,
   isKleosTradingEnabled,
   isLaunchpadToken,
+  runAsTrade,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
 } from '@racerbot/shared';
@@ -3050,6 +3051,11 @@ function makeStageEditor(ctx: Context, procMsg: { message_id: number } | null, o
 }
 
 // ── Core Helper: Execute Buy for User ────────────────────────────────────────
+/** Buys run as trades: their NEAR reads (quotes, balances, storage) use the premium RPC first */
+export function executeBuyHelper(...args: Parameters<typeof executeBuyHelperAsTrade>): ReturnType<typeof executeBuyHelperAsTrade> {
+  return runAsTrade(() => executeBuyHelperAsTrade(...args));
+}
+
 /**
  * Buys a launchpad coin along its Rhea DCL path (NEAR -> USDC -> PRL -> coin) in one transaction and
  * builds the confirmation. Shared by the buy helper's fast lane and its regular path.
@@ -3089,7 +3095,7 @@ async function buyLaunchpadDclPath(
   };
 }
 
-export async function executeBuyHelper(
+async function executeBuyHelperAsTrade(
   userIdOrTelegramId: number | string,
   rawTokenAddress: string,
   amountNear: number,
