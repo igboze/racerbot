@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
+// Imported before any test stubs fetch, so module start-up never runs against a test's stub
+const { fetchDexScreenerTokenData } = await import('./wallet.js');
+const { getIntentsNearAsset, isIntentsToken } = await import('./intentsPrivate.js');
+
 const respond = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -14,7 +18,6 @@ describe('DexScreener prices on NEAR', () => {
 
   it('ignores priceNative when the pair is not quoted in wNEAR (it is in the quote token)', async () => {
     vi.stubGlobal('fetch', vi.fn(() => respond({ pairs: [pair('prl.omft.near')] })));
-    const { fetchDexScreenerTokenData } = await import('./wallet.js');
     const d = await fetchDexScreenerTokenData('oyster.v2-launchpad.justhoot.near', 'near');
     expect(d!.priceNative).toBe(0);
     expect(d!.priceUsd).toBeCloseTo(0.0000283);
@@ -22,7 +25,6 @@ describe('DexScreener prices on NEAR', () => {
 
   it('keeps priceNative for wNEAR pairs', async () => {
     vi.stubGlobal('fetch', vi.fn(() => respond({ pairs: [pair('wrap.near')] })));
-    const { fetchDexScreenerTokenData } = await import('./wallet.js');
     const d = await fetchDexScreenerTokenData('oyster.v2-launchpad.justhoot.near', 'near');
     expect(d!.priceNative).toBeCloseTo(0.0000244);
   });
@@ -35,7 +37,6 @@ describe('1Click assets for NEAR wallets', () => {
       { assetId: '1cs_v1:near:nep141:prl.omft.near', blockchain: 'near', contractAddress: 'prl.omft.near', symbol: 'PRL' },
       { assetId: 'nep141:wrap.near', blockchain: 'near', contractAddress: 'wrap.near', symbol: 'wNEAR' },
     ])));
-    const { getIntentsNearAsset, isIntentsToken } = await import('./intentsPrivate.js');
     expect(await getIntentsNearAsset('prl.omft.near')).toBe('1cs_v1:near:nep141:prl.omft.near');
     expect(await getIntentsNearAsset('wrap.near')).toBe('nep141:wrap.near');
     expect(await isIntentsToken('oyster.v2-launchpad.justhoot.near')).toBe(false);

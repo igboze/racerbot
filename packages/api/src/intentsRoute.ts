@@ -389,7 +389,7 @@ export async function sellViaIntents(user: UserRecord, token: string, route: Int
  * contract runs every hop in one call and refunds the wNEAR if the minimum is not met. Everything read before
  * the transaction is read in parallel, and what arrived comes from the transaction's own logs.
  */
-export async function buyViaDclPath(user: UserRecord, token: string, path: string[], amountNear: number, slippagePct: number, decimals?: number): Promise<IntentsTradeResult> {
+export async function buyViaDclPath(user: UserRecord, token: string, path: string[], amountNear: number, slippagePct: number, decimals?: number, knownNativeYocto?: string | null): Promise<IntentsTradeResult> {
   const account = user.subaccount_id;
   const slippage = Math.max(0.5, Math.min(50, slippagePct));
   try {
@@ -398,7 +398,7 @@ export async function buyViaDclPath(user: UserRecord, token: string, path: strin
     const fee = (amount * BigInt(FEE_BPS)) / 10_000n;
     const swapIn = amount - fee;
     const [nativeRaw, q, registerCoin, registerWnear] = await Promise.all([
-      near.getNearBalance(account, 0).catch(() => '0'),
+      knownNativeYocto ? Promise.resolve(knownNativeYocto) : near.getNearBalance(account, 0).catch(() => '0'),
       getNear().view<any>(DCL, 'quote', { pool_ids: path, input_token: 'wrap.near', output_token: token, input_amount: swapIn.toString(), tag: null }),
       storageActions(token, [account]),
       storageActions('wrap.near', [account, TREASURY_ACCOUNT_ID]),
@@ -490,4 +490,16 @@ export async function sellViaDclPath(user: UserRecord, token: string, path: stri
     logger.warn(`DCL path sell of ${token} for ${user.id} failed: ${err?.message}`);
     return { success: false, reason: err?.message || 'Sell failed' };
   }
+}
+
+/**
+ * Warms a launchpad DCL route when its card opens: the wallet's and treasury's registrations are checked and
+ * remembered, so a buy or sell goes straight to the quote and the transaction.
+ */
+export async function prewarmDclRoute(user: UserRecord, token: string): Promise<void> {
+  if (!user.subaccount_id) return;
+  await Promise.all([
+    storageActions(token, [user.subaccount_id]),
+    storageActions('wrap.near', [user.subaccount_id, TREASURY_ACCOUNT_ID]),
+  ]).catch(() => undefined);
 }
