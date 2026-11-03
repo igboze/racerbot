@@ -169,16 +169,58 @@ export async function quoteKleos(
   return await new ethers.Contract(route.router, KLEOS_V4_ROUTER_ABI, provider)[fn](token, amountIn);
 }
 
+// ── Kleos board ─────────────────────────────────────────────────────────────
+
+const KLEOS_BOARD_URL = 'https://www.thekleos.xyz/api/board';
+const KLEOS_BOARD_TTL_MS = 60_000;
+let kleosBoard: { at: number; byAddress: Map<string, any> } | null = null;
+let kleosBoardRefresh: Promise<void> | null = null;
+
+async function refreshKleosBoard(): Promise<void> {
+  const res = await fetch(KLEOS_BOARD_URL, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`Kleos board returned ${res.status}`);
+  const coins = (await res.json()) as any[];
+  if (!Array.isArray(coins)) throw new Error('Kleos board returned an unexpected shape');
+  kleosBoard = { at: Date.now(), byAddress: new Map(coins.map(c => [String(c.address).toLowerCase(), c])) };
+}
+
+/**
+ * The Kleos board entry for a coin (name, symbol, image, price, pool and route data), or null.
+ * Kleos lists every coin it launched; DexScreener does not index Elysium mainnet. A failed
+ * refresh keeps serving the last board, so a Kleos hiccup never hides coins already known.
+ */
+export async function getKleosBoardCoin(address: string): Promise<any | null> {
+  const stale = !kleosBoard || Date.now() - kleosBoard.at > KLEOS_BOARD_TTL_MS;
+  if (stale) {
+    kleosBoardRefresh ??= refreshKleosBoard().finally(() => { kleosBoardRefresh = null; });
+    if (kleosBoard) kleosBoardRefresh.catch(() => undefined); // serve the old board while it refreshes
+    else await kleosBoardRefresh;
+  }
+  return kleosBoard?.byAddress.get(address.toLowerCase()) ?? null;
+}
+
+/** HYPE-to-quote-token hop fees a v5 coin can use when no board entry says which */
+const V5_HOP_FEES = [0, 10000, 3000, 500];
+
 /**
  * Finds the router that trades this coin. Each router only knows its own launches and reverts with
- * UnknownToken() for the rest, so a quote that answers proves the route. A board hint is tried first.
+ * UnknownToken() for the rest, so a quote that answers proves the route. The board's launch data is
+ * tried first (it carries a v5 coin's hop fee); without it every v5 hop fee is tried.
  */
 export async function resolveKleosRoute(provider: ethers.Provider, token: string, launchHint?: any): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
   const candidates: KleosRoute[] = [];
-  if (launchHint !== undefined) candidates.push(kleosRouteFromLaunch(launchHint));
+  if (launchHint !== undefined && launchHint !== null) {
+    try { candidates.push(kleosRouteFromLaunch(launchHint)); } catch { /* no HYPE route per the board: probe anyway */ }
+  }
   for (const r of [ROUTES.v5, ROUTES.v4, ROUTES.pair, ROUTES.classic]) {
-    if (!candidates.some(c => c.kind === r.kind)) candidates.push(r);
+    if (r.kind === 'v5') {
+      for (const hopFee of V5_HOP_FEES) {
+        if (!candidates.some(c => c.kind === 'v5' && c.hopFee === hopFee)) candidates.push({ ...r, hopFee });
+      }
+    } else if (!candidates.some(c => c.kind === r.kind)) {
+      candidates.push(r);
+    }
   }
   for (const route of candidates) {
     try {

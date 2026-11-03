@@ -1451,7 +1451,7 @@ export async function extractEvmCandidate(text: string): Promise<string | null> 
   }
 
   // 3. Direct EVM address (40 hex characters prefixed with 0x)
-  const directEvmMatch = /(?:^|[\s/])(0x[0-9a-fA-F]{40})(?:[\s/?#]|$)/i.exec(trimmed);
+  const directEvmMatch = /(?<![0-9a-zA-Z])(0x[0-9a-fA-F]{40})(?![0-9a-zA-Z])/i.exec(trimmed);
   if (directEvmMatch && isValidEvmAddress(directEvmMatch[1])) {
     return directEvmMatch[1];
   }
@@ -2138,7 +2138,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ]);
     } else {
       text += isKleos
-        ? '🏛️ RacerBot can’t trade Kleos coins yet. Tap *View on Kleos* to trade there.'
+        ? `🏛️ ${tokenInfo.trade_block_reason ? sanitizeMd(tokenInfo.trade_block_reason) : 'RacerBot can’t trade Kleos coins right now.'} Tap *View on Kleos* to trade there.`
         : '⚠️ Trading venue is not directly supported.';
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
@@ -3091,6 +3091,9 @@ export async function executeBuyHelper(
   const isKleos = info.venue === 'kleos';
   if (isKleos && !isKleosTradingEnabled()) {
     throw new Error('This coin is on Kleos (Elysium mainnet), which RacerBot cannot trade yet. You can buy it on thekleos.xyz.');
+  }
+  if (isKleos && info.trade_block_reason) {
+    throw new Error(`${info.trade_block_reason} You can trade it on thekleos.xyz.`);
   }
   // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
   if (!isKleos && (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium'))) {
@@ -14558,7 +14561,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
     {
       const evmCandidate = await extractEvmCandidate(rawText);
       if (evmCandidate && isValidEvmAddress(evmCandidate)) {
-        const loadingMsg = await ctx.reply('🔍 Looking up HyperEVM token...').catch(() => null);
+        const loadingMsg = await ctx.reply('🔍 Looking up token (HyperEVM · Kleos)...').catch(() => null);
         try {
           const card = await withTimeout(buildTokenCard(evmCandidate, telegramId), 15000, 'The token lookup timed out — please try again');
           if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});

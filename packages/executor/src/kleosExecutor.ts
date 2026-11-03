@@ -26,6 +26,7 @@ import {
   findRetryableTicket,
   quoteKleos,
   resolveKleosRoute,
+  getKleosBoardCoin,
   retryableTicketCost,
   toTokenUnits,
   type EvmCall,
@@ -135,7 +136,9 @@ export async function executeKleosSwap(
 
   let route;
   try {
-    route = await resolveKleosRoute(l2, token);
+    // The board's launch data carries a v5 coin's hop fee; without it those coins find no route
+    const boardCoin = await getKleosBoardCoin(token).catch(() => null);
+    route = await resolveKleosRoute(l2, token, boardCoin?.launch);
   } catch (err: any) {
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
