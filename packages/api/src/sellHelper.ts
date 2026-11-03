@@ -102,7 +102,7 @@ export async function sellAtTarget(
       token_out: 'HYPE',
       amount_in: ethers.formatUnits(evmSellUnits, 18),
       min_amount_out: '1',
-      venue: info.venue === 'kleos' ? 'kleos' : `${chain}_dex` as any,
+      venue: info.venue === 'kleos' || info.venue === 'ronspad' ? info.venue : `${chain}_dex` as any,
       timestamp: Date.now(),
       slippage_pct: slippagePct,
     };

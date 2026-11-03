@@ -83,6 +83,9 @@ import {
   getErc20TokenInfo,
   getKleosBoardCoin,
   kleosRouteFromLaunch,
+  getRonsPadLaunch,
+  ronsPadPriceHype,
+  RONSPAD,
   getErc20Balance,
   getEvmProvider,
   type EvmChain,
@@ -701,6 +704,50 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
   if (onHyper?.hasCode || !onHyper || !onElysium || !onElysiumMainnet) return new EvmTokenLookupError('rpc', address);
   const read = [onHyper, onElysium, onElysiumMainnet];
   return new EvmTokenLookupError(read.some(r => r.nonce > 0) ? 'wallet' : 'empty', address);
+}
+
+/**
+ * Look up a coin launched on RonsPad (ronspad.fun), the other launchpad on Elysium mainnet. Everything is
+ * read from the chain: PadFactory names its own launches, and the coin's pool gives its price and depth.
+ */
+export async function lookupRonsPadToken(address: string): Promise<TokenInfoResult | null> {
+  const provider = getEvmProvider('elysium', false);
+  const launch = await getRonsPadLaunch(provider, address);
+  if (!launch) return null;
+  const whype = new ethers.Contract(RONSPAD.whype, ['function balanceOf(address) view returns (uint256)'], provider);
+  const [meta, priceHype, poolHype, hypeUsd] = await Promise.all([
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
+    ronsPadPriceHype(provider, launch).catch(() => 0),
+    (whype.balanceOf(launch.pool) as Promise<bigint>).catch(() => 0n),
+    getHypeUsdPrice().catch(() => 25.0),
+  ]);
+  const decimals = meta?.decimals ?? 18;
+  const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
+  // The pool's HYPE side doubled: the depth of a full-range pool, in HYPE
+  const liquidityHype = Number(ethers.formatEther(poolHype)) * 2;
+  const marketCapHype = priceHype * supply;
+  const feePct = launch.fee / 10_000;
+  return {
+    address: meta?.address ?? ethers.getAddress(address),
+    chain: 'elysium',
+    name: meta?.name || 'RonsPad coin',
+    symbol: meta?.symbol || 'TKN',
+    decimals,
+    total_supply: meta?.totalSupply ?? '0',
+    price: priceHype.toString(),
+    price_usd: (priceHype * hypeUsd).toString(),
+    liquidity: liquidityHype.toFixed(2),
+    liquidity_usd: (liquidityHype * hypeUsd).toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapHype * hypeUsd,
+    near_usd: hypeUsd,
+    venue: 'ronspad',
+    launchpad: 'RonsPad',
+    tradeable: isKleosTradingEnabled(),
+    // The pool's tier is the coin's fee, taken on both sides
+    buy_tax_pct: feePct,
+    sell_tax_pct: feePct,
+  } as TokenInfoResult;
 }
 
 /**
@@ -1388,7 +1435,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       ]);
 
       if (!tokenMeta && !dexscreenerData) {
-        const kleos = await lookupKleosToken(tokenAddress, null).catch(() => null);
+        // Elysium mainnet launchpads: RonsPad names its launches on chain, then Kleos coins newer than its board
+        const kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
+          ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
