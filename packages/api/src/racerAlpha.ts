@@ -198,13 +198,23 @@ const inMemorySignals: AlphaSignal[] = [];
 /**
  * 1. Fetch Alpha Traders with viewing key status for requester
  */
+/**
+ * A trader shown, sold or copied must belong to a real RacerBot user. Rows
+ * without one (old seeded demo traders with made-up stats and payout accounts
+ * that do not exist, which anyone could register) are never listed or sold.
+ * `alias` is the traders table's name or alias in the query.
+ */
+export function realTraderSql(alias = 'racer_alpha_traders'): string {
+  return `EXISTS (SELECT 1 FROM users u_real WHERE u_real.id::text = ${alias}.user_id OR u_real.subaccount_id = ${alias}.user_id)`;
+}
+
 export async function getAlphaTraders(userId?: string): Promise<AlphaTrader[]> {
   try {
     const db = await getDb().catch(() => null);
     let dbTraders: AlphaTrader[] = [];
     if (db) {
       const res = await db.query(
-        `SELECT * FROM racer_alpha_traders WHERE is_active = TRUE AND user_id <> 'system_alpha' ORDER BY verified_pnl_pct DESC`
+        `SELECT * FROM racer_alpha_traders WHERE is_active = TRUE AND user_id <> 'system_alpha' AND ${realTraderSql()} ORDER BY verified_pnl_pct DESC`
       ).catch(() => ({ rows: [] }));
       dbTraders = res.rows.map(rowToTrader);
     }
@@ -271,7 +281,7 @@ export async function getAlphaFeed(userId?: string): Promise<AlphaSignal[]> {
           s.created_at AS "createdAt"
         FROM racer_alpha_signals s
         LEFT JOIN racer_alpha_traders t ON t.id = s.trader_id
-        WHERE COALESCE(t.user_id, '') <> 'system_alpha'
+        WHERE COALESCE(t.user_id, '') <> 'system_alpha' AND ${realTraderSql('t')}
         ORDER BY s.created_at DESC
         LIMIT 50
       `);
@@ -447,7 +457,7 @@ export async function buyViewingKey(
       await client.query('BEGIN');
       const traderResult = await client.query(
         `SELECT * FROM racer_alpha_traders
-         WHERE (id = $1 OR handle = $1) AND is_active = TRUE AND user_id <> 'system_alpha'
+         WHERE (id = $1 OR handle = $1) AND is_active = TRUE AND user_id <> 'system_alpha' AND ${realTraderSql()}
          FOR UPDATE`,
         [traderId]
       );
@@ -1936,7 +1946,7 @@ export async function getAlphaTraderById(traderId: string, userId?: string): Pro
   const db = await getDb().catch(() => null);
   if (!db) return null;
   const res = await db.query(
-    `SELECT * FROM racer_alpha_traders WHERE (id = $1 OR handle = $1) AND is_active = TRUE`,
+    `SELECT * FROM racer_alpha_traders WHERE (id = $1 OR handle = $1) AND is_active = TRUE AND ${realTraderSql()}`,
     [traderId]
   ).catch(() => ({ rows: [] }));
   if (!res.rows[0]) return null;

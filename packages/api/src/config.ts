@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -28,7 +29,16 @@ export const DEFAULT_ALLOWANCE = 0.5;
 export const DATABASE_URL: string = process.env.DATABASE_URL || 'postgres://localhost:5432/racerbot';
 export const REDIS_URL: string = process.env.REDIS_URL || 'redis://localhost:6379';
 export const PUBLIC_URL: string = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '');
-export const TELEGRAM_WEBHOOK_SECRET: string = process.env.TELEGRAM_WEBHOOK_SECRET || '';
+/**
+ * Telegram sends this with every webhook call; anything without it is refused.
+ * Without TELEGRAM_WEBHOOK_SECRET set, derive one from the bot token so the
+ * webhook is never left open (only Telegram and this server know the token).
+ * Telegram allows A-Z, a-z, 0-9, _ and -: hex fits.
+ */
+export const TELEGRAM_WEBHOOK_SECRET: string = process.env.TELEGRAM_WEBHOOK_SECRET
+  || (TELEGRAM_BOT_TOKEN
+    ? crypto.createHmac('sha256', TELEGRAM_BOT_TOKEN).update('racerbot-telegram-webhook').digest('hex')
+    : '');
 
 // ── Admin monitoring ─────────────────────────────────────────────────────────
 // Comma-separated Telegram usernames (with or without @) allowed to run admin

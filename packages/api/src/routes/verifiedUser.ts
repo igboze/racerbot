@@ -17,3 +17,16 @@ export async function verifiedUser(req: any): Promise<UserRecord | null> {
   const session = token ? await verifyAuthToken(token) : null;
   return session?.userId ? getUserById(session.userId) : null;
 }
+
+/**
+ * The NEAR account a request merely claims (x-wallet-address header, or a
+ * walletAddress field), or null. Only read-only requests may use such a claim:
+ * anything that changes state needs a verified session, because a wallet
+ * account can still hold money RacerBot keeps for it (the confidential private
+ * balance) and settings that spend it (auto-copy).
+ */
+export function unprovenWalletClaim(req: any): string | null {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return null;
+  const claim = req.headers?.['x-wallet-address'] || req.query?.walletAddress || req.body?.walletAddress;
+  return typeof claim === 'string' && claim.trim() ? claim.trim() : null;
+}
