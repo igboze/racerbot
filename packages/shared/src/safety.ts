@@ -46,6 +46,36 @@ export const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.omft.near',
 ];
 
+/**
+ * Coins launched by a launchpad. Their launchpad's own pool is always checked before any Rhea pool: a buy
+ * never goes to another pool first (a thin side pool once filled a buy 43% below the launchpad route).
+ */
+export const LAUNCHPAD_TOKEN_SUFFIXES = [
+  '.meme-cooking.near',
+  '.nearlytrade.near',
+  '.v2-launchpad.justhoot.near',
+  '.launchpad.justhoot.near',
+  '.launchpad-justhoot.near',
+  '.nearpadfamily.near',
+  '.nearpad.near',
+  '.factory.shardsmarket.near',
+  '.launch.intear.near',
+  '.launch-v2.intear.near',
+  '.launch.shoremarkets.near',
+  '.shoremarkets.near',
+  '.gaypad.j1-racing.near',
+  '.gaypad.near',
+  '.exchange.kelytradevs.near',
+  '.kelytra.near',
+  '.nearpumpfun.near',
+  '.onetokenhub.near',
+];
+
+export function isLaunchpadToken(tokenAddress: string): boolean {
+  const t = (tokenAddress || '').toLowerCase();
+  return LAUNCHPAD_TOKEN_SUFFIXES.some(suffix => t.endsWith(suffix));
+}
+
 export const VERIFIED_CORE_TOKENS = new Set([
   'wrap.near',
   'near',

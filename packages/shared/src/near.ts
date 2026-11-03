@@ -2523,7 +2523,7 @@ export class MultiRpcNear {
    */
   async planShoremarketsRoute(tokenAddress: string): Promise<
     | { kind: 'direct'; launchPoolId: string; quote: 'wrap.near' }
-    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string } }
+    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string }; hop1Path?: string[] }
   > {
     const st = await this.getShoremarketsTokenState(tokenAddress);
     const launchPoolId = st.pool_id;
@@ -2533,6 +2533,12 @@ export class MultiRpcNear {
     }
 
     const quote = st.quote;
+
+    // 0. Best DCL path from wNEAR to the quote, compared by output (direct or through USDC)
+    const bestPath = await this.findDclPathFromNear(quote).catch(() => null);
+    if (bestPath?.length) {
+      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: bestPath[bestPath.length - 1] }, hop1Path: bestPath };
+    }
 
     // 1. Prioritize Ref DCL pool! Both ShoreMarkets launch pool and hop1 pool
     // live on dclv2.ref-labs.near, enabling seamless, single-transaction atomic multi-hop swaps!
@@ -3118,7 +3124,7 @@ export class MultiRpcNear {
    */
   async planNearlytradeRoute(tokenAddress: string): Promise<
     | { kind: 'direct'; launchPoolId: string; quote: 'wrap.near' }
-    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string } }
+    | { kind: 'multihop'; quote: string; launchPoolId: string; hop1: { type: 'dcl' | 'v2'; poolId: string }; hop1Path?: string[] }
   > {
     const cachedRoute = ntRouteCache.get(tokenAddress);
     if (cachedRoute && Date.now() - cachedRoute.at < 600_000) {
@@ -3135,6 +3141,21 @@ export class MultiRpcNear {
     }
 
     const quote = st.quote;
+
+    // 0. Best DCL path from wNEAR to the quote (direct or through USDC, compared by output): a thin direct
+    // NEAR/PRL pool filled buys 43% worse than NEAR -> USDC -> PRL, the route nearly.trade itself uses
+    const bestPath = await this.findDclPathFromNear(quote).catch(() => null);
+    if (bestPath?.length) {
+      const res = {
+        kind: 'multihop' as const,
+        quote,
+        launchPoolId,
+        hop1: { type: 'dcl' as const, poolId: bestPath[bestPath.length - 1] },
+        hop1Path: bestPath,
+      };
+      ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
+      return res;
+    }
 
     // 1. Fast path: Direct Ref DCL pool for wrap.near <-> quote (instant DCL resolution)
     const dclHop = await this.findDclPoolId('wrap.near', quote).catch(() => null);

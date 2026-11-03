@@ -252,6 +252,8 @@ export {
   isAuditedLaunchpadToken,
   VERIFIED_CORE_TOKENS,
   VERIFIED_LAUNCHPAD_SUFFIXES,
+  LAUNCHPAD_TOKEN_SUFFIXES,
+  isLaunchpadToken,
 } from './safety.js';
 export type {
   TokenSafetyReport,

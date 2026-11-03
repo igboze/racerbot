@@ -71,22 +71,60 @@ async function balanceOf(token: string, account: string): Promise<bigint> {
   return BigInt((await getNear().getTokenBalance(token, account).catch(() => '0')) || '0');
 }
 
-/** storage_deposit actions for any of `accounts` not yet registered on `token` */
+const registeredOn = new Set<string>();
+
+/** storage_deposit actions for any of `accounts` not yet registered on `token` (checked in parallel, remembered) */
 async function storageActions(token: string, accounts: string[]): Promise<any[]> {
   const near = getNear();
-  const out: any[] = [];
-  for (const account of accounts) {
+  const missing = await Promise.all(accounts.map(async (account) => {
+    const key = `${token}|${account}`;
+    if (registeredOn.has(key)) return null;
     const registered = await near.view<any>(token, 'storage_balance_of', { account_id: account }).catch(() => null);
-    if (!registered) out.push(transactions.functionCall('storage_deposit', { account_id: account, registration_only: true }, 10n * TGAS, STORAGE_DEPOSIT));
-  }
-  return out;
+    if (registered) {
+      registeredOn.add(key);
+      return null;
+    }
+    return account;
+  }));
+  return missing.filter((a): a is string => Boolean(a)).map(account =>
+    transactions.functionCall('storage_deposit', { account_id: account, registration_only: true }, 10n * TGAS, STORAGE_DEPOSIT));
 }
 
-async function send(near: any, from: string, receiver: string, actions: any[]): Promise<string> {
+async function sendForOutcome(near: any, from: string, receiver: string, actions: any[]): Promise<any> {
   const outcome = await near.signAndSendTransactionAll(from, receiver, actions);
   const err = failureOf(outcome);
   if (err) throw new Error(err);
-  return outcome.transaction.hash;
+  return outcome;
+}
+
+async function send(near: any, from: string, receiver: string, actions: any[]): Promise<string> {
+  return (await sendForOutcome(near, from, receiver, actions)).transaction.hash;
+}
+
+/**
+ * How much of `token` reached `account` in a transaction, from the token's own NEP-141 transfer events,
+ * or null when the logs do not say (then the caller reads the balance instead).
+ */
+function receivedFromLogs(outcome: any, token: string, account: string): bigint | null {
+  let total = 0n;
+  let seen = false;
+  for (const r of outcome?.receipts_outcome ?? []) {
+    if (r?.outcome?.executor_id !== token) continue;
+    for (const log of r.outcome.logs ?? []) {
+      if (!log.startsWith('EVENT_JSON:')) continue;
+      try {
+        const ev = JSON.parse(log.slice('EVENT_JSON:'.length));
+        if (ev.standard !== 'nep141' || ev.event !== 'ft_transfer') continue;
+        for (const d of ev.data ?? []) {
+          if (d.new_owner_id === account) {
+            total += BigInt(d.amount);
+            seen = true;
+          }
+        }
+      } catch { /* not an event */ }
+    }
+  }
+  return seen ? total : null;
 }
 
 /** Output of a DCL swap, from the pool's own quote */
@@ -147,10 +185,9 @@ async function payTokenFee(near: any, from: string, token: string, amount: bigin
   ]);
 }
 
-async function recordFill(user: UserRecord, token: string, side: 'buy' | 'sell', tokensRaw: bigint, nearValue: number, feeNear: number, txHash: string, positionId?: string): Promise<{ positionId?: string; priceNear: number }> {
-  const near = getNear();
-  const meta = await near.getTokenMetadata(token).catch(() => ({ decimals: 18 }));
-  const human = Number(tokensRaw) / 10 ** (meta?.decimals ?? 18);
+async function recordFill(user: UserRecord, token: string, side: 'buy' | 'sell', tokensRaw: bigint, nearValue: number, feeNear: number, txHash: string, positionId?: string, knownDecimals?: number): Promise<{ positionId?: string; priceNear: number }> {
+  const decimals = knownDecimals ?? (await getNear().getTokenMetadata(token).catch(() => ({ decimals: 18 })))?.decimals ?? 18;
+  const human = Number(tokensRaw) / 10 ** decimals;
   const priceNear = human > 0 ? (side === 'buy' ? nearValue - feeNear : nearValue) / human : 0;
   let posId = positionId;
   if (!posId) {
@@ -349,31 +386,37 @@ export async function sellViaIntents(user: UserRecord, token: string, route: Int
 /**
  * Buys a launchpad coin with NEAR along `path` (Rhea DCL pools from wNEAR to the coin, e.g. NEAR -> USDC ->
  * PRL -> coin): wrap, pay the 1.5% platform fee in wNEAR, and swap the rest, all in one transaction. The DCL
- * contract runs every hop in one call and refunds the wNEAR if the minimum is not met.
+ * contract runs every hop in one call and refunds the wNEAR if the minimum is not met. Everything read before
+ * the transaction is read in parallel, and what arrived comes from the transaction's own logs.
  */
-export async function buyViaDclPath(user: UserRecord, token: string, path: string[], amountNear: number, slippagePct: number): Promise<IntentsTradeResult> {
+export async function buyViaDclPath(user: UserRecord, token: string, path: string[], amountNear: number, slippagePct: number, decimals?: number): Promise<IntentsTradeResult> {
   const account = user.subaccount_id;
   const slippage = Math.max(0.5, Math.min(50, slippagePct));
   try {
     const near = await signer(user);
     const amount = BigInt(Math.round(amountNear * 1e6)) * 10n ** 18n;
-    const nativeBal = BigInt((await near.getNearBalance(account, 0).catch(() => '0')) || '0');
-    if (nativeBal < amount + 50_000_000_000_000_000_000_000n) {
-      return { success: false, reason: `Not enough NEAR: this buy needs ${amountNear} NEAR plus about 0.05 NEAR for fees.` };
-    }
     const fee = (amount * BigInt(FEE_BPS)) / 10_000n;
     const swapIn = amount - fee;
-    const q = await getNear().view<any>(DCL, 'quote', { pool_ids: path, input_token: 'wrap.near', output_token: token, input_amount: swapIn.toString(), tag: null });
+    const [nativeRaw, q, registerCoin, registerWnear] = await Promise.all([
+      near.getNearBalance(account, 0).catch(() => '0'),
+      getNear().view<any>(DCL, 'quote', { pool_ids: path, input_token: 'wrap.near', output_token: token, input_amount: swapIn.toString(), tag: null }),
+      storageActions(token, [account]),
+      storageActions('wrap.near', [account, TREASURY_ACCOUNT_ID]),
+    ]);
+    if (BigInt(nativeRaw || '0') < amount + 50_000_000_000_000_000_000_000n) {
+      return { success: false, reason: `Not enough NEAR: this buy needs ${amountNear} NEAR plus about 0.05 NEAR for fees.` };
+    }
     const expected = BigInt(q?.amount || '0');
     if (expected <= 0n) return { success: false, reason: 'The Rhea pools quoted nothing for this buy. Nothing was spent.' };
     const min = (expected * BigInt(Math.round((100 - slippage) * 100))) / 10_000n;
 
-    // The wallet receives the coin, and the treasury the fee: both must be registered
-    const registerCoin = await storageActions(token, [account]);
-    if (registerCoin.length) await send(near, account, token, registerCoin);
-    const before = await balanceOf(token, account);
-    const txHash = await send(near, account, 'wrap.near', [
-      ...(await storageActions('wrap.near', [account, TREASURY_ACCOUNT_ID])),
+    // First buy of this coin only: the wallet must be registered on it before the pool can pay out
+    if (registerCoin.length) {
+      await send(near, account, token, registerCoin);
+      registeredOn.add(`${token}|${account}`);
+    }
+    const outcome = await sendForOutcome(near, account, 'wrap.near', [
+      ...registerWnear,
       transactions.functionCall('near_deposit', {}, 10n * TGAS, amount),
       transactions.functionCall('ft_transfer', { receiver_id: TREASURY_ACCOUNT_ID, amount: fee.toString() }, 15n * TGAS, 1n),
       transactions.functionCall('ft_transfer_call', {
@@ -382,11 +425,13 @@ export async function buyViaDclPath(user: UserRecord, token: string, path: strin
         msg: JSON.stringify({ Swap: { pool_ids: path, output_token: token, min_output_amount: min.toString() } }),
       }, 200n * TGAS, 1n),
     ]);
-    const got = (await balanceOf(token, account)) - before;
+    const txHash = outcome.transaction.hash;
+    let got = receivedFromLogs(outcome, token, account);
+    if (got === null) got = (await balanceOf(token, account)) > 0n ? expected : 0n;
     if (got <= 0n) {
       return { success: false, txHash, reason: 'The price moved past your slippage limit, so the swap did not fill. Your NEAR came back as wNEAR in your wallet.' };
     }
-    const rec = await recordFill(user, token, 'buy', got, amountNear, amountNear * FEE_BPS / 10_000, txHash);
+    const rec = await recordFill(user, token, 'buy', got, amountNear, amountNear * FEE_BPS / 10_000, txHash, undefined, decimals);
     return { success: true, txHash, positionId: rec.positionId, tokensRaw: got.toString(), nearSpent: amountNear, priceNear: rec.priceNear };
   } catch (err: any) {
     logger.warn(`DCL path buy of ${token} for ${user.id} failed: ${err?.message}`);
@@ -394,40 +439,52 @@ export async function buyViaDclPath(user: UserRecord, token: string, path: strin
   }
 }
 
-/** Sells a launchpad coin back to NEAR along the reversed path, then pays the 1.5% fee from the wNEAR received */
-export async function sellViaDclPath(user: UserRecord, token: string, path: string[], amountRaw: bigint, slippagePct: number, positionId?: string): Promise<IntentsTradeResult> {
+/** Sells a launchpad coin back to NEAR along the reversed path; the 1.5% fee is paid from the wNEAR received */
+export async function sellViaDclPath(user: UserRecord, token: string, path: string[], amountRaw: bigint, slippagePct: number, positionId?: string, decimals?: number): Promise<IntentsTradeResult> {
   const account = user.subaccount_id;
   const slippage = Math.max(0.5, Math.min(50, slippagePct));
   try {
     const near = await signer(user);
+    const back = [...path].reverse();
     const held = await balanceOf(token, account);
     const sell = amountRaw > held ? held : amountRaw;
     if (sell <= 0n) return { success: false, reason: 'Nothing left in your wallet to sell.' };
-    const back = [...path].reverse();
-    const q = await getNear().view<any>(DCL, 'quote', { pool_ids: back, input_token: token, output_token: 'wrap.near', input_amount: sell.toString(), tag: null });
+    const [q, registerNear] = await Promise.all([
+      getNear().view<any>(DCL, 'quote', { pool_ids: back, input_token: token, output_token: 'wrap.near', input_amount: sell.toString(), tag: null }),
+      storageActions('wrap.near', [account]),
+    ]);
     const expected = BigInt(q?.amount || '0');
     if (expected <= 0n) return { success: false, reason: 'The Rhea pools quoted nothing for this sale. Nothing was sold.' };
     const min = (expected * BigInt(Math.round((100 - slippage) * 100))) / 10_000n;
 
-    const registerNear = await storageActions('wrap.near', [account]);
-    if (registerNear.length) await send(near, account, 'wrap.near', registerNear);
-    const before = await balanceOf('wrap.near', account);
-    const txHash = await send(near, account, token, [
+    if (registerNear.length) {
+      await send(near, account, 'wrap.near', registerNear);
+      registeredOn.add(`wrap.near|${account}`);
+    }
+    const outcome = await sendForOutcome(near, account, token, [
       transactions.functionCall('ft_transfer_call', {
         receiver_id: DCL,
         amount: sell.toString(),
         msg: JSON.stringify({ Swap: { pool_ids: back, output_token: 'wrap.near', min_output_amount: min.toString() } }),
       }, 200n * TGAS, 1n),
     ]);
-    const got = (await balanceOf('wrap.near', account)) - before;
+    const txHash = outcome.transaction.hash;
+    let got = receivedFromLogs(outcome, 'wrap.near', account);
+    if (got === null) {
+      const left = await balanceOf(token, account);
+      got = left < held ? expected : 0n;
+    }
     if (got <= 0n) return { success: false, txHash, reason: 'The price moved past your slippage limit, so nothing was sold.' };
     const fee = (got * BigInt(FEE_BPS)) / 10_000n;
-    await send(near, account, 'wrap.near', [
-      ...(await storageActions('wrap.near', [TREASURY_ACCOUNT_ID])),
-      transactions.functionCall('ft_transfer', { receiver_id: TREASURY_ACCOUNT_ID, amount: fee.toString() }, 15n * TGAS, 1n),
-    ]).catch((err: any) => logger.warn(`Sell fee not paid for ${user.id}: ${err?.message}`));
+    // The sale is done: the fee goes out in the background so the confirmation does not wait on it
+    void storageActions('wrap.near', [TREASURY_ACCOUNT_ID])
+      .then(register => send(near, account, 'wrap.near', [
+        ...register,
+        transactions.functionCall('ft_transfer', { receiver_id: TREASURY_ACCOUNT_ID, amount: fee.toString() }, 15n * TGAS, 1n),
+      ]))
+      .catch((err: any) => logger.warn(`Sell fee not paid for ${user.id}: ${err?.message}`));
     const received = yoctoToNear(got - fee);
-    const rec = await recordFill(user, token, 'sell', sell, received, yoctoToNear(fee), txHash, positionId);
+    const rec = await recordFill(user, token, 'sell', sell, received, yoctoToNear(fee), txHash, positionId, decimals);
     return { success: true, txHash, positionId: rec.positionId, tokensRaw: sell.toString(), nearReceived: received, priceNear: rec.priceNear };
   } catch (err: any) {
     logger.warn(`DCL path sell of ${token} for ${user.id} failed: ${err?.message}`);

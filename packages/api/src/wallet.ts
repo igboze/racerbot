@@ -82,6 +82,7 @@ import {
   getHypeBalance,
   getErc20TokenInfo,
   getKleosBoardCoin,
+  isLaunchpadToken,
   kleosRouteFromLaunch,
   getRonsPadLaunch,
   ronsPadPriceHype,
@@ -1983,6 +1984,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     // Launchpads that report their own fees (transfer fee + pool tier), and why a coin cannot be bought
     let launchpadTaxPct: number | null = null;
     let tradeBlockReason: string | undefined;
+    // Launchpad coins: the launchpad's own pool is checked before any Rhea pool, and wins when it has one
+    const launchpadToken = isLaunchpadToken(tokenAddress);
+    let launchpadCheckFailed = false;
     let intentsRoute: { quote: string; dclPoolId?: string } | undefined;
     let dclPath: string[] | undefined;
     let intearPoolFee: number | undefined;
@@ -1998,7 +2002,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     }
 
     // Fast-path: if dbCache already knows the exact Rhea pool ID or DCL pool ID, check it directly in 1 view call (<50ms)
-    if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref')) {
+    // (never for a launchpad coin: its launchpad's pool is checked first, below)
+    if (dbCache && (dbCache.venue === 'rhea' || dbCache.venue === 'ref') && !launchpadToken) {
       if (dbCache.dcl_pool_id && (dbCache.dcl_pool_id.includes('|') || dbCache.dcl_pool_id.includes('>'))) {
         try {
           const parts = dbCache.dcl_pool_id.split('|');
@@ -2081,7 +2086,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               }
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (isIntearToken(tokenAddress) || (dbCache && dbCache.venue === 'intear')) {
         try {
           const intearState = await near.getIntearTokenState(tokenAddress);
@@ -2136,7 +2141,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               }
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.factory.shardsmarket.near')) {
         try {
           const smState = await near.getShardsmarketTokenState(tokenAddress);
@@ -2154,7 +2159,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               }
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.pad.onetokenhub.near') || tokenAddress.endsWith('.onetokenhub.near')) {
         try {
           const hubState = await near.getOneTokenHubState(tokenAddress);
@@ -2167,7 +2172,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = hubState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.nearpadfamily.near') || tokenAddress.endsWith('.nearpad.near')) {
         try {
           const padState = await near.getNEARpadState(tokenAddress);
@@ -2180,7 +2185,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = padState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.gaypad.j1-racing.near') || tokenAddress.endsWith('.gaypad.near')) {
         try {
           const gpState = await near.getGaypadTokenState(tokenAddress);
@@ -2194,7 +2199,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = gpState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.v2-launchpad.justhoot.near')) {
         // justhoot v2 launches into a Rhea DCL pool against the creator's chosen quote token (wNEAR,
         // PRL, ZEC, USDC, RHEA, HOOT...): the launchpad names the pool, and its transfer fee is the tax
@@ -2230,7 +2235,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               }
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.launchpad.justhoot.near') || tokenAddress.endsWith('.justhoot.near')) {
         try {
           const dclId = (await near.findDclPoolId(tokenAddress, 'wrap.near').catch(() => null)) || `${tokenAddress}|wrap.near|10000`;
@@ -2241,7 +2246,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
             liquidity = dclState.liquidityNear;
             dclPoolId = dclId;
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.launch.shoremarkets.near') || tokenAddress.endsWith('.shoremarkets.near')) {
         try {
           const smState = await near.getShoremarketsTokenState(tokenAddress);
@@ -2256,7 +2261,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = smState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.exchange.kelytradevs.near') || tokenAddress.endsWith('.kelytra.near')) {
         try {
           const ktState = await near.getKelytraTokenState(tokenAddress);
@@ -2271,7 +2276,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = ktState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.nearpumpfun.near') || tokenAddress === 'nearpumpfun.near') {
         try {
           const npState = await near.getNearpumpfunTokenState(tokenAddress);
@@ -2285,7 +2290,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               totalSupply = npState.totalSupply;
             }
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       } else if (tokenAddress.endsWith('.qlyphs.near')) {
         try {
           const qlyphsState = await near.findRheaPoolForToken(tokenAddress);
@@ -2298,10 +2303,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
             dclPoolId = String(qlyphsState.poolId);
             pairedSymbol = 'QTC';
           }
-        } catch { /* no-op */ }
+        } catch { launchpadCheckFailed = true; }
       }
     }
 
+    const launchpadPoolFound = launchpadToken && venue !== 'unknown' && (price > 0 || Boolean(dclPoolId) || Boolean(rheaPoolId) || Boolean(dclPath));
     let rheaCandidate: { venue: 'rhea' | 'qlyphs'; price: number; liquidity: number; rheaPoolId: number | null; dclPoolId: string | null; poolFee?: number } | null = null;
     // Step 2: Only probe Rhea if price is still unknown or pool ID is not yet resolved
     if ((venue === 'unknown' || bondingPhase === 'bonded') && (price <= 0 || (!rheaPoolId && !dclPoolId))) {
@@ -2317,8 +2323,8 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
             dclPoolId: rhea.isDcl ? String(rhea.poolId) : null,
             poolFee: rhea.fee,
           };
-          // Prefer Rhea if it has deeper liquidity or if venue was unknown
-          if (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded') {
+          // Prefer Rhea if it has deeper liquidity or if venue was unknown, but never over a launchpad's own pool
+          if (!launchpadPoolFound && (venue === 'unknown' || rheaCandidate.liquidity >= (liquidity + 5) || bondingPhase === 'bonded')) {
             venue = rheaCandidate.venue;
             price = rheaCandidate.price;
             liquidity = rheaCandidate.liquidity;
@@ -2327,6 +2333,11 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           }
         }
       } catch { /* no-op */ }
+    }
+
+    // A launchpad coin whose launchpad could not be checked is never bought from another pool instead
+    if (launchpadToken && launchpadCheckFailed && !launchpadPoolFound && (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs')) {
+      tradeBlockReason = 'RacerBot could not reach this coin\u2019s launchpad to check its pool, so it will not buy it from another pool. Try again in a moment.';
     }
 
     // Step 3: Generic fallback venue probe for non-standard suffixes (only if still unknown)

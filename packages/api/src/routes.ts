@@ -3418,7 +3418,7 @@ export async function executeBuyHelper(
   if (info.dcl_path?.length && info.tradeable) {
     onProgress?.('submitting');
     const { buyViaDclPath } = await import('./intentsRoute.js');
-    const res = await buyViaDclPath(user, tokenAddress, info.dcl_path, amountNear, slippagePct);
+    const res = await buyViaDclPath(user, tokenAddress, info.dcl_path, amountNear, slippagePct, info.decimals);
     if (!res.success) throw new Error(res.reason || 'Buy failed.');
     const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
     const sym = info.symbol || 'TOKEN';
