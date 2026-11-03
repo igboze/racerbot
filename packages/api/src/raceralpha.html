@@ -3871,7 +3871,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;">Deposit</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;" title="Public deposit to your trading wallet. For private trading, use Deposit to private balance in the Confidential Pool.">Deposit to wallet</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -4628,17 +4628,17 @@
 
                 <div class="console-conf-actions">
                   <button type="button" class="btn-secondary" id="btn-toggle-console-deposit" onclick="toggleConsoleConfDrawer('deposit')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
-                    <span>Mass Deposit</span>
+                    <span>Deposit to private balance</span>
                   </button>
                   <button type="button" class="btn-secondary" id="btn-toggle-console-settings" onclick="toggleConsoleConfDrawer('settings')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
                     <span>Executor Config</span>
                   </button>
                 </div>
 
-                <!-- Collapsible Mass Deposit Drawer -->
+                <!-- Collapsible private-balance deposit drawer -->
                 <div class="console-conf-drawer" id="console-conf-deposit-box" hidden>
                   <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
-                    Deposit NEAR into your Confidential Intents balance. The pool automatically spawns and funds disposable executor subaccounts so your wallet never appears on-chain in trades.
+                    Goes to your private balance (NEAR Intents), not your wallet. RacerBot funds disposable executors from it, so your wallet never appears in a trade.
                   </div>
                   <div style="display:flex; gap:8px;">
                     <input type="number" id="console-conf-deposit-amount" min="0.1" step="0.5" value="5.0" placeholder="NEAR amount" aria-label="Deposit amount in NEAR"
@@ -5403,7 +5403,7 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
           </div>
           <div style="min-width:0;">
-            <h3 style="font-family:var(--font-display); font-size:17px; font-weight:800; color:#fff; margin:0; line-height:1.2;">Cross-Chain Deposit</h3>
+            <h3 style="font-family:var(--font-display); font-size:17px; font-weight:800; color:#fff; margin:0; line-height:1.2;">Deposit to trading wallet (public)</h3>
             <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text); display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
               <span class="live-dot" style="width:6px; height:6px;"></span> Powered by NEAR Intents • 37 Chains
             </div>
@@ -5411,6 +5411,7 @@
         </div>
         <button onclick="closeDepositModal()" style="background:transparent; border:none; color:var(--color-text-subtle); cursor:pointer; font-size:22px; padding:4px; flex-shrink:0; line-height:1;" aria-label="Close deposit modal">&times;</button>
       </div>
+      <p style="margin:0; font-size:12.5px; line-height:1.45; color:var(--color-text-muted);">This goes to your trading wallet and is visible on-chain. For private trading, use <b>Deposit to private balance</b> in the Confidential Pool instead.</p>
 
       <!-- Tab Selection: Cross-Chain vs Direct NEAR -->
       <div class="deposit-tab-bar">
@@ -5476,7 +5477,7 @@
         <!-- Live Solver Quote Breakdown -->
         <div class="quote-box">
           <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px;">
-            <span style="color:var(--color-text-muted);">Connected Recipient (NEAR):</span>
+            <span style="color:var(--color-text-muted);">Trading wallet (NEAR):</span>
             <span style="font-family:var(--font-mono); font-weight:700; color:#fff;" id="deposit-dest-address">user.near</span>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; font-size:13px;">
@@ -5526,7 +5527,7 @@
           </div>
 
           <div id="deposit-status-feedback" style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
-            Send funds from your external wallet or exchange. The NEAR Intent solver will automatically bridge, swap, and credit pure NEAR to your connected account.
+            Send funds from your external wallet or exchange. The NEAR Intent solver will automatically bridge, swap, and credit pure NEAR to your trading wallet.
           </div>
         </div>
       </div>
@@ -5534,7 +5535,7 @@
       <!-- PANEL 2: DIRECT NEAR TRANSFER -->
       <div id="panel-direct-deposit" style="display:none; flex-direction:column; gap:16px;">
         <div style="font-size:13px; color:var(--color-text-muted); line-height:1.5;">
-          Send native NEAR directly from any NEAR wallet (Meteor, HERE, MyNearWallet) or centralized exchange (Binance, Coinbase, OKX) to your connected account.
+          Send native NEAR directly from any NEAR wallet (Meteor, HERE, MyNearWallet) or centralized exchange (Binance, Coinbase, OKX) to your trading wallet.
         </div>
 
         <div style="padding:16px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); display:flex; flex-direction:column; gap:10px;">
