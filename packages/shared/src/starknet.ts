@@ -110,7 +110,6 @@ export const DEFAULT_STARKNET_TREASURY_ADDRESS =
 const FALLBACK_STARKNET_RPCS = [
   'https://api.cartridge.gg/x/starknet/mainnet',
   'https://starknet-rpc.publicnode.com',
-  'https://free-rpc.nethermind.io/mainnet-juno',
 ];
 
 export function getStarknetRpcEndpoints(): string[] {

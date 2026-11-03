@@ -2322,7 +2322,7 @@ export async function sendPnlCardMessage(
         cb('🔴 Sell Initial', `sell_initial:${positionId}`, 'danger'),
       ]);
       buttons.push([
-        cb('🟢 Buy More', `buy_custom_prompt:${position.token_address}`, 'success'),
+        cb('🟢 Buy More', `buy_custom_prompt:${getShortTokenKey(position.token_address)}`, 'success'),
       ]);
     }
 
@@ -3010,6 +3010,10 @@ export async function executeBuyHelper(
   if (isKleos && !isKleosTradingEnabled()) {
     throw new Error('This coin is on Kleos (Elysium mainnet), which RacerBot cannot trade yet. You can buy it on thekleos.xyz.');
   }
+  // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
+  if (!isKleos && (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium'))) {
+    throw new Error('Only Kleos coins can be traded on Elysium. This token is not on Elysium mainnet.');
+  }
   if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
     const chain: EvmChain = (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
@@ -3224,7 +3228,7 @@ export async function executeBuyHelper(
       message:
         `🚀 *Buy Confirmed!* (Starknet)\n\n` +
         `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
-        `Spent: *${amountNear} ${tokenInSymbol}*\n` +
+        `Spent: *${Number(amountInWei) / 1e18} ${tokenInSymbol}*\n` +
         `Tx Hash: \`${swapResult.txHash}\``,
     };
   }
@@ -4258,7 +4262,7 @@ export function setupRoutes(bot: Telegraf): void {
                     parse_mode: 'Markdown',
                     ...Markup.inlineKeyboard([
                       [
-                        cb(`✅ Confirm Buy ${quickBuyAmount} NEAR`, `buy_fixed:${tokenAddress}:${quickBuyAmount}`, 'success'),
+                        cb(`✅ Confirm Buy ${quickBuyAmount} NEAR`, `buy_fixed:${getShortTokenKey(tokenAddress)}:${quickBuyAmount}`, 'success'),
                         cb('❌ Cancel', 'menu_home', 'danger'),
                       ]
                     ]),
@@ -4731,6 +4735,14 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => { });
   });
 
+  // Warning chip on the token card: explain instead of leaving the button spinning
+  bot.action('noop_unlocked_risk', async (ctx) => {
+    await ctx.answerCbQuery(
+      'Liquidity in this pool is not locked: the creator can pull it at any time and the price can go to zero. Trade small.',
+      { show_alert: true },
+    ).catch(() => { });
+  });
+
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => { });
     const cat = (ctx as any).match[1] as any;
@@ -4964,6 +4976,29 @@ export function setupRoutes(bot: Telegraf): void {
       await ctx.editMessageText(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(async () => {
         await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard }).catch(() => { });
       });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+    }
+  });
+
+  // /copy and /dca are in the bot's command menu: open the same dashboards as the menu buttons
+  bot.command('copy', async (ctx) => {
+    try {
+      const user = await getUserByTelegramId(ctx.from!.id);
+      if (!user) { await ctx.reply('Please run /start first.'); return; }
+      const dash = await buildCopyTradingDashboard(user);
+      await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+    }
+  });
+
+  bot.command('dca', async (ctx) => {
+    try {
+      const user = await getUserByTelegramId(ctx.from!.id);
+      if (!user) { await ctx.reply('Please run /start first.'); return; }
+      const dash = await buildDcaDashboard(user);
+      await ctx.reply(dash.text, { parse_mode: 'Markdown', ...dash.keyboard });
     } catch (err: any) {
       await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
@@ -10606,7 +10641,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
             cb('50%', `sell:${pos.id}:50`, 'danger'),
             cb('100%', `sell:${pos.id}:100`, 'danger'),
           ],
-          [cb('🟢 Buy More', `buy_custom_prompt:${pos.token_address}`, 'success')],
+          [cb('🟢 Buy More', `buy_custom_prompt:${getShortTokenKey(pos.token_address)}`, 'success')],
           [cb('🔄 Refresh', 'menu_positions', 'primary')],
         ]);
 
