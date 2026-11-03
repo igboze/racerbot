@@ -320,6 +320,31 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
  * per-account Redis lock + highestUsedNonce tracking keep nonce discipline,
  * so hedging never produces duplicate or conflicting transactions.
  */
+const INTENTS_TOKENS_URL = 'https://1click.chaindefuser.com/v0/tokens';
+const INTENTS_TOKENS_TTL_MS = 5 * 60_000;
+let intentsTokens: { at: number; byContract: Map<string, { price: number; decimals: number }> } | null = null;
+
+/** NEAR per token from NEAR Intents' token list (USD prices, refreshed every few minutes), or null */
+async function getIntentsTokenNearRate(contract: string): Promise<{ rateInNear: number; decimals: number } | null> {
+  if (!intentsTokens || Date.now() - intentsTokens.at > INTENTS_TOKENS_TTL_MS) {
+    const res = await fetch(INTENTS_TOKENS_URL, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) throw new Error(`NEAR Intents tokens returned ${res.status}`);
+    const list = (await res.json()) as any[];
+    const byContract = new Map<string, { price: number; decimals: number }>();
+    for (const t of Array.isArray(list) ? list : []) {
+      const id = String(t?.assetId || '');
+      if (!id.startsWith('nep141:')) continue;
+      const price = Number(t.price);
+      if (price > 0) byContract.set(id.slice('nep141:'.length).toLowerCase(), { price, decimals: Number(t.decimals) || 18 });
+    }
+    intentsTokens = { at: Date.now(), byContract };
+  }
+  const token = intentsTokens.byContract.get(contract.toLowerCase());
+  const near = intentsTokens.byContract.get('wrap.near');
+  if (!token || !near || near.price <= 0) return null;
+  return { rateInNear: token.price / near.price, decimals: token.decimals };
+}
+
 export class MultiRpcNear {
   private readProviders: RPCProvider[];
   private tradeProviders: RPCProvider[];
@@ -1600,6 +1625,12 @@ export class MultiRpcNear {
       } catch { /* no-op */ }
       return { rateInNear: 24.8122, decimals: 12 };
     }
+    // Tokens bridged through Omni (*.omft.near: PRL, ZEC, ...) are priced on NEAR Intents first: their Ref
+    // pools, when any, are thin, and searching every pool tier costs seconds on a slow RPC
+    if (pairedToken.endsWith('.omft.near')) {
+      const intents = await getIntentsTokenNearRate(pairedToken).catch(() => null);
+      if (intents) return intents;
+    }
     // General fallback: check if pairedToken has a wNEAR pool on Ref (simple pool or DCL)
     try {
       const pId = await this.findRheaPoolId('wrap.near', pairedToken).catch(() => null);
@@ -1622,6 +1653,10 @@ export class MultiRpcNear {
         }
       }
     } catch { /* no-op */ }
+    // No wNEAR pool on Ref: tokens bridged through Omni (prl.omft.near, ...) still have a live USD
+    // price on NEAR Intents, the way they move on and off NEAR. Rate = token USD / NEAR USD.
+    const intents = await getIntentsTokenNearRate(pairedToken).catch(() => null);
+    if (intents) return intents;
     return { rateInNear: 0, decimals: 18 };
   }
 

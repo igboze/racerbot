@@ -182,6 +182,18 @@ export async function sellAtTarget(
     return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
+  // No Rhea route: back to NEAR through the coin's DCL pool (when it has one) and NEAR Intents (1Click)
+  if (info.intents_route && user) {
+    onProgress?.('submitting');
+    const { sellViaIntents } = await import('./intentsRoute.js');
+    const res = await sellViaIntents(user, position.token_address, info.intents_route, BigInt(sellQty), slippagePct, positionId);
+    if (!res.success) return { success: false, reason: res.reason || 'NEAR Intents sell failed.' };
+    if (fullExit) {
+      await updatePosition({ position_id: positionId, status: 'closed', closed_at: new Date(), quantity_held: '0' }).catch(() => {});
+    }
+    return { success: true, nearReceived: res.nearReceived };
+  }
+
   if (!['rhea', 'ref', 'shardsmarket', 'nearlytrade', 'intear', 'onetokenhub', 'nearpad', 'gaypad', 'memecooking', 'shoremarkets', 'kelytra', 'nearpumpfun'].includes(info.venue)) {
     return { success: false, reason: 'venue_unknown' };
   }
