@@ -361,6 +361,15 @@ export function calculateEvmTradeFee(hypeAmountIn: bigint): {
 }
 
 /**
+ * Human token amount (positions store e.g. "0.5") to raw units. Digits past the
+ * token's decimals are dropped instead of throwing, as parseUnits would.
+ */
+export function toTokenUnits(amount: string | number, decimals: number): bigint {
+  const [whole, frac = ''] = String(amount).trim().split('.');
+  return ethers.parseUnits(frac ? `${whole || '0'}.${frac.slice(0, decimals)}` : (whole || '0'), decimals);
+}
+
+/**
  * Calculates minimum tokens to receive after applying slippage tolerance.
  */
 export function calculateSlippageMin(amountExpected: bigint, slippagePct: number): bigint {

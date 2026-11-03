@@ -1,4 +1,5 @@
-import { getNear, getSolanaTokenBalance, SOL_MINT } from '@racerbot/shared';
+import { ethers } from 'ethers';
+import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits } from '@racerbot/shared';
 import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
@@ -23,8 +24,10 @@ export async function sellAtTarget(
   if (position.status === 'closed') return { success: false, reason: 'position_already_closed' };
   if (position.user_id !== userId) return { success: false, reason: 'not_your_position' };
 
+  // HyperEVM and Elysium positions hold human amounts ("0.5"), not raw units, so their integer part can be 0
+  const isEvmPosition = position.chain === 'hyperevm' || position.chain === 'elysium';
   const rawQty = BigInt(position.quantity_held.split('.')[0] || '0');
-  if (rawQty <= 0n) return { success: false, reason: 'zero_quantity' };
+  if (!isEvmPosition && rawQty <= 0n) return { success: false, reason: 'zero_quantity' };
 
   const sellPctBps = BigInt(Math.floor(percentage * 100));
   // A typed full amount can round to 99.99..%; anything short of that is a partial sell and keeps the position open
@@ -33,7 +36,7 @@ export async function sellAtTarget(
     ? rawQty.toString()
     : ((rawQty * sellPctBps) / 10000n).toString();
 
-  if (sellQty === '0') return { success: false, reason: 'zero_quantity' };
+  if (sellQty === '0' && !isEvmPosition) return { success: false, reason: 'zero_quantity' };
 
   // Use cached token info for instant (<1ms) metadata & pool resolution
   const info = await getTokenInfo(position.token_address, false).catch(() => null);
@@ -87,13 +90,17 @@ export async function sellAtTarget(
   // HyperEVM & Elysium Chain Execution Route
   if (position.chain === 'hyperevm' || position.chain === 'elysium' || info.chain === 'hyperevm' || info.chain === 'elysium') {
     const chain = (position.chain || info.chain || 'hyperevm') as 'hyperevm' | 'elysium';
+    // Take the share of the decimal holding (18 places covers every ERC-20); the executor caps it at the wallet balance
+    const heldUnits = toTokenUnits(position.quantity_held, 18);
+    const evmSellUnits = fullExit ? heldUnits : (heldUnits * sellPctBps) / 10000n;
+    if (evmSellUnits <= 0n) return { success: false, reason: 'zero_quantity' };
     const swapEvent = {
       type: 'execute_swap' as const,
       chain,
       user_id: userId,
       token_in: position.token_address,
       token_out: 'HYPE',
-      amount_in: sellQty,
+      amount_in: ethers.formatUnits(evmSellUnits, 18),
       min_amount_out: '1',
       venue: info.venue === 'kleos' ? 'kleos' : `${chain}_dex` as any,
       timestamp: Date.now(),

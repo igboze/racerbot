@@ -382,6 +382,7 @@ export {
   getErc20Balance,
   calculateEvmTradeFee,
   calculateSlippageMin,
+  toTokenUnits,
   simulateEvmTrade,
   resolveV2Router,
   HYPERSWAP_V2_ROUTER,

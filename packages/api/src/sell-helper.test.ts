@@ -21,6 +21,7 @@ vi.mock('@racerbot/db', () => ({
     quantity_held: '1000',
   }),
   getUserById: vi.fn().mockResolvedValue({ id: 'user-1', slippage_pct: 2 }),
+  updatePosition: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@racerbot/shared', async (importOriginal) => {
@@ -34,6 +35,7 @@ vi.mock('@racerbot/shared', async (importOriginal) => {
 });
 
 const { sellAtTarget } = await import('./sellHelper.js');
+const db: any = await import('@racerbot/db');
 
 describe('sellAtTarget failure feedback', () => {
   it('passes the executor failure reason through to the caller', async () => {
@@ -76,5 +78,18 @@ describe('sellAtTarget failure feedback', () => {
 
     expect(result).toEqual({ success: false, reason: 'invalid_sell_percentage' });
     expect(publishSwapMock).not.toHaveBeenCalled();
+  });
+
+  it('sells EVM positions from their decimal holding, even below one token', async () => {
+    const evmPosition = { id: 'pos-1', user_id: 'user-1', status: 'open', chain: 'hyperevm', token_address: '0xabc', quantity_held: '0.5' };
+    publishSwapMock.mockResolvedValue({ success: true, txHash: 'tx-3' });
+
+    db.getPositionById.mockResolvedValueOnce(evmPosition);
+    expect((await sellAtTarget('user-1', 'pos-1', 50)).success).toBe(true);
+    expect(publishSwapMock.mock.calls.at(-1)?.[0].amount_in).toBe('0.25');
+
+    db.getPositionById.mockResolvedValueOnce({ ...evmPosition, quantity_held: '12.345678' });
+    await sellAtTarget('user-1', 'pos-1', 100);
+    expect(publishSwapMock.mock.calls.at(-1)?.[0].amount_in).toBe('12.345678');
   });
 });

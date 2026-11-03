@@ -5,6 +5,7 @@ import {
   isValidEvmAddress,
   calculateEvmTradeFee,
   calculateSlippageMin,
+  toTokenUnits,
   HYPE_DECIMALS,
   HYPE_SYMBOL,
   HYPEREVM_MAINNET_CHAIN_ID,
@@ -57,3 +58,11 @@ describe('Unified EVM Module', () => {
   });
 });
 
+describe('toTokenUnits', () => {
+  it('converts human amounts and drops digits past the token decimals', () => {
+    expect(toTokenUnits('0.5', 18)).toBe(500000000000000000n);
+    expect(toTokenUnits('12', 6)).toBe(12000000n);
+    expect(toTokenUnits('1.2345678', 6)).toBe(1234567n);
+    expect(toTokenUnits('.5', 2)).toBe(50n);
+  });
+});
