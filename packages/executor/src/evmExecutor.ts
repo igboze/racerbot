@@ -17,6 +17,7 @@ import {
   HYPERSWAP_V2_ROUTER,
   resolveV2Router,
   toTokenUnits,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -228,7 +229,14 @@ export async function executeEvmSwap(
       }).catch(() => null);
 
       if (fill?.fillId && fill.inserted) {
-        await recordFee(fill.fillId, ethers.formatEther(feeAmount)).catch(() => {});
+        const feeHype = ethers.formatEther(feeAmount);
+        await recordFee(fill.fillId, feeHype).catch(() => {});
+        await distributeTradeFeeRewards({
+          userId: user.id,
+          chain,
+          feeAmount: feeHype,
+          tokenAddress: targetTokenAddress,
+        }).catch((err) => console.warn('[EVM_EXECUTOR] Fee distribution error:', err?.message));
       }
     }
 

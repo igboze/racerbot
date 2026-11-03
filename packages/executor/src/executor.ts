@@ -34,6 +34,7 @@ import {
   type RedisClient,
   type MultiRpcNear,
   intearRegisteredCache,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 
 export { calculateMinOutAdj };
@@ -4392,35 +4393,12 @@ export class SwapExecutor {
       if (fillResult.inserted) {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
-        // Handle token share link referral (5% fee to token sharer)
-        let tokenSharerId: string | null = null;
-        try {
-          const tokenRef = await getTokenReferral(userId, tokenAddress);
-          if (tokenRef && tokenRef.referrer_id !== userId) {
-            tokenSharerId = tokenRef.referrer_id;
-            const tokenRewardAmount = (parseFloat(feePaidNear.toString()) * 0.05);
-            await addTokenReferralReward(tokenRef.id, tokenRewardAmount);
-          }
-        } catch (err: any) {
-          console.warn('[EXECUTOR] Failed to award token referral reward:', err?.message);
-        }
-
-        // Handle global referral rewards (30% of fee goes to account referrer)
-        const referral = await getReferralByReferredUser(userId);
-        let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
-        if (referral && referral.status === 'pending') {
-          // Activate referral on first trade — and count THIS trade's reward too
-          await activateReferral(referral.id);
-          referralActive = true;
-        }
-        if (referral && referralActive && referral.referrer_id !== userId) {
-          // Calculate referral reward using referrer's configured fee percentage (default 30%, ambassador 45%)
-          const refFeePct = (referral as any).referrer_fee_pct != null
-            ? parseFloat(String((referral as any).referrer_fee_pct))
-            : 30;
-          const rewardAmount = (parseFloat(feePaidNear.toString()) * (refFeePct / 100));
-          await addReferralReward(referral.id, rewardAmount);
-        }
+        await distributeTradeFeeRewards({
+          userId,
+          chain: 'near',
+          feeAmount: feePaidNear.toString(),
+          tokenAddress,
+        }).catch((err) => console.warn('[EXECUTOR] Fee distribution error:', err?.message));
 
         // Season 1 points — idempotent, and must never fail or delay the trade
         try {
@@ -4562,35 +4540,12 @@ export class SwapExecutor {
       if (fillResult.inserted) {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
-        // Handle token share link referral (5% fee to token sharer)
-        let tokenSharerId: string | null = null;
-        try {
-          const tokenRef = await getTokenReferral(userId, tokenAddress);
-          if (tokenRef && tokenRef.referrer_id !== userId) {
-            tokenSharerId = tokenRef.referrer_id;
-            const tokenRewardAmount = (parseFloat(feePaidNear.toString()) * 0.05);
-            await addTokenReferralReward(tokenRef.id, tokenRewardAmount);
-          }
-        } catch (err: any) {
-          console.warn('[EXECUTOR] Failed to award token referral reward:', err?.message);
-        }
-
-        // Handle global referral rewards (30% of fee goes to account referrer)
-        const referral = await getReferralByReferredUser(userId);
-        let referralActive = !!referral && (referral.status === 'active' || referral.status === 'completed');
-        if (referral && referral.status === 'pending') {
-          // First tracked trade may be a sell — activate and count it too
-          await activateReferral(referral.id);
-          referralActive = true;
-        }
-        if (referral && referralActive && referral.referrer_id !== userId) {
-          // Calculate referral reward using referrer's configured fee percentage (default 30%, ambassador 45%)
-          const refFeePct = (referral as any).referrer_fee_pct != null
-            ? parseFloat(String((referral as any).referrer_fee_pct))
-            : 30;
-          const rewardAmount = (parseFloat(feePaidNear.toString()) * (refFeePct / 100));
-          await addReferralReward(referral.id, rewardAmount);
-        }
+        await distributeTradeFeeRewards({
+          userId,
+          chain: 'near',
+          feeAmount: feePaidNear.toString(),
+          tokenAddress,
+        }).catch((err) => console.warn('[EXECUTOR] Fee distribution error:', err?.message));
 
         // Season 1 points — idempotent, and must never fail or delay the trade
         try {

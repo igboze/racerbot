@@ -16,6 +16,7 @@ import {
   SUI_FEE_BPS,
   SUI_BPS_DENOMINATOR,
   type SwapEvent,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -248,6 +249,12 @@ export async function executeSuiSwap(
     // Record Dev Fee
     if (fillRes?.fillId) {
       await recordFee(fillRes.fillId, devFeeSui.toString()).catch(() => {});
+      await distributeTradeFeeRewards({
+        userId: user.id,
+        chain: 'sui',
+        feeAmount: devFeeSui.toString(),
+        tokenAddress: tokenTarget,
+      }).catch((err) => console.warn('[SUI_EXECUTOR] Fee distribution error:', err?.message));
     }
 
     return {
@@ -426,6 +433,12 @@ export async function executeSuiSwap(
     // Record Dev Fee
     if (fillId) {
       await recordFee(fillId, devFeeSui.toString()).catch(() => {});
+      await distributeTradeFeeRewards({
+        userId: user.id,
+        chain: 'sui',
+        feeAmount: devFeeSui.toString(),
+        tokenAddress: tokenTarget,
+      }).catch((err) => console.warn('[SUI_EXECUTOR] Fee distribution error:', err?.message));
     }
 
     return {

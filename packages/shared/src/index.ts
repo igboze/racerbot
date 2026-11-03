@@ -387,6 +387,7 @@ export {
   resolveV2Router,
   HYPERSWAP_V2_ROUTER,
   WHYPE_ADDRESS,
+  getHypeUsdPrice,
 } from './evm.js';
 export type {
   EvmChain,
@@ -426,3 +427,11 @@ export {
   isKleosTradingEnabled,
 } from './kleos.js';
 export type { KleosRoute, KleosRouteKind, EvmCall, RetryableTicketCost, RetryableTicketFields } from './kleos.js';
+
+export {
+  distributeTradeFeeRewards,
+} from './rewards.js';
+export type {
+  DistributeFeeParams,
+  FeeDistributionResult,
+} from './rewards.js';

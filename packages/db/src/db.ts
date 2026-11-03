@@ -36,6 +36,9 @@ export interface UserRecord {
   fee_tier: string;
   referral_fee_pct?: number;
   is_ambassador?: boolean;
+  cashback_pct?: number;
+  total_cashback_earned?: number;
+  total_cashback_claimed?: number;
   auto_buy_enabled: boolean;
   auto_buy_amount_near: number;
   auto_buy_min_liquidity_near: number;
@@ -1711,9 +1714,9 @@ export async function getReferralByReferredUser(referredUserId: string): Promise
   const ref = rowToReferral(row);
   const feePct = row.ref_fee_pct != null
     ? parseFloat(row.ref_fee_pct)
-    : (row.ref_fee_tier === 'ambassador' || row.ref_is_ambassador ? 45 : 30);
+    : (row.ref_fee_tier === 'super_ambassador' ? 50 : (row.ref_fee_tier === 'ambassador' || row.ref_is_ambassador ? 45 : 15));
   ref.referrer_fee_pct = feePct;
-  ref.referrer_is_ambassador = Boolean(row.ref_is_ambassador || row.ref_fee_tier === 'ambassador');
+  ref.referrer_is_ambassador = Boolean(row.ref_is_ambassador || row.ref_fee_tier === 'ambassador' || row.ref_fee_tier === 'super_ambassador');
   return ref;
 }
 
@@ -1899,6 +1902,22 @@ export async function getTotalReferralClaimed(referrerId: string): Promise<numbe
   return parseFloat(result.rows[0].total);
 }
 
+export async function addCashbackReward(userId: string, amountNear: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE users SET total_cashback_earned = COALESCE(total_cashback_earned, 0) + $1 WHERE id = $2',
+    [amountNear, userId]
+  );
+}
+
+export async function recordCashbackClaim(userId: string, amountNear: number): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    'UPDATE users SET total_cashback_claimed = COALESCE(total_cashback_claimed, 0) + $1 WHERE id = $2',
+    [amountNear, userId]
+  );
+}
+
 function rowToReferral(row: any): ReferralRecord {
   return {
     id: row.id,
@@ -1930,8 +1949,11 @@ function rowToUser(row: any): UserRecord {
     fee_tier: row.fee_tier,
     referral_fee_pct: row.referral_fee_pct != null
       ? parseFloat(row.referral_fee_pct)
-      : (row.fee_tier === 'ambassador' || Boolean(row.is_ambassador) ? 45 : 30),
-    is_ambassador: Boolean(row.is_ambassador || row.fee_tier === 'ambassador'),
+      : (row.fee_tier === 'super_ambassador' ? 50 : (row.fee_tier === 'ambassador' || Boolean(row.is_ambassador) ? 45 : 15)),
+    is_ambassador: Boolean(row.is_ambassador || row.fee_tier === 'ambassador' || row.fee_tier === 'super_ambassador'),
+    cashback_pct: row.cashback_pct != null ? parseFloat(row.cashback_pct) : 0,
+    total_cashback_earned: row.total_cashback_earned != null ? parseFloat(row.total_cashback_earned) : 0,
+    total_cashback_claimed: row.total_cashback_claimed != null ? parseFloat(row.total_cashback_claimed) : 0,
     auto_buy_enabled: Boolean(row.auto_buy_enabled),
     auto_buy_amount_near: row.auto_buy_amount_near != null ? parseFloat(row.auto_buy_amount_near) : 1,
     auto_buy_min_liquidity_near: row.auto_buy_min_liquidity_near != null ? parseFloat(row.auto_buy_min_liquidity_near) : 10,

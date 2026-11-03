@@ -48,6 +48,8 @@ export {
   getTotalReferralEarnings,
   createReferralClaim,
   getTotalReferralClaimed,
+  addCashbackReward,
+  recordCashbackClaim,
   getOrCreateTokenShare,
   getTokenShareByCode,
   recordTokenReferral,

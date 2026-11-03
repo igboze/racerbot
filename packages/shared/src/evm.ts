@@ -440,3 +440,42 @@ export async function simulateEvmTrade(
   }
 }
 
+
+
+let cachedHypeUsdPrice = 0;
+let lastHypeUsdPriceTime = 0;
+
+export async function getHypeUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (now - lastHypeUsdPriceTime < 60_000 && cachedHypeUsdPrice > 0) {
+    return cachedHypeUsdPrice;
+  }
+  try {
+    const mids = await fetch('https://api.hyperliquid.xyz/info', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'allMids' }),
+      signal: AbortSignal.timeout(3000),
+    }).then(r => (r.ok ? r.json() : null)).catch(() => null) as any;
+    const mid = parseFloat(mids?.HYPE || '0');
+    if (mid > 0) {
+      cachedHypeUsdPrice = mid;
+      lastHypeUsdPriceTime = now;
+      return cachedHypeUsdPrice;
+    }
+    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555');
+      const val = parseFloat(p?.priceUsd || '0');
+      if (val > 0) {
+        cachedHypeUsdPrice = val;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+  } catch { }
+  return cachedHypeUsdPrice || 25.0;
+}

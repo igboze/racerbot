@@ -19,6 +19,7 @@ import {
   getTotalReferralEarnings,
   getTotalReferralClaimed,
   createReferralClaim,
+  recordCashbackClaim,
   getOrCreateTokenShare,
   getTokenShareByCode,
   recordTokenReferral,
@@ -11166,19 +11167,30 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
 
     const activeReferrals = referrals.filter((r: any) => r.status === 'active' || r.status === 'completed').length;
     const globalEarnings = referrals.reduce((sum: number, r: any) => sum + parseFloat(r.total_fees_earned || 0), 0);
-    const totalEarnings = globalEarnings + tokenShareEarnings;
+    const isSuperAmbassador = user.fee_tier === 'super_ambassador';
+    const isAmbassador = Boolean((user as any).is_ambassador || user.fee_tier === 'ambassador' || isSuperAmbassador);
+    const referralPct = (user as any).referral_fee_pct != null
+      ? parseFloat(String((user as any).referral_fee_pct))
+      : (isSuperAmbassador ? 50 : (isAmbassador ? 45 : 15));
+    const hasSpecialFeeShare = isSuperAmbassador || (isAmbassador && user.fee_tier === 'ambassador');
+    const ambassadorBadge = isSuperAmbassador
+      ? `👑 *Super Ambassador Status: Active* (${referralPct}% Referral Fee Share across all chains)\n\n`
+      : (isAmbassador
+        ? `🎖 *Ambassador Status: Active* (${referralPct}% Referral Fee Share)\n\n`
+        : '');
+
+    const cashbackPct = (user as any).cashback_pct != null ? parseFloat(String((user as any).cashback_pct)) : 0;
+    const cashbackEarnings = (user as any).total_cashback_earned != null ? parseFloat(String((user as any).total_cashback_earned)) : 0;
+    const totalEarnings = globalEarnings + tokenShareEarnings + cashbackEarnings;
     const totalClaimed = await getTotalReferralClaimed(user.id).catch(() => 0);
     const claimableNear = Math.max(0, totalEarnings - totalClaimed);
     const nearUsd = await getNearUsdPrice().catch(() => 0);
     const claimableUsd = claimableNear * nearUsd;
     const claimReady = claimableUsd >= REFERRAL_CLAIM_MIN_USD;
 
-    const isAmbassador = Boolean((user as any).is_ambassador || user.fee_tier === 'ambassador');
-    const referralPct = (user as any).referral_fee_pct != null
-      ? parseFloat(String((user as any).referral_fee_pct))
-      : (isAmbassador ? 45 : 30);
-    const ambassadorBadge = isAmbassador
-      ? `🎖 *Ambassador Status: Active* (${referralPct}% Referral Fee Share)\n\n`
+    const cashbackSection = (cashbackPct > 0 || cashbackEarnings > 0)
+      ? `💸 *Trading Fee Cashback* (${cashbackPct}% on all your trades across all chains):\n` +
+        `• Cashback earned: \`${cashbackEarnings.toFixed(4)} NEAR\`\n\n`
       : '';
 
     const text =
@@ -11189,18 +11201,24 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       `📊 *Global Referrals* (account sign-ups):\n` +
       `• Total referrals: ${referrals.length}\n` +
       `• Active referrals: ${activeReferrals}\n` +
-      `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\` (${referralPct}% fee share)\n\n` +
+      (hasSpecialFeeShare
+        ? `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\` (${referralPct}% fee share across all chains)\n\n`
+        : `• Earnings: \`${globalEarnings.toFixed(4)} NEAR\`\n\n`) +
       `📤 *Token Share Links*:\n` +
       `• Traders via your links: ${tokenShareCount}\n` +
       `• Earnings: \`${tokenShareEarnings.toFixed(4)} NEAR\` (5% fee share)\n\n` +
+      cashbackSection +
       `💰 *Combined Totals*:\n` +
-      `• Total earned: \`${totalEarnings.toFixed(4)} NEAR\`\n` +
+      `• Total earned: \`${totalEarnings.toFixed(4)} NEAR\`${cashbackEarnings > 0 ? ' (Referrals + Cashback)' : ''}\n` +
       `• Already claimed: \`${totalClaimed.toFixed(4)} NEAR\`\n` +
-      `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~${claimableUsd.toFixed(2)})\n\n` +
+      `• Claimable: \`${claimableNear.toFixed(4)} NEAR\` (~$${claimableUsd.toFixed(2)})\n\n` +
       `💡 *How to earn more*:\n` +
-      `• Earn *${referralPct}%* of fees from every user you refer with your referral link\n` +
+      (hasSpecialFeeShare
+        ? `• Earn *${referralPct}%* of fees from every user you refer with your referral link (All Chains: NEAR, Solana, Sui, Starknet, EVM)\n`
+        : `• Earn rewards from every user you refer with your referral link (All Chains: NEAR, Solana, Sui, Starknet, EVM)\n`) +
+      (cashbackPct > 0 ? `• Get *${cashbackPct}%* cashback on all trading fees you pay across all chains\n` : '') +
       `• Earn *5%* of fees when someone trades via your *📤 Share Token* links\n` +
-      `• Claim once your rewards reach ${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet`;
+      `• Claim once your rewards reach $${REFERRAL_CLAIM_MIN_USD} — paid straight to your RacerBot wallet`;
 
     const buttons: any[] = [];
     if (claimableNear > 0) {
@@ -11286,7 +11304,14 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
         'SELECT COALESCE(SUM(total_fees_earned), 0) as total FROM referrals WHERE referrer_id = $1',
         [user.id]
       );
-      const totalEarned = parseFloat(referralsResult.rows[0]?.total || '0');
+      const globalEarned = parseFloat(referralsResult.rows[0]?.total || '0');
+      const tokenShareResult = await db.query(
+        'SELECT COALESCE(SUM(total_fees_earned), 0) as total FROM token_referrals WHERE referrer_id = $1',
+        [user.id]
+      );
+      const tokenShareEarned = parseFloat(tokenShareResult.rows[0]?.total || '0');
+      const cashbackEarned = (user as any).total_cashback_earned != null ? parseFloat(String((user as any).total_cashback_earned)) : 0;
+      const totalEarned = globalEarned + tokenShareEarned + cashbackEarned;
       const totalClaimed = await getTotalReferralClaimed(user.id);
       const claimableNear = Math.max(0, totalEarned - totalClaimed);
 
@@ -11309,6 +11334,9 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
       // Pay first, then record — a failed payout must never mark rewards claimed
       const { txHash } = await payReferralReward(user.subaccount_id, claimableNear);
       await createReferralClaim(user.id, claimableNear, txHash);
+      if (cashbackEarned > 0) {
+        await recordCashbackClaim(user.id, Math.min(cashbackEarned, claimableNear)).catch(() => {});
+      }
 
       await ctx.reply(
         `✅ *Referral Rewards Claimed!*\n\n` +

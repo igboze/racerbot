@@ -29,6 +29,7 @@ import {
   retryableTicketCost,
   toTokenUnits,
   type EvmCall,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -250,7 +251,16 @@ export async function executeKleosSwap(
         amount: tokensBought, price: priceHype.toString(), fee_paid: ethers.formatEther(feeAmount),
         input_amount: ethers.formatEther(gross), venue: 'kleos', tx_hash: swapReceipt.hash,
       }).catch(() => null);
-      if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, ethers.formatEther(feeAmount)).catch(() => {});
+      if (fill?.fillId && fill.inserted) {
+        const feeHype = ethers.formatEther(feeAmount);
+        await recordFee(fill.fillId, feeHype).catch(() => {});
+        await distributeTradeFeeRewards({
+          userId: user.id,
+          chain: 'elysium',
+          feeAmount: feeHype,
+          tokenAddress: token,
+        }).catch((err) => console.warn('[KLEOS_EXECUTOR] Fee distribution error:', err?.message));
+      }
     }
 
     return {

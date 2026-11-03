@@ -21,6 +21,7 @@ import {
   getLaunchyQuote,
   LAUNCHY_SWAPPER_V3,
   type SwapEvent,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -499,6 +500,13 @@ export async function executeStarknetSwap(
       await recordFee(fillRes.fillId, humanFee.toString()).catch((e) =>
         console.warn('[STARKNET_EXECUTOR] recordFee error:', e?.message)
       );
+      await distributeTradeFeeRewards({
+        userId: user.id,
+        chain: 'starknet',
+        feeAmount: humanFee.toString(),
+        tokenAddress: isBuy ? tokenOutCanonical : tokenInCanonical,
+        tokenSymbol: gasTokenUsed,
+      }).catch((err) => console.warn('[STARKNET_EXECUTOR] Fee distribution error:', err?.message));
     }
   }
 

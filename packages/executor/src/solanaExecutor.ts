@@ -18,6 +18,7 @@ import {
   invalidateSolanaBalanceCache,
   lamportsToSol,
   type SwapEvent,
+  distributeTradeFeeRewards,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -153,7 +154,15 @@ export async function executeSolanaSwap(
       venue: venue as any,
       tx_hash: sent.signature,
     });
-    if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, feeSol.toString()).catch(() => {});
+    if (fill?.fillId && fill.inserted) {
+      await recordFee(fill.fillId, feeSol.toString()).catch(() => {});
+      await distributeTradeFeeRewards({
+        userId: user.id,
+        chain: 'solana',
+        feeAmount: feeSol.toString(),
+        tokenAddress: mint,
+      }).catch((err) => console.warn('[SOLANA_EXECUTOR] Fee distribution error:', err?.message));
+    }
 
     return {
       txHash: sent.signature,
@@ -249,7 +258,15 @@ export async function executeSolanaSwap(
       venue: (info?.launchpad === 'pump.fun' ? (info.bondingPhase === 'prebonded' ? 'pumpfun' : 'pumpswap') : 'jupiter') as any,
       tx_hash: sent.signature,
     });
-    if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, feeSol.toString()).catch(() => {});
+    if (fill?.fillId && fill.inserted) {
+      await recordFee(fill.fillId, feeSol.toString()).catch(() => {});
+      await distributeTradeFeeRewards({
+        userId: user.id,
+        chain: 'solana',
+        feeAmount: feeSol.toString(),
+        tokenAddress: mint,
+      }).catch((err) => console.warn('[SOLANA_EXECUTOR] Fee distribution error:', err?.message));
+    }
   }
 
   return {
