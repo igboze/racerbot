@@ -7,7 +7,7 @@ import { publishSwap, transferNearFromUser, getTokenInfo } from './wallet.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
 import { splitAlphaKeyPayment } from './alphaPayment.js';
 import { sellAtTarget } from './sellHelper.js';
-import { recordCopyBuy, settleCopySell } from './alphaCopyFee.js';
+import { recordCopyBuy, resolveCopyFeeSettings, settleCopySell, type CopyRoute } from './alphaCopyFee.js';
 import { getAuthenticTokenIcon } from './authenticIcons.js';
 
 const logger = createLogger('racer-alpha');
@@ -1535,17 +1535,7 @@ export async function recordAlphaSignal(params: {
   let copyFeePct = 0;
   let copyFeePayout: string | null = null;
   if (db && params.side === 'SELL' && keyholders.length > 0) {
-    const feeRes = await db.query(
-      'SELECT copy_fee_pct, payout_wallet_address, user_id FROM racer_alpha_traders WHERE id = $1',
-      [params.traderId]
-    ).catch(() => ({ rows: [] as any[] }));
-    const feeRow = feeRes.rows[0];
-    copyFeePct = Number(feeRow?.copy_fee_pct) || 0;
-    if (copyFeePct > 0 && feeRow && feeRow.user_id !== 'system_alpha') {
-      copyFeePayout = feeRow.payout_wallet_address?.trim()
-        || (await getUserById(feeRow.user_id).catch(() => null))?.subaccount_id?.trim()
-        || null;
-    }
+    ({ feePct: copyFeePct, payoutAccount: copyFeePayout } = await resolveCopyFeeSettings(db, params.traderId));
   }
   const tokenBalanceOf = async (account?: string | null): Promise<bigint | null> => {
     if (!account) return null;
@@ -1619,8 +1609,9 @@ export async function recordAlphaSignal(params: {
         // 2a. Try Confidential Executor Pool first if enabled and funded
         if (buyerUser) {
           try {
-            const { EXECUTORS_ENABLED, confidentialBuy } = await import('./executorPool.js');
+            const { EXECUTORS_ENABLED, confidentialBuy, positionBalance } = await import('./executorPool.js');
             if (EXECUTORS_ENABLED) {
+              const heldBefore = (await positionBalance(kh.buyerUserId, params.tokenAddress).catch(() => null))?.total ?? null;
               const confRes = await confidentialBuy({
                 user: buyerUser,
                 tokenAddress: params.tokenAddress,
@@ -1630,6 +1621,19 @@ export async function recordAlphaSignal(params: {
               });
               if (confRes.success && confRes.txHashes.length > 0) {
                 swapRes = { success: true, txHash: confRes.txHashes[0], routeLabel: 'Confidential Executor' };
+                // Cost basis for the creator's profit share, kept apart from wallet copies
+                const heldAfter = heldBefore === null ? null
+                  : (await positionBalance(kh.buyerUserId, params.tokenAddress).catch(() => null))?.total ?? null;
+                if (heldBefore !== null && heldAfter !== null && heldAfter > heldBefore) {
+                  await recordCopyBuy(db, {
+                    userId: kh.buyerUserId,
+                    traderId: params.traderId,
+                    tokenAddress: params.tokenAddress,
+                    route: 'confidential',
+                    costNear: copyAmount,
+                    qtyRaw: heldAfter - heldBefore,
+                  }).catch((err: any) => logger.warn('Failed to record confidential copy cost basis:', err?.message));
+                }
               }
             }
           } catch {}
@@ -1658,6 +1662,7 @@ export async function recordAlphaSignal(params: {
                   userId: kh.buyerUserId,
                   traderId: params.traderId,
                   tokenAddress: params.tokenAddress,
+                  route: 'wallet',
                   costNear: copyAmount,
                   qtyRaw: balAfter - balBefore,
                 }).catch((err: any) => logger.warn('Failed to record copy cost basis:', err?.message));
@@ -1719,6 +1724,8 @@ export async function recordAlphaSignal(params: {
       try {
         let soldOk = false;
         let sellReason = '';
+        // What the sell route measured, for the creator's profit share
+        let feeInputs: { route: CopyRoute; balanceBeforeRaw: bigint; soldRaw: bigint; proceedsNear: number } | null = null;
         const buyerUser = await getUserById(kh.buyerUserId).catch(() => null);
 
         // 2a. Check if position is held in Confidential Executors
@@ -1737,6 +1744,16 @@ export async function recordAlphaSignal(params: {
                 });
                 if (confSellRes.success && confSellRes.txHashes.length > 0) {
                   soldOk = true;
+                  const heldAfter = (await positionBalance(kh.buyerUserId, params.tokenAddress).catch(() => null))?.total ?? null;
+                  const proceedsYocto = BigInt(confSellRes.nearOut || '0');
+                  if (heldAfter !== null && heldAfter < posBal.total && proceedsYocto > 0n) {
+                    feeInputs = {
+                      route: 'confidential',
+                      balanceBeforeRaw: posBal.total,
+                      soldRaw: posBal.total - heldAfter,
+                      proceedsNear: Number(proceedsYocto / 10n ** 18n) / 1e6,
+                    };
+                  }
                 } else {
                   sellReason = confSellRes.reason || '';
                 }
@@ -1804,29 +1821,35 @@ export async function recordAlphaSignal(params: {
         if (soldOk) {
           autoCopyFillsCount++;
           let feeLine = '';
-          if (sellBalBefore !== null && sellBalBefore > 0n && walletProceedsNear > 0 && buyerUser) {
+          if (!feeInputs && sellBalBefore !== null && sellBalBefore > 0n && walletProceedsNear > 0 && buyerUser) {
             const sellBalAfter = await tokenBalanceOf(buyerUser.subaccount_id);
             if (sellBalAfter !== null && sellBalAfter < sellBalBefore) {
-              const fee = await settleCopySell(db, {
-                signalId,
-                userId: kh.buyerUserId,
-                telegramId: kh.buyerTelegramId,
-                traderId: params.traderId,
-                tokenAddress: params.tokenAddress,
-                feePct: copyFeePct,
-                payoutAccount: copyFeePayout,
+              feeInputs = {
+                route: 'wallet',
                 balanceBeforeRaw: sellBalBefore,
                 soldRaw: sellBalBefore - sellBalAfter,
                 proceedsNear: walletProceedsNear,
-              }).catch((err: any) => {
-                logger.warn('Failed to settle copy profit share:', err?.message);
-                return null;
-              });
-              if (fee) {
-                feeLine = fee.paid
-                  ? `\n💸 <b>Creator profit share</b>: <code>${fee.feeNear.toFixed(4)} NEAR</code> (${copyFeePct}% of <code>${fee.profitNear.toFixed(4)} NEAR</code> profit)`
-                  : `\n⚠️ The creator's ${copyFeePct}% profit share (${fee.feeNear.toFixed(4)} NEAR) could not be collected.`;
-              }
+              };
+            }
+          }
+          if (feeInputs) {
+            const fee = await settleCopySell(db, {
+              signalId,
+              userId: kh.buyerUserId,
+              telegramId: kh.buyerTelegramId,
+              traderId: params.traderId,
+              tokenAddress: params.tokenAddress,
+              feePct: copyFeePct,
+              payoutAccount: copyFeePayout,
+              ...feeInputs,
+            }).catch((err: any) => {
+              logger.warn('Failed to settle copy profit share:', err?.message);
+              return null;
+            });
+            if (fee) {
+              feeLine = fee.paid
+                ? `\n💸 <b>Creator profit share</b>: <code>${fee.feeNear.toFixed(4)} NEAR</code> (${copyFeePct}% of <code>${fee.profitNear.toFixed(4)} NEAR</code> profit)`
+                : `\n⏳ The creator's ${copyFeePct}% profit share (${fee.feeNear.toFixed(4)} NEAR) will be collected once your ${feeInputs.route === 'confidential' ? 'private balance' : 'wallet'} covers it.`;
             }
           }
           if (bot && kh.buyerTelegramId) {

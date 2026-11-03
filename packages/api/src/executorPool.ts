@@ -81,6 +81,8 @@ export interface ConfidentialTradeResult {
   txHashes: string[];
   amountIn: string;
   fee?: string;
+  /** Sells: NEAR the executors took in (yocto), after the platform sell fee they pay on exit */
+  nearOut?: string;
   reason?: string;
 }
 
@@ -459,6 +461,7 @@ export async function confidentialSell(p: {
   const pct = Math.min(100, Math.max(1, Math.round(p.percent)));
   const near = getNear();
   let total = 0n;
+  let nearOut = 0n;
 
   const results = await Promise.all(holding.map(async (e) => {
     try {
@@ -466,6 +469,7 @@ export async function confidentialSell(p: {
       const amountIn = pct === 100 ? balance : (balance * BigInt(pct)) / 100n;
       if (amountIn <= 0n) return { ok: false, executor: e.account_id, reason: 'Nothing to sell' };
       total += amountIn;
+      const valueBefore = await executorNearValue(e.account_id).catch(() => null);
       const plan = await buildPlan({
         tokenAddress: p.tokenAddress, venue: p.venue, isBuy: false, amountIn, swapAmount: amountIn,
         slippagePct: p.slippagePct ?? 2, poolId: p.poolId, dclPoolId: p.dclPoolId, correlationId: e.position_group || e.account_id,
@@ -474,6 +478,11 @@ export async function confidentialSell(p: {
       const sold = extractExecutorEvents(outcome).find(ev => ev.event === 'sold');
       await updateExecutor(e.account_id, { event: sold ?? { event: 'sell_failed' }, tx_hash: outcome?.transaction?.hash });
       if (!sold) return { ok: false, executor: e.account_id, hash: outcome?.transaction?.hash, reason: failureOf(outcome) || 'The exchange rejected the sell' };
+      // Measured before a close can move the NEAR on; the exit fee is taken from it later
+      const valueAfter = valueBefore === null ? null : await executorNearValue(e.account_id).catch(() => null);
+      if (valueBefore !== null && valueAfter !== null && valueAfter > valueBefore) {
+        nearOut += ((valueAfter - valueBefore) * BigInt(10_000 - SELL_FEE_BPS)) / 10_000n;
+      }
       // Close once nothing is left, however the sells were split (a partial sell can still empty it)
       const left = pct === 100 ? 0n : BigInt(await near.getTokenBalance(p.tokenAddress, e.account_id).catch(() => '1'));
       if (left === 0n) {
@@ -495,8 +504,37 @@ export async function confidentialSell(p: {
     executors: ok.map(r => r.executor),
     txHashes: results.map(r => (r as any).hash).filter(Boolean),
     amountIn: total.toString(),
+    nearOut: nearOut.toString(),
     reason: ok.length === results.length ? undefined : results.find(r => !r.ok)?.reason,
   };
+}
+
+/** NEAR an executor holds for its owner: free native NEAR plus wNEAR (as the exit fee measures it) */
+async function executorNearValue(executor: string): Promise<bigint> {
+  const near = getNear();
+  const [state, wnear] = await Promise.all([
+    near.view<any>(executor, 'get_state', {}),
+    near.getTokenBalance('wrap.near', executor),
+  ]);
+  return BigInt(state?.native_available || 0) + BigInt(wnear || '0');
+}
+
+/**
+ * Pays an amount from the user's private balance to a NEAR account (a creator's copy profit
+ * share). Throws when the private balance does not cover it yet, so the caller can retry later,
+ * e.g. once a sold executor has returned its NEAR.
+ */
+export async function payFromPrivateBalance(userId: string, amount: bigint, destination: string): Promise<{ intentHash: string }> {
+  const acct = await getConfidentialAccount(userId);
+  if (!acct) throw new Error('No private balance');
+  const have = await privateBalance(acct);
+  if (have < amount) throw new Error('The private balance does not cover it yet');
+  const move = await unshield(keysOf(acct), amount, destination);
+  await insertConfidentialMove({
+    user_id: userId, kind: 'copy_fee', deposit_address: move.depositAddress, amount: amount.toString(),
+    destination, intent_hash: move.intentHash,
+  });
+  return { intentHash: move.intentHash };
 }
 
 /** Tokens held for `token` across the user's open executors (a position may span several) */
