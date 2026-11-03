@@ -27,6 +27,7 @@ import {
   quoteKleos,
   resolveKleosRoute,
   retryableTicketCost,
+  toTokenUnits,
   type EvmCall,
 } from '@racerbot/shared';
 import {
@@ -247,7 +248,7 @@ export async function executeKleosSwap(
       const fill = await createFill({
         user_id: user.id, position_id: position.id, chain: chain as any, side: 'buy', token_address: token,
         amount: tokensBought, price: priceHype.toString(), fee_paid: ethers.formatEther(feeAmount),
-        input_amount: gross.toString(), venue: 'kleos', tx_hash: swapReceipt.hash,
+        input_amount: ethers.formatEther(gross), venue: 'kleos', tx_hash: swapReceipt.hash,
       }).catch(() => null);
       if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, ethers.formatEther(feeAmount)).catch(() => {});
     }
@@ -262,9 +263,13 @@ export async function executeKleosSwap(
   // ── SELL: coin -> HYPE on Elysium, signed by the user so the router can take the coins ──
   onProgress?.('preparing_sell');
   const coin = new ethers.Contract(token, ERC20_ABI, l2);
-  const amountIn = ethers.parseUnits(String(amount_in), decimals);
+  let amountIn = toTokenUnits(amount_in, decimals);
   const held: bigint = await coin.balanceOf(userAddress);
-  if (held < amountIn) return fail(`Insufficient token balance. You hold ${ethers.formatUnits(held, decimals)} ${tokenSymbol}.`);
+  if (held <= 0n) return fail(`No ${tokenSymbol} left in your wallet to sell.`);
+  // The bot's record can sit slightly above the wallet: sell what is really there (stop-losses must not fail)
+  if (held < amountIn) amountIn = held;
+  if (amountIn <= 0n) return fail('Sell amount must be greater than 0.');
+  const soldQty = ethers.formatUnits(amountIn, decimals);
 
   let expectedHype: bigint;
   try {
@@ -320,22 +325,22 @@ export async function executeKleosSwap(
   const gasPaid = receipts.reduce((sum, r) => sum + r.gasUsed * (r.gasPrice ?? 0n), 0n);
   const receivedRaw = l2After + gasPaid - l2Before;
   const receivedHype = Number(ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n));
-  const priceHype = receivedHype / (Number(amount_in) || 1);
+  const priceHype = receivedHype / (Number(soldQty) || 1);
 
   const openPositions = await getOpenPositions(user.id);
   const pos = openPositions.find(p => p.token_address === token && p.chain === (chain as any));
   if (pos) {
     const fill = await createFill({
       user_id: user.id, position_id: pos.id, chain: chain as any, side: 'sell', token_address: token,
-      amount: String(amount_in), price: priceHype.toString(), fee_paid: '0',
-      input_amount: receivedRaw.toString(), venue: 'kleos', tx_hash: sellReceipt.hash,
+      amount: soldQty, price: priceHype.toString(), fee_paid: '0',
+      input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: 'kleos', tx_hash: sellReceipt.hash,
     }).catch(() => null);
     if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, '0').catch(() => {});
   }
 
   return {
     txHash: sellReceipt.hash, success: true, chain, positionId: pos?.id, tokenName, tokenSymbol,
-    tokenQty: String(amount_in), priceHype, hypeSpentOrReceived: receivedHype,
+    tokenQty: soldQty, priceHype, hypeSpentOrReceived: receivedHype,
     explorerUrl: `${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${sellReceipt.hash}`,
   };
 }

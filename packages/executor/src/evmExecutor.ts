@@ -16,6 +16,7 @@ import {
   HYPE_SYMBOL,
   HYPERSWAP_V2_ROUTER,
   resolveV2Router,
+  toTokenUnits,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -221,7 +222,7 @@ export async function executeEvmSwap(
         amount: tokensBought,
         price: priceHype.toString(),
         fee_paid: ethers.formatEther(feeAmount),
-        input_amount: actualHypeIn.toString(),
+        input_amount: ethers.formatEther(actualHypeIn),
         venue: `${chain}_dex` as any,
         tx_hash: txHash,
       }).catch(() => null);
@@ -242,7 +243,7 @@ export async function executeEvmSwap(
       tokenSymbol,
       tokenQty: tokensBought,
       priceHype,
-      hypeSpentOrReceived: Number(amount_in),
+      hypeSpentOrReceived: Number(ethers.formatEther(actualHypeIn)),
       explorerUrl: `${baseExplorer}/tx/${txHash}`,
     };
   } else {
@@ -250,21 +251,21 @@ export async function executeEvmSwap(
     onProgress?.('preparing_sell');
 
     const tokenContract = new ethers.Contract(targetTokenAddress, ERC20_ABI, signer);
-    const tokenDec = await tokenContract.decimals().catch(() => 18);
-    const sellQtyRaw = ethers.parseUnits(String(amount_in), tokenDec);
+    const tokenDec = Number(await tokenContract.decimals().catch(() => 18));
+    let sellQtyRaw = toTokenUnits(amount_in, tokenDec);
 
     // Verify token balance
-    const currentBalance = await tokenContract.balanceOf(userAddress);
-    if (currentBalance < sellQtyRaw) {
-      return {
-        txHash: '',
-        success: false,
-        chain,
-        reason: `Insufficient token balance. You hold ${ethers.formatUnits(currentBalance, tokenDec)} ${tokenSymbol}.`,
-        tokenSymbol,
-        tokenName,
-      };
+    const currentBalance: bigint = await tokenContract.balanceOf(userAddress);
+    if (currentBalance <= 0n) {
+      return { txHash: '', success: false, chain, reason: `No ${tokenSymbol} left in your wallet to sell.`, tokenSymbol, tokenName };
     }
+    // The bot's record can sit slightly above the wallet (transfer taxes): sell what is
+    // really there instead of failing, which matters most for stop-losses
+    if (currentBalance < sellQtyRaw) sellQtyRaw = currentBalance;
+    if (sellQtyRaw <= 0n) {
+      return { txHash: '', success: false, chain, reason: 'Sell amount must be greater than 0.', tokenSymbol, tokenName };
+    }
+    const soldQty = ethers.formatUnits(sellQtyRaw, tokenDec);
 
     const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
     const path = [targetTokenAddress, wethAddress];
@@ -290,6 +291,7 @@ export async function executeEvmSwap(
     onProgress?.('executing_swap');
     const minHypeOut = calculateSlippageMin(expectedHypeOut, slippage_pct);
     const deadline = Math.floor(Date.now() / 1000) + 300;
+    const hypeBefore = await provider.getBalance(userAddress);
 
     // Fee-on-transfer variant: also works for meme tokens that tax transfers
     const tx = await router.swapExactTokensForETHSupportingFeeOnTransferTokens(
@@ -303,8 +305,12 @@ export async function executeEvmSwap(
     const receipt = await tx.wait(1);
     const txHash = receipt?.hash || tx.hash;
 
-    const receivedHype = parseFloat(ethers.formatEther(expectedHypeOut));
-    const priceHype = receivedHype / (parseFloat(String(amount_in)) || 1);
+    // HYPE received = balance change plus the swap's gas; the quote is only the fallback
+    const hypeAfter: bigint | null = await provider.getBalance(userAddress).catch(() => null);
+    const gasPaid: bigint = receipt ? BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice ?? 0n) : 0n;
+    const receivedRaw = hypeAfter !== null && hypeAfter + gasPaid > hypeBefore ? hypeAfter + gasPaid - hypeBefore : expectedHypeOut;
+    const receivedHype = parseFloat(ethers.formatEther(receivedRaw));
+    const priceHype = receivedHype / (parseFloat(soldQty) || 1);
 
     // Update position in DB via createFill
     const openPositions = await getOpenPositions(user.id);
@@ -316,10 +322,10 @@ export async function executeEvmSwap(
         chain: chain as any,
         side: 'sell',
         token_address: targetTokenAddress,
-        amount: String(amount_in),
+        amount: soldQty,
         price: priceHype.toString(),
         fee_paid: '0',
-        input_amount: expectedHypeOut.toString(),
+        input_amount: ethers.formatEther(receivedRaw),
         venue: `${chain}_dex` as any,
         tx_hash: txHash,
       }).catch(() => null);
@@ -338,7 +344,7 @@ export async function executeEvmSwap(
       positionId: pos?.id,
       tokenName,
       tokenSymbol,
-      tokenQty: String(amount_in),
+      tokenQty: soldQty,
       priceHype,
       hypeSpentOrReceived: receivedHype,
       explorerUrl: `${baseExplorer}/tx/${txHash}`,
