@@ -142,6 +142,9 @@ export async function executeKleosSwap(
   } catch (err: any) {
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
+  // RonsPad coins trade through the same inbox flow, on RonsPad's PadFactory
+  const venueName = route.kind === 'ronspad' ? 'RonsPad' : 'Kleos';
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : 'kleos';
 
   const l2Block = await l2.getBlock('latest');
   const l2MaxFee = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
@@ -169,9 +172,9 @@ export async function executeKleosSwap(
     try {
       expectedOut = await quoteKleos(l2, route, token, 'buy', netTradeAmount);
     } catch (err) {
-      return fail(`Kleos could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
+      return fail(`${venueName} could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
     }
-    if (expectedOut <= 0n) return fail('Kleos quoted zero coins for this buy. Nothing was spent.');
+    if (expectedOut <= 0n) return fail(`${venueName} quoted zero coins for this buy. Nothing was spent.`);
     const minOut = calculateSlippageMin(expectedOut, slippage_pct);
 
     const [l1Balance, l2Balance, l1Block] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress), l1.getBlock('latest')]);
@@ -252,7 +255,7 @@ export async function executeKleosSwap(
       const fill = await createFill({
         user_id: user.id, position_id: position.id, chain: chain as any, side: 'buy', token_address: token,
         amount: tokensBought, price: priceHype.toString(), fee_paid: ethers.formatEther(feeAmount),
-        input_amount: ethers.formatEther(gross), venue: 'kleos', tx_hash: swapReceipt.hash,
+        input_amount: ethers.formatEther(gross), venue: fillVenue, tx_hash: swapReceipt.hash,
       }).catch(() => null);
       if (fill?.fillId && fill.inserted) {
         const feeHype = ethers.formatEther(feeAmount);
@@ -286,11 +289,11 @@ export async function executeKleosSwap(
 
   let expectedHype: bigint;
   try {
-    expectedHype = await quoteKleos(l2, route, token, 'sell', amountIn);
+    expectedHype = await quoteKleos(l2, route, token, 'sell', amountIn, userAddress);
   } catch (err) {
-    return fail(`Kleos could not quote this sell: ${describeKleosRevert(err)} Nothing was sold.`);
+    return fail(`${venueName} could not quote this sell: ${describeKleosRevert(err)} Nothing was sold.`);
   }
-  if (expectedHype <= 0n) return fail('Kleos quoted no HYPE for this sell. Nothing was sold.');
+  if (expectedHype <= 0n) return fail(`${venueName} quoted no HYPE for this sell. Nothing was sold.`);
   const minOut = calculateSlippageMin(expectedHype, slippage_pct);
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
@@ -346,7 +349,7 @@ export async function executeKleosSwap(
     const fill = await createFill({
       user_id: user.id, position_id: pos.id, chain: chain as any, side: 'sell', token_address: token,
       amount: soldQty, price: priceHype.toString(), fee_paid: '0',
-      input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: 'kleos', tx_hash: sellReceipt.hash,
+      input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: fillVenue, tx_hash: sellReceipt.hash,
     }).catch(() => null);
     if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, '0').catch(() => {});
   }

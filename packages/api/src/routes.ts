@@ -178,6 +178,7 @@ import {
   ELYSIUM_TESTNET_EXPLORER_URL,
   ELYSIUM_MAINNET_EXPLORER_URL,
   KLEOS_TOKEN_URL,
+  RONSPAD_TOKEN_URL,
   isKleosTradingEnabled,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
@@ -1456,8 +1457,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isEvm = !isSolana && !isStarknet && !isSui && (tokenInfo.chain === 'hyperevm' || tokenInfo.chain === 'elysium' || isValidEvmAddress(tokenAddress));
   const isHyperEvm = isEvm && tokenInfo.chain !== 'elysium' && !tokenAddress.toLowerCase().endsWith('.elysium');
   const isElysium = isEvm && !isHyperEvm;
-  // Kleos coins live on Elysium mainnet (99901); every other Elysium token here is on the Kinetiq testnet
-  const isKleos = isElysium && tokenInfo.venue === 'kleos';
+  // Kleos and RonsPad coins live on Elysium mainnet (99901) and trade through the same inbox flow
+  const isKleos = isElysium && (tokenInfo.venue === 'kleos' || tokenInfo.venue === 'ronspad');
+  const padName = tokenInfo.venue === 'ronspad' ? 'RonsPad' : 'Kleos';
+  const padUrl = tokenInfo.venue === 'ronspad' ? `${RONSPAD_TOKEN_URL}${tokenInfo.address}` : `${KLEOS_TOKEN_URL}/${tokenInfo.address}`;
   // Kleos buys are paid from HyperEVM HYPE and sale proceeds land on Elysium mainnet, so the card shows both
   const kleosWallet = isKleos ? (b?.evmAddress || userRecord?.evm_address) : null;
   const kleosElysiumBal = kleosWallet ? await getHypeBalance(kleosWallet, 'elysium', false).catch(() => null) : null;
@@ -1488,7 +1491,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       : (isSui
         ? (b ? `💳 *SUI Wallet Balance*: \`${b.suiBalanceFormatted || '0.0000'} SUI\` (\`${b.suiBalanceUsd || '$0.00'}\`)\n\n` : '')
         : (isKleos
-          ? (b ? `💳 *HYPE*: HyperEVM \`${b.hyperevmBalanceFormatted || '0.0000'}\` • Elysium \`${kleosElysiumBal ? Number(kleosElysiumBal.formatted).toFixed(4) : '0.0000'}\`\n\n` : '')
+          ? (b ? `💳 *HYPE*: HyperEVM \`${Number(b.hyperevmBalanceFormatted || 0).toFixed(4)}\` • Elysium \`${kleosElysiumBal ? Number(kleosElysiumBal.formatted).toFixed(4) : '0.0000'}\`\n\n` : '')
           : isEvm
           ? (b ? `💳 *${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
           : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : '')));
@@ -1588,7 +1591,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (isHyperEvm) {
     venueText = `⚡ *Venue*: HyperEVM DEX (Mainnet)`;
   } else if (isKleos) {
-    venueText = `🏛️ *Venue*: Kleos (Elysium mainnet)`;
+    venueText = `🏛️ *Venue*: ${padName} (Elysium mainnet)`;
   } else if (isElysium) {
     venueText = `🏛️ *Venue*: Elysium L2 (Testnet - Mainnet soon)`;
   } else if (tokenInfo.tradeable) {
@@ -1608,7 +1611,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${tokenInfo.address}`),
         ]);
       } else if (isKleos) {
-        rows.push([Markup.button.url('🏛️ View on Kleos', `${KLEOS_TOKEN_URL}/${tokenInfo.address}`)]);
+        rows.push([Markup.button.url(`🏛️ View on ${padName}`, padUrl)]);
       } else {
         rows.push([
           Markup.button.url('🔍 Elysium Explorer', `https://elysium.kinetiq.xyz/testnet-explorer/token/${tokenInfo.address}`),
@@ -2084,7 +2087,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       ]);
     } else {
       text += isKleos
-        ? `🏛️ ${tokenInfo.trade_block_reason ? sanitizeMd(tokenInfo.trade_block_reason) : 'RacerBot can’t trade Kleos coins right now.'} Tap *View on Kleos* to trade there.`
+        ? `🏛️ ${tokenInfo.trade_block_reason ? tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ') : `RacerBot can’t trade ${padName} coins right now.`} Tap *View on ${padName}* to trade there.`
         : '⚠️ Trading venue is not directly supported.';
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
@@ -3034,7 +3037,7 @@ export async function executeBuyHelper(
 
   // ── HyperEVM & Elysium Trading Path ──────────────────────────────────────
   // Kleos coins live on Elysium mainnet (99901); other Elysium tokens here are on the Kinetiq testnet
-  const isKleos = info.venue === 'kleos';
+  const isKleos = info.venue === 'kleos' || info.venue === 'ronspad';
   if (isKleos && !isKleosTradingEnabled()) {
     throw new Error('This coin is on Kleos (Elysium mainnet), which RacerBot cannot trade yet. You can buy it on thekleos.xyz.');
   }
@@ -3078,7 +3081,7 @@ export async function executeBuyHelper(
       token_out: tokenAddress,
       amount_in: String(amountHype),
       min_amount_out: '1',
-      venue: isKleos ? 'kleos' : `${chain}_dex` as any,
+      venue: isKleos ? info.venue as any : `${chain}_dex` as any,
       slippage_pct: slippagePct,
     }, onProgress);
 
@@ -3593,7 +3596,7 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
     if (!evmUser.evm_address) throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
     const chain: EvmChain = (info?.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
-    const isKleos = info?.venue === 'kleos';
+    const isKleos = info?.venue === 'kleos' || info?.venue === 'ronspad';
     const isTestnet = chain === 'elysium' ? !isKleos : (process.env.HYPEREVM_TESTNET === 'true');
     let spendable: number;
     if (isKleos) {
@@ -8438,7 +8441,10 @@ export function setupRoutes(bot: Telegraf): void {
         ]);
       }
 
-      // External explorer & chart links
+      // External explorer & chart links (an Elysium position is a Kleos or a RonsPad coin)
+      const posVenue = isEvmPos && posChain !== 'hyperevm'
+        ? (await getTokenInfo(position.token_address).catch(() => null))?.venue
+        : null;
       const linkRows = (() => {
         if (isEvmPos) {
           const rows: any[] = [];
@@ -8448,7 +8454,9 @@ export function setupRoutes(bot: Telegraf): void {
               Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${position.token_address}`),
             ]);
           } else {
-            rows.push([Markup.button.url('🏛️ View on Kleos', `${KLEOS_TOKEN_URL}/${position.token_address}`)]);
+            rows.push([posVenue === 'ronspad'
+              ? Markup.button.url('🏛️ View on RonsPad', `${RONSPAD_TOKEN_URL}${position.token_address}`)
+              : Markup.button.url('🏛️ View on Kleos', `${KLEOS_TOKEN_URL}/${position.token_address}`)]);
           }
           return rows;
         }

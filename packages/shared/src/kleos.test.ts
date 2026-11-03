@@ -9,6 +9,7 @@ import {
   KLEOS_SWAP_ROUTER_ABI,
   MULTICALL3_VALUE_ABI,
   kleosRouteFromLaunch,
+  RONSPAD,
   encodeKleosBuy,
   encodeKleosSell,
   encodeKleosBuyWithTransfers,
@@ -121,5 +122,33 @@ describe('HyperEVM inbox helpers', () => {
     const data = new ethers.Interface(KLEOS_V4_ROUTER_ABI).encodeErrorResult('TooLittleReceived', []);
     expect(describeKleosRevert({ data })).toMatch(/slippage/);
     expect(describeKleosRevert({ shortMessage: 'boom' })).toBe('boom');
+  });
+});
+
+describe('BLOB-paired and RonsPad routes', () => {
+  it('routes a v5 coin paired against BLOB through the hop router', () => {
+    const route = kleosRouteFromLaunch({ v4: { pair: { symbol: 'BLOB' }, v5: { routeFee: 0, quote: '0x9a9815Af521149E8D982791703A31bca2F95f534' } } });
+    expect(route.kind).toBe('hop');
+    expect(route.router).toBe(KLEOS.hopRouter);
+    expect(route.hop).toMatchObject({ tickSpacing: 200, fee: 0, hooks: '0xe11cafa5901b0aab51eb78251488400f9e4320cc' });
+  });
+
+  it('still refuses a pair whose quote token has no known HYPE pool', () => {
+    expect(() => kleosRouteFromLaunch({ v4: { pair: {}, v5: { routeFee: 0, quote: '0x0000000000000000000000000000000000000001' } } })).toThrow(/no HYPE route/);
+  });
+
+  it('never sends RonsPad a minimum of 0, which PadFactory refuses', () => {
+    const route = { kind: 'ronspad' as const, router: RONSPAD.padFactory, hopFee: 0 };
+    const iface = new ethers.Interface(['function buy(address token, uint256 pairIn, uint256 minTokensOut, address recipient, uint256 deadline)',
+      'function sell(address token, uint256 tokensIn, uint256 minPairOut, address recipient, bool toNative, uint256 deadline)']);
+    const coin = '0x44d13223e2024c6f3f957d5c9ab98f8a550061f3';
+    const me = '0x000000000000000000000000000000000000bEEF';
+    const buy = encodeKleosBuy(route, coin, 10n ** 16n, 0n, me, 1n);
+    expect(buy.value).toBe(10n ** 16n);
+    expect(iface.decodeFunctionData('buy', buy.data)[2]).toBe(1n);
+    const sell = encodeKleosSell(route, coin, 5n, 0n, me, 1n);
+    const args = iface.decodeFunctionData('sell', sell.data);
+    expect(args[2]).toBe(1n);
+    expect(args[4]).toBe(true); // paid out as native HYPE
   });
 });

@@ -20,7 +20,41 @@ export const KLEOS = {
   pairRouter: '0x819741D02baFa76f0eEDF9EE8eDAb2a3EcCD37de',
   pairLauncher: '0x3AD2Ea50c1BFfBDE6FA47E219D2e1e838B22Cb77',
   multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
+  /** Buys and sells coins paired against a quote token whose HYPE pool sits on another pool manager */
+  hopRouter: '0x9428d860fE65C585704CCA1C3F2F02eecF12ee0d',
 } as const;
+
+export interface KleosPoolKey {
+  currency0: string;
+  currency1: string;
+  fee: number;
+  tickSpacing: number;
+  hooks: string;
+}
+
+/**
+ * The HYPE pool of each quote token the hop router can route through (from the Kleos app, which
+ * names them per quote token). Coins paired against these trade HYPE -> quote -> coin in one call.
+ */
+export const KLEOS_HOP_KEYS: Record<string, KleosPoolKey> = {
+  // BLOB
+  '0x9a9815af521149e8d982791703a31bca2f95f534': {
+    currency0: '0x0000000000000000000000000000000000000000',
+    currency1: '0x9a9815Af521149E8D982791703A31bca2F95f534',
+    fee: 0,
+    tickSpacing: 200,
+    hooks: '0xe11cafa5901b0aab51eb78251488400f9e4320cc',
+  },
+};
+
+/** RonsPad (ronspad.fun), the other launchpad on Elysium: its own Uniswap V3, every coin paired with its WHYPE */
+export const RONSPAD = {
+  padFactory: '0x371811b06bd66c93b46F2F1FfD45b65455A2D2a2',
+  v3Factory: '0x24e21E3F2b0bB0C166ec3EAFf1e615aB14cDD85F',
+  whype: '0xbA876237B0F021A6c6D852d6c26E107997cC5E81',
+} as const;
+
+export const RONSPAD_TOKEN_URL = 'https://ronspad.fun/token?token=';
 
 /** KleosSwap (classic coins) pools all use the 1% fee tier */
 export const KLEOS_CLASSIC_POOL_FEE = 10000;
@@ -65,6 +99,25 @@ export const KLEOS_SWAP_ROUTER_ABI = [
 export const KLEOS_QUOTER_V2_ABI = [
   'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
 ];
+
+const POOL_KEY = '(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)';
+export const KLEOS_HOP_ROUTER_ABI = [
+  `function buy(address token, ${POOL_KEY} hop, uint256 minOut, address recipient, uint256 deadline) payable returns (uint256 out)`,
+  `function sell(address token, ${POOL_KEY} hop, uint256 amountIn, uint256 minOut, address recipient, uint256 deadline) returns (uint256 out)`,
+  `function quoteBuy(address token, ${POOL_KEY} hop, uint256 hypeIn) view returns (uint256 quoteIn, uint256 tokensOut)`,
+  `function quoteSell(address token, ${POOL_KEY} hop, uint256 amountIn) view returns (uint256 quoteOut, uint256 hypeOut)`,
+  'error Expired()', 'error TooLittleReceived()', 'error WrongHopPool()', 'error ZeroRecipient()',
+];
+
+/** RonsPad's PadFactory: native HYPE in and out at the coin's own pool tier. It refuses a minimum of 0. */
+export const RONSPAD_FACTORY_ABI = [
+  'function buy(address token, uint256 pairIn, uint256 minTokensOut, address recipient, uint256 deadline) payable returns (uint256 tokensOut)',
+  'function sell(address token, uint256 tokensIn, uint256 minPairOut, address recipient, bool toNative, uint256 deadline) returns (uint256 pairOut)',
+  'function poolOfToken(address token) view returns (address)',
+  'function getLaunch(address token) view returns (tuple(address token, address pool, address creator, address feeRecipient, bool tokenIsToken0, int24 tickLower, int24 tickUpper, uint128 liquidity, uint64 createdAt, uint64 lastBurnAt, uint256 creatorFees, uint256 creatorFeesToken, uint256 burned, uint96 startMcap, uint24 fee, uint16 buybackBps, uint16 dividendBps, uint16 liquidityBps, uint16 coinToDeadBps))',
+];
+
+const V3_POOL_SLOT0_ABI = ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'];
 
 export const KLEOS_COIN_ABI = [
   'function maxWallet() view returns (uint256)',
@@ -113,13 +166,15 @@ export function describeKleosRevert(err: any): string {
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
-export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair';
+export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad';
 
 export interface KleosRoute {
   kind: KleosRouteKind;
   router: string;
   /** v5 only: fee of the hop from HYPE to the coin's quote token; 0 when the coin trades against HYPE */
   hopFee: number;
+  /** hop only: the quote token's HYPE pool */
+  hop?: KleosPoolKey;
 }
 
 const ROUTES: Record<KleosRouteKind, KleosRoute> = {
@@ -127,7 +182,32 @@ const ROUTES: Record<KleosRouteKind, KleosRoute> = {
   v4: { kind: 'v4', router: KLEOS.v4Router, hopFee: 0 },
   pair: { kind: 'pair', router: KLEOS.pairRouter, hopFee: 0 },
   classic: { kind: 'classic', router: KLEOS.swapRouter, hopFee: 0 },
+  hop: { kind: 'hop', router: KLEOS.hopRouter, hopFee: 0 },
+  ronspad: { kind: 'ronspad', router: RONSPAD.padFactory, hopFee: 0 },
 };
+
+/** The hop route for a coin paired against `quote`, when the hop router knows that quote's HYPE pool */
+function hopRouteFor(quote: string | undefined): KleosRoute | null {
+  const key = quote ? KLEOS_HOP_KEYS[quote.toLowerCase()] : undefined;
+  return key ? { ...ROUTES.hop, hop: key } : null;
+}
+
+/** The RonsPad launch of a coin, or null when PadFactory did not launch it */
+export async function getRonsPadLaunch(provider: ethers.Provider, token: string): Promise<{ pool: string; fee: number; tokenIsToken0: boolean } | null> {
+  const pad = new ethers.Contract(RONSPAD.padFactory, RONSPAD_FACTORY_ABI, provider);
+  const pool: string = await pad.poolOfToken(token);
+  if (!pool || pool === ethers.ZeroAddress) return null;
+  const launch = await pad.getLaunch(token);
+  return { pool, fee: Number(launch.fee), tokenIsToken0: Boolean(launch.tokenIsToken0) };
+}
+
+/** HYPE per whole RonsPad coin from its pool's current price (both sides have 18 decimals) */
+export async function ronsPadPriceHype(provider: ethers.Provider, launch: { pool: string; tokenIsToken0: boolean }): Promise<number> {
+  const [sqrtPriceX96] = await new ethers.Contract(launch.pool, V3_POOL_SLOT0_ABI, provider).slot0();
+  const ratio = Number(sqrtPriceX96) / 2 ** 96;
+  const token1PerToken0 = ratio * ratio;
+  return launch.tokenIsToken0 ? token1PerToken0 : (token1PerToken0 > 0 ? 1 / token1PerToken0 : 0);
+}
 
 /**
  * The router the Kleos board's `launch` object implies (the same rules as the Kleos app).
@@ -137,7 +217,12 @@ export function kleosRouteFromLaunch(launch: any): KleosRoute {
   const v4 = launch?.v4;
   if (!v4) return ROUTES.classic;
   if (v4.v5) {
-    if (v4.pair && Number(v4.v5.routeFee ?? 0) === 0) throw new Error(KLEOS_ERROR_MESSAGES.NoHypeRoute);
+    if (v4.pair && Number(v4.v5.routeFee ?? 0) === 0) {
+      // No HYPE hop on the v5 router: the hop router routes HYPE -> quote -> coin when it knows the quote's pool
+      const hop = hopRouteFor(v4.v5.quote);
+      if (hop) return hop;
+      throw new Error(KLEOS_ERROR_MESSAGES.NoHypeRoute);
+    }
     return { ...ROUTES.v5, hopFee: Number(v4.v5.routeFee ?? 0) };
   }
   if (v4.pair) {
@@ -154,8 +239,16 @@ export async function quoteKleos(
   route: KleosRoute,
   token: string,
   side: 'buy' | 'sell',
-  amountIn: bigint
+  amountIn: bigint,
+  /** RonsPad sells: the seller, whose approval lets the sale be simulated exactly */
+  from?: string
 ): Promise<bigint> {
+  if (route.kind === 'hop') {
+    const hop = new ethers.Contract(route.router, KLEOS_HOP_ROUTER_ABI, provider);
+    const [, out] = side === 'buy' ? await hop.quoteBuy(token, route.hop, amountIn) : await hop.quoteSell(token, route.hop, amountIn);
+    return out;
+  }
+  if (route.kind === 'ronspad') return quoteRonsPad(provider, token, side, amountIn, from);
   if (route.kind === 'classic') {
     const quoter = new ethers.Contract(KLEOS.quoterV2, KLEOS_QUOTER_V2_ABI, provider);
     const [tokenIn, tokenOut] = side === 'buy' ? [KLEOS.whype, token] : [token, KLEOS.whype];
@@ -167,6 +260,41 @@ export async function quoteKleos(
     return await new ethers.Contract(route.router, KLEOS_V5_ROUTER_ABI, provider)[fn](token, amountIn, route.hopFee);
   }
   return await new ethers.Contract(route.router, KLEOS_V4_ROUTER_ABI, provider)[fn](token, amountIn);
+}
+
+/**
+ * RonsPad has no quoter: a buy is simulated on PadFactory from a funded throwaway address. A sell is
+ * simulated from the seller when their approval allows it, else estimated from the pool's price
+ * after its tier (price impact is then left to the slippage limit).
+ */
+async function quoteRonsPad(provider: ethers.Provider, token: string, side: 'buy' | 'sell', amountIn: bigint, from?: string): Promise<bigint> {
+  const pad = new ethers.Interface(RONSPAD_FACTORY_ABI);
+  const deadline = Math.floor(Date.now() / 1000) + 600;
+  const send = (provider as any).send?.bind(provider);
+  if (side === 'buy' && send) {
+    const sim = '0x000000000000000000000000000000000000bEEF';
+    const data = pad.encodeFunctionData('buy', [token, amountIn, 1n, sim, deadline]);
+    const raw = await send('eth_call', [
+      { from: sim, to: RONSPAD.padFactory, data, value: ethers.toQuantity(amountIn) },
+      'latest',
+      { [sim]: { balance: ethers.toQuantity(amountIn + 10n ** 18n) } },
+    ]);
+    return pad.decodeFunctionResult('buy', raw)[0];
+  }
+  if (side === 'sell' && from && send) {
+    try {
+      const data = pad.encodeFunctionData('sell', [token, amountIn, 1n, from, true, deadline]);
+      const raw = await send('eth_call', [{ from, to: RONSPAD.padFactory, data }, 'latest']);
+      return pad.decodeFunctionResult('sell', raw)[0];
+    } catch { /* not approved yet: estimate below */ }
+  }
+  const launch = await getRonsPadLaunch(provider, token);
+  if (!launch) throw new Error('RonsPad did not launch this coin.');
+  const price = await ronsPadPriceHype(provider, launch);
+  const PRICE_SCALE = 10n ** 18n;
+  const priceScaled = BigInt(Math.floor(price * 1e18));
+  const gross = side === 'sell' ? (amountIn * priceScaled) / PRICE_SCALE : (priceScaled > 0n ? (amountIn * PRICE_SCALE) / priceScaled : 0n);
+  return (gross * BigInt(1_000_000 - launch.fee)) / 1_000_000n;
 }
 
 // ── Kleos board ─────────────────────────────────────────────────────────────
@@ -209,6 +337,8 @@ const V5_HOP_FEES = [0, 10000, 3000, 500];
  */
 export async function resolveKleosRoute(provider: ethers.Provider, token: string, launchHint?: any): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
+  // RonsPad coins: PadFactory names its own launches
+  if (await getRonsPadLaunch(provider, token).catch(() => null)) return ROUTES.ronspad;
   const candidates: KleosRoute[] = [];
   if (launchHint !== undefined && launchHint !== null) {
     try { candidates.push(kleosRouteFromLaunch(launchHint)); } catch { /* no HYPE route per the board: probe anyway */ }
@@ -221,6 +351,9 @@ export async function resolveKleosRoute(provider: ethers.Provider, token: string
     } else if (!candidates.some(c => c.kind === r.kind)) {
       candidates.push(r);
     }
+  }
+  for (const quote of Object.keys(KLEOS_HOP_KEYS)) {
+    if (!candidates.some(c => c.kind === 'hop' && c.hop?.currency1.toLowerCase() === quote)) candidates.push(hopRouteFor(quote)!);
   }
   for (const route of candidates) {
     try {
@@ -237,6 +370,15 @@ export interface EvmCall {
 }
 
 export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
+  if (route.kind === 'hop') {
+    const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('buy', [token, route.hop, minOut, recipient, deadline]);
+    return { to: route.router, data, value: hypeIn };
+  }
+  if (route.kind === 'ronspad') {
+    const min = minOut > 0n ? minOut : 1n;
+    const data = new ethers.Interface(RONSPAD_FACTORY_ABI).encodeFunctionData('buy', [token, hypeIn, min, recipient, deadline]);
+    return { to: route.router, data, value: hypeIn };
+  }
   if (route.kind === 'classic') {
     const data = new ethers.Interface(KLEOS_SWAP_ROUTER_ABI).encodeFunctionData('exactInputSingle', [{
       tokenIn: KLEOS.whype, tokenOut: token, fee: KLEOS_CLASSIC_POOL_FEE, recipient, deadline,
@@ -251,6 +393,15 @@ export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint,
 }
 
 export function encodeKleosSell(route: KleosRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
+  if (route.kind === 'hop') {
+    const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('sell', [token, route.hop, amountIn, minOut, recipient, deadline]);
+    return { to: route.router, data, value: 0n };
+  }
+  if (route.kind === 'ronspad') {
+    const min = minOut > 0n ? minOut : 1n;
+    const data = new ethers.Interface(RONSPAD_FACTORY_ABI).encodeFunctionData('sell', [token, amountIn, min, recipient, true, deadline]);
+    return { to: route.router, data, value: 0n };
+  }
   if (route.kind === 'classic') {
     // The router receives the WHYPE and unwraps it to the seller
     const iface = new ethers.Interface(KLEOS_SWAP_ROUTER_ABI);
