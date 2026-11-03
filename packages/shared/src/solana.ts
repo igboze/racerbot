@@ -1640,9 +1640,35 @@ export async function transferSolanaToken(
 ): Promise<string> {
   if (!isSolanaAddress(to)) throw new Error('Invalid Solana destination address.');
   if (rawAmount <= 0n) throw new Error('Amount must be greater than 0.');
-  const programId = new PublicKey(tokenProgramId || TOKEN_PROGRAM_ID);
   const mintPk = new PublicKey(mint);
   const destOwner = new PublicKey(to);
+
+  let programId: PublicKey;
+  let resolvedDecimals = decimals;
+
+  if (tokenProgramId && (tokenProgramId === TOKEN_PROGRAM_ID || tokenProgramId === TOKEN_2022_PROGRAM_ID)) {
+    programId = new PublicKey(tokenProgramId);
+  } else {
+    try {
+      const mintAcc = await solanaRpc<any>('getAccountInfo', [mint, { encoding: 'base64' }], { timeoutMs: 5000, allowPaid: true });
+      const owner = mintAcc?.value?.owner;
+      programId = owner ? new PublicKey(owner) : new PublicKey(tokenProgramId || TOKEN_PROGRAM_ID);
+      const b64 = Array.isArray(mintAcc?.value?.data) ? mintAcc.value.data[0] : null;
+      if (b64) {
+        const buf = Buffer.from(b64, 'base64');
+        if (buf.length >= 45) {
+          resolvedDecimals = buf.readUInt8(44);
+        }
+      }
+    } catch {
+      programId = new PublicKey(tokenProgramId || TOKEN_PROGRAM_ID);
+    }
+  }
+
+  if (resolvedDecimals === undefined || resolvedDecimals === null || isNaN(resolvedDecimals)) {
+    resolvedDecimals = 6;
+  }
+
   const sourceAta = associatedTokenAddress(keypair.publicKey, mintPk, programId);
   const destAta = associatedTokenAddress(destOwner, mintPk, programId);
 
@@ -1662,7 +1688,7 @@ export async function transferSolanaToken(
   const data = Buffer.alloc(10);
   data.writeUInt8(12, 0); // TransferChecked
   data.writeBigUInt64LE(rawAmount, 1);
-  data.writeUInt8(decimals, 9);
+  data.writeUInt8(resolvedDecimals, 9);
   const transferChecked = new TransactionInstruction({
     programId,
     keys: [
