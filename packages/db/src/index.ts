@@ -107,6 +107,8 @@ export {
   getUserWalletById,
   createUserWallet,
   setActiveWallet,
+  addEvmWallet,
+  setActiveEvmWallet,
   syncUserActiveWallet,
   renameUserWallet,
   deleteUserWallet,
