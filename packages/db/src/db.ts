@@ -980,6 +980,126 @@ export async function createUserWallet(params: CreateUserWalletParams): Promise<
   }
 }
 
+/**
+ * HyperEVM and Elysium (Kleos) share one EVM key, so an EVM wallet is a pair of
+ * user_wallets rows with the same address. Adds both in one transaction; when
+ * active, users.evm_address follows it so every EVM path uses the same wallet.
+ */
+export async function addEvmWallet(params: {
+  userId: string;
+  address: string;
+  name: string;
+  encryptedPrivateKey: string;
+  isImported: boolean;
+  isActive: boolean;
+}): Promise<UserWalletRecord> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    // users.evm_address is unique: an address another account uses cannot be added
+    const taken = await client.query(
+      `SELECT 1 FROM users WHERE LOWER(evm_address) = LOWER($1) AND id <> $2
+       UNION ALL
+       SELECT 1 FROM user_wallets WHERE LOWER(address) = LOWER($1) AND user_id <> $2 AND chain IN ('hyperevm', 'elysium')
+       LIMIT 1`,
+      [params.address, params.userId]
+    );
+    if (taken.rows.length > 0) throw new Error('This EVM wallet is already connected to another RacerBot account.');
+
+    // Keep the wallet in use as a listed wallet first: making the new one active rewrites
+    // users.evm_*, and the old key must stay recoverable (it may still hold funds)
+    const current = await client.query('SELECT evm_address, evm_private_key_enc FROM users WHERE id = $1', [params.userId]);
+    const cur = current.rows[0];
+    if (cur?.evm_address && cur?.evm_private_key_enc) {
+      for (const chain of ['hyperevm', 'elysium'] as const) {
+        await client.query(
+          `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+           VALUES ($1, $2, $3, 'EVM Wallet 1', $4, FALSE, NOT EXISTS (
+             SELECT 1 FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE))
+           ON CONFLICT (user_id, chain, address) DO NOTHING`,
+          [params.userId, chain, cur.evm_address, cur.evm_private_key_enc]
+        );
+      }
+    }
+
+    if (params.isActive) {
+      await client.query(
+        `UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain IN ('hyperevm', 'elysium')`,
+        [params.userId]
+      );
+    }
+    let hyperevmRow: any = null;
+    for (const chain of ['hyperevm', 'elysium'] as const) {
+      const res = await client.query(
+        `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = EXCLUDED.is_active OR user_wallets.is_active
+         RETURNING *`,
+        [params.userId, chain, params.address, params.name, params.encryptedPrivateKey, params.isImported, params.isActive]
+      );
+      if (chain === 'hyperevm') hyperevmRow = res.rows[0];
+    }
+    if (params.isActive) {
+      await client.query(
+        'UPDATE users SET evm_address = $1, evm_private_key_enc = $2 WHERE id = $3',
+        [params.address, params.encryptedPrivateKey, params.userId]
+      );
+    }
+    await client.query('COMMIT');
+    invalidateUserCache(params.userId);
+    return rowToUserWallet(hyperevmRow);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Makes one EVM address active on both HyperEVM and Elysium, and points users.evm_address at it */
+export async function setActiveEvmWallet(userId: string, walletId: string): Promise<UserWalletRecord> {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(
+      `SELECT * FROM user_wallets WHERE id = $1 AND user_id = $2 AND chain IN ('hyperevm', 'elysium')`,
+      [walletId, userId]
+    );
+    if (found.rows.length === 0) throw new Error('Wallet not found');
+    const target = rowToUserWallet(found.rows[0]);
+    await client.query(
+      `UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain IN ('hyperevm', 'elysium')`,
+      [userId]
+    );
+    // Both chains, adding the missing twin if an older wallet only had one
+    let hyperevmRow: any = null;
+    for (const chain of ['hyperevm', 'elysium'] as const) {
+      const res = await client.query(
+        `INSERT INTO user_wallets (user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+         ON CONFLICT (user_id, chain, address) DO UPDATE SET is_active = TRUE
+         RETURNING *`,
+        [userId, chain, target.address, target.name, target.encrypted_private_key, target.is_imported]
+      );
+      if (chain === 'hyperevm') hyperevmRow = res.rows[0];
+    }
+    await client.query(
+      'UPDATE users SET evm_address = $1, evm_private_key_enc = $2 WHERE id = $3',
+      [target.address, target.encrypted_private_key, userId]
+    );
+    await client.query('COMMIT');
+    invalidateUserCache(userId);
+    return rowToUserWallet(hyperevmRow);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function setActiveWallet(userId: string, chain: DbChain, walletId: string): Promise<UserWalletRecord> {
   const db = await getDb();
   const client = await db.connect();
