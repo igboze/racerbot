@@ -515,9 +515,21 @@ export interface TelegramVerificationRequest {
   authToken?: string;
   createdAt: number;
   expiresAt: number;
+  /** Wrong codes entered so far; the request locks at MAX_CODE_ATTEMPTS */
+  attempts?: number;
 }
 
 const inMemoryVerifications = new Map<string, TelegramVerificationRequest>();
+
+/** A 6-digit code allows a million guesses: lock the request after a few wrong ones. */
+export const MAX_CODE_ATTEMPTS = 5;
+
+async function saveTelegramVerification(vreq: TelegramVerificationRequest): Promise<void> {
+  const ttl = Math.max(1, Math.ceil((vreq.expiresAt - Date.now()) / 1000));
+  const redis = getAuthRedis();
+  if (redis) await redis.set(`auth:vreq:${vreq.requestId}`, JSON.stringify(vreq), ttl).catch(() => {});
+  inMemoryVerifications.set(vreq.requestId, vreq);
+}
 
 /**
  * 6. Initiate a safe Telegram username verification request.
@@ -656,13 +668,29 @@ export async function verifyTelegramCode(requestId: string, codeInput: string): 
     return { success: false, reason: 'This connection request was rejected in Telegram.' };
   }
 
+  if (vreq.status !== 'pending' || (vreq.attempts ?? 0) >= MAX_CODE_ATTEMPTS) {
+    return { success: false, reason: 'Too many wrong codes. Request a new code.' };
+  }
+
   if (Date.now() > vreq.expiresAt) {
     vreq.status = 'expired';
     return { success: false, reason: 'Verification code has expired. Please request a new one.' };
   }
 
-  if (vreq.code !== (codeInput || '').trim()) {
-    return { success: false, reason: 'Invalid 6-digit code. Please check your Telegram DM.' };
+  const given = Buffer.from((codeInput || '').trim());
+  const expected = Buffer.from(vreq.code);
+  const matches = given.length === expected.length && crypto.timingSafeEqual(given, expected);
+  if (!matches) {
+    vreq.attempts = (vreq.attempts ?? 0) + 1;
+    const left = MAX_CODE_ATTEMPTS - vreq.attempts;
+    if (left <= 0) vreq.status = 'expired';
+    await saveTelegramVerification(vreq);
+    return {
+      success: false,
+      reason: left > 0
+        ? `Invalid 6-digit code. ${left} attempt${left === 1 ? '' : 's'} left.`
+        : 'Too many wrong codes. Request a new code.',
+    };
   }
 
   // Generate auth token

@@ -3616,10 +3616,10 @@ export class SwapExecutor {
               let effectiveNetAfterFeeYocto = netAfterFeeYocto;
               let nativeDepositOnSellYocto = BigInt(netAmountOut);
               if (paidNativeOnSell) {
-                const currNativeStr = await (
+                const currNativeStr = await Promise.resolve(
                   (this.nearClient as any).getNearBalanceOnTradeRpc
                     ? (this.nearClient as any).getNearBalanceOnTradeRpc(subaccountId)
-                    : this.nearClient.getNearBalance?.(subaccountId)
+                    : this.nearClient.getNearBalance?.(subaccountId) ?? null
                 ).catch(() => null);
                 if (currNativeStr !== null) {
                   const currNative = BigInt(currNativeStr);

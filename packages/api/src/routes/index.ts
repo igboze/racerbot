@@ -20,6 +20,7 @@ import {
   ensureTelegramInitData,
   ensureTelegramUser,
   perUserRateLimit,
+  rateLimit,
 } from '../middleware.js';
 import {
   ROUTER_CONTRACT_ID,
@@ -31,7 +32,7 @@ import { registerWebWalletRoutes } from './webWallet.js';
 import { createSwarmRouter } from './swarmRoutes.js';
 import { createFleetRouter } from './fleetRoutes.js';
 import { createRacerCardRouter } from './racerCardRoutes.js';
-import { verifiedUser } from './verifiedUser.js';
+import { unprovenWalletClaim, verifiedUser } from './verifiedUser.js';
 import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
 const logger = createLogger('api-routes');
@@ -73,7 +74,10 @@ router.get('/auth/session/:sessionId', async (req, res) => {
 });
 
 // 2b. Request Telegram Username Verification (Safety measure against identity/wallet hijacking)
-router.post('/auth/telegram/request-verification', async (req, res) => {
+// Code login: per-IP limit on top of the per-code attempt limit
+const codeLoginLimit = rateLimit(10 * 60 * 1000, 20);
+
+router.post('/auth/telegram/request-verification', codeLoginLimit, async (req, res) => {
   try {
     const { username } = req.body;
     const { requestTelegramVerification } = await import('../authSession.js');
@@ -89,7 +93,7 @@ router.post('/auth/telegram/request-verification', async (req, res) => {
 });
 
 // 2c. Verify 6-digit code entered on WebApp
-router.post('/auth/telegram/verify-code', async (req, res) => {
+router.post('/auth/telegram/verify-code', codeLoginLimit, async (req, res) => {
   try {
     const { requestId, code } = req.body;
     if (!requestId || !code) {
@@ -432,7 +436,8 @@ export async function resolveAlphaUser(req: any) {
   // 3. NEAR Connect Wallet Header: an unproven claim, so it may only stand for a wallet RacerBot holds
   // no key for (anything that wallet does still needs its own signature). Accounts RacerBot manages
   // and signs for are reachable only through a verified session above, never by naming them here.
-  const walletHeader = req.headers['x-wallet-address'] || req.query.walletAddress || req.body?.walletAddress;
+  // Read-only requests only (see unprovenWalletClaim)
+  const walletHeader = unprovenWalletClaim(req);
   if (walletHeader && typeof walletHeader === 'string' && walletHeader.trim()) {
     const cleanWallet = walletHeader.trim();
     try {
