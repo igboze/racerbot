@@ -50,6 +50,7 @@ import {
 import { planVaultHops, quoteMinimumOut } from './racerVault.js';
 import { encodeExecPlan, type ExecPlan, type ExecVenue } from './executorPlan.js';
 import { hasManagedWallet } from './webWallet.js';
+import { withInFlightGuard } from './inflight.js';
 
 const logger = createLogger('executor-pool');
 
@@ -141,6 +142,16 @@ const u32le = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); re
 const u128le = (n: bigint) => { const b = Buffer.alloc(16); b.writeBigUInt64LE(n & ((1n << 64n) - 1n)); b.writeBigUInt64LE(n >> 64n, 8); return b; };
 const borshStr = (v: string) => { const b = Buffer.from(v, 'utf8'); return Buffer.concat([u32le(b.length), b]); };
 const borshBytes = (v: Buffer) => Buffer.concat([u32le(v.length), v]);
+
+/**
+ * Whether an executor's on-chain owner is this account: its owner_hash must equal sha256(salt + payout).
+ * The database maps executors to users; this proves the mapping against the chain before NEAR moves,
+ * so a mix-up can never send one user's executor to another user's private balance.
+ */
+export function ownsExecutor(state: { owner_hash?: string } | null, acct: Pick<ConfidentialAccountRecord, 'owner_salt' | 'payout_address'>): boolean {
+  const onChain = String(state?.owner_hash || '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(onChain) && onChain === ownerHash(acct.owner_salt, acct.payout_address);
+}
 
 /** Borsh arguments of the executor's `new(controller, owner_hash)` */
 export function executorInitArgs(controller: string, ownerHashHex: string): Uint8Array {
@@ -239,6 +250,9 @@ async function spawnExecutor(acct: ConfidentialAccountRecord, size: bigint): Pro
     ]);
     const createErr = failureOf(created);
     if (createErr) throw new Error(`create executor: ${createErr}`);
+    // Fund only an executor the chain says belongs to this user
+    const createdState = await getNear().view<any>(executor, 'get_state', {});
+    if (!ownsExecutor(createdState, acct)) throw new Error('owner mismatch after create: not funded');
     await updateExecutor(executor, { status: 'funding', tx_hash: created?.transaction?.hash });
 
     const move = await unshield(keysOf(acct), size, executor);
@@ -401,6 +415,11 @@ export async function confidentialBuy(p: {
 }): Promise<ConfidentialTradeResult> {
   const fail = (reason: string): ConfidentialTradeResult => ({ success: false, executors: [], txHashes: [], amountIn: p.amountYocto.toString(), reason });
   if (!EXECUTORS_ENABLED) return fail('Confidential executors are not enabled yet');
+  const guard = await withInFlightGuard(`conf:${p.user.id}:${p.tokenAddress}:buy`, () => confidentialBuyLocked(p, fail));
+  return guard.ran ? guard.result : fail('A private buy of this token is already running. Wait for it to finish.');
+}
+
+async function confidentialBuyLocked(p: Parameters<typeof confidentialBuy>[0], fail: (reason: string) => ConfidentialTradeResult): Promise<ConfidentialTradeResult> {
   const acct = await ensureConfidentialAccount(p.user);
   if (!acct.enabled) return fail('Confidential mode is switched off for this account');
 
@@ -478,6 +497,12 @@ export async function confidentialSell(p: {
 }): Promise<ConfidentialTradeResult> {
   const fail = (reason: string): ConfidentialTradeResult => ({ success: false, executors: [], txHashes: [], amountIn: '0', reason });
   if (!EXECUTORS_ENABLED) return fail('Confidential executors are not enabled yet');
+  // A second sell of the same executors would sell twice the share asked for
+  const guard = await withInFlightGuard(`conf:${p.user.id}:${p.tokenAddress}:sell`, () => confidentialSellLocked(p, fail));
+  return guard.ran ? guard.result : fail('A private sell of this token is already running. Wait for it to finish.');
+}
+
+async function confidentialSellLocked(p: Parameters<typeof confidentialSell>[0], fail: (reason: string) => ConfidentialTradeResult): Promise<ConfidentialTradeResult> {
   const acct = await getConfidentialAccount(p.user.id);
   if (!acct) return fail('No confidential positions');
   const holding = (await listUserExecutors(acct.user_id, ['open'])).filter(e => e.token === p.tokenAddress);
@@ -684,6 +709,11 @@ export async function closeExecutor(executor: string): Promise<void> {
   if (!userId) throw new Error(`Executor ${executor} is not tracked`);
   const acct = await getConfidentialAccount(userId);
   if (!acct) throw new Error('No confidential account');
+  if (!ownsExecutor(state, acct)) {
+    logger.error(`Executor ${executor} is recorded for user ${userId} but its on-chain owner differs: exit refused`);
+    await updateExecutor(executor, { last_error: 'owner mismatch: exit refused, needs review' });
+    return;
+  }
   await updateExecutor(executor, { status: 'exiting' });
 
   const fee = await exitFeeBps(executor, state);

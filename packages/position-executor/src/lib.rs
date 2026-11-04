@@ -553,8 +553,19 @@ impl PositionExecutor {
             Status::Exited => "Exited",
         };
         let tokens: Vec<String> = self.tokens.iter().map(|t| cat!(r#"""#, t, r#"""#)).collect();
-        env::value_return(cat!(r#"{"controller":""#, self.controller, r#"","status":""#, status, r#"","tokens":["#, tokens.join(","), r#"],"wnear_registered":"#, self.wnear_registered, r#","value_after_buy":""#, self.value_after_buy, r#"","exit_amount":""#, self.exit_amount, r#"","native_available":""#, self.native_available(), r#"","reserve":""#, self.reserve, r#"","exited_at_block":"#, self.exited_at_block, "}").as_bytes());
+        env::value_return(cat!(r#"{"controller":""#, self.controller, r#"","status":""#, status, r#"","tokens":["#, tokens.join(","), r#"],"wnear_registered":"#, self.wnear_registered, r#","value_after_buy":""#, self.value_after_buy, r#"","exit_amount":""#, self.exit_amount, r#"","native_available":""#, self.native_available(), r#"","reserve":""#, self.reserve, r#"","exited_at_block":"#, self.exited_at_block, r#","owner_hash":""#, hex(&self.owner_hash), r#""}"#).as_bytes());
     }
+}
+
+/// Lowercase hex without core::fmt (the bot compares it with sha256(salt + payout) before NEAR leaves)
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0xf) as usize] as char);
+    }
+    out
 }
 
 // ═══════════════════════════ INTERNALS ═══════════════════════════════════════

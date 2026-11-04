@@ -1,5 +1,6 @@
+import { createHash } from 'crypto';
 import { describe, expect, it } from 'vitest';
-import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, executorInitArgs, exitToIntentsArgs, extractExecutorEvents, parseControllerKeys, roundedReturn } from './executorPool.js';
+import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, executorInitArgs, exitToIntentsArgs, extractExecutorEvents, ownsExecutor, parseControllerKeys, roundedReturn } from './executorPool.js';
 import { generatePrivateAccount, ownerHash } from './intentsPrivate.js';
 
 const NEAR = 10n ** 24n;
@@ -110,5 +111,20 @@ describe('executor borsh arguments', () => {
   it('exit_to_intents(deposit_address, amount): string then u128 little-endian', () => {
     const hex = Buffer.from(exitToIntentsArgs('a.near', (1n << 64n) + 5n)).toString('hex');
     expect(hex).toBe('06000000' + Buffer.from('a.near').toString('hex') + '0500000000000000' + '0100000000000000');
+  });
+});
+
+describe('ownsExecutor', () => {
+  const acct = { owner_salt: 'salt1', payout_address: 'alice.near' };
+  const hash = createHash('sha256').update('salt1alice.near').digest('hex');
+  it('accepts the executor whose on-chain owner hash is this account', () => {
+    expect(ownsExecutor({ owner_hash: hash }, acct)).toBe(true);
+    expect(ownsExecutor({ owner_hash: hash.toUpperCase() }, acct)).toBe(true);
+  });
+  it("refuses another user's executor, a missing hash, or no state", () => {
+    expect(ownsExecutor({ owner_hash: hash }, { owner_salt: 'salt2', payout_address: 'alice.near' })).toBe(false);
+    expect(ownsExecutor({ owner_hash: hash }, { owner_salt: 'salt1', payout_address: 'bob.near' })).toBe(false);
+    expect(ownsExecutor({}, acct)).toBe(false);
+    expect(ownsExecutor(null, acct)).toBe(false);
   });
 });

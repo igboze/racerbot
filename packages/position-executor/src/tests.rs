@@ -707,3 +707,11 @@ fn plan_borsh_vector() {
     assert_eq!(decoded.correlation_id, "intent_1");
     assert_eq!(fee, 150);
 }
+
+#[test]
+fn state_view_exposes_owner_hash() {
+    // The view writes hex(owner_hash); it must match the usual hex encoding the bot compares against
+    assert_eq!(hex(&owner_hash()), hex_of(&owner_hash()));
+    assert_eq!(hex(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
+    setup().get_state();
+}
