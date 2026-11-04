@@ -5987,6 +5987,8 @@
         }
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         lastConfidentialOverview = data;
+        renderPrivateBalanceCard();
+        renderBalanceForCurrentSide();
         if (body) body.hidden = false;
         mountPrivateDeposits();
 
@@ -7358,8 +7360,10 @@
       return str.slice(0, 8) + '...' + str.slice(-10);
     }
 
+    let alphaSelectSeq = 0;
     async function selectAlphaToken(address) {
       if (!address) return;
+      const seq = ++alphaSelectSeq;
       const cleanAddr = address.trim();
       let tok = alphaTokens.find(t => t.address.toLowerCase() === cleanAddr.toLowerCase());
       if (!tok) {
@@ -7381,7 +7385,7 @@
           console.warn('Failed to fetch token detail by address:', e);
         }
       }
-      if (!tok) return;
+      if (!tok || seq !== alphaSelectSeq) return;
       selectedAlphaToken = tok;
 
       if (window.innerWidth <= 767 && typeof switchMobileTerminalTab === 'function') {
@@ -7562,19 +7566,25 @@
 
       realTimeTokenTimer = setInterval(async () => {
         if (!selectedAlphaToken || !selectedAlphaToken.address) return;
+        // The answer must still be for the token selected now: picking another token while this request
+        // is in flight once merged USDC's data (and address) into the newly selected token
+        const polled = selectedAlphaToken;
+        const polledAddr = polled.address.toLowerCase();
 
         try {
-          const res = await fetch(`/alpha/token/${encodeURIComponent(selectedAlphaToken.address)}`);
+          const res = await fetch(`/alpha/token/${encodeURIComponent(polled.address)}`);
           if (!res.ok) return;
           const data = await res.json();
           if (!data.success || !data.token) return;
+          if (selectedAlphaToken !== polled || String(data.token.address || '').toLowerCase() !== polledAddr) return;
 
           const fresh = data.token;
           const oldPrice = selectedAlphaToken.priceUsd;
           const newPrice = fresh.priceUsd;
 
-          // Merge fresh fields into active selected token
-          Object.assign(selectedAlphaToken, fresh);
+          // Merge market fields only: the token's identity (address, symbol, name, decimals) never changes here
+          const { address: _a, symbol: _s, name: _n, decimals: _d, ...market } = fresh;
+          Object.assign(selectedAlphaToken, market);
 
           const priceEl = document.getElementById('spotlight-price-usd');
           const changeEl = document.getElementById('spotlight-change');
@@ -7810,8 +7820,11 @@
       if (!balEl) return;
 
       if (selectedRacerAlphaSide === 'BUY') {
-        if (balLabel) balLabel.textContent = 'NEAR Balance:';
-        balEl.textContent = `${(lastCachedNearBalance || 0).toFixed(4)} Ⓝ`;
+        // Private buys spend executors funded from the private balance, not the public RacerBot wallet
+        const priv = privateFunds();
+        if (balLabel) balLabel.textContent = 'Private balance:';
+        balEl.textContent = priv ? `${priv.total.toFixed(4)} Ⓝ` : '-- Ⓝ';
+        balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors` : 'Sign in to see your private balance';
         balEl.style.color = 'var(--color-primary)';
       } else {
         const sym = selectedAlphaToken?.symbol || selectedTokenBalance.symbol || 'TOKEN';
@@ -7820,6 +7833,39 @@
         balEl.textContent = `${numBal.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${sym}`;
         balEl.style.color = 'var(--color-racer-cyan)';
       }
+    }
+
+    /** Private funds from the last confidential overview: balance (inner wallet) and ready executors, in NEAR */
+    function privateFunds() {
+      const o = lastConfidentialOverview;
+      if (!o) return null;
+      const toNearNum = (y) => { try { return Number(BigInt(y || '0') / 10n ** 18n) / 1e6; } catch (e) { return 0; } };
+      const balance = toNearNum(o.privateBalance);
+      const ready = (o.pool || []).filter(p => p.status === 'ready').reduce((sum, p) => sum + toNearNum(p.size), 0);
+      return { balance, ready, total: balance + ready };
+    }
+
+    /** The card above the trade panel: the private balance this terminal trades from, and how to fund it */
+    function renderPrivateBalanceCard() {
+      const card = document.getElementById('alpha-trading-wallet-card');
+      const inner = document.getElementById('alpha-trading-wallet-inner');
+      if (!card || !inner || !getAuthHeaders().Authorization) return;
+      const priv = privateFunds();
+      card.style.display = 'block';
+      inner.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+          <div style="min-width:0;">
+            <div style="font-weight:700; color:#fff; font-size:11.5px; display:flex; align-items:center; gap:5px;">
+              <span class="live-dot" style="width:5px; height:5px;"></span> Private balance
+            </div>
+            <div style="font-family:var(--font-mono); font-size:13px; color:var(--color-racer-cyan);">
+              ${priv ? `${priv.total.toFixed(4)} NEAR` : '--'}
+              ${priv && priv.ready > 0 ? `<span style="font-size:11px; color:var(--color-text-muted);"> · ${priv.ready.toFixed(2)} ready in executors</span>` : ''}
+            </div>
+          </div>
+          <button type="button" class="btn-secondary btn-sm" style="min-height:44px; padding:0 14px; font-size:12px;" onclick="openPrivateDepositModal()">Deposit</button>
+        </div>
+        <div style="font-size:11px; color:var(--color-text-subtle); margin-top:4px;">Private trades run from here (your inner NEAR Intents wallet). A deposit shows up about 20 seconds after it settles.</div>`;
     }
 
     function renderTradePresetChips() {
@@ -10135,27 +10181,7 @@
             const addrEl = document.getElementById('trading-wallet-address');
             if (addrEl) addrEl.textContent = data.address;
           }
-          if (inlineCard && inlineInner) {
-            const shortAddr = data.address.length > 22 ? data.address.slice(0, 8) + '...' + data.address.slice(-6) : data.address;
-            const linkedWallet = Array.isArray(data.connectedWallets) && data.connectedWallets[0] ? data.connectedWallets[0] : '';
-            inlineCard.style.display = 'block';
-            inlineInner.innerHTML = `
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px;">
-                <span style="font-weight:700; color:#fff; font-size:11.5px; display:flex; align-items:center; gap:5px;">
-                  <span class="live-dot" style="width:5px; height:5px;"></span> RacerBot Trading Wallet
-                </span>
-                <div style="display:flex; align-items:center; gap:6px;">
-                  <code style="font-family:var(--font-mono); font-size:11px; color:var(--color-racer-cyan);" title="${escapeHtml(data.address)}">${escapeHtml(shortAddr)}</code>
-                  <button type="button" class="btn-secondary btn-sm" style="height:28px; min-height:28px; padding:2px 10px; font-size:11px;" onclick="navigator.clipboard.writeText('${escapeHtml(data.address)}').then(() => showToast('RacerBot wallet address copied!', 'success'))">Copy</button>
-                </div>
-              </div>
-              <div style="display:flex; gap:6px; align-items:center;">
-                <input id="inline-trading-wallet-fund" type="number" min="0.1" step="0.5" value="2.5" placeholder="NEAR" style="width:80px; height:30px; background:var(--color-bg); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 8px; font-family:var(--font-mono); font-size:12px;">
-                <button type="button" class="btn-secondary btn-sm" style="flex:1; height:30px; font-size:11px; justify-content:center; border-color:rgba(106, 204, 220, 0.35); color:var(--color-racer-cyan);" onclick="fundTradingWalletInline(this, '${escapeHtml(data.address)}')">
-                  <span>Fund from Connected Wallet${linkedWallet ? ' (' + escapeHtml(linkedWallet.slice(0, 12)) + ')' : ''}</span>
-                </button>
-              </div>`;
-          }
+          renderPrivateBalanceCard();
         } else {
           rememberManagedWallet(null);
           if (body) {
@@ -10164,18 +10190,7 @@
               <button type="button" class="btn-primary" style="height:44px; min-height:44px; justify-content:center; font-size:13px;" onclick="createTradingWallet(this)">Create a RacerBot wallet</button>
               <span style="color:var(--color-text-subtle); font-size:12px;">RacerBot creates a NEAR wallet for you and keeps its key encrypted on the server, like the Telegram bot. You sign in with your connected wallet as before; fund it whenever you like.</span>`;
           }
-          if (inlineCard && inlineInner) {
-            inlineCard.style.display = 'block';
-            inlineInner.innerHTML = `
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                <div style="font-size:11px; color:var(--color-text-muted); line-height:1.35;">
-                  <b style="color:#fff;">External Wallet Connected</b> - Create a free RacerBot Trading Wallet for 1-click private swaps &amp; automated PNL copy-trading.
-                </div>
-                <button type="button" class="btn-primary btn-sm" style="height:30px; padding:0 10px; font-size:11px; white-space:nowrap;" onclick="createTradingWallet(this)">
-                  <span>Create Wallet</span>
-                </button>
-              </div>`;
-          }
+          renderPrivateBalanceCard();
         }
       } catch (err) {
         if (box) box.hidden = false;
