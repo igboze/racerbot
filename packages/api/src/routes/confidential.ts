@@ -20,7 +20,7 @@ import {
   withdrawPrivate,
   WalletNeedsNearError,
 } from '../executorPool.js';
-import { verifiedUser } from './verifiedUser.js';
+import { verifiedUser, unprovenWalletClaim } from './verifiedUser.js';
 import { buildRecoveryKit } from '../recoveryKit.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
 
@@ -35,8 +35,17 @@ const toNear = (y: bigint) => Number(y / 10n ** 18n) / 1e6;
 const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$/;
 
 export function registerConfidentialRoutes(router: Router): void {
-  const authed = async (req: any, res: any): Promise<UserRecord | null> => {
-    const user = await verifiedUser(req).catch(() => null);
+  const authed = async (req: any, res: any, allowClaimForRead = false): Promise<UserRecord | null> => {
+    let user = await verifiedUser(req).catch(() => null);
+    if (!user?.id && allowClaimForRead && (req.method === 'GET' || req.method === 'HEAD')) {
+      const claim = unprovenWalletClaim(req);
+      if (claim) {
+        const { getUserBySubaccount, getUserBySolanaAddress, getUserByEvmAddress } = await import('@racerbot/db');
+        user = (await getUserBySubaccount(claim).catch(() => null)) ||
+               (await getUserByEvmAddress(claim).catch(() => null)) ||
+               (await getUserBySolanaAddress(claim).catch(() => null));
+      }
+    }
     if (!user?.id) {
       res.status(401).json({ error: 'Sign in with Telegram, or connect your wallet and approve the sign-in message, to use private trading.' });
       return null;
@@ -51,7 +60,7 @@ export function registerConfidentialRoutes(router: Router): void {
 
   router.get('/alpha/confidential', async (req, res) => {
     try {
-      const user = await authed(req, res);
+      const user = await authed(req, res, true);
       if (!user) return;
       res.json({ success: true, ...(await confidentialOverview(user)) });
     } catch (err: any) {

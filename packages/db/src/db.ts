@@ -687,6 +687,13 @@ export async function updateUserStarknetWallet(userId: string, starknetAddress: 
   invalidateUserCache(userId);
 }
 
+export async function getUserByEvmAddress(evmAddress: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const result = await db.query('SELECT * FROM users WHERE LOWER(evm_address) = LOWER($1)', [evmAddress]);
+  if (result.rows.length === 0) return null;
+  return rowToUser(result.rows[0]);
+}
+
 export async function getUserBySolanaAddress(solanaAddress: string): Promise<UserRecord | null> {
   const db = await getDb();
   const result = await db.query('SELECT * FROM users WHERE solana_address = $1', [solanaAddress]);

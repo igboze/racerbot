@@ -15,6 +15,9 @@ const quoteWalletDeposit = vi.fn(async () => ({ depositAddress: 'b'.repeat(64), 
 vi.mock('@racerbot/db', () => ({
   getUserById: (id: string) => getUserById(id),
   getUserByTelegramId: vi.fn(async () => null),
+  getUserBySubaccount: vi.fn(async (sub: string) => Object.values(users).find(u => u.subaccount_id === sub) ?? null),
+  getUserByEvmAddress: vi.fn(async () => null),
+  getUserBySolanaAddress: vi.fn(async () => null),
   getConfidentialAccount: (id: string) => getConfidentialAccount(id),
   listUserExecutors: vi.fn(async () => [
     { account_id: 'e1.router.near', status: 'open', token: 'hoot.near' },
@@ -60,17 +63,28 @@ async function call(route: string, headers: Record<string, string>, body: any = 
   res.json = (b: any) => { res.body = b; return res; };
   res.headers = {};
   res.set = (k: string, v: string) => { res.headers[k] = v; return res; };
-  await handlers[route]({ headers, body, query: {} }, res);
+  const [method] = route.split(' ');
+  await handlers[route]({ method, headers, body, query: {} }, res);
   return res;
 }
 
 describe('private trading routes', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('refuses a bare wallet-address header, even for a real RacerBot account', async () => {
+  it('serves read-only overview for a connected wallet address', async () => {
     const res = await call('GET /alpha/confidential', { 'x-wallet-address': managed.subaccount_id });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('refuses mutations with only a bare wallet-address header', async () => {
+    const res = await call('POST /alpha/confidential/deposit', { 'x-wallet-address': managed.subaccount_id }, { amountNear: 1 });
     expect(res.statusCode).toBe(401);
-    expect(getUserById).not.toHaveBeenCalled();
+  });
+
+  it('refuses recovery-kit download with only a bare wallet-address header', async () => {
+    const res = await call('GET /alpha/confidential/recovery-kit', { 'x-wallet-address': managed.subaccount_id });
+    expect(res.statusCode).toBe(401);
   });
 
   it('refuses an unknown or made-up session token', async () => {

@@ -7881,7 +7881,7 @@
 
       if (selectedRacerAlphaSide === 'BUY') {
         // Private buys spend executors funded from the private balance, not the public RacerBot wallet
-        const priv = getAuthHeaders().Authorization && !confSessionRejected ? privateFunds() : null;
+        const priv = !confSessionRejected ? privateFunds() : null;
         if (balLabel) balLabel.textContent = 'Private balance:';
         balEl.textContent = priv ? `${priv.total.toFixed(4)} Ⓝ` : '-- Ⓝ';
         balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors` : 'Sign in to see your private balance';
@@ -7947,7 +7947,7 @@
     function renderAccountStrip() {
       const strip = document.getElementById('alpha-account-strip');
       if (!strip) return;
-      const authed = Boolean(getAuthHeaders().Authorization) && !confSessionRejected;
+      const authed = Boolean(getAuthHeaders().Authorization || (getActiveUserAddress() && lastConfidentialOverview?.success !== false)) && !confSessionRejected;
       const o = lastConfidentialOverview;
       const priv = privateFunds();
       const step = !authed ? 'connect' : (priv && priv.total > 0 ? 'trade' : 'fund');
@@ -10172,7 +10172,9 @@
       const sbBal = document.getElementById('sidebar-user-bal');
       const depBal = document.getElementById('deposit-modal-balance');
 
-      if (gmBal && selectedRacerAlphaSide === 'BUY') gmBal.textContent = `${preciseBal} Ⓝ`;
+      if (gmBal && selectedRacerAlphaSide === 'BUY') {
+        renderBalanceForCurrentSide();
+      }
       if (sbBal) sbBal.textContent = `${shortBal} NEAR`;
       if (depBal) depBal.textContent = `${shortBal} NEAR`;
     }

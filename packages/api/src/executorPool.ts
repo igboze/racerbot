@@ -283,7 +283,17 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
     if (missing.length === 0) return 0;
     const cap = BigInt(acct.pool_cap_yocto) < HARD_POOL_CAP ? BigInt(acct.pool_cap_yocto) : HARD_POOL_CAP;
     let committed = live.reduce((s, e) => s + BigInt(e.size_yocto), 0n);
-    let available = await privateBalance(acct).catch(() => 0n);
+    let available = await privateBalance(acct).catch(async () => {
+      const moves = await listUserConfidentialMoves(acct.user_id, 50);
+      let ledger = 0n;
+      for (const m of moves) {
+        if (m.status !== 'SUCCESS') continue;
+        const amt = BigInt(m.amount || '0');
+        if (m.kind === 'deposit' || m.kind === 'return') ledger += amt;
+        else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') ledger -= amt;
+      }
+      return ledger > committed ? ledger - committed : 0n;
+    });
     const toCreate: bigint[] = [];
     for (const raw of missing) {
       const size = BigInt(raw);
@@ -623,11 +633,31 @@ export async function confidentialOverview(user: UserRecord) {
       moves: [],
     };
   }
-  const [balance, executors, moves] = await Promise.all([
+  const [rawBalance, executors, moves] = await Promise.all([
     privateBalance(acct).catch((err) => { logger.warn(`Failed reading private balance for ${acct.user_id}: ${err?.message}`); return null; }),
     listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed', 'open', 'exiting', 'exited', 'failed']),
-    listUserConfidentialMoves(acct.user_id, 30),
+    listUserConfidentialMoves(acct.user_id, 50),
   ]);
+
+  let balance = rawBalance;
+  if (balance === null) {
+    // Fall back to confirmed ledger moves
+    let ledger = 0n;
+    for (const m of moves) {
+      if (m.status !== 'SUCCESS') continue;
+      const amt = BigInt(m.amount || '0');
+      if (m.kind === 'deposit' || m.kind === 'return') {
+        ledger += amt;
+      } else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') {
+        ledger -= amt;
+      }
+    }
+    const committed = executors
+      .filter(e => ['creating', 'funding', 'ready', 'claimed'].includes(e.status))
+      .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
+    balance = ledger > committed ? ledger - committed : 0n;
+    logger.info(`Resolved fallback private balance from ledger moves for ${acct.user_id}: ${balance.toString()} yocto`);
+  }
   const near = getNear();
   const positions = await Promise.all(executors.filter(e => e.status === 'open' && e.token).map(async e => ({
     executor: e.account_id,
