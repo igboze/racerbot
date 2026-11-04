@@ -6329,6 +6329,7 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
     /** The console's executor pool links here: the private cross-chain deposit card on Receipts */
     function openPrivateCrossChainDeposit() {
       switchNav('receipts');
+      confLoadXchainChains(); // the chain list loads with the overview, which may not have rendered yet
       setTimeout(() => {
         const card = document.getElementById('conf-xchain-label')?.closest('.conf-card');
         if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -9406,7 +9407,11 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       }
     }
 
-    /** Whether the signed-in user has private mode switched on (loads the overview when not seen yet) */
+    /**
+     * Whether this user trades privately: private trading is live and they already use it (a private
+     * balance or executors). Every web sign-in gets a private account whose `enabled` defaults to true,
+     * so that flag alone says nothing. Loads the overview when it has not been seen yet.
+     */
     async function isPrivateModeOn() {
       if (!lastConfidentialOverview) {
         try {
@@ -9415,7 +9420,11 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           if (res.ok && data.success) lastConfidentialOverview = data;
         } catch (e) { /* not signed in, or private trading is off */ }
       }
-      return Boolean(lastConfidentialOverview?.account?.settings?.enabled);
+      const o = lastConfidentialOverview;
+      if (!o || o.enabled !== true || o.account?.settings?.enabled === false) return false;
+      let balance = 0n;
+      try { balance = BigInt(o.privateBalance || '0'); } catch (e) { balance = 0n; }
+      return balance > 0n || (Array.isArray(o.pool) && o.pool.length > 0);
     }
 
     /**
