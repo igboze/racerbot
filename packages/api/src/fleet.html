@@ -1073,9 +1073,10 @@
   <div class="modal-overlay" id="deposit-modal" style="display:none;">
     <div class="modal-card" style="max-width:480px; max-height:90vh; overflow-y:auto;">
       <button class="modal-close" onclick="closeDepositModal()" aria-label="Close">×</button>
-      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Deposit NEAR</div>
+      <div style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Deposit to your RacerBot wallet (public)</div>
       <p style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px; line-height:1.5;">
-        Your fleet is funded from your RacerBot account. Fund it below, then split it across your fleet wallets.
+        RaceFleet trades from your public RacerBot wallet. Fund it below, then split it across your fleet wallets.
+        Private (confidential) trading uses a separate private balance: deposit to it on <a href="/alpha" style="color:var(--color-primary);">Racer Alpha</a>.
       </p>
 
       <div class="fdep-label">YOUR RACERBOT ACCOUNT</div>
@@ -1711,6 +1712,11 @@
         if (!res.ok) throw new Error('Status failed');
         const data = await res.json();
         fleetMainAccount = (data.user && data.user.subaccountId) || null;
+        // Racer Alpha links public deposits here (/fleet#deposit)
+        if (fleetMainAccount && location.hash === '#deposit') {
+          history.replaceState(null, '', location.pathname + location.search);
+          openDepositModal();
+        }
         fleetTelegramId = (data.user && data.user.telegramId) || null;
 
         if (data.hasFleet && data.fleet) {

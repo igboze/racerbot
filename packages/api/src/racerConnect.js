@@ -1009,6 +1009,18 @@
      * Sign one transaction of function calls with the connected wallet.
      * `actions`: [{ methodName, args, gas, deposit }] with gas and deposit as strings.
      */
+    /** The account the connected NEAR wallet signs as, or null when none is connected */
+    async nearWalletAccount() {
+      const wallet = await this.getNearWallet();
+      if (!wallet || typeof wallet.getAccounts !== 'function') return null;
+      try {
+        const accounts = await wallet.getAccounts();
+        return (accounts && accounts[0] && accounts[0].accountId) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     async sendFunctionCalls({ receiverId, actions }) {
       if (!this.nearConnector) {
         await this.initNearConnect(false);

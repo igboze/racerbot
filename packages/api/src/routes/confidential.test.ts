@@ -99,6 +99,22 @@ describe('private trading routes', () => {
     expect(depositFromWallet).not.toHaveBeenCalled();
   });
 
+  it('a RacerBot user paying from their connected NEAR wallet gets a transaction to sign, refunded to that wallet', async () => {
+    const res = await call('POST /alpha/confidential/deposit', { authorization: 'Bearer tok-managed' },
+      { amountNear: 1, source: 'connected_wallet', fromAccount: 'Bob.near' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.requiresWalletSignature).toBe(true);
+    expect(depositFromWallet).not.toHaveBeenCalled();
+    // The refund is quoted to the wallet that pays, not the RacerBot wallet
+    expect(quoteWalletDeposit).toHaveBeenCalledWith(managed, 10n ** 24n, 'bob.near');
+  });
+
+  it('the RacerBot wallet source is signed server-side', async () => {
+    await call('POST /alpha/confidential/deposit', { authorization: 'Bearer tok-managed' }, { amountNear: 1, source: 'racer_wallet' });
+    expect(depositFromWallet).toHaveBeenCalled();
+    expect(quoteWalletDeposit).not.toHaveBeenCalled();
+  });
+
   it('cross-chain deposits need a known token', async () => {
     const res = await call('POST /alpha/confidential/deposit/crosschain', { authorization: 'Bearer tok-external' }, { tokenKey: 'nope', amount: 1 });
     expect(res.statusCode).toBe(400);

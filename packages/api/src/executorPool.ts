@@ -821,10 +821,15 @@ export interface WalletDeposit {
   transaction: { receiverId: string; actions: { methodName: string; args: object; gas: string; deposit: string }[] };
 }
 
-/** Deposit from an external wallet: RacerBot quotes, the user's wallet signs, refunds go back to that wallet */
-export async function quoteWalletDeposit(user: UserRecord, amount: bigint): Promise<WalletDeposit> {
+/**
+ * Deposit from the user's connected NEAR wallet into their private balance: RacerBot quotes, that wallet
+ * signs. `fromAccount` is the wallet that pays, so a refund (an expired or unsettled quote) goes back to
+ * it, never to a different wallet the user did not pay from.
+ */
+export async function quoteWalletDeposit(user: UserRecord, amount: bigint, fromAccount: string): Promise<WalletDeposit> {
+  if (!isNearPayoutAccount(fromAccount)) throw new Error('Connect the NEAR wallet you are paying from.');
   const acct = await ensureConfidentialAccount(user);
-  const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
+  const quote = await quoteShield(acct.private_account_id, amount, fromAccount);
   const to = quote.depositAddress;
   await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: to, amount: amount.toString(), destination: acct.private_account_id });
   return {

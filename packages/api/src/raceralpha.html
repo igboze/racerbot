@@ -2659,6 +2659,19 @@
     .conf-xchain-result { display: flex; flex-direction: column; gap: 8px; }
     .conf-xchain-result img { width: 148px; height: 148px; background: #fff; border-radius: 8px; padding: 6px; }
     .conf-address { font: 12px var(--font-mono); word-break: break-all; color: var(--color-text); }
+    /* Private deposit panel: one component wherever Alpha offers a deposit */
+    .pdep { display: flex; flex-direction: column; gap: 10px; }
+    .pdep-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .pdep-source {
+      min-height: 44px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--color-border);
+      background: transparent; color: var(--color-text-muted); font: 600 12px var(--font-sans, inherit); cursor: pointer; line-height: 1.2;
+    }
+    .pdep-source[aria-pressed="true"] { border-color: var(--color-primary); color: var(--color-text); background: rgba(52, 211, 153, 0.08); }
+    .pdep-source:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+    .pdep-pane { display: flex; flex-direction: column; gap: 8px; }
+    .pdep-pane[hidden] { display: none; }
+    .pdep-from { font: 12px var(--font-mono); color: var(--color-text); word-break: break-all; }
+    @media (max-width: 420px) { .pdep-sources { grid-template-columns: 1fr; } }
     @media (max-width: 767px) {
       .receipt-item summary {
         grid-template-columns: minmax(0, 1fr) auto 20px;
@@ -3871,7 +3884,7 @@
     </nav>
 
     <div class="desktop-actions">
-      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openDepositModal()" style="display:none;" title="Public deposit to your trading wallet. For private trading, use Deposit to private balance in the Confidential Pool.">Deposit to wallet</button>
+      <button id="header-deposit-btn" class="btn btn-secondary btn-sm" onclick="openPrivateDepositModal()" style="display:none;" title="Deposit to your private balance (inner NEAR Intents wallet)">Deposit</button>
       <button id="header-connect-btn" class="btn btn-primary btn-sm" onclick="handleHeaderConnectClick()">
         <span id="header-connect-label">Connect</span>
       </button>
@@ -4637,26 +4650,7 @@
 
                 <!-- Collapsible private-balance deposit drawer -->
                 <div class="console-conf-drawer" id="console-conf-deposit-box" hidden>
-                  <div style="font-size:11.5px; color:var(--color-text-muted); line-height:1.4;">
-                    Goes to your private balance (NEAR Intents), not your wallet. RacerBot funds disposable executors from it, so your wallet never appears in a trade.
-                  </div>
-                  <div style="display:flex; gap:8px;">
-                    <input type="number" id="console-conf-deposit-amount" min="0.1" step="0.5" value="5.0" placeholder="NEAR amount" aria-label="Deposit amount in NEAR"
-                      style="flex:1; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 12px; font-family:var(--font-mono); font-size:14px; font-weight:600;">
-                    <button type="button" class="btn-primary" onclick="confDepositFromConsole(this)" style="min-height:44px; padding:0 16px; font-size:12.5px; font-weight:700; white-space:nowrap;">
-                      <span>Deposit NEAR</span>
-                    </button>
-                  </div>
-                  <div class="alpha-preset-chips">
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='2'">2Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='5'">5Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='10'">10Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='25'">25Ⓝ</button>
-                    <button type="button" class="alpha-chip" onclick="document.getElementById('console-conf-deposit-amount').value='50'">50Ⓝ</button>
-                  </div>
-                  <button type="button" class="btn-secondary" onclick="openPrivateCrossChainDeposit()" style="min-height:44px; width:100%; justify-content:center; font-size:12px;">
-                    <span>Deposit privately from another chain (SOL, BTC, USDC...)</span>
-                  </button>
+                  <div class="pdep" data-private-deposit></div>
                 </div>
 
                 <!-- Collapsible Multi-Executor Config Drawer -->
@@ -5207,10 +5201,7 @@
               <div class="conf-card" aria-labelledby="conf-balance-label">
                 <h4 id="conf-balance-label">Private balance</h4>
                 <div class="conf-big"><span id="conf-balance">-</span><small>NEAR</small></div>
-                <div class="conf-row">
-                  <input class="conf-input" id="conf-deposit-amount" type="number" min="0.1" step="0.1" placeholder="Amount (NEAR)" aria-label="Deposit amount in NEAR">
-                  <button type="button" class="receipts-btn" onclick="confDeposit(this)">Deposit</button>
-                </div>
+                <div class="pdep" data-private-deposit></div>
                 <div class="conf-row">
                   <input class="conf-input" id="conf-withdraw-amount" type="number" min="0.01" step="0.1" placeholder="Amount (NEAR)" aria-label="Withdraw amount in NEAR">
                   <input class="conf-input" id="conf-withdraw-to" type="text" placeholder="To (default: your wallet)" aria-label="Withdraw destination account">
@@ -5243,20 +5234,6 @@
                   <button type="button" class="receipts-btn" onclick="confSavePool(this)">Save</button>
                 </div>
                 <p class="conf-hint">A buy uses ready executors in your chosen mode, and replacements are funded straight away (about 15 seconds). NEAR waiting here is visible on-chain but not linked to you.</p>
-              </div>
-              <div class="conf-card" aria-labelledby="conf-xchain-label">
-                <h4 id="conf-xchain-label">Deposit from another chain</h4>
-                <div class="conf-row">
-                  <select class="conf-input" id="conf-xchain-chain" aria-label="Chain to send from" onchange="confLoadXchainTokens()"></select>
-                  <select class="conf-input" id="conf-xchain-token" aria-label="Token to send"></select>
-                </div>
-                <div class="conf-row">
-                  <input class="conf-input" id="conf-xchain-amount" type="number" min="0" step="any" placeholder="Amount" aria-label="Amount to send">
-                  <button type="button" class="receipts-btn" onclick="confXchainQuote(this)">Get address</button>
-                </div>
-                <div class="conf-xchain-result" id="conf-xchain-result" aria-live="polite" hidden></div>
-                <p class="conf-hint">Send SOL, BTC, USDC and more from any wallet. It arrives in your private balance as NEAR without passing through a public NEAR wallet. 1% fee, the same as regular deposits.</p>
-                <p class="conf-hint">Want it in your public RacerBot wallet instead (for Fleet or regular trades)? <a href="#" onclick="event.preventDefault(); openDepositModal({ public: true });">Deposit to wallet</a></p>
               </div>
             </div>
             <h4 class="conf-subhead">Open positions</h4>
@@ -5396,6 +5373,17 @@
   </div>
 
   <!-- Universal Cross-Chain & Multi-Chain Deposit Modal (Powered by NEAR Intents) -->
+  <div class="modal-backdrop" id="modal-private-deposit" onclick="if(event.target===this)closePrivateDepositModal()">
+    <div class="modal-window" role="dialog" aria-modal="true" aria-labelledby="pdep-modal-title">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;">
+        <h3 id="pdep-modal-title" style="font-family:var(--font-display); font-size:17px; font-weight:800; color:#fff; margin:0;">Deposit to private balance</h3>
+        <button type="button" class="btn-secondary" onclick="closePrivateDepositModal()" aria-label="Close" style="min-height:44px; min-width:44px; justify-content:center;">✕</button>
+      </div>
+      <div class="pdep" data-private-deposit></div>
+      <p class="conf-hint" style="margin-top:12px;">Funding RaceFleet or regular (public) trades? Those use your public RacerBot wallet: <a href="/fleet#deposit" style="color:var(--color-primary);">deposit on the Fleet page</a>.</p>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="modal-deposit">
     <div class="modal-window modal-wide">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
@@ -6000,7 +5988,7 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         lastConfidentialOverview = data;
         if (body) body.hidden = false;
-        confLoadXchainChains();
+        mountPrivateDeposits();
 
         const privBalFmt = data.privateBalance === null || data.privateBalance === undefined ? '0' : nearFmt(data.privateBalance);
         if (document.getElementById('conf-balance')) document.getElementById('conf-balance').textContent = privBalFmt;
@@ -6152,62 +6140,6 @@
       }
     }
 
-    async function executeConfidentialNearDeposit(amountNear, btn) {
-      if (!(amountNear >= 0.1)) { showToast('Deposit at least 0.1 NEAR.', 'error'); return false; }
-      let data;
-      try {
-        data = await confPost('/alpha/confidential/deposit', { amountNear }, btn, 'Depositing...');
-      } catch (err) {
-        // The RacerBot wallet is short: a connected NEAR wallet can sign the deposit instead
-        const connected = window.RacerConnect?.activeNearWallet;
-        if (err.code !== 'wallet_needs_near' || !connected || typeof window.RacerConnect.sendFunctionCalls !== 'function') throw err;
-        if (!confirm(`${err.message}
-
-Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) return false;
-        data = await confPost('/alpha/confidential/deposit', { amountNear, fromConnectedWallet: true }, btn, 'Preparing...');
-      }
-      if (data.requiresWalletSignature) {
-        if (!window.RacerConnect || typeof window.RacerConnect.sendFunctionCalls !== 'function') {
-          throw new Error('Connect your NEAR wallet to approve the deposit.');
-        }
-        showToast('Approve the confidential Intents deposit in your NEAR wallet.', 'info');
-        const tx = await window.RacerConnect.sendFunctionCalls(data.transaction);
-        const txHash = tx?.hash || tx?.transaction?.hash;
-        if (!txHash) throw new Error('Wallet did not return a transaction hash.');
-        const done = await confPost('/alpha/confidential/deposit/submit', { depositAddress: data.depositAddress, txHash }, btn, 'Recording...');
-        data.message = done.message;
-      }
-      showToast(data.message || `Deposited ${amountNear} NEAR into Confidential Pool. Spawning executors...`, 'success');
-      refreshUserBalance();
-      setTimeout(loadConfidential, 1500);
-      setTimeout(loadConfidential, 6000);
-      return true;
-    }
-
-    async function confDeposit(btn) {
-      const amountNear = Number(document.getElementById('conf-deposit-amount').value);
-      try {
-        const ok = await executeConfidentialNearDeposit(amountNear, btn);
-        if (ok) document.getElementById('conf-deposit-amount').value = '';
-      } catch (err) {
-        showToast(`Deposit failed: ${err.message}`, 'error');
-      }
-    }
-
-    async function confDepositFromConsole(btn) {
-      const input = document.getElementById('console-conf-deposit-amount');
-      const amountNear = Number(input?.value || '0');
-      try {
-        const ok = await executeConfidentialNearDeposit(amountNear, btn);
-        if (ok) {
-          const depBox = document.getElementById('console-conf-deposit-box');
-          if (depBox) depBox.hidden = true;
-        }
-      } catch (err) {
-        showToast(`Deposit failed: ${err.message}`, 'error');
-      }
-    }
-
     function parsePoolSizesInput(rawStr) {
       if (!rawStr || !rawStr.trim()) return undefined;
       const nums = rawStr.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n >= 0.1);
@@ -6298,23 +6230,161 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       }
     }
 
-    let confXchainLoaded = false;
-    async function confLoadXchainChains() {
-      const sel = document.getElementById('conf-xchain-chain');
-      if (!sel || confXchainLoaded) return;
+    // ── Private deposit panel ──────────────────────────────────────────────────
+    // One component wherever Alpha offers a deposit (console drawer, Receipts card, Deposit modal). Every
+    // source lands in the user's private balance, their inner NEAR Intents wallet, never a public wallet:
+    //   RacerBot wallet:   RacerBot signs from the user's RacerBot NEAR wallet
+    //   Connected wallet:  the user's NEAR wallet signs; a refund goes back to that same wallet
+    //   Another chain:     a one-time 1Click address straight into the private balance
+    // Public deposits (RacerBot wallet, for RaceFleet and regular trades) live on the Fleet page.
+
+    const pdepState = new WeakMap();
+    let pdepChains = null;
+
+    function mountPrivateDeposits() {
+      document.querySelectorAll('[data-private-deposit]').forEach(el => {
+        if (pdepState.has(el)) { pdepRefresh(el); return; }
+        pdepState.set(el, { source: 'racer', quote: null });
+        el.innerHTML = `
+          <p class="conf-hint">Lands in your <b>private balance</b> (your inner NEAR Intents wallet). Executors are funded from it, so your wallet never appears in a trade.</p>
+          <div class="pdep-sources" role="group" aria-label="Deposit from">
+            <button type="button" class="pdep-source" data-src="racer" aria-pressed="true">RacerBot wallet</button>
+            <button type="button" class="pdep-source" data-src="connected" aria-pressed="false">Connected NEAR wallet</button>
+            <button type="button" class="pdep-source" data-src="chain" aria-pressed="false">Another chain</button>
+          </div>
+          <div class="pdep-pane" data-pane="racer">
+            <div class="conf-hint">From <span class="pdep-from" data-racer-addr>your RacerBot wallet</span>. RacerBot signs; no approval needed.</div>
+            <div class="conf-row">
+              <input class="conf-input" type="number" min="0.1" step="0.1" placeholder="Amount (NEAR)" aria-label="Amount in NEAR" data-amount>
+              <button type="button" class="receipts-btn" data-go="racer">Deposit</button>
+            </div>
+          </div>
+          <div class="pdep-pane" data-pane="connected" hidden>
+            <div class="conf-hint" data-connected-line></div>
+            <div class="conf-row" data-connected-form>
+              <input class="conf-input" type="number" min="0.1" step="0.1" placeholder="Amount (NEAR)" aria-label="Amount in NEAR" data-amount>
+              <button type="button" class="receipts-btn" data-go="connected">Deposit</button>
+            </div>
+          </div>
+          <div class="pdep-pane" data-pane="chain" hidden>
+            <div class="conf-row">
+              <select class="conf-input" aria-label="Chain to send from" data-chain></select>
+              <select class="conf-input" aria-label="Token to send" data-token></select>
+            </div>
+            <div class="conf-row">
+              <input class="conf-input" type="number" min="0" step="any" placeholder="Amount" aria-label="Amount to send" data-chain-amount>
+              <button type="button" class="receipts-btn" data-go="chain">Get address</button>
+            </div>
+            <div class="conf-xchain-result" aria-live="polite" data-result hidden></div>
+            <p class="conf-hint">SOL, ETH, USDC, BTC and more. If 1Click cannot fill it, the refund stays in your private balance. 1% fee.</p>
+          </div>
+          <p class="conf-hint" aria-live="polite" data-status></p>`;
+        el.querySelectorAll('.pdep-source').forEach(b => b.addEventListener('click', () => pdepSelect(el, b.dataset.src)));
+        el.querySelector('[data-go="racer"]').addEventListener('click', e => pdepFromRacerWallet(el, e.currentTarget));
+        el.querySelector('[data-go="connected"]').addEventListener('click', e => pdepFromConnectedWallet(el, e.currentTarget));
+        el.querySelector('[data-go="chain"]').addEventListener('click', e => pdepFromChain(el, e.currentTarget));
+        el.querySelector('[data-chain]').addEventListener('change', () => pdepLoadTokens(el));
+        pdepRefresh(el);
+      });
+    }
+
+    function pdepSelect(el, src) {
+      pdepState.get(el).source = src;
+      el.querySelectorAll('.pdep-source').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.src === src)));
+      el.querySelectorAll('.pdep-pane').forEach(p => { p.hidden = p.dataset.pane !== src; });
+      pdepStatus(el, '');
+      if (src === 'chain') pdepLoadChains(el);
+      pdepRefresh(el);
+    }
+
+    /** Show which wallet each source pays from */
+    function pdepRefresh(el) {
+      const racer = window.RacerConnect?.user?.subaccountId || window.RacerConnect?.user?.managedWallet || '';
+      const racerEl = el.querySelector('[data-racer-addr]');
+      if (racerEl) racerEl.textContent = racer || 'your RacerBot wallet';
+      const near = window.RacerConnect?.activeNearWallet || '';
+      const line = el.querySelector('[data-connected-line]');
+      const form = el.querySelector('[data-connected-form]');
+      if (line) {
+        line.innerHTML = near
+          ? `From <span class="pdep-from">${escapeHtml(near)}</span>. You approve in that wallet; if the deposit does not settle, the refund returns to it.`
+          : 'Connect the NEAR wallet you want to pay from. <button type="button" class="receipts-btn" data-connect-near>Connect NEAR wallet</button>';
+        line.querySelector('[data-connect-near]')?.addEventListener('click', () => handleOpenNearWalletSelector().then(() => pdepRefresh(el)));
+      }
+      if (form) form.hidden = !near;
+    }
+
+    function pdepStatus(el, text, tone) {
+      const box = el.querySelector('[data-status]');
+      if (!box) return;
+      box.textContent = text;
+      box.style.color = tone === 'error' ? '#FF6B73' : tone === 'ok' ? 'var(--color-primary)' : '';
+    }
+
+    function pdepAmount(el) {
+      const pane = el.querySelector(`.pdep-pane[data-pane="${pdepState.get(el).source}"]`);
+      return Number(pane?.querySelector('[data-amount]')?.value || '0');
+    }
+
+    function pdepDone(el, message) {
+      pdepStatus(el, message, 'ok');
+      showToast(message, 'success');
+      refreshUserBalance();
+      setTimeout(loadConfidential, 1500);
+      setTimeout(loadConfidential, 20000);
+    }
+
+    async function pdepFromRacerWallet(el, btn) {
+      const amountNear = pdepAmount(el);
+      if (!(amountNear >= 0.1)) { pdepStatus(el, 'Deposit at least 0.1 NEAR.', 'error'); return; }
       try {
-        const data = await fetch('/deposit/chains').then(r => r.json());
-        sel.innerHTML = (data.chains || []).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
-        confXchainLoaded = true;
-        await confLoadXchainTokens();
+        const data = await confPost('/alpha/confidential/deposit', { amountNear, source: 'racer_wallet' }, btn, 'Depositing...');
+        pdepDone(el, data.message || 'Deposit sent. It reaches your private balance in about 20 seconds.');
+      } catch (err) {
+        // Short RacerBot wallet: point at the other sources instead of switching silently
+        pdepStatus(el, err.code === 'wallet_needs_near'
+          ? `${err.message} Or deposit from your connected NEAR wallet or another chain.`
+          : `Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function pdepFromConnectedWallet(el, btn) {
+      const amountNear = pdepAmount(el);
+      const fromAccount = window.RacerConnect?.activeNearWallet || '';
+      if (!fromAccount) { pdepRefresh(el); pdepStatus(el, 'Connect your NEAR wallet first.', 'error'); return; }
+      if (!(amountNear >= 0.1)) { pdepStatus(el, 'Deposit at least 0.1 NEAR.', 'error'); return; }
+      try {
+        // The wallet that signs must be the one the refund is quoted to
+        const signer = typeof window.RacerConnect.nearWalletAccount === 'function' ? await window.RacerConnect.nearWalletAccount() : fromAccount;
+        if (signer && signer !== fromAccount) throw new Error(`Your NEAR wallet is signed in as ${signer}, not ${fromAccount}. Reconnect it and try again.`);
+        const data = await confPost('/alpha/confidential/deposit', { amountNear, source: 'connected_wallet', fromAccount }, btn, 'Preparing...');
+        pdepStatus(el, `Approve ${amountNear} NEAR in your wallet (${fromAccount}).`);
+        const tx = await window.RacerConnect.sendFunctionCalls(data.transaction);
+        const txHash = tx?.hash || tx?.transaction?.hash;
+        if (!txHash) throw new Error('Your wallet did not return a transaction hash.');
+        const done = await confPost('/alpha/confidential/deposit/submit', { depositAddress: data.depositAddress, txHash }, btn, 'Recording...');
+        pdepDone(el, done.message || 'Deposit sent. It reaches your private balance in about 20 seconds.');
+      } catch (err) {
+        pdepStatus(el, `Deposit failed: ${err.message}`, 'error');
+      }
+    }
+
+    async function pdepLoadChains(el) {
+      const sel = el.querySelector('[data-chain]');
+      if (!sel || sel.options.length) return;
+      try {
+        pdepChains ??= (await fetch('/deposit/chains').then(r => r.json())).chains || [];
+        sel.innerHTML = pdepChains.filter(c => c.id !== 'near').map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        await pdepLoadTokens(el);
       } catch (err) {
         sel.innerHTML = '<option value="">Chains unavailable</option>';
       }
     }
 
-    async function confLoadXchainTokens() {
-      const chain = document.getElementById('conf-xchain-chain').value;
-      const sel = document.getElementById('conf-xchain-token');
+    async function pdepLoadTokens(el) {
+      const chain = el.querySelector('[data-chain]').value;
+      const sel = el.querySelector('[data-token]');
+      if (!chain) { sel.innerHTML = ''; return; }
       sel.innerHTML = '<option value="">Loading...</option>';
       try {
         const data = await fetch(`/deposit/tokens?chain=${encodeURIComponent(chain)}`).then(r => r.json());
@@ -6326,78 +6396,78 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       }
     }
 
-    /** The console's executor pool links here: the private cross-chain deposit card on Receipts */
-    function openPrivateCrossChainDeposit() {
-      switchNav('receipts');
-      confLoadXchainChains(); // the chain list loads with the overview, which may not have rendered yet
-      setTimeout(() => {
-        const card = document.getElementById('conf-xchain-label')?.closest('.conf-card');
-        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        document.getElementById('conf-xchain-chain')?.focus({ preventScroll: true });
-      }, 300);
-    }
-
-    async function confXchainQuote(btn) {
-      const tokenKey = document.getElementById('conf-xchain-token').value;
-      const amount = Number(document.getElementById('conf-xchain-amount').value);
-      if (!tokenKey) { showToast('Pick a token to deposit.', 'error'); return; }
-      if (!(amount > 0)) { showToast('Enter an amount to deposit.', 'error'); return; }
-      const box = document.getElementById('conf-xchain-result');
+    async function pdepFromChain(el, btn) {
+      const st = pdepState.get(el);
+      const tokenKey = el.querySelector('[data-token]').value;
+      const amount = Number(el.querySelector('[data-chain-amount]').value);
+      if (!tokenKey) { pdepStatus(el, 'Pick a token to deposit.', 'error'); return; }
+      if (!(amount > 0)) { pdepStatus(el, 'Enter an amount to deposit.', 'error'); return; }
+      const box = el.querySelector('[data-result]');
       try {
         const d = await confPost('/alpha/confidential/deposit/crosschain', { tokenKey, amount }, btn, 'Getting address...');
-        confXchainDeposit = d;
-        // No memo chains only: a wallet transfer here carries no memo
+        st.quote = d;
+        // Chains that need a memo are paid by hand: a wallet transfer from this page carries none
         const canPay = !d.depositMemo && canPayDepositInWallet(d.sourceChain, d.symbol, d.sourceContract);
+        pdepStatus(el, '');
         box.hidden = false;
         box.innerHTML = `
           <img src="${d.qrDataUrl}" alt="QR code of the deposit address">
           <p class="conf-hint">Send exactly <b>${escapeHtml(d.amount)} ${escapeHtml(d.symbol)}</b> on ${escapeHtml(d.chain)} to:</p>
-          <code class="conf-address" id="conf-xchain-address">${escapeHtml(d.depositAddress)}</code>
+          <code class="conf-address">${escapeHtml(d.depositAddress)}</code>
           ${d.depositMemo ? `<p class="conf-hint">Memo (required): <code class="conf-address">${escapeHtml(d.depositMemo)}</code></p>` : ''}
           <div class="conf-row">
-            <button type="button" class="receipts-btn" onclick="navigator.clipboard.writeText(document.getElementById('conf-xchain-address').textContent).then(() => showToast('Address copied', 'success'))">Copy address</button>
-            ${canPay ? `<button type="button" class="receipts-btn" onclick="confXchainPayInWallet(this)">Pay ${escapeHtml(d.amount)} ${escapeHtml(d.symbol)} in wallet</button>` : ''}
+            <button type="button" class="receipts-btn" data-copy>Copy address</button>
+            ${canPay ? `<button type="button" class="receipts-btn" data-pay>Pay ${escapeHtml(d.amount)} ${escapeHtml(d.symbol)} in wallet</button>` : ''}
             ${d.walletLink ? `<a class="receipts-btn" href="${escapeHtml(d.walletLink)}" target="_blank" rel="noopener">Open in wallet</a>` : ''}
           </div>
-          <p class="conf-hint" id="conf-xchain-status" aria-live="polite"></p>
           <p class="conf-hint">About ${escapeHtml(String(d.expectedNear))} NEAR arrives in your private balance (at least ${escapeHtml(String(d.minNear))}). This address is for this deposit only and expires in 30 minutes.</p>`;
+        box.querySelector('[data-copy]').addEventListener('click', () =>
+          navigator.clipboard.writeText(d.depositAddress).then(() => showToast('Address copied', 'success')));
+        box.querySelector('[data-pay]')?.addEventListener('click', e => pdepPayInWallet(el, e.currentTarget));
         setTimeout(loadConfidential, 5000);
       } catch (err) {
         box.hidden = true;
-        showToast(`Could not create the deposit: ${err.message}`, 'error');
+        pdepStatus(el, `Could not create the deposit: ${err.message}`, 'error');
       }
     }
 
-    let confXchainDeposit = null;
-
-    /** Pay the private deposit from the connected wallet: exactly the quoted asset, on the quoted chain */
-    async function confXchainPayInWallet(btn) {
-      const d = confXchainDeposit;
+    /** Pay the cross-chain quote from the connected wallet: exactly the quoted asset, on the quoted chain */
+    async function pdepPayInWallet(el, btn) {
+      const d = pdepState.get(el).quote;
       if (!d) return;
-      const status = document.getElementById('conf-xchain-status');
       btn.disabled = true;
-      const oldHtml = btn.innerHTML;
-      btn.innerHTML = 'Approve in your wallet...';
+      const label = btn.textContent;
+      btn.textContent = 'Approve in your wallet...';
       try {
         await window.RacerConnect.sendConnectedWalletTransfer({
-          chain: d.sourceChain,
-          depositAddress: d.depositAddress,
-          amount: d.amount,
-          amountRaw: d.sourceAmountRaw,
-          decimals: d.sourceDecimals,
-          contract: d.sourceContract,
-          symbol: d.symbol,
+          chain: d.sourceChain, depositAddress: d.depositAddress, amount: d.amount, amountRaw: d.sourceAmountRaw,
+          decimals: d.sourceDecimals, contract: d.sourceContract, symbol: d.symbol,
         });
-        btn.innerHTML = 'Sent';
-        if (status) status.textContent = 'Payment sent. It arrives in your private balance in a few minutes.';
-        showToast('Payment sent to your private balance', 'success');
-        setTimeout(loadConfidential, 20000);
-        setTimeout(loadConfidential, 90000);
+        btn.textContent = 'Sent';
+        pdepDone(el, 'Payment sent. It arrives in your private balance in a few minutes.');
       } catch (err) {
-        btn.innerHTML = oldHtml;
+        btn.textContent = label;
         btn.disabled = false;
-        showToast(err.message || 'Payment failed', 'error');
+        pdepStatus(el, err.message || 'Payment failed', 'error');
       }
+    }
+
+    function openPrivateDepositModal(amountNear) {
+      const modal = document.getElementById('modal-private-deposit');
+      if (!modal) return;
+      modal.classList.add('open');
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      mountPrivateDeposits();
+      if (amountNear) modal.querySelectorAll('[data-amount]').forEach(i => { i.value = String(amountNear); });
+    }
+
+    function closePrivateDepositModal() {
+      const modal = document.getElementById('modal-private-deposit');
+      if (!modal) return;
+      modal.classList.remove('open');
+      modal.style.display = 'none';
+      document.body.style.overflow = '';
     }
 
     async function confWithdraw(btn) {
@@ -8126,18 +8196,17 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         if (data.needsConfidentialDeposit) {
           const depAmt = Math.max(2, Number(((data.amountNear || amtNear || 1.0) * 1.05).toFixed(2)));
           const depBox = document.getElementById('console-conf-deposit-box');
-          const depInput = document.getElementById('console-conf-deposit-amount');
-          if (depBox) { depBox.hidden = false; revealConsoleConfDrawer(depBox); }
-          if (depInput) depInput.value = String(depAmt);
+          if (depBox) {
+            depBox.hidden = false;
+            revealConsoleConfDrawer(depBox);
+            mountPrivateDeposits();
+            depBox.querySelectorAll('[data-amount]').forEach(i => { i.value = String(depAmt); });
+          }
           if (feedback) {
             feedback.style.display = 'block';
             feedback.style.background = 'rgba(106, 204, 220, 0.14)';
             feedback.style.color = 'var(--color-racer-cyan)';
-            feedback.innerHTML = `<b>Confidential Executor Pool Needs Funding:</b> Approve the deposit of <b>${depAmt} NEAR</b> into your NEAR Intents Private Balance so disposable executor wallets can spawn and execute this trade with zero trace to your wallet.`;
-          }
-          const ok = await executeConfidentialNearDeposit(depAmt, btn);
-          if (ok && feedback) {
-            feedback.innerHTML = `<b>Private Balance Funded (${depAmt} NEAR):</b> Disposable executor subaccounts are spawning now (about 15 seconds). Click <b>Buy</b> again once a Ready Executor chip appears above.`;
+            feedback.innerHTML = `<b>Your private balance needs funding:</b> deposit about <b>${depAmt} NEAR</b> below (from your RacerBot wallet, your connected NEAR wallet, or another chain). Executors spawn about 15 seconds after it arrives; then click <b>Buy</b> again.`;
           }
           return;
         }
@@ -9407,36 +9476,8 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       }
     }
 
-    /**
-     * Whether this user trades privately: private trading is live and they already use it (a private
-     * balance or executors). Every web sign-in gets a private account whose `enabled` defaults to true,
-     * so that flag alone says nothing. Loads the overview when it has not been seen yet.
-     */
-    async function isPrivateModeOn() {
-      if (!lastConfidentialOverview) {
-        try {
-          const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
-          const data = await res.json();
-          if (res.ok && data.success) lastConfidentialOverview = data;
-        } catch (e) { /* not signed in, or private trading is off */ }
-      }
-      const o = lastConfidentialOverview;
-      if (!o || o.enabled !== true || o.account?.settings?.enabled === false) return false;
-      let balance = 0n;
-      try { balance = BigInt(o.privateBalance || '0'); } catch (e) { balance = 0n; }
-      return balance > 0n || (Array.isArray(o.pool) && o.pool.length > 0);
-    }
-
-    /**
-     * Deposit button. With private mode on, a deposit goes straight to the private balance, never through
-     * the public RacerBot wallet (which would link the two on-chain); `public: true` opens the wallet deposit.
-     */
-    async function openDepositModal(opts = {}) {
-      if (!opts.public && await isPrivateModeOn()) {
-        openPrivateCrossChainDeposit();
-        showToast('Private mode is on, so this deposit goes to your private balance.', 'info');
-        return;
-      }
+    /** The public deposit to the RacerBot wallet (creator entry fee and the trading wallet flows use it) */
+    async function openDepositModal() {
       const modal = document.getElementById('modal-deposit');
       if (modal) {
         modal.style.display = 'flex';
@@ -10612,7 +10653,7 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           <div id="trading-wallet-body" style="display:flex; flex-direction:column; gap:10px; font-size:13px; line-height:1.5;"></div>
         </div>
 
-        <button onclick="closeConnectModal(); openDepositModal();" class="btn-primary" style="width:100%; height:44px; min-height:44px; font-size:13px; justify-content:center; margin-bottom:10px;">
+        <button onclick="closeConnectModal(); openPrivateDepositModal();" class="btn-primary" style="width:100%; height:44px; min-height:44px; font-size:13px; justify-content:center; margin-bottom:10px;">
           <span>Deposit via 1Click Intent</span>
         </button>
 

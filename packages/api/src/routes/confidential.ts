@@ -120,15 +120,17 @@ export function registerConfidentialRoutes(router: Router): void {
         res.status(400).json({ error: `Deposit at least ${toNear(POOL_LIMITS.min)} NEAR.` });
         return;
       }
-      if (isExternalWallet(user) || req.body?.fromConnectedWallet === true) {
-        // RacerBot holds no key for this wallet (or user chose connected wallet signing):
-        // return the transaction for the user's wallet to sign
-        const quote = await quoteWalletDeposit(user, amount);
-        res.json({ success: true, requiresWalletSignature: true, ...quote, amountNear: toNear(amount) });
+      // The source is the user's choice: their RacerBot wallet (RacerBot signs) or their connected NEAR
+      // wallet (that wallet signs, and refunds go back to it). Either way it lands in the private balance.
+      const source = req.body?.source === 'connected_wallet' || req.body?.fromConnectedWallet === true || isExternalWallet(user)
+        ? 'connected_wallet' : 'racer_wallet';
+      if (source === 'connected_wallet') {
+        const fromAccount = String(req.body?.fromAccount || (isExternalWallet(user) ? user.subaccount_id : '')).trim().toLowerCase();
+        const quote = await quoteWalletDeposit(user, amount, fromAccount);
+        res.json({ success: true, requiresWalletSignature: true, ...quote, fromAccount, amountNear: toNear(amount) });
         return;
       }
-      // RacerBot wallet. If it cannot cover the deposit, say so with a code: the page offers the
-      // connected NEAR wallet when one is there (Telegram users often have none to fall back to).
+      // RacerBot wallet: if it cannot cover the deposit, say so with a code so the page can suggest the other sources
       const result = await depositFromWallet(user, amount);
       res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Deposit sent. It reaches your private balance in about 20 seconds.' });
     } catch (err: any) {
