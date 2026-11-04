@@ -18,6 +18,7 @@ import {
   createConfidentialAccount,
   expireStaleConfidentialQuotes,
   getConfidentialAccount,
+  listActiveConfidentialAccounts,
   repairConfidentialPayout,
   getExecutor,
   getUserConfidentialMove,
@@ -283,7 +284,8 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
     if (missing.length === 0) return 0;
     const cap = BigInt(acct.pool_cap_yocto) < HARD_POOL_CAP ? BigInt(acct.pool_cap_yocto) : HARD_POOL_CAP;
     let committed = live.reduce((s, e) => s + BigInt(e.size_yocto), 0n);
-    let available = await privateBalance(acct).catch(async () => {
+    let available = await privateBalance(acct).catch(() => 0n);
+    if (available === 0n) {
       const moves = await listUserConfidentialMoves(acct.user_id, 50);
       let ledger = 0n;
       for (const m of moves) {
@@ -292,8 +294,8 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
         if (m.kind === 'deposit' || m.kind === 'return') ledger += amt;
         else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') ledger -= amt;
       }
-      return ledger > committed ? ledger - committed : 0n;
-    });
+      if (ledger > committed) available = ledger - committed;
+    }
     const toCreate: bigint[] = [];
     for (const raw of missing) {
       const size = BigInt(raw);
@@ -640,23 +642,35 @@ export async function confidentialOverview(user: UserRecord) {
   ]);
 
   let balance = rawBalance;
-  if (balance === null) {
-    // Fall back to confirmed ledger moves
-    let ledger = 0n;
-    for (const m of moves) {
-      if (m.status !== 'SUCCESS') continue;
-      const amt = BigInt(m.amount || '0');
-      if (m.kind === 'deposit' || m.kind === 'return') {
-        ledger += amt;
-      } else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') {
-        ledger -= amt;
-      }
+  let ledger = 0n;
+  for (const m of moves) {
+    if (m.status !== 'SUCCESS') continue;
+    const amt = BigInt(m.amount || '0');
+    if (m.kind === 'deposit' || m.kind === 'return') {
+      ledger += amt;
+    } else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') {
+      ledger -= amt;
     }
-    const committed = executors
-      .filter(e => ['creating', 'funding', 'ready', 'claimed'].includes(e.status))
-      .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
-    balance = ledger > committed ? ledger - committed : 0n;
-    logger.info(`Resolved fallback private balance from ledger moves for ${acct.user_id}: ${balance.toString()} yocto`);
+  }
+  const committed = executors
+    .filter(e => ['creating', 'funding', 'ready', 'claimed'].includes(e.status))
+    .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
+  const ledgerAvailable = ledger > committed ? ledger - committed : 0n;
+
+  if (balance === null || balance === 0n) {
+    if (ledgerAvailable > 0n) {
+      balance = ledgerAvailable;
+      logger.info(`Resolved fallback private balance from ledger moves for ${acct.user_id}: ${balance.toString()} yocto`);
+    } else if (balance === null) {
+      balance = 0n;
+    }
+  }
+
+  if (EXECUTORS_ENABLED && acct.enabled && acct.auto_refill && balance > 0n) {
+    const readyOrCreating = executors.filter(e => ['creating', 'funding', 'ready'].includes(e.status));
+    if (readyOrCreating.length < acct.pool_sizes.length) {
+      void refillPool(acct).catch(err => logger.warn(`Overview pool refill for ${acct.user_id}: ${err?.message}`));
+    }
   }
   const near = getNear();
   const positions = await Promise.all(executors.filter(e => e.status === 'open' && e.token).map(async e => ({
@@ -986,6 +1000,14 @@ async function workerTick(): Promise<void> {
   }
   // 5. Fully sold positions whose close was lost to a restart
   await closeEmptyOpenExecutors();
+
+  // 6. Automatically refill pools for enabled accounts
+  if (EXECUTORS_ENABLED) {
+    const activeAccts = await listActiveConfidentialAccounts(10).catch(() => []);
+    for (const a of activeAccts) {
+      void refillPool(a).catch(err => logger.warn(`Worker pool refill for ${a.user_id}: ${err?.message}`));
+    }
+  }
 }
 
 export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | null {

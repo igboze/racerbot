@@ -4625,6 +4625,15 @@ export async function getConfidentialAccount(userId: string): Promise<Confidenti
   return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
 }
 
+export async function listActiveConfidentialAccounts(limit = 20): Promise<ConfidentialAccountRecord[]> {
+  const db = await getDb();
+  const res = await db.query(
+    'SELECT * FROM confidential_accounts WHERE enabled = TRUE AND auto_refill = TRUE ORDER BY updated_at ASC LIMIT $1',
+    [limit]
+  );
+  return res.rows.map(mapConfidentialAccount);
+}
+
 /**
  * Point a private account's payout at a new NEAR account. Executors carry a hash of the payout, so this
  * only applies while the user has none yet; returns null otherwise.
