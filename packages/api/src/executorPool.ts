@@ -319,11 +319,8 @@ async function buildPlan(p: {
       break;
     }
     case 'GenericFtCall':
-      if (!planned.custom_contract || !LAUNCHPAD_RECEIVERS.has(planned.custom_contract)) {
-        throw new Error('This token is in a pre-bonding auction, which confidential mode cannot trade');
-      }
       venue = 'Launchpad';
-      receiver = planned.custom_contract;
+      receiver = planned.custom_contract || p.tokenAddress;
       break;
     default:
       throw new Error(`Venue ${planned.venue} is not supported in confidential mode`);
@@ -337,6 +334,7 @@ async function buildPlan(p: {
     receiver,
     deadline_sec: Math.floor(Date.now() / 1000) + 120,
     correlation_id: p.correlationId,
+    custom_msg: planned.custom_msg || null,
   };
 }
 

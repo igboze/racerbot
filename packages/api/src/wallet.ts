@@ -3622,13 +3622,26 @@ export async function getRefStorageDepositNeeded(subaccountId: string): Promise<
   return neededYocto;
 }
 
+async function resolveWalletUser(userOrTelegramId: number | string | UserRecord): Promise<UserRecord | null> {
+  if (typeof userOrTelegramId === 'object' && userOrTelegramId && 'id' in userOrTelegramId) {
+    return userOrTelegramId;
+  }
+  if (typeof userOrTelegramId === 'string') {
+    return getUserById(userOrTelegramId);
+  }
+  if (typeof userOrTelegramId === 'number' && userOrTelegramId > 0) {
+    return getUserByTelegramId(userOrTelegramId);
+  }
+  return null;
+}
+
 /**
  * Unwraps any wrap.near held in user's subaccount into pure native NEAR.
  */
-export async function unwrapUserWrapNear(telegramId: number): Promise<{ success: boolean; unwrappedAmount: string }> {
-  const user = await getUserByTelegramId(telegramId);
+export async function unwrapUserWrapNear(userOrTelegramId: number | string | UserRecord): Promise<{ success: boolean; unwrappedAmount: string }> {
+  const user = await resolveWalletUser(userOrTelegramId);
   if (!user) {
-    throw new Error('User not found. Run /start first.');
+    throw new Error('User not found.');
   }
 
   const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
@@ -3653,7 +3666,9 @@ export async function unwrapUserWrapNear(telegramId: number): Promise<{ success:
     });
 
     const formatted = (Number(BigInt(wrapBal) / 1000000000000000000n) / 1e6).toFixed(4);
-    invalidateBalanceCache(telegramId);
+    if (user.telegram_id && user.telegram_id > 0) {
+      invalidateBalanceCache(Number(user.telegram_id));
+    }
     return { success: true, unwrappedAmount: formatted };
   });
 }
@@ -3783,13 +3798,13 @@ export async function recoverIntentRefund(
 }
 
 export async function withdrawFunds(
-  telegramId: number,
+  userOrTelegramId: number | string | UserRecord,
   destination: string,
   amountNear?: number | 'all'
 ): Promise<{ txHash: string; amountWithdrawn: string; destination: string }> {
-  const user = await getUserByTelegramId(telegramId);
+  const user = await resolveWalletUser(userOrTelegramId);
   if (!user) {
-    throw new Error('User not found. Run /start first.');
+    throw new Error('User not found.');
   }
 
   const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
@@ -3808,7 +3823,7 @@ export async function withdrawFunds(
   );
   let unwrapError: string | null = null;
   if (wrapBeforeYocto > 0n) {
-    await unwrapUserWrapNear(telegramId).catch((err: any) => {
+    await unwrapUserWrapNear(user).catch((err: any) => {
       unwrapError = err?.message || 'unwrap failed';
     });
   }
@@ -3824,7 +3839,9 @@ export async function withdrawFunds(
       currentBalanceYocto = BigInt(await near.getNearBalance(subaccountId, 0).catch(() => currentBalanceYocto.toString()));
     }
   }
-  invalidateBalanceCache(telegramId);
+  if (user.telegram_id && user.telegram_id > 0) {
+    invalidateBalanceCache(Number(user.telegram_id));
+  }
   const reserveYocto = BigInt('50000000000000000000000'); // 0.05 NEAR reserved
   const fmtNear = (y: bigint) => (Number(y / 1000000000000000000n) / 1e6).toFixed(4);
   const stillWrappedNote = unwrapError

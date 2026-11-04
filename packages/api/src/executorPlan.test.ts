@@ -3,7 +3,7 @@ import { encodeExecPlan } from './executorPlan.js';
 
 // Same plan and bytes as plan_borsh_vector in packages/contract/src/executors/tests.rs
 const VECTOR =
-  '02090000006d656d652e6e6561720100000001120100000000000001190000006d656d652e6e6561727c777261702e6e6561727c3130303030040000006e656172090000006d656d652e6e65617205000000000000000000000000000000e80300000000000000000000000000000500000000000000000000000000000001150000006761797061642e6a312d726163696e672e6e65617200d2496b0000000008000000696e74656e745f31';
+  '02090000006d656d652e6e6561720100000001120100000000000001190000006d656d652e6e6561727c777261702e6e6561727c3130303030040000006e656172090000006d656d652e6e65617205000000000000000000000000000000e80300000000000000000000000000000500000000000000000000000000000001150000006761797061642e6a312d726163696e672e6e65617200d2496b0000000008000000696e74656e745f3100';
 
 describe('encodeExecPlan', () => {
   it('matches the executor SwapPlan borsh layout byte for byte', () => {
@@ -16,8 +16,25 @@ describe('encodeExecPlan', () => {
       receiver: 'gaypad.j1-racing.near',
       deadline_sec: 1_800_000_000,
       correlation_id: 'intent_1',
+      custom_msg: null,
     });
     expect(bytes.toString('hex')).toBe(VECTOR);
+  });
+
+  it('encodes custom_msg when present', () => {
+    const bytes = encodeExecPlan({
+      venue: 'Launchpad',
+      token: 'meme.near',
+      hops: [],
+      amount_in: '1000',
+      min_amount_out: '5',
+      receiver: 'custom-launch.near',
+      deadline_sec: 1_800_000_000,
+      correlation_id: 'c1',
+      custom_msg: '{"action":"buy"}',
+    });
+    // option 1 + length (16 = 0x10) + utf8
+    expect(bytes.toString('hex')).toContain('01100000007b22616374696f6e223a22627579227d');
   });
 
   it('encodes absent options and large amounts', () => {

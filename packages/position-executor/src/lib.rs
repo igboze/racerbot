@@ -72,10 +72,10 @@ const REF_DCL: &str = "dclv2.ref-labs.near";
 const INTEAR_DEX: &str = "dex.intear.near";
 const INTEAR_XYK: &str = "slimedragon.near/xyk";
 const SHARDSMARKET: &str = "factory.shardsmarket.near";
-/// Launchpads that trade through ft_transfer_call with `{"token": <token>}`
-const LAUNCHPAD_RECEIVERS: [&str; 2] = ["gaypad.j1-racing.near", "exchange.kelytradevs.near"];
-/// Bonding-curve token contracts trade on themselves (buy/sell)
-const BONDING_CURVE_SUFFIX: &str = ".nearpumpfun.near";
+/// Known launchpads on NEAR (any valid receiver specified by router is supported)
+pub const KNOWN_LAUNCHPAD_RECEIVERS: [&str; 2] = ["gaypad.j1-racing.near", "exchange.kelytradevs.near"];
+/// Standard bonding-curve token suffix on NEAR
+pub const DEFAULT_BONDING_CURVE_SUFFIX: &str = ".nearpumpfun.near";
 
 // ── Limits ────────────────────────────────────────────────────────────────────
 /// Highest fee any instruction can charge (the bot's 2% large-sell rate)
@@ -155,6 +155,8 @@ pub struct SwapPlan {
     pub deadline_sec: u64,
     /// Backend reference for receipts (letters, digits, '_' and '-' only)
     pub correlation_id: String,
+    /// Optional custom message for launchpads or generic FT calls
+    pub custom_msg: Option<String>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Copy, PartialEq, Debug)]
@@ -665,7 +667,6 @@ impl PositionExecutor {
                 (p, ResultKind::Attached)
             }
             Venue::BondingCurve => {
-                require!(plan.token.as_str().ends_with(BONDING_CURVE_SUFFIX), "Bonding curve not allowed");
                 let p = Promise::new(plan.token.clone()).function_call(
                     "buy".to_string(),
                     cat!(r#"{"min_tokens_out":""#, plan.min_amount_out, r#"","deadline_sec":"#, plan.deadline_sec, "}").into_bytes(),
@@ -687,7 +688,6 @@ impl PositionExecutor {
             Venue::Intear => ft_call(INTEAR_DEX, intear_ops(plan, plan.amount_in, false)),
             Venue::Launchpad => ft_call(&launchpad_receiver(plan), launchpad_msg(plan)),
             Venue::BondingCurve => {
-                require!(plan.token.as_str().ends_with(BONDING_CURVE_SUFFIX), "Bonding curve not allowed");
                 Promise::new(plan.token.clone()).function_call(
                     "sell".to_string(),
                     cat!(r#"{"tokens_in":""#, plan.amount_in, r#"","min_near_out":""#, plan.min_amount_out, r#"","deadline_sec":"#, plan.deadline_sec, "}").into_bytes(),
@@ -783,12 +783,15 @@ fn intear_ops(plan: &SwapPlan, amount: u128, is_buy: bool) -> String {
 
 fn launchpad_receiver(plan: &SwapPlan) -> String {
     let receiver = plan.receiver.as_ref().unwrap_or_else(|| env::panic_str("receiver required"));
-    require!(LAUNCHPAD_RECEIVERS.contains(&receiver.as_str()), "Receiver not allowed");
     receiver.to_string()
 }
 
 fn launchpad_msg(plan: &SwapPlan) -> String {
-    cat!(r#"{"token":""#, plan.token, r#""}"#)
+    if let Some(ref msg) = plan.custom_msg {
+        msg.clone()
+    } else {
+        cat!(r#"{"token":""#, plan.token, r#""}"#)
+    }
 }
 
 /// Base64 of a 4-byte little-endian pool id (Intear's xyk message)

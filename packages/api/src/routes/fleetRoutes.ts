@@ -20,7 +20,7 @@ export function createFleetRouter(): Router {
     return verifiedUser(req).catch(() => null);
   }
 
-  const FLEET_SIGN_IN = 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use RaceFleet.';
+  const FLEET_SIGN_IN = 'Sign in with Telegram, or connect your wallet and approve the sign-in message, to use RaceFleet.';
 
   // 1. Get Fleet Status & Balances
   router.get('/fleet/status', async (req, res) => {
@@ -96,8 +96,9 @@ export function createFleetRouter(): Router {
       const { walletCount, fleetName } = req.body;
       const count = parseInt(walletCount, 10) || 10;
       const { deployRaceFleet } = await import('../raceFleet.js');
+      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
 
-      const result = await deployRaceFleet(user.telegram_id, count, fleetName || 'Alpha Fleet');
+      const result = await deployRaceFleet(userRef, count, fleetName || 'Alpha Fleet');
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Deployment failed' });
         return;
@@ -130,7 +131,8 @@ export function createFleetRouter(): Router {
       }
 
       const { distributeFundsToFleet } = await import('../raceFleet.js');
-      const result = await distributeFundsToFleet(user.telegram_id, totalNear);
+      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
+      const result = await distributeFundsToFleet(userRef, totalNear);
 
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Distribution failed' });
@@ -154,7 +156,8 @@ export function createFleetRouter(): Router {
       }
 
       const { sweepFleetFunds } = await import('../raceFleet.js');
-      const result = await sweepFleetFunds(user.telegram_id);
+      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
+      const result = await sweepFleetFunds(userRef);
 
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Sweep failed' });

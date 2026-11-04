@@ -5511,9 +5511,12 @@
             <div style="display:flex; flex-direction:column; gap:6px; flex:1; min-width:0;">
               <div style="font-size:11px; color:var(--color-text-muted);">Send exactly to this generated address on <b id="active-chain-name" style="color:#fff;">Solana</b>:</div>
               <code id="active-deposit-address" style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); word-break:break-all; user-select:all;">--</code>
-              <div style="display:flex; gap:8px; margin-top:4px;">
+              <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;">
                 <button class="btn-secondary btn-sm" onclick="copyActiveDepositAddress()">
                   <span>Copy Address</span>
+                </button>
+                <button id="deposit-pay-connected-btn" class="btn-primary btn-sm" style="display:none;" onclick="handlePayDepositFromConnectedWallet(this)">
+                  <span>Pay with Connected Wallet</span>
                 </button>
                 <a id="deposit-wallet-deeplink" href="javascript:void(0)" role="button" target="_blank" class="btn-secondary btn-sm" style="display:none; text-decoration:none;">
                   <span>Open Wallet ↗</span>
@@ -9671,10 +9674,46 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         }
       }
 
+      // In-Wallet 1Click payment option
+      const payBtn = document.getElementById('deposit-pay-connected-btn');
+      if (payBtn) {
+        const isEvmChain = ['eth', 'base', 'arb', 'bsc', 'pol'].includes(quote.sourceChain);
+        const isSolChain = ['sol', 'solana'].includes(quote.sourceChain);
+        const hasEvm = Boolean(window.ethereum && (window.RacerConnect?.activeEvmWallet || window.RacerConnect?.activeWalletChain === 'evm'));
+        const hasSol = Boolean((window.phantom?.solana || window.solana) && (window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeWalletChain === 'solana'));
+        if ((isEvmChain && hasEvm) || (isSolChain && hasSol) || (quote.sourceChain === 'near' && window.RacerConnect?.activeNearWallet)) {
+          payBtn.style.display = 'inline-flex';
+          payBtn.innerHTML = `<span>Pay ${quote.sourceAmount} ${quote.sourceSymbol} in Wallet</span>`;
+        } else {
+          payBtn.style.display = 'none';
+        }
+      }
+
       card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       // Start live poller for this address
       startDepositStatusPoller(quote.depositAddress);
+    }
+
+    async function handlePayDepositFromConnectedWallet(btn) {
+      if (!activeDepositQuote) return;
+      const oldHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span>Approving in Wallet...</span>';
+      try {
+        const res = await window.RacerConnect.sendConnectedWalletTransfer({
+          chain: activeDepositQuote.sourceChain,
+          depositAddress: activeDepositQuote.depositAddress,
+          amount: activeDepositQuote.sourceAmount,
+          symbol: activeDepositQuote.sourceSymbol,
+        });
+        showToast('Payment submitted from connected wallet! Tracking deposit...', 'success');
+        btn.innerHTML = '<span>Submitted! Tracking...</span>';
+      } catch (err) {
+        showToast(err.message || 'Payment failed', 'error');
+        btn.innerHTML = oldHtml;
+        btn.disabled = false;
+      }
     }
 
     function startDepositStatusPoller(depositAddress) {
@@ -9800,18 +9839,21 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         .replace(/'/g, '&#39;');
     }
 
-    // ── NEAR Wallet Connect & RacerConnect Integration ─────────────────────────
+    // ── Multi-Chain Wallet Connect & RacerConnect Integration ─────────────────
     function getActiveUserAddress() {
-      if (window.RacerConnect && window.RacerConnect.user?.managedWallet) {
-        return window.RacerConnect.user.managedWallet;
+      if (window.RacerConnect) {
+        if (window.RacerConnect.user?.managedWallet) return window.RacerConnect.user.managedWallet;
+        if (window.RacerConnect.activeNearWallet) return window.RacerConnect.activeNearWallet;
+        if (window.RacerConnect.activeEvmWallet) return window.RacerConnect.activeEvmWallet;
+        if (window.RacerConnect.activeSolanaWallet) return window.RacerConnect.activeSolanaWallet;
+        if (window.RacerConnect.user?.subaccountId) return window.RacerConnect.user.subaccountId;
+        if (window.RacerConnect.user?.address) return window.RacerConnect.user.address;
+        if (window.RacerConnect.user?.evm_address) return window.RacerConnect.user.evm_address;
+        if (window.RacerConnect.user?.solana_address) return window.RacerConnect.user.solana_address;
       }
-      if (window.RacerConnect && window.RacerConnect.activeNearWallet) {
-        return window.RacerConnect.activeNearWallet;
-      }
-      if (window.RacerConnect && window.RacerConnect.user?.subaccountId) {
-        return window.RacerConnect.user.subaccountId;
-      }
-      return localStorage.getItem('racer_connected_near_wallet') || '';
+      return localStorage.getItem('racer_connected_near_wallet') ||
+             localStorage.getItem('racer_connected_evm_wallet') ||
+             localStorage.getItem('racer_connected_solana_wallet') || '';
     }
 
     function getAuthHeaders() {
@@ -10137,32 +10179,91 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
 
         const savedCustomUsername = localStorage.getItem('racer_custom_username_' + activeAddr);
         const uElem = document.getElementById('linked-username');
+        const chainBadge = document.getElementById('linked-chain-badge');
+        const chain = (window.RacerConnect ? window.RacerConnect.activeWalletChain : null) ||
+          (activeAddr.startsWith('0x') ? 'evm' : activeAddr.length >= 32 && !activeAddr.includes('.') ? 'solana' : 'near');
+
+        if (chainBadge) {
+          chainBadge.innerHTML = `<span class="live-dot" style="width:5px; height:5px;"></span> ${chain.toUpperCase()}`;
+        }
+
         if (uElem) {
           if (savedCustomUsername) {
             uElem.textContent = '@' + savedCustomUsername.replace(/^@/, '');
-          } else if (user?.username && user.username !== activeAddr && !user.username.endsWith('.near')) {
+          } else if (user?.username && user.username !== activeAddr && !user.username.endsWith('.near') && !user.username.startsWith('0x')) {
             uElem.textContent = user.username.startsWith('@') ? user.username : '@' + user.username;
+          } else if (chain === 'evm') {
+            uElem.textContent = 'EVM Wallet Connected';
+          } else if (chain === 'solana') {
+            uElem.textContent = 'Solana Wallet Connected';
           } else {
             uElem.textContent = 'NEAR Wallet Connected';
           }
         }
         const sElem = document.getElementById('linked-subaccount');
         if (sElem) sElem.textContent = activeAddr;
+
+        // Show inner intent account if available
+        const intentWrap = document.getElementById('linked-intent-account');
+        const intentHex = document.getElementById('linked-intent-hex');
+        const confidentialAcc = user?.confidential_account || (user?.id ? user : null);
+        if (intentWrap && intentHex) {
+          const ownerSalt = confidentialAcc?.owner_salt || user?.subaccountId || '';
+          if (ownerSalt) {
+            intentWrap.hidden = false;
+            intentHex.textContent = ownerSalt.length > 20 ? (ownerSalt.slice(0, 10) + '...' + ownerSalt.slice(-6)) : ownerSalt;
+          } else {
+            intentWrap.hidden = false;
+            intentHex.textContent = 'Auto-provisioned on deposit';
+          }
+        }
       } else {
         if (unlinkedDiv) unlinkedDiv.style.display = 'block';
         if (linkedDiv) linkedDiv.style.display = 'none';
-        if (label) label.textContent = 'Connect NEAR Wallet';
+        if (label) label.textContent = 'Connect Wallet';
         if (headerBtn) {
           headerBtn.classList.remove('connected');
-          headerBtn.title = 'Connect with NEAR Wallet';
+          headerBtn.title = 'Connect External Wallet';
         }
         if (mobileLabel) mobileLabel.textContent = 'Connect';
         if (mobileBtn) {
           mobileBtn.classList.remove('connected');
-          mobileBtn.title = 'Connect NEAR Wallet';
+          mobileBtn.title = 'Connect Wallet';
         }
         if (sidebarAddr) sidebarAddr.textContent = 'Connect Wallet';
         if (sidebarAvatar) sidebarAvatar.textContent = 'R';
+      }
+    }
+
+    async function handleConnectSolanaWallet() {
+      const statusDiv = document.getElementById('wallet-link-status');
+      try {
+        if (statusDiv) { statusDiv.textContent = 'Connecting Solana wallet (Phantom/Solflare)...'; statusDiv.style.color = 'var(--color-racer-cyan)'; }
+        if (!window.RacerConnect) throw new Error('RacerConnect not ready');
+        await window.RacerConnect.connectSolanaWallet();
+        if (statusDiv) { statusDiv.textContent = 'Connected successfully!'; statusDiv.style.color = 'var(--color-primary)'; }
+        updateWalletUI();
+        fetchTraders();
+        refreshUserBalance();
+        closeConnectModal();
+      } catch (err) {
+        if (statusDiv) { statusDiv.textContent = 'Solana Error: ' + (err.message || 'Connection failed'); statusDiv.style.color = '#FF6B73'; }
+      }
+    }
+
+    async function handleConnectEvmWallet() {
+      const statusDiv = document.getElementById('wallet-link-status');
+      try {
+        if (statusDiv) { statusDiv.textContent = 'Connecting EVM wallet (MetaMask/Rabby)...'; statusDiv.style.color = 'var(--color-racer-cyan)'; }
+        if (!window.RacerConnect) throw new Error('RacerConnect not ready');
+        await window.RacerConnect.connectEvmWallet();
+        if (statusDiv) { statusDiv.textContent = 'Connected successfully!'; statusDiv.style.color = 'var(--color-primary)'; }
+        updateWalletUI();
+        fetchTraders();
+        refreshUserBalance();
+        closeConnectModal();
+      } catch (err) {
+        if (statusDiv) { statusDiv.textContent = 'EVM Error: ' + (err.message || 'Connection failed'); statusDiv.style.color = '#FF6B73'; }
       }
     }
 
@@ -10330,42 +10431,60 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
 
       <!-- State A: Not connected / Choose method -->
       <div id="modal-state-unlinked">
-        <p style="font-size:13.5px; color:var(--color-text-muted); line-height:1.5; margin-bottom:16px;">
-          Connect your NEAR Wallet or pair your Telegram account to unlock confidential copy trading and viewing keys.
+        <p style="font-size:13px; color:var(--color-text-muted); line-height:1.5; margin-bottom:16px;">
+          Connect your Solana, EVM, or NEAR wallet to unlock 1Click Intent deposits, confidential trading, and RaceFleet execution.
         </p>
 
-        <!-- Option 1: Native NEAR Wallet Selector (Meteor, HERE, MyNearWallet) -->
-        <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-primary" style="width:100%; height:44px; font-size:13.5px; justify-content:center; margin-bottom:12px;">
+        <!-- Option 1: Solana Wallet (Phantom, Solflare, Backpack) -->
+        <button onclick="handleConnectSolanaWallet()" class="btn-primary" style="width:100%; height:44px; font-size:13.5px; justify-content:center; margin-bottom:10px; background:linear-gradient(135deg, #9945FF 0%, #14F195 100%); border:none; color:#0b0e14; font-weight:700;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 18h14.5a1.5 1.5 0 0 0 1.06-2.56L17.2 13H4a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1zm0-7h12.5a1.5 1.5 0 0 0 1.06-2.56L15.2 6H4a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1z"/></svg>
+          <span>Connect Solana (Phantom / Solflare)</span>
+        </button>
+
+        <!-- Option 2: EVM Wallet (MetaMask, Rabby, Coinbase) -->
+        <button onclick="handleConnectEvmWallet()" class="btn-secondary" style="width:100%; height:44px; font-size:13.5px; justify-content:center; margin-bottom:10px; border-color:rgba(106, 204, 220, 0.4); color:#fff; font-weight:600;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          <span>Connect EVM (MetaMask / Rabby / Base)</span>
+        </button>
+
+        <!-- Option 3: Native NEAR Wallet Selector (Meteor, HOT, HERE, MyNearWallet) -->
+        <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-secondary" style="width:100%; height:44px; font-size:13.5px; justify-content:center; margin-bottom:12px; border-color:var(--color-border); color:#fff;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"></path><path d="M16 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"></path><path d="M4 7V5a2 2 0 0 1 2-2h12"></path></svg>
-          <span>Connect NEAR Wallet (Selector)</span>
+          <span>Connect NEAR (HOT / Meteor / Intear)</span>
         </button>
 
         <div style="display:flex; align-items:center; gap:10px; margin:14px 0;">
           <div style="flex:1; height:1px; background:var(--color-border);"></div>
-          <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);">OR VIEW AN ACCOUNT (READ-ONLY)</span>
+          <span style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-subtle);">OR CONNECT VIA TELEGRAM BOT</span>
           <div style="flex:1; height:1px; background:var(--color-border);"></div>
         </div>
 
-        <!-- Option 2: Enter Account ID Directly -->
-        <div style="display:flex; gap:8px; margin-bottom:14px;">
-          <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near" style="flex:1; height:44px; min-height:44px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 12px; font-size:13px; font-family:var(--font-mono);">
-          <button onclick="handleLinkSelectorWallet()" class="btn-secondary" style="height:44px; min-height:44px; padding:0 14px; font-size:13px;">
-            <span>View</span>
-          </button>
-        </div>
-        <div id="wallet-link-status" style="font-size:12px; margin-bottom:10px;"></div>
-
-        <!-- Option 3: Telegram Pair -->
-        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:14px; text-align:center;">
+        <!-- Option 4: Telegram Pair -->
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px; text-align:center; margin-bottom:14px;">
           <div id="pairing-spinner" style="display:none; margin-bottom:10px;">
             <span style="display:inline-block; width:26px; height:26px; border:3px solid rgba(106, 204, 220,0.2); border-top-color:var(--color-racer-cyan); border-radius:50%; animation:spin 0.8s linear infinite;"></span>
             <div style="font-size:13px; color:var(--color-racer-cyan); font-weight:600; margin-top:6px;">Waiting for Telegram confirmation...</div>
             <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">Tap <b>Start</b> in Telegram to finish pairing.</div>
           </div>
-          <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-secondary" style="width:100%; height:44px; min-height:44px; font-size:13px; justify-content:center;">
+          <button id="btn-start-telegram-pairing" onclick="handleStartTelegramPairing()" class="btn-secondary" style="width:100%; height:40px; min-height:40px; font-size:13px; justify-content:center;">
             <span>Pair with Telegram Bot</span>
           </button>
         </div>
+
+        <div style="display:flex; align-items:center; gap:10px; margin:14px 0;">
+          <div style="flex:1; height:1px; background:var(--color-border);"></div>
+          <span style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-subtle);">OR VIEW AN ACCOUNT (READ-ONLY)</span>
+          <div style="flex:1; height:1px; background:var(--color-border);"></div>
+        </div>
+
+        <!-- Option 5: Enter Account ID Directly -->
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input type="text" id="wallet-selector-input" placeholder="e.g. yourname.near or 0x... or solana address" style="flex:1; height:40px; min-height:40px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:6px; color:#fff; padding:0 12px; font-size:12.5px; font-family:var(--font-mono);">
+          <button onclick="handleLinkSelectorWallet()" class="btn-secondary" style="height:40px; min-height:40px; padding:0 14px; font-size:12.5px;">
+            <span>View</span>
+          </button>
+        </div>
+        <div id="wallet-link-status" style="font-size:12px; margin-bottom:6px;"></div>
       </div>
 
       <!-- State B: Connected -->
@@ -10373,12 +10492,15 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         <div style="background:var(--color-surface); border:1px solid rgba(52, 211, 153,0.3); border-radius:8px; padding:14px; margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <span style="font-size:11.5px; color:var(--color-text-muted); font-family:var(--font-mono);">ACTIVE ACCOUNT</span>
-            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--color-text); font-weight:600; background:rgba(52, 211, 153,0.1); padding:2px 8px; border-radius:4px;">
+            <span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--color-text); font-weight:600; background:rgba(52, 211, 153,0.1); padding:2px 8px; border-radius:4px;" id="linked-chain-badge">
               <span class="live-dot" style="width:5px; height:5px;"></span> CONNECTED
             </span>
           </div>
           <div style="font-weight:700; font-size:16px; color:#fff;" id="linked-username">Connected</div>
-          <div style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); margin-top:4px;" id="linked-subaccount">user.near</div>
+          <div style="font-family:var(--font-mono); font-size:12px; color:var(--color-racer-cyan); margin-top:4px; word-break:break-all;" id="linked-subaccount">user.near</div>
+          <div id="linked-intent-account" style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); margin-top:8px; padding-top:8px; border-top:1px dashed var(--color-border);" hidden>
+            Inner Intent Wallet: <code style="color:#fff;" id="linked-intent-hex"></code>
+          </div>
         </div>
 
         <div id="modal-trading-wallet" style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:14px; margin-bottom:16px;" hidden>
@@ -10386,11 +10508,15 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           <div id="trading-wallet-body" style="display:flex; flex-direction:column; gap:10px; font-size:13px; line-height:1.5;"></div>
         </div>
 
+        <button onclick="closeConnectModal(); openDepositModal();" class="btn-primary" style="width:100%; height:44px; min-height:44px; font-size:13px; justify-content:center; margin-bottom:10px;">
+          <span>Deposit via 1Click Intent</span>
+        </button>
+
         <div style="display:flex; gap:10px;">
-          <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-primary" style="flex:1; height:44px; min-height:44px; font-size:13px; justify-content:center;">
+          <button onclick="handleOpenNearWalletSelector(); closeConnectModal();" class="btn-secondary" style="flex:1; height:42px; min-height:42px; font-size:12.5px; justify-content:center;">
             <span>Switch Wallet</span>
           </button>
-          <button onclick="handleDisconnect()" class="btn-secondary" style="height:44px; min-height:44px; font-size:13px; padding:0 14px; color:var(--color-danger); border-color:rgba(255, 107, 115,0.3);">
+          <button onclick="handleDisconnect()" class="btn-secondary" style="height:42px; min-height:42px; font-size:12.5px; padding:0 14px; color:var(--color-danger); border-color:rgba(255, 107, 115,0.3);">
             <span>Disconnect</span>
           </button>
         </div>

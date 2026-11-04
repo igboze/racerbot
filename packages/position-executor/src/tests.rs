@@ -78,6 +78,7 @@ fn plan(venue: Venue, buy: bool) -> SwapPlan {
         receiver: None,
         deadline_sec: 1_800_000_000,
         correlation_id: "c1".into(),
+        custom_msg: None,
     }
 }
 
@@ -507,10 +508,12 @@ fn injected_pool_id_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "Bonding curve not allowed")]
-fn bonding_curve_target_restricted() {
+fn bonding_curve_buy_allowed_on_any_token() {
     let mut e = setup();
-    e.buy(plan(Venue::BondingCurve, true), 150);
+    let mut p = plan(Venue::BondingCurve, true);
+    p.token = "any-meme.near".parse().unwrap();
+    e.buy(p, 150);
+    assert_eq!(e.status, Status::Open);
 }
 
 #[test]
@@ -523,18 +526,31 @@ fn bonding_curve_buy_allowed_on_nearpumpfun() {
 }
 
 #[test]
-#[should_panic(expected = "Receiver not allowed")]
-fn launchpad_receiver_restricted() {
+#[should_panic(expected = "receiver required")]
+fn launchpad_receiver_required() {
     let mut e = setup();
     e.status = Status::Open;
     let mut p = plan(Venue::Launchpad, false);
-    p.receiver = Some("attacker.near".parse().unwrap());
+    p.receiver = None;
     e.sell(p);
 }
 
 #[test]
-fn launchpad_message() {
+fn launchpad_custom_receiver_allowed() {
+    let mut e = setup();
+    e.status = Status::Open;
+    let mut p = plan(Venue::Launchpad, false);
+    p.receiver = Some("custom-launchpad.near".parse().unwrap());
+    e.sell(p);
+    assert_eq!(e.status, Status::Open);
+}
+
+#[test]
+fn launchpad_message_default_and_custom() {
     assert_eq!(launchpad_msg(&plan(Venue::Launchpad, true)), r#"{"token":"meme.near"}"#);
+    let mut p = plan(Venue::Launchpad, true);
+    p.custom_msg = Some(r#"{"action":"buy_meme","ref":"racer"}"#.into());
+    assert_eq!(launchpad_msg(&p), r#"{"action":"buy_meme","ref":"racer"}"#);
 }
 
 #[test]

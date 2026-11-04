@@ -1,4 +1,8 @@
 import crypto from 'crypto';
+import { ethers } from 'ethers';
+import nacl from 'tweetnacl';
+import bs58 from 'bs58';
+import { PublicKey } from '@solana/web3.js';
 import { createLogger, createRedis, encrypt, isValidNearAccountId, type RedisClient } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -14,6 +18,8 @@ import { getBotInstance } from './notify.js';
 import { createSubaccount } from './wallet.js';
 
 const logger = createLogger('auth-session');
+
+export type WalletAuthChain = 'evm' | 'solana' | 'near';
 
 export interface AuthSessionData {
   sessionId: string;
@@ -32,8 +38,9 @@ const inMemorySessions = new Map<string, AuthSessionData>();
 const inMemoryTokens = new Map<string, { userId: string; telegramId: number; expiresAt: number }>();
 const inMemoryWalletChallenges = new Map<string, WalletAuthChallenge>();
 
-interface WalletAuthChallenge {
+export interface WalletAuthChallenge {
   accountId: string;
+  chain: WalletAuthChain;
   message: string;
   nonce: string;
   recipient: string;
@@ -43,11 +50,49 @@ interface WalletAuthChallenge {
 export interface WalletAuthProof {
   challengeId: string;
   accountId: string;
+  chain?: WalletAuthChain;
   message: string;
   nonce: string;
   recipient: string;
-  publicKey: string;
+  publicKey?: string;
   signature: string;
+}
+
+export function detectWalletChain(accountIdInput: string, chainInput?: string): WalletAuthChain {
+  const ch = (chainInput || '').trim().toLowerCase();
+  if (ch === 'evm' || ch === 'solana' || ch === 'near') return ch as WalletAuthChain;
+  const acc = accountIdInput.trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(acc)) return 'evm';
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(acc)) return 'solana';
+  if (isValidNearAccountId(acc.toLowerCase())) return 'near';
+  throw new Error('Unsupported wallet address. Please provide a valid EVM, Solana, or NEAR account address.');
+}
+
+export function verifyEvmSignature(message: string, signature: string, address: string): boolean {
+  try {
+    const recovered = ethers.verifyMessage(message, signature);
+    return recovered.toLowerCase() === address.toLowerCase();
+  } catch (err: any) {
+    logger.warn(`EVM signature verification error: ${err?.message}`);
+    return false;
+  }
+}
+
+export function verifySolanaSignature(message: string, signature: string, address: string): boolean {
+  try {
+    const pubkey = new PublicKey(address);
+    const msgBytes = Buffer.from(message, 'utf8');
+    let sigBytes: Uint8Array;
+    if (/^[0-9a-fA-F]{128}$/.test(signature)) {
+      sigBytes = Buffer.from(signature, 'hex');
+    } else {
+      sigBytes = bs58.decode(signature);
+    }
+    return nacl.sign.detached.verify(msgBytes, sigBytes, pubkey.toBytes());
+  } catch (err: any) {
+    logger.warn(`Solana signature verification error: ${err?.message}`);
+    return false;
+  }
 }
 
 const WALLET_CHALLENGE_TTL_SECONDS = 300;
@@ -241,49 +286,73 @@ export async function verifyAuthToken(token: string): Promise<{ userId: string; 
   return null;
 }
 
-export async function createWalletAuthChallenge(accountIdInput: string): Promise<{
+export async function createWalletAuthChallenge(accountIdInput: string, chainInput?: string): Promise<{
   challengeId: string;
   accountId: string;
+  chain: WalletAuthChain;
   message: string;
   nonce: string;
   recipient: string;
 }> {
-  const accountId = accountIdInput.trim().toLowerCase();
-  if (!isValidNearAccountId(accountId)) {
-    throw new Error('Enter a valid NEAR account ID.');
-  }
+  const chain = detectWalletChain(accountIdInput, chainInput);
+  const accountId = chain === 'evm' ? accountIdInput.trim().toLowerCase() : accountIdInput.trim();
 
   const challengeId = crypto.randomBytes(24).toString('hex');
   const nonce = crypto.randomBytes(32).toString('base64');
-  const message = `Sign in to RacerBot\nAccount: ${accountId}\nChallenge: ${crypto.randomBytes(16).toString('hex')}`;
+  const recipient = WALLET_AUTH_RECIPIENT;
+  const isoTime = new Date().toISOString();
+
+  let message: string;
+  if (chain === 'evm') {
+    // EIP-4361 SIWE specification
+    message = `${recipient} wants you to sign in with your Ethereum account:\n${accountId}\n\nSign in to RacerBot\n\nURI: https://${recipient}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: ${isoTime}`;
+  } else if (chain === 'solana') {
+    // Sign-In with Solana specification
+    message = `Sign in to RacerBot\nAddress: ${accountId}\nNonce: ${nonce}\nIssued At: ${isoTime}`;
+  } else {
+    // NEAR NEP-413 challenge
+    message = `Sign in to RacerBot\nAccount: ${accountId}\nChallenge: ${crypto.randomBytes(16).toString('hex')}`;
+  }
+
   const challenge: WalletAuthChallenge = {
     accountId,
+    chain,
     message,
     nonce,
-    recipient: WALLET_AUTH_RECIPIENT,
+    recipient,
     expiresAt: Date.now() + WALLET_CHALLENGE_TTL_SECONDS * 1000,
   };
 
   const redis = getAuthRedis();
+  let savedInRedis = false;
   if (redis) {
-    await redis.set(`auth:wallet-challenge:${challengeId}`, JSON.stringify(challenge), WALLET_CHALLENGE_TTL_SECONDS);
-  } else {
+    try {
+      await redis.set(`auth:wallet-challenge:${challengeId}`, JSON.stringify(challenge), WALLET_CHALLENGE_TTL_SECONDS);
+      savedInRedis = true;
+    } catch (err: any) {
+      logger.warn('Redis set challenge failed; using memory fallback:', err?.message);
+    }
+  }
+  if (!savedInRedis) {
     inMemoryWalletChallenges.set(challengeId, challenge);
   }
 
-  return { challengeId, accountId, message, nonce, recipient: challenge.recipient };
+  return { challengeId, accountId, chain, message, nonce, recipient };
 }
 
 async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAuthChallenge | null> {
   const redis = getAuthRedis();
   if (redis) {
-    const result = await redis.eval(
-      "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
-      1,
-      `auth:wallet-challenge:${challengeId}`
-    );
-    if (typeof result !== 'string') return null;
-    return JSON.parse(result) as WalletAuthChallenge;
+    try {
+      const result = await redis.eval(
+        "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
+        1,
+        `auth:wallet-challenge:${challengeId}`
+      );
+      if (typeof result === 'string') return JSON.parse(result) as WalletAuthChallenge;
+    } catch (err: any) {
+      logger.warn('Redis consume challenge failed; checking memory fallback:', err?.message);
+    }
   }
 
   const challenge = inMemoryWalletChallenges.get(challengeId) || null;
@@ -291,7 +360,7 @@ async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAu
   return challenge;
 }
 
-export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<void> {
+export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ chain: WalletAuthChain }> {
   if (!proof || typeof proof.challengeId !== 'string' || !/^[a-f0-9]{48}$/.test(proof.challengeId)) {
     throw new Error('Wallet authentication challenge is invalid or expired.');
   }
@@ -301,21 +370,38 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<voi
     throw new Error('Wallet authentication challenge is invalid or expired. Please reconnect.');
   }
 
-  const accountId = proof.accountId.trim().toLowerCase();
+  const chain = challenge.chain || detectWalletChain(proof.accountId, proof.chain);
+  const accountId = chain === 'evm' ? proof.accountId.trim().toLowerCase() : proof.accountId.trim();
   const nonce = Buffer.from(proof.nonce || '', 'base64');
   const expectedNonce = Buffer.from(challenge.nonce, 'base64');
+
   if (
     accountId !== challenge.accountId ||
     proof.message !== challenge.message ||
     proof.recipient !== challenge.recipient ||
     nonce.length !== 32 ||
     !crypto.timingSafeEqual(nonce, expectedNonce) ||
-    !proof.publicKey ||
     !proof.signature
   ) {
     throw new Error('Wallet authentication proof does not match the issued challenge.');
   }
 
+  if (chain === 'evm') {
+    const valid = verifyEvmSignature(challenge.message, proof.signature, accountId);
+    if (!valid) throw new Error('The EVM wallet signature is invalid.');
+    return { chain };
+  }
+
+  if (chain === 'solana') {
+    const valid = verifySolanaSignature(challenge.message, proof.signature, accountId);
+    if (!valid) throw new Error('The Solana wallet signature is invalid.');
+    return { chain };
+  }
+
+  // NEAR signature verification
+  if (!proof.publicKey) {
+    throw new Error('A public key is required for NEAR wallet authentication.');
+  }
   const { verifySignature, verifyFullKeyBelongsToUser } = await import('@near-wallet-selector/core');
   const validSignature = verifySignature({
     publicKey: proof.publicKey,
@@ -362,29 +448,40 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<voi
   if (!ownsAccountKey) {
     throw new Error('The signing key is not a full-access key for this NEAR account.');
   }
+
+  return { chain };
 }
 
 /**
- * 4b. Authenticate or auto-provision a user directly via NEAR Wallet Selector
+ * 4b. Authenticate or auto-provision a user directly via WebApp Wallet (EVM, Solana, or NEAR)
  */
 export async function authenticateWalletUser(params: {
   accountId: string;
+  chain?: WalletAuthChain;
   walletName?: string;
   proof: WalletAuthProof;
 }): Promise<{
   success: boolean;
   authToken?: string;
-  user?: { id: string; telegramId: number; username: string; subaccountId: string; address: string };
+  user?: {
+    id: string;
+    telegramId: number;
+    username: string;
+    subaccountId: string;
+    address: string;
+    chain: string;
+    solana_address?: string | null;
+    evm_address?: string | null;
+    innerIntentWallet?: string;
+  };
+  innerIntentWallet?: string;
   reason?: string;
 }> {
   try {
-    const accountId = (params.accountId || '').trim().toLowerCase();
-    if (!isValidNearAccountId(accountId) || params.proof.accountId.trim().toLowerCase() !== accountId) {
-      return { success: false, reason: 'A valid signed NEAR account proof is required.' };
-    }
-    await verifyWalletAuthProof(params.proof);
+    const { chain } = await verifyWalletAuthProof(params.proof);
+    const accountId = chain === 'evm' ? params.accountId.trim().toLowerCase() : params.accountId.trim();
 
-    const walletName = params.walletName || 'NEAR Wallet Selector';
+    const walletName = params.walletName || `${chain.toUpperCase()} Wallet`;
     const db = await import('@racerbot/db').then(m => m.getDb()).catch(() => null);
     if (!db) {
       return { success: false, reason: 'Wallet login requires the account database. Please try again.' };
@@ -392,30 +489,59 @@ export async function authenticateWalletUser(params: {
 
     const userResult = await db.query(
       `SELECT u.* FROM users u
-       LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain = 'near'
-       WHERE LOWER(u.subaccount_id) = $1 OR LOWER(w.address) = $1
+       LEFT JOIN user_wallets w ON u.id = w.user_id
+       WHERE LOWER(u.subaccount_id) = LOWER($1)
+          OR LOWER(w.address) = LOWER($1)
+          OR u.solana_address = $1
+          OR LOWER(u.evm_address) = LOWER($1)
        LIMIT 1`,
       [accountId]
     );
     let user = userResult.rows[0];
+
+    const { EXTERNAL_WALLET_MARKER } = await import('./webWallet.js');
+
     if (!user) {
-      // A wallet with no Telegram account: it proved ownership above, so it gets its own account
-      // (RacerBot holds no key for it; the wallet signs its own transactions)
+      const shortName = accountId.length > 12 ? `${accountId.slice(0, 6)}...${accountId.slice(-4)}` : accountId;
       const created = await db.query(
-        `INSERT INTO users (id, subaccount_id, telegram_id, scoped_key_encrypted, username)
-         VALUES (uuid_generate_v4(), $1, 0, '', NULL)
+        `INSERT INTO users (id, subaccount_id, telegram_id, scoped_key_encrypted, username, solana_address, evm_address)
+         VALUES (uuid_generate_v4(), $1, 0, $2, $3, $4, $5)
          ON CONFLICT (subaccount_id) DO UPDATE SET subaccount_id = EXCLUDED.subaccount_id
          RETURNING *`,
-        [accountId]
+        [
+          accountId,
+          EXTERNAL_WALLET_MARKER,
+          shortName,
+          chain === 'solana' ? accountId : null,
+          chain === 'evm' ? accountId : null,
+        ]
       );
       user = created.rows[0];
       if (!user) return { success: false, reason: 'Could not create your account. Please try again.' };
+
+      const walletChain = chain === 'evm' ? 'hyperevm' : (chain === 'solana' ? 'solana' : 'near');
+      await db.query(
+        `INSERT INTO user_wallets (id, user_id, chain, address, name, encrypted_private_key, is_imported, is_active)
+         VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, TRUE, FALSE)
+         ON CONFLICT DO NOTHING`,
+        [user.id, walletChain, accountId, walletName, EXTERNAL_WALLET_MARKER]
+      ).catch(() => undefined);
+    }
+
+    // Auto-provision inner intent wallet (confidential accounts) for 1Click Intent trading
+    let innerIntentWallet: string | undefined;
+    try {
+      const { ensureConfidentialAccount } = await import('./executorPool.js');
+      const conf = await ensureConfidentialAccount(user);
+      innerIntentWallet = conf.private_account_id;
+    } catch (confErr: any) {
+      logger.warn(`Could not provision inner intent wallet for user ${user.id}:`, confErr?.message);
     }
 
     const authToken = 'racer_tok_wallet_' + crypto.randomBytes(20).toString('hex');
     const tokenPayload = {
       userId: user.id,
-      telegramId: Number(user.telegram_id || 9900000001),
+      telegramId: Number(user.telegram_id || 0),
       expiresAt: Date.now() + TOKEN_TTL_SECONDS * 1000,
     };
 
@@ -431,11 +557,16 @@ export async function authenticateWalletUser(params: {
       authToken,
       user: {
         id: user.id,
-        telegramId: Number(user.telegram_id || 9900000001),
+        telegramId: Number(user.telegram_id || 0),
         username: user.username || accountId,
         subaccountId: user.subaccount_id || accountId,
         address: accountId,
+        chain,
+        solana_address: user.solana_address || (chain === 'solana' ? accountId : null),
+        evm_address: user.evm_address || (chain === 'evm' ? accountId : null),
+        innerIntentWallet,
       },
+      innerIntentWallet,
     };
   } catch (err: any) {
     logger.error('Failed to authenticate wallet user:', err);

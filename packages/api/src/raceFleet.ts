@@ -103,9 +103,22 @@ export async function hasActiveRaceFleet(userId: string): Promise<boolean> {
   }
 }
 
+async function resolveFleetUser(userOrTelegramId: number | string | UserRecord): Promise<UserRecord | null> {
+  if (typeof userOrTelegramId === 'object' && userOrTelegramId && 'id' in userOrTelegramId) {
+    return userOrTelegramId;
+  }
+  if (typeof userOrTelegramId === 'string') {
+    return getUserById(userOrTelegramId);
+  }
+  if (typeof userOrTelegramId === 'number' && userOrTelegramId > 0) {
+    return getUserByTelegramId(userOrTelegramId);
+  }
+  return null;
+}
+
 // ── Deploy / Subscribe to RaceFleet ─────────────────────────────────────────
 export async function deployRaceFleet(
-  telegramId: number,
+  userOrTelegramId: number | string | UserRecord,
   walletCount: number = 10,
   fleetName: string = 'Alpha Fleet'
 ): Promise<{
@@ -115,9 +128,9 @@ export async function deployRaceFleet(
   reason?: string;
   txHash?: string;
 }> {
-  const user = await getUserByTelegramId(telegramId);
+  const user = await resolveFleetUser(userOrTelegramId);
   if (!user) {
-    return { success: false, reason: 'User not found. Please run /start first.' };
+    return { success: false, reason: 'User not found. Please sign in or connect your wallet first.' };
   }
 
   const clampedCount = Math.max(MIN_FLEET_WALLETS, Math.min(MAX_FLEET_WALLETS, walletCount));
@@ -136,7 +149,7 @@ export async function deployRaceFleet(
 
   // 2. Collect 2 NEAR Subscription Fee to Treasury
   try {
-    const feeWithdrawal = await withdrawFunds(telegramId, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
+    const feeWithdrawal = await withdrawFunds(user, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
     logger.info(`Paid RaceFleet subscription fee for user ${user.id}: tx ${feeWithdrawal.txHash}`);
   } catch (payErr: any) {
     return { success: false, reason: `Subscription payment failed: ${payErr?.message || payErr}` };
@@ -360,7 +373,7 @@ export async function getFleetBalances(
 
 // ── 1-Click Distribute from Main Wallet ──────────────────────────────────────
 export async function distributeFundsToFleet(
-  telegramId: number,
+  userOrTelegramId: number | string | UserRecord,
   totalNear: number
 ): Promise<{
   success: boolean;
@@ -368,7 +381,7 @@ export async function distributeFundsToFleet(
   walletCount?: number;
   reason?: string;
 }> {
-  const user = await getUserByTelegramId(telegramId);
+  const user = await resolveFleetUser(userOrTelegramId);
   if (!user) return { success: false, reason: 'User not found' };
 
   const fleet = await getRaceFleetByUserId(user.id);
@@ -394,7 +407,7 @@ export async function distributeFundsToFleet(
   // Send transfers from main wallet to each fleet wallet
   const results = await Promise.allSettled(
     wallets.map((w) =>
-      withdrawFunds(telegramId, w.account_id, parseFloat(perWalletFormatted))
+      withdrawFunds(user, w.account_id, parseFloat(perWalletFormatted))
     )
   );
 
@@ -414,14 +427,14 @@ export async function distributeFundsToFleet(
 }
 
 // ── 1-Click Sweep Funds Back to Main Wallet ─────────────────────────────────
-export async function sweepFleetFunds(telegramId: number): Promise<{
+export async function sweepFleetFunds(userOrTelegramId: number | string | UserRecord): Promise<{
   success: boolean;
   totalSweptNear: number;
   successCount: number;
   failCount: number;
   reason?: string;
 }> {
-  const user = await getUserByTelegramId(telegramId);
+  const user = await resolveFleetUser(userOrTelegramId);
   if (!user) return { success: false, totalSweptNear: 0, successCount: 0, failCount: 0, reason: 'User not found' };
 
   const fleet = await getRaceFleetByUserId(user.id);

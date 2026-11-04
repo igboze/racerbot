@@ -18,9 +18,48 @@
   const STORAGE_KEY = 'racer_auth_token';
   const USER_KEY = 'racer_user_profile';
   const WALLET_KEY = 'racer_connected_near_wallet';
+  const EVM_WALLET_KEY = 'racer_connected_evm_wallet';
+  const SOLANA_WALLET_KEY = 'racer_connected_solana_wallet';
+  const CHAIN_KEY = 'racer_connected_wallet_chain';
   const PLATFORM_FEE_PCT = 1.5;
   const TREASURY_ACCOUNT = 'racerbottreasury.near';
   const isWalletAuthToken = (token) => /^racer_tok_wallet_[a-f0-9]{40}$/.test(token || '');
+
+  /** Deterministic base58 encoder for Solana signatures */
+  function base58Encode(bytes) {
+    if (typeof bytes === 'string') return bytes;
+    const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    const source = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes || []);
+    if (source.length === 0) return '';
+    const digits = [0];
+    for (let i = 0; i < source.length; i++) {
+      for (let j = 0; j < digits.length; j++) digits[j] <<= 8;
+      digits[0] += source[i];
+      let carry = 0;
+      for (let j = 0; j < digits.length; ++j) {
+        digits[j] += carry;
+        carry = (digits[j] / 58) | 0;
+        digits[j] %= 58;
+      }
+      while (carry) {
+        digits.push(carry % 58);
+        carry = (carry / 58) | 0;
+      }
+    }
+    for (let i = 0; i < source.length && source[i] === 0; i++) digits.push(0);
+    return digits.reverse().map(d => ALPHABET[d]).join('');
+  }
+
+  /** Convert ether decimal string or number to hex wei */
+  function toHexWei(amountEther) {
+    const parts = String(amountEther || '0').trim().split('.');
+    const whole = BigInt(parts[0] || '0');
+    let fraction = parts[1] || '';
+    if (fraction.length > 18) fraction = fraction.slice(0, 18);
+    else while (fraction.length < 18) fraction += '0';
+    const wei = (whole * 1000000000000000000n) + BigInt(fraction);
+    return '0x' + wei.toString(16);
+  }
 
   /** The transaction hash from whatever shape a wallet's signAndSendTransaction returns */
   function txHashOf(outcome) {
@@ -34,6 +73,9 @@
     constructor() {
       this.token = localStorage.getItem(STORAGE_KEY) || null;
       this.activeNearWallet = localStorage.getItem(WALLET_KEY) || null;
+      this.activeEvmWallet = localStorage.getItem(EVM_WALLET_KEY) || null;
+      this.activeSolanaWallet = localStorage.getItem(SOLANA_WALLET_KEY) || null;
+      this.activeWalletChain = localStorage.getItem(CHAIN_KEY) || (this.activeNearWallet ? 'near' : this.activeEvmWallet ? 'evm' : this.activeSolanaWallet ? 'solana' : null);
       this.user = this._loadUser();
       if (this.token?.startsWith('racer_tok_wallet_') && !isWalletAuthToken(this.token)) {
         this.token = null;
@@ -50,16 +92,22 @@
 
       // Real-time synchronization across all tabs and pages
       window.addEventListener('storage', (e) => {
-        if (e.key === WALLET_KEY || e.key === STORAGE_KEY || e.key === USER_KEY) {
+        if (e.key === WALLET_KEY || e.key === EVM_WALLET_KEY || e.key === SOLANA_WALLET_KEY || e.key === CHAIN_KEY || e.key === STORAGE_KEY || e.key === USER_KEY) {
           this.token = localStorage.getItem(STORAGE_KEY) || null;
           this.activeNearWallet = localStorage.getItem(WALLET_KEY) || null;
+          this.activeEvmWallet = localStorage.getItem(EVM_WALLET_KEY) || null;
+          this.activeSolanaWallet = localStorage.getItem(SOLANA_WALLET_KEY) || null;
+          this.activeWalletChain = localStorage.getItem(CHAIN_KEY) || (this.activeNearWallet ? 'near' : this.activeEvmWallet ? 'evm' : this.activeSolanaWallet ? 'solana' : null);
           this.user = this._loadUser();
           if (this.token?.startsWith('racer_tok_wallet_') && !isWalletAuthToken(this.token)) {
             this.token = null;
             localStorage.removeItem(STORAGE_KEY);
           }
           this.dispatchEvent('racer:auth-changed', { authenticated: this.isAuthenticated(), user: this.user });
-          this.dispatchEvent('racer:wallet-linked', { address: this.activeNearWallet });
+          this.dispatchEvent('racer:wallet-linked', {
+            address: this.activeNearWallet || this.activeEvmWallet || this.activeSolanaWallet,
+            chain: this.activeWalletChain,
+          });
         }
       });
 
@@ -90,7 +138,7 @@
     }
 
     isAuthenticated() {
-      return Boolean(this.token || this.isTelegramMiniApp() || this.activeNearWallet);
+      return Boolean(this.token || this.isTelegramMiniApp() || this.activeNearWallet || this.activeEvmWallet || this.activeSolanaWallet);
     }
 
     getAuthHeader() {
@@ -318,9 +366,15 @@
       this.token = null;
       this.user = null;
       this.activeNearWallet = null;
+      this.activeEvmWallet = null;
+      this.activeSolanaWallet = null;
+      this.activeWalletChain = null;
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(USER_KEY);
       localStorage.removeItem(WALLET_KEY);
+      localStorage.removeItem(EVM_WALLET_KEY);
+      localStorage.removeItem(SOLANA_WALLET_KEY);
+      localStorage.removeItem(CHAIN_KEY);
       this.dispatchEvent('racer:auth-changed', { authenticated: false, user: null });
       this.dispatchEvent('racer:wallet-linked', null);
     }
@@ -348,10 +402,12 @@
 
     getState() {
       const isLinked = this.isAuthenticated();
-      const connectedWallet = this.activeNearWallet || (this.user ? (this.user.address || this.user.subaccountId) : null);
+      const connectedWallet = this.activeNearWallet || this.activeEvmWallet || this.activeSolanaWallet || (this.user ? (this.user.address || this.user.subaccountId || this.user.evm_address || this.user.solana_address) : null);
+      const chain = this.activeWalletChain || (this.activeNearWallet ? 'near' : this.activeEvmWallet ? 'evm' : this.activeSolanaWallet ? 'solana' : 'near');
       return {
         isLinked,
         connectedWallet,
+        walletChain: chain,
         subaccount: this.user ? (this.user.subaccountId || this.user.address) : connectedWallet,
         user: this.user,
         token: this.token,
@@ -575,12 +631,14 @@
             this.authToken = data.authToken;
             this.user = data.user;
             this.activeNearWallet = accountId;
+            this.activeWalletChain = 'near';
             localStorage.setItem(STORAGE_KEY, data.authToken);
             localStorage.setItem(USER_KEY, JSON.stringify(data.user));
             localStorage.setItem(WALLET_KEY, accountId);
+            localStorage.setItem(CHAIN_KEY, 'near');
 
             this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
-            this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+            this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName, chain: 'near' });
             return this.user;
           }
         }
@@ -596,17 +654,229 @@
           localStorage.setItem(USER_KEY, JSON.stringify(this.user));
         }
         this.activeNearWallet = accountId;
+        this.activeWalletChain = 'near';
         localStorage.setItem(WALLET_KEY, accountId);
+        localStorage.setItem(CHAIN_KEY, 'near');
 
         this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
-        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName, chain: 'near' });
         return this.user;
       } catch (err) {
         console.error('[RacerConnect] Error connecting account:', err);
         this.activeNearWallet = accountId;
+        this.activeWalletChain = 'near';
         localStorage.setItem(WALLET_KEY, accountId);
-        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName });
+        localStorage.setItem(CHAIN_KEY, 'near');
+        this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName, chain: 'near' });
       }
+    }
+
+    /**
+     * Connect EVM Wallet via EIP-4361 SIWE challenge signing
+     * Compatible with MetaMask, Rabby, Coinbase, Rainbow, Brave, etc.
+     */
+    async connectEvmWallet() {
+      const ethereum = window.ethereum;
+      if (!ethereum) {
+        throw new Error('No EVM wallet detected. Please install MetaMask, Rabby, or Coinbase Wallet.');
+      }
+
+      const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts selected in EVM wallet.');
+      }
+      const accountId = accounts[0].toLowerCase();
+      const walletName = (ethereum.isRabby ? 'Rabby' : ethereum.isCoinbaseWallet ? 'Coinbase' : ethereum.isMetaMask ? 'MetaMask' : 'EVM Wallet');
+
+      // Request SIWE challenge
+      const challengeRes = await fetch('/api/auth/wallet/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, chain: 'evm' }),
+      });
+      const challenge = await challengeRes.json();
+      if (!challengeRes.ok || !challenge.success) {
+        throw new Error(challenge.error || 'Failed to create EVM sign-in challenge');
+      }
+
+      // Sign challenge using personal_sign
+      const signature = await ethereum.request({
+        method: 'personal_sign',
+        params: [challenge.message, accountId],
+      });
+
+      // Submit verified proof
+      const proof = {
+        challengeId: challenge.challengeId,
+        accountId,
+        chain: 'evm',
+        message: challenge.message,
+        nonce: challenge.nonce,
+        recipient: challenge.recipient,
+        signature,
+      };
+
+      const loginRes = await fetch('/api/auth/wallet-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, chain: 'evm', walletName, proof }),
+      });
+      const loginData = await loginRes.json();
+      if (!loginRes.ok || !loginData.success || !loginData.authToken) {
+        throw new Error(loginData.error || 'EVM wallet verification failed');
+      }
+
+      this.token = loginData.authToken;
+      this.authToken = loginData.authToken;
+      this.user = loginData.user;
+      this.activeEvmWallet = accountId;
+      this.activeWalletChain = 'evm';
+
+      localStorage.setItem(STORAGE_KEY, loginData.authToken);
+      localStorage.setItem(USER_KEY, JSON.stringify(loginData.user));
+      localStorage.setItem(EVM_WALLET_KEY, accountId);
+      localStorage.setItem(CHAIN_KEY, 'evm');
+
+      this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+      this.dispatchEvent('racer:wallet-linked', { address: accountId, name: walletName, chain: 'evm' });
+      return this.user;
+    }
+
+    /**
+     * Connect Solana Wallet via SIWS challenge signing
+     * Compatible with Phantom, Solflare, Backpack, etc.
+     */
+    async connectSolanaWallet() {
+      const solana = window.phantom?.solana || window.solana;
+      if (!solana) {
+        throw new Error('No Solana wallet detected. Please install Phantom, Solflare, or Backpack.');
+      }
+
+      let resp = null;
+      if (solana.isConnected && solana.publicKey) {
+        resp = { publicKey: solana.publicKey };
+      } else {
+        resp = await solana.connect();
+      }
+      const pubkey = resp.publicKey?.toBase58 ? resp.publicKey.toBase58() : resp.publicKey?.toString();
+      if (!pubkey) {
+        throw new Error('Could not retrieve public key from Solana wallet.');
+      }
+      const walletName = (solana.isPhantom ? 'Phantom' : solana.isSolflare ? 'Solflare' : 'Solana Wallet');
+
+      // Request SIWS challenge
+      const challengeRes = await fetch('/api/auth/wallet/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: pubkey, chain: 'solana' }),
+      });
+      const challenge = await challengeRes.json();
+      if (!challengeRes.ok || !challenge.success) {
+        throw new Error(challenge.error || 'Failed to create Solana sign-in challenge');
+      }
+
+      // Sign challenge message
+      const encodedMsg = new TextEncoder().encode(challenge.message);
+      const signed = await solana.signMessage(encodedMsg, 'utf8');
+      const rawSig = signed.signature || signed;
+      const signatureBase58 = base58Encode(rawSig);
+
+      // Submit verified proof
+      const proof = {
+        challengeId: challenge.challengeId,
+        accountId: pubkey,
+        chain: 'solana',
+        message: challenge.message,
+        nonce: challenge.nonce,
+        recipient: challenge.recipient,
+        signature: signatureBase58,
+      };
+
+      const loginRes = await fetch('/api/auth/wallet-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: pubkey, chain: 'solana', walletName, proof }),
+      });
+      const loginData = await loginRes.json();
+      if (!loginRes.ok || !loginData.success || !loginData.authToken) {
+        throw new Error(loginData.error || 'Solana wallet verification failed');
+      }
+
+      this.token = loginData.authToken;
+      this.authToken = loginData.authToken;
+      this.user = loginData.user;
+      this.activeSolanaWallet = pubkey;
+      this.activeWalletChain = 'solana';
+
+      localStorage.setItem(STORAGE_KEY, loginData.authToken);
+      localStorage.setItem(USER_KEY, JSON.stringify(loginData.user));
+      localStorage.setItem(SOLANA_WALLET_KEY, pubkey);
+      localStorage.setItem(CHAIN_KEY, 'solana');
+
+      this.dispatchEvent('racer:auth-changed', { status: 'linked', authenticated: true, user: this.user });
+      this.dispatchEvent('racer:wallet-linked', { address: pubkey, name: walletName, chain: 'solana' });
+      return this.user;
+    }
+
+    /**
+     * Send transfer directly from connected wallet to 1Click Intent Deposit Address
+     */
+    async sendConnectedWalletTransfer({ chain, depositAddress, amount, symbol }) {
+      if (!depositAddress) throw new Error('Deposit address is required.');
+      const targetChain = (chain || '').toLowerCase();
+
+      if (['eth', 'base', 'arb', 'bsc', 'pol', 'evm', 'ethereum'].includes(targetChain)) {
+        if (!window.ethereum) throw new Error('No EVM wallet detected to send transaction.');
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        const from = accounts[0] || this.activeEvmWallet;
+        if (!from) throw new Error('Please connect your EVM wallet first.');
+
+        const valueHex = toHexWei(amount);
+        const txHash = await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [{ from, to: depositAddress, value: valueHex }],
+        });
+        return { success: true, txHash, chain: targetChain };
+      }
+
+      if (['sol', 'solana'].includes(targetChain)) {
+        const solana = window.phantom?.solana || window.solana;
+        if (!solana) throw new Error('No Solana wallet detected to send transaction.');
+        if (!window.solanaWeb3) {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://unpkg.com/@solana/web3.js@1.95.8/lib/index.iife.min.js';
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('Failed to load Solana Web3 runtime. Please copy deposit address.'));
+            document.head.appendChild(s);
+          });
+        }
+        if (window.solanaWeb3) {
+          const connection = new window.solanaWeb3.Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+          const fromPubkey = solana.publicKey;
+          const toPubkey = new window.solanaWeb3.PublicKey(depositAddress);
+          const lamports = Math.round(parseFloat(amount) * 1e9);
+          const tx = new window.solanaWeb3.Transaction().add(
+            window.solanaWeb3.SystemProgram.transfer({
+              fromPubkey,
+              toPubkey,
+              lamports,
+            })
+          );
+          const { blockhash } = await connection.getLatestBlockhash();
+          tx.recentBlockhash = blockhash;
+          tx.feePayer = fromPubkey;
+          const signed = await solana.signAndSendTransaction(tx);
+          const txHash = signed.signature || signed;
+          return { success: true, txHash, chain: 'solana' };
+        }
+      }
+
+      if (['near'].includes(targetChain)) {
+        return this.sendNearTransaction({ receiverId: depositAddress, amountNear: amount });
+      }
+
+      throw new Error(`Sending directly from connected wallet is not yet supported for ${chain}. Please copy deposit address.`);
     }
 
     /**

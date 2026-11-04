@@ -25,6 +25,7 @@ export interface ExecPlan {
   receiver: string | null;
   deadline_sec: number;
   correlation_id: string;
+  custom_msg?: string | null;
 }
 
 class Writer {
@@ -65,5 +66,6 @@ export function encodeExecPlan(p: ExecPlan): Buffer {
   w.option(p.receiver, v => w.str(v));
   w.u64(p.deadline_sec);
   w.str(p.correlation_id);
+  w.option(p.custom_msg, v => w.str(v));
   return w.bytes();
 }

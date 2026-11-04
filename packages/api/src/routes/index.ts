@@ -257,27 +257,27 @@ router.post('/wallet/link-selector', ensureTelegramUser, async (req, res) => {
   }
 });
 
-// 5a. Create a signed wallet challenge for Wallet Selector authentication
+// 5a. Create a signed wallet challenge for Web Wallet authentication (EVM, Solana, NEAR)
 router.post('/auth/wallet/challenge', async (req, res) => {
   try {
-    const { accountId } = req.body;
+    const { accountId, chain } = req.body;
     if (!accountId || typeof accountId !== 'string') {
       res.status(400).json({ error: 'accountId is required' });
       return;
     }
 
     const { createWalletAuthChallenge } = await import('../authSession.js');
-    const challenge = await createWalletAuthChallenge(accountId);
+    const challenge = await createWalletAuthChallenge(accountId, chain);
     res.json({ success: true, ...challenge });
   } catch (err: any) {
     res.status(400).json({ error: err?.message || 'Failed to create wallet challenge' });
   }
 });
 
-// 5b. Authenticate or Login via NEAR Wallet Selector
+// 5b. Authenticate or Login via Web Wallet (EVM, Solana, NEAR)
 router.post('/auth/wallet-login', async (req, res) => {
   try {
-    const { accountId, walletName, proof } = req.body;
+    const { accountId, chain, walletName, proof } = req.body;
     if (!accountId || typeof accountId !== 'string') {
       res.status(400).json({ error: 'accountId is required' });
       return;
@@ -290,7 +290,8 @@ router.post('/auth/wallet-login', async (req, res) => {
     const { authenticateWalletUser } = await import('../authSession.js');
     const result = await authenticateWalletUser({
       accountId: accountId.trim(),
-      walletName: walletName || 'NEAR Wallet Selector',
+      chain,
+      walletName: walletName || (chain ? `${String(chain).toUpperCase()} Wallet` : 'Connected Wallet'),
       proof,
     });
 

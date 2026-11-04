@@ -37,8 +37,8 @@ const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$|^[0-
 export function registerConfidentialRoutes(router: Router): void {
   const authed = async (req: any, res: any): Promise<UserRecord | null> => {
     const user = await verifiedUser(req).catch(() => null);
-    if (!user?.subaccount_id || !NEAR_ACCOUNT.test(user.subaccount_id)) {
-      res.status(401).json({ error: 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.' });
+    if (!user?.id) {
+      res.status(401).json({ error: 'Sign in with Telegram, or connect your wallet and approve the sign-in message, to use private trading.' });
       return null;
     }
     return user;
