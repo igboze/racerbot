@@ -4623,7 +4623,7 @@
                 </div>
 
                 <div class="console-conf-pool-chips" id="console-conf-pool-chips" aria-live="polite">
-                  <span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet to fund disposable executor wallets.</span>
+                  <span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your wallet to fund disposable executor wallets.</span>
                 </div>
 
                 <div class="console-conf-actions">
@@ -5982,7 +5982,7 @@
         }
         if (res.status === 401) {
           const activeWallet = getActiveUserAddress();
-          if (note) note.textContent = data.error || 'Sign in with Telegram, or connect your NEAR wallet and approve the sign-in message, to use private trading.';
+          if (note) note.textContent = data.error || 'Sign in with Telegram, or connect your wallet (Solana, EVM or NEAR) and approve the sign-in message, to use private trading.';
           if (body) body.hidden = true;
           if (consoleBalEl) consoleBalEl.textContent = '--';
           if (consolePoolEl) consolePoolEl.textContent = '--';
@@ -5992,7 +5992,7 @@
                    <span style="font-size:11.5px; color:var(--color-text-muted);">Approve a free wallet sign-in message for <b>${escapeHtml(activeWallet)}</b> to unlock your Confidential Pool &amp; Executor Wallets.</span>
                    <button type="button" class="btn-primary" style="min-height:44px; padding:0 14px; font-size:12px;" onclick="verifyConnectedWalletSession(this)"><span>Verify Wallet Session</span></button>
                  </div>`
-              : '<span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your NEAR wallet and sign in to spawn disposable executor wallets.</span>';
+              : '<span style="font-size:11.5px; color:var(--color-text-subtle);">Connect your wallet and sign in to spawn disposable executor wallets.</span>';
           }
           if (consolePosWrap) consolePosWrap.hidden = true;
           return;
@@ -6444,7 +6444,7 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         const res = await fetch('/alpha/vault/receipts?limit=50', { headers: getAuthHeaders() });
         const data = await res.json();
         if (res.status === 401) {
-          const msg = '<li class="receipts-empty">Connect your NEAR wallet or sign in with Telegram to see your receipts.</li>';
+          const msg = '<li class="receipts-empty">Connect your wallet or sign in with Telegram to see your receipts.</li>';
           if (vaultList) vaultList.innerHTML = msg;
           if (list) list.innerHTML = msg;
           return;
@@ -9316,9 +9316,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
               <div style="margin-bottom:12px;"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-primary);"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></div>
               <div style="font-size:15px; font-weight:600; color:#fff; margin-bottom:8px;">Connect your wallet to view your keys</div>
               <div style="font-size:13px; margin-bottom:20px;">Your viewing key subscriptions will appear here after connecting.</div>
-              <button class="btn-primary" onclick="handleOpenNearWalletSelector()" style="margin:0 auto;">
+              <button class="btn-primary" onclick="openConnectModal()" style="margin:0 auto;">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-                Connect NEAR Wallet
+                Connect Wallet
               </button>
             </div>`;
         }
@@ -9666,7 +9666,7 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       // The deposit is delivered to this account: never guess it
       const subaccountId = getActiveUserAddress();
       if (!subaccountId) {
-        showToast('Connect your NEAR wallet or sign in with Telegram first, so the deposit has an account to arrive in.', 'error');
+        showToast('Connect your wallet or sign in with Telegram first, so the deposit has an account to arrive in.', 'error');
         openConnectModal();
         return;
       }
@@ -9994,12 +9994,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
     }
     window.showToast = showToast;
 
+    /** Every connect entry opens the chooser: Solana, EVM and NEAR wallets, or Telegram */
     function handleHeaderConnectClick() {
-      if (window.RacerConnect && (window.RacerConnect.isAuthenticated() || window.RacerConnect.activeNearWallet)) {
-        openConnectModal();
-      } else {
-        handleOpenNearWalletSelector();
-      }
+      openConnectModal();
     }
 
     async function handleOpenNearWalletSelector() {
