@@ -2133,17 +2133,28 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               liquidityInPaired = ntState.reserveQuoteHuman > 0 ? ntState.reserveQuoteHuman.toFixed(2) : undefined;
             }
           }
+          // A coin whose quote token has no NEAR price (a tokenized stock bridged from BNB Chain, paired only
+          // with launchpad coins) still gets a card, saying plainly why it cannot be bought with NEAR
+          if (ntState && !ntState.quoteIsNear && ntState.dclPoolId && !(ntState.price > 0) && venue === 'unknown') {
+            venue = 'nearlytrade';
+            dclPoolId = ntState.dclPoolId;
+            pairedSymbol = ntState.quoteSymbol || pairedSymbol;
+            if (ntState.totalSupply && ntState.totalSupply !== '0') totalSupply = ntState.totalSupply;
+          }
           // Quoted in a token Rhea cannot reach from NEAR (PRL, ...): trade through NEAR Intents + the DCL pool
           if (ntState && !ntState.quoteIsNear && ntState.dclPoolId) {
             // The launchpad's pool first, reached from NEAR through Rhea's DCL pools (as nearly.trade does)
-            const toQuote = await near.findDclPathFromNear(ntState.quote).catch(() => null);
-            const hop = toQuote ? null : await near.findRheaPoolId('wrap.near', ntState.quote).catch(() => null);
-            if (toQuote) {
-              dclPath = [...toQuote, ntState.dclPoolId];
-            } else if (hop === null) {
+            const best = await near.bestNearHop(ntState.quote).catch(() => null);
+            if (best?.kind === 'dcl') {
+              dclPath = [...best.path, ntState.dclPoolId];
+            } else if (!best) {
               const { isIntentsToken } = await import('./intentsPrivate.js');
               if (await isIntentsToken(ntState.quote).catch(() => false)) {
                 intentsRoute = { quote: ntState.quote, dclPoolId: ntState.dclPoolId };
+              } else {
+                const sym = ntState.quoteSymbol || ntState.quote;
+                tradeBlockReason = `This coin trades only against $${sym}, which has no NEAR pool on Rhea and is not on NEAR Intents, ` +
+                  `so it cannot be bought with NEAR (nearly.trade buyers pay in $${sym} itself).`;
               }
             }
           }
@@ -2226,11 +2237,10 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
               pairedSymbol = qMeta?.symbol || undefined;
               // The executor's two-hop route needs a Ref pool between wNEAR and the quote token
               // The launchpad's pool first, reached from NEAR through Rhea's DCL pools (as nearly.trade does)
-              const toQuote = await near.findDclPathFromNear(quote).catch(() => null);
-              const hop = toQuote ? null : await near.findRheaPoolId('wrap.near', quote).catch(() => null);
-              if (toQuote) {
-                dclPath = [...toQuote, fee.pool_id];
-              } else if (hop === null) {
+              const best = await near.bestNearHop(quote).catch(() => null);
+              if (best?.kind === 'dcl') {
+                dclPath = [...best.path, fee.pool_id];
+              } else if (!best) {
                 // No on-chain path: Rhea's own app swaps such quote tokens (PRL, ...) through NEAR Intents
                 const { isIntentsToken } = await import('./intentsPrivate.js');
                 if (await isIntentsToken(quote).catch(() => false)) {
@@ -2471,6 +2481,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       finalPriceUsd = usdVal < 0.000001 ? usdVal.toExponential(4) : usdVal.toFixed(8);
     } else if (dexData && dexData.priceUsd > 0) {
       finalPriceUsd = dexData.priceUsd < 0.000001 ? dexData.priceUsd.toExponential(4) : dexData.priceUsd.toFixed(8);
+    }
+
+    // Any coin whose pool holds no wNEAR (a launchpad pool paired with PRL, USDC...) is reached along the best
+    // DCL path from wNEAR, whatever the launchpad, so buys and sells never go through a pool that cannot take NEAR
+    if (!dclPath && !intentsRoute && dclPoolId && !dclPoolId.includes('>') && !dclPoolId.includes(',')) {
+      const expanded = await near.expandDclPoolFromNear(dclPoolId, tokenAddress).catch(() => dclPoolId!);
+      if (expanded !== dclPoolId) dclPath = expanded.split('>');
     }
 
     const tradeable = (isTradableVenue(venue) || Boolean(intentsRoute) || Boolean(dclPath)) && !tradeBlockReason;
