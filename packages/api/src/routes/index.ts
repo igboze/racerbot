@@ -32,7 +32,7 @@ import { registerWebWalletRoutes } from './webWallet.js';
 import { createSwarmRouter } from './swarmRoutes.js';
 import { createFleetRouter } from './fleetRoutes.js';
 import { createRacerCardRouter } from './racerCardRoutes.js';
-import { unprovenWalletClaim, verifiedUser } from './verifiedUser.js';
+import { verifiedUser } from './verifiedUser.js';
 import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
 const logger = createLogger('api-routes');
@@ -401,7 +401,7 @@ async function verifyClientTx(txHash: string, signerId: string): Promise<{ ok: t
 }
 
 export async function resolveAlphaUser(req: any) {
-  const { getUserById, getUserByTelegramId, getDb } = await import('@racerbot/db');
+  const { getUserById, getUserByTelegramId } = await import('@racerbot/db');
 
   if (req.userId) {
     const u = await getUserById(req.userId);
@@ -434,63 +434,10 @@ export async function resolveAlphaUser(req: any) {
     } catch {}
   }
 
-  // 3. NEAR Connect Wallet Header: an unproven claim, so it may only stand for a wallet RacerBot holds
-  // no key for (anything that wallet does still needs its own signature). Accounts RacerBot manages
-  // and signs for are reachable only through a verified session above, never by naming them here.
-  // Read-only requests only (see unprovenWalletClaim)
-  const walletHeader = unprovenWalletClaim(req);
-  if (walletHeader && typeof walletHeader === 'string' && walletHeader.trim()) {
-    const cleanWallet = walletHeader.trim();
-    try {
-      const db = await getDb();
-      // IMPORTANT: Only filter by subaccount_id (TEXT) — never by id (UUID) with a wallet address.
-      // Passing a NEAR address to a UUID column causes Postgres to throw
-      // "invalid input syntax for type uuid" which propagates as a trade error.
-      const uRes = await db.query(
-        `SELECT * FROM users WHERE subaccount_id = $1 LIMIT 1`,
-        [cleanWallet]
-      );
-      if (uRes.rows[0]?.scoped_key_encrypted) return null;
-      if (uRes.rows[0]) {
-        // If users.username is default or empty, check if racer_alpha_traders has a custom handle
-        if (!uRes.rows[0].username || uRes.rows[0].username === cleanWallet) {
-          const tRes = await db.query(
-            `SELECT handle FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $1 LIMIT 1`,
-            [cleanWallet]
-          );
-          if (tRes.rows[0]?.handle) {
-            uRes.rows[0].username = tRes.rows[0].handle;
-          }
-        }
-        return uRes.rows[0];
-      }
-
-      // Check if a trader record exists with a custom handle
-      const tRes = await db.query(
-        `SELECT handle FROM racer_alpha_traders WHERE user_id = $1 OR payout_wallet_address = $1 LIMIT 1`,
-        [cleanWallet]
-      );
-      const customHandle = tRes.rows[0]?.handle || null;
-
-      // Generate a proper UUID for `id` — the wallet address goes into subaccount_id (TEXT).
-      // Using uuid_generate_v4() server-side is safest; ON CONFLICT on subaccount_id ensures idempotency.
-      const newU = await db.query(
-        `INSERT INTO users (id, subaccount_id, telegram_id, scoped_key_encrypted, username)
-         VALUES (uuid_generate_v4(), $1, 0, '', $2)
-         ON CONFLICT (subaccount_id) DO UPDATE SET username = COALESCE(EXCLUDED.username, users.username)
-         RETURNING *`,
-        [cleanWallet, customHandle]
-      );
-      // ON CONFLICT returns the existing row, which may be a managed account created meanwhile
-      if (newU.rows[0]?.scoped_key_encrypted) return null;
-      if (newU.rows[0]) return newU.rows[0];
-    } catch {
-      // Without the database we cannot tell a managed account from a plain wallet: refuse
-      return null;
-    }
-    return null;
-  }
-
+  // A wallet address in a header or query is only a claim: it never stands for a user. Taking it as one
+  // let anyone name a wallet that holds a viewing key and read that trader's paid positions, see which keys
+  // a wallet bought, and create a user row per request. Public on-chain reads (balances) take the address
+  // as a plain parameter instead; everything about a user needs a session or Telegram proof.
   return null;
 }
 
@@ -687,7 +634,8 @@ router.get('/alpha/creator/dashboard', async (req, res) => {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
       return;
     }
-    const walletAddress = req.headers['x-wallet-address'] || user.subaccount_id;
+    // The signed-in user's own wallet: a header naming another creator's payout wallet would show their studio
+    const walletAddress = user.subaccount_id;
     const { getCreatorStudioData } = await import('../racerAlpha.js');
     const data = await getCreatorStudioData(user.id, walletAddress as string);
     res.json(data);
@@ -728,7 +676,7 @@ router.get(['/api/user/balance', '/user/balance'], async (req, res) => {
 
     if (!accountId) {
       const user = await resolveAlphaUser(req);
-      accountId = user?.subaccount_id || user?.id;
+      accountId = user?.subaccount_id || user?.id || '';
     }
 
     if (!accountId) {
