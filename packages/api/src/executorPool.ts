@@ -294,7 +294,13 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
         if (m.kind === 'deposit' || m.kind === 'return') ledger += amt;
         else if (m.kind === 'withdraw' || m.kind === 'refill' || m.kind === 'copy_fee') ledger -= amt;
       }
-      if (ledger > committed) available = ledger - committed;
+      const settledRefills = new Set(
+        moves.filter(m => m.status === 'SUCCESS' && m.kind === 'refill' && m.executor_account_id).map(m => m.executor_account_id)
+      );
+      const inFlight = live
+        .filter(e => !settledRefills.has(e.account_id))
+        .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
+      if (ledger > inFlight) available = ledger - inFlight;
     }
     const toCreate: bigint[] = [];
     for (const raw of missing) {
@@ -652,10 +658,13 @@ export async function confidentialOverview(user: UserRecord) {
       ledger -= amt;
     }
   }
-  const committed = executors
-    .filter(e => ['creating', 'funding', 'ready', 'claimed'].includes(e.status))
+  const settledRefillExecutors = new Set(
+    moves.filter(m => m.status === 'SUCCESS' && m.kind === 'refill' && m.executor_account_id).map(m => m.executor_account_id)
+  );
+  const inFlightUnsettled = executors
+    .filter(e => ['creating', 'funding'].includes(e.status) && !settledRefillExecutors.has(e.account_id))
     .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
-  const ledgerAvailable = ledger > committed ? ledger - committed : 0n;
+  const ledgerAvailable = ledger > inFlightUnsettled ? ledger - inFlightUnsettled : 0n;
 
   if (balance === null || balance === 0n) {
     if (ledgerAvailable > 0n) {
