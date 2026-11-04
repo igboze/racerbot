@@ -9618,8 +9618,30 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           })
         });
 
-        const data = await res.json();
-        if (!res.ok || !data.success) {
+        let data = await res.json();
+        // A connected wallet RacerBot holds no key for (EVM, Solana) deposits into its private balance
+        if (res.status === 409 && data.usePrivateDeposit) {
+          const priv = await fetch('/alpha/confidential/deposit/crosschain', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ tokenKey: currentDepositToken.key, amount }),
+          });
+          const p = await priv.json();
+          if (!priv.ok || !p.success) throw new Error(p.error || data.error || 'Failed to generate deposit quote from solver');
+          data = {
+            success: true,
+            depositAddress: p.depositAddress,
+            depositMemo: p.depositMemo,
+            sourceChain: p.sourceChain || currentDepositChain,
+            sourceSymbol: p.symbol,
+            sourceAmount: p.amount,
+            sourceDecimals: p.sourceDecimals,
+            sourceContract: p.sourceContract,
+            sourceAmountRaw: p.sourceAmountRaw,
+            minNearOut: p.minNear,
+            destinationAddress: 'your private balance',
+          };
+        } else if (!res.ok || !data.success) {
           throw new Error(data.error || 'Failed to generate deposit quote from solver');
         }
 
@@ -9677,11 +9699,7 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       // In-Wallet 1Click payment option
       const payBtn = document.getElementById('deposit-pay-connected-btn');
       if (payBtn) {
-        const isEvmChain = ['eth', 'base', 'arb', 'bsc', 'pol'].includes(quote.sourceChain);
-        const isSolChain = ['sol', 'solana'].includes(quote.sourceChain);
-        const hasEvm = Boolean(window.ethereum && (window.RacerConnect?.activeEvmWallet || window.RacerConnect?.activeWalletChain === 'evm'));
-        const hasSol = Boolean((window.phantom?.solana || window.solana) && (window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeWalletChain === 'solana'));
-        if ((isEvmChain && hasEvm) || (isSolChain && hasSol) || (quote.sourceChain === 'near' && window.RacerConnect?.activeNearWallet)) {
+        if (canPayDepositInWallet(quote.sourceChain, quote.sourceSymbol, quote.sourceContract)) {
           payBtn.style.display = 'inline-flex';
           payBtn.innerHTML = `<span>Pay ${quote.sourceAmount} ${quote.sourceSymbol} in Wallet</span>`;
         } else {
@@ -9695,6 +9713,25 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       startDepositStatusPoller(quote.depositAddress);
     }
 
+    /**
+     * Whether the connected wallet can pay this quote itself: the chain's coin or an ERC-20 on a supported
+     * EVM chain, or native SOL. Other tokens (SPL, NEAR) are sent by hand to the copied address.
+     */
+    function canPayDepositInWallet(chain, symbol, contract) {
+      const native = { eth: 'ETH', base: 'ETH', arb: 'ETH', bsc: 'BNB', pol: 'POL' };
+      const sym = String(symbol || '').toUpperCase();
+      const c = String(chain || '').toLowerCase();
+      if (native[c]) {
+        const hasEvm = Boolean(window.ethereum && (window.RacerConnect?.activeEvmWallet || window.RacerConnect?.activeWalletChain === 'evm'));
+        return hasEvm && (Boolean(contract) || sym === native[c]);
+      }
+      if (c === 'sol' || c === 'solana') {
+        const hasSol = Boolean((window.phantom?.solana || window.solana) && (window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeWalletChain === 'solana'));
+        return hasSol && !contract && sym === 'SOL';
+      }
+      return false;
+    }
+
     async function handlePayDepositFromConnectedWallet(btn) {
       if (!activeDepositQuote) return;
       const oldHtml = btn.innerHTML;
@@ -9705,6 +9742,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           chain: activeDepositQuote.sourceChain,
           depositAddress: activeDepositQuote.depositAddress,
           amount: activeDepositQuote.sourceAmount,
+          amountRaw: activeDepositQuote.sourceAmountRaw,
+          decimals: activeDepositQuote.sourceDecimals,
+          contract: activeDepositQuote.sourceContract,
           symbol: activeDepositQuote.sourceSymbol,
         });
         showToast('Payment submitted from connected wallet! Tracking deposit...', 'success');
@@ -10206,12 +10246,11 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
         // Show inner intent account if available
         const intentWrap = document.getElementById('linked-intent-account');
         const intentHex = document.getElementById('linked-intent-hex');
-        const confidentialAcc = user?.confidential_account || (user?.id ? user : null);
         if (intentWrap && intentHex) {
-          const ownerSalt = confidentialAcc?.owner_salt || user?.subaccountId || '';
-          if (ownerSalt) {
+          const intentAccount = user?.innerIntentWallet || window.RacerConnect?.innerIntentWallet || '';
+          if (intentAccount) {
             intentWrap.hidden = false;
-            intentHex.textContent = ownerSalt.length > 20 ? (ownerSalt.slice(0, 10) + '...' + ownerSalt.slice(-6)) : ownerSalt;
+            intentHex.textContent = intentAccount.length > 20 ? (intentAccount.slice(0, 10) + '...' + intentAccount.slice(-6)) : intentAccount;
           } else {
             intentWrap.hidden = false;
             intentHex.textContent = 'Auto-provisioned on deposit';

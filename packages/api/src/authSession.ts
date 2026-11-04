@@ -60,12 +60,26 @@ export interface WalletAuthProof {
 
 export function detectWalletChain(accountIdInput: string, chainInput?: string): WalletAuthChain {
   const ch = (chainInput || '').trim().toLowerCase();
-  if (ch === 'evm' || ch === 'solana' || ch === 'near') return ch as WalletAuthChain;
   const acc = accountIdInput.trim();
-  if (/^0x[a-fA-F0-9]{40}$/.test(acc)) return 'evm';
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(acc)) return 'solana';
-  if (isValidNearAccountId(acc.toLowerCase())) return 'near';
+  const isEvm = /^0x[a-fA-F0-9]{40}$/.test(acc);
+  const isSolana = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(acc);
+  const isNear = isValidNearAccountId(acc.toLowerCase());
+  // A stated chain must still fit the address (an ETH-style 0x account can be NEAR too)
+  if (ch === 'evm' && isEvm) return 'evm';
+  if (ch === 'solana' && isSolana) return 'solana';
+  if (ch === 'near' && isNear) return 'near';
+  if (ch && ch !== 'evm' && ch !== 'solana' && ch !== 'near') throw new Error('Unsupported wallet chain.');
+  if (!ch) {
+    if (isEvm) return 'evm';
+    if (isSolana) return 'solana';
+    if (isNear) return 'near';
+  }
   throw new Error('Unsupported wallet address. Please provide a valid EVM, Solana, or NEAR account address.');
+}
+
+/** Solana addresses are case-sensitive; EVM and NEAR account ids compare in lowercase */
+export function normalizeWalletAccount(chain: WalletAuthChain, accountId: string): string {
+  return chain === 'solana' ? accountId.trim() : accountId.trim().toLowerCase();
 }
 
 export function verifyEvmSignature(message: string, signature: string, address: string): boolean {
@@ -295,7 +309,7 @@ export async function createWalletAuthChallenge(accountIdInput: string, chainInp
   recipient: string;
 }> {
   const chain = detectWalletChain(accountIdInput, chainInput);
-  const accountId = chain === 'evm' ? accountIdInput.trim().toLowerCase() : accountIdInput.trim();
+  const accountId = normalizeWalletAccount(chain, accountIdInput);
 
   const challengeId = crypto.randomBytes(24).toString('hex');
   const nonce = crypto.randomBytes(32).toString('base64');
@@ -360,7 +374,7 @@ async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAu
   return challenge;
 }
 
-export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ chain: WalletAuthChain }> {
+export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ chain: WalletAuthChain; accountId: string }> {
   if (!proof || typeof proof.challengeId !== 'string' || !/^[a-f0-9]{48}$/.test(proof.challengeId)) {
     throw new Error('Wallet authentication challenge is invalid or expired.');
   }
@@ -371,7 +385,7 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
   }
 
   const chain = challenge.chain || detectWalletChain(proof.accountId, proof.chain);
-  const accountId = chain === 'evm' ? proof.accountId.trim().toLowerCase() : proof.accountId.trim();
+  const accountId = normalizeWalletAccount(chain, String(proof.accountId || ''));
   const nonce = Buffer.from(proof.nonce || '', 'base64');
   const expectedNonce = Buffer.from(challenge.nonce, 'base64');
 
@@ -389,13 +403,13 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
   if (chain === 'evm') {
     const valid = verifyEvmSignature(challenge.message, proof.signature, accountId);
     if (!valid) throw new Error('The EVM wallet signature is invalid.');
-    return { chain };
+    return { chain, accountId };
   }
 
   if (chain === 'solana') {
     const valid = verifySolanaSignature(challenge.message, proof.signature, accountId);
     if (!valid) throw new Error('The Solana wallet signature is invalid.');
-    return { chain };
+    return { chain, accountId };
   }
 
   // NEAR signature verification
@@ -449,7 +463,7 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
     throw new Error('The signing key is not a full-access key for this NEAR account.');
   }
 
-  return { chain };
+  return { chain, accountId };
 }
 
 /**
@@ -478,8 +492,10 @@ export async function authenticateWalletUser(params: {
   reason?: string;
 }> {
   try {
-    const { chain } = await verifyWalletAuthProof(params.proof);
-    const accountId = chain === 'evm' ? params.accountId.trim().toLowerCase() : params.accountId.trim();
+    const { chain, accountId } = await verifyWalletAuthProof(params.proof);
+    if (normalizeWalletAccount(chain, params.accountId || '') !== accountId) {
+      return { success: false, reason: 'The signed wallet does not match the account you are signing in with.' };
+    }
 
     const walletName = params.walletName || `${chain.toUpperCase()} Wallet`;
     const db = await import('@racerbot/db').then(m => m.getDb()).catch(() => null);
@@ -487,19 +503,29 @@ export async function authenticateWalletUser(params: {
       return { success: false, reason: 'Wallet login requires the account database. Please try again.' };
     }
 
-    const userResult = await db.query(
-      `SELECT u.* FROM users u
-       LEFT JOIN user_wallets w ON u.id = w.user_id
-       WHERE LOWER(u.subaccount_id) = LOWER($1)
-          OR LOWER(w.address) = LOWER($1)
-          OR u.solana_address = $1
-          OR LOWER(u.evm_address) = LOWER($1)
-       LIMIT 1`,
-      [accountId]
-    );
+    const userResult = chain === 'solana'
+      ? await db.query(
+        `SELECT u.* FROM users u
+         LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain = 'solana'
+         WHERE u.solana_address = $1 OR w.address = $1 OR u.subaccount_id = $1
+         LIMIT 1`,
+        [accountId])
+      : chain === 'evm'
+        ? await db.query(
+          `SELECT u.* FROM users u
+           LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain IN ('evm', 'hyperevm', 'elysium')
+           WHERE LOWER(u.evm_address) = $1 OR LOWER(w.address) = $1 OR LOWER(u.subaccount_id) = $1
+           LIMIT 1`,
+          [accountId])
+        : await db.query(
+          `SELECT u.* FROM users u
+           LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain = 'near'
+           WHERE LOWER(u.subaccount_id) = $1 OR LOWER(w.address) = $1
+           LIMIT 1`,
+          [accountId]);
     let user = userResult.rows[0];
 
-    const { EXTERNAL_WALLET_MARKER } = await import('./webWallet.js');
+    const { EXTERNAL_WALLET_MARKER, hasManagedWallet, createWebManagedWallet } = await import('./webWallet.js');
 
     if (!user) {
       const shortName = accountId.length > 12 ? `${accountId.slice(0, 6)}...${accountId.slice(-4)}` : accountId;
@@ -526,6 +552,19 @@ export async function authenticateWalletUser(params: {
          ON CONFLICT DO NOTHING`,
         [user.id, walletChain, accountId, walletName, EXTERNAL_WALLET_MARKER]
       ).catch(() => undefined);
+    }
+
+    // A Solana or EVM wallet is not a NEAR account, so the user gets a RacerBot NEAR wallet to receive
+    // 1Click deposits and trade from (Fleet, private mode). Someone signing in with a wallet RacerBot
+    // generated for them in Telegram already has one, and keeps using that profile.
+    if (chain !== 'near' && !hasManagedWallet(user)) {
+      try {
+        await createWebManagedWallet(user.id);
+        const fresh = await db.query('SELECT * FROM users WHERE id = $1', [user.id]);
+        if (fresh.rows[0]) user = fresh.rows[0];
+      } catch (walletErr: any) {
+        logger.warn(`Could not create a RacerBot wallet for web user ${user.id}: ${walletErr?.message}`);
+      }
     }
 
     // Auto-provision inner intent wallet (confidential accounts) for 1Click Intent trading
@@ -589,7 +628,10 @@ export async function linkSelectorWallet(params: {
     if (!isValidNearAccountId(accountId) || params.proof.accountId.trim().toLowerCase() !== accountId) {
       return { success: false, reason: 'A valid signed NEAR account proof is required.' };
     }
-    await verifyWalletAuthProof(params.proof);
+    const verified = await verifyWalletAuthProof(params.proof);
+    if (verified.chain !== 'near' || verified.accountId !== accountId) {
+      return { success: false, reason: 'A valid signed NEAR account proof is required.' };
+    }
 
     const chain = 'near';
     const walletName = (params.walletName || 'NEAR Wallet').trim().slice(0, 30);

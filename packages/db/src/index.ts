@@ -237,6 +237,7 @@ export type {
 } from './db.js';
 export {
   getConfidentialAccount,
+  repairConfidentialPayout,
   createConfidentialAccount,
   updateConfidentialSettings,
   insertExecutor,

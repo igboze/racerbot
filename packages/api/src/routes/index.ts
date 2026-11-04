@@ -3307,6 +3307,19 @@ router.post('/deposit/quote', async (req, res) => {
       res.status(400).json({ error: 'subaccountId and amount are required' });
       return;
     }
+    // 1Click delivers wNEAR to an account on NEAR that RacerBot can trade from. A signed-in user's deposit
+    // always goes to their own RacerBot wallet (a Solana or EVM sign-in has one made at sign-in); a NEAR
+    // wallet RacerBot holds no key for deposits into its private balance instead.
+    const { getUserBySubaccount } = await import('@racerbot/db');
+    const { hasManagedWallet } = await import('../webWallet.js');
+    const { isNearPayoutAccount } = await import('../executorPool.js');
+    const signedIn = await verifiedUser(req).catch(() => null);
+    const owner = signedIn || await getUserBySubaccount(String(subaccountId).trim()).catch(() => null);
+    const destination = signedIn ? signedIn.subaccount_id : String(subaccountId).trim();
+    if (!isNearPayoutAccount(destination) || (owner && !hasManagedWallet(owner))) {
+      res.status(409).json({ error: 'RacerBot holds no key for this wallet, so deposits go to your private balance.', usePrivateDeposit: true });
+      return;
+    }
 
     const chainTokens = getTokensForChain((chain || 'sol').toLowerCase());
     const token = chainTokens.find(t => (t.symbol || '').toUpperCase() === (symbol || 'SOL').toUpperCase()) || chainTokens[0];
@@ -3317,8 +3330,10 @@ router.post('/deposit/quote', async (req, res) => {
     }
 
     const record = await create1ClickDepositQuote({
-      telegramId: Number(telegramId) || 9900000001,
-      subaccountId,
+      // A web-only account has no Telegram chat: 0, so nothing is sent to Telegram for it
+      telegramId: owner ? Number(owner.telegram_id || 0) : (Number(telegramId) || 0),
+      userId: owner?.id,
+      subaccountId: destination,
       token,
       amount: Number(amount),
     });
@@ -3330,6 +3345,10 @@ router.post('/deposit/quote', async (req, res) => {
       sourceChain: record.source_chain,
       sourceSymbol: record.source_symbol,
       sourceAmount: record.source_amount,
+      // What the connected wallet must send: native coin, or this token contract, in base units
+      sourceDecimals: token.decimals,
+      sourceContract: token.contractAddress || null,
+      sourceAmountRaw: (record.quote_data as any)?.amountIn || null,
       minNearOut: record.min_destination_amount,
       destinationAddress: record.destination_address,
       status: record.status,

@@ -3684,11 +3684,11 @@ export async function unwrapUserWrapNear(userOrTelegramId: number | string | Use
  * (e.g. when origin chain transfer was slightly below minimum due to wallet gas fee deduction).
  */
 export async function recoverIntentRefund(
-  telegramId: number,
+  userOrTelegramId: number | string | UserRecord,
   assetId: string
 ): Promise<{ success: boolean; unwrappedAmount?: string; error?: string }> {
   try {
-    const user = await getUserByTelegramId(telegramId);
+    const user = await resolveWalletUser(userOrTelegramId);
     if (!user || !user.scoped_key_encrypted) {
       return { success: false, error: 'User or key not found' };
     }
@@ -3786,7 +3786,7 @@ export async function recoverIntentRefund(
 
     // 5. Unwrap wrap.near into pure native NEAR
     await new Promise((r) => setTimeout(r, 2000));
-    const unwrapRes = await unwrapUserWrapNear(telegramId).catch(() => ({ success: true, unwrappedAmount: '0' }));
+    const unwrapRes = await unwrapUserWrapNear(user).catch(() => ({ success: true, unwrappedAmount: '0' }));
 
     return {
       success: true,

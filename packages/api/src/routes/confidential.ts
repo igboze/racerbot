@@ -41,6 +41,11 @@ export function registerConfidentialRoutes(router: Router): void {
       res.status(401).json({ error: 'Sign in with Telegram, or connect your wallet and approve the sign-in message, to use private trading.' });
       return null;
     }
+    // Private balances pay out to this account on NEAR (an EVM address is a valid NEAR account; a Solana one is not)
+    if (!user.subaccount_id || !NEAR_ACCOUNT.test(user.subaccount_id)) {
+      res.status(400).json({ error: 'Private trading pays out to a NEAR account. Connect a NEAR or EVM wallet, or sign in with Telegram, to use it.' });
+      return null;
+    }
     return user;
   };
 
@@ -177,6 +182,11 @@ export function registerConfidentialRoutes(router: Router): void {
         chain: chain?.name || token.blockchain,
         symbol: token.symbol,
         amount: String(amount),
+        // What a connected wallet must send: native coin, or this token contract, in base units
+        sourceChain: token.blockchain.toLowerCase(),
+        sourceDecimals: token.decimals,
+        sourceContract: token.contractAddress || null,
+        sourceAmountRaw: amountRaw,
         expectedNear: toNear(BigInt(quote.amountOut || '0')),
         minNear: toNear(BigInt(quote.minAmountOut || '0')),
         timeEstimateSec: quote.timeEstimate ?? null,

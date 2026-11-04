@@ -96,9 +96,8 @@ export function createFleetRouter(): Router {
       const { walletCount, fleetName } = req.body;
       const count = parseInt(walletCount, 10) || 10;
       const { deployRaceFleet } = await import('../raceFleet.js');
-      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
 
-      const result = await deployRaceFleet(userRef, count, fleetName || 'Alpha Fleet');
+      const result = await deployRaceFleet(user, count, fleetName || 'Alpha Fleet');
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Deployment failed' });
         return;
@@ -131,8 +130,7 @@ export function createFleetRouter(): Router {
       }
 
       const { distributeFundsToFleet } = await import('../raceFleet.js');
-      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
-      const result = await distributeFundsToFleet(userRef, totalNear);
+      const result = await distributeFundsToFleet(user, totalNear);
 
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Distribution failed' });
@@ -156,8 +154,7 @@ export function createFleetRouter(): Router {
       }
 
       const { sweepFleetFunds } = await import('../raceFleet.js');
-      const userRef = (user.telegram_id && user.telegram_id > 0) ? user.telegram_id : user;
-      const result = await sweepFleetFunds(userRef);
+      const result = await sweepFleetFunds(user);
 
       if (!result.success) {
         res.status(400).json({ error: result.reason || 'Sweep failed' });
@@ -251,7 +248,7 @@ export function createFleetRouter(): Router {
       }
 
       const { buildFleetHoldingsView } = await import('../raceFleet.js');
-      const view = await buildFleetHoldingsView(user.telegram_id, req.query.refresh === 'true');
+      const view = await buildFleetHoldingsView(user, req.query.refresh === 'true');
 
       const { getRaceFleetByUserId, getRaceFleetFills } = await import('@racerbot/db');
       const fleet = await getRaceFleetByUserId(user.id);
