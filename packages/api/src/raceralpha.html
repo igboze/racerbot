@@ -5256,6 +5256,7 @@
                 </div>
                 <div class="conf-xchain-result" id="conf-xchain-result" aria-live="polite" hidden></div>
                 <p class="conf-hint">Send SOL, BTC, USDC and more from any wallet. It arrives in your private balance as NEAR without passing through a public NEAR wallet. 1% fee, the same as regular deposits.</p>
+                <p class="conf-hint">Want it in your public RacerBot wallet instead (for Fleet or regular trades)? <a href="#" onclick="event.preventDefault(); openDepositModal({ public: true });">Deposit to wallet</a></p>
               </div>
             </div>
             <h4 class="conf-subhead">Open positions</h4>
@@ -6343,6 +6344,9 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       const box = document.getElementById('conf-xchain-result');
       try {
         const d = await confPost('/alpha/confidential/deposit/crosschain', { tokenKey, amount }, btn, 'Getting address...');
+        confXchainDeposit = d;
+        // No memo chains only: a wallet transfer here carries no memo
+        const canPay = !d.depositMemo && canPayDepositInWallet(d.sourceChain, d.symbol, d.sourceContract);
         box.hidden = false;
         box.innerHTML = `
           <img src="${d.qrDataUrl}" alt="QR code of the deposit address">
@@ -6351,13 +6355,47 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
           ${d.depositMemo ? `<p class="conf-hint">Memo (required): <code class="conf-address">${escapeHtml(d.depositMemo)}</code></p>` : ''}
           <div class="conf-row">
             <button type="button" class="receipts-btn" onclick="navigator.clipboard.writeText(document.getElementById('conf-xchain-address').textContent).then(() => showToast('Address copied', 'success'))">Copy address</button>
+            ${canPay ? `<button type="button" class="receipts-btn" onclick="confXchainPayInWallet(this)">Pay ${escapeHtml(d.amount)} ${escapeHtml(d.symbol)} in wallet</button>` : ''}
             ${d.walletLink ? `<a class="receipts-btn" href="${escapeHtml(d.walletLink)}" target="_blank" rel="noopener">Open in wallet</a>` : ''}
           </div>
+          <p class="conf-hint" id="conf-xchain-status" aria-live="polite"></p>
           <p class="conf-hint">About ${escapeHtml(String(d.expectedNear))} NEAR arrives in your private balance (at least ${escapeHtml(String(d.minNear))}). This address is for this deposit only and expires in 30 minutes.</p>`;
         setTimeout(loadConfidential, 5000);
       } catch (err) {
         box.hidden = true;
         showToast(`Could not create the deposit: ${err.message}`, 'error');
+      }
+    }
+
+    let confXchainDeposit = null;
+
+    /** Pay the private deposit from the connected wallet: exactly the quoted asset, on the quoted chain */
+    async function confXchainPayInWallet(btn) {
+      const d = confXchainDeposit;
+      if (!d) return;
+      const status = document.getElementById('conf-xchain-status');
+      btn.disabled = true;
+      const oldHtml = btn.innerHTML;
+      btn.innerHTML = 'Approve in your wallet...';
+      try {
+        await window.RacerConnect.sendConnectedWalletTransfer({
+          chain: d.sourceChain,
+          depositAddress: d.depositAddress,
+          amount: d.amount,
+          amountRaw: d.sourceAmountRaw,
+          decimals: d.sourceDecimals,
+          contract: d.sourceContract,
+          symbol: d.symbol,
+        });
+        btn.innerHTML = 'Sent';
+        if (status) status.textContent = 'Payment sent. It arrives in your private balance in a few minutes.';
+        showToast('Payment sent to your private balance', 'success');
+        setTimeout(loadConfidential, 20000);
+        setTimeout(loadConfidential, 90000);
+      } catch (err) {
+        btn.innerHTML = oldHtml;
+        btn.disabled = false;
+        showToast(err.message || 'Payment failed', 'error');
       }
     }
 
@@ -9368,7 +9406,28 @@ Deposit ${amountNear} NEAR from your connected wallet ${connected} instead?`)) r
       }
     }
 
-    async function openDepositModal() {
+    /** Whether the signed-in user has private mode switched on (loads the overview when not seen yet) */
+    async function isPrivateModeOn() {
+      if (!lastConfidentialOverview) {
+        try {
+          const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
+          const data = await res.json();
+          if (res.ok && data.success) lastConfidentialOverview = data;
+        } catch (e) { /* not signed in, or private trading is off */ }
+      }
+      return Boolean(lastConfidentialOverview?.account?.settings?.enabled);
+    }
+
+    /**
+     * Deposit button. With private mode on, a deposit goes straight to the private balance, never through
+     * the public RacerBot wallet (which would link the two on-chain); `public: true` opens the wallet deposit.
+     */
+    async function openDepositModal(opts = {}) {
+      if (!opts.public && await isPrivateModeOn()) {
+        openPrivateCrossChainDeposit();
+        showToast('Private mode is on, so this deposit goes to your private balance.', 'info');
+        return;
+      }
       const modal = document.getElementById('modal-deposit');
       if (modal) {
         modal.style.display = 'flex';
