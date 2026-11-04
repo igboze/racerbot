@@ -3796,7 +3796,8 @@ export class MultiRpcNear {
           if (route.hop1.type === 'dcl') {
             // Atomic multi-pool quote on dclv2.ref-labs.near: wrap.near -> quote -> launch token
             const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-              pool_ids: [route.hop1.poolId, launchPoolId],
+              // The whole path from wNEAR (e.g. NEAR -> USDC -> PRL), not only its last pool
+              pool_ids: [...(route.hop1Path ?? [route.hop1.poolId]), launchPoolId],
               input_token: 'wrap.near',
               output_token: outToken,
               input_amount: amountIn,
@@ -3833,7 +3834,7 @@ export class MultiRpcNear {
           if (route.hop1.type === 'dcl') {
             // Atomic multi-pool sell quote on dclv2.ref-labs.near: launch token -> quote -> wrap.near
             const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
-              pool_ids: [launchPoolId, route.hop1.poolId],
+              pool_ids: [launchPoolId, ...(route.hop1Path ? [...route.hop1Path].reverse() : [route.hop1.poolId])],
               input_token: inToken,
               output_token: 'wrap.near',
               input_amount: amountIn,
@@ -4241,9 +4242,10 @@ export class MultiRpcNear {
           if (route.kind === 'multihop') {
             if (route.hop1.type === 'dcl') {
               // Native atomic 2-pool quote on dclv2.ref-labs.near
+              // The whole path from wNEAR (e.g. NEAR -> USDC -> PRL), not only its last pool
               const poolIds = isBuyDirection
-                ? [route.hop1.poolId, launchPoolId]
-                : [launchPoolId, route.hop1.poolId];
+                ? [...(route.hop1Path ?? [route.hop1.poolId]), launchPoolId]
+                : [launchPoolId, ...(route.hop1Path ? [...route.hop1Path].reverse() : [route.hop1.poolId])];
               const q = await this.view<any>('dclv2.ref-labs.near', 'quote', {
                 pool_ids: poolIds,
                 input_token: inToken,
@@ -4251,7 +4253,7 @@ export class MultiRpcNear {
                 input_amount: amountIn,
               });
               const finalOut = BigInt(q?.amount || '0');
-              if (finalOut <= 0n) throw new Error('Atomic 2-hop DCL quote returned 0');
+              if (finalOut <= 0n) throw new Error('Atomic multi-hop DCL quote returned 0');
               const minFinal = calculateMinAmountOut(finalOut, slippagePct);
               return { expectedOutput: finalOut.toString(), minAmountOut: minFinal };
             }

@@ -1262,6 +1262,12 @@ export async function getFastTokenRoute(rawTokenAddress: string): Promise<TokenI
     return cached.data;
   }
 
+  // Launchpad coins never take the DB shortcut: it holds no launchpad route (dcl_path), and a buy must
+  // reach the launchpad's own pool first. Their path lookups stay cached, so a full resolve is quick.
+  if (isLaunchpadToken(tokenAddress)) {
+    return getTokenInfo(rawTokenAddress, false);
+  }
+
   // 2. DB cache hit (< 2ms)
   const dbCache = await getTokenCache(tokenAddress).catch(() => null);
   if (
