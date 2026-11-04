@@ -2,7 +2,8 @@
 // place). The same optimized wasm runs as a normal contract on <name>.<owner>, with the owner
 // account as its controller (as racerbot.near is in production), and trades tiny amounts on the real venues.
 // Cost: ~0.95 NEAR locked for the code's storage, returned when `close` deletes the account,
-// plus the test trade (sold back) and gas (~0.01 NEAR). No fee is charged (fee_bps 0).
+// plus the test trade (sold back) and gas (~0.01 NEAR). No fee is charged unless --fee-bps is given:
+// --fee-bps 150 on buy and exit pays a real 1.5% fee to racerbottreasury.near, checking the fee path.
 //
 // Preview by default; pass --send to submit. Run the steps in order:
 //   node scripts/rehearse-executor.mjs create --send
@@ -33,6 +34,8 @@ const execId = `${opt('name') || 'rehearse1'}.${ownerId}`;
 const WASM = 'packages/position-executor/target/racerbot_position_executor.opt.wasm';
 const NEAR = 10n ** 24n;
 const TGAS = 10n ** 12n;
+const feeBps = Number(opt('fee-bps') || '0');
+if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 200) throw new Error('--fee-bps must be 0..200');
 const toYocto = (n) => BigInt(Math.round(Number(n) * 1e6)) * 10n ** 18n;
 const fmt = (y) => (Number(BigInt(y) / 10n ** 18n) / 1e6).toFixed(4);
 
@@ -150,7 +153,8 @@ if (step === 'state') {
   else console.log('Re-run with --send.');
 } else if (step === 'buy') {
   const amount = toYocto(opt('amount') || '0.1');
-  const args = Buffer.concat([Buffer.from(plan(true, amount)), new Writer().u32(0).done()]);
+  const args = Buffer.concat([Buffer.from(plan(true, amount)), new Writer().u32(feeBps).done()]);
+  if (feeBps) console.log(`Fee ${feeBps} bps of what the venue uses goes to racerbottreasury.near`);
   await call('buy', new Uint8Array(args), 300);
 } else if (step === 'sell') {
   const token = opt('token');
@@ -159,7 +163,7 @@ if (step === 'state') {
   await call('sell', plan(false, bal), 300);
 } else if (step === 'exit') {
   if (before?.status !== 'Exiting') {
-    await call('prepare_exit', new Writer().u32(0).done(), 100);
+    await call('prepare_exit', new Writer().u32(feeBps).done(), 100);
   }
   const s = send ? await state() : before;
   // --prepare-only: measure now, so a NEAR Intents quote can be made for the exact amount
